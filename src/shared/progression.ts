@@ -241,7 +241,26 @@ export const TALENTS_PER_CLASS_MAX = 12;
  * Both sides import this now. The grid's job is to be big enough to SHOW it,
  * which is a separate assertion in the panel.
  */
-export const INVENTORY_CAP = 12;
+/**
+ * RAISED FROM TWELVE, because twelve is not a bag you can farm into.
+ *
+ * Twelve was the number three grid rows of four could SHOW, and the panel is a
+ * scrolling list now, so the display no longer has an opinion. What replaces it
+ * is upstream's own figure: `tome/class/Actor.lua` computes a carry limit of
+ * `floor(40 + Str * 1.8 + max_encumber)`, which is 58 at Strength 10 -- so sixty
+ * is ToME's starting capacity, rounded to a number a person can hold in mind.
+ *
+ * IT IS STILL A CAP, AND THAT IS STILL THE POINT. The paragraph below is
+ * unchanged and is the whole argument: what matters is not the number but that
+ * `pickup` has a BOUNDED answer, so `carried` cannot grow without limit under a
+ * client in a loop.
+ *
+ * RAISING IS SAFE; LOWERING IS NOT. The load path drops overflow and logs it
+ * (see `restoreLoadout` in net/gateway.ts), so no existing save can be over the
+ * new limit -- but a build that lowered this would silently bin the difference
+ * out of every character file that had used it.
+ */
+export const INVENTORY_CAP = 60;
 
 /**
  * `ActorLevel.exp_chart(level)` — load.lua:193-206, VERBATIM.

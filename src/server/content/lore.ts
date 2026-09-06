@@ -29,8 +29,9 @@
  * `Object.lua:2313-2315` removes the object from the map and calls `learnLore`
  * — it never reaches an inventory. So a note costs no bag slot, cannot be
  * dropped, sold or handed over, and picking one up twice is impossible because
- * the second one does not exist. `INVENTORY_CAP` is 12 and a player who filled
- * it with paper would have found a way to lose the game by reading.
+ * the second one does not exist. `INVENTORY_CAP` was 12 when this was written
+ * and is sixty now, and a player who filled it with paper would still have
+ * found a way to lose the game by reading.
  *
  * ═══ THE TEXT IS AUTHORED, THE SHAPE IS PORTED ═══
  * Every word below is this game's. What is ported is the RECORD — an id, a

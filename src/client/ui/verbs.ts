@@ -337,8 +337,12 @@ const PILE_ROWS_MAX = 6;
  * upstream uses. This function is the list half.
  *
  * ═══ IT IS BOUNDED BY THE SAME GEOMETRY `pickupRows` IS ═══
- * `INVENTORY_CAP` is 12 and the menu has no scroll, so an unbounded bag would
- * draw a box taller than the smallest viewport this client renders. `PILE_ROWS_MAX`
+ * `INVENTORY_CAP` WAS 12 when this was written and is sixty now; the menu still
+ * has no scroll, so an unbounded bag would draw a box taller than the smallest
+ * viewport this client renders. The slice below is what makes that safe, and it
+ * matters more than it did: `...and 54 more in your bag` is the ordinary state
+ * of a full bag rather than an edge case, and only the first six are offerable.
+ * `PILE_ROWS_MAX`
  * is reused rather than doubled: it was chosen against the box, not against
  * loot, and a second constant for the same six rows is a second thing to keep
  * true. What is cut off says so, in `pickupRows`' words and for its reason.

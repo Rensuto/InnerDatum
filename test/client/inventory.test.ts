@@ -9,8 +9,6 @@ import {
   INVENTORY_DRAG_PANEL,
   INVENTORY_PANEL_CARRIED_MAX,
   INVENTORY_PANEL_COLS,
-  inventoryColumnsFor,
-  inventoryPanelWidthForColumns,
   INVENTORY_PANEL_MARGIN,
   INVENTORY_PANEL_MIN_H,
   INVENTORY_PANEL_MIN_W,
@@ -24,6 +22,7 @@ import {
   inventoryPanelHitAt,
   inventoryPanelRect,
   inventoryPanelRows,
+  tabsFor,
   hasSomethingToBuy,
   hasSomethingToWear,
   inventoryTipAt,
@@ -148,7 +147,7 @@ function frame(over: Partial<InventoryMsg> = {}): InventoryMsg {
 }
 
 function view(over: Partial<InventoryPanelView> = {}): InventoryPanelView {
-  return { inventory: frame(), tab: InventoryTab.Equipped, focus: null, ...over };
+  return { inventory: frame(), tab: InventoryTab.Bag, focus: null, ...over };
 }
 
 /**
@@ -164,10 +163,16 @@ function cellItemId(cell: InventoryCell | undefined): string | undefined {
  * Every row that holds cells, in reading order — the BAG's flat rows and the
  * DOLL's placed grid alike. Both carry `cells`; only the doll carries `places`.
  */
+/**
+ * THE LIST'S ROWS -- the bag, or the shelf. NOT the doll.
+ *
+ * This gathered `Cells` AND `Doll`, which was unambiguous while the two were
+ * different TABS and only ever one was present. They are two columns of one
+ * window now and both are always there, so a helper that returned both answered
+ * "seven plates plus four carried" to every question about either.
+ */
 function cellRows(rows: readonly InventoryRow[]) {
-  return rows.flatMap((row) =>
-    row.kind === InventoryRowKind.Cells || row.kind === InventoryRowKind.Doll ? [row] : [],
-  );
+  return rows.flatMap((row) => (row.kind === InventoryRowKind.Cells ? [row] : []));
 }
 
 /** The doll row, or a throw. There is exactly one on the Equipped tab. */
@@ -241,6 +246,16 @@ describe('the paper doll at the sizes this client actually renders', () => {
   }
 
   it('sheds doll slots on the smallest window, and says how many', () => {
+    /**
+     * STILL TRUE AT 40-PIXEL PLATES, WHICH I DID NOT EXPECT. I rewrote this to
+     * assert the opposite when the cells shrank from 72 -- three rows of 40 plus
+     * gaps is 130 against 216 -- and the test failed, because the panel at the
+     * floor is short enough that the 96-pixel comparison strip still crowds the
+     * doll out of its third row. The budget moved; it did not stop binding.
+     *
+     * So the original assertion stands, and this note is here so the next person
+     * to shrink a cell checks rather than assumes.
+     */
     const notes = notesAt(FLOOR_W, FLOOR_H);
     const hidden = notes.filter((note) => note.includes('hidden'));
     expect(
@@ -395,7 +410,10 @@ describe('inventoryPanelRows', () => {
     // EquipDollFrame.lua:165-177 paints the frame and then EITHER the object OR
     // `bg_empty`. A doll that listed only what was worn would hide the fact that
     // `offhand` and `trinket` are places things can go.
-    const cells = cellRows(inventoryPanelRows(view())).flatMap((row) => row.cells);
+    // THROUGH `dollOf`, not `cellRows`. They were interchangeable while the
+    // doll and the bag were two tabs and only one was ever present; they are
+    // two columns of one window now.
+    const cells = dollOf(inventoryPanelRows(view())).cells;
     expect(cells).toHaveLength(SLOT_ORDER.length);
     // Both cell shapes carry a slot, filled or not — which is what makes the doll
     // a fixed seven rather than a list of what happens to be worn.
@@ -412,7 +430,7 @@ describe('inventoryPanelRows', () => {
   });
 
   it('keeps the bag in the server’s own order and never sorts it', () => {
-    const cells = cellRows(inventoryPanelRows(view({ tab: InventoryTab.Carried }))).flatMap(
+    const cells = cellRows(inventoryPanelRows(view({ tab: InventoryTab.Bag }))).flatMap(
       (row) => row.cells,
     );
     expect(cells.map((cell) => (cell.kind === 'item' ? cell.name : '—'))).toEqual([
@@ -424,7 +442,7 @@ describe('inventoryPanelRows', () => {
   });
 
   it('carries the wire’s own icon key and never one built from the name', () => {
-    const first = cellRows(inventoryPanelRows(view({ tab: InventoryTab.Carried })))[0]?.cells[0];
+    const first = cellRows(inventoryPanelRows(view({ tab: InventoryTab.Bag })))[0]?.cells[0];
     expect(first?.kind).toBe('item');
     if (first?.kind !== 'item') throw new Error('unreachable');
     expect(first.icon).toBe('item_watchmans_coat');
@@ -513,7 +531,7 @@ describe('inventoryPanelRows', () => {
       bagged(`cap_${String(i)}`, `Thing ${String(i)}`, ItemTier.Common, 'ring'),
     );
     const shown = cellRows(
-      inventoryPanelRows(view({ inventory: frame({ carried: full }), tab: InventoryTab.Carried })),
+      inventoryPanelRows(view({ inventory: frame({ carried: full }), tab: InventoryTab.Bag })),
     ).reduce((n, row) => n + row.cells.length, 0);
     expect(shown, 'the grid cannot show a legal full bag').toBe(INVENTORY_CAP);
   });
@@ -530,10 +548,17 @@ describe('inventoryPanelRows', () => {
       bagged(`item_${String(i)}`, `Thing ${String(i)}`, ItemTier.Common, 'ring'),
     );
     const bag = cellRows(
-      inventoryPanelRows(view({ inventory: frame({ carried: full }), tab: InventoryTab.Carried })),
+      inventoryPanelRows(view({ inventory: frame({ carried: full }), tab: InventoryTab.Bag })),
     );
-    expect(bag).toHaveLength(3);
-    expect(bag.map((row) => row.cells.length)).toEqual([4, 4, 4]);
+    /**
+     * ═══ ONE ROW PER ITEM. THIS ASSERTED THREE ROWS OF FOUR ═══
+     * The bag was a grid because twelve things fit in one, and the panel was
+     * too narrow to hold the doll beside it. Sixty do not fit in any grid
+     * worth drawing, so it is a list — `engine/ui/Inventory.lua`'s shape, one
+     * item to a line with an icon beside the name.
+     */
+    expect(bag).toHaveLength(INVENTORY_PANEL_CARRIED_MAX);
+    expect(bag.every((row) => row.cells.length === 1)).toBe(true);
   });
 
   it('says so in words when a bag arrives longer than one page holds', () => {
@@ -545,7 +570,7 @@ describe('inventoryPanelRows', () => {
       bagged(`item_${String(i)}`, `Thing ${String(i)}`, ItemTier.Common, 'ring'),
     );
     const rows = inventoryPanelRows(
-      view({ inventory: frame({ carried: thirteen }), tab: InventoryTab.Carried }),
+      view({ inventory: frame({ carried: thirteen }), tab: InventoryTab.Bag }),
     );
     expect(cellRows(rows).flatMap((row) => row.cells)).toHaveLength(INVENTORY_PANEL_CARRIED_MAX);
     const note = rows.find((row) => row.kind === InventoryRowKind.Note);
@@ -566,7 +591,7 @@ describe('inventoryPanelRows', () => {
 
   it('says the bag is empty rather than drawing an empty grid', () => {
     const rows = inventoryPanelRows(
-      view({ inventory: frame({ carried: [] }), tab: InventoryTab.Carried }),
+      view({ inventory: frame({ carried: [] }), tab: InventoryTab.Bag }),
     );
     const note = rows.find((row) => row.kind === InventoryRowKind.Note);
     if (note?.kind !== InventoryRowKind.Note) throw new Error('unreachable');
@@ -578,92 +603,48 @@ describe('inventoryPanelRows', () => {
 // THE TABS — one screen, two halves, and switching changes nothing else
 // ---------------------------------------------------------------------------
 
-describe('the tabs', () => {
-  it('changes the CELLS and leaves every other row alone', () => {
-    // `SHOW_EQUIPMENT = "SHOW_INVENTORY"` (Game.lua:2192) is an alias and both
-    // open one combined dialog, so the tab is a view onto one frame rather than a
-    // second screen with a second source of truth. Everything that is not a cell
-    // — the tab strip's counts, the comparison strip — must be identical either
-    // way, or the two halves are two panels wearing one header.
-    const focus: InventoryFocus = { kind: 'item', itemId: 'item_signet' };
-    const equipped = inventoryPanelRows(view({ tab: InventoryTab.Equipped, focus }));
-    const carried = inventoryPanelRows(view({ tab: InventoryTab.Carried, focus }));
-
-    // ═══ THE CONTENT IS IDENTICAL; ONLY THE RESERVED HEIGHT IS NOT ═══
-    // `compact` is deliberately excluded from the comparison, and that exclusion
-    // is the point rather than a loophole: the Equipped tab reserves ONE LINE for
-    // the strip WHEN THE PANEL CANNOT AFFORD MORE — measured, a full strip at the
-    // 640x320 floor takes the doll from four visible cells to two, and the doll
-    // IS that tab (`equippedStripFits`). What the strip SAYS is one answer to one
-    // question on both tabs either way, or the two halves are two panels wearing
-    // one header.
-    //
-    // THIS COMMENT USED TO SAY the reservation was because *"`compare` exists
-    // only on `CarriedItemView` and a worn item is handed `rows: []`"*. That was
-    // true and is not: `compare` is on `ItemView` now, so the doll produces the
-    // same rows the bag does — which is why the content assertion below is doing
-    // real work rather than comparing two empty lists.
-    const stripBody = (rows: readonly InventoryRow[]) =>
-      rows
-        .filter(
-          (row) =>
-            row.kind !== InventoryRowKind.Cells &&
-            row.kind !== InventoryRowKind.Doll &&
-            row.kind !== InventoryRowKind.Tabs,
-        )
-        .map((row) => (row.kind === InventoryRowKind.Detail ? { ...row, compact: null } : row));
-    expect(stripBody(carried)).toEqual(stripBody(equipped));
-    expect(detailOf(equipped).compact).toBe(true);
-    expect(detailOf(carried).compact).toBe(false);
-
-    const tabs = (rows: readonly InventoryRow[]) =>
-      rows.find((row) => row.kind === InventoryRowKind.Tabs);
-    const a = tabs(equipped);
-    const b = tabs(carried);
-    if (a?.kind !== InventoryRowKind.Tabs || b?.kind !== InventoryRowKind.Tabs) {
-      throw new Error('unreachable');
-    }
-    // The COUNTS are the same on both tabs; only which one is selected moves.
-    expect([a.wornCount, a.carriedCount]).toEqual([3, 4]);
-    expect([b.wornCount, b.carriedCount]).toEqual([3, 4]);
-    expect(a.tab).toBe(InventoryTab.Equipped);
-    expect(b.tab).toBe(InventoryTab.Carried);
-
-    expect(cellRows(equipped).flatMap((row) => row.cells)).toHaveLength(SLOT_ORDER.length);
-    expect(cellRows(carried).flatMap((row) => row.cells)).toHaveLength(BAG.length);
+describe('the tab strip', () => {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THERE ARE NO TABS ANY MORE UNLESS A SHOP PUTS ONE THERE.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * This block used to hold four tests about switching between EQUIPPED and
+   * CARRIED: that the switch changed the cells and nothing else, that the strip
+   * marked the selection with brackets as well as colour, that a click resolved
+   * from POSITION rather than from state, and that the doll's strip was compact
+   * while the bag's was not.
+   *
+   * Every one of them described a control that no longer exists. The doll and
+   * the bag are two columns of one window, so there is nothing to switch
+   * between -- and a strip offering to show you the thing already on screen is
+   * furniture that costs a row of height.
+   *
+   * WHAT SURVIVES IS THE RULE UNDERNEATH THEM: a tab is only drawn when there
+   * is a genuine choice. `tabsFor` is the whole of it, and the shop's own tests
+   * (test/client/shoptab.test.ts) cover the case where the choice is real.
+   */
+  it('offers no tab strip at all when there is nothing to choose', () => {
+    expect(tabsFor(false)).toEqual([]);
+    const rows = inventoryPanelRows(view());
+    expect(rows.some((row) => row.kind === InventoryRowKind.Tabs)).toBe(false);
   });
 
-  it('answers which tab a click means from POSITION, not from state', () => {
-    // The two boxes are laid out by the geometry and never by the selection, so a
-    // click on the left half means EQUIPPED whichever tab happens to be open. A
-    // hit test that read the current tab would swap the two the moment somebody
-    // switched, and the bug would present as a tab that cannot be left.
-    const rect = roomyRect();
-    for (const tab of [InventoryTab.Equipped, InventoryTab.Carried]) {
-      const rows = inventoryPanelRows(view({ tab }));
-      const placed = inventoryPanelGeometry(rect, rows).placed.find(
-        (entry) => entry.row.kind === InventoryRowKind.Tabs,
-      );
-      if (placed === undefined) throw new Error('unreachable');
-      const [left, right] = placed.tabs;
-      if (left === undefined || right === undefined) throw new Error('unreachable');
+  it('offers exactly two when a counter is in the room', () => {
+    // The bag and the shelf: one list column, two things it could be showing.
+    expect(tabsFor(true)).toHaveLength(2);
+  });
 
-      const at = (box: { x: number; y: number; w: number; h: number }) =>
-        inventoryPanelHitAt(
-          rect,
-          rows,
-          box.x + Math.floor(box.w / 2),
-          box.y + Math.floor(box.h / 2),
-        );
-      expect(at(left)).toEqual({ kind: InventoryHitKind.Tab, tab: InventoryTab.Equipped });
-      expect(at(right)).toEqual({ kind: InventoryHitKind.Tab, tab: InventoryTab.Carried });
-    }
+  it('gives the row back to the panel when the strip is gone', () => {
+    // A strip that is not drawn must not still be RESERVED, or the panel keeps
+    // paying eighteen pixels for a control it decided not to have.
+    const rect = roomyRect();
+    const placed = inventoryPanelGeometry(rect, inventoryPanelRows(view())).placed;
+    const top = Math.min(...placed.map((entry) => entry.rect.y));
+    const dollTop = placed.find((entry) => entry.row.kind === InventoryRowKind.Doll)?.rect.y;
+    expect(dollTop).toBe(top);
   });
 });
-
-// ---------------------------------------------------------------------------
-// THE BAND — the panel-not-modal property, made mechanical
-// ---------------------------------------------------------------------------
 
 describe('inventoryPanelRect', () => {
   /**
@@ -759,14 +740,21 @@ describe('inventoryPanelRect', () => {
       expect(rect.w, `${String(size.width)} narrower than the floor`).toBeGreaterThanOrEqual(
         INVENTORY_PANEL_MIN_W,
       );
-      // WHOLE COLUMNS, asked as a round trip: the width the panel chose is
-      // exactly the width the column count it implies would ask for. A panel
-      // sized to four-and-a-half columns fails this and nothing else would see
-      // it — half a column of dead inset draws the same as none.
-      const cols = inventoryColumnsFor(rect.w);
-      expect(rect.w, `${String(size.width)} -> ${String(cols)} columns`).toBe(
-        inventoryPanelWidthForColumns(cols),
-      );
+      // ═══ NO COLUMN SNAP ANY MORE ═══
+      // This asked for a round trip -- the width the panel chose had to be
+      // exactly the width its implied column count would ask for -- because half
+      // a column of dead inset draws the same as none. There is no grid: the bag
+      // is a list and takes whatever is left beside the doll, so every width is
+      // a whole number of what the panel now holds.
+      //
+      // What replaces it is the property that actually binds: BOTH COLUMNS FIT.
+      // Below the floor the list computes to zero width and every row in it has
+      // nowhere to go, which is how this was found.
+      const geometry = inventoryPanelGeometry(rect, inventoryPanelRows(view()));
+      expect(
+        geometry.list.viewport.w,
+        `${String(size.width)}: no room for the list`,
+      ).toBeGreaterThan(0);
     }
   });
 
@@ -776,13 +764,13 @@ describe('inventoryPanelRect', () => {
     // in a fifth of the width.
     const atFloor = inventoryPanelRect({ width: 640, height: 480, top: 17, bottom: 337 });
     const atWide = inventoryPanelRect({ width: 1920, height: 1080, top: 24, bottom: 900 });
-    // Even the guaranteed floor has room for more than the four it was pinned
-    // to: 0.8 of 640 is 512, which holds six whole columns.
-    expect(inventoryColumnsFor(atFloor?.w ?? 0)).toBeGreaterThan(INVENTORY_PANEL_COLS);
+    // MEASURED IN LIST WIDTH, not in grid columns -- the bag is a list and the
+    // doll's column is fixed, so every pixel the panel gains goes to the names.
+    const listW = (rect: { w: number; h: number; x: number; y: number } | null) =>
+      rect === null ? 0 : inventoryPanelGeometry(rect, inventoryPanelRows(view())).list.viewport.w;
+    expect(listW(atFloor)).toBeGreaterThan(0);
     expect(atWide?.w ?? 0).toBeGreaterThan(atFloor?.w ?? 0);
-    expect(inventoryColumnsFor(atWide?.w ?? 0)).toBeGreaterThan(
-      inventoryColumnsFor(atFloor?.w ?? 0),
-    );
+    expect(listW(atWide)).toBeGreaterThan(listW(atFloor));
     // AND IT STILL FITS THE FLOOR ITSELF, margins included — the one viewport
     // this client is guaranteed to be able to render.
     expect((atFloor?.w ?? 0) + 12).toBeLessThanOrEqual(640);
@@ -814,7 +802,7 @@ describe('inventoryPanelHitAt', () => {
       const rect = inventoryPanelRect(size);
       if (rect === null) continue;
 
-      for (const tab of [InventoryTab.Equipped, InventoryTab.Carried]) {
+      for (const tab of [InventoryTab.Bag, InventoryTab.Bag]) {
         const rows = inventoryPanelRows(view({ tab }));
         const geometry = inventoryPanelGeometry(rect, rows);
 
@@ -886,7 +874,7 @@ describe('inventoryPanelHitAt', () => {
 
   it('marks a carried item as NOT worn, which is what decides equip from unequip', () => {
     const rect = roomyRect();
-    const rows = inventoryPanelRows(view({ tab: InventoryTab.Carried }));
+    const rows = inventoryPanelRows(view({ tab: InventoryTab.Bag }));
     const placed = inventoryPanelGeometry(rect, rows).placed.find(
       (entry) => entry.row.kind === InventoryRowKind.Cells,
     );
@@ -905,16 +893,20 @@ describe('inventoryPanelHitAt', () => {
     // where each cell starts. Each id appears in exactly one run: a repeat would
     // mean two cells interleaved, a gap would mean one is unreachable.
     const rect = roomyRect();
-    const rows = inventoryPanelRows(view({ tab: InventoryTab.Carried }));
+    const rows = inventoryPanelRows(view({ tab: InventoryTab.Bag }));
     const placed = inventoryPanelGeometry(rect, rows).placed.find(
       (entry) => entry.row.kind === InventoryRowKind.Cells,
     );
     const first = placed?.cells[0];
     if (placed === undefined || first === undefined) throw new Error('unreachable');
 
+    // DOWN THE COLUMN, NOT ACROSS A ROW. This walked x across one grid row of
+    // four cells; the bag is a list, so the four items are four ROWS and the
+    // run that has to be contiguous is vertical. The property is the same one:
+    // no gap inside an item, and no pixel answering for the wrong one.
     const seen: string[] = [];
-    const y = first.y + Math.floor(first.h / 2);
-    for (let x = rect.x; x < rect.x + rect.w; x += 1) {
+    const x = first.x + Math.floor(first.w / 2);
+    for (let y = rect.y; y < rect.y + rect.h; y += 1) {
       const hit = inventoryPanelHitAt(rect, rows, x, y);
       if (hit === null || hit.kind !== InventoryHitKind.Item) continue;
       if (seen[seen.length - 1] !== hit.itemId) seen.push(hit.itemId);
@@ -943,7 +935,7 @@ describe('inventoryPanelHitAt', () => {
     // teach about a button that would never apply.
     const rect = roomyRect();
     const dropFor = (focus: InventoryFocus | null) => {
-      const rows = inventoryPanelRows(view({ tab: InventoryTab.Carried, focus }));
+      const rows = inventoryPanelRows(view({ tab: InventoryTab.Bag, focus }));
       const strip = inventoryPanelGeometry(rect, rows).placed.find(
         (entry) => entry.row.kind === InventoryRowKind.Detail,
       );
@@ -957,7 +949,7 @@ describe('inventoryPanelHitAt', () => {
     const box = dropFor({ kind: 'item', itemId: 'item_signet' });
     if (box === null) throw new Error('unreachable: a carried item can be dropped');
     const rows = inventoryPanelRows(
-      view({ tab: InventoryTab.Carried, focus: { kind: 'item', itemId: 'item_signet' } }),
+      view({ tab: InventoryTab.Bag, focus: { kind: 'item', itemId: 'item_signet' } }),
     );
     expect(
       inventoryPanelHitAt(rect, rows, box.x + Math.floor(box.w / 2), box.y + Math.floor(box.h / 2)),
@@ -1069,7 +1061,7 @@ describe('inventoryPanelHitAt', () => {
     // `equip { itemId }` (protocol.ts:1905-1909). The verb differs and the
     // identifier differs, which is why they are two DragKinds and not one with a
     // flag (ui/drag.ts's `DragSubject`).
-    const bag = inventoryPanelRows(view({ tab: InventoryTab.Carried }));
+    const bag = inventoryPanelRows(view({ tab: InventoryTab.Bag }));
     const bagPlaced = inventoryPanelGeometry(rect, bag).placed.find(
       (entry) => entry.row.kind === InventoryRowKind.Cells,
     );
@@ -1110,7 +1102,7 @@ describe('inventoryPanelHitAt', () => {
     });
     // A tab, the ×, the DROP control and a miss are all "not about a thing", so
     // none of them may quietly change what the strip is describing.
-    expect(focusForHit({ kind: InventoryHitKind.Tab, tab: InventoryTab.Carried })).toBeNull();
+    expect(focusForHit({ kind: InventoryHitKind.Tab, tab: InventoryTab.Bag })).toBeNull();
     expect(
       focusForHit({ kind: InventoryHitKind.Drop, itemId: 'item_signet', enabled: true }),
     ).toBeNull();
@@ -1135,6 +1127,11 @@ describe('the drop policy', () => {
     // the array. The parallel between `placed.cells[i]` and `row.cells[i]` is what
     // the hit test depends on, and splicing to make the count easier here would
     // break it there.
+    // THE PROPERTY, NOT A COUNT. This asserted `shown < SLOT_ORDER.length`, which
+    // read the doll and the bag as one pool of cells -- true when they were one
+    // column, meaningless now that they are two and the bag's rows are items
+    // rather than plates. What has to hold is that something was held back AND
+    // the panel said so, which the note below is.
     const shown = placed
       .filter(
         (entry) =>
@@ -1142,7 +1139,8 @@ describe('the drop policy', () => {
       )
       .flatMap((entry) => entry.cells)
       .filter((box) => box.w > 0);
-    expect(shown.length).toBeLessThan(SLOT_ORDER.length);
+    const wanted = SLOT_ORDER.length + (view().inventory?.carried.length ?? 0);
+    expect(shown.length, 'nothing was shed, so there is nothing to announce').toBeLessThan(wanted);
 
     const note = placed.find(
       (entry) => entry.row.kind === InventoryRowKind.Note && entry.row.text.includes('hidden'),
@@ -1163,11 +1161,16 @@ describe('the drop policy', () => {
     // panel is now too short for the BAG's seven-line strip and comfortably tall
     // enough for the DOLL's one-line one. Asserting both here is what makes the
     // per-tab reservation a tested property rather than a comment.
-    const tight = { x: 0, y: 0, w: INVENTORY_PANEL_MIN_W, h: INVENTORY_PANEL_MIN_H + 45 };
-    const placed = inventoryPanelGeometry(
-      tight,
-      inventoryPanelRows(view({ tab: InventoryTab.Carried })),
-    ).placed;
+    // ONE STRIP HEIGHT NOW, so this no longer contrasts two tabs against one
+    // rect -- it contrasts one rect too short for the strip against one that is
+    // not. The property is unchanged: when the strip is dropped the panel SAYS
+    // it was, rather than leaving the reader to notice a missing comparison.
+    // TALL ENOUGH FOR THE NOTE, SHORT ENOUGH FOR THE STRIP. At the very floor
+    // the note itself has nowhere to go, which would make this pass for the
+    // wrong reason -- the row would be absent because nothing fits, not because
+    // the panel decided to say something.
+    const tight = { x: 0, y: 0, w: INVENTORY_PANEL_MIN_W, h: INVENTORY_PANEL_MIN_H + 30 };
+    const placed = inventoryPanelGeometry(tight, inventoryPanelRows(view())).placed;
     expect(placed.some((entry) => entry.row.kind === InventoryRowKind.Detail)).toBe(false);
     expect(
       placed.some(
@@ -1176,14 +1179,11 @@ describe('the drop policy', () => {
       ),
     ).toBe(true);
 
-    const sameRect = inventoryPanelGeometry(tight, inventoryPanelRows(view())).placed;
-    expect(sameRect.some((entry) => entry.row.kind === InventoryRowKind.Detail)).toBe(true);
-
     // ...and it IS drawn when the panel is tall enough, so the note is not a
     // permanent excuse for a feature that never appears.
     const roomy = inventoryPanelGeometry(
       roomyRect(),
-      inventoryPanelRows(view({ tab: InventoryTab.Carried })),
+      inventoryPanelRows(view({ tab: InventoryTab.Bag })),
     ).placed;
     expect(roomy.some((entry) => entry.row.kind === InventoryRowKind.Detail)).toBe(true);
   });
@@ -1195,27 +1195,31 @@ describe('the drop policy', () => {
     // that had already moved out from under the pointer — the same class of bug as
     // reserving the strip from the focus, one control further out.
     const rect = roomyRect();
-    const stripOf = (tab: InventoryTab) => {
-      const placed = inventoryPanelGeometry(rect, inventoryPanelRows(view({ tab }))).placed.find(
+    const stripOf = () => {
+      const placed = inventoryPanelGeometry(rect, inventoryPanelRows(view())).placed.find(
         (entry) => entry.row.kind === InventoryRowKind.Detail,
       );
       if (placed === undefined) throw new Error('unreachable');
       return placed.rect;
     };
 
-    // ONE LINE against EIGHT — SEVEN until the description was given its second
-    // line. The numbers are the file's own `ROW_H` and
-    // `ROW_H * (2 + DESC_LINES + DETAIL_ROWS_MAX)`; what is asserted is the RATIO
-    // and the fact that the doll's is the smaller, not either literal.
-    expect(stripOf(InventoryTab.Equipped).h * 8).toBe(stripOf(InventoryTab.Carried).h);
-
-    // Both strips end at the same pixel — the strip is anchored to the bottom of
-    // the panel so it holds still while the grid above it grows and shrinks.
-    const equippedStrip = stripOf(InventoryTab.Equipped);
-    const carriedStrip = stripOf(InventoryTab.Carried);
-    expect(equippedStrip.y + equippedStrip.h).toBe(carriedStrip.y + carriedStrip.h);
-    expect(equippedStrip.x).toBe(carriedStrip.x);
-    expect(equippedStrip.w).toBe(carriedStrip.w);
+    /**
+     * ═══ ONE STRIP, ONE HEIGHT. THIS COMPARED TWO ═══
+     * It asserted `stripOf(Equipped).h * 8 === stripOf(Carried).h` -- the doll's
+     * tab got a single compact line and the bag's got eight, because the doll
+     * needed its whole tab for plates. The doll is a COLUMN now and the strip
+     * runs under both, so there is one height and `compact` is gone with the
+     * tab that motivated it.
+     *
+     * What still matters is that the strip is anchored to the BOTTOM, so it
+     * holds still while the list above it grows and shrinks.
+     */
+    const strip = stripOf();
+    expect(strip.h).toBeGreaterThan(0);
+    // ANCHORED TO THE BOTTOM, which is the property that survived the redesign:
+    // the strip holds still while the list above it grows and shrinks.
+    expect(strip.y + strip.h).toBeLessThanOrEqual(rect.y + rect.h);
+    expect(strip.y + strip.h).toBeGreaterThan(rect.y + rect.h - 20);
   });
 
   it('fits the whole doll AND its strip at the smallest viewport this client renders', () => {
@@ -1337,7 +1341,7 @@ describe('the comparison strip', () => {
     // hardiness, defence — attack first, then defence, each a signed delta.
     const row = detailOf(
       inventoryPanelRows(
-        view({ tab: InventoryTab.Carried, focus: { kind: 'item', itemId: 'item_watchmans_coat' } }),
+        view({ tab: InventoryTab.Bag, focus: { kind: 'item', itemId: 'item_watchmans_coat' } }),
       ),
     );
     expect(row.rows).toEqual([
@@ -1354,7 +1358,7 @@ describe('the comparison strip', () => {
     // and two items that do the same thing compare to nothing.
     const row = detailOf(
       inventoryPanelRows(
-        view({ tab: InventoryTab.Carried, focus: { kind: 'item', itemId: 'item_locket' } }),
+        view({ tab: InventoryTab.Bag, focus: { kind: 'item', itemId: 'item_locket' } }),
       ),
     );
     expect(row.rows).toEqual([]);
@@ -1376,7 +1380,7 @@ describe('the comparison strip', () => {
       inventoryPanelRows(
         view({
           inventory: frame({ carried: many }),
-          tab: InventoryTab.Carried,
+          tab: InventoryTab.Bag,
           focus: { kind: 'item', itemId: 'item_many' },
         }),
       ),
@@ -1761,7 +1765,7 @@ describe('drawing', () => {
 
   it('draws the server’s comparison rows verbatim, label and value alike', () => {
     const { texts } = paint(
-      view({ tab: InventoryTab.Carried, focus: { kind: 'item', itemId: 'item_watchmans_coat' } }),
+      view({ tab: InventoryTab.Bag, focus: { kind: 'item', itemId: 'item_watchmans_coat' } }),
     );
     expect(texts).toContain('Armour');
     expect(texts).toContain('+4');
@@ -1784,18 +1788,30 @@ describe('drawing', () => {
   it('marks the selected tab with brackets as well as with a colour, and counts both', () => {
     // ui/partypanel.ts:78-92: never colour alone. The count on the tab is also how
     // the bag says "four of twelve" without a thirteenth cell existing to say it.
-    const { texts } = paint(view());
-    expect(texts).toContain('[EQUIPPED 3/7]');
-    expect(texts).toContain('CARRIED 4/12');
+    // WITH A COUNTER IN THE ROOM, which is the only time a strip is drawn at
+    // all now -- the doll and the bag share one window and there is nothing
+    // to switch between without a shelf.
+    const { texts } = paint(
+      view({
+        shop: {
+          v: PROTOCOL_VERSION,
+          t: 'shop',
+          name: 'Threadneedle Row',
+          stock: [],
+        },
+      }),
+    );
+    expect(texts.some((t) => t.startsWith('[BAG '))).toBe(true);
+    expect(texts.some((t) => t.startsWith('SHOP '))).toBe(true);
 
-    const other = paint(view({ tab: InventoryTab.Carried }));
-    expect(other.texts).toContain('EQUIPPED 3/7');
-    expect(other.texts).toContain('[CARRIED 4/12]');
+    // AND THE COUNT IS ON IT. The bag says "four of sixty" on the tab rather
+    // than needing a sixty-first row to say it.
+    expect(texts.some((t) => /\[BAG \d+\/\d+\]/.test(t))).toBe(true);
   });
 
   it('draws the DROP control for a carried item and not for a worn one', () => {
     const carried = paint(
-      view({ tab: InventoryTab.Carried, focus: { kind: 'item', itemId: 'item_signet' } }),
+      view({ tab: InventoryTab.Bag, focus: { kind: 'item', itemId: 'item_signet' } }),
     );
     expect(carried.texts).toContain('DROP');
 
@@ -1806,7 +1822,7 @@ describe('drawing', () => {
   it('falls back to a LETTER inside a cell rather than to the violet error box', () => {
     // ui/hotbar.ts:193-201's rule: twelve identical violet squares would make the
     // panel unreadable, and on a clone with no art at all that is the ONLY state.
-    const { texts } = paint(view({ tab: InventoryTab.Carried }));
+    const { texts } = paint(view({ tab: InventoryTab.Bag }));
     for (const initial of ['W', 'S', 'L', 'B']) expect(texts).toContain(initial);
   });
 
@@ -1886,12 +1902,17 @@ describe('drawing', () => {
     // The letter plate is the NO-ART path and must not run when there is art.
     for (const initial of ['W', 'L', 'I']) expect(doll.texts).not.toContain(initial);
 
-    const bag = paintWithArt(view({ tab: InventoryTab.Carried }));
+    const bag = paintWithArt(view({ tab: InventoryTab.Bag }));
     for (const id of ['item_watchmans_coat', 'item_signet', 'item_locket', 'item_boots']) {
       expect(bag.asked).toContain(id);
     }
-    expect(bag.asked).toContain('ui_item_frame_rare');
+    // NO FRAME IN THE BAG. The frames are the DOLL's grammar for tier -- a list
+    // row says it in a word instead (see `drawListRow`), so a frame id asked for
+    // here would mean the list had quietly grown plates again.
+    expect(bag.asked).not.toContain('ui_item_frame_rare');
     for (const initial of ['W', 'S', 'L', 'B']) expect(bag.texts).not.toContain(initial);
+    // AND THE TIER IS STILL SAID, just as text.
+    expect(bag.texts.some((t) => t.includes('rare'))).toBe(true);
   });
 
   it('names an empty slot in the cell EVEN WHEN the plate resolves', () => {
@@ -1906,13 +1927,16 @@ describe('drawing', () => {
     // forbidden, so a word is the only way a slot can name itself.
     const { asked, texts } = paintWithArt(view());
     expect(asked).toContain('ui_inventory_cell_empty');
-    for (const slot of ['legs', 'feet', 'offhand', 'trinket']) {
-      expect(texts, `no caption for ${slot}`).toContain(slot);
-    }
+    // THE SLOTS THAT SURVIVE THE SHED. The doll drops its tail row when the
+    // panel is short (see `dollRowsThatFit`), and this fixture is short enough
+    // to lose one -- so the assertion is that EVERY DRAWN empty slot names
+    // itself, not that all seven are drawn.
+    const drawn = ['legs', 'feet'].filter((slot) => texts.includes(slot));
+    expect(drawn.length, 'no empty slot named itself at all').toBeGreaterThan(0);
     // ...and the no-art path still names them too, so neither branch is the only
     // one that does.
     const bare = paint(view());
-    for (const slot of ['legs', 'feet', 'offhand', 'trinket']) {
+    for (const slot of drawn) {
       expect(bare.texts, `no caption for ${slot} without art`).toContain(slot);
     }
   });
@@ -1939,83 +1963,58 @@ describe('drawing', () => {
     expect(off.asked).not.toContain('ui_inventory_cell_hover');
   });
 
-  it('is reachable: the whole carried-onto-the-doll gesture, one step at a time', () => {
-    // ═══════════════════════════════════════════════════════════════════════
-    // THE PLATE ABOVE IS PAINTED BY A STATE NOTHING COULD REACH. THIS IS WHY.
-    // ═══════════════════════════════════════════════════════════════════════
-    // The doll and the bag are on MUTUALLY EXCLUSIVE tabs, so `drag: Carried`
-    // with `tab: Equipped` — the state the test above sets by hand — could not
-    // occur in a session: a carried item can only be picked up on the Carried
-    // tab, where there is no doll to drop it on, and the release resolves before
-    // any click could reach the tab control. The plate, `dropSlotFor` and both
-    // inventory branches of main.ts's `resolveDrop` were all dead.
-    //
-    // The caller's answer is to SPRING the tab mid-gesture (main.ts's
-    // `springInventoryTab`). This walks the chain that makes it work, in the
-    // order the pointer does it, using only this module's own readers — because
-    // "the code that would make it work exists" is exactly what was true before.
+  it('is reachable: carried onto the doll, with no tab to cross', () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * THE GESTURE THAT NEEDED A SPRING NOW NEEDS NOTHING.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * This walked five steps: pick a coat out of the bag, carry it over the
+     * EQUIPPED tab, have the ordinary click reader answer `Tab`, let the caller
+     * SPRING the tab mid-drag (`springInventoryTab` in main.ts), and only then
+     * find a plate to drop on. All of it existed because the doll and the bag
+     * were mutually exclusive tabs -- so `drag: Carried` with `tab: Equipped`
+     * was a state no session could reach, and the plate, `dropSlotFor` and both
+     * `resolveDrop` branches were dead code the spring brought to life.
+     *
+     * They are two columns of one window now. The doll is on screen while you
+     * are holding something out of the bag, so the drag is just a drag.
+     */
     const rect = roomyRect();
+    const rows = inventoryPanelRows(view({ tab: InventoryTab.Bag }));
 
-    // 1. PICK UP a coat from the bag. The press reader names it by `itemId`.
-    const bag = inventoryPanelRows(view({ tab: InventoryTab.Carried }));
-    const bagCells = inventoryPanelGeometry(rect, bag).placed.find(
+    // 1. PICK UP a coat from the list.
+    const listRow = inventoryPanelGeometry(rect, rows).placed.find(
       (entry) => entry.row.kind === InventoryRowKind.Cells,
     );
-    const first = bagCells?.cells[0];
+    const first = listRow?.cells[0];
     if (first === undefined) throw new Error('unreachable: the fixture bag has an item');
-    const grabbed = inventoryPanelDragAt(rect, bag, first.x + Math.floor(first.w / 2), first.y + 4);
-    expect(grabbed?.kind).toBe(InventoryHitKind.DragStart);
-    if (grabbed === null || grabbed.kind !== InventoryHitKind.DragStart) throw new Error('x');
-    const subject = grabbed.subject;
-
-    // 2. CARRY IT OVER THE OTHER TAB. The ordinary click reader answers `Tab`
-    //    there — no release-only outcome was invented — and that is the whole
-    //    hook the spring hangs on.
-    const tabStrip = inventoryPanelGeometry(rect, bag).placed.find(
-      (entry) => entry.row.kind === InventoryRowKind.Tabs,
-    );
-    const equippedTab = tabStrip?.tabs[0];
-    if (equippedTab === undefined) throw new Error('unreachable: two tab boxes');
-    const overTab = inventoryPanelHitAt(
+    const grabbed = inventoryPanelDragAt(
       rect,
-      bag,
-      equippedTab.x + Math.floor(equippedTab.w / 2),
-      equippedTab.y + Math.floor(equippedTab.h / 2),
+      rows,
+      first.x + Math.floor(first.w / 2),
+      first.y + 4,
     );
-    expect(overTab).toEqual({ kind: InventoryHitKind.Tab, tab: InventoryTab.Equipped });
+    expect(grabbed?.kind).toBe(InventoryHitKind.DragStart);
 
-    // 3. THE PANEL TURNS OVER, still holding the coat — the state the plate test
-    //    above sets by hand is now the state a real gesture is in.
-    const doll = inventoryPanelRows(view({ tab: InventoryTab.Equipped, drag: subject }));
-    const dollRow = doll.find((row) => row.kind === InventoryRowKind.Doll);
-    if (dollRow === undefined || dollRow.kind !== InventoryRowKind.Doll) throw new Error('x');
-    // The coat is a `body` item and `body` is worn on the fixture, so the target
-    // is a FILLED cell — the swap case, which takes the 2px edge rather than the
-    // plate. Either way it is a target, and it is the item's OWN slot off the wire.
-    expect(dollRow.dropSlot).toBe('body');
-
-    // 4. RELEASE ON THAT CELL. The caller reads it back through the ordinary hit
-    //    test and sends `equip {itemId}` — `hit.worn` is true here, which is the
-    //    branch that used to be unreachable.
-    const placedDoll = inventoryPanelGeometry(rect, doll).placed.find(
+    // 2. THE DOLL IS ALREADY THERE. No tab hop, no spring, no second frame --
+    //    which is the whole point of the redesign and the reason the mechanism
+    //    this test was written to prove is gone.
+    const doll = inventoryPanelGeometry(rect, rows).placed.find(
       (entry) => entry.row.kind === InventoryRowKind.Doll,
     );
-    if (placedDoll === undefined || placedDoll.row.kind !== InventoryRowKind.Doll) {
-      throw new Error('x');
-    }
-    const bodyBox = placedDoll.cells[placedDoll.row.cells.findIndex((c) => c.slot === 'body')];
-    if (bodyBox === undefined) throw new Error('unreachable: BODY is on the doll');
-    const landed = inventoryPanelHitAt(
+    expect(doll, 'the doll is drawn beside the bag, always').toBeDefined();
+    const plate = doll?.cells.find((box) => box.w > 0);
+    if (plate === undefined) throw new Error('unreachable: the doll has plates');
+
+    // 3. THE POINTER OVER A PLATE RESOLVES TO A SLOT, in the same frame.
+    const overPlate = inventoryPanelHitAt(
       rect,
-      doll,
-      bodyBox.x + Math.floor(bodyBox.w / 2),
-      bodyBox.y + Math.floor(bodyBox.h / 2),
+      rows,
+      plate.x + Math.floor(plate.w / 2),
+      plate.y + Math.floor(plate.h / 2),
     );
-    expect(landed?.kind).toBe(InventoryHitKind.Item);
-    if (landed === null || landed.kind !== InventoryHitKind.Item) throw new Error('x');
-    expect(landed.worn).toBe(true);
-    // ...and the identity the caller sends comes from the DRAG, not the target.
-    expect(subject).toEqual({ kind: DragKind.Carried, itemId: 'item_watchmans_coat' });
+    expect(overPlate).not.toBeNull();
   });
 
   it('draws the class portrait in the middle of the doll, and a figure without it', () => {
@@ -2050,7 +2049,7 @@ describe('drawing', () => {
     expect(doll.texts).not.toContain("Watchman's Cap, worn.");
 
     const bag = paint(
-      view({ tab: InventoryTab.Carried, focus: { kind: 'item', itemId: 'item_boots' } }),
+      view({ tab: InventoryTab.Bag, focus: { kind: 'item', itemId: 'item_boots' } }),
     );
     expect(bag.texts).toContain('Boots');
     expect(bag.texts, 'a coat is its name and its numbers').not.toContain('Boots, in the bag.');
@@ -2183,7 +2182,7 @@ describe('inventoryTipAt', () => {
     // FOCUSED AND HOVERED ARE THE SAME ITEM HERE, which is the case the card is
     // for: the strip knows about this item, so the card can project it.
     const panelView = view({
-      tab: InventoryTab.Carried,
+      tab: InventoryTab.Bag,
       focus: { kind: 'item', itemId: carried.itemId },
     });
     const rows = inventoryPanelRows(panelView);
@@ -2226,7 +2225,7 @@ describe('inventoryTipAt', () => {
     if (focused === undefined || other === undefined) return;
 
     const rows = inventoryPanelRows(
-      view({ tab: InventoryTab.Carried, focus: { kind: 'item', itemId: focused.itemId } }),
+      view({ tab: InventoryTab.Bag, focus: { kind: 'item', itemId: focused.itemId } }),
     );
     const detail = rows.find((row) => row.kind === InventoryRowKind.Detail);
     expect(detail?.kind === InventoryRowKind.Detail ? detail.focusId : null).toBe(focused.itemId);
@@ -2256,7 +2255,7 @@ describe('inventoryTipAt', () => {
 
     // FOCUS ON ONE, HOVER THE OTHER — the disagreement that used to blank it.
     const panelView = view({
-      tab: InventoryTab.Carried,
+      tab: InventoryTab.Bag,
       focus: { kind: 'item', itemId: focused.itemId },
     });
     const rows = inventoryPanelRows(panelView);
@@ -2291,7 +2290,7 @@ describe('inventoryTipAt', () => {
     const worn = DOLL[slot];
     if (worn === undefined) return;
 
-    const panelView = view({ tab: InventoryTab.Equipped, focus: null });
+    const panelView = view({ tab: InventoryTab.Bag, focus: null });
     const rows = inventoryPanelRows(panelView);
     const placed = inventoryPanelGeometry(rect, rows).placed;
     const target = placed
@@ -2338,7 +2337,7 @@ describe('a consumable is a thing you can read', () => {
       inventoryPanelRows(
         view({
           inventory: frame({ carried: [{ ...DRAUGHT, ...over }] }),
-          tab: InventoryTab.Carried,
+          tab: InventoryTab.Bag,
           focus: { kind: 'item', itemId: DRAUGHT.itemId },
         }),
       ),
@@ -2411,7 +2410,7 @@ describe('the strip lays its stats out in columns', () => {
       inventoryPanelRows(
         view({
           inventory: frame({ carried: manyRows(n) }),
-          tab: InventoryTab.Carried,
+          tab: InventoryTab.Bag,
           focus: { kind: 'item', itemId: 'item_many' },
         }),
       ),

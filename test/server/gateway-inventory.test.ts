@@ -25,7 +25,7 @@ import { createTurnEngine } from '../../src/server/turn-engine.ts';
 import { createWorld } from '../../src/server/world/world.ts';
 import { AiProfile } from '../../src/server/engine/actor.ts';
 import { createDownedState, goDown, tickDowned } from '../../src/server/engine/downed.ts';
-import { TALENT_MAX_LEVEL } from '../../src/shared/progression.ts';
+import { INVENTORY_CAP, TALENT_MAX_LEVEL } from '../../src/shared/progression.ts';
 import { ActorKind, TileCode } from '../../src/shared/protocol.ts';
 import { PROTOCOL_VERSION } from '../../src/shared/version.ts';
 import type { PlayerActor } from '../../src/server/engine/actor.ts';
@@ -124,8 +124,20 @@ const ALEX_ID = '555555555555555555';
 
 const FRAME_TIMEOUT_MS = 2_000;
 
-/** The gateway's cap, restated here so a change to it fails a test rather than a player. */
-const INVENTORY_CAP = 12;
+/**
+ * THE GATEWAY'S CAP, IMPORTED RATHER THAN RESTATED.
+ *
+ * This was a literal 12 under a note saying it was restated "so a change to
+ * it fails a test rather than a player". It did fail a test when the cap moved
+ * -- but as three fixtures that could no longer fill a bag, which is a
+ * confusing way to learn a number changed. `shared/progression.ts` makes the
+ * same argument about the PANEL having held a copy: the grid's `COLS * 3` was
+ * twelve by coincidence of layout, and re-flowing the grid would have changed
+ * what the game told a player their capacity was.
+ *
+ * One authority, imported by both sides and by this file.
+ */
+const FULL_BAG = INVENTORY_CAP;
 
 // ---------------------------------------------------------------------------
 // The socket harness — the same one class-choice.test.ts drives
@@ -1049,9 +1061,18 @@ describe('what the bag refuses', () => {
     // TWELVE REAL IDS. Real, because `handlePickup` checks "do you already own
     // this" BEFORE it checks the cap, so a bag of invented ids would prove the
     // wrong branch.
-    const bag = ITEMS.slice(0, INVENTORY_CAP).map((item) => item.id);
-    const spare = ITEMS[INVENTORY_CAP];
-    if (spare === undefined) throw new Error('test fixture: the catalogue is too small');
+    // REPEATED, NOT SLICED. This took the first `INVENTORY_CAP` ids out of the
+    // catalogue, which worked only while the cap was smaller than the
+    // catalogue; at sixty against twenty-three items it throws. A bag full of
+    // the same real id proves the same branch -- what matters is that the ids
+    // RESOLVE, because `handlePickup` asks "do I know this" before it checks
+    // the cap.
+    const first = ITEMS[0];
+    const spare = ITEMS[1];
+    if (first === undefined || spare === undefined) {
+      throw new Error('test fixture: the catalogue is too small');
+    }
+    const bag = Array.from({ length: FULL_BAG }, () => first.id);
     body.carried = bag;
     server.world.addGroundItem({ x: 10, y: 10 }, spare.id);
     await ren.settle();
@@ -1222,7 +1243,8 @@ describe('what the bag refuses', () => {
     const ren = await connect(server.port);
     playsThe(WATCHMAN);
     const body = bodyOf(await ren.hello('ren-handle'));
-    body.carried = ITEMS.slice(0, INVENTORY_CAP).map((item) => item.id);
+    // Repeated rather than sliced -- see the pickup fixture above.
+    body.carried = Array.from({ length: FULL_BAG }, () => 'item_watchmans_cap');
     body.equipped = { body: 'item_watchmans_coat' };
     ren.clear();
 
@@ -1231,7 +1253,7 @@ describe('what the bag refuses', () => {
 
     expect(ren.last('error')?.['code']).toBe('refused');
     expect(body.equipped['body']).toBe('item_watchmans_coat');
-    expect(body.carried).toHaveLength(INVENTORY_CAP);
+    expect(body.carried).toHaveLength(FULL_BAG);
   });
 });
 
@@ -1929,7 +1951,7 @@ describe('what you put on changes how much of you there is', () => {
     // ═══ THEIR BAG IS FULL ═══ upstream's `canAddToInven`, which for us is
     // INVENTORY_CAP. The coat must stay exactly where it was.
     ren.clear();
-    alexBody.carried = Array.from({ length: INVENTORY_CAP }, () => 'item_watchmans_cap');
+    alexBody.carried = Array.from({ length: FULL_BAG }, () => 'item_watchmans_cap');
     await ren.settle();
     ren.clear();
     ren.send({ t: 'give', itemId: 'item_watchmans_coat', dir: 'e' });

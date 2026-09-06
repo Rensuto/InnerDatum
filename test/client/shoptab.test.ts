@@ -5,7 +5,6 @@ import {
   InventoryHitKind,
   InventoryRowKind,
   InventoryTab,
-  inventoryColumnsFor,
   inventoryPanelDragAt,
   inventoryPanelGeometry,
   inventoryPanelHitAt,
@@ -88,18 +87,25 @@ describe('which tabs exist', () => {
     // something most rooms do not have, and a player who pressed it once in a
     // corridor would learn to stop looking at it — the wrong lesson for the one
     // tab with gold in it.
-    expect(tabsFor(false)).toEqual([InventoryTab.Equipped, InventoryTab.Carried]);
-    expect(tabsFor(true)).toEqual([InventoryTab.Equipped, InventoryTab.Carried, InventoryTab.Shop]);
+    // NONE IN AN ORDINARY ROOM, TWO WHERE THERE IS A COUNTER. It was two and
+    // three: EQUIPPED and CARRIED were tabs, and the shelf made a third. The
+    // doll and the bag are two columns of one window now, so without a shop
+    // there is nothing to switch between and the strip is not drawn at all --
+    // which is this test's own argument, applied one tab further in.
+    expect(tabsFor(false)).toEqual([]);
+    expect(tabsFor(true)).toEqual([InventoryTab.Bag, InventoryTab.Shop]);
   });
 
   it('puts the list on the row, so the painter and the hit test cannot disagree', () => {
-    expect(tabsRow(inventoryPanelRows(view())).tabs).toHaveLength(3);
-    expect(tabsRow(inventoryPanelRows(view({ shop: null }))).tabs).toHaveLength(2);
+    expect(tabsRow(inventoryPanelRows(view())).tabs).toHaveLength(2);
+    // AND NO ROW AT ALL without a counter -- there is nothing to put on it.
+    expect(
+      inventoryPanelRows(view({ shop: null })).some((row) => row.kind === InventoryRowKind.Tabs),
+    ).toBe(false);
   });
 
   it('counts the shelf on the tab, the way the bag counts itself', () => {
     expect(tabsRow(inventoryPanelRows(view())).shopCount).toBe(2);
-    expect(tabsRow(inventoryPanelRows(view({ shop: null }))).shopCount).toBe(0);
   });
 });
 
@@ -182,7 +188,7 @@ describe('the strip’s one control', () => {
     const focus = { kind: 'item', itemId: 'item_leather_chest~ol1' } as const;
 
     const inShop = inventoryPanelRows(
-      view({ inventory: inventoryFrame(100, carried), tab: InventoryTab.Carried, focus }),
+      view({ inventory: inventoryFrame(100, carried), tab: InventoryTab.Bag, focus }),
     );
     expect(detail(inShop).action?.kind).toBe('sell');
     expect(detail(inShop).action?.label).toBe('SELL 1');
@@ -191,7 +197,7 @@ describe('the strip’s one control', () => {
       view({
         inventory: inventoryFrame(100, carried),
         shop: null,
-        tab: InventoryTab.Carried,
+        tab: InventoryTab.Bag,
         focus,
       }),
     );
@@ -214,7 +220,7 @@ describe('the strip’s one control', () => {
             },
           },
         },
-        tab: InventoryTab.Equipped,
+        tab: InventoryTab.Bag,
         focus: { kind: 'item', itemId: 'w' },
       }),
     );
@@ -258,7 +264,7 @@ describe('a shelf row cannot be picked up', () => {
   /** The middle of the first cell on whichever tab `v` is showing. */
   function firstCell(v: InventoryPanelView) {
     const rect = rectFor();
-    const rows = inventoryPanelRows(v, inventoryColumnsFor(rect.w));
+    const rows = inventoryPanelRows(v);
     for (const placed of inventoryPanelGeometry(rect, rows).placed) {
       if (placed.row.kind !== InventoryRowKind.Cells) continue;
       const box = placed.cells[0];
@@ -294,7 +300,7 @@ describe('a shelf row cannot be picked up', () => {
      * got in.
      */
     const v = view({
-      tab: InventoryTab.Carried,
+      tab: InventoryTab.Bag,
       inventory: inventoryFrame(100, [
         {
           itemId: 'item_watchmans_coat~mine',
@@ -327,7 +333,7 @@ describe('a worn item says what it is giving you', () => {
 
   const wornView = (panelH?: number) =>
     view({
-      tab: InventoryTab.Equipped,
+      tab: InventoryTab.Bag,
       shop: null,
       focus: { kind: 'item', itemId: 'w' },
       inventory: {
@@ -365,7 +371,14 @@ describe('a worn item says what it is giving you', () => {
     const short = detailOf(inventoryPanelRows(wornView(120)));
     const tall = detailOf(inventoryPanelRows(wornView(600)));
     expect(short.rows).toEqual(tall.rows);
-    expect(short.compact, 'a small panel still protects the doll').toBe(true);
-    expect(tall.compact, 'a big one can afford the strip').toBe(false);
+    // ═══ THERE IS ONE STRIP HEIGHT NOW ═══
+    // `compact` was the doll TAB's: it got a single line so its plates kept the
+    // rest, and the bag's tab got the full eight. The doll is a column beside
+    // the list rather than a tab in front of it, so there is nothing to protect
+    // it from and the flag is always false. The property this test is named for
+    // -- the ANSWER does not depend on the SPACE -- is the assertion above, and
+    // it is the one that mattered.
+    expect(short.compact).toBe(false);
+    expect(tall.compact).toBe(false);
   });
 });

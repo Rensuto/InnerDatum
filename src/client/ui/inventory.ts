@@ -113,33 +113,32 @@
  * than taste — see `DOLL_ROWS`.
  *
  * ===========================================================================
- * NO SCROLLING, NO PAGING, AND THE CAP IS WHAT KEEPS THAT HONEST
+ * THE BAG SCROLLS NOW, AND THIS SECTION USED TO REFUSE IT
  * ===========================================================================
- * ui/charsheet.ts:98-111 refuses scrolling in writing — "a scroll position is
- * state, state needs a scrollbar, a scrollbar needs a hit test" — and
- * ui/talents.ts:84-92 refuses it again. There is exactly ONE scrolling surface in
- * this whole client (the Case Log, and it scrolls by ENTRY INDEX with a text
- * signal rather than with a bar), and there is no scrollbar sprite in the
- * manifest.
+ * It read "NO SCROLLING, NO PAGING, AND THE CAP IS WHAT KEEPS THAT HONEST", and
+ * every word of its reasoning was sound on its premise: *"twelve fits on one
+ * page — three rows of four — and the server enforces twelve, so the refusal
+ * costs nothing: there is never a thirteenth thing to scroll to."*
  *
- * THIS FILE USED TO ADD "and there is no draggable control anywhere in ui/", AND
- * THAT IS NO LONGER TRUE — ui/drag.ts exists and this panel's header is a handle.
- * It does not weaken the refusal, it sharpens it. A drag that MOVES a window
- * carries no state between frames that anything else has to agree with: the
- * offset lives in one place, is clamped on read, and a panel nobody has touched
- * is at exactly the position `hudLayout` computed. A SCROLL POSITION is the
- * opposite — it is per-surface state that the painter, the hit test and the drop
- * policy must all read the same way, and it changes which cell is under a given
- * pixel. The one is a rect; the other is an index into content.
+ * THE PREMISE WAS THE THING THAT CHANGED. A bag capped at twelve is not a bag
+ * you can farm into, and farming is what the cap now has to allow. Sixty items
+ * do not fit on a page at any cell size worth drawing, so the choice was never
+ * "scroll or do not" — it was "scroll, or keep a cap that makes the floor loot
+ * you cannot carry a nuisance rather than a decision".
  *
- * TWELVE FITS ON ONE PAGE — three rows of four — AND THE SERVER ENFORCES TWELVE
- * (`INVENTORY_CAP`, src/server/net/gateway.ts:1631-1648, which argues at length
- * that the point of a cap that cannot bind is that `pickup` has a bounded answer
- * at all). So the refusal above costs nothing: there is never a thirteenth thing
- * to scroll to. A bag that somehow arrives longer than twelve — a save written by
- * a build with a different cap — shows its first twelve and SAYS SO in words,
- * taking ui/caselog.ts:467-478's rule that a surface which has quietly stopped
- * showing everything must never make the reader infer it.
+ * THE REFUSAL'S ACTUAL ARGUMENT IS ANSWERED RATHER THAN IGNORED. It said a
+ * scroll position "is per-surface state that the painter, the hit test and the
+ * drop policy must all read the same way, and it changes which cell is under a
+ * given pixel". That is exactly right, and it is why the offset is applied in
+ * `inventoryPanelGeometry` and NOWHERE ELSE — never with a `ctx.translate` the
+ * painter knows about and the hit test does not. Every surface reads one list of
+ * placed rows, and a row scrolled out of view is NOT PLACED rather than clipped,
+ * so there is no rect the pointer can find that the eye cannot. `ui/talents.ts`
+ * had already made the same move for the same reason; the sentence above citing
+ * it as a fellow refuser was stale before this change.
+ *
+ * A bag longer than the cap still SAYS SO in words rather than ending quietly,
+ * which is ui/caselog.ts:467-478's rule and survives untouched.
  *
  * ===========================================================================
  * THE COMPARISON STRIP DRAWS THE SERVER'S ANSWER AND COMPUTES NOTHING
@@ -200,7 +199,7 @@
  * see the long note at the top of render/canvas.ts.
  */
 
-import { wrapText } from './panel.ts';
+import { BlitAnchor, blitReduced, wrapText } from './panel.ts';
 import type { HoverCard } from './panel.ts';
 import { ItemTier, SLOT_ORDER } from '../../shared/protocol.ts';
 import { INVENTORY_CAP } from '../../shared/progression.ts';
@@ -245,8 +244,8 @@ const INSET = PANEL_PAD + 3;
  * is DERIVED from the two so it cannot drift — recutting the frame at 80 moves
  * the icon automatically and nothing here has to be edited twice.
  */
-const CELL_PX = 72;
-const ICON_PX = 64;
+const CELL_PX = 40;
+const ICON_PX = 32;
 const ICON_INSET = (CELL_PX - ICON_PX) / 2;
 
 /** Air between two cells. Four columns of 72 with three of these is 303 of 304. */
@@ -285,7 +284,7 @@ const FILL_W = 0.8;
  * present. A bare clone has no `client/public/assets/` at all, so the traced
  * plate is not an edge case, it is the state every fresh checkout runs in.
  */
-const PLATE_PX = 40;
+const PLATE_PX = 24;
 
 /**
  * How far above the bottom of the well an empty slot's caption is centred.
@@ -313,9 +312,13 @@ const CAPTION_BASELINE = 6;
  * the case is "unreachable at any viewport this client renders" is wrong in the
  * same way and for the same reason.
  *
- * IT IS NOT FIXABLE BY LAYOUT. `CELL_PX` is 72 around 64-pixel art; shrinking it
- * would resample pixel art at a non-integer scale, which is the one thing the
- * backbuffer exists to prevent (render/canvas.ts). The band is what it is. So the
+ * IT IS NOT FIXABLE BY LAYOUT. `CELL_PX` WAS 72 around 64-pixel art, and the
+ * argument here was that shrinking it would resample pixel art at a non-integer
+ * scale -- the one thing the backbuffer exists to prevent (render/canvas.ts).
+ * The cell is 40 now and the argument still stands, because nothing is
+ * resampled at a fraction: `blitReduced` (ui/panel.ts) takes an EXACT half of a
+ * 72-pixel frame and refuses anything that is not a whole divisor. The band is
+ * what it is. So the
  * floor gets a doll that says how many slots it is holding back, and that note is
  * the feature rather than an apology — the block below is kept, corrected, because
  * the reasoning about a FOURTH row is still right and still the reason there are
@@ -443,6 +446,45 @@ const TAB_ROW_H = TAB_H + 4;
 const TAB_GAP = 4;
 /** One grid row: a cell, and the gap under it. */
 const CELL_ROW_H = CELL_PX + CELL_GAP;
+
+/**
+ * ════════════════════════════════════════════════════════════════════════════
+ * THE BAG IS A LIST NOW, NOT A GRID. One row per item, icon then name.
+ * ════════════════════════════════════════════════════════════════════════════
+ * A 72-pixel frame per item is a beautiful way to show twelve things and a
+ * hopeless way to show sixty. ToME shows neither: `engine/ui/Inventory.lua`
+ * builds a `ListColumns` of `{char 33} {object 24, direct_draw} {name 72}
+ * {category 20} {enc. 8}` with `scrollbar=true`, and `engine/dialogs/ShowStore.lua:45` draws
+ * the object column at 16x16. That is the shape a bag you can FARM into needs
+ * — a name you can read at a glance, an icon to find it by, and a scrollbar.
+ *
+ * TWO OF UPSTREAM'S FIVE COLUMNS ARE DELIBERATELY DROPPED. The `char` letter
+ * keys a row to a keypress, and this panel swallows no keys (see the header).
+ * `Enc.` is encumbrance, and there is no weight system to encumber anything
+ * — `shared/progression.ts` says so where the cap is declared.
+ */
+const LIST_ROW_H = 18;
+const LIST_ICON_PX = 16;
+/** Icon plus its breathing room, so the name column starts on one line. */
+const LIST_ICON_GUTTER = LIST_ICON_PX + 4;
+
+/**
+ * THE DOLL COLUMN'S WIDTH, and the gutter between it and the list.
+ *
+ * The panel used to be two TABS because, in its own words, *"our panel is 320
+ * logical pixels wide, which is exactly four item frames, so the doll and the
+ * bag cannot share a row"*. Both halves of that stopped being true: the frames
+ * are 40 rather than 72, and the panel is as wide as the window affords. So
+ * the doll and the bag sit side by side and there is nothing to switch
+ * between — which is upstream's own layout (`tome/dialogs/ShowEquipInven.lua` places a
+ * `vsep` between the doll and the list rather than tabbing them).
+ */
+const DOLL_W = 4 * CELL_PX + 3 * CELL_GAP;
+const COLUMN_SEP_W = 9;
+/** The scrollbar's width. Narrow: it is a position readout, not a grab handle. */
+const SCROLL_BAR_W = 4;
+/** One notch of the wheel moves one row, so a notch is always a whole item. */
+export const INVENTORY_SCROLL_STEP = LIST_ROW_H;
 /** A dropped-rows sentence, or "you are carrying nothing". */
 const NOTE_ROW_H = ROW_H;
 
@@ -563,35 +605,6 @@ const DETAIL_H = ROW_H * (2 + USE_LINES + DETAIL_ROWS_MAX);
  */
 const DETAIL_COMPACT_H = ROW_H;
 
-/**
- * Can this panel show the Equipped tab's full strip WITHOUT costing the doll a
- * single cell?
- *
- * THE CONDITION IS THE ANSWER, not a threshold somebody measured once. The doll
- * wants `DOLL_H`; the tabs row and the strip are what sit around it; if what is
- * left still covers the doll, the strip is affordable and nothing is lost. A
- * magic pixel number would have been a fourth thing to re-measure the day a row
- * changed height.
- */
-function equippedStripFits(panelH: number): boolean {
-  /**
-   * ═══ THE HEADER COMES OFF FIRST, AND IT USED NOT TO ═══
-   * This read `panelH - INSET * 2` and was therefore OPTIMISTIC BY EXACTLY
-   * `HEADER_H`. The layout it is predicting subtracts the header itself —
-   * `const top = rect.y + HEADER_H + INSET` — so the predicate promised room the
-   * geometry did not have, across a 24-pixel band that `PANEL_MAX_H` makes
-   * reachable. Inside that band the strip was declared to fit while
-   * `dollRowsThatFit` had already shed the doll's bottom row: the tab lost a row
-   * of the thing it exists to show, to make space for a strip that was measured
-   * against a budget nobody has.
-   *
-   * `PANEL_MIN_H` and `PANEL_MAX_H` both include `HEADER_H`. This was the one
-   * place that did not.
-   */
-  const inner = panelH - HEADER_H - INSET * 2;
-  return inner - TAB_ROW_H - DETAIL_H >= DOLL_H;
-}
-
 /** The close control, top-right of the header strip. Square, so it is a target. */
 const CLOSE_PX = 13;
 /** The DROP control, right-aligned on the strip's first line. */
@@ -639,8 +652,21 @@ export function inventoryColumnsFor(panelW: number): number {
   return Math.min(Math.max(COLS, fits), CARRIED_MAX);
 }
 
+/**
+ * THE NARROWEST PANEL THAT CAN HOLD BOTH COLUMNS.
+ *
+ * This was the width of four 72-pixel grid cells, because the panel showed the
+ * doll OR the bag. It shows both side by side now, so the floor is the doll's
+ * own width plus a list column wide enough to read a name in -- below that the
+ * list computed to ZERO and every row, note and comparison in it silently had
+ * nowhere to go.
+ *
+ * `LIST_MIN_W` is twenty characters at `CHAR_W`, which is an item name plus its
+ * icon gutter. Narrower than that and the list is a column of ellipses.
+ */
+const LIST_MIN_W = LIST_ICON_GUTTER + 20 * CHAR_W;
 const PANEL_W = inventoryPanelWidthForColumns(COLS);
-const PANEL_MIN_W = PANEL_W;
+const PANEL_MIN_W = Math.max(PANEL_W, INSET * 2 + DOLL_W + COLUMN_SEP_W + LIST_MIN_W);
 
 /**
  * A panel that cannot hold its header, its tabs and ONE row of cells is not worth
@@ -742,10 +768,16 @@ function buttonInk(action: DetailAction, hovered: boolean): string {
  * is on and an enum emits runtime code the type-stripping loader refuses.
  */
 export const InventoryTab = {
-  /** The paper doll — seven slots in `SLOT_ORDER`, empty ones included. */
-  Equipped: 'equipped',
-  /** The bag — up to twelve things, in the server's own order. */
-  Carried: 'carried',
+  /**
+   * WHAT YOU ARE WEARING AND WHAT YOU ARE CARRYING, TOGETHER.
+   *
+   * These were two tabs, `Equipped` and `Carried`, because a 320-wide panel
+   * could not hold both. It holds both now — the doll's cells are 40 rather
+   * than 72 and the bag is a list — so there is nothing left to switch
+   * between, and the tab strip only appears at all when a shop puts a second
+   * thing on it.
+   */
+  Bag: 'bag',
   /**
    * THE SHELF, AND ONLY WHEN YOU ARE STANDING IN A ROOM THAT HAS ONE.
    *
@@ -762,7 +794,7 @@ export const InventoryTab = {
 export type InventoryTab = (typeof InventoryTab)[keyof typeof InventoryTab];
 
 /** Left to right, which is also the order the hit test answers in. */
-const TAB_ORDER: readonly InventoryTab[] = [InventoryTab.Equipped, InventoryTab.Carried];
+const TAB_ORDER: readonly InventoryTab[] = [InventoryTab.Bag];
 
 /**
  * The tabs on screen right now.
@@ -832,7 +864,11 @@ export function hasSomethingToBuy(stock: readonly ShopItemView[], money: number)
 }
 
 export function tabsFor(hasShop: boolean): readonly InventoryTab[] {
-  return hasShop ? [...TAB_ORDER, InventoryTab.Shop] : TAB_ORDER;
+  // NO STRIP WHERE THERE IS NOTHING TO CHOOSE. One tab is furniture: it costs
+  // a row of height to offer a switch to the thing already on screen.
+  // `tome/dialogs/ShowEquipInven.lua` hides its own second set the same way when the
+  // character has no quick-switch weapons.
+  return hasShop ? [...TAB_ORDER, InventoryTab.Shop] : [];
 }
 
 /**
@@ -1212,16 +1248,20 @@ function dropSlotFor(inventory: InventoryMsg, drag: DragSubject | null | undefin
 }
 
 /** Break a flat list of cells into rows of at most `cols`. */
-function intoRows(cells: readonly InventoryCell[], cols: number): readonly InventoryRow[] {
-  const rows: InventoryRow[] = [];
-  const width = Math.max(1, cols);
-  for (let i = 0; i < cells.length; i += width) {
-    rows.push({ kind: InventoryRowKind.Cells, cells: cells.slice(i, i + width) });
-  }
-  return rows;
+/**
+ * ONE ROW PER ITEM. `cols` is gone with the grid.
+ *
+ * The row kind is still `Cells` and still carries an array, because every
+ * consumer — the hit test, the drag, the painter — walks `row.cells` and none
+ * of them cares that the array is now always one long. A new row kind would
+ * have meant touching six switch statements to say the same thing.
+ */
+function intoRows(cells: readonly InventoryCell[]): readonly InventoryRow[] {
+  return cells.map((cell) => ({ kind: InventoryRowKind.Cells, cells: [cell] }) as const);
 }
 
 /** The tier, as a word. A switch, so a fourth `ItemTier` is a compile error. */
+
 function tierWord(tier: ItemTier): string {
   switch (tier) {
     case ItemTier.Common:
@@ -1302,7 +1342,8 @@ function detailRow(view: InventoryPanelView, inventory: InventoryMsg | null): In
   // `equippedStripFits`. `panelH` is absent for a caller with no rect (a hit
   // test replaying last frame's rows, a fixture), and absent reads as the
   // smallest panel, which is the shape this tab has always had.
-  const compact = view.tab === InventoryTab.Equipped && !equippedStripFits(view.panelH ?? 0);
+  // ONE STRIP HEIGHT. `compact` was the doll TAB's, and the doll is not a tab.
+  const compact = false;
 
   const blank = {
     kind: InventoryRowKind.Detail,
@@ -1494,32 +1535,34 @@ function detailRow(view: InventoryPanelView, inventory: InventoryMsg | null): In
  * and touches neither the wire's order nor the server's fold. The two arrays stay
  * index-parallel, which is what the hit test and the painter both depend on.
  */
-export function inventoryPanelRows(
-  view: InventoryPanelView,
-  /**
-   * How many cells per row, from `inventoryColumnsFor(rect.w)`.
-   *
-   * OPTIONAL, DEFAULTING TO THE FLOOR, because the row builder is handed a VIEW
-   * and not a rect — a caller that has no panel on screen (a hit test replaying
-   * last frame's rows, a fixture) still gets the shape the panel has always had.
-   * The four callers in main.ts that do have a rect pass its column count.
-   */
-  cols: number = COLS,
-): readonly InventoryRow[] {
+export function inventoryPanelRows(view: InventoryPanelView): readonly InventoryRow[] {
   const inventory = view.inventory;
-  const rows: InventoryRow[] = [
-    {
-      kind: InventoryRowKind.Tabs,
-      tab: view.tab,
-      wornCount: inventory === null ? 0 : Object.keys(inventory.equipped).length,
-      carriedCount: inventory === null ? 0 : inventory.carried.length,
-      // ON THE ROW rather than derived twice. The painter draws these boxes and
-      // the hit test names them, and a third tab that existed for one of them
-      // would be a box you could click and not see, or see and not click.
-      tabs: tabsFor(view.shop != null),
-      shopCount: view.shop?.stock.length ?? 0,
-    },
-  ];
+  /**
+   * THE STRIP IS EMITTED ONLY WHEN THERE IS A CHOICE ON IT.
+   *
+   * It used to be the unconditional first row, which was right when it always
+   * carried two: the doll and the bag. They are two columns of one window now,
+   * so without a counter in the room there is nothing to switch between -- and
+   * a row that offers to show you what is already on screen costs `TAB_ROW_H`
+   * of a panel that would rather spend it on items.
+   */
+  const tabs = tabsFor(view.shop != null);
+  const rows: InventoryRow[] =
+    tabs.length < 2
+      ? []
+      : [
+          {
+            kind: InventoryRowKind.Tabs,
+            tab: view.tab,
+            wornCount: inventory === null ? 0 : Object.keys(inventory.equipped).length,
+            carriedCount: inventory === null ? 0 : inventory.carried.length,
+            // ON THE ROW rather than derived twice. The painter draws these boxes and
+            // the hit test names them, and a third tab that existed for one of them
+            // would be a box you could click and not see, or see and not click.
+            tabs,
+            shopCount: view.shop?.stock.length ?? 0,
+          },
+        ];
 
   if (inventory === null) {
     // NEVER A BLANK BOX. The frame is unicast and only when there is something to
@@ -1535,40 +1578,50 @@ export function inventoryPanelRows(
     return rows;
   }
 
+  /**
+   * ═══ THE DOLL IS ALWAYS ON. IT IS NOT A TAB ANY MORE ═══
+   * It used to be one arm of a three-way switch on the tab, because the panel
+   * could show the doll OR a grid and never both. It shows both now, side by
+   * side, so what you are wearing is on screen while you decide what to do
+   * with what you are carrying — which is the question the panel exists to
+   * answer and the reason the comparison strip was built.
+   *
+   * ONE ROW, NOT THREE. The doll is a placed grid (see `InventoryRowKind.Doll`)
+   * and `equippedCells` hands over all seven in `SLOT_ORDER`, so `cells` and
+   * `places` stay parallel and the doll's LIST order and its PLACEMENT are two
+   * facts about the same seven things rather than two lists.
+   */
+  const worn = equippedCells(inventory);
+  rows.push({
+    kind: InventoryRowKind.Doll,
+    cells: worn,
+    // Every doll cell has a slot by construction; the fallback tells the type
+    // system that rather than covering a case this row can reach. A draught is
+    // never on the doll — it has no slot, so `wornOf` never files it.
+    places: worn.flatMap((cell) => (cell.slot === undefined ? [] : [DOLL_PLACES[cell.slot]])),
+    portrait: view.portrait ?? null,
+    dropSlot: dropSlotFor(inventory, view.drag),
+  });
+
+  // THE LIST COLUMN: the shelf when a counter is selected, your bag otherwise.
   if (view.tab === InventoryTab.Shop && view.shop != null) {
     const cells = shopCells(view.shop, view.inventory?.money ?? 0);
-    rows.push(...intoRows(cells, cols));
+    rows.push(...intoRows(cells));
     if (cells.length === 0) {
       // A SHOP CAN BE EMPTY and it is worth saying so plainly: the shelves top
       // up when somebody levels, so "come back" is the actual answer.
       rows.push({ kind: InventoryRowKind.Note, text: 'the shelves are bare — come back later' });
     }
-  } else if (view.tab === InventoryTab.Equipped) {
-    // ONE ROW, NOT THREE. The doll is a placed grid — see `InventoryRowKind.Doll`
-    // — and `equippedCells` still hands over all seven in `SLOT_ORDER`, so
-    // `cells` and `places` stay parallel and the doll's LIST order and its
-    // PLACEMENT are two facts about the same seven things rather than two lists.
-    const cells = equippedCells(inventory);
-    rows.push({
-      kind: InventoryRowKind.Doll,
-      cells,
-      // The doll's cells ARE the seven plates, so every one has a slot by
-      // construction; the fallback is the type system being told that rather
-      // than a case this row can reach. A draught is never on the doll — it has
-      // no slot, so `wornOf` never files it and no plate ever holds it.
-      places: cells.flatMap((cell) => (cell.slot === undefined ? [] : [DOLL_PLACES[cell.slot]])),
-      portrait: view.portrait ?? null,
-      dropSlot: dropSlotFor(inventory, view.drag),
-    });
   } else {
     const cells = carriedCells(inventory);
-    rows.push(...intoRows(cells, cols));
+    rows.push(...intoRows(cells));
     if (cells.length === 0) {
       rows.push({ kind: InventoryRowKind.Note, text: 'you are carrying nothing' });
     } else if (inventory.carried.length > cells.length) {
-      // The server caps at twelve, so this is unreachable in ordinary play. It is
-      // still said out loud rather than assumed: the alternative is a build whose
-      // cap has moved quietly hiding a row that the player watched arrive.
+      // The list scrolls and holds the whole bag, so this is unreachable in
+      // ordinary play. It is still said out loud rather than assumed: the
+      // alternative is a build whose cap has moved quietly hiding a row that
+      // the player watched arrive.
       const more = inventory.carried.length - cells.length;
       rows.push({
         kind: InventoryRowKind.Note,
@@ -1627,7 +1680,20 @@ export function inventoryPanelRect(options: {
    * to remove, moved rather than removed.
    */
   const want = Math.min(Math.floor(width * FILL_W), width - PANEL_MARGIN * 2);
-  const w = inventoryPanelWidthForColumns(inventoryColumnsFor(want));
+  /**
+   * CLAMPED TO THE FLOOR, NOT SNAPPED TO A COLUMN COUNT.
+   *
+   * This asked `inventoryPanelWidthForColumns(inventoryColumnsFor(want))` so the
+   * panel was always a whole number of 72-pixel grid cells -- half a column of
+   * dead inset draws the same as none. There is no grid: the bag is a list that
+   * takes whatever width is left beside the doll, so any width is a whole
+   * number of what it now holds.
+   *
+   * What DOES bind is the floor, and it binds harder than it used to: below
+   * `PANEL_MIN_W` the list column computes to nothing and every row in it has
+   * nowhere to go.
+   */
+  const w = Math.max(PANEL_MIN_W, want);
   const h = Math.min(PANEL_MAX_H, band - PANEL_MARGIN * 2);
   return { x: Math.floor((width - w) / 2), y: bottom - PANEL_MARGIN - h, w, h };
 }
@@ -1653,7 +1719,7 @@ function rowHeight(row: InventoryRow, useLines: number = USE_LINES): number {
     case InventoryRowKind.Tabs:
       return TAB_ROW_H;
     case InventoryRowKind.Cells:
-      return CELL_ROW_H;
+      return LIST_ROW_H;
     case InventoryRowKind.Doll:
       return DOLL_H;
     case InventoryRowKind.Detail:
@@ -1721,20 +1787,34 @@ export type InventoryPanelGeometry = {
   readonly close: PanelRect;
   /** Rows in reading order, top to bottom. */
   readonly placed: readonly PlacedInventoryRow[];
+  /**
+   * THE LIST COLUMN'S SCROLL STATE, so the caller can clamp its own offset by
+   * reading back what the geometry actually used -- the talent panel's pattern.
+   * A caller that kept its own maximum would drift the moment a row was added.
+   *
+   * `bar` and `thumb` are null when everything fits: a scrollbar for a list that
+   * cannot scroll is a control that does nothing, and this panel already argues
+   * that case for the tab strip one column over.
+   */
+  readonly list: {
+    readonly viewport: PanelRect;
+    readonly scroll: number;
+    readonly maxScroll: number;
+    readonly bar: PanelRect | null;
+    readonly thumb: PanelRect | null;
+  };
 };
 
 /** The four cell boxes of one grid row. One copy, read by the painter and the pointer. */
+/**
+ * A list row's boxes. One item, one FULL-WIDTH box.
+ *
+ * This laid `count` 72-pixel frames out left to right at a fixed pitch. A row
+ * is one item now, and its box spans the list column — which is what makes the
+ * whole row a hit target and a drag handle, rather than just the icon.
+ */
 function cellRects(row: PanelRect, count: number): readonly PanelRect[] {
-  const boxes: PanelRect[] = [];
-  for (let i = 0; i < count; i += 1) {
-    boxes.push({
-      x: row.x + i * (CELL_PX + CELL_GAP),
-      y: row.y,
-      w: CELL_PX,
-      h: CELL_PX,
-    });
-  }
-  return boxes;
+  return count <= 0 ? [] : [{ x: row.x, y: row.y, w: row.w, h: LIST_ROW_H }];
 }
 
 /** The top-left corner of one 4x3 doll box, from its grid coordinates. */
@@ -1799,6 +1879,17 @@ function tabRects(row: PanelRect, count: number): readonly PanelRect[] {
 export function inventoryPanelGeometry(
   rect: PanelRect,
   rows: readonly InventoryRow[],
+  /**
+   * HOW FAR THE LIST COLUMN IS SCROLLED, in pixels, defaulted so every
+   * fixture and every hit test that replays last frame's rows keeps compiling
+   * and reads as "at the top".
+   *
+   * APPLIED IN THE GEOMETRY, never with `ctx.translate` — the talent panel's
+   * rule, and for its reason: the hit test and the painter must agree about
+   * where a row IS, and a transform only the painter knows about is exactly
+   * how they stop agreeing.
+   */
+  scroll = 0,
 ): InventoryPanelGeometry {
   const close = closeRect(rect);
   const x = rect.x + INSET;
@@ -1836,15 +1927,57 @@ export function inventoryPanelGeometry(
     useLines -= 1;
     stripH = detail === undefined ? 0 : rowHeight(detail, useLines);
   }
-  const stripped = detail !== undefined && room >= CELL_ROW_H + stripH;
+  // ROOM FOR THE STRIP MEANS ROOM FOR THE STRIP AND ONE LIST ROW. A panel that
+  // spent its whole height on a comparison of an item it could no longer show
+  // would be a comparison with nothing to compare.
+  const stripped = detail !== undefined && room >= LIST_ROW_H + stripH;
   const limit = stripped ? bottom - stripH : bottom;
 
+  /**
+   * ════════════════════════════════════════════════════════════════════════════
+   * TWO COLUMNS AND TWO CURSORS. The doll on the left, the list on the right.
+   * ════════════════════════════════════════════════════════════════════════════
+   * This was ONE cursor down a single column, because the panel showed the
+   * doll or the bag and never both. Upstream never had that constraint —
+   * `tome/dialogs/ShowEquipInven.lua` puts a `vsep` between its doll and its list — and
+   * neither do we now that the frames are 40 wide.
+   *
+   * The TABS row, when there is one, still spans the whole panel: it names
+   * what the LIST column is showing, and a tab strip over one column would
+   * read as belonging to the doll.
+   */
+  const hasTabs = rows.some((row) => row.kind === InventoryRowKind.Tabs);
+  const contentTop = top + (hasTabs ? TAB_ROW_H : 0);
+  const listX = x + DOLL_W + COLUMN_SEP_W;
+  const listW = Math.max(0, innerW - DOLL_W - COLUMN_SEP_W);
+
   const placed: PlacedInventoryRow[] = [];
-  let cursor = top;
+  let cursor = contentTop;
+  let listCursor = contentTop;
+  // WHERE THE LIST WOULD REACH IF NOTHING STOPPED IT — the content height the
+  // scrollbar is a fraction of. Counted for EVERY list row, including the ones
+  // scrolled out of view, which is the whole point of counting it separately.
+  let listContentH = 0;
+  // The bottom of the last list row actually PLACED -- where a note goes.
+  let listBottom = contentTop;
   let droppedCells = 0;
 
   for (const row of rows) {
     if (row.kind === InventoryRowKind.Detail) continue;
+
+    if (row.kind === InventoryRowKind.Tabs) {
+      const h = rowHeight(row);
+      const rowRect: PanelRect = { x, y: top, w: innerW, h };
+      placed.push({
+        row,
+        rect: rowRect,
+        cells: [],
+        tabs: tabRects(rowRect, row.tabs.length),
+        drop: null,
+        portrait: null,
+      });
+      continue;
+    }
 
     if (row.kind === InventoryRowKind.Doll) {
       // THE DOLL SHEDS GRID ROWS FROM THE TAIL, exactly as the bag sheds cell
@@ -1862,7 +1995,10 @@ export function inventoryPanelGeometry(
         continue;
       }
       const h = fit * CELL_PX + (fit - 1) * CELL_GAP;
-      const rowRect: PanelRect = { x, y: cursor, w: innerW, h };
+      // THE DOLL COLUMN, not the panel. Its cells are placed at a fixed pitch
+      // from `rowRect.x`, so a full-width rect would scatter them across the
+      // list beside it.
+      const rowRect: PanelRect = { x, y: cursor, w: DOLL_W, h };
       const boxes = row.places.map((place) =>
         place.row < fit ? dollCellRect(rowRect, place) : { x: rowRect.x, y: rowRect.y, w: 0, h: 0 },
       );
@@ -1886,21 +2022,36 @@ export function inventoryPanelGeometry(
       continue;
     }
 
+    /**
+     * ═══ A ROW SCROLLED OUT OF VIEW IS NOT PLACED, NOT CLIPPED ═══
+     * The talent panel's rule: *a rect the painter clips away is still in the
+     * list the HIT TEST walks*. Placing an off-screen row and trusting the
+     * clip would leave an item you cannot see but can still click.
+     */
     const h = rowHeight(row);
-    if (cursor + h > limit) {
-      if (row.kind === InventoryRowKind.Cells) droppedCells += row.cells.length;
+    const y = listCursor - scroll;
+    listCursor += h;
+    listContentH += h;
+    if (y < contentTop || y + h > limit) {
+      // COUNTED, NOT SILENTLY SKIPPED. A row above the viewport is SCROLLED past
+      // and the player can bring it back; a row below the last line the panel can
+      // draw is HELD BACK and must be announced -- the two look identical here
+      // and are not, so only the second is counted.
+      if (row.kind === InventoryRowKind.Cells && y >= contentTop) {
+        droppedCells += row.cells.length;
+      }
       continue;
     }
-    const rowRect: PanelRect = { x, y: cursor, w: innerW, h };
+    const rowRect: PanelRect = { x: listX, y, w: listW, h };
     placed.push({
       row,
       rect: rowRect,
       cells: row.kind === InventoryRowKind.Cells ? cellRects(rowRect, row.cells.length) : [],
-      tabs: row.kind === InventoryRowKind.Tabs ? tabRects(rowRect, row.tabs.length) : [],
+      tabs: [],
       drop: null,
       portrait: null,
     });
-    cursor += h;
+    listBottom = y + h;
   }
 
   // ═══ EVERYTHING HELD BACK IS SAID OUT LOUD, INCLUDING THE STRIP ITSELF ═══
@@ -1912,17 +2063,53 @@ export function inventoryPanelGeometry(
   if (droppedCells > 0) held.push(`${String(droppedCells)} hidden — panel too small`);
   if (detail !== undefined && !stripped) held.push('comparison hidden — panel too small');
 
+  /**
+   * THE NOTES GO IN THE LIST COLUMN, under whatever the list managed to draw.
+   *
+   * They used to stack under a single full-width column. With the doll beside
+   * the list they would otherwise queue behind the DOLL's cursor and be the
+   * first thing squeezed out on a short panel -- so the panel would fall silent
+   * about the very thing it had just decided not to show, which is the one
+   * outcome caselog.ts's rule exists to prevent.
+   */
+  /**
+   * ═══ THE ANNOUNCEMENT OUTRANKS THE LAST ROW ═══
+   * A list that filled its column to the pixel left nothing for the note, so a
+   * panel that had just decided to hold rows back FELL SILENT about it -- which
+   * is precisely the outcome caselog.ts:467-478's rule forbids, arrived at by
+   * running out of room rather than by choosing to.
+   *
+   * So a note takes the last row's line if it has to, and that row joins the
+   * count it is announcing. One fewer item shown and an honest panel beats one
+   * more item and a lie.
+   */
+  let noteY = listBottom;
+  while (held.length > 0 && noteY + NOTE_ROW_H * held.length > limit) {
+    const last = placed.pop();
+    if (last === undefined) break;
+    if (last.row.kind === InventoryRowKind.Cells) droppedCells += last.row.cells.length;
+    noteY = last.rect.y;
+    if (last.row.kind !== InventoryRowKind.Cells) {
+      placed.push(last);
+      break;
+    }
+  }
+  // Recount, because the loop above may have changed what is held back.
+  held.length = 0;
+  if (droppedCells > 0) held.push(`${String(droppedCells)} hidden — panel too small`);
+  if (detail !== undefined && !stripped) held.push('comparison hidden — panel too small');
+
   for (const text of held) {
-    if (cursor + NOTE_ROW_H > limit) break;
+    if (noteY + NOTE_ROW_H > limit) break;
     placed.push({
       row: { kind: InventoryRowKind.Note, text },
-      rect: { x, y: cursor, w: innerW, h: NOTE_ROW_H },
+      rect: { x: listX, y: noteY, w: listW, h: NOTE_ROW_H },
       cells: [],
       tabs: [],
       drop: null,
       portrait: null,
     });
-    cursor += NOTE_ROW_H;
+    noteY += NOTE_ROW_H;
   }
 
   // The strip LAST and at the bottom of the panel, so it holds still while the
@@ -1983,7 +2170,42 @@ export function inventoryPanelGeometry(
     });
   }
 
-  return { close, placed };
+  /**
+   * ═══ THE BAR IS A FRACTION OF WHAT DID NOT FIT ═══
+   * `maxScroll` is content minus viewport, floored at zero, and the offset is
+   * clamped to it here rather than trusted from the caller -- a stale offset
+   * survives a frame in which items were dropped, and the row it would have
+   * pointed at is gone.
+   */
+  const listViewport: PanelRect = {
+    x: listX,
+    y: contentTop,
+    w: listW,
+    h: Math.max(0, limit - contentTop),
+  };
+  const maxScroll = Math.max(0, listContentH - listViewport.h);
+  const used = Math.max(0, Math.min(scroll, maxScroll));
+  const bar =
+    maxScroll <= 0
+      ? null
+      : { x: listX + listW - SCROLL_BAR_W, y: listViewport.y, w: SCROLL_BAR_W, h: listViewport.h };
+  const thumbH =
+    bar === null ? 0 : Math.max(8, Math.floor((listViewport.h / listContentH) * listViewport.h));
+  const thumb =
+    bar === null
+      ? null
+      : {
+          x: bar.x,
+          y: bar.y + Math.floor((used / maxScroll) * (bar.h - thumbH)),
+          w: bar.w,
+          h: thumbH,
+        };
+
+  return {
+    close,
+    placed,
+    list: { viewport: listViewport, scroll: used, maxScroll, bar, thumb },
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -2110,11 +2332,18 @@ export function inventoryPanelHitAt(
   rows: readonly InventoryRow[],
   px: number,
   py: number,
+  /**
+   * THE LIST'S SCROLL OFFSET, and it must be the SAME number the painter was
+   * given. The geometry applies it; nothing else may. A reader that defaulted
+   * to zero while the panel was scrolled would answer for the wrong row,
+   * silently -- which is why it is threaded rather than re-derived.
+   */
+  scroll = 0,
 ): InventoryHit | null {
   const inside = (r: PanelRect): boolean =>
     px >= r.x && px < r.x + r.w && py >= r.y && py < r.y + r.h;
 
-  const geometry = inventoryPanelGeometry(rect, rows);
+  const geometry = inventoryPanelGeometry(rect, rows, scroll);
   if (inside(geometry.close)) return { kind: InventoryHitKind.Close };
 
   for (const placed of geometry.placed) {
@@ -2191,6 +2420,13 @@ export function inventoryPanelDragAt(
   rows: readonly InventoryRow[],
   px: number,
   py: number,
+  /**
+   * THE LIST'S SCROLL OFFSET, and it must be the SAME number the painter was
+   * given. The geometry applies it; nothing else may. A reader that defaulted
+   * to zero while the panel was scrolled would answer for the wrong row,
+   * silently -- which is why it is threaded rather than re-derived.
+   */
+  scroll = 0,
 ): InventoryDrag | null {
   const inside = (r: PanelRect): boolean =>
     px >= r.x && px < r.x + r.w && py >= r.y && py < r.y + r.h;
@@ -2198,7 +2434,7 @@ export function inventoryPanelDragAt(
   if (inside(closeRect(rect))) return null;
   if (inside(headerHandle(rect))) return { kind: InventoryHitKind.Header };
 
-  for (const placed of inventoryPanelGeometry(rect, rows).placed) {
+  for (const placed of inventoryPanelGeometry(rect, rows, scroll).placed) {
     const row = placed.row;
     if (row.kind !== InventoryRowKind.Cells && row.kind !== InventoryRowKind.Doll) continue;
     for (let i = 0; i < placed.cells.length; i += 1) {
@@ -2320,30 +2556,6 @@ function traceBox(ctx: CanvasRenderingContext2D, box: PanelRect, colour: string)
   ctx.fillRect(box.x + box.w - 1, box.y, 1, box.h);
 }
 
-/** Blit a sprite 1:1 at its authored size, centred in `box`. Returns false if it is missing. */
-function blitCentred(
-  ctx: CanvasRenderingContext2D,
-  sprites: SpriteSource,
-  id: string,
-  box: PanelRect,
-): boolean {
-  const sprite = sprites.sprite(id);
-  if (sprite === undefined) return false;
-  // NEVER SCALED AND NEVER CROPPED. A sprite that does not fit the box it was cut
-  // for is a pipeline fault, and drawing a fraction of it would hide that fault
-  // behind something that looks almost right — panel.ts:111 refuses a 9-slice of
-  // the wrong size for the same reason.
-  if (sprite.w > box.w || sprite.h > box.h) return false;
-  ctx.drawImage(
-    sprite.image,
-    box.x + Math.floor((box.w - sprite.w) / 2),
-    box.y + Math.floor((box.h - sprite.h) / 2),
-    sprite.w,
-    sprite.h,
-  );
-  return true;
-}
-
 /**
  * ══════════════════════════════════════════════════════════════════════════
  * THE FACE, FILLING ITS WINDOW. The doll's portrait, and only the doll's.
@@ -2407,6 +2619,93 @@ function blitFilled(
  * squares would make the panel unreadable, and on a clone with no art at all that
  * is the ONLY state.
  */
+/**
+ * ════════════════════════════════════════════════════════════════════════════
+ * ONE BAG ROW: a small icon, the name, and one right-aligned fact.
+ * ════════════════════════════════════════════════════════════════════════════
+ * `engine/ui/Inventory.lua:129-135`, minus two columns we have nothing to put
+ * in. Upstream draws its object column at 16x16 (`engine/dialogs/ShowStore.lua:45`), which is
+ * why the icon here is `LIST_ICON_PX` rather than a shrunken frame: a 40-pixel
+ * plate per row would make a sixty-item bag nine hundred pixels tall.
+ *
+ * THE WHOLE ROW IS THE TARGET, not the icon. `cellRects` gives a list row one
+ * full-width box, so the name is as clickable as the picture -- which is the
+ * point of a list, and is what a grid of frames cannot offer.
+ *
+ * FOCUS AND HOVER ARE A BAR AND A WASH, not a border. A 1px frame around an
+ * 18px row reads as a text field; a filled bar reads as a selection, which is
+ * what `ListColumns` does upstream and what the talent panel does here.
+ */
+function drawListRow(
+  ctx: CanvasRenderingContext2D,
+  sprites: SpriteSource,
+  cell: InventoryCell,
+  box: PanelRect,
+  focused: boolean,
+  hovered: boolean,
+): void {
+  if (box.w <= 0 || box.h <= 0) return;
+  if (cell.kind !== 'item') return;
+
+  if (focused || hovered) {
+    ctx.fillStyle = focused ? PALETTE.SLATE : PALETTE.VOID;
+    ctx.fillRect(box.x, box.y, box.w, box.h);
+  }
+
+  const iconBox: PanelRect = {
+    x: box.x + 2,
+    y: box.y + Math.floor((box.h - LIST_ICON_PX) / 2),
+    w: LIST_ICON_PX,
+    h: LIST_ICON_PX,
+  };
+  // A QUARTER, the deepest this client reduces anything: a 64x64 item icon
+  // into upstream's own 16px list column (`engine/dialogs/ShowStore.lua:45`).
+  if (!blitReduced(ctx, sprites, cell.icon, iconBox, BlitAnchor.Centre, 4)) {
+    // A LETTER, NOT A BLANK PLATE. ui/hotbar.ts's rule and the doll cell's: a
+    // column of identical grey squares is unreadable, and on a bare clone with
+    // no art on disk that is the ORDINARY state rather than an edge case.
+    ctx.font = FONT_ICON_FALLBACK;
+    ctx.textAlign = 'center';
+    ctx.fillStyle = PALETTE.SILVER;
+    ctx.fillText(
+      (cell.name.charAt(0) || '?').toUpperCase(),
+      iconBox.x + iconBox.w / 2,
+      iconBox.y + iconBox.h / 2 + 1,
+    );
+    ctx.textAlign = 'left';
+  }
+
+  const baseline = box.y + Math.floor(box.h / 2) + 4;
+  // WHAT IS ON THE RIGHT depends on where the row came from: a price where
+  // there is a counter, the slot it goes in otherwise. Measured first, because
+  // the name is what gives way when the column is narrow.
+  const right =
+    cell.price === null || cell.price === undefined
+      ? `${tierWord(cell.tier)}${cell.slot === undefined ? '' : ` · ${cell.slot}`}`
+      : `${String(cell.price)}g`;
+  ctx.font = FONT_BODY;
+  const rightW = right === '' ? 0 : Math.ceil(ctx.measureText(right).width);
+
+  /**
+   * THE TIER IS A WORD, NOT A COLOUR. The doll says it with frame art, which a
+   * list row has none of -- and the two colours that would carry it are both
+   * spoken for: GOLD is the focused row two lines below, and VIOLET_HI is the
+   * missing-asset box and reserved (test/client/assets.test.ts pins both). A
+   * word is also the strip's own grammar for this exact fact: "rare - body".
+   */
+  ctx.textAlign = 'left';
+  ctx.fillStyle = cell.worn ? PALETTE.GREY_HI : PALETTE.PARCHMENT;
+  const nameX = box.x + LIST_ICON_GUTTER;
+  ctx.fillText(fitText(ctx, cell.name, box.x + box.w - rightW - 6 - nameX), nameX, baseline);
+
+  if (right !== '') {
+    ctx.textAlign = 'right';
+    ctx.fillStyle = PALETTE.GREY_HI;
+    ctx.fillText(right, box.x + box.w - 2, baseline);
+    ctx.textAlign = 'left';
+  }
+}
+
 function drawCell(
   ctx: CanvasRenderingContext2D,
   sprites: SpriteSource,
@@ -2428,7 +2727,11 @@ function drawCell(
   // one — upstream has a single `itemframe48.png` for every slot and every
   // rarity (load.lua:140), so this is the closest thing to "no rarity" we have.
   const frameId = cell.kind === 'item' ? frameIdFor(cell.tier) : frameIdFor(ItemTier.Common);
-  if (!blitCentred(ctx, sprites, frameId, box)) traceBox(ctx, box, PALETTE.SLATE);
+  // HALVED WHERE IT MUST BE. The frames are cut at 72 and the cell is 40 now,
+  // so a 1:1 blit would refuse and every plate would fall back to a traced
+  // box. `blitReduced` takes the exact half and stays sharp; the trace is
+  // still the answer when there is no art at all.
+  if (!blitReduced(ctx, sprites, frameId, box)) traceBox(ctx, box, PALETTE.SLATE);
 
   const well: PanelRect = {
     x: box.x + ICON_INSET,
@@ -2451,7 +2754,7 @@ function drawCell(
     // dragged is about to land, rather than on an edge shared with two other
     // meanings (focus and pointer-hover).
     const plateId = dropTarget ? 'ui_inventory_cell_hover' : 'ui_inventory_cell_empty';
-    if (!blitCentred(ctx, sprites, plateId, well)) {
+    if (!blitReduced(ctx, sprites, plateId, well)) {
       // The primitives fallback traces a box where the 40x40 plate would have
       // been. `client/public/assets/` is gitignored wholesale, so this is not a
       // degraded state — it is what every fresh clone renders.
@@ -2466,7 +2769,7 @@ function drawCell(
         dropTarget ? PALETTE.PARCHMENT : PALETTE.SLATE,
       );
     }
-  } else if (!blitCentred(ctx, sprites, cell.icon, well)) {
+  } else if (!blitReduced(ctx, sprites, cell.icon, well)) {
     ctx.font = FONT_ICON_FALLBACK;
     ctx.textAlign = 'center';
     ctx.fillStyle = PALETTE.SILVER;
@@ -2784,11 +3087,9 @@ function drawRow(
         // selected tab as well as the colour does: never colour alone
         // (ui/partypanel.ts:78-92).
         const label =
-          tab === InventoryTab.Equipped
-            ? `EQUIPPED ${String(row.wornCount)}/${String(SLOT_ORDER.length)}`
-            : tab === InventoryTab.Carried
-              ? `CARRIED ${String(row.carriedCount)}/${String(CARRIED_MAX)}`
-              : `SHOP ${String(row.shopCount)}`;
+          tab === InventoryTab.Bag
+            ? `BAG ${String(row.carriedCount)}/${String(CARRIED_MAX)}`
+            : `SHOP ${String(row.shopCount)}`;
         drawButton(ctx, box, selected ? `[${label}]` : label, {
           ink: selected ? PALETTE.GOLD : PALETTE.GREY_HI,
         });
@@ -2805,7 +3106,7 @@ function drawRow(
           cell.kind === 'item'
             ? { kind: 'item', itemId: cell.itemId }
             : { kind: 'slot', slot: cell.slot };
-        drawCell(ctx, sprites, cell, box, sameFocus(focus, self), sameFocus(hovered, self), false);
+        drawListRow(ctx, sprites, cell, box, sameFocus(focus, self), sameFocus(hovered, self));
       }
       return;
     }
@@ -2855,6 +3156,12 @@ export type InventoryPanelDrawOptions = {
   readonly rect: PanelRect;
   /** From `inventoryPanelRows`. Passed in so the caller holds one copy per frame. */
   readonly rows: readonly InventoryRow[];
+  /**
+   * The list column's scroll offset. Optional and defaulted, so a fixture that
+   * does not scroll reads as "at the top" -- and so the painter cannot disagree
+   * with the hit test, which takes the same defaulted parameter.
+   */
+  readonly scroll?: number;
   /** Highlights the close control, so it reads as pressable. */
   readonly hoveredClose: boolean;
   /** What the strip is about — the last thing pointed at. Never cleared on leave. */
@@ -2897,6 +3204,7 @@ export function drawInventoryPanel(options: InventoryPanelDrawOptions): void {
   const { ctx, sprites, rect, rows, hoveredClose, focus, hovered, hoveredDrop } = options;
   const money = options.money ?? 0;
   const shop = options.shop ?? null;
+  const scroll = options.scroll ?? 0;
   if (rect.w <= 0 || rect.h <= 0) return;
 
   ctx.save();
@@ -2911,9 +3219,27 @@ export function drawInventoryPanel(options: InventoryPanelDrawOptions): void {
 
   drawHeader(ctx, sprites, panelTitle(money, shop), rect, FONT_META);
 
-  const geometry = inventoryPanelGeometry(rect, rows);
+  const geometry = inventoryPanelGeometry(rect, rows, scroll);
   for (const placed of geometry.placed) {
     drawRow(ctx, sprites, placed, focus, hovered, hoveredDrop);
+  }
+
+  /**
+   * THE SCROLLBAR, OUTSIDE ANY CLIP AND ONLY WHEN IT MEANS SOMETHING.
+   *
+   * Null when the whole bag fits, because a bar that cannot move is a control
+   * that lies about being one -- the same argument `tabsFor` makes one column
+   * over for a tab strip with a single tab on it.
+   */
+  if (geometry.list.bar !== null) {
+    ctx.fillStyle = PALETTE.SLATE;
+    const bar = geometry.list.bar;
+    ctx.fillRect(bar.x, bar.y, bar.w, bar.h);
+  }
+  if (geometry.list.thumb !== null) {
+    ctx.fillStyle = PALETTE.GREY_HI;
+    const thumb = geometry.list.thumb;
+    ctx.fillRect(thumb.x, thumb.y, thumb.w, thumb.h);
   }
 
   // The close control. The key that opened the panel closes it too and always
@@ -2985,8 +3311,15 @@ function cellBoxAt(
   rows: readonly InventoryRow[],
   px: number,
   py: number,
+  /**
+   * THE LIST'S SCROLL OFFSET, and it must be the SAME number the painter was
+   * given. The geometry applies it; nothing else may. A reader that defaulted
+   * to zero while the panel was scrolled would answer for the wrong row,
+   * silently -- which is why it is threaded rather than re-derived.
+   */
+  scroll = 0,
 ): PanelRect | null {
-  for (const placed of inventoryPanelGeometry(rect, rows).placed) {
+  for (const placed of inventoryPanelGeometry(rect, rows, scroll).placed) {
     const row = placed.row;
     if (row.kind !== InventoryRowKind.Cells && row.kind !== InventoryRowKind.Doll) continue;
     for (let i = 0; i < placed.cells.length; i += 1) {
@@ -3005,10 +3338,17 @@ export function inventoryTipAt(
   view: InventoryPanelView,
   px: number,
   py: number,
+  /**
+   * THE LIST'S SCROLL OFFSET, and it must be the SAME number the painter was
+   * given. The geometry applies it; nothing else may. A reader that defaulted
+   * to zero while the panel was scrolled would answer for the wrong item,
+   * silently -- which is why it is threaded rather than re-derived.
+   */
+  scroll = 0,
 ): HoverCard | null {
-  const hit = inventoryPanelHitAt(rect, rows, px, py);
+  const hit = inventoryPanelHitAt(rect, rows, px, py, scroll);
   if (hit === null || hit.kind !== InventoryHitKind.Item) return null;
-  const box = cellBoxAt(rect, rows, px, py);
+  const box = cellBoxAt(rect, rows, px, py, scroll);
 
   /**
    * ═══════════════════════════════════════════════════════════════════════════

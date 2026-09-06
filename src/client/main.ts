@@ -268,8 +268,9 @@ import {
   inventoryPanelDragAt,
   inventoryPanelHitAt,
   inventoryPanelRect,
-  inventoryColumnsFor,
+  inventoryPanelGeometry,
   inventoryPanelRows,
+  INVENTORY_SCROLL_STEP,
   hasSomethingToBuy,
   hasSomethingToWear,
 } from './ui/inventory.ts';
@@ -376,8 +377,8 @@ import type {
   PartyInviteView,
   PartyMember,
   PartyStateMsg,
-  ProgressMsg,
   ResourceKind,
+  ProgressMsg,
   UnlockableTree,
   ProjectileView,
   ResourceView,
@@ -1702,7 +1703,22 @@ let invDropHovered = false;
  * (dialogs/ShowEquipment.lua:54 — `self:setFocus(self.c_doll)`), and it is the
  * only one of the two tabs that is never empty.
  */
-let invTab: InventoryTab = InventoryTab.Equipped;
+let invTab: InventoryTab = InventoryTab.Bag;
+/**
+ * HOW FAR THE BAG LIST IS SCROLLED, in pixels.
+ *
+ * Beside `invTab` because it is the same kind of thing — what this panel is
+ * showing — and clamped by READING BACK what the geometry used, exactly as
+ * `talentScroll` is. A caller that kept its own maximum would drift the first
+ * time an item was picked up.
+ *
+ * NOT RESET WHEN AN `inventory` FRAME ARRIVES, deliberately, and this is where
+ * it differs from `talentScroll` (which IS reset, on a class change). A bag
+ * frame arrives every time anything is picked up, dropped, bought or worn — so
+ * resetting would snap a player who is forty rows down back to the top for
+ * equipping a hat. The clamp on read is what keeps a shrinking bag honest.
+ */
+let invScroll = 0;
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════
@@ -2664,10 +2680,9 @@ function inventoryViewFor(rect: PanelRect | null): InventoryPanelView {
 }
 
 function inventoryRowsFor(rect: PanelRect | null): readonly InventoryRow[] {
-  return inventoryPanelRows(
-    inventoryViewFor(rect),
-    rect === null ? undefined : inventoryColumnsFor(rect.w),
-  );
+  // THE COLUMN COUNT IS GONE WITH THE GRID. The bag is a list: one row per
+  // item, whatever the panel's width, so the rows no longer depend on the rect.
+  return inventoryPanelRows(inventoryViewFor(rect));
 }
 
 function inventoryPanelView(): InventoryPanelView {
@@ -2679,7 +2694,7 @@ function inventoryPanelView(): InventoryPanelView {
     // A ROOM WITH NO SHOP CANNOT LEAVE YOU ON THE SHOP TAB. Walking out of a
     // town with the tab open would otherwise leave the panel showing a shelf
     // that is not there, with no box to click to get off it.
-    tab: shop === null && invTab === InventoryTab.Shop ? InventoryTab.Carried : invTab,
+    tab: shop === null && invTab === InventoryTab.Shop ? InventoryTab.Bag : invTab,
     focus: invFocus,
     // ═══ THE FACE IN THE MIDDLE OF THE DOLL, JOINED FROM THE `turn` FRAME ═══
     // NOT BUILT HERE FROM THE CLASS NAME. src/server/view/projector.ts:387-393
@@ -4264,6 +4279,10 @@ const paintHud: HudPainter = (ctx, width, height) => {
       sprites,
       rect: layout.inventory,
       rows: inventoryRowsFor(layout.inventory),
+      // THE SAME OFFSET EVERY READER GETS. The geometry applies it; if the
+      // painter and the hit test were handed different numbers, every click
+      // would land on the wrong row and nothing would look wrong.
+      scroll: invScroll,
       hoveredClose: invCloseHovered,
       // TWO RINGS, TWO MEANINGS. `focus` is sticky and survives the pointer
       // leaving a cell (it is what the strip and DROP are about); `hovered` is
@@ -4349,6 +4368,7 @@ const paintHud: HudPainter = (ctx, width, height) => {
             inventoryViewFor(layout.inventory),
             pointerPoint.x,
             pointerPoint.y,
+            invScroll,
           )) ??
       /**
        * ═══ THE MINIMAP, WHICH IS A CONTROL AND HAS TO SAY SO ═══
@@ -7282,7 +7302,13 @@ async function boot(): Promise<void> {
          * shelved draught carrying a borrowed `body` would have taken the equip
          * branch for the same doomed reason.
          */
-        if (invTab === InventoryTab.Shop && shop !== null) {
+        // ═══ THE TAB NO LONGER MEANS THE DOLL IS HIDDEN ═══
+        // This swallowed every click while the Shop tab was up, which was
+        // right when the shelf was the ONLY thing on screen. The doll is
+        // always drawn now, so an unqualified guard would make gear
+        // un-removable at a counter. `worn` is the discriminator: a doll cell
+        // carries it and a shelf row never can.
+        if (invTab === InventoryTab.Shop && shop !== null && !hit.worn) {
           requestDraw();
           return;
         }
@@ -7653,9 +7679,11 @@ async function boot(): Promise<void> {
    * its own control on the strip and is a different act.
    */
   function inventoryTargetAt(rect: PanelRect, px: number, py: number): VerbTarget | null {
-    const hit = inventoryPanelHitAt(rect, inventoryRowsFor(rect), px, py);
+    const hit = inventoryPanelHitAt(rect, inventoryRowsFor(rect), px, py, invScroll);
     if (hit === null || hit.kind !== InventoryHitKind.Item) return null;
-    if (invTab === InventoryTab.Shop) return null;
+    // The doll is on screen at a counter now, so the right-click menu has to
+    // reach worn gear there. See the press guard for why `worn` is the test.
+    if (invTab === InventoryTab.Shop && !hit.worn) return null;
 
     const bag = inventory?.carried ?? [];
     const doll = inventory?.equipped ?? {};
@@ -9815,6 +9843,7 @@ async function boot(): Promise<void> {
               inventoryRowsFor(layout.inventory),
               point.x,
               point.y,
+              invScroll,
             );
       const overInvClose = invHit?.kind === InventoryHitKind.Close;
       if (overInvClose !== invCloseHovered) {
@@ -10010,16 +10039,26 @@ async function boot(): Promise<void> {
         requestDraw();
         return;
       }
-      // AND THE INVENTORY PANEL, WHICH IS AN OCCLUSION GUARD AND NOT A SCROLL
-      // GATE — the same distinction the paragraph above draws for the talent
-      // panel. This panel consumes nothing: it has no scroll position, no
-      // scrollbar and no hit test for one (ui/inventory.ts, "NO SCROLLING", which
-      // is honest because the server caps a bag at twelve and twelve fits on one
-      // page). What this line stops is the wheel reaching a DIFFERENT panel drawn
-      // UNDERNEATH it, and the overlap is not exotic: this one is centred
-      // horizontally like the other two, on the same assumption that the docks own
-      // the sides.
-      if (inRect(wheelLayout.inventory, point.x, point.y)) return;
+      /**
+       * AND THE INVENTORY PANEL, WHICH SCROLLS NOW.
+       *
+       * This was an OCCLUSION GUARD and said so: *"this panel consumes
+       * nothing: it has no scroll position, no scrollbar and no hit test for
+       * one — which is honest because the server caps a bag at twelve and
+       * twelve fits on one page"*. The cap is sixty and the bag is a list, so
+       * the premise is gone and the panel is a scroller like the one above it.
+       *
+       * It still stops the wheel reaching a panel drawn UNDERNEATH — that half
+       * was always separate, and returning is what does it either way.
+       */
+      const invRect = wheelLayout.inventory;
+      if (invRect !== null && inRect(invRect, point.x, point.y)) {
+        const step = event.deltaY > 0 ? INVENTORY_SCROLL_STEP : -INVENTORY_SCROLL_STEP;
+        invScroll = inventoryPanelGeometry(invRect, inventoryRowsFor(invRect), invScroll + step)
+          .list.scroll;
+        requestDraw();
+        return;
+      }
       /**
        * `?.` RATHER THAN AN EARLY BAIL ON A MISSING LOG, and the difference is
        * an ordering bug a test caught before this shipped.
@@ -10225,6 +10264,7 @@ async function boot(): Promise<void> {
       inventoryRowsFor(layout.inventory),
       point.x,
       point.y,
+      invScroll,
     );
     if (hit === null || hit.kind !== InventoryHitKind.Tab || hit.tab === invTab) return;
     invTab = hit.tab;
@@ -10302,6 +10342,7 @@ async function boot(): Promise<void> {
       inventoryRowsFor(layout.inventory),
       point.x,
       point.y,
+      invScroll,
     );
     if (hit === null) return;
     // A BAG ITEM ONTO A DOLL CELL — filled or empty — IS `equip`. That is the
@@ -11098,7 +11139,7 @@ async function boot(): Promise<void> {
       // and the whole bag, and building them twice per press would do that work
       // twice for one pointer event.
       const rows = inventoryRowsFor(layout.inventory);
-      const grab = inventoryPanelDragAt(layout.inventory, rows, point.x, point.y);
+      const grab = inventoryPanelDragAt(layout.inventory, rows, point.x, point.y, invScroll);
       if (grab !== null) {
         event.preventDefault();
         if (grab.kind === InventoryHitKind.Header) {
@@ -11110,13 +11151,13 @@ async function boot(): Promise<void> {
           );
           return;
         }
-        const pressed = inventoryPanelHitAt(layout.inventory, rows, point.x, point.y);
+        const pressed = inventoryPanelHitAt(layout.inventory, rows, point.x, point.y, invScroll);
         beginDrag(grab.subject, point.x, point.y, () => {
           runInventoryHit(pressed);
         });
         return;
       }
-      const hit = inventoryPanelHitAt(layout.inventory, rows, point.x, point.y);
+      const hit = inventoryPanelHitAt(layout.inventory, rows, point.x, point.y, invScroll);
       if (hit !== null) {
         event.preventDefault();
         runInventoryHit(hit);
