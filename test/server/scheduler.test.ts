@@ -819,3 +819,137 @@ describe('the tick budget', () => {
     );
   });
 });
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * A HUNT HAS TO OUTLIVE THE ENGAGEMENT WINDOW.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `ai/npc.ts` ports `ai/simple.lua:210` — ten turns of walking to the tile it
+ * last saw you on — and `test/server/ai.test.ts` proves all ten of them. It
+ * proves them against `decideNpcAction` directly, which is the half that always
+ * worked: the AI wanted to hunt, and the SCHEDULER would not let it.
+ *
+ * Engagement is level-wide, refreshes only when a monster can SEE a player, and
+ * lasts three turns. A monster walking to a remembered tile sees nobody by
+ * definition, so `actMonster`'s `engagement <= 0` froze it on turn three with
+ * seven pursuit turns in hand — and every fight in the game could be ended by
+ * stepping round a corner and counting to three.
+ *
+ * SO THIS TEST DRIVES `pump`, NOT THE AI. The bug lived in the one line between
+ * two layers that were each correct on their own, and only the real entry point
+ * can see it.
+ */
+describe('losing sight of the party', () => {
+  it('does not stop the hunt when engagement lapses', () => {
+    const world = createWorld('hunt-outlives-engagement');
+    const player = world.addPlayer('p1', 'Player 1');
+    player.maxHp = 10_000;
+    player.hp = 10_000;
+
+    // Row 2 of this level is open floor from x=1 to x=28 and the player spawns
+    // at (3,2), so nine tiles of clear corridor sit between them with nothing to
+    // block the sightline. `aggroRange` is pinned rather than defaulted: this
+    // test is about the scheduler, and it should not start failing because a
+    // template moved.
+    world.addMonster('m1', {
+      name: 'Index Husk',
+      sprite: HUSK_SPRITE,
+      x: 12,
+      y: 2,
+      profile: AiProfile.MeleeChaser,
+      globalSpeed: 1,
+      aggroRange: 10,
+    });
+
+    const barrier = createBarrier();
+    const step = (nowMs: number): PumpResult => {
+      submitIntent(world, barrier, 'p1', HOLD_INTENT);
+      return pump(world, { nowMs, barrier });
+    };
+
+    // ═══ ONE TURN IN PLAIN SIGHT ═══
+    step(0);
+    const monster = must(world.getActor('m1'), 'm1');
+    expect(isMonster(monster), 'fixture: m1 is not a monster').toBe(true);
+    if (!isMonster(monster)) return;
+    expect(monster.ai.lastSeen, 'the sighting was never stamped').toEqual({ x: 3, y: 2 });
+
+    // ═══ AND NOW VANISH ═══
+    // Out of `aggroRange` in an open corridor is out of sight, and the monster
+    // is about to walk WEST to the remembered tile, away from where the player
+    // now is — so there is no chance of a re-acquisition rescuing this.
+    player.x = 27;
+    player.y = 2;
+
+    const walk: number[] = [];
+    for (let turn = 0; turn < 16; turn += 1) walk.push(mustMonsterX(world));
+
+    // ═══ THE ASSERTION THAT FAILS WITHOUT `stillHunting` ═══
+    // With engagement freezing the floor, the husk stops three turns after the
+    // last sighting and stands there for the rest of the game, still holding a
+    // memory it will never act on. It must instead ARRIVE.
+    const arrived = walk.at(-1);
+    expect(arrived, 'the husk never finished walking to where it last saw you').toBe(3);
+    expect(monster.ai.lastSeen, 'it arrived but never forgot — `forget` did not run').toBeNull();
+
+    // Belt and braces on the specific number, because "3" above could in
+    // principle be reached by a monster that only moved once: it has to still be
+    // moving AFTER the three-turn window that used to end it.
+    const beyondTheWindow = walk[3] ?? 0;
+    expect(beyondTheWindow, 'it was already frozen inside the old window').toBeLessThan(12);
+    expect(walk[6] ?? 0, 'it stopped moving once engagement would have lapsed').toBeLessThan(
+      beyondTheWindow,
+    );
+
+    function mustMonsterX(w: World): number {
+      step(walk.length + 1);
+      const m = must(w.getActor('m1'), 'm1');
+      return m.x;
+    }
+  });
+
+  /**
+   * THE OTHER HALF, AND THE ONE THAT KEEPS THE FAN QUIET. `actMonster` documents
+   * an idle fixed point: something has to stop, or the pump never returns idle
+   * and a home PC runs a game loop forever. `stillHunting` is safe only because
+   * the hunt it shelters is BOUNDED — `forget()` clears `lastSeen` on arrival,
+   * on failing to route, and at `PURSUIT_TURNS`.
+   *
+   * So: no memory anywhere, and engagement back to zero. If a later change makes
+   * a monster hold `lastSeen` forever, this is what says so.
+   */
+  it('still lets the level go quiet once the hunt is over', () => {
+    const world = createWorld('hunt-still-goes-quiet');
+    const player = world.addPlayer('p1', 'Player 1');
+    player.maxHp = 10_000;
+    player.hp = 10_000;
+    world.addMonster('m1', {
+      name: 'Index Husk',
+      sprite: HUSK_SPRITE,
+      x: 12,
+      y: 2,
+      profile: AiProfile.MeleeChaser,
+      globalSpeed: 1,
+      aggroRange: 10,
+    });
+
+    const barrier = createBarrier();
+    const step = (nowMs: number): PumpResult => {
+      submitIntent(world, barrier, 'p1', HOLD_INTENT);
+      return pump(world, { nowMs, barrier });
+    };
+
+    step(0);
+    player.x = 27;
+    player.y = 2;
+
+    let last: PumpResult | undefined;
+    for (let turn = 0; turn < 30; turn += 1) last = step(turn + 1);
+
+    const monster = must(world.getActor('m1'), 'm1');
+    if (!isMonster(monster)) throw new Error('fixture: m1 is not a monster');
+    expect(monster.ai.lastSeen, 'a hunt that never ends is an idle loop').toBeNull();
+    expect(last?.engagement, 'engagement never came back down').toBe(0);
+  });
+});

@@ -435,12 +435,25 @@ function chase(self: MonsterActor, target: EngineActor, ctx: AiCtx): Intent {
  * idle fixed point, which this must not break), so ten turns is where the
  * memory is forgotten and the monster stands.
  *
- * IN PRACTICE `ENGAGEMENT_TURNS` USUALLY BITES FIRST, and that is the pleasant
- * part of the design rather than a redundancy. Engagement is level-wide and
- * lasts three turns past the last contact, so a monster that cannot re-find you
- * within three stops being asked to act at all and the pump idles. This counter
- * is what stops a monster resuming a stale hunt minutes later, when engagement
- * has been raised again by somebody else's fight on the far side of the floor.
+ * ═══ `ENGAGEMENT_TURNS` USED TO BITE FIRST, AND THAT WAS A BUG WEARING A
+ * DESIGN'S CLOTHES ═══
+ * This note used to say engagement biting first was "the pleasant part of the
+ * design rather than a redundancy". It was not pleasant and it was not the
+ * design: engagement is level-wide, refreshes only when a monster can SEE a
+ * player, and lasts three turns — so a monster hunting a remembered tile (which
+ * by definition sees nobody) was frozen by `actMonster` after three, with seven
+ * turns of this counter left. TEN WAS UNREACHABLE. Every fight could be ended
+ * by stepping round a corner and waiting three turns.
+ *
+ * `stillHunting` (engine/scheduler.ts) is the fix: engagement no longer lapses
+ * while any monster still holds a `lastSeen`. It extends combat and cannot start
+ * it, exactly as the `stillAfflicted` clause beside it does, and the pump still
+ * reaches idle because THIS counter bounds the hunt — which is what makes it
+ * load-bearing rather than belt-and-braces.
+ *
+ * It also still does the job the old note credited it with: stopping a monster
+ * resuming a stale hunt minutes later, when engagement has been raised again by
+ * somebody else's fight on the far side of the floor.
  */
 export const PURSUIT_TURNS = 10;
 

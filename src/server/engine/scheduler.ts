@@ -4126,7 +4126,7 @@ function updateEngagement(
 
   if (anyContact(world, actors)) {
     world.turn.engagement = ENGAGEMENT_TURNS;
-  } else if (before > 0 && stillAfflicted(actors, ctx)) {
+  } else if (before > 0 && (stillAfflicted(actors, ctx) || stillHunting(actors))) {
     /**
      * ═══════════════════════════════════════════════════════════════════════
      * IT EXTENDS COMBAT AND CANNOT START IT — `tome/class/Actor.lua:7649`.
@@ -4147,6 +4147,11 @@ function updateEngagement(
      * to avoid and `assertNoCombatInSharedSpace` throws over.
      *
      * `before > 0` is the whole guard, and it is upstream's own line.
+     *
+     * TWO CLAUSES SHELTER BEHIND IT NOW. `stillHunting` was added here rather
+     * than beside `anyContact` for precisely the reason written above, and it
+     * gets the argument for free: whatever cannot start combat cannot start it
+     * in a town either.
      */
     world.turn.engagement = ENGAGEMENT_TURNS;
   } else if (decay && world.turn.engagement > 0) {
@@ -4324,6 +4329,49 @@ function stillAfflicted(actors: readonly EngineActor[], ctx: PumpCtx): boolean {
   for (const actor of actors) {
     if (actor.kind !== ActorKind.Player || !actor.alive) continue;
     if (carrying(actor.id)) return true;
+  }
+  return false;
+}
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * IS ANYTHING STILL HUNTING? THE CLAUSE THAT LET `PURSUIT_TURNS` EXIST.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `ai/npc.ts` ports upstream's `ai/simple.lua:210`: a monster that loses sight
+ * of you walks to the tile it last saw you on and keeps hunting for
+ * `PURSUIT_TURNS` — TEN — before it forgets. That number could never happen.
+ *
+ * Engagement is level-wide and refreshes only on `anyContact`, which requires a
+ * monster to SEE a player. A monster hunting a remembered tile sees nobody by
+ * definition, so the moment the last one loses sight the countdown starts, and
+ * three turns later `actMonster`'s `engagement <= 0` freezes the whole floor —
+ * including one mid-stride with seven pursuit turns left. **The hunt was capped
+ * at three by a mechanism that has nothing to do with hunting**, and the effect
+ * at the table is the thing this exists to stop: break line of sight, count to
+ * three, and everything on the level stands still. Every fight was escapable by
+ * stepping round a corner and waiting.
+ *
+ * ═══ IT EXTENDS COMBAT AND CANNOT START IT ═══
+ * Same shape as `stillAfflicted` above and for the same reason — it sits behind
+ * that branch's `before > 0`. A monster's `lastSeen` is only ever stamped by
+ * `decideNpcAction` on a turn it could see somebody, so this cannot fire in a
+ * realm that was never in combat; the guard makes that structural rather than
+ * incidental, and `assertNoCombatInSharedSpace` is what would notice.
+ *
+ * ═══ AND IT STILL GOES IDLE, WHICH IS NOT OPTIONAL HERE ═══
+ * The fixed point survives because the hunt is BOUNDED and self-clearing:
+ * `forget()` nulls `lastSeen` on arriving at the tile, on failing to route to
+ * it, and at `PURSUIT_TURNS`. So this clause can hold engagement up for at most
+ * ten turns past the last sighting, after which it is false, the ordinary decay
+ * runs, and the pump idles. It is a longer leash, not an open one — and note
+ * that it deliberately does NOT ask about `targetId`, which a monster can hold
+ * while standing in a room it cannot leave.
+ */
+function stillHunting(actors: readonly EngineActor[]): boolean {
+  for (const actor of actors) {
+    if (actor.kind !== ActorKind.Monster || !actor.alive) continue;
+    if (actor.ai.lastSeen !== null) return true;
   }
   return false;
 }
