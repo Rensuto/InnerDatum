@@ -53,6 +53,18 @@ import {
 import type { Talent } from '../engine/talents.ts';
 
 const AP_COST = 4;
+/**
+ * ═══ DIVERGES FROM THE CITED TALENT, AND THE REASON IS NOT RECORDED ═══
+ * Upstream is `cooldown = 10` in ACTIONS, which `tomeCooldownToTurns` converts
+ * to 5 turns. This is 6.
+ *
+ * Flagged rather than changed: a cooldown is a balance number and moving four
+ * of them is a tuning pass, not a transcription. `redaction.ts` is the shape a
+ * deliberate divergence takes here — it states the multiple, gives the reason
+ * (its reach against upstream's melee), and says it is written down precisely so
+ * `tools/talent-costs.mjs` does not report it as silent. This one has no such
+ * paragraph, and the probe has been printing it on every run.
+ */
 const COOLDOWN = 6;
 const REAGENT_COST = 2;
 /**
