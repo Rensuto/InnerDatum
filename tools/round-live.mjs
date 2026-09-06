@@ -172,15 +172,39 @@ console.log(`AP: ${apBefore} -> ${apMid}`);
  * ═══ ZERO CASTS IS NOT A VERDICT, AND THIS PRINTED ONE ═══
  * "CLOSED" was reported for a run in which nothing was ever cast — the same
  * vacuous green a probe gives whenever the thing it measures did not happen.
- * The three outcomes are now distinct, and the middle one is the honest answer
- * when the setup failed rather than the feature.
+ *
+ * ═══ AND NEITHER IS ONE CAST. THAT FIX STOPPED ONE SHORT ═══
+ * A run that landed ONE cast fell through to CLOSED, and observed:
+ *
+ *     casts landed: 1
+ *     game turns advanced: 0
+ *     CLOSED: each cast still cost a whole turn.
+ *
+ * The verdict is contradicted by the line printed directly above it — a cast
+ * that advanced NO turn is the opposite of costing one. The three refusals under
+ * it were all `no_target`, so the chain was never attempted: the setup failed,
+ * exactly as it does at zero, and the count was the only thing telling them
+ * apart.
+ *
+ * THIS IS WORSE THAN A SILENT PROBE. `casts landed: 0` reads as "ignore me";
+ * "CLOSED: each cast still cost a whole turn" reads as a REGRESSION in the
+ * multi-action round (DECISIONS.md D1), and would send somebody hunting a bug
+ * that the same output disproves.
+ *
+ * SO CLOSED NOW REQUIRES THE EVIDENCE ITS SENTENCE CLAIMS: two casts, and a
+ * turn counter that moved for them. Anything less says the setup failed.
  */
+const casts = usedAfter - usedBefore;
+const turns = turnAfter - turnBefore;
 console.log(
-  usedAfter - usedBefore === 0
+  casts === 0
     ? '  INCONCLUSIVE: nothing was cast at all — see the errors below.'
-    : usedAfter - usedBefore >= 2 && turnAfter - turnBefore <= 1
-      ? '  OPEN ROUND: two casts inside one turn.'
-      : '  CLOSED: each cast still cost a whole turn.',
+    : casts === 1
+      ? '  INCONCLUSIVE: only one cast landed, so no chain was ever attempted — ' +
+        'see the errors below.'
+      : turns <= 1
+        ? '  OPEN ROUND: two casts inside one turn.'
+        : '  CLOSED: each cast still cost a whole turn.',
 );
 const errs = frames.filter((f) => f.t === 'error').map((f) => f.message);
 if (errs.length) console.log('errors:', errs.slice(0, 3).join(' | '));
