@@ -148,6 +148,25 @@ for (const p of walk(`${REF}/game`, [])) {
 const wrongLines = [];
 const notInFile = [];
 let judged = 0;
+/**
+ * ════════════════════════════════════════════════════════════════════════════
+ * THE DENOMINATOR. "28 judged" says nothing without "of how many".
+ * ════════════════════════════════════════════════════════════════════════════
+ * This file's header already says to watch the judged COUNT rather than the
+ * verdict, because a drop means a form stopped matching and that reads as clean.
+ * It could not be watched properly: nothing said how many citations into a
+ * `data/talents/` file were passed over, so 28 could have been 28 of 30 or 28 of
+ * 90 and the output looked identical.
+ *
+ * `--unnamed` lists them. It is a LIST AND NOT A FAILURE, because most are
+ * correct: a citation may point at a FORMULA rather than a talent -- five of our
+ * stat passives cite `ghoul.lua:26` for `combatTalentScale(t, 2, 15, 0.75)`, and
+ * naming "Ghoul" there would claim a port that did not happen. What the list is
+ * for is finding the ones that SHOULD carry a name and do not, which is the only
+ * way a citation becomes checkable at all.
+ */
+const unnamed = [];
+const LIST_UNNAMED = process.argv.includes('--unnamed');
 
 for (const file of fs.readdirSync(DIR).filter((f) => f.endsWith('.ts'))) {
   const src = fs.readFileSync(path.join(DIR, file), 'utf8');
@@ -185,7 +204,17 @@ for (const file of fs.readdirSync(DIR).filter((f) => f.endsWith('.ts'))) {
   lines.forEach((line, i) => {
     for (const m of line.matchAll(CITE)) {
       const name = claimedName(m[4]);
-      if (name === null) continue;
+      if (name === null) {
+        // ONLY A TALENTS FILE. A citation into `class/` or `timed_effects/` names
+        // no talent by construction and is not a gap.
+        if (/\/data\/talents\//.test(m[1])) {
+          unnamed.push({
+            at: `${file}:${String(i + 1)}`,
+            cited: `${m[1].split('/').pop()}:${m[2]}`,
+          });
+        }
+        continue;
+      }
       const base = m[1].split('/').pop();
       const candidates = byName.get(base);
       if (candidates === undefined) continue; // check-citations owns missing files
@@ -242,6 +271,15 @@ for (const file of fs.readdirSync(DIR).filter((f) => f.endsWith('.ts'))) {
 
 console.log('\ncitation names');
 console.log(`  ${String(judged)} citation(s) name a talent and were judged`);
+console.log(
+  `  ${String(unnamed.length)} citation(s) into a talents file name none ` +
+    `(run with --unnamed to list them)`,
+);
+if (LIST_UNNAMED) {
+  console.log('\n═══ CITES A TALENTS FILE AND NAMES NO TALENT ═══');
+  console.log('  Not a fault list: a citation may name a FORMULA rather than a talent.');
+  for (const u of unnamed) console.log(`  ${u.at.padEnd(40)} ${u.cited}`);
+}
 
 console.log(`\n═══ CITED LINES ARE NOT THAT TALENT (${String(wrongLines.length)}) ═══`);
 for (const r of wrongLines) {
