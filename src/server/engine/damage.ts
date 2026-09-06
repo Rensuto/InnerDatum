@@ -476,7 +476,22 @@ export function resolveDamage(
     dam = applyArmour(dam, spec.armour, spec.apr ?? 0, spec.hardiness ?? 0);
   }
 
-  // 3. CRIT — Combat.lua:544. AFTER armour. Multiplies what survived.
+  /**
+   * 3. CRIT — Combat.lua:544. AFTER armour. Multiplies what survived.
+   *
+   * ═══ NO `unseen_critical_power`, AND IT IS ABSENT TWICE OVER ═══
+   * Upstream adds a second crit term here (damage_types.lua:111-128): an
+   * attacker the target cannot see crits HARDER, scaled down past three tiles
+   * and reducible by the target's `unseen_crit_defense`. A reader diffing the
+   * projector will find it, so: it is not an omission.
+   *
+   * It is talent-granted upstream and nothing here grants it — the same
+   * "capability with no content" the melee sweep found twice. But it would be
+   * unreachable even if something did, for `combat.ts`'s reason about the
+   * blind-swing clause: the condition is `not target:canSee(src)`, sight is
+   * radius 10 with line of sight, and no status in `MVP_EFFECTS` conceals a
+   * body. Both halves would have to change together.
+   */
   let crit = false;
   if (spec.critChance !== undefined) {
     const rolled = rollCrit(dam, spec.critChance, spec.critPower ?? 1.5, rng, `${label}.crit`);
