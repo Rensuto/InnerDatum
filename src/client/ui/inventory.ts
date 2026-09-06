@@ -1951,6 +1951,32 @@ export function inventoryPanelGeometry(
   const listX = x + DOLL_W + COLUMN_SEP_W;
   const listW = Math.max(0, innerW - DOLL_W - COLUMN_SEP_W);
 
+  /**
+   * ═══ THE OFFSET IS CLAMPED BEFORE ANYTHING IS PLACED, NOT AFTER ═══
+   * It was clamped on the way OUT, next to the scrollbar arithmetic, so a
+   * caller that asked to scroll past the end got a geometry built from the raw
+   * number -- every row above the viewport, nothing placed, an EMPTY LIST. The
+   * caller reads `list.scroll` back and self-corrects on the next frame, which
+   * is exactly what made it survive: one blank frame at the bottom of a long
+   * bag, and a wheel notch that appears to do nothing at the end of the list.
+   *
+   * So the content height is measured from the ROWS first -- the list is a
+   * fixed height per row and needs no placement pass to total it -- and the
+   * offset is clamped to it before a single row is positioned.
+   */
+  const listRowsH = rows.reduce(
+    (sum, row) =>
+      row.kind === InventoryRowKind.Detail ||
+      row.kind === InventoryRowKind.Doll ||
+      row.kind === InventoryRowKind.Tabs
+        ? sum
+        : sum + rowHeight(row),
+    0,
+  );
+  const viewportH = Math.max(0, limit - contentTop);
+  const scrollMax = Math.max(0, listRowsH - viewportH);
+  const scrollAt = Math.max(0, Math.min(scroll, scrollMax));
+
   const placed: PlacedInventoryRow[] = [];
   let cursor = contentTop;
   let listCursor = contentTop;
@@ -2029,7 +2055,7 @@ export function inventoryPanelGeometry(
      * clip would leave an item you cannot see but can still click.
      */
     const h = rowHeight(row);
-    const y = listCursor - scroll;
+    const y = listCursor - scrollAt;
     listCursor += h;
     listContentH += h;
     if (y < contentTop || y + h > limit) {
@@ -2183,8 +2209,8 @@ export function inventoryPanelGeometry(
     w: listW,
     h: Math.max(0, limit - contentTop),
   };
-  const maxScroll = Math.max(0, listContentH - listViewport.h);
-  const used = Math.max(0, Math.min(scroll, maxScroll));
+  const maxScroll = scrollMax;
+  const used = scrollAt;
   const bar =
     maxScroll <= 0
       ? null

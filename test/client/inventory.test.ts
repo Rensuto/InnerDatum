@@ -2441,3 +2441,69 @@ describe('the strip lays its stats out in columns', () => {
     expect(placed.detailHidden ?? 0).toBe(200 - shown);
   });
 });
+
+describe('the bag scrolls, and every item in it is reachable', () => {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE CAP IS SIXTY AND THE LIST IS THE ONLY WAY TO SEE THE TAIL OF IT.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Driven at a real window size rather than a fixture rect, because the whole
+   * question is "does the sixtieth thing you picked up exist on screen".
+   */
+  const full = (n: number) =>
+    Array.from({ length: n }, (_v, i) =>
+      bagged(`item_${String(i)}`, `Thing ${String(i)}`, ItemTier.Common, 'ring'),
+    );
+
+  const bagView = () => view({ inventory: frame({ carried: full(INVENTORY_CAP) }) });
+  const wide = () => {
+    const rect = inventoryPanelRect({ width: 1920, height: 1080, top: 24, bottom: 900 });
+    if (rect === null) throw new Error('unreachable: a 1920 window holds a panel');
+    return rect;
+  };
+  const namesAt = (scroll: number) => {
+    const rect = wide();
+    return inventoryPanelGeometry(rect, inventoryPanelRows(bagView()), scroll)
+      .placed.flatMap((entry) => (entry.row.kind === InventoryRowKind.Cells ? entry.row.cells : []))
+      .map((cell) => (cell.kind === 'item' ? cell.name : '—'));
+  };
+
+  it('offers a scrollbar exactly when the bag overflows', () => {
+    const rect = wide();
+    const many = inventoryPanelGeometry(rect, inventoryPanelRows(bagView()), 0);
+    expect(many.list.maxScroll).toBeGreaterThan(0);
+    expect(many.list.bar).not.toBeNull();
+
+    // AND NONE WHEN IT DOES NOT. A bar that cannot move is a control that lies
+    // about being one -- the same argument `tabsFor` makes for a lone tab.
+    const few = inventoryPanelGeometry(
+      rect,
+      inventoryPanelRows(view({ inventory: frame({ carried: full(3) }) })),
+      0,
+    );
+    expect(few.list.maxScroll).toBe(0);
+    expect(few.list.bar).toBeNull();
+  });
+
+  it('reaches the LAST item in the bag, not just the first screenful', () => {
+    /**
+     * ═══ THE OFFSET USED TO BE CLAMPED AFTER PLACEMENT, AND THIS IS THE BUG ═══
+     * Scrolling past the end built the geometry from the RAW number, so every
+     * row landed above the viewport and the list came back EMPTY. The caller
+     * reads `list.scroll` back and self-corrects on the next frame, which is
+     * what hid it: one blank frame at the bottom of a long bag, and a wheel
+     * notch that appears to do nothing exactly where the player is looking.
+     */
+    const bottom = namesAt(99_999);
+    expect(bottom.length, 'the bottom of the list came back empty').toBeGreaterThan(0);
+    expect(bottom[bottom.length - 1]).toBe(`Thing ${String(INVENTORY_CAP - 1)}`);
+  });
+
+  it('leaves nothing unreachable between the top and the bottom', () => {
+    // The two extremes must OVERLAP, or there is a band of items no scroll
+    // position shows -- which a per-position test would never notice.
+    const seen = new Set([...namesAt(0), ...namesAt(99_999)]);
+    expect(seen.size).toBe(INVENTORY_CAP);
+  });
+});
