@@ -1,6 +1,17 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Dalton Barraclough
-// NUMBERS: t-engine4 game/modules/tome/data/talents/engine/derived.ts:162 -- combat_generic_power (Combat.lua:1693, 1748, 2060).
+// NUMBERS: t-engine4 game/modules/tome/class/interface/Combat.lua:1693, 1748, 2060
+//          -- `combat_generic_power`, added to all three power reads.
+//          Ours is `CombatMods.genericPower`, spent by `derived.ts`.
+//
+// THIS LINE USED TO READ `t-engine4 game/modules/tome/data/talents/engine/
+// derived.ts:162`, which is three separate wrongs in one citation: a
+// t-engine4 path prefixed onto OUR OWN file, under a `data/talents/`
+// directory neither of them lives in, at a line that has since drifted onto
+// an unrelated `sight` docblock. `check:citations` could not see any of it --
+// its pattern matches `.lua` basenames only, so a citation naming a `.ts`
+// file is invisible to the gate entirely. Found by `tools/talent-costs.mjs`,
+// which parses headers differently and said `cited file missing`.
 // T-Engine4 (C) 2009-2018 Nicolas Casalini "DarkGod" -- https://te4.org/license
 
 /**

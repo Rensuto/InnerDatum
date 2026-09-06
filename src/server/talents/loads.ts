@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Dalton Barraclough
-// SHAPE:   t-engine4 game/modules/tome/data/talents/spell/explosives.lua:44-51
+// SHAPE:   t-engine4 game/modules/tome/data/talents/spells/explosives.lua:44-51
+//          (`spells/`, not `spell/` -- the directory is plural, and the
+//          singular sat here unnoticed because `check:citations` matches on
+//          the BASENAME: `explosives.lua` resolves wherever it really lives.)
 //          -- `computeDamage` is a five-branch if-chain on WHICH INFUSION IS
 //          CURRENTLY UP. `Talent.sustainSlot`'s own docblock already cites this
 //          as the shape a mode-stance is for; this is that citation cashed in.

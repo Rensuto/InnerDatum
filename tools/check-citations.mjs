@@ -129,6 +129,7 @@ function lineCount(p) {
 // ---------------------------------------------------------------------------
 
 const unknown = [];
+const misplaced = [];
 const outOfRange = [];
 const ambiguous = [];
 let checked = 0;
@@ -170,6 +171,33 @@ for (const file of walk('src', (n) => n.endsWith('.ts'), [])) {
         ? (/([A-Za-z0-9_/-]+)\/$/.exec(before)?.[1] ?? '')
         : '';
       const narrowed = qualifier === '' ? paths : paths.filter((p) => p.includes(`${qualifier}/`));
+      /**
+       * ════════════════════════════════════════════════════════════════════════
+       * A PATH THAT MATCHES NOTHING IS WRONG, NOT MERELY UNFAMILIAR.
+       * ════════════════════════════════════════════════════════════════════════
+       * The note above says an unmatched qualifier falls back to the laxer bar
+       * "rather than reporting a citation as out of range because its path is
+       * unfamiliar". That is right about RANGE and wrong about the PATH, and it
+       * conflated two different things:
+       *
+       *   a PARTIAL path -- `tome/class/` -- still matches by `includes`, and
+       *     must keep working, because most citations here are written that way.
+       *   a WRONG path -- `data/talents/spell/explosives.lua` when the directory
+       *     is `spells/` -- matches nothing, and was silently accepted.
+       *
+       * THAT EXACT ONE SHIPPED. `talents/loads.ts` cited `spell/explosives.lua`
+       * for weeks; this file said all 2177 citations resolved, because `CITE`
+       * matches the BASENAME and `explosives.lua` does exist -- somewhere else.
+       * `tools/talent-costs.mjs` parses headers differently and had been printing
+       * `cited file missing` about it the whole time, unread.
+       *
+       * SO A QUALIFIER THAT NARROWS TO ZERO IS ITS OWN FAULT CLASS. It cannot
+       * false-positive on a partial path (those match), and it says the one thing
+       * the reader needs: the file is real, and it is not where you said.
+       */
+      if (qualifier !== '' && narrowed.length === 0) {
+        misplaced.push({ at, name, qualifier, have: paths });
+      }
       const candidates = narrowed.length > 0 ? narrowed : paths;
       if (candidates.every((p) => to > lineCount(p))) {
         outOfRange.push({ at, name, from, to, have: candidates.map(lineCount) });
@@ -214,6 +242,19 @@ if (unknown.length === 0) {
   failed = true;
   console.log(`  FAIL  ${String(unknown.length)} citation(s) name a file that is not there`);
   for (const u of unknown.slice(0, 12)) console.log(`          ${u.at}  ${u.name}`);
+}
+
+if (misplaced.length === 0) {
+  console.log('  ok    every qualified citation names the directory the file is in');
+} else {
+  failed = true;
+  console.log(
+    `  FAIL  ${String(misplaced.length)} citation(s) name a directory that file is not in`,
+  );
+  for (const m of misplaced.slice(0, 12)) {
+    console.log(`          ${m.at}  said ${m.qualifier}/${m.name}`);
+    console.log(`                  it is at ${m.have.join(' , ')}`);
+  }
 }
 
 if (outOfRange.length === 0) {
