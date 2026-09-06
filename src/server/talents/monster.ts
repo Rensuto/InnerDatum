@@ -65,6 +65,7 @@ import { clearTheAltar } from './clear_the_altar.ts';
 import { efface } from './efface.ts';
 import { rush } from './rush.ts';
 import { uncorroborated } from './uncorroborated.ts';
+import { bearDown } from './bear_down.ts';
 import { graspingHold } from './grasping_hold.ts';
 import type { Talent } from '../engine/talents.ts';
 
@@ -100,6 +101,7 @@ export const MONSTER_CURVE = 0.75;
  * change to the tool at all.
  */
 export const MONSTER_TALENTS: readonly Talent[] = Object.freeze([
+  bearDown,
   graspingHold,
   breachingBlow,
   efface,

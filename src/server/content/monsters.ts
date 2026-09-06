@@ -1445,7 +1445,27 @@ export const INDEX_HUSK_ELITE: MonsterTemplate = Object.freeze({
    *
    * `MeleeChaser` at `attackRange: 1` against a 1.5-reach talent — it arrives.
    */
-  talents: ['talent:breaching_blow'],
+  /**
+   * ═══════════════════════════════════════════════════════════════════════
+   * TWO, WHICH IS WHAT THE GHOUL CARRIES.
+   * ═══════════════════════════════════════════════════════════════════════
+   * `ghoul.lua:52-58` gives it three: `T_STUN`, `T_BITE_POISON` and
+   * `T_ROTTING_DISEASE`. There is no poison and no disease in this game, so
+   * the stun is the whole of what there was to take -- and it is
+   * `talents/bear_down.ts`.
+   *
+   * A TALENT AND NOT AN `onHit` RIDER, which is the decision that keeps this
+   * fair. A rider fires on every landed blow and a melee creature adjacent to
+   * you lands one most turns, so a stunning rider on a bruiser is exactly the
+   * failure INDEX_CAIRN's own note describes -- stunned, hit while stunned,
+   * stunned again. On a three-turn cooldown it fires about once per
+   * engagement, which is what upstream's `cooldown = 6` buys.
+   *
+   * BOTH REACH. `MeleeChaser` at `attackRange: 1` against two 1.5-reach
+   * talents, which is the arithmetic the wraith failed and this creature
+   * passes.
+   */
+  talents: ['talent:breaching_blow', 'talent:bear_down'],
   // Grows into what it already leads with. See `autoStats`.
   autoStats: ['str', 'con'],
   id: 'index_husk_elite',

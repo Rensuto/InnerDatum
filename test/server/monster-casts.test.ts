@@ -198,6 +198,41 @@ describe('every armed creature casts, in a real fight', () => {
   );
 
   /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * A CREATURE WITH TWO TALENTS MUST BE SEEN TO USE BOTH.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * The assertion above is `casts.length > 0`, which a creature satisfies by
+   * using ONE of its talents forever. That was enough while every armed
+   * creature carried exactly one — and it stopped being enough the moment the
+   * husk elite carried two, because a second talent that never fires is
+   * precisely the wraith's Grasping Hold again: every part works, the AI is
+   * offered it, something refuses it every turn, and nothing reports a problem.
+   *
+   * Iterating the creatures with MORE THAN ONE rather than naming the elite, so
+   * the next creature to be armed twice is covered on the run it lands.
+   */
+  const MANY = ARMED.filter((template) => (template.talents ?? []).length > 1);
+
+  it.each(MANY.map((template) => [template.displayName, template] as const))(
+    '%s uses every talent it carries',
+    (_name, template) => {
+      // LONGER THAN THE SHARED BUDGET. Two talents on cooldowns have to take
+      // turns, so a window sized for one is not evidence about the second.
+      const steps = everyStep(standoff(`both-${template.id}`, template), TURNS * 3);
+      const used = new Set(steps.flatMap((step) => (step.t === 'talent' ? [step.talentId] : [])));
+      for (const id of template.talents ?? []) {
+        expect(
+          used.has(id),
+          `${template.displayName} never used ${id}. A talent it cannot reach is ` +
+            `indistinguishable from one it chose not to use — check the range against ` +
+            `this creature's profile, as the wraith's Grasping Hold taught.`,
+        ).toBe(true);
+      }
+    },
+  );
+
+  /**
    * A CAST THAT DEALS DAMAGE IS FOLLOWED BY ITS DAMAGE.
    *
    * `sweepStepFor` returned a bare `hold` for a monster's talent until this

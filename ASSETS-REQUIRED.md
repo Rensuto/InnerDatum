@@ -255,3 +255,26 @@ is the thing that was rejected.
 
 `tools/gen_ui_assets.py` generates both stand-ins — `img(72, 72)` for the frames
 and `img(40, 40)` for the plates — so the placeholder pass changes there first.
+
+---
+
+## `icon_monster_bear_down` — one talent icon, the only thing outstanding
+
+`npm run art:needs` reports exactly one missing id and this is it. The talent
+shipped in the same commit; the icon did not, so the report is the record.
+
+**What it is:** the Index Husk Elite's stun, ported from `npcs.lua:191-217`
+(the ghoul's `T_STUN`). A bruiser bearing its weight down on something.
+
+**Cut it at 64x64**, matching its six siblings — `icon_monster_breaching_blow`,
+`_clear_the_altar`, `_efface`, `_grasping_hold`, `_rush`, `_uncorroborated`,
+all 64x64 and all derived.
+
+**It is the lowest-priority icon in the game, and that is worth writing down so
+nobody hurries it.** A monster talent has `classId: null` and appears in no
+loadout and no tree, so this icon reaches no player screen today — the talent
+panel and the hotbar draw what a PLAYER can learn. It exists because every
+talent module declares an `iconId` and the manifest convention is that a
+declared id has a file.
+
+**Acceptance test:** `npm run art:needs` reports `missing art: 0`.
