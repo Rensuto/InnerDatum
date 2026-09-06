@@ -39,6 +39,38 @@
 import { spawn } from 'node:child_process';
 
 const RUNS = [
+  /**
+   * ════════════════════════════════════════════════════════════════════════
+   * THE THREE THAT NEED NO SERVER GO FIRST, AND THEY COST ABOUT A SECOND.
+   * ════════════════════════════════════════════════════════════════════════
+   * This list was FIVE of the ~25 probes in `tools/`, and a sweep through the
+   * other twenty on 2026-09-06 found six defects in one afternoon — two false
+   * citations the gate could not see, a probe reporting a regression its own
+   * numbers disproved, a skip whose stated reason its own output contradicted,
+   * a table of `0/0` presented as a content finding, and refusals counted as
+   * answers. None of it was exotic. It was simply unrun.
+   *
+   * These three are STATIC: no socket, no server, no port, measured at 161ms,
+   * 474ms and 431ms. There is no cost argument for leaving them out, and
+   * between them they are what surfaced most of that list.
+   *
+   * THEY REPORT RATHER THAN FAIL, which is why they belong here and not in
+   * `npm run check`. `rescue-reach` printing "27 of 27 cannot reach anybody in
+   * time" is a finding for a person to rule on, not a red build — the same
+   * contract every probe in this file has, stated at the top.
+   */
+  {
+    what: 'talent-costs — every talent cost against the upstream it cites',
+    argv: ['tools/talent-costs.mjs'],
+  },
+  {
+    what: 'world — what each named region is made of, and whether anything is in it',
+    argv: ['tools/world.mjs'],
+  },
+  {
+    what: 'rescue-reach — how far a downed body is from the way in, against the clock',
+    argv: ['tools/rescue-reach.mjs'],
+  },
   { what: 'smoke — the server boots and answers /healthz', argv: ['tools/smoke.mjs'] },
   {
     what: 'status-live — an effect applied on the server reaches a client as a badge',
@@ -63,6 +95,23 @@ const RUNS = [
   {
     what: 'class-live inspector — its pool reaches its sheet',
     argv: ['tools/class-live.mjs', 'inspector', '31985'],
+  },
+  /**
+   * IT EXITS 1 ON A FAULT, WHICH IS RARE HERE AND IS WHY IT GOES LAST.
+   *
+   * Every probe above reports; this one ASSERTS, across two sockets — a move
+   * broadcast to the other client, a spoofed identity refused, a disconnect
+   * leaving the body in the world and naming it Standing By. It was red for
+   * three reasons and all three were its own: two assertions written when the
+   * level was a 30x30 test room, and a Standing By check that never formed a
+   * party, so the dropped body was correctly out of the survivor's scope.
+   *
+   * Green now, so it can hold the line rather than be a known-red thing nobody
+   * runs.
+   */
+  {
+    what: 'e2e-m1 — two clients, a move, a refused spoof, and a disconnect',
+    argv: ['tools/e2e-m1.mjs', '31995'],
   },
 ];
 

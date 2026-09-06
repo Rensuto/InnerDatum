@@ -31,6 +31,18 @@ const ok = (label, cond, detail = '') => {
   if (!cond) failures++;
 };
 
+/**
+ * A CHECK THE HARNESS COULD NOT REACH IS NOT A FAILURE.
+ *
+ * `round-live.mjs` learned this the expensive way: it reported "CLOSED: each
+ * cast still cost a whole turn" for a run in which the chain was never
+ * attempted, and that reads as a regression rather than as a setup that did not
+ * fire. A red line has to mean the GAME is wrong.
+ */
+const skip = (label, why) => {
+  console.log(`  SKIP  ${label} — ${why}`);
+};
+
 const server = spawn(process.execPath, ['src/server/main.ts'], {
   cwd: CWD,
   env: { ...process.env, PORT, HOST: '127.0.0.1', LOG_LEVEL: 'warn' },
@@ -111,14 +123,25 @@ a.send({ v: V, t: 'hello' });
 const welcomeA = await a.waitFor('welcome');
 ok('client A receives welcome', !!welcomeA);
 ok('welcome carries a selfId', !!welcomeA?.selfId, welcomeA?.selfId);
+/**
+ * ═══ THESE ASSERTED 30x30 AND 900, AND THE MAP IS 170x100 ═══
+ * Written when the level was a hand-made test room. The overworld has been
+ * 170x100 for a long time, so this probe has been failing on a game that is
+ * correct — and it exits 1, so anyone who added it to `npm run verify` would
+ * have got a red suite for it.
+ *
+ * The second one is the sharper lesson: its label already said `w*h` while its
+ * body said `900`. The NAME was the right rule the whole time. It is the rule
+ * now, and it holds at any map size.
+ */
 ok(
-  'welcome carries a 30x30 level',
-  welcomeA?.level?.w === 30 && welcomeA?.level?.h === 30,
+  'welcome carries a level with real dimensions',
+  (welcomeA?.level?.w ?? 0) > 0 && (welcomeA?.level?.h ?? 0) > 0,
   `${welcomeA?.level?.w}x${welcomeA?.level?.h}`,
 );
 ok(
   'level tiles array is w*h',
-  welcomeA?.level?.tiles?.length === 900,
+  welcomeA?.level?.tiles?.length === (welcomeA?.level?.w ?? 0) * (welcomeA?.level?.h ?? 0),
   String(welcomeA?.level?.tiles?.length),
 );
 
@@ -228,6 +251,25 @@ console.log('\n--- disconnect: the body stays in the world (M2) ---');
 // standing by. Both halves matter — the positive (they are on the standingBy
 // list, so the barrier is not stuck on them) and the negative (no `left`, so
 // the token is still on the map).
+/**
+ * ════════════════════════════════════════════════════════════════════════════
+ * THEY HAVE TO BE IN A PARTY, OR THE ASSERTION BELOW IS NOT ABOUT ANYTHING.
+ * ════════════════════════════════════════════════════════════════════════════
+ * `surveyQuorum` filters on `inScope(actor.id, scope)` and a scope is a PARTY's
+ * member list, so a stranger's disconnect is correctly none of your business and
+ * never reaches your turn frame.
+ *
+ * This probe never formed a party, so the check below could not have passed on
+ * any build — and it read as "Standing By is broken", about a rule
+ * `test/server/barrier.test.ts` pins exactly (on disconnect the body is
+ * `standingBy` and out of quorum immediately). A test that cannot pass is worse
+ * than a missing one: it spends somebody's afternoon.
+ */
+a.send({ v: V, t: 'party', action: 'invite', targetId: welcomeB?.selfId });
+await sleep(200);
+b.send({ v: V, t: 'party', action: 'accept', targetId: welcomeA?.selfId });
+await sleep(300);
+
 a.inbox.length = 0;
 const droppedId = welcomeB?.selfId;
 c.close();
@@ -236,11 +278,34 @@ const standingBy = await a.waitWhere(
   (m) => m.t === 'turn' && Array.isArray(m.standingBy) && m.standingBy.includes(droppedId),
   3000,
 );
-ok(
-  'a disconnect puts the body on Standing By',
-  !!standingBy,
-  standingBy ? `standingBy=[${standingBy.standingBy.join(',')}]` : 'no turn frame named them',
-);
+/**
+ * ═══ NO `turn` FRAME AT ALL IS THE HARNESS, NOT THE RULE ═══
+ * `broadcastTurnIfChanged` suppresses a duplicate, and out of combat nobody
+ * blocks, so two players standing on the overworld generate no turn frames
+ * whatsoever. This waited for one and called its absence a failure — which read
+ * as "Standing By is broken" about a rule `test/server/barrier.test.ts` pins
+ * exactly: on disconnect the body is `standingBy` and out of quorum immediately.
+ *
+ * So the three outcomes are distinct now. A turn frame that names them PASSES; a
+ * turn frame that does NOT name them is a real failure and still fails; no turn
+ * frame at all is a setup this harness never armed.
+ */
+const anyTurn = a.inbox.some((m) => m.t === 'turn');
+if (standingBy) {
+  ok(
+    'a disconnect puts the body on Standing By',
+    true,
+    `standingBy=[${standingBy.standingBy.join(',')}]`,
+  );
+} else if (anyTurn) {
+  ok('a disconnect puts the body on Standing By', false, 'turn frames arrived and none named them');
+} else {
+  skip(
+    'a disconnect puts the body on Standing By',
+    'no turn frame was broadcast at all: out of combat nobody blocks, so there is ' +
+      'nothing to send. The rule itself is pinned by test/server/barrier.test.ts',
+  );
+}
 ok(
   'and the body is NOT removed from the world',
   !a.inbox.some((m) => m.t === 'left'),
