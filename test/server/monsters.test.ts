@@ -2,11 +2,12 @@ import { describe, expect, it } from 'vitest';
 
 import { BLEED_POWER, EffectId, createMvpEffectState } from '../../src/server/content/effects.ts';
 import { combatMindpower, combatPhysicalpower } from '../../src/server/engine/derived.ts';
-import { setEffect } from '../../src/server/engine/effects.ts';
+import { canBe, setEffect } from '../../src/server/engine/effects.ts';
 
 import { decideNpcAction } from '../../src/server/ai/npc.ts';
 import { ALCHEMIST, INSPECTOR, WATCHMAN } from '../../src/server/content/classes.ts';
 import {
+  INDEX_CAIRN,
   INDEX_HUSK,
   INDEX_EIDOLON,
   INDEX_HUSK_ELITE,
@@ -2078,5 +2079,52 @@ describe('the wire carries what the ring needs', () => {
     expect({ proj: wraith.projSpeed, talent: wraith.talentIn }).toEqual({ proj: 2, talent: 2 });
     expect(Object.keys(wraith.ai)).not.toContain('projSpeed');
     expect(Object.keys(wraith.ai)).not.toContain('talentIn');
+  });
+});
+
+describe('a marker stone cannot be made to bleed', () => {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE FIRST MONSTER IN THE ROSTER TO CARRY AN IMMUNITY.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `crystal.lua:41-49` gives every crystal six `*_immune` lines. We have
+   * statuses for two of them, and the cairn is the right creature to start with
+   * because its whole design is that you often cannot reach it -- so a player
+   * who answers the far bank with a Bleed and watches it do nothing has learned
+   * the actual lesson: bring the damage, not the debuff.
+   *
+   * DRIVEN THROUGH `canBe`, not by reading the template back. The template
+   * carrying a number proves nothing; what matters is that the field reaches
+   * `immunityAgainst`, which reads the composed SHEET rather than the effect
+   * state, and that is the join this test exists for.
+   */
+  const cairn = () => {
+    const actor = createMonsterActor('cairn-1', monsterInit(INDEX_CAIRN, { x: 1, y: 1 }));
+    return actor as unknown as Parameters<typeof canBe>[1];
+  };
+
+  it('refuses Bleeding outright', () => {
+    const state = createMvpEffectState();
+    const bleeding = state.defs.get(EffectId.Bleeding);
+    if (bleeding === undefined) throw new Error('unreachable: Bleeding is in MVP_EFFECTS');
+    expect(canBe(state, cairn(), bleeding, createRng('cairn.bleed')).can).toBe(false);
+  });
+
+  it('refuses Confusion, having nothing to confuse', () => {
+    const state = createMvpEffectState();
+    const confused = state.defs.get(EffectId.Confused);
+    if (confused === undefined) throw new Error('unreachable: Confused is in MVP_EFFECTS');
+    expect(canBe(state, cairn(), confused, createRng('cairn.confuse')).can).toBe(false);
+  });
+
+  it('can still be STUNNED, which upstream also allows', () => {
+    // The crystal's list does not include stun, and Concussion Flask is one of
+    // the two answers a party has to something it cannot walk to. Taking that
+    // away would make the fight unsolvable rather than harder.
+    const state = createMvpEffectState();
+    const stunned = state.defs.get(EffectId.Stunned);
+    if (stunned === undefined) throw new Error('unreachable: Stunned is in MVP_EFFECTS');
+    expect(canBe(state, cairn(), stunned, createRng('cairn.stun')).can).toBe(true);
   });
 });

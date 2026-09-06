@@ -1850,6 +1850,30 @@ export const INDEX_CAIRN: MonsterTemplate = Object.freeze({
       apr: 6,
       damMod: { mag: 0.8 },
     },
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * YOU CANNOT MAKE A PILE OF CITATIONS BLEED, AND IT HAS NO MIND TO ADDLE.
+     * ═══════════════════════════════════════════════════════════════════════
+     * `crystal.lua:41-49` gives every crystal `cut_immune`, `confusion_immune`,
+     * `blind_immune`, `fear_immune`, `poison_immune` and `disease_immune` — six
+     * lines, of which we have statuses for two. Ported as the two we can spend:
+     * a marker stone does not open a wound, and it has nothing to confuse.
+     *
+     * THE FIRST MONSTER IN THE ROSTER TO CARRY ANY IMMUNITY, and it is the
+     * right one to start with, because its whole design is that you often
+     * cannot reach it. A player who answers the far bank with a Bleed and
+     * watches it do nothing has learned the actual lesson: bring the damage,
+     * not the debuff.
+     *
+     * NOT `stun`, deliberately, and upstream agrees — the crystal's list does
+     * not include it. Concussion Flask is one of the two answers a party has to
+     * something it cannot walk to, and taking that away would make the fight
+     * unsolvable rather than harder.
+     *
+     * 100 IS TOTAL. `canBe` reads sheet immunities additively with the effect
+     * state, so anything at or above a hundred refuses outright.
+     */
+    immunities: { cut: 100, bleed: 100, confusion: 100 },
     profile: {
       resists: {
         [DamageType.Darkness]: 50,
