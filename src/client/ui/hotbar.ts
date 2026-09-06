@@ -1667,17 +1667,28 @@ export function hotbarTipAt(
      * does. The sentence was already on the wire and already rendered against
      * this body's own Constitution; the bag's card next door was reading it.
      *
-     * The stats come last, under the prose, in the order and the `label  value`
-     * shape `inventoryTipAt` uses — two cards about one item laid out two ways
-     * would read as two different features.
+     * ═══ STATS FIRST, PROSE LAST — AND THIS SAID SO WHILE DOING THE REVERSE ═══
+     * The paragraph here read *"the stats come last, under the prose, in the
+     * order ... `inventoryTipAt` uses — two cards about one item laid out two
+     * ways would read as two different features"*, and then laid them out the
+     * other way. `inventoryTipAt` puts STATS FIRST and cites why:
+     * `Object.lua:2027-2028` merges `getUseDesc` at the very END of
+     * `getTextualDesc`, after the wielder block. That card was corrected; this
+     * one kept the old order under a comment claiming it matched.
+     *
+     * So the two cards agree now, and they agree with upstream. On the only item
+     * that has both — the Draught of Mending — a sentence no longer pushes the
+     * numbers down the card, on the surface a player reads while deciding
+     * whether to drink it.
      */
     // THE SAME COLUMNS THE ITEM CARD USES -- one helper, so a coat hovered on
     // the bar and the same coat hovered in the bag cannot lay out differently.
     const stats = cardStatLines(slot.rows ?? []);
+    const prose = slot.desc === undefined || slot.desc === '' ? [] : [slot.desc];
     return {
       title: slot.name,
       meta: itemActionWord(slot.action),
-      lines: [...(slot.desc === undefined || slot.desc === '' ? [] : [slot.desc]), ...stats],
+      lines: [...stats, ...prose],
     };
   }
 

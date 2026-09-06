@@ -1,3 +1,4 @@
+import { cardStatLines } from '../../src/client/ui/panel.ts';
 /// <reference lib="dom" />
 
 import { describe, expect, it } from 'vitest';
@@ -181,7 +182,8 @@ function view(over: Partial<HotbarView> = {}): HotbarView {
 function itemView(itemId: string): ItemView {
   // `compare: []` — an empty list is the honest answer for a fixture with no
   // body behind it. It no longer means "a bar slot cannot show rows": it can,
-  // and `hotbarTipAt` draws them under the prose. The rows a slot shows are
+  // and `hotbarTipAt` draws them ABOVE the prose (it drew them under it once,
+  // which is the bug the ordering test below pins). The rows a slot shows are
   // joined in main.ts out of the bag the binding names, so this fixture — which
   // has no bag — has nothing to join and says so.
   return { itemId, name: itemId, icon: itemId, tier: 'common', compare: [] };
@@ -1216,5 +1218,65 @@ describe('a consumable on the bar is drunk, not worn', () => {
     const gone = withDraught(ItemSlotAction.Gone);
     expect(isSlotDisabled(live.slots[0] as HotbarSlot)).toBe(false);
     expect(isSlotDisabled(gone.slots[0] as HotbarSlot)).toBe(true);
+  });
+});
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * STATS FIRST, PROSE LAST — `Object.lua:2027-2028`.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Upstream merges `getUseDesc` at the very END of `getTextualDesc`, after the
+ * wielder block. `inventoryTipAt` was corrected to that order and cites it; this
+ * card kept the old one under a comment claiming it MATCHED the bag's — *"the
+ * stats come last, under the prose, in the order `inventoryTipAt` uses"* — while
+ * doing the reverse.
+ *
+ * It matters on the one item that has both. The Draught of Mending's sentence
+ * pushed its numbers down the card, on the surface a player is looking at while
+ * deciding whether to drink it — and the action bar is the surface the report
+ * that started this work actually named.
+ */
+describe('an item card puts its numbers above its sentence', () => {
+  const W = 640;
+  const H = 320;
+  const ROWS = [
+    { label: 'Armour', value: '9' },
+    { label: 'Defence', value: '21' },
+  ];
+  const PROSE = 'Restores 40 hit points.';
+
+  function itemTip(over: Partial<HotbarSlot> = {}): readonly string[] {
+    const slots = barSlots();
+    slots[0] = itemSlot(ItemSlotAction.Use, {
+      itemId: 'item_draught_mending',
+      name: 'Draught of Mending',
+      icon: 'item_draught_mending',
+      desc: PROSE,
+      rows: ROWS,
+      ...over,
+    });
+    const view: HotbarView = { slots, hovered: -1, armed: -1 };
+    const rect = slotRect(0, slots.length, W, H);
+    return hotbarTipAt(view, rect.x + 2, rect.y + 2, W, H)?.lines ?? [];
+  }
+
+  it('draws every stat before the prose line', () => {
+    const lines = itemTip();
+    const prose = lines.indexOf(PROSE);
+    expect(prose, 'the sentence is missing from the card').toBeGreaterThan(-1);
+    // EVERY row, not just the first: an ordering bug that put one stat above the
+    // prose and the rest below would pass a "first line is a stat" check.
+    for (const row of ROWS) {
+      const at = lines.findIndex((l) => l.startsWith(row.label));
+      expect(at, `${row.label} is missing`).toBeGreaterThan(-1);
+      expect(at, `${row.label} fell below the prose`).toBeLessThan(prose);
+    }
+  });
+
+  /** A coat has numbers and no sentence; a draught with no rows is still legal. */
+  it('is happy with either half missing', () => {
+    expect(itemTip({ desc: '' })).toEqual(cardStatLines(ROWS));
+    expect(itemTip({ rows: [] })).toEqual([PROSE]);
   });
 });
