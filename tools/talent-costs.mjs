@@ -8,10 +8,14 @@
  * opens the cited range in `reference/t-engine4`, and compares the resource cost
  * it finds there with the one we charge.
  *
- * ═══ WHAT THE FIRST RUN FOUND, AND WHY IT IS ONE FINDING RATHER THAN FIVE ═══
- * Five ported talents charge nothing where upstream charges, and every one of
- * them belongs to the two classes that `tools/class-live.mjs` reports cannot
- * spend their resource at level 1:
+ * ═══ WHAT THE FIRST RUN FOUND — AND IT WAS FIXED, SO THIS IS HISTORY ═══
+ * FIVE PORTED TALENTS CHARGED NOTHING where upstream charged. All five carry
+ * their price now: the run above prints them under BOTH CHARGE at 8/8, 12/12,
+ * 15/15 and 30/30, and `shin_crack` grew the dated ruling that argues
+ * transcribing upstream 1:1. The list is kept because it is the reason this file
+ * exists and the shape to watch for again — not because it is still true. Every
+ * one of them belonged to the two classes `tools/class-live.mjs` reported could
+ * not spend their resource at level 1:
  *
  *     shin_crack       Watchman    Crippling Shot        stamina 15  ->  0
  *     truncheon_sweep  Watchman    Death Dance           stamina 30  ->  0
@@ -108,8 +112,56 @@ for (const name of fs.readdirSync(DIR).filter((f) => f.endsWith('.ts'))) {
     }
   }
 
-  // ── the citation ────────────────────────────────────────────────────────
-  const cite = /t-engine4 (game\/modules\/tome\/data\/talents\/[^\s:]+):(\d+)(?:-(\d+))?/.exec(src);
+  /**
+   * ══════════════════════════════════════════════════════════════════════════
+   * A COST QUESTION GOES TO THE `NUMBERS:` CITATION, NEVER TO `SHAPE:`.
+   * ═══════════════════════════════════════════════════════════════════════════
+   * This took the FIRST t-engine4 talents citation anywhere in the file, from
+   * either header. The two do not mean the same thing: `NUMBERS:` says where a
+   * figure came from, `SHAPE:` says what the talent BEHAVES like. Asking a shape
+   * citation for a price is asking the wrong file.
+   *
+   * It reported four talents under "no cost found in the cited window", and
+   * three of them -- `lockdown`, `iron_curtain`, `mend_wounds` -- carry
+   * `NUMBERS: Outer Index content/skills/*.json` and cite t-engine4 only for
+   * SHAPE. Their prices were never meant to come from ToME, so "no cost found"
+   * was a correct answer to a question nobody asked, printed as a fault.
+   *
+   * So the NUMBERS header decides. A talent whose numbers come from somewhere
+   * else is reported as PROVENANCE, in its own bucket, rather than as a gap.
+   */
+  const numbersBlock = /^\/\/ NUMBERS:([\s\S]*?)(?=^\/\/ [A-Z])/m.exec(src);
+  /**
+   * IT MUST NAME A SOURCE, not merely fail to be a path. The first cut asked
+   * only "does NUMBERS mention t-engine4", which swept up `bear_down` -- whose
+   * NUMBERS is PROSE about the SHAPE citation's own line 207 ("the damage band
+   * is upstream's `combatTalentWeaponDamage(t, 0.5, 1)` at :207") and which is
+   * therefore still comparable. It lost a real row: upstream charges stamina 8
+   * and a monster here pays none.
+   *
+   * So the test is a named provenance -- `authored.`, an Outer Index JSON, or
+   * game-design.md -- and anything else falls through to the file-wide citation
+   * exactly as before.
+   */
+  const numbersElsewhere =
+    numbersBlock !== null && /^\s*(authored|Outer Index|game-design)/i.test(numbersBlock[1] ?? '');
+  if (numbersElsewhere) {
+    const from = (/NUMBERS:\s*(\S[^\n]*)/.exec(src)?.[1] ?? 'elsewhere').trim();
+    rows.push({ name, ours, upstream: null, pool: null, note: `numbers from ${from}` });
+    continue;
+  }
+  /**
+   * NUMBERS FIRST, THEN THE FILE. Preferring the NUMBERS citation is the point;
+   * REQUIRING one would be a second bug, because a header may put its figures in
+   * prose against the SHAPE citation's own lines — `bear_down`'s NUMBERS is
+   * "the damage band is upstream's `combatTalentWeaponDamage(t, 0.5, 1)` at
+   * :207", which names a line and not a path. Falling back keeps that row
+   * comparable instead of reporting it as uncited.
+   */
+  const TALENT_CITE = /t-engine4 (game\/modules\/tome\/data\/talents\/[^\s:]+):(\d+)(?:-(\d+))?/;
+  const cite =
+    (numbersBlock === null ? null : TALENT_CITE.exec(numbersBlock[1] ?? '')) ??
+    TALENT_CITE.exec(src);
   if (cite === null) {
     rows.push({ name, ours, upstream: null, pool: null, note: 'no talent citation' });
     continue;

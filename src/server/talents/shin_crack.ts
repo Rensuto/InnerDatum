@@ -94,7 +94,7 @@ const AP_COST = 3;
  * The RESOLVE cost directly above carries a three-measurement ruling for
  * transcribing upstream 1:1; the cooldown beside it carries nothing at all.
  *
- * Flagged rather than changed: a cooldown is a balance number and moving four
+ * Flagged rather than changed: a cooldown is a balance number and moving five
  * of them is a tuning pass, not a transcription. `redaction.ts` is the shape a
  * deliberate divergence takes here — it states the multiple, gives the reason
  * (its reach against upstream's melee), and says it is written down precisely so

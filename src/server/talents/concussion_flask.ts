@@ -58,7 +58,7 @@ const AP_COST = 4;
  * Upstream is `cooldown = 10` in ACTIONS, which `tomeCooldownToTurns` converts
  * to 5 turns. This is 6.
  *
- * Flagged rather than changed: a cooldown is a balance number and moving four
+ * Flagged rather than changed: a cooldown is a balance number and moving five
  * of them is a tuning pass, not a transcription. `redaction.ts` is the shape a
  * deliberate divergence takes here — it states the multiple, gives the reason
  * (its reach against upstream's melee), and says it is written down precisely so

@@ -83,7 +83,7 @@ const AP_COST = 4;
  * damage". The cooldown is the one it did not take: 4 is neither upstream's 10
  * nor the converted 5.
  *
- * Flagged rather than changed: a cooldown is a balance number and moving four
+ * Flagged rather than changed: a cooldown is a balance number and moving five
  * of them is a tuning pass, not a transcription. `redaction.ts` is the shape a
  * deliberate divergence takes here — it states the multiple, gives the reason
  * (its reach against upstream's melee), and says it is written down precisely so
