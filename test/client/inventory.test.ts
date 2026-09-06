@@ -2092,8 +2092,12 @@ describe('drawing', () => {
  * ever regexed is the twenty lines under test.
  *
  * ═══ WHAT BREAKS WITHOUT IT — TRAP 1, EXACTLY AS A PLAYER MEETS IT ═══
- * `inspectCache` is cleared in exactly one other place, `case 'turn'`, and only
- * on a game-turn EDGE. A loot verb does spend the sender's turn server-side, so
+ * `inspectCache` is invalidated in exactly one other place, `case 'turn'`, and
+ * only on a game-turn EDGE. (Neither site DELETES any more — both mark the entry
+ * stale so the card and the sheet keep drawing while the reply is out. The
+ * argument below is unchanged: what matters is that the entry stops counting as
+ * fresh before anything re-asks.)
+ * A loot verb does spend the sender's turn server-side, so
  * usually the clock moves and that edge arrives — but `tickLevel` returns
  * `parked` without advancing anything while another player still owes a
  * decision. Measured: two players, engagement up, one blocking; the other
@@ -2117,13 +2121,25 @@ describe('the inventory frame re-asks for the character sheet', () => {
     return mainSrc.slice(from, to).replace(/^\s*\/\/.*$/gm, '');
   })();
 
-  it('deletes the viewer own cache entry and THEN re-asks, in that order', () => {
-    const deleted = body.indexOf('inspectCache.delete(selfId)');
+  it('marks the viewer own cache entry and THEN re-asks, in that order', () => {
+    // IT USED TO DELETE. `markInspectStale` replaced that so an open sheet is
+    // not emptied for the round trip — see `inspectCache` in main.ts and
+    // test/client/inspect-freshness.test.ts. THE ORDER IS UNCHANGED AND IS STILL
+    // THE FIX: `requestSelfSheet` early-returns on an entry that is stamped with
+    // this turn AND unmarked, so re-asking before the mark sends nothing at all.
+    const invalidated = body.indexOf('markInspectStale(selfId)');
     const reasked = body.indexOf('refreshSelfSheet()');
-    expect(deleted).toBeGreaterThan(-1);
+    expect(invalidated).toBeGreaterThan(-1);
     expect(reasked).toBeGreaterThan(-1);
-    // THE ORDER IS THE FIX. Re-asking against a live entry sends nothing at all.
-    expect(deleted).toBeLessThan(reasked);
+    expect(invalidated).toBeLessThan(reasked);
+  });
+
+  /**
+   * AND IT MAY NOT GO BACK TO DELETING. That is what blanked an open sheet on
+   * every equip, which is the same defect the tick edge had.
+   */
+  it('does not empty the sheet it is refreshing', () => {
+    expect(body).not.toContain('inspectCache.delete(');
   });
 
   it('refreshes a card pinned to the viewer own body on the same frame', () => {

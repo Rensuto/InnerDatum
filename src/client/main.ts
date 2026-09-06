@@ -2184,10 +2184,72 @@ let pointerPoint: TileXY | null = null;
  * to "no such actor", "you cannot see it" and "that monster is dead"; re-asking
  * every 120 ms would be the one case that defeats the cache entirely.
  */
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * INVALIDATION MARKS. IT DOES NOT DELETE — AND THAT IS THE WHOLE OF THE FIX.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Reported from a live session: *"each server tick causes the informational
+ * pages to briefly flash. if you were hovering over something and had a tooltip,
+ * it would just close the tooltip when the tick/refresh happens."*
+ *
+ * Every reader of this map draws `?.view ?? null` and `null` means DRAW NOTHING
+ * — `tooltipView`, the character sheet's `view`, the pin. Invalidation used to
+ * be `clear()` on the game-turn edge and `delete(id)` when a body was hit, so
+ * between the drop and the arrival of the re-asked answer there was no entry,
+ * and every one of those readers rendered a blank. The client is a dirty-flag
+ * renderer, so it faithfully drew that blank. THE CARD DID NOT FLICKER BECAUSE
+ * OF A REPAINT; IT WAS GENUINELY EMPTY FOR THE ROUND TRIP, once per tick.
+ *
+ * This file had already patched the three consumers to RE-ASK on that edge (the
+ * pin, the sheet, and the plain hover, each with its own paragraph). Every one
+ * of those fixes cured "stays blank forever" and none of them touched "is blank
+ * until the reply lands", which is the flash the player is describing.
+ *
+ * ═══ STALE IS DRAWN, BUT IT IS NEVER FRESH ═══
+ * So an invalidated entry KEEPS ITS VIEW and is marked. The two rules split:
+ *
+ *   READERS IGNORE THE MARK — they would rather show last turn's number for the
+ *   two frames a round trip takes than show nothing at all.
+ *   THE ASK PATHS RESPECT IT — `requestInspect` and `requestSelfSheet` treat a
+ *   marked entry as a miss, so exactly the same frames go out as before.
+ *
+ * That second half is what keeps the correctness argument this cache was built
+ * on. The Case Log bug in `noteInspectedBodyChanged` — the card reading `50/60`
+ * beside a log line saying `14/60` — was a stale answer that was never RE-ASKED.
+ * A stale answer with a question already in flight is a different thing, and it
+ * is replaced within a frame or two.
+ *
+ * ═══ `forgetInspections` STILL CLEARS, AND MUST ═══
+ * A `welcome` replaces the board wholesale and an actor id means nothing across
+ * that boundary, so there the entries are not stale — they are about somebody
+ * else. See that function.
+ */
 const inspectCache = new Map<
   string,
-  { readonly view: InspectView | null; readonly gameTurn: number }
+  { readonly view: InspectView | null; readonly gameTurn: number; readonly stale: boolean }
 >();
+
+/**
+ * Invalidate one body's answer WITHOUT blanking the card that is drawing it.
+ *
+ * A no-op for a body nobody has asked about, which is the common case: the
+ * guards at every call site already checked, and this one keeps the map from
+ * growing entries for bodies that were never inspected.
+ */
+function markInspectStale(id: string): void {
+  const known = inspectCache.get(id);
+  if (known === undefined || known.stale) return;
+  inspectCache.set(id, { view: known.view, gameTurn: known.gameTurn, stale: true });
+}
+
+/** The game-turn edge: every answer in the map is now about a turn that ended. */
+function markAllInspectStale(): void {
+  for (const [id, known] of inspectCache) {
+    if (known.stale) continue;
+    inspectCache.set(id, { view: known.view, gameTurn: known.gameTurn, stale: true });
+  }
+}
 
 /**
  * THE ONE OUTSTANDING QUESTION, or null. There is never more than one: a new
@@ -4982,7 +5044,11 @@ function forgetInspections(): void {
  * them. That is the property that keeps this off the token bucket.
  */
 function noteInspectedBodyChanged(id: string): void {
-  inspectCache.delete(id);
+  // MARKED, NOT DELETED. The mark is what makes the re-ask below fire — the
+  // stamp still matches this turn, so `stale` is the only thing distinguishing
+  // "answered" from "answered before the blow landed". See `inspectCache` for
+  // why the view itself is kept: deleting it is what blanked the card mid-hover.
+  markInspectStale(id);
   // NOBODY IS LOOKING AT THIS BODY. Dropping the stale answer is the whole job;
   // asking for a fresh one nobody will read is a frame spent on nothing.
   const watched = pinnedInspectId === id || hoveredActorId === id || selfId === id;
@@ -6238,7 +6304,7 @@ async function boot(): Promise<void> {
     // A HIT FOR THIS TURN DRAWS AND SENDS NOTHING. The stamp is the whole cache:
     // hit points and hit chances are answers about one game turn, and a stale
     // one is a wrong number stated confidently.
-    if (known !== undefined && known.gameTurn === (turn?.gameTurn ?? -1)) {
+    if (known !== undefined && !known.stale && known.gameTurn === (turn?.gameTurn ?? -1)) {
       requestDraw();
       return;
     }
@@ -6297,7 +6363,7 @@ async function boot(): Promise<void> {
     const id = selfId;
     if (!sheetVisible || id === null) return;
     const known = inspectCache.get(id);
-    if (known !== undefined && known.gameTurn === (turn?.gameTurn ?? -1)) {
+    if (known !== undefined && !known.stale && known.gameTurn === (turn?.gameTurn ?? -1)) {
       requestDraw();
       return;
     }
@@ -11959,7 +12025,12 @@ function applyServerMessage(msg: ServerMsg): void {
       // and a `view: null` reply retires it, which is what makes the card vanish
       // when its subject dies or the viewer loses sight of it.
       if (msg.gameTurn !== turn?.gameTurn) {
-        inspectCache.clear();
+        // MARKED, NOT CLEARED — see `inspectCache`. Every re-ask below is
+        // unchanged (the stamp already fails the freshness test on a new turn);
+        // what changes is that the card, the sheet and the pin go on drawing
+        // last turn's answer for the frame or two the reply takes, instead of
+        // blanking once per tick.
+        markAllInspectStale();
         refreshPinnedInspect();
         // AND THE OPEN CHARACTER SHEET IS RE-ASKED ON THE SAME EDGE, for exactly
         // the same reason the pin is: the sheet draws from that cache, so without
@@ -12583,7 +12654,10 @@ function applyServerMessage(msg: ServerMsg): void {
       // sent by `refreshViewers` only when this viewer's own loadout actually
       // changed — once per real change, and never for anybody else's.
       if (selfId !== null) {
-        inspectCache.delete(selfId);
+        // MARKED, NOT DELETED, and the ordering note above still holds exactly:
+        // `requestSelfSheet` treats a marked entry as a miss, so it still sends.
+        // What it no longer does is empty the open sheet while the reply is out.
+        markInspectStale(selfId);
         // THE PIN TAKES THE SAME TREATMENT AS ON THE TURN EDGE, and for the same
         // reason: `tooltipView()` reads the pin BEFORE the cache, so clearing the
         // cache alone leaves a card pinned to your own body quoting the armour
@@ -12646,7 +12720,11 @@ function applyServerMessage(msg: ServerMsg): void {
       if (inspectInFlight === msg.targetId) inspectInFlight = null;
       // AND THE REFRESH LEDGER, so the next blow on this body may ask again.
       inspectRefreshPending.delete(msg.targetId);
-      inspectCache.set(msg.targetId, { view: msg.view, gameTurn: turn?.gameTurn ?? -1 });
+      inspectCache.set(msg.targetId, {
+        view: msg.view,
+        gameTurn: turn?.gameTurn ?? -1,
+        stale: false,
+      });
       if (pinnedInspectId === msg.targetId) {
         pinnedInspectView = msg.view;
         // A NULL ANSWER RETIRES THE PIN ENTIRELY, not just its view. The server

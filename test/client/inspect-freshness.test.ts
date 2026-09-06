@@ -72,9 +72,33 @@ describe('a body that takes damage stops having a cached card', () => {
     );
   });
 
-  it('drops the stale entry rather than papering over it', () => {
+  it('marks the stale entry rather than papering over it', () => {
     at('function noteInspectedBodyChanged(id: string): void {');
-    at('inspectCache.delete(id);');
+    at('markInspectStale(id);');
+  });
+
+  /**
+   * ═══ AND IT MAY NOT BLANK THE CARD IT IS INVALIDATING ═══
+   *
+   * This used to be `inspectCache.delete(id)`, and that is the second bug this
+   * file is about. Every reader draws `?.view ?? null` and `null` means DRAW
+   * NOTHING, so removing the entry emptied the card for the whole round trip.
+   * Reported as *"if you were hovering over something and had a tooltip, it
+   * would just close the tooltip when the tick/refresh happens"*.
+   *
+   * The mark keeps both properties at once: the answer is still refused by
+   * `requestInspect` (so the 50/60 bug above cannot come back) and still drawn
+   * (so the card does not blink once per blow).
+   */
+  it('does not delete the entry a card may be drawing', () => {
+    const fn = at('function noteInspectedBodyChanged(id: string): void {');
+    // The function is twenty lines; a fixed window keeps this off a brittle
+    // brace-matching parse and still cannot reach the next declaration.
+    const body = CODE.slice(fn, fn + 700);
+    expect(
+      body.includes('inspectCache.delete('),
+      'noteInspectedBodyChanged deletes the entry again — the card will blank on every blow',
+    ).toBe(false);
   });
 
   /**
@@ -159,12 +183,49 @@ describe('the cache itself survives', () => {
    * pointer on a token does not poll the server every frame, and the reasons for
    * it are argued at length where it is declared. A change that deleted it would
    * fix this bug by creating a worse one.
+   *
+   * BOTH HALVES OF THE GUARD ARE IN THE ONE LINE: the stamp is what expires an
+   * answer at a turn edge, and `!known.stale` is what expires one WITHIN a turn.
+   * Drop either term and a card goes on quoting a number it should have re-asked.
    */
   it('still serves a cached answer when nothing has changed', () => {
-    at('if (known !== undefined && known.gameTurn === (turn?.gameTurn ?? -1)) {');
+    at('if (known !== undefined && !known.stale && known.gameTurn === (turn?.gameTurn ?? -1)) {');
   });
 
-  it('still clears wholesale on the game-turn edge', () => {
-    at('inspectCache.clear();');
+  /**
+   * ════════════════════════════════════════════════════════════════════════════
+   * THE GAME-TURN EDGE MAY NOT CLEAR. THIS TEST USED TO SAY IT MUST.
+   * ════════════════════════════════════════════════════════════════════════════
+   * The old assertion was `at('inspectCache.clear();')` under the title *"still
+   * clears wholesale on the game-turn edge"*. Once the edge stopped clearing,
+   * that assertion KEPT PASSING — it was matching the `clear()` inside
+   * `forgetInspections`, which is a different rule about a different edge. A
+   * test true of the fixture rather than of the rule.
+   *
+   * So it is pinned by POSITION now. `clear()` is legal in exactly one place: a
+   * board replacement, where the entries are not stale but are about other
+   * people entirely.
+   */
+  it('clears only when the whole board is replaced', () => {
+    const occurrences = CODE.split('inspectCache.clear();').length - 1;
+    expect(occurrences, 'inspectCache.clear() appears somewhere new').toBe(1);
+    const forget = at('function forgetInspections(): void {');
+    const clear = CODE.indexOf('inspectCache.clear();');
+    expect(clear, 'the only clear() is outside forgetInspections').toBeGreaterThan(forget);
+    expect(clear - forget, 'the clear() drifted out of forgetInspections').toBeLessThan(200);
+  });
+
+  /**
+   * The tick marks instead. Without this the flash is back and nothing else in
+   * this file would notice — every other rule here is about a single body.
+   */
+  it('marks the whole map stale on the game-turn edge', () => {
+    at('markAllInspectStale();');
+    at('function markAllInspectStale(): void {');
+  });
+
+  /** And an arriving answer is what clears the mark. */
+  it('an arriving answer lands unmarked', () => {
+    at('stale: false,');
   });
 });
