@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { drawHoverCard, hoverCardRect } from '../../src/client/ui/panel.ts';
+import { drawHoverCard, hoverCardBody, hoverCardRect } from '../../src/client/ui/panel.ts';
 import type { HoverCard } from '../../src/client/ui/panel.ts';
 
 /**
@@ -126,5 +126,55 @@ describe('the card is placed where it was asked to be', () => {
 
     expect(rect.x, 'it stayed on the right and ran off').toBeLessThan(anchor.x);
     expect(rect.x).toBeGreaterThanOrEqual(0);
+  });
+});
+
+describe('a card is bounded by the screen, and says when it cut something', () => {
+  const many = (n: number): HoverCard => ({
+    title: 'Oiled Watchman’s Trousers of the Ledger',
+    meta: 'rare · legs',
+    lines: Array.from({ length: n }, (_v, i) => `Row ${String(i)}  +${String(i)}`),
+    nextLines: [],
+  });
+
+  it('draws every line when they fit', () => {
+    const { body, goldFrom } = hoverCardBody(many(6), 320);
+    expect(body).toHaveLength(6);
+    expect(body.join(' ')).not.toContain('more');
+    // Nothing is `nextLines`, so nothing is gold.
+    expect(goldFrom).toBe(6);
+  });
+
+  /**
+   * ═══ THE WIDTH WAS CLAMPED AND THE HEIGHT WAS NOT ═══
+   * `hoverCardRect` sized `h` from the row count with no ceiling, and its `y`
+   * clamp collapses once `h` passes the viewport — the inner `Math.max` bottoms
+   * out at the gap and the card runs off the screen, unclipped and unscrollable.
+   * Latent while every card was short; `compareRows` can emit forty-four rows.
+   */
+  it('cuts to the viewport and never grows past it', () => {
+    const card = many(60);
+    const { body } = hoverCardBody(card, 320);
+    expect(body.length).toBeLessThan(60);
+    const rect = hoverCardRect(recorder().ctx, card, 10, 10, 640, 320);
+    expect(rect.h).toBeLessThanOrEqual(320);
+  });
+
+  it('says how many it held back rather than stopping short', () => {
+    // caselog.ts's rule: a list cut without a word looks complete and is not.
+    const { body } = hoverCardBody(many(60), 320);
+    const last = body[body.length - 1] ?? '';
+    expect(last).toContain('more');
+    // AND THE COUNT IS HONEST — everything not drawn is accounted for.
+    const shown = body.length - 1;
+    expect(last).toContain(String(60 - shown));
+  });
+
+  it('never paints the elision line gold, because it is not a next rank', () => {
+    // `goldFrom` is where `lines` ends and `nextLines` begins. The cut line is
+    // the card talking about itself and must not take the "at rank N" colour.
+    const card: HoverCard = { ...many(60), nextLines: ['At the next rank: more'] };
+    const { body, goldFrom } = hoverCardBody(card, 320);
+    expect(goldFrom).toBe(body.length - 1);
   });
 });

@@ -396,12 +396,64 @@ const CARD_PAD = 6;
 const CARD_LINE_H = 12;
 const CARD_GAP = 10;
 
-/** How wide a card wants to be, so a caller can wrap its prose to fit. */
-export function hoverCardWidth(ctx: CanvasRenderingContext2D, card: HoverCard): number {
+/**
+ * ════════════════════════════════════════════════════════════════════════════
+ * THE BODY A CARD WILL ACTUALLY DRAW, BOUNDED BY THE SCREEN.
+ * ════════════════════════════════════════════════════════════════════════════
+ * THE WIDTH WAS CLAMPED AND THE HEIGHT WAS NOT, which was survivable only
+ * while every card was short. `hoverCardRect` computed `h` from the row count
+ * with no ceiling, and its `y` clamp collapses once `h` exceeds the viewport:
+ * the inner `Math.max` bottoms out at `CARD_GAP` and the card runs off the
+ * screen, unclipped and unscrollable. An item card lists one row per channel
+ * the item moves, and `compareRows` can emit forty-four.
+ *
+ * SEPARATED FROM THE PAINTING SO IT CAN BE ASSERTED, exactly as
+ * `hoverCardRect` below is and for its stated reason. THE BOX AND THE INK NOW
+ * READ ONE ANSWER: the rect sizes itself from this list and the painter walks
+ * this list, so they cannot disagree about how many lines there are — which is
+ * the failure that would otherwise replace a clipped card, and a worse one,
+ * because a box drawn for rows it never paints looks deliberate.
+ *
+ * `goldFrom` IS WHERE `lines` ENDS AND `nextLines` BEGINS. The painter used
+ * two loops and two colours; one list needs the index instead, and carrying it
+ * here keeps the split with the arithmetic that produced it.
+ *
+ * A CUT LIST STILL SAYS SO. The last slot is spent on the count rather than on
+ * a row, for `inventory.ts`'s rule about its own strip: a table that stops
+ * short without a word looks complete and is not.
+ */
+export function hoverCardBody(
+  card: HoverCard,
+  viewportH: number,
+): { readonly body: readonly string[]; readonly goldFrom: number } {
+  const all = [...card.lines, ...(card.nextLines ?? [])];
+  const maxRows = Math.max(1, Math.floor((viewportH - CARD_GAP * 2 - CARD_PAD * 2) / CARD_LINE_H));
+  // The title always costs a row; the meta line costs one when it exists.
+  const budget = Math.max(1, maxRows - 1 - (card.meta === undefined ? 0 : 1));
+  if (all.length <= budget) return { body: all, goldFrom: card.lines.length };
+  return {
+    body: [...all.slice(0, budget - 1), `…and ${String(all.length - (budget - 1))} more`],
+    // THE ELISION LINE IS NOT `nextLines`. It is the card talking about
+    // itself, so it must not take the gold that means "at the next rank".
+    goldFrom: Math.min(card.lines.length, budget - 1),
+  };
+}
+
+/**
+ * How wide a card wants to be, so a caller can wrap its prose to fit.
+ *
+ * MEASURES THE BOUNDED BODY, not every line the card was built with: a card
+ * sized against rows it will not draw is a box with a margin nobody asked for.
+ */
+export function hoverCardWidth(
+  ctx: CanvasRenderingContext2D,
+  card: HoverCard,
+  viewportH: number,
+): number {
   ctx.font = FONT_BUTTON;
   let widest = ctx.measureText(card.title).width;
   ctx.font = '10px ui-monospace, Consolas, monospace';
-  for (const line of [card.meta ?? '', ...card.lines, ...(card.nextLines ?? [])]) {
+  for (const line of [card.meta ?? '', ...hoverCardBody(card, viewportH).body]) {
     widest = Math.max(widest, ctx.measureText(line).width);
   }
   return Math.ceil(widest) + CARD_PAD * 2;
@@ -429,9 +481,11 @@ export function hoverCardRect(
   viewportW: number,
   viewportH: number,
 ): PanelRect {
-  const body = [...card.lines, ...(card.nextLines ?? [])];
+  const { body } = hoverCardBody(card, viewportH);
   const rows = 1 + (card.meta === undefined ? 0 : 1) + body.length;
-  const w = Math.min(hoverCardWidth(ctx, card), Math.max(80, viewportW - CARD_GAP * 2));
+  const w = Math.min(hoverCardWidth(ctx, card, viewportH), Math.max(80, viewportW - CARD_GAP * 2));
+  // BOUNDED BY `hoverCardBody`, which is why this needs no clamp of its own:
+  // `body` is already cut to what fits, so `h` cannot exceed the viewport.
   const h = CARD_PAD * 2 + rows * CARD_LINE_H;
 
   const anchor = card.anchor;
@@ -523,20 +577,23 @@ export function drawHoverCard(
     cursor += CARD_LINE_H;
   }
   // ═══ THROUGH `fitText`, LIKE THE TITLE AND THE META ABOVE ═══
-  // These two loops were the only raw `fillText` calls in the card. `w` is
-  // `hoverCardWidth` clamped against the viewport, so a card wider than the
-  // screen silently painted its stat rows past its own right edge. Latent while
-  // every card was narrow; the anchored placement makes a clamped card ordinary.
-  ctx.fillStyle = PALETTE.BONE;
-  for (const line of card.lines) {
+  // This was the only raw `fillText` in the card. `w` is `hoverCardWidth`
+  // clamped against the viewport, so a card wider than the screen silently
+  // painted its stat rows past its own right edge. Latent while every card was
+  // narrow; the anchored placement makes a clamped card ordinary.
+  //
+  // ═══ ONE LOOP OVER `hoverCardBody`, WHICH IS WHAT `hoverCardRect` MEASURED ═══
+  // It was two loops over `card.lines` and `card.nextLines` — the whole list,
+  // however long — while the rect sized itself from the same unbounded pair. Now
+  // that the body is CUT to the viewport, painting the raw fields would draw
+  // lines the box was never sized for, straight off the bottom of it. The
+  // colour split moves to an index for the same reason: one list, read once.
+  const { body, goldFrom } = hoverCardBody(card, viewportH);
+  body.forEach((line, i) => {
+    ctx.fillStyle = i < goldFrom ? PALETTE.BONE : PALETTE.GOLD;
     ctx.fillText(fitText(ctx, line, w - CARD_PAD * 2), x + CARD_PAD, cursor);
     cursor += CARD_LINE_H;
-  }
-  ctx.fillStyle = PALETTE.GOLD;
-  for (const line of card.nextLines ?? []) {
-    ctx.fillText(fitText(ctx, line, w - CARD_PAD * 2), x + CARD_PAD, cursor);
-    cursor += CARD_LINE_H;
-  }
+  });
 
   ctx.restore();
 }

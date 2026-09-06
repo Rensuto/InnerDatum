@@ -447,17 +447,70 @@ const CELL_ROW_H = CELL_PX + CELL_GAP;
 const NOTE_ROW_H = ROW_H;
 
 /**
- * THE COMPARISON STRIP: three fixed lines and four for the server's rows.
- *
+ * ════════════════════════════════════════════════════════════════════════════
+ * HOW MANY LINES THE STRIP RESERVES FOR STATS. NOT how many stats an item has.
+ * ════════════════════════════════════════════════════════════════════════════
  * Line 1 is the name (and the DROP control), line 2 is the tier and slot in
  * WORDS, line 3 is the catalogue's one-sentence description, and the rest is
- * `CarriedItemView.compare`. FOUR ROWS is comfortably more than the catalogue
+ * the item's rows.
+ *
+ * THIS USED TO READ *"FOUR ROWS is comfortably more than the catalogue
  * produces — the fattest authored item moves an armour number, a hardiness
- * percentage and the two derived rows they feed — and when a fifth ever appears
- * the strip shows three and says how many it held back, because a table cut off
- * without a word looks complete and is not.
+ * percentage and the two derived rows they feed"*, and it was wrong the day
+ * egos landed. `compareRows` (view/projector.ts) emits six primary stats,
+ * eleven derived rows, three per damage type over six types, one per immunity
+ * over eight, and the melee rider — forty-four channels, of which a two-ego
+ * rare comfortably moves ten. So the strip said "6 more not shown" on an
+ * ordinary coat, and the hover card said it too, because both read one capped
+ * list.
+ *
+ * IT IS A LINE BUDGET NOW AND IT BUYS COLUMNS. Four lines times the columns
+ * the panel's width affords, so widening the panel buys ROWS rather than
+ * whitespace — see `DETAIL_COL_W`. The concession survives where it is true:
+ * when even the columns run out the strip says how many it held back, because
+ * a table cut off without a word looks complete and is not.
  */
 const DETAIL_ROWS_MAX = 4;
+
+/**
+ * ════════════════════════════════════════════════════════════════════════════
+ * THE STRIP IS COLUMNS NOW, WHICH IS WHAT MADE THE OLD LAYOUT UNREADABLE.
+ * ════════════════════════════════════════════════════════════════════════════
+ * Every row was drawn label-at-the-left-edge, value-right-aligned-to-the-
+ * right-edge, ACROSS THE WHOLE PANEL. On the 474-wide panel that is fine; on
+ * a wide one the pair ends up a hand's width apart with nothing between them,
+ * and reading `Constitution` back to `0 (-6)` means tracking across empty
+ * space. It was reported exactly that way: the values sit "WAY further than
+ * the name".
+ *
+ * A column is therefore SIZED TO ITS CONTENT rather than to the panel, and
+ * the panel gets as many as it can hold. The width is the worst pair the
+ * catalogue can actually produce, not a guess:
+ *
+ *     `Lightning penetration`   21 glyphs, the longest label `compareRows`
+ *                               emits (view/projector.ts, over DAMAGE_TYPES)
+ *     `+35% (+35%)`             11 glyphs, the widest value — an `ub` ego at
+ *                               its ceiling, shown as own-worth then delta
+ *     one glyph                 the gap `drawDetail` already leaves
+ *
+ * `CHAR_W` is 6 because that is this client's monospace figure everywhere
+ * else it decides how big a box is — ui/charsheet.ts, ui/classpicker.ts and
+ * ui/contextmenu.ts each declare the same six for the same reason. It is a
+ * BOX measurement, never a claim about a glyph that has been drawn.
+ */
+const CHAR_W = 6;
+const DETAIL_COL_GAP = 6;
+const DETAIL_COL_W = 33 * CHAR_W;
+
+/**
+ * How many stat columns fit. PURE, and it takes the width rather than a
+ * canvas: `inventoryPanelGeometry` may not measure text (see the header), and
+ * the painter must not compute this a second time — the hit test and the paint
+ * share one geometry by construction.
+ */
+function detailColumns(innerW: number): number {
+  return Math.max(1, Math.floor((innerW + DETAIL_COL_GAP) / (DETAIL_COL_W + DETAIL_COL_GAP)));
+}
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════
@@ -970,10 +1023,21 @@ export type InventoryRow =
        * it is not flavour — it is the only place its numbers appear.
        */
       readonly useText: string;
-      /** THE SERVER'S ROWS, IN THE SERVER'S ORDER. A prefix of them when capped. */
+      /**
+       * THE SERVER'S ROWS, IN THE SERVER'S ORDER, ALL OF THEM.
+       *
+       * This was a PREFIX — `detailRows` kept three and reported the rest as
+       * `hiddenRows`, so a rare coat said "6 more not shown" on the one screen
+       * a player uses to decide whether to wear it. The cap was never a fact
+       * about the item; it was the strip's line budget leaking into the
+       * ANSWER, and it reached the hover card too because the card read the
+       * same capped list.
+       *
+       * The budget still exists — a strip is a fixed height — but it is applied
+       * where the space is known (`inventoryPanelGeometry`), against a COLUMN
+       * count, and it no longer travels as though it were the item's stats.
+       */
       readonly rows: readonly InspectRow[];
-      /** How many the cap held back. 0 in every ordinary case. */
-      readonly hiddenRows: number;
       /** What DROP would drop, or null — a worn item and an empty slot have none. */
       readonly action: DetailAction | null;
       /**
@@ -1229,37 +1293,6 @@ function itemOnShelf(view: InventoryPanelView, itemId: string): CarriedItemView 
   return view.inventory?.carried.find((row) => row.itemId === itemId);
 }
 
-/**
- * THE CAP, AND IT KEEPS A WHOLE PREFIX.
- *
- * Showing four of five and saying "1 more" is a table that has stopped short and
- * admits it; showing four of five silently is a table that looks complete —
- * ui/caselog.ts:467-478's rule, which this panel follows everywhere.
- *
- * ONE HELPER, TWO CALLERS. The bag inlined this and the doll had `rows: []`
- * because the wire could not fill them; now both sides produce the same rows and
- * a second copy of the arithmetic would be two concessions that could disagree
- * about how many fit.
- *
- * ═══ IT DOES NOT KNOW ABOUT `compact`, AND THAT IS DELIBERATE ═══
- * A compact strip is one line and cannot draw a row — but that is a fact about
- * the SPACE, not about the ANSWER. `drawDetail`'s compact branch returns before
- * it ever reads `rows`, so emptying the list here would buy nothing and would
- * break the property `test/client/inventory.test.ts` pins: what the strip SAYS
- * is one answer to one question on both tabs, and only the reserved height
- * differs. Two tabs disagreeing about an item's stats would be two panels
- * wearing one header.
- */
-function detailRows(all: readonly InspectRow[]): {
-  rows: readonly InspectRow[];
-  hiddenRows: number;
-} {
-  const capped = all.length > DETAIL_ROWS_MAX;
-  return capped
-    ? { rows: all.slice(0, DETAIL_ROWS_MAX - 1), hiddenRows: all.length - (DETAIL_ROWS_MAX - 1) }
-    : { rows: all, hiddenRows: 0 };
-}
-
 function detailRow(view: InventoryPanelView, inventory: InventoryMsg | null): InventoryRow {
   // THE HEIGHT IS THE TAB'S AND NEVER THE FOCUS'S. See `DETAIL_COMPACT_H` and the
   // header: a strip that grew when a cell was pointed at would drop the tail row
@@ -1278,7 +1311,6 @@ function detailRow(view: InventoryPanelView, inventory: InventoryMsg | null): In
     meta: DETAIL_HINT,
     useText: '',
     rows: [] as readonly InspectRow[],
-    hiddenRows: 0,
     action: null,
     focusId: null,
   } as const;
@@ -1302,7 +1334,6 @@ function detailRow(view: InventoryPanelView, inventory: InventoryMsg | null): In
       meta: 'empty',
       useText: '',
       rows: [],
-      hiddenRows: 0,
       action: null,
     };
   }
@@ -1337,7 +1368,7 @@ function detailRow(view: InventoryPanelView, inventory: InventoryMsg | null): In
        * it has always been.
        */
       useText: carried.use ?? '',
-      ...detailRows(carried.compare),
+      rows: carried.compare,
       // DROP IS OFFERED FOR A CARRIED ITEM ONLY. ToME's `playerDrop`
       // (Game.lua:2173-2176 -> `DROP_FLOOR`) drops out of INVEN, and taking a
       // worn thing off is a separate act there and here.
@@ -1376,11 +1407,12 @@ function detailRow(view: InventoryPanelView, inventory: InventoryMsg | null): In
        * ON could not answer the question it exists to answer. It is on
        * `ItemView` now and means the same thing on both sides of the swap.
        *
-       * CAPPED THE SAME WAY THE BAG'S ARE, through the same `detailRows`
-       * helper — one concession, said out loud in `hiddenRows`, rather than two
-       * that could disagree about how many fit.
+       * VERBATIM, THE SAME WAY THE BAG'S ARE. Both used to run through a
+       * `detailRows` helper that kept three and reported the rest; the fitting
+       * is the STRIP's job now and happens once, in `inventoryPanelGeometry`,
+       * so the doll and the bag still cannot disagree about how many fit.
        */
-      ...detailRows(worn.compare),
+      rows: worn.compare,
       // NO CONTROL ON A WORN ITEM, in a shop or out of one. Selling the coat off
       // your own back is one click from being an accident, and taking it off is
       // already a separate act.
@@ -1427,7 +1459,6 @@ function detailRow(view: InventoryPanelView, inventory: InventoryMsg | null): In
        * server too old to send the map.
        */
       rows: inventory.shelf?.[shelved.itemId] ?? item?.compare ?? [],
-      hiddenRows: 0,
       action: {
         kind: 'buy',
         itemId: shelved.itemId,
@@ -1668,6 +1699,22 @@ export type PlacedInventoryRow = {
    * than a place to put something.
    */
   readonly portrait: PanelRect | null;
+  /**
+   * THE STAT ROWS THIS STRIP HAS ROOM FOR, and how many it could not take.
+   *
+   * On the placed row rather than recomputed by the painter, for `useLines`'
+   * reason directly above: the HEIGHT was reserved against this number, so a
+   * painter that counted differently would draw into space nobody kept.
+   * `detailCols` travels for the same reason — `rect.w === innerW` is a
+   * coincidence of how the strip is placed, not a contract.
+   *
+   * OPTIONAL, like `useLines`: three of the four `placed.push` sites are cells
+   * and tabs that have no strip, and widening them for fields they cannot use
+   * is churn. Absent reads as "no stat block", which is what they mean.
+   */
+  readonly detailRows?: readonly InspectRow[];
+  readonly detailHidden?: number;
+  readonly detailCols?: number;
 };
 
 export type InventoryPanelGeometry = {
@@ -1884,10 +1931,43 @@ export function inventoryPanelGeometry(
   // dialog can afford two columns; at 320 the only free edge is the bottom one.
   if (detail !== undefined && stripped) {
     const stripRect: PanelRect = { x, y: bottom - stripH, w: innerW, h: stripH };
+    /**
+     * ═══ THE BUDGET IS THE SPACE'S, AND IT IS APPLIED HERE ═══
+     * `detailRows` used to cut the list to three on its way OUT OF THE MODEL,
+     * so the hover card inherited a limit that belonged to a strip it is not
+     * drawn in. The deleted helper's own sentence was the argument against
+     * itself, and it is kept here where the code now obeys it: *a compact
+     * strip is one line and cannot draw a row — but that is a fact about the
+     * SPACE, not about the ANSWER.*
+     *
+     * `rowHeight` reserves `2 + useLines + DETAIL_ROWS_MAX` lines. Two go to
+     * the name and the meta. The prose lines are skipped entirely for gear
+     * (see `drawDetail`: "the ink moves up; the geometry does not"), so a coat
+     * gets them back and a draught does not.
+     */
+    const compact = detail.kind === InventoryRowKind.Detail && detail.compact;
+    const all: readonly InspectRow[] = detail.kind === InventoryRowKind.Detail ? detail.rows : [];
+    const lineSlots =
+      useLines +
+      DETAIL_ROWS_MAX -
+      (detail.kind === InventoryRowKind.Detail && detail.useText !== '' ? useLines : 0);
+    const cols = detailColumns(innerW);
+    const capacity = lineSlots * cols;
+    // A COMPACT STRIP DRAWS NO ROWS AT ALL and must not claim otherwise:
+    // `drawDetail` returns before reading these, and a nonzero count nothing
+    // paints is a lie left for the next reader. The card answers instead.
+    const fitted = compact ? [] : all.slice(0, Math.min(all.length, capacity));
+    const overflow = compact ? 0 : all.length - fitted.length;
+    // The last LINE goes to the count, not the last cell: the sentence is
+    // prose and left-aligned, so it cannot share a row with a column.
+    const kept = overflow > 0 ? all.slice(0, Math.max(0, (lineSlots - 1) * cols)) : fitted;
     placed.push({
       row: detail,
       rect: stripRect,
       useLines,
+      detailRows: kept,
+      detailHidden: compact ? 0 : all.length - kept.length,
+      detailCols: cols,
       cells: [],
       tabs: [],
       drop:
@@ -2576,7 +2656,40 @@ function drawDetail(
     y += ROW_H * lines;
   }
 
-  for (const line of row.rows) {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE STATS, IN COLUMNS, EACH PAIR KEPT TOGETHER.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * This drew `label` at `rect.x` and `value` right-aligned at `right` — the
+   * panel's two outer edges — so on a wide panel the two halves of one fact sat
+   * a hand's width apart. `Constitution` and `0 (-6)` are the same row and have
+   * to read as one.
+   *
+   * COLUMN-MAJOR, so the server's order still reads top-to-bottom. `compareRows`
+   * emits in sheet order (Accuracy, Damage, APR…) and that order is the point;
+   * filling left-to-right across columns would scramble it into a crossword.
+   *
+   * BALANCED, not packed: `perCol` is the ceiling over the column count, so
+   * seven rows in two columns read 4+3 rather than 6+1.
+   *
+   * THE COUNT COMES FROM THE PLACED ROW. Recomputing `detailColumns(rect.w)`
+   * here would be a second copy of the geometry, and the height was reserved
+   * against the first — see `PlacedInventoryRow.detailCols`.
+   */
+  const stats = placed.detailRows ?? [];
+  const cols = Math.max(1, placed.detailCols ?? 1);
+  const hidden = placed.detailHidden ?? 0;
+  const colW = Math.floor((rect.w - (cols - 1) * DETAIL_COL_GAP) / cols);
+  const perCol = Math.max(1, Math.ceil(stats.length / cols));
+  const blockTop = y;
+
+  stats.forEach((line, i) => {
+    const col = Math.floor(i / perCol);
+    const colX = rect.x + col * (colW + DETAIL_COL_GAP);
+    const colRight = colX + colW;
+    const lineY = blockTop + (i % perCol) * ROW_H;
+
     const emphasis = line.emphasis === true;
     ctx.font = emphasis ? FONT_META : FONT_BODY;
     // `fitText` measures, so the font has to be live BEFORE it is called.
@@ -2584,19 +2697,22 @@ function drawDetail(
 
     ctx.textAlign = 'left';
     ctx.fillStyle = emphasis ? PALETTE.GOLD : PALETTE.GREY_HI;
-    ctx.fillText(fitText(ctx, line.label, rect.w - valueW - 6), rect.x, y);
+    // Into the COLUMN's width now, not the panel's. A label long enough to
+    // crowd its own value still gives way to the number, as it always did.
+    ctx.fillText(fitText(ctx, line.label, colW - valueW - CHAR_W), colX, lineY);
 
     ctx.textAlign = 'right';
     ctx.fillStyle = emphasis ? PALETTE.GOLD : PALETTE.BONE;
-    ctx.fillText(line.value, right, y);
+    ctx.fillText(line.value, colRight, lineY);
     ctx.textAlign = 'left';
-    y += ROW_H;
-  }
+  });
 
-  if (row.hiddenRows > 0) {
+  if (hidden > 0) {
     ctx.font = FONT_BODY;
     ctx.fillStyle = PALETTE.GREY_HI;
-    ctx.fillText(`${String(row.hiddenRows)} more not shown`, rect.x, y);
+    // BELOW THE BLOCK, not at a running `y` — the cursor no longer walks the
+    // rows, because they no longer run in one line down the panel.
+    ctx.fillText(`${String(hidden)} more not shown`, rect.x, blockTop + perCol * ROW_H);
   }
 }
 
@@ -2892,12 +3008,12 @@ export function inventoryTipAt(
   // PROSE ONLY WHERE THERE IS ANY — a consumable's effect line. A coat goes
   // straight from its name to its numbers, which is the whole point of the card.
   const lines = detail.useText === '' ? [] : wrapForCard(detail.useText);
+  // EVERY ROW THE SERVER SENT. The card used to print the strip's leftovers
+  // as "…and N more", because both read one capped list; the cap is the
+  // STRIP's and the card has a whole viewport. `hoverCardBody` (ui/panel.ts)
+  // bounds it against the screen and says so in the same words if it ever has
+  // to — caselog.ts's rule is kept, one layer down, where the height is known.
   const stats = detail.rows.map((row) => `${row.label}  ${row.value}`);
-  // ═══ NOTHING IS DROPPED SILENTLY ═══ caselog.ts's rule, which the strip
-  // already follows through `hiddenRows`. The card is capped by the same
-  // `detailRows` call, so it must own up to the same concession.
-  const more =
-    detail.hiddenRows > 0 ? [`…and ${String(detail.hiddenRows)} more`] : ([] as readonly string[]);
   /**
    * ═══ STATS FIRST, PROSE LAST — `Object.lua:2027-2028` ═══
    * Upstream merges `getUseDesc` at the very END of `getTextualDesc`, after the
@@ -2912,7 +3028,7 @@ export function inventoryTipAt(
   return {
     title: detail.title,
     meta: detail.meta,
-    lines: [...stats, ...more, ...lines],
+    lines: [...stats, ...lines],
     nextLines: [],
     // BESIDE THE CELL, NEVER OVER IT. See `HoverCard.anchor`.
     ...(box === null ? {} : { anchor: box }),

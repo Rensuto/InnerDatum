@@ -1346,7 +1346,6 @@ describe('the comparison strip', () => {
     ]);
     expect(row.title).toBe("Watchman's Coat");
     expect(row.meta).toBe('rare · body');
-    expect(row.hiddenRows).toBe(0);
   });
 
   it('draws an EMPTY comparison as blank rather than inventing a “no change” line', () => {
@@ -1362,7 +1361,7 @@ describe('the comparison strip', () => {
     expect(row.title).toBe('Locket');
   });
 
-  it('shows a whole prefix and says how many it held back when there are too many', () => {
+  it('carries EVERY row the server sent, however many, and lets the SPACE fit them', () => {
     const many = [
       bagged('item_many', 'Many', ItemTier.Rare, 'body', [
         { label: 'Strength', value: '+3' },
@@ -1382,10 +1381,24 @@ describe('the comparison strip', () => {
         }),
       ),
     );
-    // A PREFIX, never a sample: the rows shown are the first ones the server sent,
-    // in its order, and the count of what is missing is said out loud.
-    expect(row.rows.map((line) => line.label)).toEqual(['Strength', 'Accuracy', 'Damage']);
-    expect(row.hiddenRows).toBe(3);
+    /**
+     * ═══ THE MODEL IS THE ANSWER; THE FIT IS THE GEOMETRY'S ═══
+     * This asserted a THREE-ROW PREFIX and a `hiddenRows` of 3, which is what
+     * a player saw as "6 more not shown" on a rare coat: the strip's line
+     * budget had leaked into the model, so the hover card — which has a whole
+     * viewport — inherited a limit belonging to a strip it is not drawn in.
+     *
+     * The row now carries all six verbatim. What the strip can DRAW is decided
+     * where the width is known, and travels on the placed row.
+     */
+    expect(row.rows.map((line) => line.label)).toEqual([
+      'Strength',
+      'Accuracy',
+      'Damage',
+      'Armour',
+      'Defence',
+      'Hardiness',
+    ]);
   });
 
   it('shows a worn item the rows the wire sent, and never says the word worn', () => {
@@ -2362,5 +2375,70 @@ describe('a consumable is a thing you can read', () => {
     // its numbers; an empty string here is what lets `drawDetail` skip the gap
     // and start the stats immediately under the name.
     expect(cardFor({ slot: 'ring' }).useText).toBe('');
+  });
+});
+
+describe('the strip lays its stats out in columns', () => {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE REPORT WAS TWO DEFECTS AT ONCE AND THEY SHARED A CAUSE.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * A rare coat said "6 more not shown" AND its values sat at the far right edge
+   * of the panel, a hand's width from the labels they belong to. Both came from
+   * one row of stats stretched across the whole width: only four fit, and each
+   * one read as two unrelated halves.
+   *
+   * The rows are columns now, sized to their own widest content, so the panel's
+   * width buys MORE ROWS instead of more whitespace.
+   */
+  const manyRows = (n: number) => [
+    bagged(
+      'item_many',
+      'Many',
+      ItemTier.Rare,
+      'body',
+      Array.from({ length: n }, (_v, i) => ({
+        label: `Channel ${String(i)}`,
+        value: `+${String(i)}`,
+      })),
+    ),
+  ];
+
+  const stripOf = (n: number) => {
+    const placed = inventoryPanelGeometry(
+      roomyRect(),
+      inventoryPanelRows(
+        view({
+          inventory: frame({ carried: manyRows(n) }),
+          tab: InventoryTab.Carried,
+          focus: { kind: 'item', itemId: 'item_many' },
+        }),
+      ),
+    ).placed.find((entry) => entry.row.kind === InventoryRowKind.Detail);
+    if (placed === undefined) throw new Error('unreachable');
+    return placed;
+  };
+
+  it('shows far more than the four rows one column could hold', () => {
+    // The number that matters is "more than the old cap", not a literal: the
+    // column count follows the panel width, which follows the viewport.
+    const placed = stripOf(10);
+    expect((placed.detailRows ?? []).length).toBeGreaterThan(4);
+    expect(placed.detailHidden ?? 0).toBe(0);
+  });
+
+  it('uses more than one column when the panel is wide enough to hold one', () => {
+    expect(stripOf(10).detailCols ?? 1).toBeGreaterThan(1);
+  });
+
+  it('still says how many it held back, when even the columns run out', () => {
+    // caselog.ts's rule survives the redesign: a table that stops short without
+    // a word looks complete and is not. It is a last resort now rather than the
+    // everyday case — it takes far more channels than any real item carries.
+    const placed = stripOf(200);
+    const shown = (placed.detailRows ?? []).length;
+    expect(shown).toBeGreaterThan(0);
+    expect(placed.detailHidden ?? 0).toBe(200 - shown);
   });
 });
