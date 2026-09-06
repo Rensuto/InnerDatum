@@ -3,6 +3,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { createContextMenu } from '../../src/client/ui/contextmenu.ts';
+import { RESOURCE_H } from '../../src/client/ui/resource.ts';
 import {
   PARTY_PANE_COMPACT_W,
   PARTY_PANE_W,
@@ -26,7 +27,7 @@ import {
 import type { DeathView } from '../../src/client/ui/respawnprompt.ts';
 import { DEFAULT_KEYMAP } from '../../src/client/input/keymap.ts';
 import { ActorKind, ActorRank, DownedStatus, PartyAction } from '../../src/shared/protocol.ts';
-import { TurnActorState, VoiceState } from '../../src/shared/protocol.ts';
+import { ResourceKind, TurnActorState, VoiceState } from '../../src/shared/protocol.ts';
 import { PROTOCOL_VERSION } from '../../src/shared/version.ts';
 import type { MapVerb } from '../../src/client/ui/contextmenu.ts';
 import type {
@@ -157,6 +158,7 @@ function trio(invites: readonly PartyInviteView[] = []): PartyPaneView {
       ],
     ]),
     inCombat: true,
+    resource: null,
   });
 }
 
@@ -300,6 +302,7 @@ describe('the pane draws the party frame and joins only what that frame cannot c
       actors: new Map(),
       effects: new Map(),
       inCombat: false,
+      resource: null,
     });
     expect(view.rows[0]?.downed).toEqual({
       status: DownedStatus.Downed,
@@ -344,6 +347,7 @@ describe('the pane draws the party frame and joins only what that frame cannot c
       actors: new Map(),
       effects: new Map(),
       inCombat: false,
+      resource: null,
     });
     expect(view.rows[0]?.downed?.status).toBe(DownedStatus.Downed);
     expect(view.rows[0]?.downed?.turnsLeft).toBe(2);
@@ -360,6 +364,7 @@ describe('the pane draws the party frame and joins only what that frame cannot c
       actors: new Map(),
       effects: new Map(),
       inCombat: false,
+      resource: null,
     });
     // Alphabetical would be Ada first; "self first" would be Ada first too. Both
     // would move a row under a cursor that is about to press Kick.
@@ -426,6 +431,7 @@ describe('the pane collapses rather than burying the map', () => {
       actors: new Map(),
       effects: new Map(),
       inCombat: false,
+      resource: null,
     });
     expect(
       partyPaneLayout({ view: empty, width: 900, top: 20, bottom: 420, rightReserved: 214 }),
@@ -440,6 +446,7 @@ describe('the pane collapses rather than burying the map', () => {
       actors: new Map([['actor_a', actor('actor_a', 'Dalt')]]),
       effects: new Map(),
       inCombat: false,
+      resource: null,
     });
     const layout = partyPaneLayout({
       view: solo,
@@ -1067,5 +1074,98 @@ describe('a badge says what it is doing to you', () => {
     const named = lines.findIndex((l) => l.includes('Slowed'));
     expect(named).toBeGreaterThanOrEqual(0);
     expect(lines[named + 1] ?? '').not.toContain('Dragging');
+  });
+});
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE VIEWER'S POOLS SIT UNDER THE VIEWER'S NAME — Minimalist.lua:376-377.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Reported: "the resources, AP, MP, reagents is easy to miss at the bottom left
+ * hand of the screen. we need to include all of that info in the hp hud/'party'
+ * at the top left."
+ *
+ * Upstream puts `player` at `{x=0,y=0}` and `resources` at `{x=0,y=111}` — one
+ * left column, pools under the portrait. These pin the three properties that
+ * makes true here: the strip is DRAWN, it is drawn on the SELF row, and it is
+ * drawn on NOBODY ELSE'S — the last one is the protocol's rule, not a taste.
+ */
+describe('the viewer’s own pools on the pane', () => {
+  const pools = {
+    kind: ResourceKind.Reagents,
+    current: 3,
+    max: 8,
+    discrete: true,
+    ap: 4,
+    maxAp: 6,
+    mp: 2,
+    maxMp: 3,
+  } as const;
+
+  /** Every `drawImage`/`fillRect` y, so a strip can be told from a row. */
+  function paintedRows(view: PartyPaneView): { height: number; drew: number } {
+    let drew = 0;
+    const stub = new Proxy(
+      {},
+      {
+        get: (_target, prop: string) => {
+          if (prop === 'measureText') return () => ({ width: 20 });
+          if (prop === 'canvas') return undefined;
+          // COUNTS EVERY DRAWING CALL. With no art at all the pips fall back
+          // to hollow outlines, so counting `drawImage` alone would count zero
+          // in both arms and the test would pass on nothing.
+          return () => {
+            drew += 1;
+          };
+        },
+        set: () => true,
+      },
+    ) as unknown as CanvasRenderingContext2D;
+
+    const layout = wideLayout(view);
+    drawPartyPane({
+      ctx: stub,
+      sprites: { sprite: () => undefined },
+      view,
+      layout,
+    });
+    return { height: partyPaneHeight(view, PartyPaneMode.Rows), drew };
+  }
+
+  it('gives the self row the height its pools need, and nobody else’s row', () => {
+    const without = trio();
+    const withPools = { ...trio(), resource: pools };
+    const grew =
+      partyPaneHeight(withPools, PartyPaneMode.Rows) - partyPaneHeight(without, PartyPaneMode.Rows);
+    // EXACTLY ONE STRIP. Three members in the fixture and only one of them is
+    // the viewer, so a per-row implementation would show up here as 3x.
+    expect(grew, 'the pane grew by something other than one strip').toBe(RESOURCE_H);
+  });
+
+  it('draws pips once the frame has arrived and none before it', () => {
+    const before = paintedRows(trio());
+    const after = paintedRows({ ...trio(), resource: pools });
+    expect(after.drew, 'no pips were drawn for the viewer').toBeGreaterThan(before.drew);
+  });
+
+  /**
+   * AND THE HIT TEST FOLLOWS THE PAINTER. `paneGeometry` is the one place row
+   * rects are computed, so a taller self row must move the rows under it — if
+   * these two ever disagree a click lands on the wrong member, which is the
+   * failure `partyPaneLayout`'s header warns about.
+   */
+  it('moves the rows below the self row rather than overlapping them', () => {
+    const view = { ...trio(), resource: pools };
+    const layout = wideLayout(view);
+    const ids = view.rows.map((row) => row.member.id);
+    const hits = new Set<string>();
+    for (let y = layout.rect.y; y < layout.rect.y + layout.rect.h; y += 1) {
+      const hit = partyPaneHitAt(view, layout, layout.rect.x + 30, y);
+      if (hit?.kind === 'member') hits.add(hit.id);
+    }
+    for (const id of ids) {
+      expect(hits, `${id} became unreachable`).toContain(id);
+    }
   });
 });

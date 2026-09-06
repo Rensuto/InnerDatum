@@ -3008,6 +3008,10 @@ function partyView(): PartyPaneView | null {
     actors,
     effects,
     inCombat: turn?.inCombat === true,
+    // THE VIEWER'S OWN, and there is no other kind: `ResourceView` is
+    // viewer-private, so this is the same `resource` the bottom strip draws and
+    // the pane puts it on the self row. See `PartyPaneView.resource`.
+    resource,
   });
 }
 

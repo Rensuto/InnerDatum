@@ -129,6 +129,8 @@ import type {
 import type { SpriteSource } from '../render/assets.ts';
 import type { PanelRect } from './panel.ts';
 import { HP_LOW } from '../../shared/vitals.ts';
+import { RESOURCE_H, drawResource } from './resource.ts';
+import type { ResourceView } from '../../shared/protocol.ts';
 
 // ---------------------------------------------------------------------------
 // Geometry. See the layout note in the header before changing any of it.
@@ -216,6 +218,38 @@ const MAP_MIN_CLEAR_HARD_PX = 256;
 /** A pane shorter than a header plus one row is noise. */
 const PANE_MIN_H = HEADER_H + PARTY_ROW_H;
 
+/**
+ * How tall ONE row is, and it is not a constant any more.
+ *
+ * The self row carries the viewer's pools under the name, so it is taller than
+ * everybody else's by exactly the strip that draws them. THREE callers need this
+ * number -- `partyPaneHeight` to ask for the space, `paneGeometry` to place the
+ * rows, and `partyPaneHitAt` through that same geometry -- and the header of
+ * `partyPaneLayout` already says what two copies of this arithmetic cost: a
+ * click that lands on the map through a panel, on somebody else's window size.
+ * So there is one function and the other two call it.
+ *
+ * NOT IN THE COMPACT FORM. `PartyPaneMode.Portraits` is a 52-pixel strip of
+ * faces with no room for a word, let alone twelve pips -- the same reason its
+ * invites carry a mark rather than two buttons. On that form the bottom strip
+ * remains the only copy, which is exactly the case `ui/life.ts` argues it exists
+ * for.
+ */
+function rowHeightFor(row: PartyPaneRow, view: PartyPaneView, compact: boolean): number {
+  if (compact) return PARTY_ROW_COMPACT_H;
+  const carriesPools = row.member.isSelf && view.resource !== null;
+  return carriesPools ? PARTY_ROW_H + RESOURCE_STRIP_H : PARTY_ROW_H;
+}
+
+/**
+ * The band under the self row's name that holds the pools.
+ *
+ * `RESOURCE_H` is `ui/resource.ts`'s own row height (the pip plus its air), so
+ * this grows if the pips ever do rather than being a number that has to be
+ * remembered in two files.
+ */
+const RESOURCE_STRIP_H = RESOURCE_H;
+
 const FONT_NAME = '10px ui-monospace, Consolas, monospace';
 const FONT_NAME_SELF = 'bold 10px ui-monospace, Consolas, monospace';
 const FONT_SMALL = '10px ui-monospace, Consolas, monospace';
@@ -268,6 +302,23 @@ export type PartyPaneView = {
    * draw a strip for.
    */
   readonly inCombat: boolean;
+  /**
+   * THE VIEWER'S OWN POOLS, OR NULL BEFORE THE FIRST `resource` FRAME.
+   *
+   * Reported: *"the resources, AP, MP, reagents is easy to miss at the bottom
+   * left hand of the screen. we need to include all of that info in the hp hud/
+   * 'party' at the top left."*
+   *
+   * ONE FIELD ON THE VIEW AND NOT ONE PER ROW, because there is only ever one
+   * of these to draw. `ResourceView` is VIEWER-PRIVATE by protocol
+   * (protocol.ts:1311, *"Another detective's AP is not yours to see, and the
+   * party pane has never claimed otherwise"*) and the wire carries no teammate's
+   * pool at all, so a per-row field would be six nulls and an invitation to fill
+   * them from somewhere they cannot honestly come from.
+   *
+   * It is drawn on the SELF row, which is the row it is about.
+   */
+  readonly resource: ResourceView | null;
 };
 
 export type PartyPaneLayout = {
@@ -308,6 +359,8 @@ export function partyPaneView(options: {
   readonly actors: ReadonlyMap<string, ActorView>;
   readonly effects: ReadonlyMap<string, readonly EffectView[]>;
   readonly inCombat: boolean;
+  /** The viewer's own pools. Straight through; see `PartyPaneView.resource`. */
+  readonly resource: ResourceView | null;
 }): PartyPaneView {
   const roster = new Map(options.roster.map((member) => [member.id, member]));
 
@@ -336,6 +389,7 @@ export function partyPaneView(options: {
     }),
     invites: options.invites,
     inCombat: options.inCombat,
+    resource: options.resource,
   };
 }
 
@@ -350,7 +404,8 @@ export function partyPaneHeight(view: PartyPaneView, mode: PartyPaneMode): numbe
     const flag = view.invites.length > 0 ? BUTTON_H : 0;
     return inset * 2 + flag + view.rows.length * PARTY_ROW_COMPACT_H;
   }
-  return HEADER_H + inset * 2 + view.invites.length * INVITE_H + view.rows.length * PARTY_ROW_H;
+  const rows = view.rows.reduce((total, row) => total + rowHeightFor(row, view, false), 0);
+  return HEADER_H + inset * 2 + view.invites.length * INVITE_H + rows;
 }
 
 /**
@@ -472,9 +527,9 @@ function paneGeometry(view: PartyPaneView, layout: PartyPaneLayout): PaneGeometr
     y += BUTTON_H;
   }
 
-  const rowH = compact ? PARTY_ROW_COMPACT_H : PARTY_ROW_H;
   const rows: { row: PartyPaneRow; rect: PanelRect; follow: PanelRect | null }[] = [];
   for (const row of view.rows) {
+    const rowH = rowHeightFor(row, view, compact);
     if (y + rowH > bottom) break;
     // NOT IN THE COMPACT FORM. `FOLLOW` is a word, and the portraits mode has
     // no room for a word — the same reason its invites carry a mark rather than
@@ -841,6 +896,8 @@ function drawRow(
   row: PartyPaneRow,
   rect: PanelRect,
   inCombat: boolean,
+  /** The viewer's own pools, drawn under the SELF row only. Null before the frame. */
+  resource: ResourceView | null,
 ): void {
   const { member, effects, downed } = row;
   const away = !member.online;
@@ -848,16 +905,19 @@ function drawRow(
 
   // The self row gets a wash, exactly as the turn cards do, so the two surfaces
   // mark "you" the same way.
+  // THE WASH COVERS THE WHOLE ROW, POOLS INCLUDED -- `rect.h` and not
+  // `PARTY_ROW_H`, or the strip sits outside the block that marks it as yours
+  // and reads as a detached row belonging to whoever is listed next.
   if (member.isSelf) {
     ctx.fillStyle = PALETTE.SLATE;
-    ctx.fillRect(x, y, w, PARTY_ROW_H - 1);
+    ctx.fillRect(x, y, w, rect.h - 1);
   }
 
   // THE RAIL. Three pixels of solid colour down the left of the row: the signal
   // you catch while looking at the map, backed by the word beside it.
   if (downed !== null) {
     ctx.fillStyle = downed.status === DownedStatus.Erased ? PALETTE.GREY : PALETTE.ORANGE;
-    ctx.fillRect(x, y, 3, PARTY_ROW_H - 1);
+    ctx.fillRect(x, y, 3, rect.h - 1);
   }
 
   const token: PanelRect = { x: x + 5, y: y + 1, w: FACE_PX, h: FACE_PX };
@@ -887,6 +947,46 @@ function drawRow(
     ctx.textAlign = 'left';
     badgeX -= 14;
   }
+  /**
+   * ════════════════════════════════════════════════════════════════════════════
+   * YOUR POOLS, UNDER YOUR NAME — Minimalist.lua:376-377.
+   * ════════════════════════════════════════════════════════════════════════════
+   * Reported: *"the resources, AP, MP, reagents is easy to miss at the bottom
+   * left hand of the screen. we need to include all of that info in the hp hud/
+   * 'party' at the top left."*
+   *
+   * Upstream agrees and says so in one table: `self.places` puts `player` at
+   * `{x=0, y=0}` (:376) and `resources` at `{x=0, y=111}` (:377) — the SAME
+   * left column, the pools directly under the portrait. Ours had them in
+   * opposite corners of the screen.
+   *
+   * ═══ THE SELF ROW ONLY, AND THAT IS THE PROTOCOL'S RULE RATHER THAN A CHOICE ═══
+   * `ResourceView` is viewer-private (protocol.ts:1311) and the wire carries no
+   * teammate's pool, so there is nothing to draw on anybody else's row and
+   * nowhere honest to get it. `view.resource` is one field for that reason.
+   *
+   * ═══ THE BOTTOM STRIP STAYS ═══
+   * `ui/life.ts` argues at length that vitals must sit on furniture that cannot
+   * be dismissed, and lists this pane's own failure modes as the reason — it is
+   * toggled off with `p` and it degrades to faces on a narrow window. Both are
+   * still true, so removing the strip would reopen the exact gap that file was
+   * written to close. This is the copy the eye actually uses; that one is the
+   * copy that is always there.
+   */
+  if (member.isSelf && resource !== null) {
+    drawResource({
+      ctx,
+      sprites,
+      resource,
+      x: token.x,
+      y: y + PARTY_ROW_H - 1,
+      // FROM THE TOKEN TO THE ROW'S EDGE. It starts under the portrait rather
+      // than under the name so the pips have the full width of the row to run
+      // in -- twelve reagents plus a budget does not fit beside a 32px face.
+      width: Math.max(0, x + w - token.x),
+    });
+  }
+
   const textX = token.x + FACE_PX + 4;
   const contentRight = Math.max(textX, badgeX + BADGE_PX - BADGE_GAP);
 
@@ -1131,7 +1231,7 @@ export function drawPartyPane(options: PartyPaneOptions): void {
 
   for (const slot of geometry.rows) {
     if (compact) drawCompactRow(ctx, sprites, slot.row, slot.rect);
-    else drawRow(ctx, sprites, slot.row, slot.rect, view.inCombat);
+    else drawRow(ctx, sprites, slot.row, slot.rect, view.inCombat, view.resource);
   }
 
   ctx.restore();
