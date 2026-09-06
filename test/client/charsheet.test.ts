@@ -233,6 +233,19 @@ function sheet(over: Partial<CharSheetView> = {}): CharSheetView {
 }
 
 /**
+ * THE ROWS OF EVERY TAB, WHICH `charSheetRect` NOW REQUIRES.
+ *
+ * The panel is sized by what it has to draw (see `charSheetRect`), so a rect
+ * cannot be asked for without saying what is on the pages. Passing all five is
+ * not a convenience: upstream sizes ONCE in `init` (CharacterSheet.lua:50,
+ * before `switchTo` at :198), so the panel must not change shape as tabs are
+ * pressed, and it is the TALLEST and WIDEST page that decides it.
+ */
+function pages(over: Partial<CharSheetView> = {}): readonly (readonly SheetRow[])[] {
+  return SHEET_TABS.map((tab) => charSheetRows(sheet(over), tab));
+}
+
+/**
  * Section labels, in the order they appear. The port, extracted.
  *
  * `flatMap` rather than `filter().map()`: a boolean predicate does not narrow a
@@ -770,7 +783,7 @@ describe('the talent rows', () => {
 
 describe('charSheetRect', () => {
   it('stays inside the band it was given, so it can never sit under the hotbar', () => {
-    const rect = charSheetRect({ width: 640, height: 400, top: 20, bottom: 360 });
+    const rect = charSheetRect({ width: 640, height: 400, top: 20, bottom: 360, pages: pages() });
     expect(rect).not.toBeNull();
     if (rect === null) throw new Error('unreachable');
     expect(rect.y).toBeGreaterThanOrEqual(20);
@@ -782,14 +795,18 @@ describe('charSheetRect', () => {
   it('clamps the band against the viewport, not just against what it was told', () => {
     // A caller holding a stale viewport size must not be able to push the panel
     // off the bottom, where the close button would be unreachable.
-    const rect = charSheetRect({ width: 640, height: 240, top: 20, bottom: 900 });
+    const rect = charSheetRect({ width: 640, height: 240, top: 20, bottom: 900, pages: pages() });
     if (rect === null) throw new Error('unreachable');
     expect(rect.y + rect.h).toBeLessThanOrEqual(240);
   });
 
   it('gives up rather than drawing a sheet taller than the band', () => {
-    expect(charSheetRect({ width: 640, height: 400, top: 20, bottom: 70 })).toBeNull();
-    expect(charSheetRect({ width: 120, height: 400, top: 20, bottom: 360 })).toBeNull();
+    expect(
+      charSheetRect({ width: 640, height: 400, top: 20, bottom: 70, pages: pages() }),
+    ).toBeNull();
+    expect(
+      charSheetRect({ width: 120, height: 400, top: 20, bottom: 360, pages: pages() }),
+    ).toBeNull();
   });
 
   it('still opens, and still draws every identity row, at exactly SHEET_MIN_H', () => {
@@ -801,7 +818,13 @@ describe('charSheetRect', () => {
     // COMBAT block on an ordinary short window. This finds either mistake by
     // asking for the tightest legal band and checking the panel is both offered
     // and tall enough for the block it promises.
-    const rect = charSheetRect({ width: 640, height: 400, top: 0, bottom: SHEET_MIN_H + 12 });
+    const rect = charSheetRect({
+      width: 640,
+      height: 400,
+      top: 0,
+      bottom: SHEET_MIN_H + 12,
+      pages: pages(),
+    });
     expect(rect).not.toBeNull();
     if (rect === null) throw new Error('unreachable');
     expect(rect.h).toBeGreaterThanOrEqual(SHEET_MIN_H);
@@ -823,12 +846,14 @@ describe('charSheetRect', () => {
 
     // One pixel shorter and it must refuse, so the constant is a real edge
     // rather than a number nothing reads.
-    expect(charSheetRect({ width: 640, height: 400, top: 0, bottom: SHEET_MIN_H + 11 })).toBeNull();
+    expect(
+      charSheetRect({ width: 640, height: 400, top: 0, bottom: SHEET_MIN_H + 11, pages: pages() }),
+    ).toBeNull();
   });
 });
 
 describe('charSheetHitAt', () => {
-  const rect = charSheetRect({ width: 640, height: 400, top: 20, bottom: 360 });
+  const rect = charSheetRect({ width: 640, height: 400, top: 20, bottom: 360, pages: pages() });
   if (rect === null) throw new Error('unreachable');
 
   it('answers only in the header strip, at the right-hand end', () => {
@@ -971,7 +996,7 @@ describe('drawing', () => {
       },
     ) as unknown as CanvasRenderingContext2D;
 
-    const rect = charSheetRect({ width: 640, height: 400, top: 20, bottom: 360 });
+    const rect = charSheetRect({ width: 640, height: 400, top: 20, bottom: 360, pages: pages() });
     if (rect === null) throw new Error('unreachable');
 
     drawCharSheet({
@@ -1024,7 +1049,7 @@ describe('drawing', () => {
         },
       ) as unknown as CanvasRenderingContext2D;
 
-      const rect = charSheetRect({ width: 640, height: 400, top: 20, bottom: 360 });
+      const rect = charSheetRect({ width: 640, height: 400, top: 20, bottom: 360, pages: pages() });
       if (rect === null) throw new Error('unreachable');
       drawCharSheet({
         tab: SheetTab.General,
@@ -1150,7 +1175,17 @@ describe('the sheet shows what it says it shows', () => {
       },
     ) as unknown as CanvasRenderingContext2D;
 
-    const rect = charSheetRect({ width, height, top: 20, bottom: height - 40 });
+    // THE SAME `over` THE PAINT USES. Sizing from the default fixture while
+    // painting an overridden one measures a panel for rows it will not be
+    // given -- which is how a full talent bar came to be drawn into a panel
+    // sized for an empty one, and dropped.
+    const rect = charSheetRect({
+      width,
+      height,
+      top: 20,
+      bottom: height - 40,
+      pages: pages(over),
+    });
     if (rect === null) throw new Error(`no rect at ${String(width)}x${String(height)}`);
     drawCharSheet({
       tab,
@@ -1247,16 +1282,59 @@ describe('the sheet shows what it says it shows', () => {
     }
   });
 
-  it('uses the room a larger window gives it', () => {
-    // A panel that is the same size on a 1280 screen as on a 640 one is not
-    // "consistent", it is ignoring the window. This is the property that makes
-    // the ellipsis fix hold as content grows rather than being tuned to today's
-    // longest string.
-    const small = charSheetRect({ width: 640, height: 400, top: 20, bottom: 360 });
-    const large = charSheetRect({ width: 1280, height: 720, top: 20, bottom: 680 });
+  /**
+   * ════════════════════════════════════════════════════════════════════════════
+   * THIS SAID "uses the room a larger window gives it" AND NOW SAYS THE
+   * OPPOSITE. BOTH WERE RIGHT ABOUT THE BUG IN FRONT OF THEM.
+   * ════════════════════════════════════════════════════════════════════════════
+   * It was written against a FLAT 560-PIXEL CAP that made the sheet the same
+   * size on a 1538 window as on a 700 one, run out of room, and drop whole
+   * sections in writing. Growing with the window was the fix for that.
+   *
+   * Then a player reported the far end: *"the character page is quite large and
+   * has a LOT of wasted space."* At 1280x720 the panel was 1200x432 with four
+   * columns of 288 and every row on every page in column one.
+   *
+   * The rule is now SIZE TO THE ROWS, UNDER UPSTREAM'S BOUND. So the assertion
+   * inverts — and the property the old one actually protected is kept below,
+   * where it belongs: nothing is ever clipped, at either size.
+   */
+  it('does not take a bigger window as a reason to be bigger', () => {
+    const small = charSheetRect({ width: 640, height: 400, top: 20, bottom: 360, pages: pages() });
+    const large = charSheetRect({ width: 1280, height: 720, top: 20, bottom: 680, pages: pages() });
     expect(small).not.toBeNull();
     expect(large).not.toBeNull();
-    expect(large?.w ?? 0).toBeGreaterThan(small?.w ?? 0);
+    if (small === null || large === null) return;
+    expect(large.w, 'the sheet still spreads to fill the window').toBe(small.w);
+    // AND IT IS GENUINELY SMALLER THAN THE BOUND IT USED TO TAKE. 0.5 of 1280 is
+    // 640; the panel that shipped took 1200.
+    expect(large.w, 'the sheet still takes upstream’s whole share').toBeLessThan(640);
+  });
+
+  /**
+   * THE PROPERTY THE OLD TEST WAS DEFENDING, KEPT. A smaller panel is only
+   * correct while it still draws everything — the moment a row is clipped or a
+   * section dropped, the wasted space was load-bearing after all.
+   */
+  it('clips nothing on any page at either size', () => {
+    for (const [w, h] of [
+      [640, 400],
+      [1280, 720],
+    ]) {
+      for (const tab of SHEET_TABS) {
+        const texts = painted(w ?? 0, h ?? 0, {}, tab);
+        expect(
+          texts.filter((t) => t.includes('panel too small')),
+          `${String(w)}x${String(h)} dropped a section on ${String(tab)}`,
+        ).toEqual([]);
+        expect(
+          // `gathering…` is a NOTE and not a clipped row -- it is the sheet
+          // saying the frame has not arrived, and it ends in the same character.
+          texts.filter((t) => t.endsWith('…') && t !== 'gathering…'),
+          `${String(w)}x${String(h)} ellipsised a row on ${String(tab)}`,
+        ).toEqual([]);
+      }
+    }
   });
 
   /**
@@ -1314,7 +1392,7 @@ describe('the sheet shows what it says it shows', () => {
 
   it('never grows wider than the window it is centred in', () => {
     for (const [w, h] of VIEWPORTS) {
-      const rect = charSheetRect({ width: w, height: h, top: 20, bottom: h - 40 });
+      const rect = charSheetRect({ width: w, height: h, top: 20, bottom: h - 40, pages: pages() });
       expect(rect?.w ?? 0, `${String(w)}x${String(h)}`).toBeLessThanOrEqual(w);
       expect(rect?.x ?? 0, `${String(w)}x${String(h)} left`).toBeGreaterThanOrEqual(0);
       expect(

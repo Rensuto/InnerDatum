@@ -11,7 +11,8 @@ import {
   passesThreshold,
   settleOffset,
 } from '../../src/client/ui/drag.ts';
-import { charSheetRect } from '../../src/client/ui/charsheet.ts';
+import { SHEET_TABS, charSheetRect, charSheetRows } from '../../src/client/ui/charsheet.ts';
+import type { CharSheetView } from '../../src/client/ui/charsheet.ts';
 import { HEADER_H, PANEL_PAD, headerDragRect } from '../../src/client/ui/panel.ts';
 import type { PanelOffset } from '../../src/client/ui/drag.ts';
 import type { PanelRect } from '../../src/client/ui/panel.ts';
@@ -211,42 +212,63 @@ describe('settleOffset — what a release banks', () => {
    * before the panel moved again — and the legal travel is tiny next to a pointer
    * stroke, so one careless sweep bought several completely dead drags.
    *
-   * The numbers below are the REAL character sheet at the smallest backbuffer
-   * this client renders, taken from `charSheetRect` rather than typed out: 1248
-   * logical pixels wide (1280 minus the letterbox at integer scale), a band of
-   * top 17 / bottom 343, an 1185x314 panel resting at y=23. That is 12 pixels of
-   * vertical travel against a 480-pixel canvas.
+   * The panel below is the REAL character sheet at the smallest backbuffer this
+   * client renders, taken from `charSheetRect` rather than typed out: 1248
+   * logical pixels wide (1280 minus the letterbox at integer scale), in a band
+   * of top 17 / bottom 343.
    *
-   * ═══ THOSE NUMBERS MOVED WHEN THE SHEET TOOK ToME'S SIZING ═══
-   * It was a 328x268 panel at y=46 with 29 pixels of travel, back when
-   * `charSheetRect` capped itself at 560 pixels wide however big the window was.
-   * The panel now asks for a preferred 200 columns clamped to a share of the
-   * window (CharacterSheet.lua:50), which on this backbuffer is 1185 wide.
+   * ═══ ITS SIZE HAS MOVED TWICE AND THESE ASSERTIONS NO LONGER SPELL IT ═══
+   * It was 328x268 under a flat 560-pixel cap; then 1185x314 when the sheet took
+   * ToME's `util.bound(font_w*200, ...)` sizing (CharacterSheet.lua:50); and it
+   * is smaller again now that the panel is sized by the rows it actually draws
+   * with that bound kept as a ceiling. Each move rewrote a pile of literals here
+   * that were never the subject.
    *
-   * THE SHRINKING TRAVEL IS THE POINT OF THE TEST, not a problem with it: a
-   * bigger panel has LESS room to move inside the same band, so the gap between
-   * a pointer stroke and the legal travel is wider than ever, and banking the
-   * raw offset would buy even more dead drags than it used to.
+   * SO THE NUMBERS ARE DERIVED FROM THE RECT NOW, not typed. What is asserted is
+   * the RELATION -- a release banks the offset the clamp honoured, so the drawn
+   * position is identical either way and the next grab re-bases on it. That is
+   * true at every panel size, which is the point; the literals only ever recorded
+   * which size was current the day they were written.
+   *
+   * THE TRAVEL IS STILL THE THING UNDER TEST: a panel has only a few pixels of
+   * legal movement inside this band next to a pointer stroke of hundreds, and
+   * banking the raw offset is what bought several completely dead drags.
    */
   const WIDTH = 1248;
   const BAND = { top: 17, bottom: 343 };
   const sheet = (): PanelRect => {
-    const rect = charSheetRect({ width: WIDTH, height: 480, top: BAND.top, bottom: BAND.bottom });
+    // THE PANEL IS SIZED BY ITS ROWS NOW, so a rect cannot be asked for without
+    // saying what is on the pages. This file is about DRAGGING rather than
+    // layout, so the fixture only has to be a sheet that opens -- but it has to
+    // be a real one, because an empty view would size a panel no player sees.
+    const view = {
+      view: null,
+      resource: null,
+      loadout: [],
+      cooldowns: {},
+      progress: null,
+      equipped: {},
+    } as unknown as CharSheetView;
+    const rect = charSheetRect({
+      width: WIDTH,
+      height: 480,
+      top: BAND.top,
+      bottom: BAND.bottom,
+      pages: SHEET_TABS.map((tab) => charSheetRows(view, tab)),
+    });
     if (rect === null) throw new Error('the sheet must fit the smallest band this client renders');
     return rect;
   };
 
   it('answers the offset the clamp honoured, not the one the pointer reached', () => {
     const rect = sheet();
-    expect(rect.y).toBe(23);
-    expect(rect.h).toBe(314);
-    // The pointer is hauled to the bottom of the window: a raw dy of 423 against
-    // a panel that can move 12.
+    // The pointer is hauled to the bottom of the window, hundreds of pixels
+    // against a panel with a few of legal travel.
     const raw = nextOffset(offset(0, 0), 600, 50, 600, 473);
     expect(raw.dy).toBe(423);
     const settled = settleOffset(rect, raw, BAND, WIDTH);
     expect(settled.dy).toBe(BAND.bottom - rect.h - rect.y);
-    expect(settled.dy).toBe(6);
+    expect(settled.dy, 'the clamp banked the whole sweep').toBeLessThan(raw.dy);
     // ...and the drawn position is identical either way, which is the property
     // that makes settling invisible to the player.
     expect(moveIntoBand(rect, settled, BAND, WIDTH)).toEqual(moveIntoBand(rect, raw, BAND, WIDTH));
@@ -258,7 +280,7 @@ describe('settleOffset — what a release banks', () => {
     // window. The panel lands pinned at the band's floor.
     const first = settleOffset(rect, nextOffset(offset(0, 0), 600, 50, 600, 473), BAND, WIDTH);
     const pinned = moveIntoBand(rect, first, BAND, WIDTH);
-    expect(pinned.y).toBe(29);
+    expect(pinned.y, 'the panel did not land on the band floor').toBe(BAND.bottom - rect.h);
 
     // Gesture 2: grab it again where it now IS — that is the whole point, the
     // pointer re-bases on the drawn position — and drag 100 pixels up.
@@ -267,7 +289,10 @@ describe('settleOffset — what a release banks', () => {
     // WITH THE RAW OFFSET BANKED (dy 423) this answered 75 again: a hundred
     // pixels of drag, zero pixels of movement, four times over.
     expect(moved.y).toBeLessThan(pinned.y);
-    expect(moved.y).toBe(BAND.top);
+    // A HUNDRED PIXELS OF DRAG BUYS A HUNDRED PIXELS OF MOVEMENT, or as much of
+    // it as the band allows. Spelling `BAND.top` here only worked while the
+    // panel was big enough that 100 overshot the whole travel.
+    expect(moved.y).toBe(Math.max(BAND.top, pinned.y - 100));
   });
 
   it('is idempotent — settling a settled offset changes nothing', () => {
@@ -305,10 +330,13 @@ describe('settleOffset — what a release banks', () => {
     // RELEASE and a resize writes nothing at all.
     const rect = sheet();
     const settled = settleOffset(rect, offset(200, 9999), BAND, WIDTH);
-    const short = { top: 17, bottom: 200 };
+    // DERIVED SO IT IS ACTUALLY TOO SHORT. This was a literal `bottom: 200`,
+    // which stopped being shorter than the panel the moment the sheet was sized
+    // by its rows -- and a band that fits is not testing the pinning branch.
+    const short = { top: 17, bottom: 17 + rect.h - 20 };
     const shrunk = moveIntoBand(rect, settled, short, 400);
-    // Too short to hold a 268-pixel panel: it pins to the top rather than
-    // inverting, and the stored offset is not rewritten by that.
+    // Too short to hold the panel: it pins to the top rather than inverting, and
+    // the stored offset is not rewritten by that.
     expect(shrunk.y).toBe(short.top);
     expect(moveIntoBand(rect, settled, BAND, WIDTH).y).toBe(rect.y + settled.dy);
   });

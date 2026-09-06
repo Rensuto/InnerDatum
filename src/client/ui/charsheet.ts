@@ -202,20 +202,24 @@ const COL_GAP = 10;
  * value took the whole column and the label took the remainder — see the Field
  * case in `drawRow` for the screenshot that produced it.
  *
- * HALF, because the two are not the same KIND of string. Labels are a closed set
- * this file authors (`Armour hardiness` is the longest at 16 characters, and
- * every slot name is at most 7); values are open — an item name arrives off the
- * wire and nothing here bounds it. A cap set on the half we control lets the
- * half we do not have everything else, and the widest authored label still fits
- * inside it in every column this sheet opens: 16 characters is 96 pixels and
- * half of `COL_MIN_W` is 100.
+ * EXPRESSED AS A FLOOR UNDER THE VALUE, NOT A SHARE OF THE ROW. It was
+ * `FIELD_LABEL_MAX_SHARE = 0.5` and half is the wrong shape: in a 190-pixel
+ * column that is a 95-pixel ceiling, and `Armour hardiness` is 96 — the widest
+ * label this file authors, clipped by one pixel by a rule meant to protect it.
+ * A proportion has to be re-checked against every column width the panel can
+ * ever open; a floor does not.
+ *
+ * So the value keeps FOUR characters (`100%`, `128`, an em dash) and the label
+ * may have everything else. Both failures stay impossible: a long value cannot
+ * squeeze the label to nothing (it is measured first), and a long label cannot
+ * take the number it introduces below something readable.
  *
  * IT IS A CEILING AND NOT A COLUMN. A label shorter than the cap takes only what
- * it measures, so `Head` does not push a value 100 pixels to the right — which
- * is the "values are WAY further than the name" complaint this must not create,
- * already answered once in ui/inventory.ts.
+ * it measures, so `Head` does not push a value across the row — the "values are
+ * WAY further than the name" complaint this must not create, already answered
+ * once in ui/inventory.ts.
  */
-const FIELD_LABEL_MAX_SHARE = 0.5;
+const FIELD_VALUE_MIN_CHARS = 4;
 
 /**
  * The air between a label and the value it introduces.
@@ -375,8 +379,81 @@ const TAB_GAP = 2;
  */
 export const SHEET_MIN_H =
   HEADER_H + TAB_H + Math.floor(INSET / 2) + INSET * 2 + SECTION_H + ROW_H * 5;
+/**
+ * EVERYTHING IN THE PANEL THAT IS NOT A ROW — header, tab strip, and the air.
+ *
+ * DERIVED FROM `sheetGeometry`'S OWN TWO LINES rather than restated, because a
+ * second copy of this arithmetic is a panel sized for one row band and painted
+ * with another. That function sets
+ *
+ *   top    = rect.y + HEADER_H + floor(INSET/2) + TAB_H + floor(INSET/2)
+ *   bottom = rect.y + rect.h - INSET
+ *
+ * so the rows get `rect.h` minus exactly what is below.
+ */
+const SHEET_CHROME_H = HEADER_H + Math.floor(INSET / 2) * 2 + TAB_H + INSET;
+
+/**
+ * ════════════════════════════════════════════════════════════════════════════
+ * THE ROWS ARE NOT THE ONLY THING THAT NEEDS WIDTH. THE TAB STRIP DOES TOO.
+ * ════════════════════════════════════════════════════════════════════════════
+ * Sizing the panel to the ROWS alone shrank it to 206 pixels and the strip
+ * printed `[G]` `[A]` `[D]` `[T]` `[E]` — the painter's own deliberate fallback
+ * (*"when the word will not fit, the word goes and the letter stays"*), firing
+ * at every window because the panel had been sized without asking it.
+ *
+ * INVERTED FROM `sheetTabRects` RATHER THAN GUESSED. That function is the ONE
+ * copy of the strip's arithmetic: it divides `innerW` equally among the tabs,
+ * `each = floor((innerW - TAB_GAP*(n-1)) / n)`, and the painter draws into
+ * `box.w - 4`. So the smallest `innerW` at which every tab still prints its word
+ * is `n * (widest + 4) + TAB_GAP * (n-1)`, and this reads those same constants
+ * back rather than restating the shape.
+ */
+/** A FUNCTION because `SHEET_TABS` and `TAB_LABEL` are declared further down. */
+function sheetTabStripW(): number {
+  const widest = Math.max(...SHEET_TABS.map((tab) => TAB_LABEL[tab].length)) * CHAR_W;
+  return (
+    SHEET_TABS.length * (widest + TAB_LABEL_PAD) + TAB_GAP * (SHEET_TABS.length - 1) + INSET * 2
+  );
+}
+
+/** The air `drawTabs` takes off each box before it measures the word: `box.w - 4`. */
+const TAB_LABEL_PAD = 4;
+
 /** Air between the panel and the edges of the band it is clamped into. */
 const SHEET_MARGIN = 6;
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * HOW WIDE ONE ROW WANTS TO BE, IN A FIXED-ADVANCE FONT.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * AN ESTIMATE FROM CHARACTER COUNTS, which is this directory's established way
+ * of making geometry testable: vitest runs in `node` with deliberately no jsdom,
+ * so anything that needed `ctx.measureText` could only be checked by a human
+ * squinting at the screen. `ui/tooltip.ts` states the same rule for the same
+ * reason, and the safety net is the same one — every string the painter draws is
+ * run through `fitText` against the REAL width, so an estimate a few pixels
+ * tight costs an ellipsis and never an overflow.
+ *
+ * A TALENT ROW IS `COL_MIN_W` MINUS ITS GAP, AND THAT IS NOT A COINCIDENCE.
+ * `COL_MIN_W` is the pitch at which `sheetGeometry` opens a column; measuring a
+ * talent row any other way would create a SECOND authority on how wide a column
+ * has to be, and the panel would be sized for more columns than the painter will
+ * open. So this reads the same constant, less the gap that constant folds in.
+ */
+function rowWantW(row: SheetRow): number {
+  switch (row.kind) {
+    case SheetRowKind.Section:
+      return row.label.length * CHAR_W;
+    case SheetRowKind.Note:
+      return row.text.length * CHAR_W;
+    case SheetRowKind.Field:
+      return (row.label.length + row.value.length) * CHAR_W + FIELD_GUTTER;
+    case SheetRowKind.Talent:
+      return COL_MIN_W - COL_GAP;
+  }
+}
 
 /** The close control, top-right of the header strip. Square, so it is a target. */
 const CLOSE_PX = 13;
@@ -1141,8 +1218,26 @@ export function charSheetRect(options: {
   readonly top: number;
   /** First pixel of the bottom bands (the hotbar and the prose lines). */
   readonly bottom: number;
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE ROWS OF EVERY TAB — REQUIRED, AND REQUIRED ON PURPOSE.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * ALL FIVE PAGES AND NOT THE OPEN ONE, because upstream sizes ONCE:
+   * `CharacterSheet.lua:50` runs inside `init`, before `switchTo(start_tab)` at
+   * :198 picks a page. A panel that resized as you pressed [D] would be a
+   * different dialog to the one being ported, and would jump under the pointer.
+   *
+   * NOT OPTIONAL. An optional parameter would let every existing call site keep
+   * compiling while silently measuring nothing, and the tests that pin this
+   * panel's size would go VACUOUS rather than red — which is this project's own
+   * named recurring failure ("tests true of the fixture, not the rule"). Making
+   * it required means the compiler lists every caller that has to be thought
+   * about, and the ones in `test/` become tests of the real rule.
+   */
+  readonly pages: readonly (readonly SheetRow[])[];
 }): PanelRect | null {
-  const { width, height, top } = options;
+  const { width, height, top, pages } = options;
   const bottom = Math.min(options.bottom, height);
   const band = bottom - top;
   if (band < SHEET_MIN_H + SHEET_MARGIN * 2) return null;
@@ -1170,7 +1265,7 @@ export function charSheetRect(options: {
     Math.floor(width * SHEET_MIN_FILL),
     Math.floor(width * SHEET_MAX_FILL),
   );
-  const w = Math.min(Math.max(SHEET_MIN_W, wanted), width - SHEET_MARGIN * 2);
+  const ceilingW = Math.min(Math.max(SHEET_MIN_W, wanted), width - SHEET_MARGIN * 2);
   /**
    * AGAINST THE WHOLE WINDOW, NOT THE BAND — which is what upstream measures.
    *
@@ -1185,7 +1280,96 @@ export function charSheetRect(options: {
     Math.floor(height * SHEET_MIN_FILL_H),
     Math.floor(height * SHEET_MAX_FILL_H),
   );
-  const h = Math.min(Math.max(SHEET_ABS_MIN_H, wantedH), band - SHEET_MARGIN * 2);
+  const ceilingH = Math.min(Math.max(SHEET_ABS_MIN_H, wantedH), band - SHEET_MARGIN * 2);
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * AND NOW SPEND ONLY WHAT THE ROWS ACTUALLY NEED. THE BOUND ABOVE IS A ROOF.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Reported with screenshots: *"the character page is quite large and has a LOT
+   * of wasted space."* It was, and the measurement is unambiguous: at 1280x720
+   * the panel is 1200x432, `sheetGeometry` opens FOUR columns of 288, and every
+   * row of every tab is placed in column one. General is 13 rows and 162 pixels
+   * tall. Three empty columns and 270 empty pixels, on every page.
+   *
+   * ═══ THE PORT IS NOT WHAT WAS WRONG. THE CONTENT DENSITY IS ═══
+   * `CharacterSheet.lua:50` is kept verbatim above and still cited. Upstream
+   * EARNS 200 columns because its general tab draws four text zones SIDE BY SIDE
+   * — :603 `w = 0`, :676 `w = self.w * 0.25`, :796 `w = self.w * 0.5`, :845
+   * `w = self.w * 0.77`, all inside `if kind == "general"` at :600. Its five
+   * tabs are ported faithfully (`tabs_list` at :38 is the same five), but ToME's
+   * actor carries resistances and immunity tables this game does not have, so
+   * our pages are a dozen rows where its are a screenful. We took the width and
+   * had nothing to put in it.
+   *
+   * ═══ WHY THIS IS NOT THE 560-PIXEL BUG COMING BACK ═══
+   * That regression (see `SHEET_PREF_COLS`) was a FIXED NUMBER that knew neither
+   * the window nor the rows, so when the rows outgrew it the panel could not
+   * answer and dropped whole sections reading "hidden — panel too small". This
+   * is the opposite quantity: it is derived FROM the rows, and it can only ever
+   * make the panel SMALLER THAN THE BOUND ABOVE — never smaller than the rows.
+   * When the content wants more than the roof, the roof is what it gets, which
+   * is byte-for-byte the panel that shipped.
+   *
+   * ═══ THE HEIGHT DECIDES THE COLUMNS, WHICH IS THE RIGHT WAY ROUND ═══
+   * `charsheet.ts`'s own header has said from the start that *"width was never
+   * the binding constraint, HEIGHT is"*. So: take the height the tallest page
+   * needs, clamp it into the band, and then ask how many columns that height
+   * forces. One column while the rows fit, more only when a short window means
+   * they do not — which is exactly when the extra width was ever worth having.
+   */
+  const tallest = pages.reduce(
+    (most, rows) =>
+      Math.max(
+        most,
+        rows.reduce((sum, row) => sum + rowHeight(row), 0),
+      ),
+    0,
+  );
+  const h = Math.min(Math.max(SHEET_ABS_MIN_H, tallest + SHEET_CHROME_H), ceilingH);
+
+  /**
+   * ════════════════════════════════════════════════════════════════════════════
+   * FLOORED AT `COL_MIN_W`, AND THAT IS THE PAINTER'S NUMBER, NOT A GUESS.
+   * ════════════════════════════════════════════════════════════════════════════
+   * `sheetGeometry` opens a column every `COL_MIN_W + COL_GAP` of inner width.
+   * So for it to actually OPEN the `columns` this function sizes for, the inner
+   * width must be at least `n * COL_MIN_W + (n-1) * COL_GAP` — which is what
+   * `wantW` below computes when this is floored at `COL_MIN_W`.
+   *
+   * IT WAS FLOORED AT `COL_MIN_W - COL_GAP` AND THAT SHIPPED A DROPPED SECTION.
+   * At the 640x320 floor with a full twelve-talent bar this sized a 406-pixel
+   * panel for two columns; `floor((390 + 10) / 210)` is ONE, so the painter
+   * opened one, the rows did not fit, and the Talents page rendered as the single
+   * line "talents hidden — panel too small". Sizing and painting must read the
+   * same constant or the panel is measured against a layout nobody draws.
+   */
+  const contentColW = Math.max(
+    COL_MIN_W,
+    pages.reduce(
+      (widest, rows) =>
+        Math.max(
+          widest,
+          rows.reduce((most, row) => Math.max(most, rowWantW(row)), 0),
+        ),
+      0,
+    ),
+  );
+
+  // As FEW columns as the rows can be poured into at this height — the inverse
+  // of `sheetGeometry`, which takes as many as the width allows. `place` fills a
+  // column before moving on, so n columns hold n bands.
+  const rowBand = Math.max(1, h - SHEET_CHROME_H);
+  let columns = 1;
+  while (columns < SHEET_MAX_COLS && tallest > columns * rowBand) columns += 1;
+
+  const wantW = columns * contentColW + (columns - 1) * COL_GAP + INSET * 2;
+  // THE STRIP IS A FLOOR ALONGSIDE `SHEET_MIN_W`. A panel too narrow for its own
+  // tab words is not a smaller sheet, it is a sheet with its navigation reduced
+  // to five bracketed letters. See `SHEET_TAB_STRIP_W`.
+  const w = Math.min(Math.max(SHEET_MIN_W, sheetTabStripW(), wantW), ceilingW);
+
   return {
     x: Math.floor((width - w) / 2),
     y: top + Math.max(0, Math.floor((band - h) / 2)),
@@ -1644,7 +1828,7 @@ function drawRow(ctx: CanvasRenderingContext2D, sprites: SpriteSource, placed: P
       ctx.font = FONT_LABEL;
       const labelW = Math.min(
         Math.ceil(ctx.measureText(row.label).width),
-        Math.floor(rect.w * FIELD_LABEL_MAX_SHARE),
+        Math.max(0, rect.w - FIELD_GUTTER - FIELD_VALUE_MIN_CHARS * CHAR_W),
       );
       ctx.textAlign = 'left';
       ctx.fillStyle = PALETTE.BONE;
@@ -1850,7 +2034,7 @@ export function drawCharSheet(options: CharSheetDrawOptions): void {
      * regardless.
      */
     const full = TAB_LABEL[tab];
-    const room = Math.max(0, box.w - 4);
+    const room = Math.max(0, box.w - TAB_LABEL_PAD);
     const label = ctx.measureText(full).width <= room ? full : full.slice(0, 3);
     ctx.fillText(fitText(ctx, label, room), box.x + 2, box.y + Math.floor(box.h / 2));
   }

@@ -185,6 +185,7 @@ import {
   SheetTab,
   nextSheetTab,
   charSheetRect,
+  SHEET_TABS,
   charSheetRows,
   charSheetTipAt,
   drawCharSheet,
@@ -3276,7 +3277,19 @@ function unmovedPanelRect(
   const options = { width, height, top: band.top, bottom: band.bottom };
   switch (panel) {
     case DraggablePanel.Sheet:
-      return sheetVisible ? charSheetRect(options) : null;
+      /**
+       * EVERY PAGE, NOT THE OPEN ONE. `charSheetRect` sizes the panel to the
+       * tallest and widest tab so it does not change shape when you press [D] —
+       * upstream sizes once in `init` before a tab is chosen
+       * (CharacterSheet.lua:50 against :198). Built here because this resolver
+       * is what BOTH the painter and the hit test read; see the header.
+       */
+      return sheetVisible
+        ? charSheetRect({
+            ...options,
+            pages: SHEET_TABS.map((tab) => charSheetRows(charSheetView(), tab)),
+          })
+        : null;
     case DraggablePanel.Talents:
       return talentsVisible ? talentPanelRect(options) : null;
     case DraggablePanel.Inventory:
