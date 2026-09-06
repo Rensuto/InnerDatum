@@ -114,7 +114,36 @@ export const rush: Talent = {
   cooldownTurns: RUSH_COOLDOWN,
   targeting: {
     shape: TargetShape.Single,
-    range: RANGE_HIGH,
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * `RANGE_LOW`, NOT `RANGE_HIGH` — OFFER ONLY WHAT THE CHARGE CAN FINISH.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * This was `RANGE_HIGH` (10), which is the reach at RANK FIVE. A rank-one
+     * creature covers `rushRange(1)` = 6, so at any distance from 7 to 10 the
+     * AI was offered a charge that stops short: `closed` is spent, the melee
+     * check below fails, and the talent takes its "closes in" branch. No
+     * attack, no daze, cooldown gone.
+     *
+     * MEASURED, NOT INFERRED. The Index Eidolon is the only creature carrying
+     * Rush, it opens at 8 tiles, and over 180 instrumented turns its daze was
+     * never once applied — the status half of its only talent had never fired
+     * in the game's history.
+     *
+     * ═══ THIS IS THE WRAITH'S GRASPING HOLD, EXACTLY ═══
+     * `monster-casts.test.ts` was written because Grasping Hold was authored
+     * onto a creature that could never be in range to use it, and *"a creature
+     * that CANNOT use its talent is indistinguishable from one that chose not
+     * to"*. That test proved the Eidolon CAST something; it could not see that
+     * the cast did nothing. The same bug, one layer in.
+     *
+     * A HIGHER RANK NOW UNDER-USES ITS REACH, and that is the safe direction:
+     * a charge offered short always connects, while a charge offered long
+     * sometimes throws the turn away. `TalentTargeting` is a static object, so
+     * a rank-aware range would be a change to the talent contract rather than
+     * to this file — worth doing if a second rushing creature ever wants it.
+     */
+    range: RANGE_LOW,
     minRange: RUSH_MIN_RANGE,
     radius: 0,
     requiresLos: true,

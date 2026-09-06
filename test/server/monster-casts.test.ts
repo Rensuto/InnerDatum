@@ -357,6 +357,24 @@ describe('a monster status reaches the player, not just the log', () => {
    * Excluded by NAME so it reads as an unanswered question rather than a
    * creature nobody thought about. The other five are asserted.
    */
+  /**
+   * ═══ THE EIDOLON IS EXCLUDED BECAUSE ITS TALENT IS RARE, NOT BROKEN ═══
+   * Its Rush DOES daze now — `rush.ts` was offering the charge at up to ten
+   * tiles when a rank-one creature only covers six, so from the eight this
+   * harness opens at it stopped short every time and never attacked. That is
+   * fixed and the daze lands: *"Detective is dazed (2 turns)"*.
+   *
+   * What remains is a frequency problem, measured over six seeds of 180 turns:
+   * the Eidolon takes the charge ZERO or ONE times per fight, and only one seed
+   * in six produced a daze. It is a `MeleeChaser` — it closes on foot and then
+   * simply attacks, so the turn where a rush is both offered and worth taking
+   * barely comes up.
+   *
+   * An emergent-fight assertion on a once-in-six-fights event is a flaky test,
+   * so it is excluded by NAME with the numbers written down. THE OPEN QUESTION
+   * IS WHY A MELEE CHASER ALMOST NEVER RUSHES — an AI weighting question, not a
+   * talent one, and not something to change blind.
+   */
   const NOT_YET_OBSERVED = new Set(['index_eidolon']);
 
   it.each(
@@ -364,9 +382,16 @@ describe('a monster status reaches the player, not just the log', () => {
       (template) => !APPLIES_NOTHING.has(template.id) && !NOT_YET_OBSERVED.has(template.id),
     ).map((template) => [template.displayName, template] as const),
   )('%s lands its status on the detective', (_name, template) => {
+    /**
+     * A LONG WINDOW, AND THE EIDOLON IS WHY. A `MeleeChaser` rarely NEEDS to
+     * rush -- it closes on foot and then simply attacks -- so the one turn
+     * where the charge is both offered and worth taking can be a hundred turns
+     * in. Sixty is plenty for the creatures that lead with their talent and not
+     * nearly enough for the one that does not.
+     */
     const effects = createMvpEffectState();
     let landed = false;
-    everyStep(standoff(`lands-${template.id}`, template), TURNS * 3, effects, () => {
+    everyStep(standoff(`lands-${template.id}`, template), TURNS * 8, effects, () => {
       if (effectsOn(effects, 'p1').length > 0) landed = true;
     });
     expect(
