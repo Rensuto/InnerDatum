@@ -434,14 +434,47 @@ export const TALENT_TREES: readonly TalentTree[] = Object.freeze([
      *
      *   Stoneskin       an on-melee-hit trigger that can CANCEL the blow that
      *                   fired it ("fully ignore the attack triggering it",
-     *                   races.lua:494). We have no hook that can refuse a hit
-     *                   after it lands.
-     *   Power is Money  saves scaled by CARRIED GOLD (races.lua:511). Money
-     *                   exists (`content/money.ts`) but nothing reads it as a
-     *                   combat input, and making wealth a defensive stat is a
-     *                   balance decision rather than a transcription.
+     *                   races.lua:494).
+     *
+     *                   RE-CHECKED 2026-09-06 AND THIS ENTRY WAS STALE. It read
+     *                   "we have no hook that can refuse a hit after it lands",
+     *                   and we do: `DamageEdit.stopped` "refuses the blow
+     *                   outright" and `hooks.ts:400` is `if (edit.stopped ===
+     *                   true) return 0;`, citing upstream's own `if ret.stopped
+     *                   then return ret.stopped end`. That landed for blocks and
+     *                   last stands after this note was written.
+     *
+     *                   WHAT IS ACTUALLY MISSING IS NARROWER. Upstream does not
+     *                   use a damage hook at all: :494 sits in the MELEE ATTACK
+     *                   PATH beside `checkEvasion` and sets `repelled`, so the
+     *                   blow never rolls damage and no on-hit rider fires.
+     *                   `engine/combat.ts` deliberately does not port that repel
+     *                   channel — same argument it makes for `checkEvasion`,
+     *                   that a second dodge channel with no content feeding it
+     *                   is worse than one. So this is a SMALL ENGINE SEAM plus a
+     *                   talent, not an absent system; doing it through
+     *                   `onTakeDamage` instead would be a deviation (post-damage
+     *                   rather than pre-hit) and wants saying out loud.
+     *   Power is Money  saves scaled by CARRIED GOLD (races.lua:511).
+     *
+     *                   THE MECHANICAL HALF IS DONE, and was already done when
+     *                   this said "nothing reads it as a combat input":
+     *                   `combatPhysicalResist`/`combatSpellResist`/
+     *                   `combatMentalResist` each take an `add` and already read
+     *                   `mods.physResist`/`spellResist`/`mentalResist` — the
+     *                   exact three getters races.lua:506 names as its call
+     *                   sites — and `combatTalentLimit`/`combatTalentScale` are
+     *                   both ported. What is missing is one field: `PassiveView`
+     *                   carries no gold, and a passive reads the board through
+     *                   it.
+     *
+     *                   THE SECOND REASON IS THE REAL ONE AND IT STILL STANDS:
+     *                   making wealth a defensive stat is a BALANCE DECISION
+     *                   rather than a transcription. That is Dalton's, not a
+     *                   thing to transcribe because the arithmetic now fits.
      *   Stone Walking   `probabilityTravel` through a wall (races.lua:530). A
-     *                   movement mode, not a number.
+     *                   movement mode, not a number. Re-checked and unchanged:
+     *                   nothing here moves a body through terrain.
      *
      * `size` is that declared, exactly as `race/higher` declares its three.
      *
