@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
-import { drawHoverCard, hoverCardBody, hoverCardRect } from '../../src/client/ui/panel.ts';
+import {
+  drawHoverCard,
+  hoverCardBody,
+  hoverCardRect,
+  cardStatLines,
+} from '../../src/client/ui/panel.ts';
 import type { HoverCard } from '../../src/client/ui/panel.ts';
 
 /**
@@ -176,5 +181,71 @@ describe('a card is bounded by the screen, and says when it cut something', () =
     const card: HoverCard = { ...many(60), nextLines: ['At the next rank: more'] };
     const { body, goldFrom } = hoverCardBody(card, 320);
     expect(goldFrom).toBe(body.length - 1);
+  });
+});
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * A STAT BLOCK IS A TABLE, AND IT USED TO BE A CONCATENATION.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Both card builders wrote `${row.label}  ${row.value}`, so every number landed
+ * wherever its label happened to end:
+ *
+ *     Armour  9
+ *     Defence  21
+ *     Armour hardiness  34%
+ *
+ * Reported in those words — "the stats do not format properly so the values are
+ * WAY further than the name ... the tooltip (once fixed) is a good place to read
+ * stats." The inventory STRIP was given columns at the time; the CARD, which
+ * that report named as the right place to read stats, was left ragged.
+ *
+ * It is exact rather than approximate because `drawHoverCard` sets
+ * `10px ui-monospace` for the body, so a character of padding IS a pixel of
+ * padding — which is also why this is a pure function a node test can read
+ * without a canvas.
+ */
+describe('cardStatLines', () => {
+  const ROWS = [
+    { label: 'Armour', value: '9' },
+    { label: 'Defence', value: '21' },
+    { label: 'Armour hardiness', value: '34%' },
+  ];
+
+  it('ends every value in the same column', () => {
+    const lines = cardStatLines(ROWS);
+    // THE END, NOT THE START. Values are right-aligned, so `9` and `34%` begin
+    // at different columns ON PURPOSE and finish at the same one -- which is
+    // what makes a column of figures readable. Asserting the START was this
+    // test's own first mistake, and it failed against correct output.
+    const ends = lines.map((line) => line.trimEnd().length);
+    expect(new Set(ends).size, `values ended at ${ends.join(',')}`).toBe(1);
+  });
+
+  it('right-aligns the values, so digits line up on the last one', () => {
+    const lines = cardStatLines(ROWS);
+    // Every line is the same length once the columns are fixed, which is what
+    // right-alignment means here.
+    expect(new Set(lines.map((l) => l.length)).size).toBe(1);
+    expect(lines[2]?.endsWith('34%')).toBe(true);
+    expect(lines[0]?.endsWith('  9')).toBe(true);
+  });
+
+  it('keeps the label readable rather than truncating it', () => {
+    // Padding only ever ADDS. A card that shortened `Armour hardiness` to make a
+    // column would be trading the thing being measured for the measurement.
+    for (const row of ROWS) {
+      expect(cardStatLines(ROWS).some((l) => l.startsWith(row.label))).toBe(true);
+    }
+  });
+
+  it('answers an empty list with no lines rather than a blank row', () => {
+    expect(cardStatLines([])).toEqual([]);
+  });
+
+  /** One row needs no padding at all, and must not gain trailing spaces. */
+  it('leaves a single row alone', () => {
+    expect(cardStatLines([{ label: 'Armour', value: '9' }])).toEqual(['Armour  9']);
   });
 });

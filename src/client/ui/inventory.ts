@@ -199,7 +199,7 @@
  * see the long note at the top of render/canvas.ts.
  */
 
-import { BlitAnchor, blitReduced, wrapText } from './panel.ts';
+import { BlitAnchor, blitReduced, cardStatLines, wrapText } from './panel.ts';
 import type { HoverCard } from './panel.ts';
 import { ItemTier, SLOT_ORDER } from '../../shared/protocol.ts';
 import { INVENTORY_CAP } from '../../shared/progression.ts';
@@ -3424,7 +3424,10 @@ export function inventoryTipAt(
   // STRIP's and the card has a whole viewport. `hoverCardBody` (ui/panel.ts)
   // bounds it against the screen and says so in the same words if it ever has
   // to — caselog.ts's rule is kept, one layer down, where the height is known.
-  const stats = detail.rows.map((row) => `${row.label}  ${row.value}`);
+  // COLUMNS, NOT A CONCATENATION -- see `cardStatLines`. This was
+  // `${row.label}  ${row.value}`, which put every number wherever its label
+  // happened to end, on the surface the player was told to read stats from.
+  const stats = cardStatLines(detail.rows);
   /**
    * ═══ STATS FIRST, PROSE LAST — `Object.lua:2027-2028` ═══
    * Upstream merges `getUseDesc` at the very END of `getTextualDesc`, after the

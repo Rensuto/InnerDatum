@@ -422,6 +422,40 @@ const CARD_GAP = 10;
  * a row, for `inventory.ts`'s rule about its own strip: a table that stops
  * short without a word looks complete and is not.
  */
+/**
+ * ════════════════════════════════════════════════════════════════════════════
+ * A BLOCK OF STATS, IN COLUMNS. The card body is MONOSPACE, so this is exact.
+ * ════════════════════════════════════════════════════════════════════════════
+ * Two call sites built these rows as `${label}  ${value}` — one string, two
+ * spaces, left-aligned — so the numbers landed wherever the label happened to
+ * end:
+ *
+ *     Armour  9
+ *     Defence  21
+ *     Armour hardiness  34%
+ *
+ * Reported directly: *"the stats do not format properly so the values are WAY
+ * further than the name ... the tooltip (once fixed) is a good place to read
+ * stats."* The strip was answered by giving it columns; the CARD, which that
+ * report named as the right place to read stats, was left ragged.
+ *
+ * `drawHoverCard` sets `10px ui-monospace` for the body, so padding by CHARACTER
+ * is padding by pixel and no measuring is needed — which is what lets this live
+ * in a pure function the tests can read without a canvas.
+ *
+ * LABELS LEFT, VALUES RIGHT. A right-aligned number column is how a table of
+ * figures is read; `34%` and `150%` line up on their last digit rather than
+ * their first.
+ */
+export function cardStatLines(
+  rows: readonly { readonly label: string; readonly value: string }[],
+): readonly string[] {
+  if (rows.length === 0) return [];
+  const labelW = Math.max(...rows.map((row) => row.label.length));
+  const valueW = Math.max(...rows.map((row) => row.value.length));
+  return rows.map((row) => `${row.label.padEnd(labelW)}  ${row.value.padStart(valueW)}`);
+}
+
 export function hoverCardBody(
   card: HoverCard,
   viewportH: number,

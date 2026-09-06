@@ -129,7 +129,7 @@
  * render/canvas.ts.
  */
 
-import { wrapText } from './panel.ts';
+import { cardStatLines, wrapText } from './panel.ts';
 import type { HoverCard } from './panel.ts';
 import { TALENTS_PER_CLASS_MAX } from '../../shared/progression.ts';
 import { PALETTE } from '../render/canvas.ts';
@@ -1671,7 +1671,9 @@ export function hotbarTipAt(
      * shape `inventoryTipAt` uses — two cards about one item laid out two ways
      * would read as two different features.
      */
-    const stats = (slot.rows ?? []).map((row) => `${row.label}  ${row.value}`);
+    // THE SAME COLUMNS THE ITEM CARD USES -- one helper, so a coat hovered on
+    // the bar and the same coat hovered in the bag cannot lay out differently.
+    const stats = cardStatLines(slot.rows ?? []);
     return {
       title: slot.name,
       meta: itemActionWord(slot.action),
