@@ -322,6 +322,7 @@ import type {
   ClientUnlockTree,
   UnlockableTree,
   ClientSetKeybinds,
+  ClientSetUiScale,
   ClientSetZoom,
   ClientSpendPoint,
   ClientUnlearn,
@@ -7665,6 +7666,10 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       // same reason `binds: {}` is: the frame is absolute, so the default step
       // means "the default size" rather than "the server declined to say".
       zoom: body?.zoom ?? 0,
+      // 0 FOR A BODY WITH NO OPINION, exactly as above. The two steps are
+      // independent -- `hudScale` is not the map's magnification -- so a player
+      // who has moved one and not the other gets their value and the default.
+      uiScale: body?.uiScale ?? 0,
       persisted:
         session.ownerId !== null &&
         opts.persist !== undefined &&
@@ -15036,6 +15041,43 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     sendHotbar(session);
   };
 
+  /**
+   * `set_ui_scale` -- "THIS IS HOW BIG I WANT THE INTERFACE." STORE IT, ECHO IT.
+   *
+   * `handleSetZoom`'s shape exactly, including `queueSave` over `saveNow`: this
+   * one arrives from a settings control rather than a wheel, so the fsync-storm
+   * argument is weaker -- but the two preferences share a frame and an echo, and
+   * a handler that differed only in its durability would be a difference nobody
+   * could explain later.
+   */
+  const handleSetUiScale = (session: Session, msg: ClientSetUiScale): void => {
+    const { world } = realmFor(session);
+    const actorId = session.actorId;
+    if (actorId === null) {
+      sendError(
+        session.socket,
+        ErrorCode.NotAuthenticated,
+        'send hello before setting the interface size',
+      );
+      return;
+    }
+    const body = world.getActor(actorId);
+    if (body === undefined) {
+      sendError(session.socket, ErrorCode.Internal, 'your body is not in the world');
+      return;
+    }
+
+    // THE ECHO STILL GOES OUT ON A NO-OP, for `handleSetZoom`'s reason.
+    if ((body.uiScale ?? 0) === msg.uiScale) {
+      sendSettings(session);
+      return;
+    }
+
+    body.uiScale = msg.uiScale;
+    queueSave('uiScale');
+    sendSettings(session);
+  };
+
   const handleSetZoom = (session: Session, msg: ClientSetZoom): void => {
     const { world } = realmFor(session);
     const actorId = session.actorId;
@@ -15238,6 +15280,9 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       // the absence of a park is written out for the next person who looks.
       case 'set_zoom':
         handleSetZoom(session, msg);
+        return;
+      case 'set_ui_scale':
+        handleSetUiScale(session, msg);
         return;
       case 'set_keybinds':
         handleSetKeybinds(session, msg);

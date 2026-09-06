@@ -329,6 +329,13 @@ describe('the menu is a PANEL, and its rect is where that is decided', () => {
       // echoed, and nothing in the scheduler ever hears about it.
       'set_hotbar',
       'set_keybinds',
+      // AND THE INTERFACE SIZE'S, `set_zoom`'s twin below in every respect that
+      // matters here: a PREFERENCE and not an intent, so the barrier never waits
+      // for it. Asked for as "an option in the settings for UI scaling to lower
+      // or increase it" — where zoom already had keys and only wanted a pointer
+      // route, this had neither, because `hudScale` was computed by `viewLayout`
+      // alone with no way for a player to say otherwise.
+      'set_ui_scale',
       // AND THE ZOOM'S, added deliberately and listed here so it stays a thing
       // somebody had to decide. A player asked for tiles the size of Tales of
       // Maj'Eyal's; the zoom that answers that already existed and died with the

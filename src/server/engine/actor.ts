@@ -683,6 +683,16 @@ type ActorCommon = {
    */
   zoom?: number;
 
+  /**
+   * HOW BIG THIS PLAYER WANTS THE INTERFACE — the integer HUD step, or absent.
+   *
+   * `zoom`'s twin in every respect above: on the body for the same two reasons,
+   * absent is not zero for the same reason, and anything in engine/ that reads
+   * it is the same bug. It is a SEPARATE step because `hudScale` is a separate
+   * factor from the map's — see `UI_SCALE_MIN`.
+   */
+  uiScale?: number;
+
   // --- talents --------------------------------------------------------------
   /**
    * Talent id -> GAME TURNS remaining. Ticked by `actBase`, so it is immune to

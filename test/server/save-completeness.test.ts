@@ -72,6 +72,11 @@ const FULL = {
   // BOUNDED -1..1 (`ZOOM_MIN`/`ZOOM_MAX`). A 2 here is silently dropped by
   // `parseZoom`, which is the parser being right and the fixture being wrong.
   zoom: 1,
+  // BOUNDED -1..2 (`UI_SCALE_MIN`/`UI_SCALE_MAX`), and asymmetric on purpose:
+  // `hudScale` is a divisor bounded hard at 1 below, so there is only one step
+  // down that can mean anything. This guard is what caught the field being added
+  // without a round trip through the save, which is exactly its job.
+  uiScale: 2,
   // AND THE TWO THE FIXED GUARD BELOW IMMEDIATELY EXPOSED. Both were declared,
   // parsed and serialised the whole time; nothing here had ever exercised them.
   spentStats: { str: 2, con: 1 },

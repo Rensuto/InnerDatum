@@ -81,7 +81,7 @@
 import { inBounds } from '../../shared/coords.ts';
 import { tileAt } from '../../shared/level.ts';
 import { ActorRank, TileCode, isWalkable } from '../../shared/protocol.ts';
-import { TILE_PX, ZOOM_MAX, ZOOM_MIN } from '../../shared/version.ts';
+import { TILE_PX, UI_SCALE_MAX, UI_SCALE_MIN, ZOOM_MAX, ZOOM_MIN } from '../../shared/version.ts';
 import { isLowLife, lifeFraction } from '../../shared/vitals.ts';
 import type { TileXY } from '../../shared/coords.ts';
 import type {
@@ -578,6 +578,15 @@ export function viewLayout(
   viewport: Viewport,
   zoomStep: number,
   dpr: number,
+  /**
+   * THE PLAYER'S OWN BIAS ON THE INTERFACE, and a SECOND step deliberately.
+   *
+   * Defaulted so every existing caller keeps the behaviour it had; the one that
+   * matters passes the stored preference. Folding this into `zoomStep` would put
+   * the map and the interface back on one factor, which is the exact thing
+   * `hudScale` was split out to stop -- see test/client/hudscale.test.ts.
+   */
+  uiScaleStep = 0,
 ): ViewLayout {
   const minTilesW = Math.max(1, Math.floor(viewport.tilesW));
   const minTilesH = Math.max(1, Math.floor(viewport.tilesH));
@@ -613,9 +622,18 @@ export function viewLayout(
    * Rounding the box down to a tile multiple is what used to leave the hotbar
    * inside the map's letterbox instead of spanning the window, so it does not.
    */
+  /**
+   * THE PLAYER'S STEP IS ADDED, AND THE FLOOR OF 1 IS WHY IT IS SAFE.
+   *
+   * `Math.max(1, ...)` already bounded this below and now does double duty: a
+   * player asking for a smaller interface than the device can draw gets 1, not a
+   * fraction of a device pixel. The `ceil` terms are a CAP the step must not be
+   * able to defeat -- they keep the logical box inside `HUD_MAX_*` -- so the bias
+   * is added to the rounded-dpr term alone rather than to the result.
+   */
   const hudScale = Math.max(
     1,
-    Math.round(dpr),
+    Math.round(dpr) + uiScaleStep,
     Math.ceil(deviceW / HUD_MAX_W),
     Math.ceil(deviceH / HUD_MAX_H),
   );
@@ -673,6 +691,9 @@ export type Renderer = {
    * from "moved" without keeping its own copy of the bounds.
    */
   readonly setZoom: (next: number) => number;
+  /** The INTERFACE step. `setZoom`'s twin; see `UI_SCALE_MIN`. */
+  readonly setUiScale: (next: number) => number;
+  readonly uiScale: () => number;
   /** The current zoom step. -1 out, 0 default, +1 in. */
   readonly zoom: () => number;
   readonly draw: (scene: Scene) => void;

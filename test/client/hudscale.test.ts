@@ -11,7 +11,13 @@ import {
   HUD_MIN_W,
   viewLayout,
 } from '../../src/client/render/canvas.ts';
-import { TILE_PX, ZOOM_MAX, ZOOM_MIN } from '../../src/shared/version.ts';
+import {
+  TILE_PX,
+  UI_SCALE_MAX,
+  UI_SCALE_MIN,
+  ZOOM_MAX,
+  ZOOM_MIN,
+} from '../../src/shared/version.ts';
 import type { Viewport } from '../../src/client/render/canvas.ts';
 
 /**
@@ -231,5 +237,85 @@ describe('the interface has its own scale', () => {
       );
     }
     expect(sawALetterbox, 'no window in the table letterboxes the map').toBe(true);
+  });
+});
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * AND THE PLAYER CAN NOW MOVE IT — WITHOUT MOVING THE MAP WITH IT.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Asked for in those words: *"we also need to include an option in the settings
+ * for UI scaling to lower or increase it."* `hudScale` was computed entirely
+ * from the device pixel ratio and `HUD_MAX_*`, with no way for a player to say
+ * they wanted the interface bigger.
+ *
+ * THE WHOLE FILE ABOVE IS THE REASON THIS IS A SECOND STEP AND NOT A SHARED
+ * ONE. Zoom and the interface were one factor once, and pressing `=` resized the
+ * hotbar and every panel along with the world. These assertions are what stop a
+ * future tidy-up from folding the two controls back together.
+ */
+describe('the interface step', () => {
+  const DPR = 1;
+  const BOX: readonly [number, number] = [1280, 720];
+
+  function layout(uiScaleStep: number, zoomStep = 0): ReturnType<typeof viewLayout> {
+    return viewLayout(BOX[0], BOX[1], DEFAULT_VIEWPORT, zoomStep, DPR, uiScaleStep);
+  }
+
+  it('makes the interface larger by drawing fewer logical pixels', () => {
+    // `hudScale` is a DIVISOR — `hudW = deviceW / hudScale` — so a bigger factor
+    // is a SMALLER logical box and therefore larger furniture. Asserting the box
+    // rather than the factor is what keeps this about what a player sees.
+    const normal = layout(0);
+    const bigger = layout(1);
+    expect(bigger.hudScale, 'the step did not reach hudScale').toBeGreaterThan(normal.hudScale);
+    expect(bigger.hudW, 'the logical box did not shrink, so nothing got bigger').toBeLessThan(
+      normal.hudW,
+    );
+    expect(bigger.hudH).toBeLessThan(normal.hudH);
+  });
+
+  /**
+   * THE FLOOR IS NOT NEGOTIABLE. `hudScale` below 1 would draw the interface at
+   * a fraction of a device pixel; `Math.max(1, ...)` has always bounded it and
+   * the player's step must not be able to defeat that.
+   */
+  it('never lets a player ask the interface below one device pixel', () => {
+    for (const step of [UI_SCALE_MIN, -5, -100]) {
+      expect(layout(step).hudScale, `step ${String(step)} went under 1`).toBeGreaterThanOrEqual(1);
+    }
+  });
+
+  /**
+   * ═══ AND IT MUST NOT MOVE THE MAP. THIS IS THE ASSERTION THAT MATTERS ═══
+   * Every field the map cares about — its integer magnification and its logical
+   * size — has to be identical across the whole interface range. If this ever
+   * fails, the two controls have been folded back into one and the bug at the
+   * top of this file is back.
+   */
+  it('leaves the map untouched at every interface step', () => {
+    const base = layout(0);
+    for (let step = UI_SCALE_MIN; step <= UI_SCALE_MAX; step += 1) {
+      const other = layout(step);
+      expect(other.scale, `step ${String(step)} moved the map's magnification`).toBe(base.scale);
+      expect(other.logicalW, `step ${String(step)} moved the map's width`).toBe(base.logicalW);
+      expect(other.logicalH, `step ${String(step)} moved the map's height`).toBe(base.logicalH);
+    }
+  });
+
+  /** And the converse: zooming the map must still leave the interface alone. */
+  it('leaves the interface untouched at every zoom step', () => {
+    const base = layout(0, 0);
+    for (let zoom = ZOOM_MIN; zoom <= ZOOM_MAX; zoom += 1) {
+      expect(layout(0, zoom).hudScale, `zoom ${String(zoom)} moved the interface`).toBe(
+        base.hudScale,
+      );
+    }
+  });
+
+  /** Omitting the step is the behaviour every caller had before it existed. */
+  it('defaults to the factor viewLayout has always computed', () => {
+    expect(viewLayout(BOX[0], BOX[1], DEFAULT_VIEWPORT, 0, DPR).hudScale).toBe(layout(0).hudScale);
   });
 });

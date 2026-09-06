@@ -356,7 +356,13 @@ import {
   TalentShape,
   TurnActorState,
 } from '../shared/protocol.ts';
-import { PROTOCOL_VERSION, ZOOM_MAX, ZOOM_MIN } from '../shared/version.ts';
+import {
+  PROTOCOL_VERSION,
+  UI_SCALE_MAX,
+  UI_SCALE_MIN,
+  ZOOM_MAX,
+  ZOOM_MIN,
+} from '../shared/version.ts';
 import type { Dir, TileXY } from '../shared/coords.ts';
 import type {
   ActorView,
@@ -1838,6 +1844,9 @@ let zoomPersisted = false;
  */
 let storedZoom: number | null = null;
 
+/** The interface step the server last told us it holds. `storedZoom`'s twin. */
+let storedUiScale: number | null = null;
+
 /**
  * ═══════════════════════════════════════════════════════════════════════════
  * WHAT THE RENDERER SETTLED ON, LAST TIME ANYBODY ASKED IT.
@@ -1855,6 +1864,9 @@ let storedZoom: number | null = null;
  * mirror usually is.
  */
 let liveZoom = 0;
+
+/** What the renderer settled on for the INTERFACE. `liveZoom`'s twin, same seam. */
+let liveUiScale = 0;
 
 /**
  * PUT EVERY PIECE OF THE MENU'S STATE BACK, AND NOTHING ELSE.
@@ -3059,7 +3071,7 @@ function inParty(): boolean {
  *   zoom would be a second copy of state the renderer already owns, and the two
  *   would disagree the first time anything clamped.
  */
-function escapeMenuView(zoom: number): EscapeMenuView {
+function escapeMenuView(zoom: number, uiScale: number): EscapeMenuView {
   return {
     screen: menuScreen,
     // THE ARCHIVE AND WHICH PAGE OF IT IS OPEN — see `notesRows`. Both come off
@@ -3075,6 +3087,9 @@ function escapeMenuView(zoom: number): EscapeMenuView {
     confirming: menuConfirm,
     // THE ROW IS A READOUT AS WELL AS A CONTROL — see `EscapeMenuView.zoom`.
     zoom,
+    // AND ITS TWIN. Two rows because they move two different factors; see the
+    // `ui-scale` effect in ui/escapemenu.ts.
+    uiScale,
     // ONLY WHETHER, never which: the row is greyed or it is not.
     panelsMoved: DRAGGABLE_PANELS.some(
       (panel) => panelOffsets[panel].dx !== 0 || panelOffsets[panel].dy !== 0,
@@ -4411,7 +4426,7 @@ const paintHud: HudPainter = (ctx, width, height) => {
       sprites,
       rect: layout.menu,
       screen: menuScreen,
-      rows: escapeMenuRows(escapeMenuView(liveZoom)),
+      rows: escapeMenuRows(escapeMenuView(liveZoom, liveUiScale)),
       hoveredClose: menuCloseHovered,
       hovered: menuHovered,
     });
@@ -6576,6 +6591,13 @@ async function boot(): Promise<void> {
         liveZoom = renderer.setZoom(storedZoom);
         storedZoom = null;
       }
+      // THE SAME, FOR THE INTERFACE STEP. Separately cleared, because the two
+      // arrive on one frame but a player may have moved only one of them and a
+      // shared guard would re-apply the other over a live change.
+      if (storedUiScale !== null) {
+        liveUiScale = renderer.setUiScale(storedUiScale);
+        storedUiScale = null;
+      }
       // RE-ANCHOR THE RING. The caster can be shoved while it is open —
       // Backdraft pushes, and so will monsters — and a ring still drawn around
       // where they used to stand is a picture of a rule that is no longer true.
@@ -8507,7 +8529,7 @@ async function boot(): Promise<void> {
 
   /** The rows, as the painter builds them. One call, one answer, no cache. */
   function menuRows(): readonly MenuRow[] {
-    return escapeMenuRows(escapeMenuView(liveZoom));
+    return escapeMenuRows(escapeMenuView(liveZoom, liveUiScale));
   }
 
   /**
@@ -8669,6 +8691,32 @@ async function boot(): Promise<void> {
         // longer. `SettingsMsg.persisted` exists to make that sayable rather
         // than leaving somebody to find a working feature looks broken.
         showNotice('not signed in — that zoom will not be saved');
+      }
+    }
+    return got;
+  }
+
+  /**
+   * `applyZoom`'s twin for the interface step.
+   *
+   * IT REPEATS THE STRUCTURE RATHER THAN SHARING IT, and deliberately: the two
+   * differ in their renderer call, their wire verb, their mirror and all three
+   * of their sentences, so a shared helper would be four parameters and a worse
+   * read. What they must NOT differ in is the shape -- clamp at the renderer,
+   * mirror the authoritative answer, and say so when it will not stick.
+   */
+  function applyUiScale(next: number): number {
+    const before = renderer.uiScale();
+    const got = renderer.setUiScale(next);
+    liveUiScale = got;
+    if (got !== before) {
+      if (!socket.send({ v: PROTOCOL_VERSION, t: 'set_ui_scale', uiScale: got })) {
+        showNotice('not connected — that interface size was not saved');
+      } else if (!zoomPersisted) {
+        // THE SAME FLAG, because `SettingsMsg.persisted` is about the FILE and
+        // not about one preference: an anonymous socket has no character file,
+        // so neither step outlives the body.
+        showNotice('not signed in — that interface size will not be saved');
       }
     }
     return got;
@@ -8859,6 +8907,15 @@ async function boot(): Promise<void> {
          */
         const next = renderer.zoom() >= ZOOM_MAX ? ZOOM_MIN : renderer.zoom() + 1;
         applyZoom(next);
+        requestDraw();
+        return;
+      }
+      case 'ui-scale': {
+        // CYCLES AND LEAVES THE MENU OPEN, exactly as ZOOM does above and for
+        // the same reason -- the point is to see the result and press again.
+        // Four values here rather than three; see `UI_SCALE_MIN`.
+        const next = renderer.uiScale() >= UI_SCALE_MAX ? UI_SCALE_MIN : renderer.uiScale() + 1;
+        applyUiScale(next);
         requestDraw();
         return;
       }
@@ -12874,6 +12931,7 @@ function applyServerMessage(msg: ServerMsg): void {
       // the draw reads, and none of them reaches into the renderer, which lives
       // in the boot closure. `onMessage` is the wrapper that can see both.
       storedZoom = msg.zoom;
+      storedUiScale = msg.uiScale;
       zoomPersisted = msg.persisted;
       break;
 

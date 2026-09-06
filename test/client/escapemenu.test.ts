@@ -192,7 +192,7 @@ describe('escapeMenuRect', () => {
 // ---------------------------------------------------------------------------
 
 describe('the root screen', () => {
-  it('has exactly ten entries, in the ported order, and every one names an effect', () => {
+  it('has exactly eleven entries, in the ported order, and every one names an effect', () => {
     // ToME's own list drops a row it cannot resolve (GameMenu.lua:125-133), which
     // is how a dead "highscores" entry ships upstream. Carrying the effect ON the
     // row makes that unrepresentable — so this asserts the shape as well as the
@@ -208,17 +208,23 @@ describe('the root screen', () => {
     // are the only rows that change how the game is SET UP — the five below them
     // open a panel — and two rows is not a settings screen, so they group here
     // rather than behind a sixth surface.
+    // ELEVEN SINCE UI SIZE, which joined the settings group beside ZOOM. It is a
+    // SEPARATE row from ZOOM on purpose: the two move different factors, and
+    // `hudScale` was split out of the map's magnification precisely so that `=`
+    // stopped resizing the hotbar and every panel along with the world (see
+    // test/client/hudscale.test.ts). One row driving both would undo that.
     // TEN SINCE CASE NOTES, which is the port of `ShowLore` and lands here
     // because upstream's `learnLore` names this exact surface: *"You can read
     // all your collected lore in the game menu, by pressing Escape."* It is
     // greyed rather than dropped for a player who has found nothing, on the
     // rule LEAVE PARTY already sets — a row that vanished would teach nothing
     // about why, and no row may move under a pointer.
-    expect(rows).toHaveLength(10);
+    expect(rows).toHaveLength(11);
     expect(rows.map((row) => row.label)).toEqual([
       'RESUME',
       'KEY BINDINGS',
       'ZOOM: NORMAL',
+      'UI SIZE: NORMAL',
       'RESET PANELS',
       'CHARACTER SHEET',
       'TALENTS',
@@ -234,6 +240,10 @@ describe('the root screen', () => {
       // closes a panel; this one changes a persisted preference and leaves the
       // menu open so the player can look at the map and press again.
       { kind: 'zoom' },
+      // ITS TWIN, and a SECOND kind rather than a parameter on the first: they
+      // move two different factors and must never share a control. See
+      // `UI_SCALE_MIN` and test/client/hudscale.test.ts.
+      { kind: 'ui-scale' },
       // A RECOVERY HATCH, and one press — see `MenuEffect`. It is greyed here
       // because the fixture has moved nothing, which is the common state.
       { kind: 'reset-panels' },
@@ -252,7 +262,7 @@ describe('the root screen', () => {
       // the first thing to go wrong would be a keybinding for it.
       { kind: 'leave-character' },
     ]);
-    expect(rows.map((row) => row.index)).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
+    expect(rows.map((row) => row.index)).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
   });
 
   it('draws SWITCH CHARACTER greyed for a player with no account', () => {
@@ -289,11 +299,12 @@ describe('the root screen', () => {
     const labels = (rows: readonly MenuRow[]) => entryRows(rows).map((row) => row.label);
 
     const waiting = escapeMenuRows(view({ unspent: 2 }));
-    expect(shape(waiting)).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
+    expect(shape(waiting)).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
     expect(labels(waiting)).toEqual([
       'RESUME',
       'KEY BINDINGS',
       'ZOOM: NORMAL',
+      'UI SIZE: NORMAL',
       'RESET PANELS',
       'CHARACTER SHEET',
       'TALENTS (2)',
@@ -304,15 +315,15 @@ describe('the root screen', () => {
     ]);
     // The effect on row 3 is untouched — it is still the launcher, and a longer
     // label must not turn it into a different act.
-    expect(entryRows(waiting)[5]?.effect).toEqual({ kind: 'ui', command: UiCommand.ShowTalents });
-    expect(entryRows(waiting)[5]?.keyLabel).toBe(labelFor('show_talents', DEFAULT_KEYMAP));
+    expect(entryRows(waiting)[6]?.effect).toEqual({ kind: 'ui', command: UiCommand.ShowTalents });
+    expect(entryRows(waiting)[6]?.keyLabel).toBe(labelFor('show_talents', DEFAULT_KEYMAP));
 
     // WITHOUT POINTS THE LABEL IS UNCHANGED, at zero and with the field absent
     // entirely — which is what main.ts's existing `escapeMenuView()` passes. A
     // row reading "TALENTS (0)" on every open is furniture within one session.
-    expect(labels(escapeMenuRows(view({ unspent: 0 })))[5]).toBe('TALENTS');
-    expect(labels(escapeMenuRows(view()))[5]).toBe('TALENTS');
-    expect(labels(escapeMenuRows(view({ unspent: 1 })))[5]).toBe('TALENTS (1)');
+    expect(labels(escapeMenuRows(view({ unspent: 0 })))[6]).toBe('TALENTS');
+    expect(labels(escapeMenuRows(view()))[6]).toBe('TALENTS');
+    expect(labels(escapeMenuRows(view({ unspent: 1 })))[6]).toBe('TALENTS (1)');
   });
 
   it('draws LEAVE PARTY greyed for a party of one rather than dropping it', () => {
@@ -320,7 +331,7 @@ describe('the root screen', () => {
     // row you were reaching for, and a player who cannot see the row at all
     // learns nothing about why they cannot use it.
     const alone = entryRows(escapeMenuRows(view({ inParty: false })));
-    expect(alone).toHaveLength(10);
+    expect(alone).toHaveLength(11);
     const leave = alone[ROW_LEAVE_PARTY];
     expect(leave?.label).toBe('LEAVE PARTY');
     expect(leave?.enabled).toBe(false);
@@ -331,11 +342,11 @@ describe('the root screen', () => {
   it('names the LIVE key beside each screen row and never a hard-coded letter', () => {
     // A printed "press C" is a lie the moment somebody rebinds. The row reads
     // the same keymap the dispatcher reads.
-    const before = entryRows(escapeMenuRows(view()))[4];
+    const before = entryRows(escapeMenuRows(view()))[5];
     expect(before?.keyLabel).toBe(labelFor('show_sheet', DEFAULT_KEYMAP));
 
     const rebound = compileKeymap(ACTIONS, { show_sheet: ['key:q'] });
-    const after = entryRows(escapeMenuRows(view({ keymap: rebound })))[4];
+    const after = entryRows(escapeMenuRows(view({ keymap: rebound })))[5];
     expect(after?.keyLabel).toBe('Q');
   });
 });
@@ -358,18 +369,18 @@ describe('escapeMenuHitAt on the root screen', () => {
       if (hit === null || hit.kind !== MenuHitKind.Entry) continue;
       if (seen[seen.length - 1] !== hit.index) seen.push(hit.index);
     }
-    // SEVEN OF THE EIGHT. The fixture is in a party, so LEAVE PARTY answers;
-    // SWITCH CHARACTER does not, because `canSwitchCharacter` is absent and a
-    // greyed row is unpressable STRUCTURALLY — the property the next test is
-    // about, seen here from the other side.
-    // RESET PANELS is greyed in the fixture (nothing moved) and so is SWITCH
-    // CHARACTER (not signed in) — both unpressable STRUCTURALLY, which is why
-    // the scan skips them.
-    // AND SO IS CASE NOTES, at 7: the fixture has found nothing, and an empty
-    // archive is greyed with its reason rather than dropped. The gap between 6
-    // and 8 is that row being drawn and refusing the pointer, which is the
-    // property this scan exists to show.
-    expect(seen).toEqual([0, 1, 2, 4, 5, 6, 8]);
+    // EIGHT OF THE ELEVEN, and the three GAPS are the point of the scan. Each
+    // missing index is a row that is DRAWN and refuses the pointer, which is
+    // what "greyed" means here structurally rather than merely visually:
+    //
+    //    4  RESET PANELS   — the fixture has moved nothing
+    //    8  CASE NOTES     — the fixture has found nothing
+    //   10  SWITCH CHARACTER — `canSwitchCharacter` is absent (not signed in)
+    //
+    // The fixture IS in a party, so LEAVE PARTY at 9 answers. UI SIZE at 3 is
+    // always pressable — it has no state that could disable it, which is why it
+    // shows up in the run rather than as a fourth gap.
+    expect(seen).toEqual([0, 1, 2, 3, 5, 6, 7, 9]);
   });
 
   it('answers the × in the header and nothing else up there', () => {
@@ -1363,7 +1374,7 @@ describe('the reset-panels row', () => {
    * is truly lost, but "drag it back by hand, four times" is not a recovery
    * story.
    */
-  const rowAt = (over: Partial<EscapeMenuView> = {}) => entryRows(escapeMenuRows(view(over)))[3];
+  const rowAt = (over: Partial<EscapeMenuView> = {}) => entryRows(escapeMenuRows(view(over)))[4];
 
   it('is greyed with a reason when nothing has been moved', () => {
     // GREYED, NOT DROPPED — a row that vanished when it had nothing to do would
@@ -1390,7 +1401,7 @@ describe('the reset-panels row', () => {
     expect(rowAt({ panelsMoved: true })?.effect).toEqual({ kind: 'reset-panels' });
     expect(rowAt({ panelsMoved: true })?.label).toBe('RESET PANELS');
     // ...and it is NOT one of the two rows that arm.
-    expect(rowAt({ panelsMoved: true, confirming: 3 })?.label).toBe('RESET PANELS');
+    expect(rowAt({ panelsMoved: true, confirming: 4 })?.label).toBe('RESET PANELS');
   });
 
   it('has no key, because it is a pointer hatch', () => {

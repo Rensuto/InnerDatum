@@ -234,7 +234,7 @@ import { z } from 'zod';
 
 import { DIR_ORDER } from './coords.ts';
 import type { DamageType } from './damagetype.ts';
-import { PROTOCOL_VERSION, ZOOM_MAX, ZOOM_MIN } from './version.ts';
+import { PROTOCOL_VERSION, UI_SCALE_MAX, UI_SCALE_MIN, ZOOM_MAX, ZOOM_MIN } from './version.ts';
 
 // ---------------------------------------------------------------------------
 // Shared payload shapes
@@ -3559,6 +3559,26 @@ const SetZoomSchema = z.strictObject({
 });
 
 /**
+ * ════════════════════════════════════════════════════════════════════════════
+ * `set_ui_scale` — "THIS IS HOW BIG I WANT THE INTERFACE."
+ * ════════════════════════════════════════════════════════════════════════════
+ * `set_zoom`'s twin in every respect, and everything its docblock argues holds
+ * here unchanged: it cannot live in the browser (a Discord Activity iframe
+ * partitions or blocks storage, which is why keybinds are server-side), and the
+ * value is a STEP rather than a size, so a client cannot ask for a fractional
+ * magnification — the one thing this renderer will not do.
+ *
+ * WHAT IT MOVES IS `hudScale`, WHICH `viewLayout` HAS ALWAYS DECIDED ALONE,
+ * from the device pixel ratio and `HUD_MAX_*`. Asked for as *"an option in the
+ * settings for UI scaling to lower or increase it."*
+ */
+const SetUiScaleSchema = z.strictObject({
+  v: envelopeVersion,
+  t: z.literal('set_ui_scale'),
+  uiScale: z.number().int().min(UI_SCALE_MIN).max(UI_SCALE_MAX),
+});
+
+/**
  * ═══════════════════════════════════════════════════════════════════════════
  * `set_hotbar` — "THIS IS HOW I HAVE ARRANGED MY BAR."
  * ═══════════════════════════════════════════════════════════════════════════
@@ -3755,6 +3775,7 @@ export const ClientMsg = z.discriminatedUnion('t', [
   UnlockTreeSchema,
   SetKeybindsSchema,
   SetZoomSchema,
+  SetUiScaleSchema,
   PingSchema,
 ]);
 export type ClientMsg = z.infer<typeof ClientMsg>;
@@ -3790,6 +3811,7 @@ export type ClientSetHotbar = z.infer<typeof SetHotbarSchema>;
 export type ClientUnlockTree = z.infer<typeof UnlockTreeSchema>;
 export type ClientSetKeybinds = z.infer<typeof SetKeybindsSchema>;
 export type ClientSetZoom = z.infer<typeof SetZoomSchema>;
+export type ClientSetUiScale = z.infer<typeof SetUiScaleSchema>;
 export type ClientPing = z.infer<typeof PingSchema>;
 
 // ---------------------------------------------------------------------------
@@ -6333,7 +6355,8 @@ export type ServerMsg =
  */
 /**
  * ═══════════════════════════════════════════════════════════════════════════
- * THE PREFERENCES THAT ARE NOT KEYS. Currently one: how big the tiles are.
+ * THE PREFERENCES THAT ARE NOT KEYS. Two: how big the tiles are, and how big
+ * the interface is.
  * ═══════════════════════════════════════════════════════════════════════════
  *
  * Sent at `hello` beside `keybinds`, and echoed after every accepted
@@ -6365,6 +6388,20 @@ export type SettingsMsg = {
   t: 'settings';
   /** The integer zoom step, as stored. `ZOOM_MIN`..`ZOOM_MAX`. */
   zoom: number;
+  /**
+   * The integer INTERFACE step, as stored. `UI_SCALE_MIN`..`UI_SCALE_MAX`.
+   *
+   * A SECOND FIELD AND NOT A SECOND FRAME, because this one really is the same
+   * thing as `zoom` -- a viewer-private display preference echoed from what the
+   * server stored -- where `KeybindsMsg` was not. The docblock above said
+   * "currently one" while it was one; this is what it was leaving room for.
+   *
+   * IT IS NOT THE SAME CONTROL AS `zoom`, though, and must never be folded into
+   * it: `hudScale` was split from the map's magnification precisely so that `=`
+   * stopped resizing the hotbar and every panel along with the world. See
+   * `UI_SCALE_MIN` and test/client/hudscale.test.ts.
+   */
+  uiScale: number;
   /**
    * Whether the value above will outlive the tab.
    *

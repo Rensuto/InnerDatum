@@ -146,7 +146,7 @@
 import { PartyAction } from '../../shared/protocol.ts';
 import type { LoreView } from '../../shared/protocol.ts';
 import { PALETTE } from '../render/canvas.ts';
-import { ZOOM_MAX, ZOOM_MIN } from '../../shared/version.ts';
+import { UI_SCALE_MAX, UI_SCALE_MIN, ZOOM_MAX, ZOOM_MIN } from '../../shared/version.ts';
 import {
   ACTIONS,
   actionById,
@@ -465,6 +465,26 @@ export type MenuEffect =
    */
   | { readonly kind: 'zoom' }
   /**
+   * ════════════════════════════════════════════════════════════════════════════
+   * STEP THE INTERFACE SIZE. Asked for, and it had no route at all.
+   * ════════════════════════════════════════════════════════════════════════════
+   * *"we also need to include an option in the settings for UI scaling to lower
+   * or increase it."* Where ZOOM had keys and no pointer route, this had
+   * NEITHER: `hudScale` was computed by `viewLayout` from the device pixel ratio
+   * and `HUD_MAX_*`, and a player who wanted the interface bigger had no way to
+   * say so.
+   *
+   * A SEPARATE ROW FROM ZOOM, WHICH IS THE POINT RATHER THAN AN OVERSIGHT. The
+   * HUD used to paint into the map's backbuffer so `=` resized the world AND the
+   * hotbar together; test/client/hudscale.test.ts is the record of splitting
+   * them. One row driving both would undo that in the interface where a player
+   * would most reasonably expect them to be separate.
+   *
+   * CYCLES, LIKE ZOOM, and leaves the menu open for its reason: the whole point
+   * is to look at the result and press again.
+   */
+  | { readonly kind: 'ui-scale' }
+  /**
    * ═══════════════════════════════════════════════════════════════════════════
    * PUT THE PANELS BACK — `Minimalist.lua:354-359`'s `resetPlaces`.
    * ═══════════════════════════════════════════════════════════════════════════
@@ -688,6 +708,8 @@ export type EscapeMenuView = {
    * `settings` frame yet is actually looking at.
    */
   readonly zoom?: number;
+  /** THE CURRENT INTERFACE STEP, `UI_SCALE_MIN`..`UI_SCALE_MAX` — see `ui-scale`. */
+  readonly uiScale?: number;
   /**
    * HAS ANY PANEL BEEN DRAGGED? Decides only whether RESET PANELS is greyed.
    *
@@ -775,9 +797,12 @@ function entryRow(
  * the confirmation would silently move to `INVENTORY` — a guard protecting the
  * wrong thing is worse than no guard, because it reads as protection.
  */
-export const ROW_CASE_NOTES = 7;
-export const ROW_LEAVE_PARTY = 8;
-export const ROW_SWITCH_CHARACTER = 9;
+// ALL THREE MOVED DOWN ONE when the UI SIZE row joined the settings group. They
+// are constants and not literals precisely so that this is a one-line change and
+// not a hunt through main.ts and the tests.
+export const ROW_CASE_NOTES = 8;
+export const ROW_LEAVE_PARTY = 9;
+export const ROW_SWITCH_CHARACTER = 10;
 
 /**
  * How the three zoom steps read. `ZOOM_MIN`..`ZOOM_MAX` is -1..1, and the row is
@@ -788,6 +813,21 @@ function zoomWord(step: number): string {
   if (step <= ZOOM_MIN) return 'SMALLER';
   if (step >= ZOOM_MAX) return 'BIGGER';
   return 'NORMAL';
+}
+
+/**
+ * How the four interface steps read. `zoomWord`'s twin, and a WORD for its
+ * reason -- the row is a readout as much as a control.
+ *
+ * FOUR VALUES RATHER THAN THREE, because `UI_SCALE_*` is -1..2: the range is
+ * asymmetric on purpose (`hudScale` is a divisor bounded hard at 1 below, so
+ * there is only one step down that can mean anything) and the words have to say
+ * which of the two large ones a player is looking at.
+ */
+function uiScaleWord(step: number): string {
+  if (step <= UI_SCALE_MIN) return 'SMALLER';
+  if (step >= UI_SCALE_MAX) return 'LARGEST';
+  return step > 0 ? 'LARGER' : 'NORMAL';
 }
 
 function rootRows(view: EscapeMenuView): readonly MenuRow[] {
@@ -839,12 +879,23 @@ function rootRows(view: EscapeMenuView): readonly MenuRow[] {
       null,
     ),
     /**
-     * THE THIRD AND LAST OF THE SETTINGS ROWS. Key bindings, zoom, and putting
-     * the panels back are the three that change how the game is SET UP; the four
-     * below them open something or end something.
+     * BESIDE ZOOM, WHICH IS THE ONLY PLACE IT MAKES SENSE. The two are the same
+     * KIND of preference -- how big a thing is drawn -- and the whole reason
+     * they are two rows is that they move different factors.
+     *
+     * NO KEY SHOWN, because it has none. Zoom's row prints `zoom_in` since that
+     * binding already existed and the row is a second route to it; inventing a
+     * binding here to fill the column would put a key on the Keys screen that
+     * nobody asked for.
+     */
+    entryRow(3, { kind: 'ui-scale' }, `UI SIZE: ${uiScaleWord(view.uiScale ?? 0)}`, '', true, null),
+    /**
+     * THE FOURTH AND LAST OF THE SETTINGS ROWS. Key bindings, zoom, interface
+     * size and putting the panels back are the four that change how the game is
+     * SET UP; the four below them open something or end something.
      */
     entryRow(
-      3,
+      4,
       { kind: 'reset-panels' },
       'RESET PANELS',
       '',
@@ -852,7 +903,7 @@ function rootRows(view: EscapeMenuView): readonly MenuRow[] {
       view.panelsMoved === true ? null : 'nothing has been moved',
     ),
     entryRow(
-      4,
+      5,
       { kind: 'ui', command: UiCommand.ShowSheet },
       'CHARACTER SHEET',
       labelFor('show_sheet', keymap),
@@ -860,7 +911,7 @@ function rootRows(view: EscapeMenuView): readonly MenuRow[] {
       null,
     ),
     entryRow(
-      5,
+      6,
       { kind: 'ui', command: UiCommand.ShowTalents },
       talentsLabel,
       labelFor('show_talents', keymap),
@@ -868,7 +919,7 @@ function rootRows(view: EscapeMenuView): readonly MenuRow[] {
       null,
     ),
     entryRow(
-      6,
+      7,
       { kind: 'ui', command: UiCommand.ShowInventory },
       'INVENTORY',
       labelFor('show_inventory', keymap),

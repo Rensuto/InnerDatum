@@ -145,7 +145,7 @@ import {
   spentFromSpread,
 } from '../../shared/progression.ts';
 import { LAYOUT_REVISION } from '../../shared/level.ts';
-import { ZOOM_MAX, ZOOM_MIN } from '../../shared/version.ts';
+import { UI_SCALE_MAX, UI_SCALE_MIN, ZOOM_MAX, ZOOM_MIN } from '../../shared/version.ts';
 import { noteSpend } from '../../shared/respec.ts';
 import type { Purse } from '../../shared/respec.ts';
 import { readFile, readdir, rename } from 'node:fs/promises';
@@ -692,6 +692,8 @@ export type CharacterFile = {
    * and a rollback costs one keypress.
    */
   readonly zoom?: number;
+  /** HOW BIG THIS PLAYER WANTS THE INTERFACE. `zoom`'s twin; see `parseUiScale`. */
+  readonly uiScale?: number;
   /**
    * ═══════════════════════════════════════════════════════════════════════════
    * WHAT THIS CHARACTER HAS EXPLORED OF THE OVERWORLD — base64 of a bitset.
@@ -1107,6 +1109,8 @@ export type CharacterInit = {
    * and a rollback costs one keypress.
    */
   readonly zoom?: number;
+  /** HOW BIG THIS PLAYER WANTS THE INTERFACE. `zoom`'s twin; see `parseUiScale`. */
+  readonly uiScale?: number;
   /** base64 bitset of the overworld this character has explored. See CharacterFile. */
   readonly explored?: string;
   /** The same, for every OTHER overworld, keyed by realm id. See CharacterFile. */
@@ -1179,6 +1183,7 @@ export function createCharacterFile(init: CharacterInit): CharacterFile {
     deepenedTrees: init.deepenedTrees,
     knownLore: init.knownLore,
     zoom: init.zoom,
+    uiScale: init.uiScale,
     explored: init.explored,
     // STAMPED WHENEVER FOG IS WRITTEN, so the file always says which moor its
     // bitset belongs to. See `CharacterFile.layoutRevision`.
@@ -1765,14 +1770,39 @@ const KEYBIND_PROBLEMS_PER_ACTION = 2;
  * `keybinds` spends three paragraphs forbidding.
  */
 function parseZoom(value: unknown, problems: string[]): number | undefined {
+  return parseStep(value, ZOOM_MIN, ZOOM_MAX, 'zoom', 'tiles back to the default size', problems);
+}
+
+/**
+ * The stored INTERFACE step, repaired the same way and for the same reasons.
+ *
+ * SHARES `parseStep` WITH `parseZoom` RATHER THAN COPYING IT, because these two
+ * differ only in their bounds and their sentence — and a second hand-written
+ * copy of "integer, in range, absent stays absent" is where the third one drifts.
+ */
+function parseUiScale(value: unknown, problems: string[]): number | undefined {
+  return parseStep(
+    value,
+    UI_SCALE_MIN,
+    UI_SCALE_MAX,
+    'uiScale',
+    'interface back to the default size',
+    problems,
+  );
+}
+
+/** The shared body of the two above. Absent stays absent; anything else is repaired. */
+function parseStep(
+  value: unknown,
+  min: number,
+  max: number,
+  field: string,
+  remedy: string,
+  problems: string[],
+): number | undefined {
   if (value === undefined) return undefined;
-  if (
-    typeof value !== 'number' ||
-    !Number.isInteger(value) ||
-    value < ZOOM_MIN ||
-    value > ZOOM_MAX
-  ) {
-    problems.push('zoom: not a usable zoom step — dropped, tiles back to the default size');
+  if (typeof value !== 'number' || !Number.isInteger(value) || value < min || value > max) {
+    problems.push(`${field}: not a usable step — dropped, ${remedy}`);
     return undefined;
   }
   return value;
@@ -2101,6 +2131,7 @@ export function parseCharacterFile(doc: unknown): ParseResult {
       deepenedTrees: parseUnlockedTrees(doc.deepenedTrees, problems),
       knownLore: parseUnlockedTrees(doc.knownLore, problems),
       zoom: parseZoom(doc.zoom, problems),
+      uiScale: parseUiScale(doc.uiScale, problems),
       // REPAIR, NEVER REJECT, like every other field here: anything that is not
       // a string is dropped and the character loads with no fog rather than
       // failing to load at all. `fogFromBase64` is itself lenient about length.
@@ -2296,6 +2327,7 @@ export function serialiseCharacter(file: CharacterFile): string {
     deepenedTrees,
     knownLore,
     zoom: file.zoom,
+    uiScale: file.uiScale,
     /**
      * ═════════════════════════════════════════════════════════════════════════
      * AND THE FOUR THAT WERE NEVER WRITTEN DOWN AT ALL.
@@ -3316,6 +3348,8 @@ export type SavedPrefs = {
    * and a rollback costs one keypress.
    */
   readonly zoom?: number;
+  /** HOW BIG THIS PLAYER WANTS THE INTERFACE. `zoom`'s twin; see `parseUiScale`. */
+  readonly uiScale?: number;
   /** base64 bitset of the overworld this character has explored. See CharacterFile. */
   readonly explored?: string;
   /** The same, for every OTHER overworld, keyed by realm id. See CharacterFile. */
@@ -3429,6 +3463,8 @@ type Binding = {
    * and a rollback costs one keypress.
    */
   readonly zoom?: number;
+  /** HOW BIG THIS PLAYER WANTS THE INTERFACE. `zoom`'s twin; see `parseUiScale`. */
+  readonly uiScale?: number;
   /** base64 bitset of the overworld this character has explored. See CharacterFile. */
   readonly explored?: string;
   /** The same, for every OTHER overworld, keyed by realm id. See CharacterFile. */
@@ -3584,6 +3620,9 @@ export function createCharacterBridge(options: CharacterBridgeOptions): PersistP
       // THE SAME CARRY-FORWARD RULE. A producer with no opinion about the zoom
       // leaves the disk exactly as it found it.
       zoom: snapshot.zoom ?? binding.zoom,
+      // THE SAME CARRY-FORWARD, for the same reason: a producer with no opinion
+      // about the interface size must not erase one the player set.
+      uiScale: snapshot.uiScale ?? binding.uiScale,
       // THE SAME CARRY-FORWARD RULE, and for the same reason: a producer that
       // cannot say what has been explored leaves the disk exactly as it found
       // it. Losing a map to a build that had not been taught to fill this in
@@ -3709,6 +3748,7 @@ export function createCharacterBridge(options: CharacterBridgeOptions): PersistP
       // of a file that never mentioned keys.
       keybinds: file?.keybinds,
       zoom: file?.zoom,
+      uiScale: file?.uiScale,
       // NO `??` ON ANY OF THESE THREE EITHER, and the keymap's sentence covers
       // all of them: an absent bar or an unbought discipline is carried forward
       // AS an absence, so `fileFor` leaves the key off the file rather than
@@ -3801,6 +3841,7 @@ export function createCharacterBridge(options: CharacterBridgeOptions): PersistP
       keybinds: file.keybinds,
       // AND HOW BIG THEY LIKE THEIR TILES, on the same argument.
       zoom: file.zoom,
+      uiScale: file.uiScale,
       /**
        * ═══════════════════════════════════════════════════════════════════════
        * AND THE BAR AND THE DISCIPLINES COMING BACK — THE OTHER HALF, A FOURTH

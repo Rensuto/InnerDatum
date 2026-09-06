@@ -746,6 +746,33 @@ export const ZOOM_MIN = -1;
 export const ZOOM_MAX = 1;
 
 /**
+ * ════════════════════════════════════════════════════════════════════════════
+ * AND HOW FAR THEY MAY MOVE THE INTERFACE, WHICH IS NOT THE SAME CONTROL.
+ * ════════════════════════════════════════════════════════════════════════════
+ * `ZOOM_*` biases the MAP's magnification. This biases the HUD's, which
+ * `viewLayout` has always computed on its own from the device pixel ratio and
+ * `HUD_MAX_*` with no way for a player to say they wanted it otherwise.
+ * Requested in those words: *"we also need to include an option in the settings
+ * for UI scaling to lower or increase it."*
+ *
+ * KEEPING THEM APART IS THE WHOLE POINT OF `hudScale`. The HUD used to paint
+ * into the map's backbuffer, so `=` magnified the map AND the hotbar AND every
+ * panel together; `test/client/hudscale.test.ts` is the record of splitting
+ * them, citing `tome/class/Game.lua:571` where the UI set hands the map its rectangle. One
+ * shared control would put them straight back together.
+ *
+ * ═══ THE RANGE IS ASYMMETRIC AND THAT IS THE HONEST SHAPE ═══
+ * `hudScale` is a DIVISOR: `hudW = deviceW / hudScale`, so a bigger factor means
+ * fewer logical pixels and LARGER furniture. Down is bounded hard at 1 by
+ * `viewLayout` regardless of what is asked for (below that the HUD would be
+ * drawn at a fraction of a device pixel), so -1 is as far down as can ever
+ * mean anything, while +2 is a real amount of magnification for somebody
+ * reading a Discord Activity on a laptop across a room.
+ */
+export const UI_SCALE_MIN = -1;
+export const UI_SCALE_MAX = 2;
+
+/**
  * Energy required before an actor may act, and the energy granted per game tick.
  *
  * Ported from T-Engine4's energy scheduler. Players always spend exactly
