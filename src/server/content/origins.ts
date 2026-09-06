@@ -300,7 +300,20 @@ export const FOOTNOTED: OriginDef = Object.freeze({
   // `inc_stats = { str=-3, dex=3, con=1, cun=3, lck=5 }` (halfling.lua).
   //
   // ═══ `lck = 5` IS DROPPED, AND IT IS A REAL LOSS RATHER THAN A ROUNDING ═══
-  // There is no Luck stat in this game. Upstream's halfling is the luckiest
+  // THIS SAID "There is no Luck stat in this game" AND THAT IS NOT TRUE. `lck`
+  // is in `PrimaryStats`, `LUCK_BASE` is 50, and `luckDelta` feeds both
+  // `combatAttack` and `combatDefense` — `derived.ts` calls it "the six
+  // primaries, plus the pinned Luck", so two comments in one codebase disagreed
+  // about whether a stat exists.
+  //
+  // WHAT IS TRUE IS SHARPER, AND IT REACHES THE SAME ANSWER. Luck is PINNED:
+  // `LUCK_BASE`'s note is "Pinned, so every (Lck - 50) term is zero", and
+  // `AdditiveStats` is `Omit<PrimaryStats, 'lck'>` so nothing in the game may
+  // grant it. Writing `lck: 5` here would not be a small bonus, it would be a
+  // field the type rejects feeding a term that is defined to be zero.
+  //
+  // So it is still dropped, and the loss is still real. Upstream's halfling is
+  // the luckiest
   // thing in it and spends that on crit, on defence and on its own tier-2
   // talent; ours gets none of it and still pays the twenty per cent. Said out
   // loud rather than quietly compensated for — inventing a substitute bonus

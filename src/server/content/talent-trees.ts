@@ -495,18 +495,42 @@ export const TALENT_TREES: readonly TalentTree[] = Object.freeze([
      * misc/races.lua:552.
      * ═════════════════════════════════════════════════════════════════════════
      *
-     * ONE TALENT OF UPSTREAM'S FOUR, and the three that are missing all want the
-     * SAME two things — a LUCK stat and an on-being-hit hook:
+     * ONE TALENT OF UPSTREAM'S FOUR. RE-CHECKED 2026-09-06, and this list used to
+     * open "the three that are missing all want the SAME two things — a LUCK
+     * stat and an on-being-hit hook". The hook arrived; the stat was never quite
+     * the problem. What each actually needs now:
      *
      *   Duck and Dodge   triggers when a single blow takes a fifth of your life
-     *                    and grants Evasion scaled by `getStat("lck")`. We have
-     *                    an Evasive effect; we have neither the trigger nor the
-     *                    stat.
-     *   Militant Mind    scales six powers by how many foes are IN SIGHT, and a
-     *                    talent cannot see the actor list — `TalentWorld` is
-     *                    deliberately narrowed to the level.
+     *                    and grants Evasion scaled by `getStat("lck")`.
+     *
+     *                    BOTH HALVES OF THE OLD REASON WERE WRONG. The trigger
+     *                    exists: `onTakeDamage` sees `IncomingDamage.dam` before
+     *                    it is applied, which is exactly "a single blow took a
+     *                    fifth of your life". And there IS a Luck stat — `lck`
+     *                    is in `PrimaryStats`, `LUCK_BASE` is 50, and `luckDelta`
+     *                    feeds both `combatAttack` and `combatDefense`.
+     *
+     *                    THE REAL BLOCKER IS THAT LUCK IS PINNED. `LUCK_BASE`'s
+     *                    own note says it: "Pinned, so every (Lck - 50) term is
+     *                    zero", and `AdditiveStats` is `Omit<PrimaryStats,'lck'>`
+     *                    so nothing may grant it. A talent scaling off
+     *                    `getStat("lck")` would read 50 on every body forever and
+     *                    compute a constant. Unpinning it is a balance decision
+     *                    (see `origins.ts` on the Footnoted's dropped `lck = 5`),
+     *                    not a transcription.
+     *   Militant Mind    scales six powers by how many foes are IN SIGHT.
+     *
+     *                    NARROWER THAN "a talent cannot see the actor list". A
+     *                    PASSIVE reads the board through `PassiveView`, which
+     *                    already answers `adjacentEnemies()` and
+     *                    `nearestEnemyDistance()` — so talents do see enemies.
+     *                    What that view has no method for is a COUNT IN SIGHT.
+     *                    One field on an existing read-only view, the same size
+     *                    of gap as Power is Money's missing gold.
      *   Indomitable      strips N stun/pin effects. We have effect subtypes and
      *                    a `stun` immunity key, but no `pin` status to strip.
+     *                    RE-CHECKED AND UNCHANGED: there is no `Pinned` in
+     *                    `content/effects.ts`.
      *
      * `size` is that declared, exactly as the other three race trees declare
      * theirs. THE SAME UNREACHABLE PURSE — see the note on `race/higher`.
