@@ -194,6 +194,40 @@ const INSET = PANEL_PAD + 3;
 const COL_GAP = 10;
 
 /**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * HOW MUCH OF A FIELD ROW THE LABEL MAY TAKE BEFORE IT IS CLIPPED.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * A Field row is two competing strings on one line, and until this constant the
+ * value took the whole column and the label took the remainder — see the Field
+ * case in `drawRow` for the screenshot that produced it.
+ *
+ * HALF, because the two are not the same KIND of string. Labels are a closed set
+ * this file authors (`Armour hardiness` is the longest at 16 characters, and
+ * every slot name is at most 7); values are open — an item name arrives off the
+ * wire and nothing here bounds it. A cap set on the half we control lets the
+ * half we do not have everything else, and the widest authored label still fits
+ * inside it in every column this sheet opens: 16 characters is 96 pixels and
+ * half of `COL_MIN_W` is 100.
+ *
+ * IT IS A CEILING AND NOT A COLUMN. A label shorter than the cap takes only what
+ * it measures, so `Head` does not push a value 100 pixels to the right — which
+ * is the "values are WAY further than the name" complaint this must not create,
+ * already answered once in ui/inventory.ts.
+ */
+const FIELD_LABEL_MAX_SHARE = 0.5;
+
+/**
+ * The air between a label and the value it introduces.
+ *
+ * One character. It was `CHAR_W` inline before and it is named here because it
+ * is now load-bearing: it is subtracted from the value's budget rather than
+ * being whatever happened to be left over, so a row can no longer render with
+ * the two strings touching.
+ */
+const FIELD_GUTTER = CHAR_W;
+
+/**
  * The narrowest inner width that earns a second column.
  *
  * Below it, two columns are two columns of ellipses: the longest label the
@@ -1575,24 +1609,56 @@ function drawRow(ctx: CanvasRenderingContext2D, sprites: SpriteSource, placed: P
     }
 
     case SheetRowKind.Field: {
-      // THE VALUE FIRST, right-aligned, and the label shortened against what it
-      // actually took. The other way round is how a long label eats the number
-      // it exists to introduce.
+      /**
+       * ═══════════════════════════════════════════════════════════════════════
+       * NEITHER HALF MAY EAT THE OTHER. BOTH GET A BUDGET FIRST.
+       * ═══════════════════════════════════════════════════════════════════════
+       *
+       * This used to fit the VALUE against the whole of `rect.w` and hand the
+       * LABEL whatever was left, under a comment reading *"the other way round
+       * is how a long label eats the number it exists to introduce"*. That
+       * reasoning is right and it is only half the problem: it protects a short
+       * value from a long label and does nothing in the other direction.
+       *
+       * Reported with a screenshot, on the Equipment tab: *"the text doesnt
+       * overlap as you can see in the equip tab"*. `Legs` was drawn as `Le…`
+       * beside `Reinforced Watchman's Trousers of the Long Watch`.
+       *
+       * ═══ WHY ONLY THAT TAB, AND WHY IT IS THE SLOT NAME THAT LOSES ═══
+       * Every other page's values are two-character numbers, so the leftovers
+       * are enormous. Equipment values are ITEM NAMES (`charSheetRows` puts
+       * `worn[slot]?.name` straight into a Field), and a 44-character name in
+       * the 288-pixel column this sheet actually runs leaves the label 18px.
+       * `fitText` floors at one character plus an ellipsis, so `Legs` becomes
+       * `Le…`; at 48 characters the budget reaches zero and `panel.ts` returns
+       * the EMPTY STRING, which deletes the slot name altogether — and the slot
+       * name is the half that says which row you are reading.
+       *
+       * ═══ THE FIX IS A CAP, NOT A REVERSAL ═══
+       * Swapping the order outright would just move the bug onto `Armour
+       * hardiness`. So the label is measured first and clamped to a SHARE of the
+       * column, and the value takes everything it did not. A short label (every
+       * slot name) costs the value almost nothing; a long one cannot take more
+       * than half; and neither can ever be handed a budget of zero.
+       */
+      ctx.font = FONT_LABEL;
+      const labelW = Math.min(
+        Math.ceil(ctx.measureText(row.label).width),
+        Math.floor(rect.w * FIELD_LABEL_MAX_SHARE),
+      );
+      ctx.textAlign = 'left';
+      ctx.fillStyle = PALETTE.BONE;
+      ctx.fillText(fitText(ctx, row.label, labelW), rect.x, rect.y + ROW_H / 2);
+
       ctx.font = FONT_VALUE;
       ctx.textAlign = 'right';
       ctx.fillStyle = PALETTE.PARCHMENT;
-      const value = fitText(ctx, row.value, rect.w);
-      ctx.fillText(value, right, rect.y + ROW_H / 2);
-      const valueW = Math.ceil(ctx.measureText(value).width);
-      ctx.textAlign = 'left';
-
-      ctx.font = FONT_LABEL;
-      ctx.fillStyle = PALETTE.BONE;
       ctx.fillText(
-        fitText(ctx, row.label, Math.max(0, rect.w - valueW - CHAR_W)),
-        rect.x,
+        fitText(ctx, row.value, Math.max(0, rect.w - labelW - FIELD_GUTTER)),
+        right,
         rect.y + ROW_H / 2,
       );
+      ctx.textAlign = 'left';
       return;
     }
 

@@ -1259,6 +1259,59 @@ describe('the sheet shows what it says it shows', () => {
     expect(large?.w ?? 0).toBeGreaterThan(small?.w ?? 0);
   });
 
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * A LONG ITEM NAME MAY NOT EAT THE SLOT IT IS SITTING IN.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Reported with a screenshot: *"the text doesnt overlap as you can see in the
+   * equip tab"*. `Legs` was drawn as `Le…` beside `Reinforced Watchman's
+   * Trousers of the Long Watch`, because `drawRow` fitted the VALUE against the
+   * whole column and handed the LABEL the remainder — 18 pixels of it.
+   *
+   * ═══ THIS IS THE ONLY TAB THAT COULD SHOW IT ═══
+   * Every other page's values are two-character numbers. Equipment values are
+   * item names off the wire, and nothing in this client bounds their length —
+   * which is why the fixture below is deliberately longer than anything in
+   * `content/` rather than a name that ships today.
+   *
+   * The slot name must survive WHOLE. It is the half that says which row you are
+   * reading, and at 48 characters the old budget reached zero and `fitText`
+   * returned the empty string, deleting it outright.
+   */
+  it('keeps the slot name whole beside an item name that overruns', () => {
+    const long = {
+      itemId: 'item_long',
+      name: "Reinforced Watchman's Trousers of the Long Watch",
+      icon: 'item_long',
+      tier: ItemTier.Common,
+      desc: '',
+      compare: [],
+    } as const;
+
+    for (const [w, h] of VIEWPORTS) {
+      const texts = painted(w, h, { equipped: { legs: long } }, SheetTab.Equipment);
+      expect(texts, `${String(w)}x${String(h)} lost the slot name`).toContain('Legs');
+      // AND EVERY OTHER SLOT TOO — a fix that only spared the row with the long
+      // value in it would pass on `Legs` and clip `Offhand`, the longest label.
+      for (const slot of ['Head', 'Body', 'Feet', 'Offhand', 'Ring', 'Trinket']) {
+        expect(texts, `${String(w)}x${String(h)} clipped ${slot}`).toContain(slot);
+      }
+    }
+  });
+
+  /**
+   * AND THE VALUE MUST STILL BE THE ONE THAT GIVES WAY.
+   *
+   * The cap is half the column, so a label can never take more than that — the
+   * failure the old ordering existed to prevent (*"a long label eats the number
+   * it exists to introduce"*) must not be reintroduced by fixing this one.
+   */
+  it('still clips the value rather than the label when both are long', () => {
+    const texts = painted(640, 320, {}, SheetTab.Defence);
+    expect(texts, 'the longest authored label was clipped').toContain('Armour hardiness');
+  });
+
   it('never grows wider than the window it is centred in', () => {
     for (const [w, h] of VIEWPORTS) {
       const rect = charSheetRect({ width: w, height: h, top: 20, bottom: h - 40 });
