@@ -129,7 +129,7 @@ import type {
 import type { SpriteSource } from '../render/assets.ts';
 import type { PanelRect } from './panel.ts';
 import { HP_LOW } from '../../shared/vitals.ts';
-import { RESOURCE_H, drawResource } from './resource.ts';
+import { drawResource, resourceStripH } from './resource.ts';
 import type { ResourceView } from '../../shared/protocol.ts';
 
 // ---------------------------------------------------------------------------
@@ -244,11 +244,14 @@ function rowHeightFor(row: PartyPaneRow, view: PartyPaneView, compact: boolean):
 /**
  * The band under the self row's name that holds the pools.
  *
- * `RESOURCE_H` is `ui/resource.ts`'s own row height (the pip plus its air), so
- * this grows if the pips ever do rather than being a number that has to be
- * remembered in two files.
+ * `resourceStripH` is `ui/resource.ts`'s own answer, so this grows if the pips
+ * ever do rather than being a number remembered in two files. TRUE is passed
+ * because the pane draws the STACKED shape: the pane is 208 wide and the row was
+ * written for the full-width strip along the bottom, so on one line everything
+ * past the AP blocks ran off the end -- reported as "it looks like the MP is cut
+ * off in the player hud".
  */
-const RESOURCE_STRIP_H = RESOURCE_H;
+const RESOURCE_STRIP_H = resourceStripH(true);
 
 const FONT_NAME = '10px ui-monospace, Consolas, monospace';
 const FONT_NAME_SELF = 'bold 10px ui-monospace, Consolas, monospace';
@@ -978,11 +981,15 @@ function drawRow(
       ctx,
       sprites,
       resource,
+      stacked: true,
       x: token.x,
       y: y + PARTY_ROW_H - 1,
       // FROM THE TOKEN TO THE ROW'S EDGE. It starts under the portrait rather
       // than under the name so the pips have the full width of the row to run
       // in -- twelve reagents plus a budget does not fit beside a 32px face.
+      // Even so this is 187 pixels against the 256 the flat row wants, which is
+      // why `stacked` is set rather than the pane being widened: `MAX_PIPS` is
+      // 16, so a discrete pool alone can want 224 and NO pane width is safe.
       width: Math.max(0, x + w - token.x),
     });
   }

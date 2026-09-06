@@ -3,7 +3,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { createContextMenu } from '../../src/client/ui/contextmenu.ts';
-import { RESOURCE_H } from '../../src/client/ui/resource.ts';
+import { resourceStripH } from '../../src/client/ui/resource.ts';
 import {
   PARTY_PANE_COMPACT_W,
   PARTY_PANE_W,
@@ -1140,7 +1140,10 @@ describe('the viewer’s own pools on the pane', () => {
       partyPaneHeight(withPools, PartyPaneMode.Rows) - partyPaneHeight(without, PartyPaneMode.Rows);
     // EXACTLY ONE STRIP. Three members in the fixture and only one of them is
     // the viewer, so a per-row implementation would show up here as 3x.
-    expect(grew, 'the pane grew by something other than one strip').toBe(RESOURCE_H);
+    // THE STACKED HEIGHT, because the pane draws the two-line shape -- see
+    // `RESOURCE_STRIP_H`. Naming the flat one here would pass while the pane
+    // reserved a line less than it draws, which is the clipping this fixed.
+    expect(grew, 'the pane grew by something other than one strip').toBe(resourceStripH(true));
   });
 
   it('draws pips once the frame has arrived and none before it', () => {

@@ -57,6 +57,15 @@ const PIP_GAP = 2;
 export const RESOURCE_H = PIP_PX + 6;
 
 /**
+ * How tall the row is in each shape, so a caller reserving space for it does not
+ * have to know that `stacked` means two lines. `partypanel.ts` sizes the self
+ * row from this.
+ */
+export function resourceStripH(stacked: boolean): number {
+  return stacked ? RESOURCE_H + PIP_PX + PIP_GAP : RESOURCE_H;
+}
+
+/**
  * How many pips a CONTINUOUS pool is drawn as.
  *
  * Resolve and Focus run 0-100, and a hundred pips is not a readable row — so a
@@ -84,6 +93,27 @@ export type ResourceOptions = {
   readonly y: number;
   /** How much width the row may use. The row is left-aligned inside it. */
   readonly width: number;
+  /**
+   * ════════════════════════════════════════════════════════════════════════════
+   * TWO LINES INSTEAD OF ONE, for a column that is not as wide as the screen.
+   * ════════════════════════════════════════════════════════════════════════════
+   * This row was written for the full-width strip along the bottom, where 256
+   * pixels of pips, budgets and a label are nothing. The party pane is 208 wide
+   * and gives it 187, so everything past the AP blocks ran off the end —
+   * reported as *"it looks like the MP is cut off in the player hud"*, with a
+   * screenshot showing the `MP` label and no blocks after it.
+   *
+   * WIDENING THE PANE WOULD NOT HAVE FIXED IT. `MAX_PIPS` is 16, so a discrete
+   * pool alone can want 224 pixels before a budget is drawn; any pane width is a
+   * number the content can exceed. Breaking the line is the fix that holds.
+   *
+   * ONE IMPLEMENTATION, TWO SHAPES. The alternative was a second painter for the
+   * pane, and a second copy of "what a lit block means" is how two surfaces come
+   * to disagree about whether a block is spent or left — which this file has
+   * already had happen once, in the loop that lit `i < spent` against a variable
+   * holding the amount remaining.
+   */
+  readonly stacked?: boolean;
 };
 
 /**
@@ -207,13 +237,18 @@ export function drawResource(options: ResourceOptions): void {
 
   const { total, filled } = pipCount(resource);
   const art = pipArt(resource.kind);
-  const midY = y + PIP_PX / 2;
+  const stacked = options.stacked === true;
+  // THE LINE THE CURSOR IS ON. One line unless `stacked`, in which case the
+  // budgets drop to a second one -- so every `y` below reads this and not the
+  // parameter, or the second line would draw on top of the first.
+  let lineY = y;
+  const midY = lineY + PIP_PX / 2;
 
   let cursor = x;
   for (let i = 0; i < total; i += 1) {
     if (cursor + PIP_PX > x + width) break;
     const isFull = i < filled;
-    drawPip(ctx, sprites, isFull ? art.full : art.empty, cursor, y, isFull);
+    drawPip(ctx, sprites, isFull ? art.full : art.empty, cursor, lineY, isFull);
     cursor += PIP_PX + PIP_GAP;
   }
 
@@ -285,11 +320,11 @@ export function drawResource(options: ResourceOptions): void {
     if (left === undefined || max === undefined || max <= 0) return;
     cursor += PIP_GAP * 2;
     ctx.fillStyle = PALETTE.GREY_HI;
-    if (cursor < x + width) ctx.fillText(label, cursor, y + PIP_PX / 2);
+    if (cursor < x + width) ctx.fillText(label, cursor, lineY + PIP_PX / 2);
     cursor += 15;
     const blockW = 4;
     const blockH = PIP_PX - 2;
-    const blockY = y + 1;
+    const blockY = lineY + 1;
     const remaining = Math.max(0, Math.min(max, Math.floor(left)));
     for (let i = 0; i < max; i += 1) {
       if (cursor + blockW > x + width) break;
@@ -299,11 +334,40 @@ export function drawResource(options: ResourceOptions): void {
     }
   };
 
+  /**
+   * STACKED PUTS THE POOL'S NAME ON ITS OWN LINE AND DROPS TO THE NEXT.
+   *
+   * The pool and the word for it belong together -- eight vials over the word
+   * `Reagents` is one statement -- and the budgets are the round's small change,
+   * which is what the paragraph above already argues about their weight. So the
+   * break goes between those two groups rather than anywhere else.
+   */
+  const poolLabel = (): void => {
+    cursor += PIP_GAP * 2;
+    ctx.fillStyle = PALETTE.BONE;
+    const bare = resource.discrete && total > 0;
+    const text = bare
+      ? resourceLabel(resource.kind)
+      : `${resourceLabel(resource.kind)} ${Math.floor(resource.current)}/${Math.floor(resource.max)}`;
+    if (cursor < x + width) ctx.fillText(text, cursor, lineY + PIP_PX / 2);
+  };
+
+  if (stacked) {
+    poolLabel();
+    lineY += PIP_PX + PIP_GAP;
+    cursor = x;
+  }
+
   // AP FIRST AND MP SECOND, in the order the talents are priced and the order
   // the banner says them, so a player checking one against the other never has
   // to re-read which row is which.
   budgetRow('AP', resource.ap, resource.maxAp, PALETTE.GOLD);
   budgetRow('MP', resource.mp, resource.maxMp, PALETTE.SILVER);
+
+  if (stacked) {
+    ctx.restore();
+    return;
+  }
 
   cursor += PIP_GAP * 2;
   ctx.fillStyle = PALETTE.BONE;
