@@ -33,25 +33,32 @@ import type { Talent } from '../engine/talents.ts';
 import type { SetEffectResult } from '../engine/effects.ts';
 
 /**
- * ═══════════════════════════════════════════════════════════════════════════
- * TWO TURNS, AND UPSTREAM'S IS THREE TO SEVEN.
- * ═══════════════════════════════════════════════════════════════════════════
+ * ONE TURN. IT SHIPPED AS TWO AND TWO WAS A STUN-LOCK.
  *
- * `npcs.lua:202` is `floor(combatTalentScale(t, 3, 7))`. `ENGAGEMENT_TURNS` is
- * 3 (engine/scheduler.ts), so upstream's RANK-ONE stun already outlasts a whole
- * engagement here and its rank-five one is more than twice a fight.
+ * `npcs.lua:202` is `floor(combatTalentScale(t, 3, 7))`, far too long for a
+ * three-turn `ENGAGEMENT_TURNS`. That part was never in doubt. What was wrong
+ * was the replacement.
  *
- * TWO IS NOT A NEW JUDGEMENT. It is the same conversion `lockdown.ts` and
- * `pistol_whip.ts` already made for the player's own stuns, and both stuns in
- * the game are 2 for the reason `pistol_whip.ts` states in full: on a
- * three-turn scale the scaling has nowhere to go, so the rank buys damage and
- * the stun stays a tempo cost rather than a removal.
+ * TWO TURNS AGAINST A THREE-TURN COOLDOWN LEAVES ONE TURN IN THREE: stunned on
+ * 1 and 2, acting on 3, stunned on 4 and 5. The commit that shipped it argued
+ * the cooldown made this "a spike once per engagement" -- and an engagement IS
+ * three turns, so it fires every one and covers two thirds of each.
  *
- * THAT SYMMETRY IS THE POINT. A monster that stunned for longer than the
- * Watchman's own Lockdown would not be a harder monster, it would be a
- * different rule for the same word.
+ * `INDEX_CAIRN` had already written the rule and I did not apply it: *"a stun
+ * longer than the gap between shots is not a hard fight, it is a player who
+ * never acts again -- so the duration has to stay strictly under the cadence"*.
+ * One against three is strictly under. Two was not.
+ *
+ * WHY THE DURATION MOVED AND NOT THE COOLDOWN: three is upstream's
+ * `cooldown = 6` through `tomeCooldownToTurns`, ported exactly. The duration
+ * was already ours, because upstream's 3-to-7 is unusable here -- so the
+ * deviation belongs on the number that was deviating anyway, and the ported
+ * one stays ported.
+ *
+ * It is the cairn's stun exactly now: one turn, from a creature that applies it
+ * about every third. Two stuns in this game, one rule for both.
  */
-const STUN_TURNS = 2;
+const STUN_TURNS = 1;
 
 /**
  * `npcs.lua:207` -- `combatTalentWeaponDamage(t, 0.5, 1)`, ported as its band.

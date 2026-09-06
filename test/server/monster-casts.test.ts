@@ -40,6 +40,7 @@ import { pump, submitIntent } from '../../src/server/engine/scheduler.ts';
 import { dirToward } from '../../src/server/engine/talents.ts';
 import { createContentTalentEngine } from '../../src/server/content/classes.ts';
 import { MONSTER_TEMPLATES, monsterInit } from '../../src/server/content/monsters.ts';
+import { MONSTER_TALENTS } from '../../src/server/talents/monster.ts';
 import { talentRuntimeFor } from '../../src/server/main.ts';
 import { createWorld } from '../../src/server/world/world.ts';
 import type { MonsterTemplate } from '../../src/server/content/monsters.ts';
@@ -270,4 +271,67 @@ describe('every armed creature casts, in a real fight', () => {
     expect(actor !== undefined && 'talents' in actor ? actor.talents : undefined).toBeUndefined();
     expect(everyStep(world, TURNS).filter((step) => step.t === 'talent')).toHaveLength(0);
   });
+});
+
+describe('no creature can stun for as long as its own cadence', () => {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE RULE INDEX_CAIRN WROTE DOWN, ENFORCED FOR EVERYTHING THAT STUNS.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * The cairn's note says it plainly: *"a stun longer than the gap between
+   * shots is not a hard fight, it is a player who never acts again — so the
+   * duration has to stay strictly under the cadence"*.
+   *
+   * Bear Down shipped violating it. Two turns of stun on a three-turn cooldown
+   * leaves the player acting one turn in three, and the commit message argued
+   * the opposite — that a three-turn cooldown made it "a spike once per
+   * engagement" — without noticing that `ENGAGEMENT_TURNS` is three, so it
+   * fires every engagement and covers two thirds of each.
+   *
+   * ═══ WHY PROSE DID NOT CATCH IT AND THIS DOES ═══
+   * `monster-casts.test.ts` proves a talent is CAST. It does not prove what the
+   * cast does, because this harness wires no `status` door at all — every
+   * monster stun in the suite is applied to nothing. So the one number that
+   * decides whether a stun is a threat or a lock had no assertion anywhere.
+   *
+   * This reads the DECLARED numbers rather than driving a fight, deliberately:
+   * the ratio is a property of the talent, and a test that needed a live fight
+   * to find it would be a test nobody runs when they change a constant.
+   */
+  const stunners = MONSTER_TALENTS.filter((talent) =>
+    /stun/i.test(talent.describe?.({} as never, 1) ?? ''),
+  );
+
+  it('has stunning talents to check', () => {
+    expect(stunners.length).toBeGreaterThan(0);
+  });
+
+  it.each(stunners.map((talent) => [talent.name, talent] as const))(
+    '%s stuns for less than its cooldown',
+    (_name, talent) => {
+      const said = talent.describe?.({} as never, 1) ?? '';
+      const turns = Number(/stuns? for (\d+)/i.exec(said)?.[1] ?? '0');
+      expect(turns, `could not read a stun duration out of: ${said}`).toBeGreaterThan(0);
+      /**
+       * ═══ THE PLAYER MUST ACT MORE OFTEN THAN NOT ═══
+       * The first version of this asserted `turns < cooldownTurns`, and it
+       * passed the very bug it was written for: 2 stun on a 3 cooldown is
+       * 2 < 3, and it is also stunned-stunned-free, which is the lock.
+       *
+       * A cycle is `cooldownTurns` long and `turns` of it are gone, so the
+       * free turns are `cooldown - turns`. For the fight to be a fight rather
+       * than a cutscene those have to OUTNUMBER the stunned ones -- which is
+       * `turns * 2 < cooldownTurns`, and is what "strictly under the cadence"
+       * has to mean to be worth anything.
+       */
+      const free = talent.cooldownTurns - turns;
+      expect(
+        free,
+        `${talent.name} stuns ${String(turns)} of every ${String(talent.cooldownTurns)} turns, ` +
+          `leaving ${String(free)} free — the player must act more often than not, which is ` +
+          `the lock INDEX_CAIRN's note describes and what Bear Down shipped as.`,
+      ).toBeGreaterThan(turns);
+    },
+  );
 });
