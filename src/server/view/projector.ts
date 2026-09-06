@@ -2068,6 +2068,29 @@ const COMPARE_ROWS: readonly (readonly [string, (c: Combatant) => number, Compar
   ['Armour', combatArmor, CompareShape.Scalar],
   ['Hardiness', combatArmorHardiness, CompareShape.Percent],
   ['Defence', combatDefense, CompareShape.Scalar],
+  /**
+   * ═══ TWO ROWS THE CHARACTER SHEET HAS AND THIS CARD DID NOT ═══
+   * `inspect.ts` prints `Vision range` on the General tab and this table did
+   * not, so an item that widened your sight compared identically to one that
+   * did not — on the screen whose whole job is telling those two apart.
+   *
+   * `Healing mod.` IS THE ROW THAT IS NOT HERE, and deliberately. It is the
+   * sheet's neighbour and the obvious pair to add, but no GEAR can move it:
+   * `healingFactor` reads `mods.healMod` as a FRACTION, and egos.ts refuses a
+   * fractional grant at module load because integer values are what keep the
+   * fold in engine/equipment.ts order-independent. An effect grants it; an item
+   * cannot. A comparison row for a channel no item moves is furniture, which is
+   * the argument this table's header already makes about which rows appear.
+   *
+   * ADDED IN THE SAME COMMIT AS THE EGOS THAT MOVE THEM, which is this
+   * codebase's own rule and the reason it exists: `cb607dd` had to go back
+   * and print three channels that had shipped without a readout, two of them
+   * added the same day.
+   *
+   * THE LABELS ARE `inspect.ts`'s VERBATIM. Two surfaces naming one quantity
+   * differently is how a player concludes they are different numbers.
+   */
+  ['Vision range', (c: Combatant): number => sightRadiusOf({ combat: c }), CompareShape.Scalar],
   ['Physical save', combatPhysicalResist, CompareShape.Scalar],
   ['Spell save', combatSpellResist, CompareShape.Scalar],
   ['Mental save', combatMentalResist, CompareShape.Scalar],

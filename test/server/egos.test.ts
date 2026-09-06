@@ -76,6 +76,10 @@ describe('the ego roster', () => {
       'fd',
       // The first affix that answers being DISABLED rather than being hurt.
       'sf',
+      // A prefix that moves SIGHT — the first ego to touch the channel a talent
+      // already grants. Appended to the prefixes, so every existing save key
+      // keeps its position.
+      'kp',
       'ct',
       // The shallow suffixes.
       'lg',

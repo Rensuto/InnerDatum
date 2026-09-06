@@ -1184,6 +1184,29 @@ describe('projectInventory', () => {
     expect(rows).toContainEqual({ label: 'Armour', value: '+3' });
   });
 
+  it('compares VISION RANGE, which the sheet printed and this card did not', () => {
+    /**
+     * The `kp` ego moves `mods.sight`, and `sightRadiusOf` spends it -- a talent
+     * already granted the channel, so this is content for a live system. But the
+     * comparison card had no row for it, so a coat that widened your sight
+     * compared identically to one that did not, on the screen that exists to
+     * tell those two apart.
+     *
+     * ADDED WITH THE EGO, IN ONE COMMIT. That is this codebase's own rule, and
+     * `cb607dd` is why it has one: three channels shipped without a readout and
+     * had to be printed later, two of them added the same day.
+     */
+    const world = room();
+    const body = watchman(world);
+    body.carried = ['item_watchmans_cap~kp1'];
+
+    const rows = projectInventory(body).carried[0]?.compare ?? [];
+    expect(rows.some((row) => row.label === 'Vision range')).toBe(true);
+    // THE SHEET'S LABEL, VERBATIM. Two surfaces naming one quantity differently
+    // is how a player concludes they are different numbers.
+    expect(rows.find((row) => row.label === 'Vision range')?.value).toContain('+1');
+  });
+
   it('says what a landed blow leaves behind, which is the whole ring', () => {
     /**
      * `Object.lua:1310` prints `Effects on melee hit: ` and then the rider. Ours

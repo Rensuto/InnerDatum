@@ -351,6 +351,25 @@ const PREFIXES: readonly Ego[] = [
     cost: 70,
   },
   {
+    code: 'kp',
+    name: 'Keen-Sighted ',
+    tag: EgoSlotTag.Prefix,
+    /**
+     * THE FIRST EGO THAT MOVES SIGHT, and the channel was already live: a
+     * talent grants it (`overseer_of_nations.ts`) and `sightRadiusOf` spends
+     * it, so this is content for a system rather than a system.
+     *
+     * ONE TILE, AND RARE, because sight is not a stat — it is how much of the
+     * board the SERVER sends you. `DEFAULT_SIGHT_RADIUS` is 10 and every
+     * point is a ring of tiles wide; ToME's own infravision egos run +1 to
+     * +10, which on a delve floor would be most of the room.
+     */
+    rarity: 26,
+    levelRange: [14, 50],
+    grants: { mods: { sight: { floor: 1, step: 0 } } },
+    cost: 90,
+  },
+  {
     code: 'ct',
     name: 'Case-Hardened ',
     tag: EgoSlotTag.Prefix,
