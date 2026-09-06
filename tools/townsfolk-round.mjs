@@ -334,22 +334,46 @@ for (const { s: town } of townsOf(posOf())) {
         const errsBefore = frames.filter((f) => f.t === 'error').length;
         send({ t: 'talk', targetId: person.id, ...(topic === undefined ? {} : { topic }) });
         await sleep(220);
-        const said = logLines().slice(before);
+        const spoke = logLines().slice(before);
         // A REFUSAL IS NEVER SWALLOWED. Silence and "step closer to talk" look
         // identical in a transcript, and reading the first as "she has nothing
         // to say" is the whole reason this probe was wrong once already.
-        for (const e of frames.filter((f) => f.t === 'error').slice(errsBefore)) {
-          said.push(`REFUSED(${String(e.code)}): ${String(e.message)}`);
-        }
+        const refused = frames
+          .filter((f) => f.t === 'error')
+          .slice(errsBefore)
+          .map((e) => `REFUSED(${String(e.code)}): ${String(e.message)}`);
         const key = `${TOPIC_NAME(topic)}#${String(pass)}`;
-        heard.set(key, said);
+        /**
+         * ═══════════════════════════════════════════════════════════════════
+         * SHOWN TOGETHER, COUNTED APART — AND THEY USED TO BE ONE LIST.
+         * ═══════════════════════════════════════════════════════════════════
+         *
+         * The fix above put refusals into the same array as the spoken lines so
+         * they would stop being invisible. `answered` then tested that array for
+         * `length > 0`, so A REFUSAL COUNTED AS AN ANSWER, and the probe printed
+         *
+         *     Index Eidolon  (closed to 1 tiles)
+         *       answers 5 of 5  ·  says the same thing twice on 5 of them
+         *       (greeting)  REFUSED(bad_message): there is nobody there to talk to
+         *
+         * — five of five, about a hostile monster that said nothing at all, with
+         * every line beneath it saying so. `repeats` was inflated the same way:
+         * two identical refusals are not a townsperson repeating herself.
+         *
+         * So the transcript still shows both (that was the point) and the two
+         * COUNTS read `spoke` alone. Fixing one bug by widening a list is what
+         * made the second one, which is worth remembering rather than just
+         * correcting.
+         */
+        heard.set(key, { spoke, shown: [...spoke, ...refused] });
       }
     }
 
-    const answered = TOPICS.filter((t) => (heard.get(`${TOPIC_NAME(t)}#1`) ?? []).length > 0);
+    const spokeOn = (t, pass) => heard.get(`${TOPIC_NAME(t)}#${String(pass)}`)?.spoke ?? [];
+    const answered = TOPICS.filter((t) => spokeOn(t, 1).length > 0);
     const repeats = TOPICS.filter((t) => {
-      const a = (heard.get(`${TOPIC_NAME(t)}#1`) ?? []).join('|');
-      const b = (heard.get(`${TOPIC_NAME(t)}#2`) ?? []).join('|');
+      const a = spokeOn(t, 1).join('|');
+      const b = spokeOn(t, 2).join('|');
       return a !== '' && a === b;
     });
 
@@ -361,7 +385,9 @@ for (const { s: town } of townsOf(posOf())) {
         `  ·  says the same thing twice on ${String(repeats.length)} of them`,
     );
     for (const topic of TOPICS) {
-      const said = heard.get(`${TOPIC_NAME(topic)}#1`) ?? [];
+      // THE TRANSCRIPT SHOWS BOTH — refusals included, which is the whole point
+      // of keeping them. Only the two counts above read `spoke` alone.
+      const said = heard.get(`${TOPIC_NAME(topic)}#1`)?.shown ?? [];
       const line = said.length === 0 ? 'NOTHING' : said.join(' / ');
       console.log(`    ${TOPIC_NAME(topic).padEnd(11)} ${line}`);
     }
