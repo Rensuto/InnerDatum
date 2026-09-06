@@ -33,30 +33,42 @@
  * drawing, which is exactly the shape this file now has.
  *
  * ===========================================================================
- * WHAT AN ITEM ON THE BAR DOES: IT EQUIPS. THERE IS NO USE-ITEM VERB.
+ * WHAT AN ITEM ON THE BAR DOES: IT EQUIPS, REMOVES, OR IS DRUNK.
  * ===========================================================================
- * The complete client→server vocabulary is hello, move, commit, hold, talent,
- * ping, say, point, revive, respawn, choose_class, spend_point, pickup, equip,
- * unequip, drop, party, inspect, set_keybinds. There is no `use`, no `activate`,
- * no `consume` — and nothing to invoke one on: `Wielder` is `{stats?, mods?}`
- * only (server/content/items.ts:231-234), so all 22 authored items are passive.
- * Shipping a `use` intent for this bar would ship a verb with nothing behind it,
- * which is the "control that does nothing" trap wearing a protocol change.
+ * THIS SECTION SAID "THERE IS NO USE-ITEM VERB" AND CONTRADICTED ITS OWN FILE.
+ * It listed the client→server vocabulary, concluded "there is no `use`, no
+ * `activate`, no `consume` — and nothing to invoke one on ... all 22 authored
+ * items are passive", and argued that shipping a `use` intent would be "a verb
+ * with nothing behind it".
  *
- * So a bound item slot is a QUICK-SWAP and its verb is equip/unequip:
+ * Every clause of that has since gone: `UseSchema` is on the wire (`t: 'use'`),
+ * the Draught of Mending restores forty hit points, and `ItemSlotAction.Use`
+ * THREE HUNDRED LINES BELOW routes a bound draught to it — added because this
+ * bar "captioned a draught EQUIP and sent an intent the server answers with
+ * *that is not something you can wear*". The fix landed in the body and the
+ * header kept explaining why it could not exist.
  *
- *   in `carried`   → caption EQUIP,  click sends `equip {itemId}`
- *   in `equipped`  → caption REMOVE, click sends `unequip {slot}`
- *   in neither     → caption GONE,   click clears the binding and says so
+ * So a bound item slot is a QUICK-SWAP for anything wearable, and a drink for
+ * anything not:
+ *
+ *   in `carried`, has a slot  → caption EQUIP,  click sends `equip {itemId}`
+ *   in `carried`, no slot     → caption USE,    click sends `use {itemId}`
+ *   in `equipped`             → caption REMOVE, click sends `unequip {slot}`
+ *   in neither                → caption GONE,   click clears the binding
+ *
+ * `CarriedItemView.slot` is the whole test, and it was put there for exactly
+ * this — see `ItemSlotAction`.
  *
  * The flip between the first two is computed, never remembered — see
  * `itemSlotAction`. Upstream agrees a wearable is not a "use": tome/class/Object.lua:169-173
  * answers "This object has no usable power." for anything with no activatable,
  * and HotkeysIconsDisplay.lua:232-234 draws a bound object that is currently
  * `o.wielded` in a DIFFERENT frame from one sitting in the pack, which is the
- * same two-state distinction EQUIP/REMOVE draws. DEVIATION, LABELLED: upstream's
- * inventory hotkey routes to `playerUseItem` (PlayerHotkeys.lua:173-181); ours
- * routes to equip/unequip, because we have no usable objects to route to.
+ * same two-state distinction EQUIP/REMOVE draws. AND THE DEVIATION THAT USED TO
+ * BE LABELLED HERE IS GONE: this read "upstream's inventory hotkey routes to
+ * `playerUseItem` (PlayerHotkeys.lua:173-181); ours routes to equip/unequip,
+ * because we have no usable objects to route to". We have one, and ours routes
+ * there too now — :173-181 is ported rather than deviated from.
  *
  * THE DANGLING BINDING IS UPSTREAM'S OWN CASE, not an invention:
  * PlayerHotkeys.lua:176-177 pops "You do not have any <name>." when the bound

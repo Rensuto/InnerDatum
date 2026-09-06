@@ -1299,9 +1299,19 @@ export function charSheetRect(options: {
    * — :603 `w = 0`, :676 `w = self.w * 0.25`, :796 `w = self.w * 0.5`, :845
    * `w = self.w * 0.77`, all inside `if kind == "general"` at :600. Its five
    * tabs are ported faithfully (`tabs_list` at :38 is the same five), but ToME's
-   * actor carries resistances and immunity tables this game does not have, so
-   * our pages are a dozen rows where its are a screenful. We took the width and
-   * had nothing to put in it.
+   * actor carries the SAME tables at an order of magnitude more rows, so our
+   * pages are a dozen where its are a screenful. We took the width and had
+   * nothing to put in it.
+   *
+   * ═══ THIS SAID "tables this game does not have" AND THAT WAS WRONG ═══
+   * We have both. `view/inspect.ts` builds a resistance row per `DAMAGE_TYPES`
+   * and an immunity row per `IMMUNITY_KEYS`, and gear moves them through
+   * `Wielder.resists`. The difference is SIZE, which is the honest reason and a
+   * measurable one: six damage types against upstream's 161 `newDamageType`
+   * declarations, and eight immunity keys against the nineteen `_immune` attrs
+   * on `tome/class/Actor.lua`. Written the wrong way round in the commit that
+   * shrank this panel — while that same commit's argument only ever needed the
+   * row COUNT, which is why the error changed nothing and still had to go.
    *
    * ═══ WHY THIS IS NOT THE 560-PIXEL BUG COMING BACK ═══
    * That regression (see `SHEET_PREF_COLS`) was a FIXED NUMBER that knew neither
