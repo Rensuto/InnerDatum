@@ -216,3 +216,42 @@ job, so do not treat them as one, and do not redraw them.
   Curtain is a guard, which is a different thing and already has `guarded`.
 
 Recorded so the next art pass does not read three unreferenced files as a gap.
+
+---
+
+## The doll's frames and plates are cut for a cell that no longer exists
+
+**Status: not missing, not broken — undersized. No placeholder needed; the
+existing art draws, just smaller than its box.**
+
+The inventory became one window on 2026-09-05 (`116d46f`): the paper doll sits
+beside a scrolling list instead of behind a tab, and its cells shrank from 72 to
+`CELL_PX` 40 so both fit. Everything still renders, because `blitReduced`
+(ui/panel.ts) takes an exact whole-number reduction — but two assets are now
+authored for a size nothing uses:
+
+| asset | authored | box | drawn at | shortfall |
+|---|---|---|---|---|
+| `ui_item_frame_*` (5 files) | 72x72 | 40x40 | 36x36 (halved) | 4px |
+| `ui_inventory_cell_empty` / `_hover` | 40x40 | 24x24 | 20x20 (halved) | 4px |
+
+The item icons are unaffected and want no work: `item_*` is 64x64 and lands on
+32 in a doll cell and 16 in a list row, both exact and both full-bleed.
+
+**What to cut, when somebody is in the art tree anyway:**
+
+- the five `ui_item_frame_*` at **40x40**, same design, one-pixel border
+- `ui_inventory_cell_empty` and `ui_inventory_cell_hover` at **24x24**
+
+**Acceptance test:** open the inventory and look at the doll. A native cut fills
+its cell to the edge; the halved one leaves a two-pixel gutter on every side of
+every plate. Both are legible, which is why this is a polish item and not a bug.
+
+**Do NOT "fix" this by letting the blit scale to fit.** `blitReduced` refuses
+anything that is not a whole divisor on purpose, and the reason is written where
+it is declared: with smoothing off, a fractional reduction drops rows unevenly
+and looks torn. Cutting the art at the size it is drawn is the fix; scaling it
+is the thing that was rejected.
+
+`tools/gen_ui_assets.py` generates both stand-ins — `img(72, 72)` for the frames
+and `img(40, 40)` for the plates — so the placeholder pass changes there first.
