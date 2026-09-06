@@ -529,11 +529,26 @@ export type ItemUse = {
  *
  * ═══ `item_iron_ingot` IS ON DISK AND IS DELIBERATELY MISSING FROM THIS LIST ═══
  * It is the 23rd icon and it is not authored as an item. ToME would ship it as
- * junk — `{ type = "money" }`, npcs/ant.lua:220 — but we have no currency, no
- * vendor and no crafting, so its only property would be occupying an inventory
- * cell. An item that changes no number is worse than no item: it teaches the
- * player that picking things up is not worth the turn it costs. It stays an
- * unused PNG until there is a system that wants it.
+ * junk — `{ type = "money" }`, npcs/ant.lua:220.
+ *
+ * ═══ THE REASON INVERTED, AND THE CONCLUSION SURVIVED IT ═══
+ * This read: *"we have no currency, no vendor and no crafting, so its only
+ * property would be occupying an inventory cell ... It stays an unused PNG until
+ * there is a system that wants it."* All three clauses have since stopped being
+ * true, and nobody came back here:
+ *
+ *   CURRENCY EXISTS — `content/money.ts`, ported from money.lua:29-45.
+ *   A VENDOR EXISTS — the wire carries `shop_buy` AND `shop_sell`, and
+ *     `ItemView.sell` is a price, so junk with a sell value changes a real
+ *     number.
+ *   AND IT IS NOT AN UNUSED PNG. The system that wanted it arrived and took
+ *     exactly this sprite: `item_iron_ingot@14` IS fourteen gold lying on the
+ *     floor. `money.ts` says so at its head, and knew this note was stale —
+ *     *"what changed is that there is now a currency for its sprite to depict"*.
+ *
+ * SO IT STAYS OUT OF `ITEMS`, FOR THE OPPOSITE REASON. Not "nothing would use
+ * it" but "something already does": an ingot authored as a sellable object would
+ * be a second, worse currency standing beside the real one, wearing its picture.
  */
 /**
  * ═══════════════════════════════════════════════════════════════════════════

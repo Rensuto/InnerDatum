@@ -239,12 +239,18 @@ export const ARCHIVED: OriginDef = Object.freeze({
   // (dwarf.lua:74-76).
   //
   // ONE TALENT WHERE THE INDEXED HAVE THREE, and that is not an oversight or a
-  // half-finished tree. `race/dwarf` has four upstream and the other three each
-  // need machinery this game does not have: Stoneskin wants an on-melee-hit
-  // trigger that can cancel the blow outright, Power is Money scales saves off
-  // carried gold, and Stone Walking phases through a wall. Each is a system, not
-  // a number, so the origin ships with the one that is a pure content port and
-  // the rest are named here rather than silently missing.
+  // half-finished tree. `race/dwarf` has four upstream and the other three are
+  // still out — but the REASONS moved, and the full re-check lives at
+  // `talent-trees.ts` under `race/archived` rather than being kept in two
+  // places. In short: Stoneskin's blocker is no longer a missing hook
+  // (`DamageEdit.stopped` refuses a blow) but upstream's PRE-HIT repel seam;
+  // Power is Money's mechanical half is one `PassiveView` field away and its
+  // real blocker is a balance decision; Stone Walking is genuinely absent.
+  //
+  // THIS PARAGRAPH SAID ALL THREE "need machinery this game does not have" AND
+  // WAS THE SECOND COPY OF THAT CLAIM. The first was corrected and this one was
+  // not, which is how a duplicated reason survives its own correction — so it
+  // points at the other now instead of restating it.
   talents: [resilienceOfTheArchived],
 });
 
