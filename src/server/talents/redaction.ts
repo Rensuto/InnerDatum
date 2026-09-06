@@ -1,5 +1,15 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Dalton Barraclough
+// NUMBERS: t-engine4 game/modules/tome/data/talents/chronomancy/temporal-combat.lua:296-335
+//          for the COOLDOWN -- `cooldown = 8` in ACTIONS, taken unconverted and
+//          argued at `COOLDOWN` below. The INK COST and the RANGE are AUTHORED:
+//          upstream's is a melee strike with no resource line, so there was
+//          nothing to carry and 22 is priced against Strike Out rather than
+//          against ToME -- see the header on what a setup button is worth.
+//
+//          Written because `tools/talent-costs.mjs` had this file under "no
+//          cost found in the cited window" with no way to tell an authored
+//          price from a dropped one. It was the last entry in that block.
 // SHAPE:   t-engine4 game/modules/tome/data/talents/chronomancy/temporal-combat.lua:296-335
 //          — `EFF_BREACH` applied on a cooldown, which is the same effect this
 //          applies and the same reason it cannot be at-will.
