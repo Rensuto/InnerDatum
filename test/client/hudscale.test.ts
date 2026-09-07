@@ -319,3 +319,68 @@ describe('the interface step', () => {
     expect(viewLayout(BOX[0], BOX[1], DEFAULT_VIEWPORT, 0, DPR).hudScale).toBe(layout(0).hudScale);
   });
 });
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE INTERFACE MAY NOT BE DRAWN LARGER THAN THE WINDOW IT IS IN.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `hudW`/`hudH` floor at `HUD_MIN_W`/`HUD_MIN_H`, so a scale the device cannot
+ * honour does not yield a smaller box — it yields a box DRAWN off the screen.
+ * What reaches the canvas is `hudW * hudScale`, and when `set_ui_scale` shipped
+ * that was 1280 against a 1262-wide window at the first step up: the right edge
+ * of the interface past the right edge of the screen.
+ *
+ * Measured then: +1 overflowed every viewport under 1280 wide, +2 overflowed all
+ * five tested. The automatic factor never hit it, which is why it survived
+ * review — `round(dpr)` is 1 or 2 on real machines and the `HUD_MAX_*` terms
+ * only ever raise the scale on a screen bigger than 1920x1080.
+ */
+describe('the interface never overflows the window', () => {
+  const BOXES: readonly (readonly [number, number])[] = [
+    [1280, 720],
+    [1262, 428],
+    [900, 500],
+    [800, 400],
+    [HUD_MIN_W, HUD_MIN_H],
+  ];
+
+  it('fits at every interface step, on every viewport', () => {
+    for (const [w, h] of BOXES) {
+      for (let step = UI_SCALE_MIN; step <= UI_SCALE_MAX; step += 1) {
+        const l = viewLayout(w, h, DEFAULT_VIEWPORT, 0, 1, step);
+        expect(
+          l.hudW * l.hudScale,
+          `${String(w)}x${String(h)} step ${String(step)} too wide`,
+        ).toBeLessThanOrEqual(w);
+        expect(
+          l.hudH * l.hudScale,
+          `${String(w)}x${String(h)} step ${String(step)} too tall`,
+        ).toBeLessThanOrEqual(h);
+      }
+    }
+  });
+
+  /**
+   * AND THE CAP MUST NOT TOUCH STEP ZERO. Every window keeps exactly the factor
+   * it had before an interface step existed, or this "fix" is a silent change to
+   * everybody's HUD.
+   */
+  it('leaves the default factor alone on every viewport', () => {
+    for (const [w, h] of BOXES) {
+      const withStep = viewLayout(w, h, DEFAULT_VIEWPORT, 0, 1, 0);
+      const without = viewLayout(w, h, DEFAULT_VIEWPORT, 0, 1);
+      expect(withStep.hudScale, `${String(w)}x${String(h)} moved at step 0`).toBe(without.hudScale);
+    }
+  });
+
+  /** A window with room still honours the step — the cap is a ceiling, not a lock. */
+  it('still grows where there is room for it', () => {
+    const base = viewLayout(1280, 720, DEFAULT_VIEWPORT, 0, 1, 0);
+    const up = viewLayout(1280, 720, DEFAULT_VIEWPORT, 0, 1, 1);
+    expect(
+      up.hudScale,
+      'a 1280x720 window has room for one step and did not take it',
+    ).toBeGreaterThan(base.hudScale);
+  });
+});

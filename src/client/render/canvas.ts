@@ -631,12 +631,42 @@ export function viewLayout(
    * able to defeat -- they keep the logical box inside `HUD_MAX_*` -- so the bias
    * is added to the rounded-dpr term alone rather than to the result.
    */
-  const hudScale = Math.max(
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE PLAYER'S STEP MAY NOT ASK FOR MORE THAN THE SCREEN CAN SHOW.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * The box below floors at `HUD_MIN_W`/`HUD_MIN_H`, so a scale the device
+   * cannot honour does not produce a smaller box — it produces a box that is
+   * DRAWN LARGER THAN THE SCREEN. `hudW * hudScale` is what reaches the canvas,
+   * and at 1262x428 with the step at +1 that was 1280 against 1262: the right
+   * edge of the interface off the side of the window.
+   *
+   * Measured across five viewports when `set_ui_scale` shipped, +1 overflowed
+   * everything under 1280 wide and +2 overflowed all five. The automatic factor
+   * never hit it because `round(dpr)` is 1 or 2 on the machines this runs on and
+   * the `ceil` terms only ever RAISE it on a screen bigger than `HUD_MAX_*`.
+   *
+   * So the step is capped at the largest whole factor that still fits the floor:
+   * `floor(device / HUD_MIN)`. On a 1280x720 window that is 2, so +1 is honoured
+   * and +2 clamps to it; on the 1262x428 window it is 1, and the interface
+   * simply cannot get bigger — which is the honest answer, not a broken frame.
+   *
+   * `Math.max(auto, fitCap)` is the ceiling rather than `fitCap` alone, so a
+   * device whose automatic factor ALREADY exceeds the fit keeps whatever it had
+   * before this existed. Nothing about step 0 changes.
+   */
+  const auto = Math.max(
     1,
-    Math.round(dpr) + uiScaleStep,
+    Math.round(dpr),
     Math.ceil(deviceW / HUD_MAX_W),
     Math.ceil(deviceH / HUD_MAX_H),
   );
+  const fitCap = Math.max(
+    1,
+    Math.min(Math.floor(deviceW / HUD_MIN_W), Math.floor(deviceH / HUD_MIN_H)),
+  );
+  const hudScale = Math.max(1, Math.min(auto + uiScaleStep, Math.max(auto, fitCap)));
   const hudW = Math.max(HUD_MIN_W, Math.floor(deviceW / hudScale));
   const hudH = Math.max(HUD_MIN_H, Math.floor(deviceH / hudScale));
 
