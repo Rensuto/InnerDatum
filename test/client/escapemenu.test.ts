@@ -377,9 +377,10 @@ describe('escapeMenuHitAt on the root screen', () => {
     //    8  CASE NOTES     — the fixture has found nothing
     //   10  SWITCH CHARACTER — `canSwitchCharacter` is absent (not signed in)
     //
-    // The fixture IS in a party, so LEAVE PARTY at 9 answers. UI SIZE at 3 is
-    // always pressable — it has no state that could disable it, which is why it
-    // shows up in the run rather than as a fourth gap.
+    // The fixture IS in a party, so LEAVE PARTY at 9 answers. UI SIZE at 3 CAN
+    // be a fourth gap — it greys on a window with no room for a second interface
+    // factor — but the fixture leaves `uiScaleFixed` absent, which reads as a
+    // window that has room. `the ui-size row` below scans the greyed case.
     expect(seen).toEqual([0, 1, 2, 3, 5, 6, 7, 9]);
   });
 
@@ -1408,6 +1409,81 @@ describe('the reset-panels row', () => {
     // A player who has dragged a panel somewhere awkward has a working pointer
     // by construction. A binding would be a key nobody presses on purpose.
     expect(rowAt({ panelsMoved: true })?.keyLabel).toBe('');
+  });
+});
+
+describe('the ui-size row', () => {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * FOUR STEPS THAT CHANGED THE WORD AND NOTHING ELSE.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `hudScale` is a WHOLE number bounded hard at 1 below (a fraction of a device
+   * pixel is not a thing this renderer will draw) and capped above at the largest
+   * factor the window can still fit — see `uiScaleFixed` in render/canvas.ts and
+   * the suite in test/client/hudscale.test.ts. On a window under 1280x640 those
+   * two meet, so every one of the four steps lands on scale 1.
+   *
+   * The row still CYCLED. Press it and the label walked
+   * NORMAL -> LARGER -> LARGEST -> SMALLER while the screen never moved, which
+   * reads as a broken control rather than as a window with no room. The window
+   * this game is actually played in is 1262x428, so that was the default
+   * experience of the setting rather than an edge of it.
+   */
+  const rowAt = (over: Partial<EscapeMenuView> = {}) => entryRows(escapeMenuRows(view(over)))[3];
+
+  it('is greyed with a reason on a window that fits one size', () => {
+    const row = rowAt({ uiScaleFixed: true });
+    expect(row?.enabled).toBe(false);
+    expect(row?.reason).toBe('this window fits one size');
+  });
+
+  it('still shows the setting while it is greyed', () => {
+    /**
+     * THE READOUT SURVIVES THE GREYING, and this is the whole reason the row is
+     * greyed rather than dropped: the preference is stored server-side and
+     * follows the player to whatever they open the game on next, so a small
+     * window must say what is set even though it cannot change it.
+     */
+    expect(rowAt({ uiScaleFixed: true, uiScale: 2 })?.label).toBe('UI SIZE: LARGEST');
+    expect(rowAt({ uiScaleFixed: true, uiScale: -1 })?.label).toBe('UI SIZE: SMALLER');
+  });
+
+  it('is live on a window with room, and on a client that has not measured', () => {
+    // ABSENT READS AS FALSE. A caller that has not been taught to measure gets
+    // the working row, not a permanently dead one.
+    expect(rowAt()?.enabled).toBe(true);
+    expect(rowAt()?.reason).toBeNull();
+    expect(rowAt({ uiScaleFixed: false })?.enabled).toBe(true);
+  });
+
+  it('refuses the pointer while it is greyed', () => {
+    /**
+     * STRUCTURALLY, NOT MERELY VISUALLY — the same thing the hit-scan above
+     * asserts for the other three greyed rows. Greying a row that still
+     * answered the pointer would be worse than leaving it live, because the
+     * player would be told it does nothing and then watch it do something.
+     */
+    const rect = roomyRect();
+    const rows = escapeMenuRows(view({ uiScaleFixed: true }));
+    const reached = new Set<number>();
+    for (let y = rect.y; y < rect.y + rect.h; y += 1) {
+      const hit = escapeMenuHitAt(rect, rows, rect.x + 12, y);
+      if (hit !== null && hit.kind === MenuHitKind.Entry) reached.add(hit.index);
+    }
+    expect(reached.has(3), 'a greyed UI SIZE row answered the pointer').toBe(false);
+    // ...and its neighbours in the settings group still do, so this is the row
+    // refusing and not the scan missing a band.
+    expect(reached.has(2), 'ZOOM stopped answering').toBe(true);
+  });
+
+  it('reads all four steps as words', () => {
+    // `zoomWord`'s twin, and four values rather than three because `UI_SCALE_*`
+    // is -1..2: the range is asymmetric on purpose.
+    expect(rowAt({ uiScale: -1 })?.label).toBe('UI SIZE: SMALLER');
+    expect(rowAt({ uiScale: 0 })?.label).toBe('UI SIZE: NORMAL');
+    expect(rowAt({ uiScale: 1 })?.label).toBe('UI SIZE: LARGER');
+    expect(rowAt({ uiScale: 2 })?.label).toBe('UI SIZE: LARGEST');
   });
 });
 

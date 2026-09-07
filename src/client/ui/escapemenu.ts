@@ -711,6 +711,20 @@ export type EscapeMenuView = {
   /** THE CURRENT INTERFACE STEP, `UI_SCALE_MIN`..`UI_SCALE_MAX` — see `ui-scale`. */
   readonly uiScale?: number;
   /**
+   * DOES THIS WINDOW HAVE ROOM FOR A SECOND INTERFACE FACTOR? Decides only
+   * whether the UI SIZE row is greyed — `panelsMoved`'s twin, one rule up.
+   *
+   * TRUE ON ANY WINDOW UNDER 1280x640, where scale 1 is the only whole factor
+   * that fits and every step therefore lands on it. The row would otherwise
+   * cycle four words while the screen never changed, which reads as a broken
+   * control rather than as a window that is too small — see `uiScaleFixed` in
+   * render/canvas.ts, which is where the arithmetic lives.
+   *
+   * ABSENT READS AS FALSE, so a caller that has not been taught to measure gets
+   * the live row rather than a permanently greyed one.
+   */
+  readonly uiScaleFixed?: boolean;
+  /**
    * HAS ANY PANEL BEEN DRAGGED? Decides only whether RESET PANELS is greyed.
    *
    * GREYED, NOT DROPPED — the rule this menu follows everywhere: a row that
@@ -888,7 +902,26 @@ function rootRows(view: EscapeMenuView): readonly MenuRow[] {
      * binding here to fill the column would put a key on the Keys screen that
      * nobody asked for.
      */
-    entryRow(3, { kind: 'ui-scale' }, `UI SIZE: ${uiScaleWord(view.uiScale ?? 0)}`, '', true, null),
+    /**
+     * GREYED WHERE THE WINDOW HAS NO ROOM, with the reason on the row — the
+     * treatment `RESET PANELS` gets one rule down, and for the same argument:
+     * a control that does nothing when pressed reads as broken. This one would
+     * read as broken TWICE OVER, because the word on the row would still cycle
+     * SMALLER -> NORMAL -> LARGER -> LARGEST while the screen never moved.
+     *
+     * STILL SHOWN, and still showing the setting. The preference is stored
+     * server-side and follows the player to whatever they open the game on
+     * next, so a small window must say what is set — it just must not claim it
+     * can change it here.
+     */
+    entryRow(
+      3,
+      { kind: 'ui-scale' },
+      `UI SIZE: ${uiScaleWord(view.uiScale ?? 0)}`,
+      '',
+      view.uiScaleFixed !== true,
+      view.uiScaleFixed === true ? 'this window fits one size' : null,
+    ),
     /**
      * THE FOURTH AND LAST OF THE SETTINGS ROWS. Key bindings, zoom, interface
      * size and putting the panels back are the four that change how the game is

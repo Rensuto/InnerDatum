@@ -1869,6 +1869,18 @@ let liveZoom = 0;
 let liveUiScale = 0;
 
 /**
+ * WHETHER THIS WINDOW HAS ROOM FOR A SECOND INTERFACE FACTOR. Same seam as the
+ * two mirrors above, and the same rule: taken from the renderer's answer rather
+ * than recomputed here, so there is one opinion about the cap.
+ *
+ * A FUNCTION OF THE WINDOW AND NOT OF THE SETTING, so unlike its neighbours it
+ * is refreshed on RESIZE rather than on a preference change — see the write in
+ * `onViewportChange`. Dragging a window from 1600 wide down to 1200 is exactly
+ * the moment the answer flips.
+ */
+let liveUiScaleFixed = false;
+
+/**
  * PUT EVERY PIECE OF THE MENU'S STATE BACK, AND NOTHING ELSE.
  *
  * ═══ WHY THIS IS MODULE SCOPE WHEN `closeMenu` IS NOT ═══
@@ -3090,6 +3102,9 @@ function escapeMenuView(zoom: number, uiScale: number): EscapeMenuView {
     // AND ITS TWIN. Two rows because they move two different factors; see the
     // `ui-scale` effect in ui/escapemenu.ts.
     uiScale,
+    // ONLY WHETHER THE ROW CAN DO ANYTHING HERE, never what it would do — the
+    // same shape as `panelsMoved` below.
+    uiScaleFixed: liveUiScaleFixed,
     // ONLY WHETHER, never which: the row is greyed or it is not.
     panelsMoved: DRAGGABLE_PANELS.some(
       (panel) => panelOffsets[panel].dx !== 0 || panelOffsets[panel].dy !== 0,
@@ -5606,6 +5621,9 @@ async function boot(): Promise<void> {
 
   const renderer = createRenderer({ canvas, sprites: library });
   renderer.resize();
+  // AFTER the first layout, never before: the accessor reads the live device box
+  // and answers "fixed" while that box is still 0x0.
+  liveUiScaleFixed = renderer.uiScaleFixed();
 
   // --- draw scheduling ------------------------------------------------------
   // One pending rAF at a time. `frameHandle` doubles as the dirty flag: nonzero
@@ -6523,6 +6541,11 @@ async function boot(): Promise<void> {
     // resize() returns false when nothing moved, so a resize storm (dragging a
     // window edge fires continuously) does not queue a draw per event.
     if (renderer.resize()) requestDraw();
+    // THE ONE MOMENT THE UI SIZE ROW CAN CHANGE FROM LIVE TO GREYED. Written
+    // unconditionally rather than inside the branch above: it is two divisions,
+    // and a mirror that updated only on the frames somebody else cared about is
+    // the kind of mirror that goes stale.
+    liveUiScaleFixed = renderer.uiScaleFixed();
     // ═══════════════════════════════════════════════════════════════════════
     // AND THE MENU'S OWN REFUSAL IS RE-APPLIED, BECAUSE THIS IS THE OTHER
     // MOMENT ITS RECT CAN DISAPPEAR.

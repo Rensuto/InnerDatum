@@ -557,6 +557,98 @@ export type ViewLayout = {
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════
+ * THE INTERFACE'S WHOLE-NUMBER FACTOR, AND THE STEP THE PLAYER ASKED FOR.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * ITS OWN FUNCTION AND NOT A BLOCK INSIDE `viewLayout`, because two callers
+ * need it and only one of them wants a layout. The escape menu has to answer
+ * "does this setting DO anything on this window?" before it draws the row, and
+ * the honest answer is arithmetic on the device box — laying out a whole frame
+ * to find out, or keeping a second copy of the cap in the menu, are the two
+ * ways to get that wrong.
+ *
+ * `round(dpr)` is the size a person sees; the `ceil` terms are the cap, and
+ * they are `ceil` rather than `floor` because the constraint runs the other
+ * way — the box must not EXCEED `HUD_MAX_*`, so the factor must be at least
+ * `device / max`. No `zoomStep` term: zoom is a map control, which is the point
+ * of the whole split.
+ *
+ * ── THE PLAYER'S STEP MAY NOT ASK FOR MORE THAN THE SCREEN CAN SHOW ──
+ *
+ * `viewLayout`'s box floors at `HUD_MIN_W`/`HUD_MIN_H`, so a scale the device
+ * cannot honour does not produce a smaller box — it produces a box that is
+ * DRAWN LARGER THAN THE SCREEN. `hudW * hudScale` is what reaches the canvas,
+ * and at 1262x428 with the step at +1 that was 1280 against 1262: the right
+ * edge of the interface off the side of the window.
+ *
+ * Measured across five viewports when `set_ui_scale` shipped, +1 overflowed
+ * everything under 1280 wide and +2 overflowed all five. The automatic factor
+ * never hit it because `round(dpr)` is 1 or 2 on the machines this runs on and
+ * the `ceil` terms only ever RAISE it on a screen bigger than `HUD_MAX_*`.
+ *
+ * So the step is capped at the largest whole factor that still fits the floor:
+ * `floor(device / HUD_MIN)`. On a 1280x720 window that is 2, so +1 is honoured
+ * and +2 clamps to it; on the 1262x428 window it is 1, and the interface simply
+ * cannot get bigger — which is the honest answer, not a broken frame.
+ *
+ * `Math.max(auto, fitCap)` is the ceiling rather than `fitCap` alone, so a
+ * device whose automatic factor ALREADY exceeds the fit keeps whatever it had
+ * before this existed. Nothing about step 0 changes.
+ *
+ * MONOTONIC IN `uiScaleStep`, and `uiScaleFixed` below depends on that: a clamp
+ * of a sum cannot fold two steps together and leave a third apart, so comparing
+ * the two ENDS of the range settles the whole of it.
+ */
+export function hudScaleFor(
+  deviceW: number,
+  deviceH: number,
+  dpr: number,
+  uiScaleStep: number,
+): number {
+  const auto = Math.max(
+    1,
+    Math.round(dpr),
+    Math.ceil(deviceW / HUD_MAX_W),
+    Math.ceil(deviceH / HUD_MAX_H),
+  );
+  const fitCap = Math.max(
+    1,
+    Math.min(Math.floor(deviceW / HUD_MIN_W), Math.floor(deviceH / HUD_MIN_H)),
+  );
+  return Math.max(1, Math.min(auto + uiScaleStep, Math.max(auto, fitCap)));
+}
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * IS THE INTERFACE SIZE SETTING INERT ON THIS WINDOW?
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * TRUE WHEN EVERY STEP LANDS ON THE SAME FACTOR — which happens on any window
+ * under `HUD_MIN_W * 2` by `HUD_MIN_H * 2`, because scale 1 is then the only
+ * whole factor that fits and anything below it would be a fraction of a device
+ * pixel. The 1262x428 window this game is actually played in is one of those.
+ *
+ * FOR THE ROW TO GREY ITSELF WITH A REASON, the treatment `RESET PANELS` gets
+ * and for the same argument: a control that visibly does nothing when pressed
+ * reads as broken, and four presses that each change the WORD on the row while
+ * changing nothing on the screen would read as broken twice over.
+ *
+ * NOT A REASON TO DROP THE ROW. The preference is stored server-side and follows
+ * the player to whatever they next open the game on, so a small window must
+ * still SHOW what is set — it just must not pretend it can change it.
+ *
+ * Comparing the two ends is sound because `hudScaleFor` is monotonic in the
+ * step; see its note.
+ */
+export function uiScaleFixed(deviceW: number, deviceH: number, dpr: number): boolean {
+  return (
+    hudScaleFor(deviceW, deviceH, dpr, UI_SCALE_MIN) ===
+    hudScaleFor(deviceW, deviceH, dpr, UI_SCALE_MAX)
+  );
+}
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
  * THE WHOLE OF THE SIZING ARITHMETIC, AS A FUNCTION OF THE DEVICE BOX.
  * ═══════════════════════════════════════════════════════════════════════════
  *
@@ -609,64 +701,16 @@ export function viewLayout(
   const logicalH = tilesH * TILE_PX;
 
   /**
-   * THE INTERFACE, ON ITS OWN — see `HUD_MAX_W` for why the factor is this and
-   * not `floor(min(device / HUD_MIN))`, which magnified the UI to fill the
-   * window. No `zoomStep` term either: zoom is a map control, which is the
-   * point of the whole split.
-   *
-   * `round(dpr)` is the size a person sees; the `ceil` terms are the cap, and
-   * they are `ceil` rather than `floor` because the constraint runs the other
-   * way — the box must not EXCEED `HUD_MAX_*`, so the factor must be at least
-   * `device / max`.
+   * THE INTERFACE, ON ITS OWN — see `hudScaleFor`, which is the whole of the
+   * factor and lives above this function so the escape menu can ask the same
+   * question without laying out a frame. See `HUD_MAX_W` for why the factor is
+   * that and not `floor(min(device / HUD_MIN))`, which magnified the UI to fill
+   * the window.
    *
    * Rounding the box down to a tile multiple is what used to leave the hotbar
    * inside the map's letterbox instead of spanning the window, so it does not.
    */
-  /**
-   * THE PLAYER'S STEP IS ADDED, AND THE FLOOR OF 1 IS WHY IT IS SAFE.
-   *
-   * `Math.max(1, ...)` already bounded this below and now does double duty: a
-   * player asking for a smaller interface than the device can draw gets 1, not a
-   * fraction of a device pixel. The `ceil` terms are a CAP the step must not be
-   * able to defeat -- they keep the logical box inside `HUD_MAX_*` -- so the bias
-   * is added to the rounded-dpr term alone rather than to the result.
-   */
-  /**
-   * ═══════════════════════════════════════════════════════════════════════════
-   * THE PLAYER'S STEP MAY NOT ASK FOR MORE THAN THE SCREEN CAN SHOW.
-   * ═══════════════════════════════════════════════════════════════════════════
-   *
-   * The box below floors at `HUD_MIN_W`/`HUD_MIN_H`, so a scale the device
-   * cannot honour does not produce a smaller box — it produces a box that is
-   * DRAWN LARGER THAN THE SCREEN. `hudW * hudScale` is what reaches the canvas,
-   * and at 1262x428 with the step at +1 that was 1280 against 1262: the right
-   * edge of the interface off the side of the window.
-   *
-   * Measured across five viewports when `set_ui_scale` shipped, +1 overflowed
-   * everything under 1280 wide and +2 overflowed all five. The automatic factor
-   * never hit it because `round(dpr)` is 1 or 2 on the machines this runs on and
-   * the `ceil` terms only ever RAISE it on a screen bigger than `HUD_MAX_*`.
-   *
-   * So the step is capped at the largest whole factor that still fits the floor:
-   * `floor(device / HUD_MIN)`. On a 1280x720 window that is 2, so +1 is honoured
-   * and +2 clamps to it; on the 1262x428 window it is 1, and the interface
-   * simply cannot get bigger — which is the honest answer, not a broken frame.
-   *
-   * `Math.max(auto, fitCap)` is the ceiling rather than `fitCap` alone, so a
-   * device whose automatic factor ALREADY exceeds the fit keeps whatever it had
-   * before this existed. Nothing about step 0 changes.
-   */
-  const auto = Math.max(
-    1,
-    Math.round(dpr),
-    Math.ceil(deviceW / HUD_MAX_W),
-    Math.ceil(deviceH / HUD_MAX_H),
-  );
-  const fitCap = Math.max(
-    1,
-    Math.min(Math.floor(deviceW / HUD_MIN_W), Math.floor(deviceH / HUD_MIN_H)),
-  );
-  const hudScale = Math.max(1, Math.min(auto + uiScaleStep, Math.max(auto, fitCap)));
+  const hudScale = hudScaleFor(deviceW, deviceH, dpr, uiScaleStep);
   const hudW = Math.max(HUD_MIN_W, Math.floor(deviceW / hudScale));
   const hudH = Math.max(HUD_MIN_H, Math.floor(deviceH / hudScale));
 
@@ -724,6 +768,14 @@ export type Renderer = {
   /** The INTERFACE step. `setZoom`'s twin; see `UI_SCALE_MIN`. */
   readonly setUiScale: (next: number) => number;
   readonly uiScale: () => number;
+  /**
+   * Whether this window has room for a second interface factor at all — see the
+   * module-level `uiScaleFixed`. The escape menu greys its row on true.
+   *
+   * A METHOD AND NOT A FIELD because the answer changes with the window, and a
+   * value read once at startup would go stale the first time somebody resized.
+   */
+  readonly uiScaleFixed: () => boolean;
   /** The current zoom step. -1 out, 0 default, +1 in. */
   readonly zoom: () => number;
   readonly draw: (scene: Scene) => void;
@@ -1678,6 +1730,7 @@ export function createRenderer(options: RendererOptions): Renderer {
    * is 1x to 3x and no setting is useless.
    */
   let zoomStep = 0;
+  let uiScaleStep = 0;
   let offsetX = 0;
   let offsetY = 0;
 
@@ -1710,6 +1763,38 @@ export function createRenderer(options: RendererOptions): Renderer {
     return zoomStep;
   }
 
+  /**
+   * Change the INTERFACE step and re-lay the box. `setZoom`'s twin.
+   *
+   * Returns the step actually taken, for `setZoom`'s reason: the clamp is
+   * authoritative and the caller has to be able to say "already as large as it
+   * goes" rather than appearing to do nothing.
+   */
+  function setUiScale(next: number): number {
+    const clamped = Math.max(UI_SCALE_MIN, Math.min(UI_SCALE_MAX, Math.trunc(next)));
+    if (clamped === uiScaleStep) return uiScaleStep;
+    uiScaleStep = clamped;
+    // The device box has not changed, so `resize`'s early-out would skip the
+    // recompute -- `setZoom`'s line, for `setZoom`'s reason.
+    deviceW = 0;
+    resize();
+    return uiScaleStep;
+  }
+
+  function uiScale(): number {
+    return uiScaleStep;
+  }
+
+  /**
+   * Off the LIVE device box, so it re-answers itself after a resize. Before the
+   * first `resize()` the box is 0x0 and this reads "fixed", which is the safe
+   * direction: a greyed row that ungreys a frame later is a row that told the
+   * truth twice, and the menu cannot be open before layout has run anyway.
+   */
+  function rendererUiScaleFixed(): boolean {
+    return uiScaleFixed(deviceW, deviceH, dpr);
+  }
+
   function resize(): boolean {
     const rect = canvas.getBoundingClientRect();
     const nextDpr = window.devicePixelRatio > 0 ? window.devicePixelRatio : 1;
@@ -1733,7 +1818,7 @@ export function createRenderer(options: RendererOptions): Renderer {
     canvas.height = deviceH;
     viewCtx.imageSmoothingEnabled = false;
 
-    const next = viewLayout(deviceW, deviceH, viewport, zoomStep, dpr);
+    const next = viewLayout(deviceW, deviceH, viewport, zoomStep, dpr, uiScaleStep);
     scale = next.scale;
     hudScale = next.hudScale;
     offsetX = next.offsetX;
@@ -2776,5 +2861,16 @@ export function createRenderer(options: RendererOptions): Renderer {
     return { x: tx, y: ty };
   }
 
-  return { resize, draw, metrics, backbufferPoint, tileAtClient, setZoom, zoom };
+  return {
+    resize,
+    draw,
+    metrics,
+    backbufferPoint,
+    tileAtClient,
+    setZoom,
+    zoom,
+    setUiScale,
+    uiScale,
+    uiScaleFixed: rendererUiScaleFixed,
+  };
 }

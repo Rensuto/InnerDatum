@@ -9,6 +9,7 @@ import {
   DEFAULT_VIEWPORT,
   HUD_MIN_H,
   HUD_MIN_W,
+  uiScaleFixed,
   viewLayout,
 } from '../../src/client/render/canvas.ts';
 import {
@@ -382,5 +383,91 @@ describe('the interface never overflows the window', () => {
       up.hudScale,
       'a 1280x720 window has room for one step and did not take it',
     ).toBeGreaterThan(base.hudScale);
+  });
+});
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * A SETTING THAT CANNOT MOVE MUST SAY SO, AND THE MENU ASKS THIS.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * The cap above is correct and has a consequence: on a window with no room, all
+ * four steps land on the same factor and UI SIZE cycles four WORDS while the
+ * screen never changes. `uiScaleFixed` is what the escape menu greys its row on
+ * (see `EscapeMenuView.uiScaleFixed`), so it has to be exactly true when that
+ * is exactly the case — a flag that guessed would grey a working control or
+ * leave a dead one live.
+ *
+ * DRIVEN AGAINST `viewLayout` ITSELF rather than against a second copy of the
+ * arithmetic. The question is "does any step change the factor this function
+ * produces", so the check scans every step through the real layout and compares
+ * the count of distinct answers. A replica here would be a second opinion, and
+ * this repo has been bitten by one of those.
+ */
+describe('uiScaleFixed', () => {
+  // The same five the overflow suite uses, restated rather than hoisted: that
+  // list is the set of windows the OVERFLOW must survive, and this one is the
+  // set the FLAG must be right about. They agree today and need not tomorrow.
+  const BOXES: readonly (readonly [number, number])[] = [
+    [1920, 1080],
+    [1280, 720],
+    [1262, 428],
+    [900, 500],
+    [800, 400],
+    [HUD_MIN_W, HUD_MIN_H],
+  ];
+
+  /** Every distinct interface factor `viewLayout` will produce on a window. */
+  function factorsOn(w: number, h: number, dpr: number): ReadonlySet<number> {
+    const seen = new Set<number>();
+    for (let step = UI_SCALE_MIN; step <= UI_SCALE_MAX; step += 1) {
+      seen.add(viewLayout(w, h, DEFAULT_VIEWPORT, 0, dpr, step).hudScale);
+    }
+    return seen;
+  }
+
+  it('agrees with viewLayout on every viewport', () => {
+    for (const [w, h] of BOXES) {
+      for (const dpr of [1, 2]) {
+        const only = factorsOn(w, h, dpr).size === 1;
+        expect(
+          uiScaleFixed(w, h, dpr),
+          `${String(w)}x${String(h)} @${String(dpr)}x: ` +
+            `${String(factorsOn(w, h, dpr).size)} distinct factor(s)`,
+        ).toBe(only);
+      }
+    }
+  });
+
+  /**
+   * THE WINDOW THIS GAME IS ACTUALLY PLAYED IN, named rather than derived. It
+   * is the case that made the row worth greying, and a regression that gave it
+   * range again would mean the overflow cap had been loosened.
+   */
+  it('is fixed on a 1262x428 window and free on 1280x720', () => {
+    expect(uiScaleFixed(1262, 428, 1), '1262x428 has no room for a second factor').toBe(true);
+    expect(uiScaleFixed(1280, 720, 1), '1280x720 has room for exactly one step').toBe(false);
+  });
+
+  /**
+   * THE BOUNDARY, EXACTLY. `HUD_MIN * 2` is the first window that fits a second
+   * whole factor, so one pixel short of it in EITHER axis is fixed and the box
+   * itself is not.
+   */
+  it('turns free exactly at twice the interface floor', () => {
+    expect(uiScaleFixed(HUD_MIN_W * 2, HUD_MIN_H * 2, 1)).toBe(false);
+    expect(uiScaleFixed(HUD_MIN_W * 2 - 1, HUD_MIN_H * 2, 1)).toBe(true);
+    expect(uiScaleFixed(HUD_MIN_W * 2, HUD_MIN_H * 2 - 1, 1)).toBe(true);
+  });
+
+  /**
+   * A HIGH-DPI PHONE-SIZED WINDOW IS NOT FIXED, and this is the case a naive
+   * `deviceW < HUD_MIN_W * 2` test would get wrong: `round(dpr)` is 2 there, so
+   * the automatic factor is already 2 and SMALLER has somewhere to go even
+   * though nothing larger does.
+   */
+  it('stays free where only the smaller step has room', () => {
+    expect(uiScaleFixed(900, 500, 2), 'dpr 2 makes step -1 meaningful').toBe(false);
+    expect(factorsOn(900, 500, 2).size, 'exactly two factors: the auto one and one below').toBe(2);
   });
 });
