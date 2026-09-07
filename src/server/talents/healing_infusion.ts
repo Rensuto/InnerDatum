@@ -89,6 +89,13 @@ export const healingInfusion: Talent = {
   /** NO CLASS OWNS IT — see the header. An inscription grants it. */
   classId: null,
   tree: 'generic/inscriptions',
+  /**
+   * `type = {"inscriptions/infusions", 1}` upstream (inscriptions.lua). It is
+   * what `Actor.lua:5851` and `:6356` both branch on -- see
+   * `Talent.inscriptionKind` and the `INFUSION_SATURATION` effect. Without
+   * this line the button is free AND untaxed, which is half a port.
+   */
+  inscriptionKind: 'infusion',
   tier: 1,
   kind: TalentKind.Active,
   /**

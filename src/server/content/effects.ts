@@ -196,6 +196,10 @@ export const EffectId = {
    * touches critical chance at all.
    */
   FootnotedLuck: 'effect:footnoted_luck',
+  /**
+   * THE OTHER HALF OF EVERY `no_energy` INFUSION -- see `INFUSION_SATURATION`.
+   */
+  InfusionSaturation: 'effect:infusion_saturation',
 } as const;
 export type EffectId = (typeof EffectId)[keyof typeof EffectId];
 
@@ -1514,6 +1518,84 @@ export const FOOTNOTED_LUCK: EffectDef = Object.freeze({
   wielder: (instance) => ({ mods: instance.params.grants ?? {} }),
 } satisfies EffectDef);
 
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * INFUSION SATURATION — other.lua:97-111, and the tuning that makes a free
+ * button safe.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Every infusion in this game costs `ap: 0`, because upstream's are
+ * `no_energy = true`. Each of those three files argues that faithfully and
+ * NONE of them ports the other half:
+ *
+ *     -- Actor.lua:5850-5859, inside useTalent, delayed to onTickEnd
+ *     if ab.type[1] == "inscriptions/infusions" then
+ *         self:setEffect(self.EFF_INFUSION_COOLDOWN, 10, {power=1})
+ *
+ *     -- Actor.lua:6356-6358, inside getTalentCooldown
+ *     if t.type[1] == "inscriptions/infusions" then
+ *         local eff = self:hasEffect(self.EFF_INFUSION_COOLDOWN)
+ *         if eff and eff.power then cd = cd + eff.power end
+ *
+ * So an infusion costs no turn AND the cooldowns are long AND every use makes
+ * every infusion's next cooldown longer. Take the first two without the third
+ * and a character with three infusions fires all three the moment they are up,
+ * every time, for free — which `tools/round-live.mjs` has been reporting as
+ * *"OPEN ROUND: two casts inside one turn"* to nobody.
+ *
+ * ═══ THE MERGE IS THE MECHANIC ═══
+ * `on_merge` (other.lua:106-110) REFRESHES the duration and ADDS the power, so
+ * the tax escalates while you keep drinking and decays if you stop. A `Refresh`
+ * stack mode would make it a flat +1 no matter how hard you leaned on it, which
+ * is a different mechanic wearing this one's citation.
+ *
+ * ═══ TEN UPSTREAM TURNS IS FIVE OF OURS ═══
+ * `TOME_ACTIONS_PER_TURN` is 2. The POWER is not converted, and that is the
+ * subtle half: it is added to a cooldown expressed in UPSTREAM turns, so the
+ * engine converts `power` at the one site that reads it. See the note at
+ * `setCooldown` in engine/talents.ts.
+ *
+ * DETRIMENTAL AND VISIBLE. Upstream gives it an icon and a `long_desc` that
+ * states the number, because a player who cannot see the tax cannot plan
+ * around it — and planning around it is the entire point of the mechanic.
+ */
+export const INFUSION_SATURATION: EffectDef = Object.freeze({
+  id: EffectId.InfusionSaturation,
+  /** 'Sa'. Two letters, like every other mark in this file. */
+  badge: 'Sa',
+  displayName: 'Infusion Saturation',
+  description: 'Your infusions are recharging more slowly. Each one you use makes it worse.',
+  // other.lua:101-102 — `type = "other"`, `subtype = { infusion = true }`. We
+  // have no `other` channel and nothing rolls against this, so the label is the
+  // nearest true one — the argument HIGHBORNS_BLOOM makes one rule up.
+  type: SaveChannel.Physical,
+  status: EffectStatus.Detrimental,
+  stackMode: StackMode.Stack,
+  subtypes: ['infusion'],
+  decrease: 1,
+  icon: 'icon_status_infusion_saturation',
+  // other.lua:105 — `parameters = { power = 1 }`.
+  parameters: { power: 1 },
+  // The number the engine reads. `effectModifiers` prefers the INSTANCE's
+  // `power` over this, which is what makes the merge below mean anything —
+  // `CONFUSED` is the precedent and carries the argument.
+  modifiers: { infusionSaturation: 1 },
+  /**
+   * other.lua:106-110, verbatim:
+   *
+   *     old_eff.dur = new_eff.dur
+   *     old_eff.power = old_eff.power + new_eff.power
+   */
+  onMerge: ({ eff, incoming }: EffectHookArgs & { incoming: EffectInstance }): EffectInstance => {
+    eff.dur = incoming.dur;
+    eff.params.power = (eff.params.power ?? 1) + (incoming.params.power ?? 1);
+    // Not upstream: `totalDur` is this codebase's UI bar denominator, and a
+    // refresh that left it stale would draw a bar shorter than the effect.
+    eff.totalDur = Math.max(eff.totalDur, eff.dur);
+    return eff;
+  },
+} satisfies EffectDef);
+
 export const MVP_EFFECTS: readonly EffectDef[] = Object.freeze([
   STUNNED,
   BLEEDING,
@@ -1533,6 +1615,7 @@ export const MVP_EFFECTS: readonly EffectDef[] = Object.freeze([
   ARCHIVAL_RESILIENCE,
   ETERNAL_WRATH,
   FOOTNOTED_LUCK,
+  INFUSION_SATURATION,
 ]);
 
 /** Effect ids, for a content-completeness check and for the client's badge atlas. */

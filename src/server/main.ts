@@ -55,7 +55,7 @@ import {
 } from './engine/effects.ts';
 import type { StatusApply, StatusCure, StatusExtend, StatusHas } from './engine/effects.ts';
 import type { BudgetPenalty } from './engine/talents.ts';
-import { MVP_EFFECTS, effectById } from './content/effects.ts';
+import { EffectId, MVP_EFFECTS, effectById } from './content/effects.ts';
 import {
   MOVE_MP_COST,
   ResourceKind,
@@ -70,6 +70,7 @@ import {
   sustainAnswer,
   talentLevelOf,
   toggleSustain,
+  tomeCooldownToTurns,
   useTalent,
 } from './engine/talents.ts';
 import { authRoutes, isConfigured, readAuthConfig } from './http/auth.ts';
@@ -84,7 +85,7 @@ import { isPlayer } from './engine/actor.ts';
 import type { EngineActor } from './engine/actor.ts';
 import { breakDamageSensitive } from './engine/effects.ts';
 import type { TalentResolutionResult } from './engine/scheduler.ts';
-import type { GuardCounter, TalentEngine, TalentSheet } from './engine/talents.ts';
+import type { GuardCounter, TalentActor, TalentEngine, TalentSheet } from './engine/talents.ts';
 import type { MonsterCast } from './ai/npc.ts';
 import type { ReapingTurnEngine, TalentRuntime } from './turn-engine.ts';
 import type { World } from './world/world.ts';
@@ -177,6 +178,18 @@ const startedAt = hrtime.bigint();
  * rather than against a copy of it written in a test file. A copy would keep
  * passing on the day this one stopped calling `actBase`.
  */
+/**
+ * INFUSION SATURATION, in the two numbers upstream states.
+ *
+ * `setEffect(EFF_INFUSION_COOLDOWN, 10, {power=1})` -- Actor.lua:5853. The
+ * DURATION converts (`TOME_ACTIONS_PER_TURN` is 2, so ten upstream turns is
+ * five of ours); the POWER does not, because it is added to a cooldown still
+ * expressed in upstream turns and `useTalent` converts the sum. That asymmetry
+ * is the easiest thing here to get wrong, so both halves say which they are.
+ */
+const SATURATION_TURNS = tomeCooldownToTurns(10);
+const SATURATION_POWER = 1;
+
 export function talentRuntimeFor(
   talents: TalentEngine,
   world: World,
@@ -382,6 +395,34 @@ export function talentRuntimeFor(
           ...(cure === undefined ? {} : { cure }),
           ...(hasStatus === undefined ? {} : { hasStatus }),
           ...(extend === undefined ? {} : { extend }),
+          /**
+           * ═══════════════════════════════════════════════════════════════════
+           * THE SATURATION DOOR — Actor.lua:5851-5853.
+           * ═══════════════════════════════════════════════════════════════════
+           *
+           * DERIVED FROM `status` RATHER THAN PASSED IN. It needs exactly one
+           * capability — apply an effect by id — and that door is already open
+           * three lines up. A seventh positional parameter on
+           * `talentRuntimeFor` would be a second way to hand over the same
+           * thing, and every fixture that wires `status` would then have to
+           * learn about a mechanic it does not care about.
+           *
+           * ABSENT WITH `status` ABSENT, which is the honest behaviour for a
+           * fixture that wired no effects: no table to write the saturation
+           * into, so no saturation, rather than a throw.
+           */
+          ...(status === undefined
+            ? {}
+            : {
+                inscriptionUsed: (user: TalentActor, kind: 'infusion'): void => {
+                  if (kind !== 'infusion') return;
+                  // other.lua:105 — `parameters = { power = 1 }`, and 10 upstream
+                  // turns is `TOME_ACTIONS_PER_TURN` of ours.
+                  status(user, EffectId.InfusionSaturation, SATURATION_TURNS, {
+                    power: SATURATION_POWER,
+                  });
+                },
+              }),
         },
       );
       if (!result.ok) return { ok: false, reason: result.reason };

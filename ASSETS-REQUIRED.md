@@ -278,3 +278,33 @@ talent module declares an `iconId` and the manifest convention is that a
 declared id has a file.
 
 **Acceptance test:** `npm run art:needs` reports `missing art: 0`.
+
+---
+
+## `icon_status_infusion_saturation` — the second outstanding icon
+
+`npm run art:needs` now reports two missing ids. This is the new one, and
+unlike `icon_monster_bear_down` above it DOES reach a player screen.
+
+**What it is:** Infusion Saturation, ported from `other.lua:97-111`
+(`EFF_INFUSION_COOLDOWN`, "the more you use infusions, the longer they will take
+to recharge"). A detrimental status that stacks: each infusion you drink adds
+one to it, and every infusion's next cooldown is that much longer.
+
+**What it should look like:** upstream's own is `effects/infusion_cooldown.png`,
+which we may not copy — `COPYING-MEDIA` forbids redistributing t-engine4 art and
+`reference/` is read-only. Draw it fresh. Something at the wrong end of a
+draught: a tipped vial, a dry syringe, a stain spreading. It reads on a body
+that has been leaning on its buttons.
+
+**Cut it at 64x64**, matching the eighteen `icon_status_*` files already on
+disk.
+
+**It is drawn where the other statuses are** — the badge strip on the party
+pane and the hostile card — so until the file exists the player sees the
+two-letter fallback `Sa`, which is legible and says nothing. That is worse here
+than for a monster talent icon, because this status is one a player is meant to
+PLAN AROUND: the whole mechanic is that you can see the tax rising and choose
+whether to pay it again.
+
+**Acceptance test:** `npm run art:needs` reports `missing art: 0`.

@@ -1210,6 +1210,7 @@ describe('the status roster (game-design.md § 12)', () => {
       EffectId.ArchivalResilience,
       EffectId.EternalWrath,
       EffectId.FootnotedLuck,
+      EffectId.InfusionSaturation,
     ]);
     expect(MVP_EFFECTS.map((def) => def.icon)).toEqual([
       'icon_status_stunned',
@@ -1230,6 +1231,7 @@ describe('the status roster (game-design.md § 12)', () => {
       'icon_status_archival_resilience',
       'icon_status_eternal_wrath',
       'icon_status_footnoted_luck',
+      'icon_status_infusion_saturation',
     ]);
   });
 
@@ -1341,6 +1343,12 @@ describe('the status roster (game-design.md § 12)', () => {
       // mental.lua:1635 — `type = "mental"`, and the only beneficial effect on
       // that channel so far.
       [EffectId.FootnotedLuck]: SaveChannel.Mental,
+      /**
+       * other.lua:101 is `type = "other"`, a channel this game does not have.
+       * Physical is the nearest true label and nothing rolls against it --
+       * the argument HIGHBORNS_BLOOM makes for the same reason.
+       */
+      [EffectId.InfusionSaturation]: SaveChannel.Physical,
     });
   });
 

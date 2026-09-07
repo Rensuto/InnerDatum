@@ -269,6 +269,18 @@ export type EffectModifiers = {
    */
   readonly freeResources?: boolean;
   /**
+   * ToME's `EFF_INFUSION_COOLDOWN` power (other.lua:97-111). Added, in UPSTREAM
+   * turns, to the cooldown of every inscription of the matching kind —
+   * `Actor.lua:6356-6358`. Sets `StatusFlags.infusionSaturation`, which
+   * `useTalent` reads at the one site that starts a cooldown.
+   *
+   * READ OFF THE INSTANCE where the instance carries a `power`, like
+   * `confusedPercent` and for the same reason: this effect's whole mechanic is
+   * that its power GROWS on merge, so composing the definition's 1 would make
+   * the tax flat and the merge decorative.
+   */
+  readonly infusionSaturation?: number;
+  /**
    * MONSTERS ONLY. Added to the energy GAIN multiplier — ToME's
    * `global_speed_add` (physical.lua:632, `-eff.power`). NEGATIVE slows.
    *
@@ -1815,6 +1827,7 @@ export function effectModifiers(state: EffectState, actorId: string): EffectModi
   let mpPenalty = 0;
   let movementSpeedAdd = 0;
   let confusedPercent = 0;
+  let infusionSaturation = 0;
 
   for (const [effectId, live] of table) {
     const mods = state.defs.get(effectId)?.modifiers;
@@ -1847,6 +1860,13 @@ export function effectModifiers(state: EffectState, actorId: string): EffectModi
       const own = live.params['power'];
       confusedPercent += typeof own === 'number' ? own : mods.confusedPercent;
     }
+    // THE SECOND ONE, and the same argument exactly: this effect's power GROWS
+    // on merge (other.lua:106-110), so the definition's 1 is the value it was
+    // authored with rather than the one the body is carrying.
+    if (mods.infusionSaturation !== undefined) {
+      const own = live.params['power'];
+      infusionSaturation += typeof own === 'number' ? own : mods.infusionSaturation;
+    }
   }
 
   return {
@@ -1860,6 +1880,7 @@ export function effectModifiers(state: EffectState, actorId: string): EffectModi
     mpPenalty,
     movementSpeedAdd,
     confusedPercent,
+    infusionSaturation,
   };
 }
 
@@ -1979,6 +2000,9 @@ export function recomputeAttributes(state: EffectState, actor: EffectActor): voi
     // where it is ROLLED rather than here, so the number a tooltip prints is
     // the number the effects actually granted.
     confused: (base?.confused ?? 0) + (mods.confusedPercent ?? 0),
+    // ADDED, like `confused`: other.lua:108 is `old_eff.power + new_eff.power`,
+    // so two saturating effects on one body are twice the tax and not one.
+    infusionSaturation: (base?.infusionSaturation ?? 0) + (mods.infusionSaturation ?? 0),
   };
   // A FRESH OBJECT, never a write into `sheet`. Stage two hands this stage a
   // FROZEN sheet (`composeSheet` freezes its output), and an in-place write onto

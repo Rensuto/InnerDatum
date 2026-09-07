@@ -306,6 +306,20 @@ export type StatusFlags = {
    */
   readonly freeResources?: boolean;
   /**
+   * `EFF_INFUSION_COOLDOWN`'s power — how many UPSTREAM turns are added to the
+   * cooldown of every infusion this body starts (Actor.lua:6356-6358).
+   *
+   * A NUMBER AND NOT A FLAG, which is the opposite of `freeResources` one rule
+   * up and for the opposite reason: upstream's `on_merge` ADDS the powers
+   * (other.lua:108), so the whole mechanic is that it grows. All-or-nothing
+   * would make the second infusion free.
+   *
+   * UPSTREAM TURNS, NOT OURS. `useTalent` converts it at the one site that
+   * reads it, because it is added to a cooldown upstream expresses in ToME
+   * turns and we store already converted. That site carries the arithmetic.
+   */
+  readonly infusionSaturation?: number;
+  /**
    * Stunned. Read by NO getter in this file — it is a flat ×0.4 applied to
    * outgoing damage inside the projector (damage_types.lua:150-153).
    *

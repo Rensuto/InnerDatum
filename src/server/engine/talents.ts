@@ -1410,6 +1410,24 @@ export type TalentCallCtx = {
    * success, exactly as `cure`'s null is.
    */
   readonly extend?: StatusExtend;
+  /**
+   * AN INSCRIPTION WAS JUST USED. `Actor.lua:5850-5859`.
+   *
+   * Upstream applies the saturation effect inside `useTalent` itself, wrapped
+   * in `game:onTickEnd` so the infusion being pressed is not taxed by its own
+   * use. This is that call, as a door: `engine/` may not name an `EffectId`,
+   * and the whole mechanic wants to live at the ONE site every talent goes
+   * through rather than be repeated in each inscription file -- which is how
+   * a fourth infusion would ship without it, the failure this repo has had
+   * six times under the name `a field nobody sets`.
+   *
+   * CALLED AFTER THE COOLDOWN IS SET, which is what makes the current use
+   * untaxed without needing upstream's tick-end deferral.
+   *
+   * OPTIONAL, so every fixture that builds a runtime by hand keeps compiling
+   * and simply runs without saturation -- the shape `status` already has.
+   */
+  readonly inscriptionUsed?: (actor: TalentActor, kind: 'infusion') => void;
 };
 
 /**
@@ -1595,6 +1613,24 @@ export type Talent = {
    * two of those eight fights had no rush in them at all.
    */
   readonly closesIn?: boolean;
+  /**
+   * WHICH INSCRIPTION FAMILY THIS BELONGS TO, or absent for a class talent.
+   *
+   * Upstream branches on `t.type[1]` -- the TREE -- in both halves of the
+   * saturation mechanic (Actor.lua:5851-5858 applying it, :6356-6363 reading
+   * it), and it names three families: infusions, runes and taints.
+   *
+   * A FIELD RATHER THAN A TREE-STRING TEST, because engine/ may not learn a
+   * content tree name any more than it may learn a talent id -- the rule
+   * `rangeAt` states one screen up. The talent declares its own family and
+   * the engine branches on the declaration.
+   *
+   * ONE VALUE TODAY. Runes and taints are upstream families this game has no
+   * content for; the union is written out so the day one arrives, the two
+   * sites that read this fail to compile rather than silently taxing it as an
+   * infusion.
+   */
+  readonly inscriptionKind?: 'infusion';
   /**
    * `manifest.icons` key.
    *
@@ -2965,8 +3001,43 @@ export function useTalent(
   sheet.ap -= apSpent;
   sheet.mp -= mpSpent;
   spendResource(sheet.resource, resourceSpent);
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * INFUSION SATURATION — Actor.lua:6356-6358, and the arithmetic of the units.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   *     if t.type[1] == "inscriptions/infusions" then
+   *         local eff = self:hasEffect(self.EFF_INFUSION_COOLDOWN)
+   *         if eff and eff.power then cd = cd + eff.power end
+   *
+   * Upstream adds the power to a cooldown measured in UPSTREAM turns. Ours are
+   * already divided by `TOME_ACTIONS_PER_TURN`, so the power is converted here
+   * rather than added raw — a raw `+1` would be a two-upstream-turn tax wearing
+   * a one-turn citation.
+   *
+   * `base + tomeCooldownToTurns(power)` EQUALS `tomeCooldownToTurns(base +
+   * power)` for every power whenever the upstream cooldown is EVEN, which all
+   * three infusions in this game are (12, 12, 10). On an odd base the two
+   * differ by one turn at odd powers, and this form is the one that keeps the
+   * tax monotonic — `ceil` on the sum can spend two stacks buying nothing,
+   * which reads as the mechanic not working.
+   *
+   * ═══ IT APPLIES TO THE COOLDOWN, NOT TO THE USE ═══
+   * The infusion being pressed right now is NOT taxed by its own use: upstream
+   * delays the `setEffect` to `game:onTickEnd` (Actor.lua:5850) precisely so it
+   * "does not affect current inscription", and here the same thing falls out of
+   * ordering — the cooldown is set from the saturation as it stands, and the
+   * caller raises it afterwards.
+   */
+  const saturation =
+    talent.inscriptionKind === undefined
+      ? 0
+      : tomeCooldownToTurns(actor.combat?.flags?.infusionSaturation ?? 0);
   // engine/actor.ts owns the store AND the once-per-game-turn decrement.
-  setCooldown(actor, talent.id, talent.cooldownTurns);
+  setCooldown(actor, talent.id, talent.cooldownTurns + saturation);
+  // AND THEN THE TAX GOES UP -- Actor.lua:5851-5853. Strictly after the line
+  // above, which is what leaves the current use untaxed.
+  if (talent.inscriptionKind !== undefined) ctx.inscriptionUsed?.(actor, talent.inscriptionKind);
 
   return {
     ok: true,
