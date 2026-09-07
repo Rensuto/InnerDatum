@@ -113,6 +113,36 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# AND NOW THE OTHER QUESTION: DOES THE COMMIT ITSELF BUILD?
+# ---------------------------------------------------------------------------
+# Everything above measured the working tree, and the block at the top of this
+# file explains why that is the right thing to measure and admits what it
+# cannot see. This is the part it cannot see.
+#
+# Two agents work in this tree at once, so files are staged HUNK BY HUNK rather
+# than whole. A mis-staged hunk leaves the tree complete and the commit short,
+# and every gate this project has — this hook, CI, and the deploy script, which
+# packages the tree — looks at the complete copy. It happened: two commits went
+# out with a type declaring two methods the implementation did not have, and a
+# clean clone did not compile while the live game ran fine.
+#
+# ONLY WHEN THE TREE IS DIRTY. A clean tree IS the commit, so `npm run check`
+# above already checked exactly these bytes and this would be a second, slower
+# copy of an answer already in hand.
+#
+# The trap is cleared first: its advice is about the DIRTY-tree caveat on the
+# check above, and printing "the failure may be in work you are not pushing"
+# under a tool whose entire job is to check what you ARE pushing would be
+# exactly backwards. This tool explains itself.
+if [ -n "$DIRTY" ] && [ -n "$NODE_BIN" ]; then
+	trap - EXIT
+	echo "pre-push: npm run check:committed  (the tree is dirty — checking the commit too)"
+	# Absolute, like the relay below: git runs hooks from the top level today and
+	# a relative path would break the day that changes or somebody sources this.
+	"$NODE_BIN" "$(git rev-parse --show-toplevel)/tools/check-committed.mjs"
+fi
+
+# ---------------------------------------------------------------------------
 # DRAIN THE ANNOUNCEMENT BACKLOG — the safety net under the post-commit hook
 # ---------------------------------------------------------------------------
 # Every commit in this project is announced to #updates. The post-commit hook
