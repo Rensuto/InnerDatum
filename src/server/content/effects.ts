@@ -52,7 +52,7 @@
  */
 
 import { bound } from '../../shared/scale.ts';
-import { DamageType, applyDamage } from '../engine/damage.ts';
+import { DamageType, STUNNED_DAMAGE_MULT, applyDamage } from '../engine/damage.ts';
 import { healActor, tomeCooldownToTurns } from '../engine/talents.ts';
 import {
   EffectStatus,
@@ -266,6 +266,18 @@ export const CONFUSE_FLOOR = 10;
  */
 export const STUN_TALENT_LOCKOUT = 3;
 
+/**
+ * "3 ready talents are" / "One ready talent is", for a status sentence.
+ *
+ * WIDENED TO `number` ON PURPOSE. `STUN_TALENT_LOCKOUT` is typed as the literal
+ * `3`, so comparing it to 1 inline is a type error rather than a branch -- and
+ * a sentence that reads "1 ready talents are" the day somebody tunes the
+ * constant down is exactly the drift composing it was meant to prevent.
+ */
+export function lockedOutPhrase(count: number): string {
+  return count === 1 ? 'One ready talent is' : `${String(count)} ready talents are`;
+}
+
 /** physical.lua:493 — `movement_speed`, −0.5. Carried as data; see the note below. */
 export const STUN_MOVEMENT_SPEED_ADD = -0.5;
 
@@ -365,9 +377,15 @@ export const STUNNED: EffectDef = Object.freeze({
   id: EffectId.Stunned,
   badge: 'St',
   displayName: 'Stunned',
+  // COMPOSED FROM THE CONSTANTS THE MATHS USES, not restated. The 40 lived as
+  // a bare numeral here and as `0.4` in engine/damage.ts, and the three lived
+  // here and as `STUN_TALENT_LOCKOUT` a hundred lines up. A player-facing
+  // sentence is a promise; two copies of a number is how a promise goes stale.
   description:
-    'Reeling. Deals 40% damage, and talent cooldowns do not tick while it lasts. ' +
-    'Three ready talents are locked out for the duration.',
+    `Reeling. Deals ${String(Math.round(STUNNED_DAMAGE_MULT * 100))}% damage, and talent ` +
+    'cooldowns do not tick while it lasts. ' +
+    `${lockedOutPhrase(STUN_TALENT_LOCKOUT)} ` +
+    'locked out for the duration.',
   // Actor.lua:6981-6986 — THIS is what picks the save. `physical` → combatPhysicalResist.
   type: SaveChannel.Physical,
   status: EffectStatus.Detrimental,
@@ -957,7 +975,10 @@ export const OFF_BALANCE: EffectDef = Object.freeze({
   id: EffectId.OffBalance,
   badge: 'Ob',
   displayName: 'Off-balance',
-  description: 'Badly off balance. You deal 15% less damage until you recover your footing.',
+  // The number is `OFF_BALANCE_NUMBED` one rule up, not a second copy of it.
+  description:
+    `Badly off balance. You deal ${String(OFF_BALANCE_NUMBED)}% less damage until you ` +
+    'recover your footing.',
   type: SaveChannel.Physical,
   crossTierFor: SaveChannel.Physical,
   noCtEffect: true,
@@ -982,8 +1003,11 @@ export const SPELLSHOCKED: EffectDef = Object.freeze({
   id: EffectId.Spellshocked,
   badge: 'Ss',
   displayName: 'Spellshocked',
+  // `SPELLSHOCK_RESIST`, not a restatement of it: changing the constant used to
+  // leave this sentence promising the old number with the gate still green.
   description:
-    'Overwhelming magic has interfered with your resistances, lowering all of them by 20%.',
+    'Overwhelming magic has interfered with your resistances, lowering all of ' +
+    `them by ${String(SPELLSHOCK_RESIST)}%.`,
   type: SaveChannel.Magical,
   crossTierFor: SaveChannel.Magical,
   noCtEffect: true,

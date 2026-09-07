@@ -43,11 +43,15 @@ import {
   SLOWED,
   SLOW_POWER,
   STUNNED,
+  OFF_BALANCE_NUMBED,
+  SPELLSHOCK_RESIST,
   STUN_TALENT_LOCKOUT,
   createMvpEffectState,
+  lockedOutPhrase,
   isStunned,
   validateEffect,
 } from '../../src/server/content/effects.ts';
+import { STUNNED_DAMAGE_MULT } from '../../src/server/engine/damage.ts';
 import {
   AiProfile,
   HOLD_INTENT,
@@ -1647,5 +1651,62 @@ describe('restoreOnReentry — the floor recovers while nobody is on it', () => 
     restoreOnReentry([husk], hostileToPlayer, undefined, -5, createRng('reentry-back'));
     expect(husk.hp).toBe(50);
     expect(husk.cooldowns.size).toBe(1);
+  });
+});
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * A STATUS SENTENCE IS A PROMISE, AND IT USED TO BE A SECOND COPY OF A NUMBER.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Three descriptions stated a magnitude as a bare numeral in a string while the
+ * maths read it from a constant somewhere else:
+ *
+ *   Stunned       "Deals 40% damage"     vs `0.4` in engine/damage.ts
+ *   Stunned       "Three ready talents"  vs `STUN_TALENT_LOCKOUT`
+ *   Off-balance   "15% less damage"      vs `OFF_BALANCE_NUMBED`
+ *   Spellshocked  "by 20%"               vs `SPELLSHOCK_RESIST`
+ *
+ * `npm run check:constants` cannot see any of it — it reads COMMENTS that state
+ * a named constant's value, and these are numerals inside player-facing strings.
+ * Verified by moving `SPELLSHOCK_RESIST` from 20 to 25: the gate stayed green
+ * and the sentence went on promising 20%.
+ *
+ * They are composed from the constants now, so drift is impossible rather than
+ * merely detectable. This test is what stops somebody un-composing them: it
+ * reads the CONSTANT and looks for it in the rendered sentence, so a literal
+ * put back by hand passes only until the constant next moves — which is the
+ * moment it must fail.
+ */
+describe('status sentences quote the constants the maths uses', () => {
+  const rendered = (id: string): string => {
+    const def = MVP_EFFECTS.find((entry) => entry.id === id);
+    expect(def, `${id} is not in the roster`).toBeDefined();
+    return def?.description ?? '';
+  };
+
+  it('Stunned names the damage multiplier and the lockout count', () => {
+    const stunned = rendered(EffectId.Stunned);
+    expect(stunned).toContain(`${String(Math.round(STUNNED_DAMAGE_MULT * 100))}% damage`);
+    expect(stunned).toContain(String(STUN_TALENT_LOCKOUT));
+  });
+
+  it('Off-balance names its numbed percentage', () => {
+    expect(rendered(EffectId.OffBalance)).toContain(`${String(OFF_BALANCE_NUMBED)}% less damage`);
+  });
+
+  it('Spellshocked names the resistance it takes', () => {
+    expect(rendered(EffectId.Spellshocked)).toContain(`by ${String(SPELLSHOCK_RESIST)}%`);
+  });
+
+  /**
+   * AND THE PLURAL BRANCH, which typescript cannot reach from the constant
+   * because it is typed as the literal 3. A sentence reading "1 ready talents
+   * are" is exactly the drift composing these was meant to prevent, so the
+   * branch is exercised directly rather than left to a future tuning pass.
+   */
+  it('says "One ready talent is" when the lockout is one', () => {
+    expect(lockedOutPhrase(1)).toBe('One ready talent is');
+    expect(lockedOutPhrase(3)).toBe('3 ready talents are');
   });
 });

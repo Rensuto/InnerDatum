@@ -112,7 +112,23 @@ import type { BoundHooks, HookHost, TurnProcs } from './hooks.ts';
  * definition, one import path, no duplicated bound — which is the thing this
  * codebase keeps getting bitten by.
  */
+
 import { DAMAGE_TYPES, DamageType } from '../../shared/damagetype.ts';
+
+/**
+ * WHAT A DEBUFFED ATTACKER'S BLOW IS WORTH — damage_types.lua:146-153.
+ *
+ * NAMED RATHER THAN INLINE because the STATUS SENTENCES QUOTE THEM. `Stunned`'s
+ * description says "Deals 40% damage" and said it as a literal `40` in another
+ * file, so the number a player reads and the number the maths applies were two
+ * copies with nothing holding them together. `check:constants` could not see it
+ * either: it reads COMMENTS that state a named constant, and this was a bare
+ * numeral in a string.
+ *
+ * They COMPOUND: a dazed-and-stunned attacker deals 20%.
+ */
+export const DAZED_DAMAGE_MULT = 0.5;
+export const STUNNED_DAMAGE_MULT = 0.4;
 
 // IMPORTED AND RE-EXPORTED, not `export ... from`: this file's own maths uses
 // both names, and a bare re-export does not bind them locally. `DamageType` is
@@ -544,8 +560,8 @@ export function resolveDamage(
 
   // 5. SOURCE DEBUFFS — damage_types.lua:146-153. Dazed ×0.5, Stunned ×0.4, and
   //    they COMPOUND: a dazed-and-stunned attacker deals 20%.
-  if (spec.sourceDazed === true) dam = dam * 0.5;
-  if (spec.sourceStunned === true) dam = dam * 0.4;
+  if (spec.sourceDazed === true) dam = dam * DAZED_DAMAGE_MULT;
+  if (spec.sourceStunned === true) dam = dam * STUNNED_DAMAGE_MULT;
   //    And `numbed`, eight lines below them at damage_types.lua:158-160. It
   //    compounds with both for the same reason they compound with each other:
   //    upstream applies each in turn to the running total.
