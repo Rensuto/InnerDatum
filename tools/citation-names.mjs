@@ -41,9 +41,17 @@
  *
  * The count it prints is the number of citations JUDGED, not defects found, and
  * it is the number worth watching: 14 -> 18 when wrapped citations were joined,
- * 18 -> 28 when the bare `SHAPE:` form was added, 30 -> 41 when the QUOTED paren
- * form was. A drop means a form stopped matching, which reads as "clean" and is
- * not.
+ * 18 -> 28 when the bare `SHAPE:` form was added, 30 -> 41 for the QUOTED paren
+ * form and 41 -> 51 for `(Name:` and the one-word-plus-dash. A drop means a form
+ * stopped matching, which reads as "clean" and is not.
+ *
+ * ═══ 51 OF 61, AND THE REMAINING TEN ARE SUPPOSED TO BE THERE ═══
+ * Every one of them cites a FORMULA rather than a talent: five stat passives at
+ * `ghoul.lua:26` for `combatTalentScale(t, 2, 15, 0.75)`, two stances at
+ * `chants.lua:31` for `sustain_positive = 20`, `loads` at `explosives.lua:44`
+ * for a five-branch `computeDamage`, and `weight_of_office` at an `on_learn`
+ * block. Naming a talent on any of those would claim a port that did not happen,
+ * so the floor here is ten and not zero.
  *
  * IT NOW PRINTS ITS DENOMINATOR TOO, which is what made the last jump findable:
  * "41 judged" beside "20 name none" says how much of the port is actually
@@ -78,11 +86,13 @@ const CITE = /([A-Za-z0-9_/-]+\.lua):(\d+)(?:-(\d+))?([^\n]*)/g;
 const TITLE = "[A-Z][A-Za-z']*(?:\\s+(?:of|the|a|an|and|on|in|to|for|from)|\\s+[A-Z][A-Za-z']*)+";
 
 /**
- * The name a citation claims, from any of FOUR house forms:
+ * The name a citation claims, from any of SIX house forms:
  *
  *     ...conditioning.lua:51-98 -- Vitality, the tree's regeneration talent.
  *     ...explosives.lua:207 (Shockwave Bomb) for the damage
  *     ...races.lua:332-347 ("Unshackled" — the Yeek's own, and the reason ...)
+ *     ...explosives.lua:20-42 (Throw Bomb: `cooldown = 4`, a ball projector)
+ *     ...npcs.lua:191-217 Stun -- the ghoul's own, and the melee half of ...
  *     ...combat-training.lua:125-127
  *              Light Armour Training -- `getArmorHardiness`, an asymptotic ...
  *
@@ -118,8 +128,34 @@ function claimedName(tail) {
    * rewrite itself for the tool.
    */
   const quoted = /^\s*\("([^"]{2,})"/.exec(tail);
+  /**
+   * FIFTH AND SIXTH FORMS, both found by asking what the twenty UNJUDGED
+   * citations actually look like rather than guessing:
+   *
+   *     ...explosives.lua:20-42 (Throw Bomb: `cooldown = 4`, a ball projector)
+   *     ...npcs.lua:191-217 Stun -- the ghoul's own, and the melee half of ...
+   *
+   * `parenColon` is the commonest of the lot -- six files -- and `paren` above
+   * misses it because that one wants the bracket to CLOSE after the name.
+   *
+   * `oneWordDash` exists because a talent may simply have a one-word name, and
+   * the bare form refuses those on purpose: a lone capitalised word would read
+   * the "The" of every wrapped sentence as a talent. Requiring a dash straight
+   * after it is what makes it safe -- "Stun --", "Foresight —", "Unshackled --"
+   * are names; "The armour must close again" is not.
+   */
+  const parenColon = /^\s*\(([A-Z][A-Za-z' ]{1,40}?):/.exec(tail);
+  const oneWordDash = /^\s+([A-Z][A-Za-z']+)\s+(?:--|—)\s/.exec(tail);
   const bare = new RegExp(`^\\s+(${TITLE})`).exec(tail);
-  const raw = (dash?.[1] ?? paren?.[1] ?? quoted?.[1] ?? bare?.[1] ?? '').trim();
+  const raw = (
+    dash?.[1] ??
+    paren?.[1] ??
+    quoted?.[1] ??
+    parenColon?.[1] ??
+    bare?.[1] ??
+    oneWordDash?.[1] ??
+    ''
+  ).trim();
   if (raw.length < 2) return null;
   // A name runs to the first comma; the rest of the line is prose about it.
   // A WRAPPED NAME ARRIVES WITH THE JOIN IN IT: "Luck of the Little" plus a
