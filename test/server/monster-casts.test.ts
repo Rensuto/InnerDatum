@@ -337,58 +337,48 @@ describe('a monster status reaches the player, not just the log', () => {
   const APPLIES_NOTHING = new Set(['index_watcher']);
 
   /**
-   * ═══ THE INDEX EIDOLON IS EXCLUDED, AND THIS IS A FINDING, NOT A SKIP ═══
-   * Its Rush applies `Dazed` and the daze has NEVER been observed on the player
-   * in 180 turns of instrumented fighting. Measured, not guessed:
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE EIDOLON WAS EXEMPT FROM THIS FOR A REASON THAT WAS NOT TRUE.
+   * ═══════════════════════════════════════════════════════════════════════════
    *
-   *   - the Eidolon casts Rush exactly ONCE in that window (it is a
-   *     `MeleeChaser` and Rush is how it closes, so once adjacent it just
-   *     attacks);
-   *   - `rushRange` is 6-10, so from `APART` = 8 the charge CAN reach;
-   *   - `Dazed` carries `breaksOnDamage`, and this creature has
-   *     `globalSpeed: 1.2` -- it acts more often than the player, so its own
-   *     follow-up blow can remove the daze before any sample sees it.
+   * It carried a `NOT_YET_OBSERVED` exemption reading *"the Eidolon takes the
+   * charge ZERO or ONE times per fight ... THE OPEN QUESTION IS WHY A MELEE
+   * CHASER ALMOST NEVER RUSHES"*. Measured properly — twenty-four seeded
+   * fights, tracing what the AI was offered and what it took — the creature
+   * charged in TWENTY of twenty-four, on turn 0, 1 or 2. It was never reluctant.
    *
-   * `rush.ts` already knows about that interaction -- it applies the daze AFTER
-   * its own swing precisely so the swing does not eat it -- but nothing stops
-   * the NEXT swing. Whether that makes Rush's second half dead in practice is
-   * the open question, and it is a content decision rather than a test one.
+   * Two separate things were being read as one:
    *
-   * Excluded by NAME so it reads as an unanswered question rather than a
-   * creature nobody thought about. The other five are asserted.
+   *   THE WINDOW IS ONE OR TWO TURNS, ONCE. Rush is legal between `minRange` 2
+   *   and range 6, and both bodies close through that band, so it opens and
+   *   shuts in the opening exchange and `minRange` correctly refuses for the
+   *   rest of the fight. "One cast per fight" is the talent working, not the AI
+   *   declining — and the flat `CAST_CHANCE` roll was losing four fights in
+   *   twenty-four inside that window, which is what `CLOSE_IN_CHANCE` fixed
+   *   (24 of 24 now, every one on turn 0).
+   *
+   *   THE DAZE IS CONTESTED. `rush.ts` applies it with the creature's physical
+   *   power against the victim's save, so "Detective rides it out." is a legal
+   *   outcome and lands 16 times in 24. The seed this file happens to use for
+   *   the Eidolon is one of the eight that loses.
+   *
+   * So the shared assertion below cannot hold on one seed for this creature —
+   * not because anything is broken, but because a contested roll on a
+   * once-per-fight talent is a coin flip frozen into a seed. It gets its own
+   * test underneath instead, over enough seeds that the coin has to come up.
    */
   /**
-   * ═══ THE EIDOLON IS EXCLUDED BECAUSE ITS TALENT IS RARE, NOT BROKEN ═══
-   * Its Rush DOES daze now — `rush.ts` was offering the charge at up to ten
-   * tiles when a rank-one creature only covers six, so from the eight this
-   * harness opens at it stopped short every time and never attacked. That is
-   * fixed and the daze lands: *"Detective is dazed (2 turns)"*.
-   *
-   * What remains is a frequency problem, measured over six seeds of 180 turns:
-   * the Eidolon takes the charge ZERO or ONE times per fight, and only one seed
-   * in six produced a daze. It is a `MeleeChaser` — it closes on foot and then
-   * simply attacks, so the turn where a rush is both offered and worth taking
-   * barely comes up.
-   *
-   * An emergent-fight assertion on a once-in-six-fights event is a flaky test,
-   * so it is excluded by NAME with the numbers written down. THE OPEN QUESTION
-   * IS WHY A MELEE CHASER ALMOST NEVER RUSHES — an AI weighting question, not a
-   * talent one, and not something to change blind.
+   * ONE CONTESTED ROLL PER FIGHT — the classification, not an open question.
+   * `index_eidolon` is asserted underneath over enough seeds that the roll has
+   * to land; see the essay above for why one seed cannot answer it.
    */
-  const NOT_YET_OBSERVED = new Set(['index_eidolon']);
+  const ONE_CONTESTED_ROLL = new Set(['index_eidolon']);
 
   it.each(
     ARMED.filter(
-      (template) => !APPLIES_NOTHING.has(template.id) && !NOT_YET_OBSERVED.has(template.id),
+      (template) => !APPLIES_NOTHING.has(template.id) && !ONE_CONTESTED_ROLL.has(template.id),
     ).map((template) => [template.displayName, template] as const),
   )('%s lands its status on the detective', (_name, template) => {
-    /**
-     * A LONG WINDOW, AND THE EIDOLON IS WHY. A `MeleeChaser` rarely NEEDS to
-     * rush -- it closes on foot and then simply attacks -- so the one turn
-     * where the charge is both offered and worth taking can be a hundred turns
-     * in. Sixty is plenty for the creatures that lead with their talent and not
-     * nearly enough for the one that does not.
-     */
     const effects = createMvpEffectState();
     let landed = false;
     everyStep(standoff(`lands-${template.id}`, template), TURNS * 8, effects, () => {
@@ -400,6 +390,64 @@ describe('a monster status reaches the player, not just the log', () => {
         `Either the talent's status half is unreachable, or the status door is ` +
         `unwired and this file is back to proving only that a cast happened.`,
     ).toBe(true);
+  });
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE EIDOLON CHARGES EVERY FIGHT, AND ITS DAZE LANDS ACROSS SEEDS.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * The two halves of what the old exemption was confusing, asserted separately
+   * so a regression in either one says which.
+   *
+   * THE CHARGE IS THE STRICT HALF: every seed, no exceptions. That is what
+   * `Talent.closesIn` and `CLOSE_IN_CHANCE` bought — before them the flat
+   * cadence roll lost four of these twenty-four fights entirely, because Rush's
+   * window is one or two turns wide and shuts for good once the creature is
+   * adjacent. If this drops below `SEEDS`, the AI has gone back to treating a
+   * charge as one option among several.
+   *
+   * THE DAZE IS THE LOOSE HALF, and deliberately: `rush.ts` contests it against
+   * the victim's save, so a fight where the Detective rides it out is the
+   * system working. Measured at 16 of 24. The assertion is "more than none",
+   * not a rate — pinning 16 would be pinning the RNG stream, and every seeded
+   * draw added anywhere upstream of this would move it.
+   */
+  it('the eidolon charges every fight, and its daze lands in some of them', () => {
+    const eidolon = ARMED.find((template) => template.id === 'index_eidolon');
+    expect(eidolon).toBeDefined();
+    if (eidolon === undefined) return;
+
+    const SEEDS = 24;
+    let charged = 0;
+    let dazed = 0;
+    for (let seed = 0; seed < SEEDS; seed += 1) {
+      const effects = createMvpEffectState();
+      let landed = false;
+      const steps = everyStep(
+        standoff(`eidolon-charge-${String(seed)}`, eidolon),
+        TURNS,
+        effects,
+        () => {
+          if (effectsOn(effects, 'p1').length > 0) landed = true;
+        },
+      );
+      if (steps.some((step) => step.t === 'talent')) charged += 1;
+      if (landed) dazed += 1;
+    }
+
+    expect(
+      charged,
+      `the Index Eidolon charged in only ${String(charged)} of ${String(SEEDS)} fights. ` +
+        `A closer is meant to be taken every time it is legal — see CLOSE_IN_CHANCE ` +
+        `in ai/npc.ts and combat-techniques.lua:32's CLOSEIN = 3.`,
+    ).toBe(SEEDS);
+    expect(
+      dazed,
+      `the Index Eidolon charged ${String(charged)} times and dazed nobody. The daze is ` +
+        `contested, so some fights losing it is correct — none of them losing it means ` +
+        `the status half of Rush is unreachable.`,
+    ).toBeGreaterThan(0);
   });
 
   it('the husk elite actually stuns the detective', () => {

@@ -106,6 +106,19 @@ export type MonsterCast = {
   readonly talentId: string;
   /** The tile it is aimed at. Self-shaped talents name the caster's own. */
   readonly target: TileXY;
+  /**
+   * IS THIS THE CREATURE'S WAY OF CLOSING? `Talent.closesIn`, forwarded.
+   *
+   * ═══ ON THE OPTION RATHER THAN ASKED OF THE REGISTRY ═══
+   * This file's header is explicit that the AI must not hold a `TalentEngine`:
+   * that would put the registry, the sheet and the cost rules inside a module
+   * whose whole value is that it can be tested against two object literals and
+   * a five-tile map. `castable` already reads the registry to build these
+   * options, so it carries the one bit down rather than handing over the door.
+   *
+   * ABSENT READS AS FALSE, which is every talent in the game but one.
+   */
+  readonly closesIn?: boolean;
 };
 
 export type AiCtx = {
@@ -183,6 +196,36 @@ const SHOULDER_FAILURE_PENALTY = 5;
  */
 export const CAST_CHANCE = 40;
 
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * AND THE CADENCE DOES NOT APPLY TO CLOSING THE DISTANCE.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `CAST_CHANCE` is the honest flat stand-in for upstream's weighted tactical
+ * pick, and it is the right instrument for a talent a creature can use on ANY
+ * turn of a fight: rolling for it spreads the casts out and leaves the creature
+ * walking and swinging in between, which is the whole argument above.
+ *
+ * A CHARGE IS NOT THAT TALENT. Its window is `minRange` to `range` and both
+ * bodies are closing through it, so it exists for one turn, maybe two, once per
+ * fight. Measured on the Index Eidolon over eight seeded fights: Rush was legal
+ * on SEVEN turns out of 287 turns of fighting. A 40% roll against a window that
+ * narrow does not spread the casts out — it deletes two fights in eight.
+ *
+ * Upstream does not roll for it either. `CLOSEIN = 3` is three times the weight
+ * of either attack term in Rush's own tactical table
+ * (techniques/combat-techniques.lua:32) and `on_pre_use_ai` refuses the talent
+ * outright while the target is adjacent (:41-45): the creature charges when
+ * charging is what the situation is.
+ *
+ * ═══ 100, AND THE DRAW IS STILL TAKEN ═══
+ * A threshold rather than an early return, so `ai.cast` is drawn on exactly the
+ * turns it was drawn on before. Skipping the draw would have shifted the seeded
+ * stream for every world containing a charger — the replay rule in CLAUDE.md is
+ * about ADDING or REORDERING draws, and a threshold does neither.
+ */
+export const CLOSE_IN_CHANCE = 100;
+
 export function decideNpcAction(self: MonsterActor, ctx: AiCtx): Intent {
   const target = acquireTarget(self, ctx);
   if (target === undefined) {
@@ -233,12 +276,28 @@ export function decideNpcAction(self: MonsterActor, ctx: AiCtx): Intent {
    * than of the roll, so a given world's stream stays stable.
    */
   const options = ctx.castable?.(self, target) ?? [];
-  if (options.length > 0 && ctx.rng.int('ai.cast', 0, 99) < CAST_CHANCE) {
-    // FIRST, NOT BEST. The template's order is the creature's own preference,
-    // and `castable` preserves it — so an author orders the list and the
-    // creature obeys it, rather than the AI inventing a scoring function that
-    // every future talent has to be tuned against.
-    const pick = options[0];
+  /**
+   * ═══ CLOSING BEATS THE CADENCE, AND ONLY WHILE THERE IS DISTANCE TO CLOSE ═══
+   * `CLOSE_IN_CHANCE` carries the argument and the citation. The adjacency test
+   * is upstream's `on_pre_use_ai` (combat-techniques.lua:41-45,
+   * `distance > 1`) rather than a trust in `minRange`: the talent's own dead
+   * zone already refuses a charge from touching distance, so this cannot fire
+   * there — but a future closer authored WITHOUT a dead zone must not turn into
+   * a guaranteed free swing at melee, and one line here is cheaper than
+   * discovering that from a fight.
+   */
+  const closer =
+    combatDistance(self, target) > 1
+      ? options.find((option) => option.closesIn === true)
+      : undefined;
+  const chance = closer === undefined ? CAST_CHANCE : CLOSE_IN_CHANCE;
+  if (options.length > 0 && ctx.rng.int('ai.cast', 0, 99) < chance) {
+    // FIRST, NOT BEST — except for a closer, which is the one tactic this AI
+    // knows by name. The template's order is otherwise the creature's own
+    // preference, and `castable` preserves it, so an author orders the list and
+    // the creature obeys it rather than the AI inventing a scoring function
+    // that every future talent has to be tuned against.
+    const pick = closer ?? options[0];
     if (pick !== undefined) {
       return { kind: IntentKind.Talent, talentId: pick.talentId, target: pick.target };
     }

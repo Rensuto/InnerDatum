@@ -109,6 +109,13 @@ export const rush: Talent = {
   classId: null,
   tree: 'monster/index',
   kind: TalentKind.Active,
+  /**
+   * `CLOSEIN = 3` — combat-techniques.lua:32, the highest weight in Rush's own
+   * tactical table and three times either attack term. See `Talent.closesIn`
+   * for what the AI does with it and for the eight-fight measurement that says
+   * why the flat cadence roll was the wrong instrument here.
+   */
+  closesIn: true,
   iconId: 'icon_monster_rush',
   cost: { ap: RUSH_AP },
   cooldownTurns: RUSH_COOLDOWN,

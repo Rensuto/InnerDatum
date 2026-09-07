@@ -1562,6 +1562,40 @@ export type Talent = {
    */
   readonly kind: TalentKind;
   /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THIS TALENT'S PURPOSE IS TO CLOSE THE DISTANCE. An AI hint, and the only
+   * one on this record.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Ported from techniques/combat-techniques.lua:32, Rush's tactical table:
+   *
+   *     tactical = { ATTACK = { weapon = 1, stun = 1 }, CLOSEIN = 3 }
+   *
+   * `CLOSEIN = 3` is THREE TIMES the weight of either attack term, and
+   * upstream's `on_pre_use_ai` (combat-techniques.lua:41-45) refuses the talent
+   * outright while the target is adjacent. Both say the same thing: a charge is
+   * not one option among several, it is what the creature does with the
+   * approach.
+   *
+   * ═══ WHY A BOOLEAN AND NOT A WEIGHT ═══
+   * Upstream scores every talent against a tactical table and picks the best.
+   * We have ONE tactic and eleven armed creatures, so a scoring function would
+   * be a framework with a single input — and `castable` already establishes the
+   * house rule that ORDER is the creature's preference, which a weight would
+   * quietly become a second opinion about. If a second tactic ever earns its
+   * place, that is the moment to grow this into the table upstream has.
+   *
+   * ═══ WHAT IT COSTS THE AI TO IGNORE THIS ═══
+   * Measured on the Index Eidolon over eight seeded fights, before this
+   * existed: Rush was legal on 7 turns out of 287 turns of fighting, because
+   * the window is `minRange` 2 to range 6 and BOTH bodies close during it. One
+   * or two turns per fight, once, and then the creature is adjacent for the
+   * rest of the fight and `minRange` correctly refuses. A flat per-turn cadence
+   * roll against a window that narrow is a charge that mostly does not happen —
+   * two of those eight fights had no rush in them at all.
+   */
+  readonly closesIn?: boolean;
+  /**
    * `manifest.icons` key.
    *
    * ═══════════════════════════════════════════════════════════════════════════

@@ -346,7 +346,15 @@ export function talentRuntimeFor(
         if (canUseTalent(talents, self, talent, { ...aim, actorId: target.id }, world) !== null) {
           continue;
         }
-        out.push({ talentId: id, target: aim });
+        // THE ONE AI HINT, FORWARDED. `ai/npc.ts` holds no registry by design,
+        // so the bit rides the option rather than being asked for — see
+        // `MonsterCast.closesIn`. Omitted rather than sent false, because
+        // `exactOptionalPropertyTypes` is on and absent already reads as false.
+        out.push({
+          talentId: id,
+          target: aim,
+          ...(talent.closesIn === true ? { closesIn: true } : {}),
+        });
       }
       return out;
     },
