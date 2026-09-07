@@ -3677,7 +3677,7 @@ function hotbarView(): HotbarView {
    * slot showing EQUIP for an item that is gone, which `itemSlotAction` already
    * refuses to do.
    */
-  // THE ACTIVE PAGE'S SIX, and `slotUnder` measures the same six because it
+  // THE ACTIVE PAGE'S NINE, and `slotUnder` measures the same nine because it
   // reads `hotbarView().slots.length` — one number, both readers, which is the
   // rule hudwiring.test.ts pins after the item slots broke exactly this.
   const talents: HotbarSlot[] = Array.from({ length: HOTBAR_TALENT_SLOTS }, (_unused, index) => {

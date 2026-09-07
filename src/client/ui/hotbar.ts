@@ -268,26 +268,31 @@ export const HOTBAR_TALENT_SLOTS = 9;
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════
- *   HOW MANY PAGES OF THOSE SIX. TWO, AND SHIFT PICKS THE OTHER ONE.
+ *   HOW MANY PAGES OF THOSE NINE. TWO, AND SHIFT PICKS THE OTHER ONE.
  * ═══════════════════════════════════════════════════════════════════════════
  *
- * Twelve talents on six keys. The bar cannot grow SIDEWAYS — the note on
- * `HOTBAR_ITEM_SLOTS` below is the whole argument, and it has not changed:
- * keys 5-9 are Numpad movement on every layout this game has been played on,
- * and a slot advertising a digit that walks you north is worse than no slot.
+ * Eighteen talents on nine keys. The bar cannot grow SIDEWAYS — that is
+ * `HOTBAR_TALENT_SLOTS`'s own argument one rule up, and it is about PIXELS:
+ * thirteen slots is what the 640-wide floor holds, and four of them are the
+ * item half.
+ *
+ * (This paragraph used to say "twelve talents on six keys" and blame the
+ * numpad. Both halves went stale when slots 5-9 shipped bound by CODE —
+ * `Digit5`..`Digit9`, which the numpad does not report — so the bar's limit is
+ * the width of the window and nothing else.)
  *
  * ═══ SHIFT, AND IT IS ALREADY THE HOUSE RULE ═══
  * `scroll_back`'s note in input/keymap.ts says it exactly: *"Shift picks the
  * other lane, and that is a fact about a panel rather than about a key, so it
- * is not an action here."* Twelve `hotbar_n` actions in the keybind list would
- * be twelve rows nobody can rebind (the digits are `fixed`) explaining a
- * modifier — so the page is decided where the press is READ, not in the map.
+ * is not an action here."* Eighteen `hotbar_n` actions in the keybind list
+ * would be eighteen rows nobody can rebind (the digits are `fixed`) explaining
+ * a modifier — so the page is decided where the press is READ, not in the map.
  *
  * ═══ TWO AND NOT FOUR ═══
  * Upstream's bar pages further and ours will when there is anything to put on
- * page three. Twelve is already double what a class can hold, so a third page
- * would be a control with nothing behind it — and every page after the first
- * costs a modifier a player has to remember.
+ * page three. Eighteen already covers `TALENTS_PER_CLASS_MAX` half again over,
+ * so a third page would be a control with nothing behind it — and every page
+ * after the first costs a modifier a player has to remember.
  */
 export const HOTBAR_TALENT_PAGES = 2;
 
@@ -303,7 +308,7 @@ export const HOTBAR_TALENT_BINDINGS = HOTBAR_TALENT_SLOTS * HOTBAR_TALENT_PAGES;
  * bar's answer to it. Shrinking a page, or dropping back to one, would leave a
  * class holding actives no key could reach — a talent a player owns, can see
  * in the panel, and can never press. That is silent: nothing throws, the bar
- * just quietly stops at six and the last three are unreachable.
+ * just quietly stops at nine and the rest are unreachable.
  *
  * A TYPE-LEVEL ASSERTION rather than a runtime one, so it costs nothing at
  * runtime and fails at the only moment it matters — the commit that changes
@@ -323,25 +328,36 @@ if (HOTBAR_TALENT_BINDINGS < TALENTS_PER_CLASS_MAX || !_barCoversTheClass) {
 }
 
 /**
- * Slots 4-7: the item slots. MOUSE-ONLY, AND THAT IS THE DECISION, NOT A GAP.
+ * Slots 10-13: the item slots. MOUSE-ONLY, AND THAT IS THE DECISION, NOT A GAP.
  *
- * ═══ WHY THERE IS NO KEY 5, 6, 7 OR 8, AND WHY NO DIGIT IS DRAWN ═══
- * input/keymap.ts:1129-1133 maps Numpad5-Numpad9 onto the STRINGS '5'-'9',
- * because that is what the browser reports for them with NumLock on. keymap.ts
- * :592 and :1214 already document the consequence for the four keys that exist:
- * `hotbar_1`'s '1' and `move_southwest`'s Numpad1 are the same physical press.
- * Adding `hotbar_5`..`hotbar_8` would put four MORE collisions on Numpad8
- * (`move_north`), Numpad6 (`move_east`), Numpad7 (`move_northwest`) and Numpad9
- * (`move_northeast`) — the cardinal directions, far worse than the existing
- * diagonal ones.
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE REASON THIS GIVES IS NOT THE REASON ANY MORE. THE DECISION STANDS.
+ * ═══════════════════════════════════════════════════════════════════════════
  *
- * A mouse-only slot in a turn-based game is fine. A slot that advertises a digit
- * which walks you north is not. So the label under an item slot is its STATE
- * CAPTION and never a key, and keymap.ts is not touched by this file at all.
+ * It used to read: *"there is no key 5, 6, 7 or 8"* because keymap.ts maps
+ * Numpad5-Numpad9 onto the STRINGS '5'-'9', so a `hotbar_5` bound BY KEY would
+ * collide with `move_north` and the other cardinals — far worse than the
+ * diagonal collision `hotbar_1` already carries.
+ *
+ * THAT PROBLEM WAS SOLVED, FOR SOMEBODY ELSE. `hotbar_5` through `hotbar_9`
+ * exist today, bound by CODE (`Digit5`..`Digit9`), which the numpad never
+ * reports — so the collision argument no longer refuses anything, and reading
+ * this block as written would say the item slots COULD be keyed the same way.
+ *
+ * ═══ THE LIVE REASON IS THAT THERE ARE NO DIGITS LEFT ═══
+ * Nine talent slots take `Digit1`..`Digit9`, and `Digit0` is not a tenth in any
+ * sane reading of a row that starts at 1. What remains is punctuation or a
+ * modifier, and both are worse than a mouse: a bracket over an item slot is a
+ * key nobody guesses, and a modifier is the one Shift already spends on the
+ * talent page.
+ *
+ * A mouse-only slot in a turn-based game is fine. So the label under an item
+ * slot is its STATE CAPTION and never a key, and keymap.ts is not touched by
+ * this file at all.
  */
 export const HOTBAR_ITEM_SLOTS = 4;
 
-/** Eight. Derived, so the two halves above cannot drift from the total. */
+/** Thirteen. Derived, so the two halves above cannot drift from the total. */
 export const HOTBAR_SLOTS = HOTBAR_TALENT_SLOTS + HOTBAR_ITEM_SLOTS;
 
 /** How dark the cooldown wedge goes. Dark enough to read, light enough to identify the icon. */
@@ -513,7 +529,7 @@ export type HotbarView = {
    * reads as page 1, which is what they all mean. It changes nothing about the
    * SLOTS — main.ts has already sliced the page it is handing over — and is
    * carried purely so the label strip can say which page a player is looking
-   * at. A bar that silently swapped its six buttons would be indistinguishable
+   * at. A bar that silently swapped its nine buttons would be indistinguishable
    * from a bug.
    */
   readonly page?: number;
@@ -581,19 +597,19 @@ export function hotbarRowWidth(count: number): number {
  * The painter used to carry `if (rect.x < 0 || rect.x + rect.w > width) continue;`
  * inside its loop: a slot that did not fit was simply not painted, with nothing
  * said anywhere. On a four-talent bar that was almost unreachable and merely
- * untidy. On an eight-slot bar it is a DROP TARGET THAT VANISHES WITHOUT A WORD
+ * untidy. On a thirteen-slot bar it is a DROP TARGET THAT VANISHES WITHOUT A WORD
  * — the player drags an item at the place a slot was, releases over bare map,
  * and nothing happens for a reason nothing on screen states.
  *
  * So the decision is made once, here, for the whole row, and `drawHotbar` says
- * out loud what it did. Eight slots need 604 logical pixels; the interface
+ * out loud what it did. Thirteen slots need 620 logical pixels; the interface
  * floors at 640 (render/canvas.ts, `HUD_MIN_W`), so the full row fits
- * everywhere this client can render, with 36px of slack. The
+ * everywhere this client can render, with 20px of slack. The
  * fallbacks below are therefore for a viewport that should not exist — which is
  * exactly the kind of case that shows up on somebody else's window.
  *
  *   the whole row fits         → every slot
- *   only the talents fit       → the four talent slots, and the strip says so
+ *   only the talents fit       → the nine talent slots, and the strip says so
  *   not even the talents fit   → nothing, and the strip says that instead
  *
  * Falling back to "the talents" rather than "as many as fit" is deliberate: the
@@ -639,14 +655,19 @@ export function slotRect(index: number, count: number, width: number, height: nu
  * the one coordinate space the HUD is drawn in.
  *
  * ═══ `count` MUST BE THE SAME NUMBER `drawHotbar` SAW: `view.slots.length` ═══
- * READ THIS BEFORE WIRING THE ITEM SLOTS. The painter centres the row on the
- * slots it is given; this centres it on the `count` it is given. main.ts:5930's
- * `slotUnder` passes `loadout.length` — FOUR — which is correct today only
- * because `hotbarView` returns four slots. The moment it returns eight and
- * `slotUnder` still says four, the two centre the row on different widths (604
- * against 300) and EVERY hover and click lands on the wrong box, or on nothing
- * — silently, at every viewport, with no line of this file having changed. The
- * fix is one word at the call site: pass the same length the view carries.
+ * The painter centres the row on the slots it is GIVEN; this centres it on the
+ * `count` it is given. Hand them different numbers and they centre the row on
+ * different widths, so EVERY hover and click lands on the wrong box, or on
+ * nothing — silently, at every viewport, with no line of this file changing.
+ *
+ * THE CALL SITE IS CORRECT AND THIS PARAGRAPH USED TO SAY IT WAS NOT. It read
+ * *"main.ts:5930's `slotUnder` passes `loadout.length` — FOUR — which is
+ * correct today only because `hotbarView` returns four slots"*, and the bar has
+ * been thirteen slots for a while: `slotUnder` passes `hotbarView().slots.length`
+ * now, which is the fix that note asked for. A warning about a bug that was
+ * fixed is worse than no warning — it sends the next reader to audit a call
+ * site that is right. The RULE is what is load-bearing, so the rule is what
+ * this block keeps.
  *
  * It walks `hotbarVisibleCount` and `slotRect`, the same two functions the
  * painter walks, so a slot the painter refused can never be clicked and a slot
