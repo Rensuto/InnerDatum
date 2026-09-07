@@ -337,6 +337,24 @@ export type EffectDef = {
   readonly id: string;
   readonly displayName: string;
   readonly description: string;
+  /**
+   * THE SAME SENTENCE, COMPOSED FROM THE INSTANCE, for the effects whose
+   * strength is not fixed. Upstream's `long_desc` is a FUNCTION of `eff` on
+   * every stacking effect for exactly this reason -- other.lua:100 is
+   * `("...(+%d cooldowns)."):format(eff.power)`.
+   *
+   * ONE EFFECT NEEDS IT TODAY and the field exists because that one broke a
+   * documented invariant: `EffectView.desc` states that a status sentence
+   * carries "no numbers that vary per body, so there is nothing to render per
+   * viewer", which was true of all eighteen effects until Infusion Saturation
+   * shipped with a power that grows. A static sentence on a STACKING effect
+   * tells a player the tax exists and never what it currently is -- and the
+   * whole mechanic is deciding whether to pay it again.
+   *
+   * OPTIONAL, and `description` is the fallback, so seventeen effects are
+   * untouched and an effect that forgets this still says something true.
+   */
+  readonly describe?: (instance: EffectInstance) => string;
   /** THE SAVE SELECTOR. Actor.lua:7002 keys `save_for_effects` off exactly this. */
   readonly type: SaveChannel;
   readonly status: EffectStatus;

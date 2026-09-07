@@ -53,7 +53,7 @@
 
 import { bound } from '../../shared/scale.ts';
 import { DamageType, applyDamage } from '../engine/damage.ts';
-import { healActor } from '../engine/talents.ts';
+import { healActor, tomeCooldownToTurns } from '../engine/talents.ts';
 import {
   EffectStatus,
   SaveChannel,
@@ -1555,6 +1555,15 @@ export const FOOTNOTED_LUCK: EffectDef = Object.freeze({
  * engine converts `power` at the one site that reads it. See the note at
  * `setCooldown` in engine/talents.ts.
  *
+ * ═══ SO THE TAX MOVES ON EVERY SECOND STACK, AND IT SHOULD ═══
+ * `ceil(1/2)` and `ceil(2/2)` are both one, so the second infusion in a window
+ * costs the same as the first and the third is where the price goes up. That
+ * is not a rounding bug to paper over — it is exactly what upstream does seen
+ * through a coarser clock: `ceil((12+1)/2)` and `ceil((12+2)/2)` are both 7.
+ * Written down because it reads like the mechanic failing, and a test asserting
+ * the badge changes between one stack and two was written before this note
+ * existed and was WRONG.
+ *
  * DETRIMENTAL AND VISIBLE. Upstream gives it an icon and a `long_desc` that
  * states the number, because a player who cannot see the tax cannot plan
  * around it — and planning around it is the entire point of the mechanic.
@@ -1565,6 +1574,31 @@ export const INFUSION_SATURATION: EffectDef = Object.freeze({
   badge: 'Sa',
   displayName: 'Infusion Saturation',
   description: 'Your infusions are recharging more slowly. Each one you use makes it worse.',
+  /**
+   * other.lua:100, which is a FUNCTION of the instance and not a string:
+   *
+   *     ("The more you use infusions, the longer they will take to recharge
+   *       (+%d cooldowns)."):format(eff.power)
+   *
+   * The number is the point. A player looking at this badge is deciding
+   * whether to drink another one, and "more slowly" does not answer that
+   * while "+3 turns" does. `description` above stays as the fallback for a
+   * caller that has not been taught to compose.
+   *
+   * OUR TURNS, not upstream's: the power is stored in ToME turns and
+   * `useTalent` converts it at the cooldown site, so the sentence has to do
+   * the same conversion or it would promise a tax twice the size of the one
+   * the player is actually paying.
+   */
+  describe: (instance: EffectInstance): string => {
+    const power = instance.params.power ?? 1;
+    const turns = tomeCooldownToTurns(power);
+    return (
+      'Your infusions are recharging more slowly: ' +
+      `+${String(turns)} turn${turns === 1 ? '' : 's'} on each. ` +
+      'Every one you use makes it worse.'
+    );
+  },
   // other.lua:101-102 — `type = "other"`, `subtype = { infusion = true }`. We
   // have no `other` channel and nothing rolls against this, so the label is the
   // nearest true one — the argument HIGHBORNS_BLOOM makes one rule up.

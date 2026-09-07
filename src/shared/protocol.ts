@@ -1488,9 +1488,23 @@ export type EffectView = {
    * one a player will sit and wait out believing their abilities are coming
    * back.
    *
-   * ONE SENTENCE, AUTHORED, NOT COMPOSED. Unlike the talent descriptions this
-   * carries no numbers that vary per body, so there is nothing to render per
-   * viewer — it is the same sentence for everybody who has the status.
+   * ONE SENTENCE, AND USUALLY AUTHORED RATHER THAN COMPOSED. Seventeen of the
+   * eighteen statuses carry no number that varies per body, so for those there
+   * is nothing to render per viewer — it is the same sentence for everybody who
+   * has the status.
+   *
+   * ═══ THE EIGHTEENTH IS WHY THIS PARAGRAPH CHANGED ═══
+   * This used to state the invariant flatly, and Infusion Saturation broke it
+   * the day it shipped: its power GROWS on merge, so "your infusions are
+   * recharging more slowly" told a player the tax existed and never what it
+   * was — while the whole mechanic is deciding whether to pay it again.
+   * Upstream's `long_desc` is a FUNCTION of `eff` on every stacking effect for
+   * exactly that reason (other.lua:100, `format(eff.power)`).
+   *
+   * So `EffectDef.describe` may compose this from the instance, and
+   * `EffectDef.description` is the fallback. IT IS STILL ONE SENTENCE PER
+   * VIEWER-VISIBLE BODY and still resolved on the server — the client renders
+   * what it is given and owns no format string.
    *
    * OPTIONAL, so an effect authored without one, and every client that has
    * never heard of the field, both behave exactly as they did.

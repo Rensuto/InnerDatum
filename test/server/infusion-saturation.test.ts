@@ -30,8 +30,11 @@ import { createContentTalentEngine, sheetForClass } from '../../src/server/conte
 import { classById } from '../../src/server/content/classes.ts';
 import { effectsOn, statusApplier } from '../../src/server/engine/effects.ts';
 import { talentRuntimeFor } from '../../src/server/main.ts';
+import { projectEffects } from '../../src/server/view/projector.ts';
 import { createWorld } from '../../src/server/world/world.ts';
+import type { World } from '../../src/server/world/world.ts';
 import { healingInfusion } from '../../src/server/talents/healing_infusion.ts';
+import { regenerationInfusion } from '../../src/server/talents/regeneration_infusion.ts';
 import { wildInfusion } from '../../src/server/talents/wild_infusion.ts';
 import { MONSTER_TEMPLATES, monsterInit } from '../../src/server/content/monsters.ts';
 import { shinCrack } from '../../src/server/talents/shin_crack.ts';
@@ -58,6 +61,22 @@ function arena() {
 
   const runtime = talentRuntimeFor(engine, world, statusApplier(effects, world.rng));
   return { world, player, effects, runtime };
+}
+
+/**
+ * The sentence the CLIENT would draw under this body's saturation badge.
+ *
+ * Through `projectEffects`, which is the function the gateway calls, so this
+ * cannot pass while the projector still sends the static `description`.
+ */
+function descOf(world: World, effects: ReturnType<typeof createMvpEffectState>): string {
+  const frame = projectEffects(world, effects);
+  for (const row of frame.actors) {
+    if (row.id !== 'p1') continue;
+    const badge = row.effects.find((eff) => eff.id === EffectId.InfusionSaturation);
+    if (badge?.desc !== undefined) return badge.desc;
+  }
+  return '(no saturation badge on p1)';
 }
 
 /** The saturation power currently on a body, or 0. */
@@ -151,5 +170,59 @@ describe('infusion saturation', () => {
         '`inscriptionKind` at the cooldown site is not holding, so this is a ' +
         'global slow wearing an infusion citation',
     ).toBe(shinCrack.cooldownTurns);
+  });
+});
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * AND THE PLAYER CAN SEE HOW BIG THE TAX IS — other.lua:100.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Upstream's `long_desc` for this effect is a FUNCTION of the instance:
+ * `("...(+%d cooldowns).").format(eff.power)`. Ours shipped as a fixed
+ * sentence, which told a player the tax existed and never what it was — and
+ * the entire mechanic is deciding whether to pay it again.
+ *
+ * ASSERTED THROUGH `projectEffects`, not off the definition. `EffectDef.describe`
+ * being correct proves nothing if the projector still sends `description`;
+ * that join is the half that would fail silently, because the fallback is a
+ * true sentence and nothing would look broken.
+ */
+describe('the saturation badge says how big the tax is', () => {
+  it('grows its sentence as the stack grows', () => {
+    const { world, player, effects, runtime } = arena();
+    expect(runtime.use(player, healingInfusion.id, undefined).ok).toBe(true);
+    const once = descOf(world, effects);
+    expect(once, 'the badge did not name a number at one stack').toMatch(/\+1 turn\b/);
+
+    /**
+     * ═══ THREE STACKS, NOT TWO, AND THAT IS A FACT ABOUT THE UNITS ═══
+     * The first version of this asserted the sentence moves between ONE stack
+     * and TWO. It does not, and neither does upstream's: the power is in ToME
+     * turns and ours are twice as coarse, so `ceil(1/2)` and `ceil(2/2)` are
+     * both one turn — exactly as `ceil((12+1)/2)` and `ceil((12+2)/2)` are both
+     * 7 upstream. A test demanding movement there would have asserted something
+     * neither this game nor the one it is ported from does, so the test was
+     * what changed.
+     *
+     * Three is where the tax genuinely moves, so three is what proves the
+     * sentence is composed from the instance rather than frozen.
+     */
+    expect(runtime.use(player, wildInfusion.id, undefined).ok).toBe(true);
+    expect(descOf(world, effects), 'two stacks still round to one turn').toBe(once);
+
+    expect(runtime.use(player, regenerationInfusion.id, undefined).ok).toBe(true);
+    expect(
+      descOf(world, effects),
+      `the sentence never moved at any stack (still "${once}") — the projector ` +
+        'is sending the static `description` rather than calling `describe`',
+    ).toContain('+2 turns on each');
+  });
+
+  it('says "turn" once and "turns" after that', () => {
+    // A status a player reads every fight, so the grammar is worth the branch.
+    const { world, player, effects, runtime } = arena();
+    expect(runtime.use(player, healingInfusion.id, undefined).ok).toBe(true);
+    expect(descOf(world, effects)).toContain('+1 turn on each');
   });
 });

@@ -1510,9 +1510,12 @@ export function projectEffects(
       badges.push({
         id: eff.effectId,
         name: def.displayName,
-        // WHAT IT DOES, authored on the definition and dead data until now. See
-        // `EffectView.desc`.
-        desc: def.description,
+        // WHAT IT DOES. Authored on the definition, or COMPOSED FROM THIS
+        // INSTANCE where the effect's strength is not fixed — upstream's
+        // `long_desc` is a function of `eff` on every stacking effect, and
+        // `EffectDef.describe` carries the argument. `description` is the
+        // fallback, so seventeen of the eighteen are unchanged.
+        desc: def.describe === undefined ? def.description : def.describe(eff),
         icon: def.icon,
         // The fallback glyph. See `EffectView.badge` — the client cannot work
         // out a distinct letter from the handful of effects it can see.
