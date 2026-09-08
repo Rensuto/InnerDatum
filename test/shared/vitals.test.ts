@@ -42,10 +42,13 @@ describe('every life readout asks the same question', () => {
    * THE RULE WAS WRITTEN DOWN THREE TIMES.
    * ═══════════════════════════════════════════════════════════════════════════
    *
-   * `ui/life.ts` argues that two health readouts disagreeing about when a body
+   * `shared/vitals.ts` argues that two health readouts disagreeing about when a body
    * is in trouble would be worse than one — and `HP_LOW = 1 / 3` then appeared
    * in `ui/life.ts`, `ui/partypanel.ts` and `ui/turncards.ts`, three copies of
-   * a number that must never differ.
+   * a number that must never differ. `ui/life.ts` has since been deleted with
+   * the bottom strip it drew on, so the list below is the two that remain plus
+   * the renderer — the guard is about surfaces that EXIST, and naming a file
+   * that does not would make it throw rather than assert.
    *
    * Nothing had drifted. That is the point: three copies of an agreed number is
    * a bug that has not happened yet, and this is what stops it happening after
@@ -53,7 +56,6 @@ describe('every life readout asks the same question', () => {
    */
   it('has exactly one definition of the threshold in the whole client', () => {
     const files = [
-      'src/client/ui/life.ts',
       'src/client/ui/partypanel.ts',
       'src/client/ui/turncards.ts',
       'src/client/render/canvas.ts',

@@ -75,7 +75,7 @@ describe('the life bar on a creature token', () => {
 
   it('turns at the same third every other readout turns at', () => {
     /**
-     * `shared/vitals.ts` holds the one threshold, and `ui/life.ts` argues why:
+     * `shared/vitals.ts` holds the one threshold, and its own header argues why:
      * two health readouts that disagreed about when a body is in trouble would
      * be worse than one. This is the fourth surface to ask.
      */

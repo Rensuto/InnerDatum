@@ -129,8 +129,10 @@ import type {
 import type { SpriteSource } from '../render/assets.ts';
 import type { PanelRect } from './panel.ts';
 import { HP_LOW } from '../../shared/vitals.ts';
-import { drawResource, resourceStripH } from './resource.ts';
-import type { ResourceView } from '../../shared/protocol.ts';
+import { RESOURCE_H, drawResource, resourceStripH } from './resource.ts';
+import { PURSE_GAP, drawPurse } from './purse.ts';
+import { drawXpBar, xpBarGeometry } from './xpbar.ts';
+import type { ProgressMsg, ResourceView } from '../../shared/protocol.ts';
 
 // ---------------------------------------------------------------------------
 // Geometry. See the layout note in the header before changing any of it.
@@ -231,14 +233,34 @@ const PANE_MIN_H = HEADER_H + PARTY_ROW_H;
  *
  * NOT IN THE COMPACT FORM. `PartyPaneMode.Portraits` is a 52-pixel strip of
  * faces with no room for a word, let alone twelve pips -- the same reason its
- * invites carry a mark rather than two buttons. On that form the bottom strip
- * remains the only copy, which is exactly the case `ui/life.ts` argues it exists
- * for.
+ * invites carry a mark rather than two buttons.
+ *
+ * THIS USED TO ADD "on that form the bottom strip remains the only copy". There
+ * is no bottom strip any more, so on a window narrow enough to force Portraits
+ * the pools, the level, the xp and the purse are on NO permanent surface at
+ * all. Stated rather than left implied: it is the narrow-window half of the
+ * trade recorded at the resource band below.
  */
 function rowHeightFor(row: PartyPaneRow, view: PartyPaneView, compact: boolean): number {
   if (compact) return PARTY_ROW_COMPACT_H;
-  const carriesPools = row.member.isSelf && view.resource !== null;
-  return carriesPools ? PARTY_ROW_H + RESOURCE_STRIP_H : PARTY_ROW_H;
+  if (!row.member.isSelf) return PARTY_ROW_H;
+  /**
+   * TWO INDEPENDENT BANDS, EACH PAID FOR ONLY WHEN ITS FRAME HAS LANDED.
+   *
+   * Summed rather than branched, because the two arrive from different frames
+   * and either can be the one that is missing: a `resource` frame lands with the
+   * class and a `progress` frame with the first xp. A single "self is taller"
+   * constant would reserve space for a band that is not being drawn, which the
+   * pane cannot afford on a short window -- `partyPaneHeight` is what clamps it
+   * into the band, and every reserved pixel is a row somebody else loses.
+   */
+  // `?? null` FOR THE REASON drawRow GIVES: a fixture-built view can be missing
+  // these fields entirely, and reserving on `undefined !== null` would make
+  // every self row taller than what is drawn into it.
+  const pools = (view.resource ?? null) !== null ? RESOURCE_STRIP_H : 0;
+  const carriesProgress = (view.progress ?? null) !== null || (view.money ?? null) !== null;
+  const progress = carriesProgress ? PROGRESS_STRIP_H : 0;
+  return PARTY_ROW_H + pools + progress;
 }
 
 /**
@@ -252,6 +274,17 @@ function rowHeightFor(row: PartyPaneRow, view: PartyPaneView, compact: boolean):
  * off in the player hud".
  */
 const RESOURCE_STRIP_H = resourceStripH(true);
+
+/**
+ * The band under the pools that holds the level, the xp track and the purse.
+ *
+ * `RESOURCE_H` RATHER THAN A LITERAL, and it is the same eighteen pixels the
+ * deleted bottom strip gave these three widgets — the row they shared was
+ * exactly `RESOURCE_H` tall and their internal offsets were written against it.
+ * Reusing the constant is what makes this a MOVE rather than a re-tuning: the
+ * widgets are handed a box the shape of the one they were designed in.
+ */
+const PROGRESS_STRIP_H = RESOURCE_H;
 
 const FONT_NAME = '10px ui-monospace, Consolas, monospace';
 const FONT_NAME_SELF = 'bold 10px ui-monospace, Consolas, monospace';
@@ -322,6 +355,36 @@ export type PartyPaneView = {
    * It is drawn on the SELF row, which is the row it is about.
    */
   readonly resource: ResourceView | null;
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE VIEWER'S OWN LEVEL AND XP, OR NULL BEFORE THE FIRST `progress` FRAME.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `resource`'s twin, one field for the same reason: there is one of these and
+   * it belongs to the body under this socket.
+   *
+   * IT USED TO LIVE ON A STRIP ALONG THE BOTTOM OF THE SCREEN, right-aligned
+   * beside the pools and the purse. That row was deleted to give the Case Log
+   * the bottom-left corner it has upstream, and this is where it went — the
+   * rule the strip's replacement follows being that a fact about the VIEWER
+   * belongs on the viewer's own row.
+   *
+   * NULL IS DRAWN AS NOTHING, never as zero. `ui/xpbar.ts` refuses a null
+   * outright, and `ui/charsheet.ts:344-347` carries the argument: a row reading
+   * `Level: 0` in the window between a welcome and the first frame is a wrong
+   * number stated confidently on the screen the player is staring at.
+   */
+  readonly progress: ProgressMsg | null;
+  /**
+   * THE VIEWER'S PURSE, OR NULL BEFORE THE FIRST `inventory` FRAME.
+   *
+   * NULL AND NOT ZERO, and this is the field where that distinction has already
+   * cost something: `0 GOLD` drawn on permanent furniture for the whole window
+   * before the first frame is the same wrong-number-stated-confidently failure
+   * as `Level: 0`. The bag's own title bar may use zero because a closed bag has
+   * no rows to afford; this surface may not.
+   */
+  readonly money: number | null;
 };
 
 export type PartyPaneLayout = {
@@ -364,6 +427,10 @@ export function partyPaneView(options: {
   readonly inCombat: boolean;
   /** The viewer's own pools. Straight through; see `PartyPaneView.resource`. */
   readonly resource: ResourceView | null;
+  /** The viewer's own level and xp. Straight through; see `PartyPaneView.progress`. */
+  readonly progress: ProgressMsg | null;
+  /** The viewer's purse. NULL, never zero — see `PartyPaneView.money`. */
+  readonly money: number | null;
 }): PartyPaneView {
   const roster = new Map(options.roster.map((member) => [member.id, member]));
 
@@ -393,6 +460,8 @@ export function partyPaneView(options: {
     invites: options.invites,
     inCombat: options.inCombat,
     resource: options.resource,
+    progress: options.progress,
+    money: options.money,
   };
 }
 
@@ -893,14 +962,31 @@ export function survivalWord(downed: DownedView, elsewhere: boolean): string {
  *   y+18 .. y+25    the hp bar, with the digits or the countdown right-aligned
  * and down the right-hand edge, vertically centred, up to two 24x24 badges.
  */
+/**
+ * The three viewer-private things the self row carries. See `PartyPaneView`'s
+ * own fields for why each is nullable and why null is never drawn as zero.
+ */
+type SelfExtras = {
+  readonly resource: ResourceView | null;
+  readonly progress: ProgressMsg | null;
+  readonly money: number | null;
+};
+
 function drawRow(
   ctx: CanvasRenderingContext2D,
   sprites: SpriteSource,
   row: PartyPaneRow,
   rect: PanelRect,
   inCombat: boolean,
-  /** The viewer's own pools, drawn under the SELF row only. Null before the frame. */
-  resource: ResourceView | null,
+  /**
+   * EVERYTHING THE VIEWER'S OWN ROW DRAWS AND NOBODY ELSE'S, in one object.
+   *
+   * A SINGLE PARAMETER RATHER THAN THREE. `resource` arrived here as a sixth
+   * positional and the level, the xp track and the purse would have made it
+   * eight — at which point a call site passing them in the wrong order is a
+   * silent bug that typechecks, because two of the three are `number | null`.
+   */
+  self: SelfExtras,
 ): void {
   const { member, effects, downed } = row;
   const away = !member.online;
@@ -968,19 +1054,25 @@ function drawRow(
    * teammate's pool, so there is nothing to draw on anybody else's row and
    * nowhere honest to get it. `view.resource` is one field for that reason.
    *
-   * ═══ THE BOTTOM STRIP STAYS ═══
-   * `ui/life.ts` argues at length that vitals must sit on furniture that cannot
-   * be dismissed, and lists this pane's own failure modes as the reason — it is
-   * toggled off with `p` and it degrades to faces on a narrow window. Both are
-   * still true, so removing the strip would reopen the exact gap that file was
-   * written to close. This is the copy the eye actually uses; that one is the
-   * copy that is always there.
+   * ═══ THE BOTTOM STRIP IS GONE, AND THIS PARAGRAPH USED TO SAY IT STAYS ═══
+   * It read: *"removing the strip would reopen the exact gap `ui/life.ts` was
+   * written to close"* — that file argues vitals must sit on furniture which
+   * cannot be dismissed, and names this pane's own two failure modes as the
+   * reason: it is toggled off with `p`, and it degrades to faces on a narrow
+   * window.
+   *
+   * BOTH ARE STILL TRUE. The strip was deleted anyway, on the ruling that every
+   * number on it was already here and that it was standing in the corner the
+   * Case Log occupies upstream. So this IS the only always-on copy now, and the
+   * two gaps are real rather than covered. That is a trade, recorded as one —
+   * see `the player can always see their own health` in hudwiring.test.ts,
+   * which is where the exposure is written down instead of being rediscovered.
    */
-  if (member.isSelf && resource !== null) {
+  if (member.isSelf && self.resource !== null) {
     drawResource({
       ctx,
       sprites,
-      resource,
+      resource: self.resource,
       stacked: true,
       x: token.x,
       y: y + PARTY_ROW_H - 1,
@@ -991,6 +1083,54 @@ function drawRow(
       // why `stacked` is set rather than the pane being widened: `MAX_PIPS` is
       // 16, so a discrete pool alone can want 224 and NO pane width is safe.
       width: Math.max(0, x + w - token.x),
+    });
+  }
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * AND UNDER THE POOLS, THE LEVEL, THE XP TRACK AND THE PURSE.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * THE ARRANGEMENT IS THE DELETED STRIP'S, MOVED RATHER THAN REDESIGNED: the
+   * purse takes the left of the band and the xp widget right-aligns into the
+   * same box, so neither has to know the other's width. `xpBarGeometry` is
+   * asked where it starts and the purse is given what is left, which is the one
+   * authority on that edge — a literal there would overlap the widget for
+   * exactly the player who reached the cap and grew a `TOP` caption.
+   *
+   * BELOW THE POOLS, AND ONLY AS FAR BELOW AS THEY ACTUALLY TOOK. The offset
+   * adds `RESOURCE_STRIP_H` only when a `resource` frame has landed, because
+   * `rowHeightFor` reserved it on the same condition. Reserving on one condition
+   * and drawing on another is how a band ends up painted over the row beneath.
+   */
+  /**
+   * ═══ NORMALISED WITH `?? null`, AND THAT IS NOT BELT AND BRACES ═══
+   * `PartyPaneView.progress` is typed non-optional, so inside this file the
+   * coalesce looks redundant. It is not: every fixture that builds a view by
+   * hand predates these two fields, and an object literal missing them reaches
+   * here as `undefined` — which passes `!== null` and walks straight into
+   * `xpBarGeometry(undefined)` and a TypeError on `xpToNext`. The party-pane
+   * tests caught exactly that. Absent and null mean the same thing to this band,
+   * so it says so once here rather than four times below.
+   */
+  const progress = self.progress ?? null;
+  const money = self.money ?? null;
+  if (member.isSelf && (progress !== null || money !== null)) {
+    const bandY = y + PARTY_ROW_H - 1 + (self.resource !== null ? RESOURCE_STRIP_H : 0);
+    const bandX = token.x;
+    const bandW = Math.max(0, x + w - token.x);
+    const xpGeometry = xpBarGeometry(progress, bandX, bandY, bandW);
+    drawXpBar({ ctx, progress, x: bandX, y: bandY, width: bandW });
+    // NULL PROGRESS MEANS NO XP WIDGET, so the purse may use the whole band; it
+    // right-aligns into what it is given and `ui/purse.ts` refuses a box too
+    // narrow to hold the text rather than drawing a clipped number.
+    const xpLeft = xpGeometry === null ? bandX + bandW : (xpGeometry.caption ?? xpGeometry.track).x;
+    drawPurse({
+      ctx,
+      money,
+      x: bandX,
+      y: bandY,
+      width: Math.max(0, xpLeft - PURSE_GAP - bandX),
     });
   }
 
@@ -1238,7 +1378,7 @@ export function drawPartyPane(options: PartyPaneOptions): void {
 
   for (const slot of geometry.rows) {
     if (compact) drawCompactRow(ctx, sprites, slot.row, slot.rect);
-    else drawRow(ctx, sprites, slot.row, slot.rect, view.inCombat, view.resource);
+    else drawRow(ctx, sprites, slot.row, slot.rect, view.inCombat, view);
   }
 
   ctx.restore();

@@ -159,6 +159,8 @@ function trio(invites: readonly PartyInviteView[] = []): PartyPaneView {
     ]),
     inCombat: true,
     resource: null,
+    progress: null,
+    money: null,
   });
 }
 
@@ -303,6 +305,8 @@ describe('the pane draws the party frame and joins only what that frame cannot c
       effects: new Map(),
       inCombat: false,
       resource: null,
+      progress: null,
+      money: null,
     });
     expect(view.rows[0]?.downed).toEqual({
       status: DownedStatus.Downed,
@@ -348,6 +352,8 @@ describe('the pane draws the party frame and joins only what that frame cannot c
       effects: new Map(),
       inCombat: false,
       resource: null,
+      progress: null,
+      money: null,
     });
     expect(view.rows[0]?.downed?.status).toBe(DownedStatus.Downed);
     expect(view.rows[0]?.downed?.turnsLeft).toBe(2);
@@ -365,6 +371,8 @@ describe('the pane draws the party frame and joins only what that frame cannot c
       effects: new Map(),
       inCombat: false,
       resource: null,
+      progress: null,
+      money: null,
     });
     // Alphabetical would be Ada first; "self first" would be Ada first too. Both
     // would move a row under a cursor that is about to press Kick.
@@ -432,6 +440,8 @@ describe('the pane collapses rather than burying the map', () => {
       effects: new Map(),
       inCombat: false,
       resource: null,
+      progress: null,
+      money: null,
     });
     expect(
       partyPaneLayout({ view: empty, width: 900, top: 20, bottom: 420, rightReserved: 214 }),
@@ -447,6 +457,8 @@ describe('the pane collapses rather than burying the map', () => {
       effects: new Map(),
       inCombat: false,
       resource: null,
+      progress: null,
+      money: null,
     });
     const layout = partyPaneLayout({
       view: solo,
@@ -1170,5 +1182,118 @@ describe('the viewer’s own pools on the pane', () => {
     for (const id of ids) {
       expect(hits, `${id} became unreachable`).toContain(id);
     }
+  });
+});
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE LEVEL, THE XP TRACK AND THE PURSE, WHICH USED TO BE ON A BOTTOM STRIP.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * That strip was deleted — every number on it was already here or belonged
+ * here, and it was standing in the corner the Case Log occupies upstream
+ * (`Minimalist.lua:381`). These three had nowhere else permanent to be, so they
+ * moved onto the viewer's own row.
+ *
+ * THE THING THAT BREAKS SILENTLY IS THE RESERVATION. `rowHeightFor` decides a
+ * row's height and two other functions read it; draw a band the height was not
+ * reserved for and it paints over the row beneath, on a pane that is already
+ * clamped for height on a short window.
+ */
+/**
+ * A one-member view carrying the viewer's own row, with the two viewer-private
+ * fields under test supplied by the caller.
+ */
+function viewWith(over: {
+  readonly progress: PartyPaneView['progress'];
+  readonly money: PartyPaneView['money'];
+}): PartyPaneView {
+  return partyPaneView({
+    state: state([member({ id: 'actor_a', name: 'Dalt', isSelf: true })]),
+    invites: [],
+    roster: [],
+    actors: new Map(),
+    effects: new Map(),
+    inCombat: false,
+    resource: null,
+    progress: over.progress,
+    money: over.money,
+  });
+}
+
+describe('the viewer’s own level and purse on the pane', () => {
+  const progress = {
+    v: PROTOCOL_VERSION,
+    t: 'progress',
+    level: 3,
+    xp: 40,
+    xpToNext: 100,
+    unspent: 0,
+    unspentGenerics: 0,
+  } as const;
+
+  it('makes the self row taller only once a frame has landed', () => {
+    const bare = viewWith({ progress: null, money: null });
+    const withProgress = viewWith({ progress, money: null });
+    expect(
+      partyPaneHeight(withProgress, PartyPaneMode.Rows),
+      'the band was drawn without being reserved',
+    ).toBeGreaterThan(partyPaneHeight(bare, PartyPaneMode.Rows));
+  });
+
+  it('reserves for the purse alone, with no xp frame at all', () => {
+    /**
+     * THE TWO ARRIVE FROM DIFFERENT FRAMES and either can be the one that is
+     * missing — `progress` lands with the first xp and `inventory` with the
+     * first bag. A reservation gated on `progress` alone would draw the purse
+     * into a band it never asked for.
+     */
+    const bare = viewWith({ progress: null, money: null });
+    const withMoney = viewWith({ progress: null, money: 15 });
+    expect(partyPaneHeight(withMoney, PartyPaneMode.Rows)).toBeGreaterThan(
+      partyPaneHeight(bare, PartyPaneMode.Rows),
+    );
+  });
+
+  it('survives a view that predates the two fields entirely', () => {
+    /**
+     * `undefined` IS NOT `null`, and this is not hypothetical: every fixture in
+     * this file predated these fields, and `self.progress !== null` passed for
+     * `undefined` and walked into `xpBarGeometry(undefined)` and a TypeError on
+     * `xpToNext`. Both the reservation and the draw normalise with `?? null`;
+     * this is the test that caught it.
+     */
+    const legacy = { ...viewWith({ progress: null, money: null }) } as Record<string, unknown>;
+    delete legacy['progress'];
+    delete legacy['money'];
+    const view = legacy as unknown as PartyPaneView;
+
+    // THE HEIGHT PATH IS NOT WHERE IT THREW. `partyPaneHeight` only reserves;
+    // the TypeError was inside `drawRow`, and a test that exercised the
+    // reservation alone passed with the guard removed. This drives the real
+    // painter, which is the half that touched `progress.xpToNext`.
+    const stub = new Proxy(
+      {},
+      {
+        get: (_target, prop: string) => {
+          if (prop === 'measureText') return () => ({ width: 20 });
+          if (prop === 'canvas') return undefined;
+          return () => undefined;
+        },
+        set: () => true,
+      },
+    ) as unknown as CanvasRenderingContext2D;
+    const layout = partyPaneLayout({
+      view,
+      width: 900,
+      top: 0,
+      bottom: 500,
+      rightReserved: 0,
+    });
+    expect(layout).not.toBeNull();
+    if (layout === null) return;
+    expect(() =>
+      drawPartyPane({ ctx: stub, sprites: { sprite: () => undefined }, view, layout }),
+    ).not.toThrow();
   });
 });

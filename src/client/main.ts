@@ -286,8 +286,7 @@ import {
 // THE CEILING RULE, SHARED WITH THE SERVER THAT ENFORCES IT. One function, so
 // a greyed `+` and a refused frame can never disagree about where the limit is.
 import { STAT_MAX, canRaiseStat } from '../shared/progression.ts';
-import { drawLife, LIFE_W } from './ui/life.ts';
-import { drawResource, RESOURCE_H, resourceLabel } from './ui/resource.ts';
+import { resourceLabel } from './ui/resource.ts';
 import {
   TalentHitKind,
   drawTalentPanel,
@@ -309,8 +308,6 @@ import {
 // that its strip is a row of COUNTABLE PIPS and not a bar, and a continuous
 // gauge authored inside it is a comment that will mislead somebody within a
 // month. They share one 18px strip and nothing else.
-import { PURSE_GAP, drawPurse } from './ui/purse.ts';
-import { drawXpBar, xpBarGeometry } from './ui/xpbar.ts';
 import {
   DeathStage,
   drawRespawnPrompt,
@@ -655,10 +652,21 @@ const DOCK_MIN_H = 84;
 function panelBand(height: number, hudTop: number): { top: number; bottom: number } {
   return {
     top: hudTop + DOCK_MARGIN,
-    // Stops above the resource pips, the targeting hint and the notice line, all
-    // of which are full-width strips. Derived from the modules' own exported
-    // heights so no two bands can overlap because a slot changed size.
-    bottom: height - HOTBAR_TOTAL_H - RESOURCE_H - LINE_H * 2 - DOCK_MARGIN,
+    /**
+     * Stops above the targeting hint and the notice line, both of which are
+     * full-width strips. Derived from the modules' own exported heights so no
+     * two bands can overlap because a slot changed size.
+     *
+     * ═══ THE `- RESOURCE_H` TERM WENT WITH THE STRIP, AND IT WAS THE SILENT
+     * HALF OF THAT DELETION ═══
+     * The bottom row of widgets was reserved HERE and painted from a separate
+     * `resourceY` in `paintHud`, so deleting the paint alone would have left
+     * every panel — sheet, talents, inventory, escape menu, log, party pane,
+     * respawn plate — stopping eighteen pixels short of a gutter nothing drew
+     * into. Nothing would have looked broken; there would simply have been a
+     * band of map that no panel was allowed to use.
+     */
+    bottom: height - HOTBAR_TOTAL_H - LINE_H * 2 - DOCK_MARGIN,
   };
 }
 
@@ -3040,9 +3048,17 @@ function partyView(): PartyPaneView | null {
     effects,
     inCombat: turn?.inCombat === true,
     // THE VIEWER'S OWN, and there is no other kind: `ResourceView` is
-    // viewer-private, so this is the same `resource` the bottom strip draws and
-    // the pane puts it on the self row. See `PartyPaneView.resource`.
+    // viewer-private, so the pane puts it on the self row.
+    // See `PartyPaneView.resource`.
     resource,
+    // ═══ AND THE TWO THAT MOVED HERE WHEN THE BOTTOM STRIP WAS DELETED ═══
+    // Both are viewer-private in the same way and both land on the self row.
+    progress,
+    // `?? null` AND NOT `?? 0`, and the distinction has already cost something
+    // once: a `0 GOLD` drawn on permanent furniture for the whole window before
+    // the first `inventory` frame is a wrong number stated confidently. The
+    // bag's own title may use zero, because a closed bag has no rows to afford.
+    money: inventory?.money ?? null,
   });
 }
 
@@ -4540,102 +4556,45 @@ const paintHud: HudPainter = (ctx, width, height) => {
     }
   }
 
-  const resourceY = height - HOTBAR_TOTAL_H - RESOURCE_H;
-
   /**
-   * ═══ YOUR OWN LIFE, FIRST ON THE ROW AND ALWAYS ON SCREEN ═══
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE BOTTOM STRIP IS GONE. Four widgets shared one 18-pixel row here.
+   * ═══════════════════════════════════════════════════════════════════════════
    *
-   * See ui/life.ts for what this closes: until it existed, every copy of the
-   * player's own HP could be absent at the moment it mattered — the party pane
-   * toggles off with `p` and sheds its digits on a narrow window, the turn cards
-   * are drawn only in combat, and the character sheet is behind a keypress.
+   * `drawLife`, `drawResource`, `drawXpBar` and `drawPurse` were laid out left
+   * to right across `width - 8` at `height - HOTBAR_TOTAL_H - RESOURCE_H`.
+   * Every one of them is now somewhere the player was already looking:
    *
-   * IT IS READ OFF `actors`, NOT off the party frame or the turn frame. That map
-   * is the one thing that is always populated for the body under this socket's
-   * control, in combat and out of it, solo and in a party — so this widget has
-   * the same lifetime as the strip it sits on.
+   *   LIFE and the POOLS were ALREADY on the party pane — it draws an hp bar
+   *     with digits on every row, and the viewer's own pools under their own
+   *     token. Two copies of a number a player checks constantly is two places
+   *     for it to be wrong.
+   *   LEVEL, XP and the PURSE moved onto that pane in the same commit, on the
+   *     viewer's own row, because they had nowhere else permanent to be.
    *
-   * THE PIPS SHIFT RIGHT BY A CONSTANT. `LIFE_W` is fixed at the widest digits
-   * the widget can hold rather than measured, so healing and being hit cannot
-   * shuffle the resource row sideways.
+   * WHAT THE ROW COST WAS NOT ITS PIXELS, IT WAS THE CORNER. The Case Log is a
+   * bottom-left window upstream — `Minimalist.lua:381`,
+   * `gamelog = {x=0, y=hup-210, w=math.floor(w/2), h=200}` — and this row was
+   * standing in the only place it could go.
+   *
+   * `panelBand` STOPPED RESERVING IT TOO, at its own declaration. That
+   * subtraction was independent of the `resourceY` this block used to compute:
+   * the strip was reserved in the band and painted from the row in two separate
+   * places, so removing only the paint would have left an eighteen-pixel dead
+   * gutter above the hotbar that nothing drew into.
    */
-  const meBody = selfId === null ? null : (actors.get(selfId) ?? null);
-  drawLife({
-    ctx,
-    hp: meBody === null ? null : meBody.hp,
-    maxHp: meBody?.maxHp ?? 0,
-    x: 4,
-    y: resourceY + 4,
-  });
-  drawResource({
-    ctx,
-    sprites,
-    resource,
-    x: 4 + LIFE_W,
-    y: resourceY + 3,
-    width: width - 8 - LIFE_W,
-  });
-  // ═══ v12 — `Lv 3` AND THE XP TRACK, SHARING THIS ONE 18-PIXEL STRIP ═══
-  //
-  // THE SAME x/y/width AS `drawResource` ABOVE, DELIBERATELY. The pips are
-  // left-aligned (ui/resource.ts:70-74) and this widget right-aligns itself
-  // inside the same box, so the two occupy the empty end of one strip rather
-  // than costing a second row of the viewport — and neither has to know the
-  // other's width.
-  //
-  // IT IS PERMANENT FURNITURE, WHICH IS THE WHOLE POINT. Level, xp and the
-  // points in hand were drawn ONLY inside two panels the player has to open by
-  // hand, so a banked point was invisible to anybody who did not already know to
-  // press `g` and the entire talent tree was dead content for a party that never
-  // did. This is the surface that is always on screen.
-  //
-  // IT DRAWS NOTHING WHILE `progress` IS NULL, and that is not an edge case: it
-  // is a real window on connect, and it is exactly when the player is staring at
-  // the screen. ui/xpbar.ts owns that refusal for ui/charsheet.ts:344-347's
-  // reason — "a row reading Level: 0 in that window would be a wrong number
-  // stated confidently".
-  const stripX = 4;
-  const stripY = resourceY + 3;
-  const stripW = width - 8;
-  drawXpBar({ ctx, progress, x: stripX, y: stripY, width: stripW });
-
-  /**
-   * ═══ AND THE PURSE, BETWEEN THE PIPS AND THE TRACK ═══
-   *
-   * `Minimalist.lua:1532-1540` blits `player.money` onto the permanent frame
-   * every pass. Ours had it only in the bag's title bar, so the number a
-   * player checks before walking into a shop was behind a keypress from
-   * every screen except the one that spends it.
-   *
-   * THE BOX IS COMPUTED FROM `xpBarGeometry`, NOT GUESSED. The experience
-   * widget right-aligns itself and its width changes with the `TOP` caption
-   * at the level cap, so a literal here would overlap it for exactly the
-   * player who reached 50. Asking the widget where it starts keeps one
-   * authority on that edge — ui/xpbar.ts's own rule for importing `PIP_PX`
-   * rather than copying it.
-   *
-   * NULL PROGRESS MEANS NO XP WIDGET, so the purse may use the whole strip;
-   * it right-aligns into it and ui/purse.ts refuses a box too narrow to hold
-   * the text.
-   *
-   * `inventory?.money ?? null` AND NOT `?? 0` — the zero at the bag's call
-   * site is right there because a closed bag draws no rows to afford. Here it
-   * would print `0 GOLD` on permanent furniture for the whole window between
-   * a welcome and the first `inventory` frame, which is a wrong number stated
-   * confidently on the screen the player is staring at.
-   */
-  const xpGeometry = xpBarGeometry(progress, stripX, stripY, stripW);
-  const xpLeft = xpGeometry === null ? stripX + stripW : (xpGeometry.caption ?? xpGeometry.track).x;
-  drawPurse({
-    ctx,
-    money: inventory?.money ?? null,
-    x: stripX,
-    y: stripY,
-    width: Math.max(0, xpLeft - PURSE_GAP - stripX),
-  });
 
   const hint = targeting?.hint() ?? '';
-  const hintY = resourceY - LINE_H;
+  /**
+   * THE PROSE LINES ANCHOR TO THE HOTBAR NOW, not to the strip that is gone.
+   *
+   * This was `resourceY - LINE_H`, and `resourceY` was the FOURTH reader of a
+   * value the strip happened to compute — the targeting hint, the respawn
+   * prompt, the revive prompt and the refusal notice all hang off it, and none
+   * of them belongs to the strip. They move down by `RESOURCE_H` into the space
+   * the strip used to occupy, which is where they always should have been.
+   */
+  const hintY = height - HOTBAR_TOTAL_H - LINE_H;
   if (hint !== '') {
     // GOLD for a legal aim, ORANGE for one this client expects to be refused —
     // and the words say which, because colour is never the only signal here.

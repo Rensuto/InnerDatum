@@ -6,13 +6,18 @@
  *                  WHEN A BODY IS IN TROUBLE — ONE ANSWER
  * ═══════════════════════════════════════════════════════════════════════════
  *
- * `ui/life.ts` states the rule this file exists to keep, and states it as an
+ * `ui/life.ts` stated the rule this file exists to keep, and stated it as an
  * argument rather than a preference: *"the colour is the party pane's, exactly
  * — GOLD, turning ORANGE under a third. Two health readouts that disagreed
  * about when a body is in trouble would be worse than one."*
  *
+ * THAT FILE IS DELETED. It drew the player's own hp on a bottom strip that was
+ * removed to give the Case Log the corner it has upstream, and nothing else
+ * imported it. The rule outlived it — `ui/partypanel.ts` and `ui/turncards.ts`
+ * still read `HP_LOW` from here, which is exactly why it is here.
+ *
  * That rule was written down three times. `HP_LOW = 1 / 3` appeared in
- * `ui/life.ts`, `ui/partypanel.ts` and `ui/turncards.ts`, each with its own
+ * `ui/life.ts` (now gone), `ui/partypanel.ts` and `ui/turncards.ts`, each with its own
  * copy of the same number — which is precisely the shape `shared/version.ts`
  * says keeps biting this codebase: *"a bound written out twice is the shape
  * this codebase keeps getting bitten by — most recently `HAUNTS`, which learned
@@ -40,7 +45,7 @@
  *
  * ToME steps its own tactical frame at .75/.50/.25 (Actor.lua:947-957). This
  * game answers the same question with one step and a proportional bar, because
- * `ui/life.ts` also reserves CRIMSON for "hostiles are engaged" and a four-band
+ * `ui/life.ts` also reserved CRIMSON for "hostiles are engaged" and a four-band
  * ramp would spend it — and because every surface that carries this also
  * carries DIGITS, except the creature token, whose bar is proportional and says
  * the rest by its height.

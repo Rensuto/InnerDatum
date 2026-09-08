@@ -1000,7 +1000,7 @@ const LOOT_PILE_OFFSET = 3;
  *   ally, hostile or elite far more loudly than an edge could, and the right
  *   edge is the status-pip column (`paintStatusPips`).
  * COLOUR. Upstream steps green/yellow/orange/red at .75/.50/.25. This game has
- *   one step — `shared/vitals.ts` — because `ui/life.ts` reserves CRIMSON for
+ *   one step — `shared/vitals.ts` — because the HUD reserves CRIMSON for
  *   "hostiles are engaged" and a four-band ramp would spend it, and because
  *   every other readout here already agrees on one boundary. The FRACTION is
  *   carried by the bar's height, which is continuous; the colour only has to

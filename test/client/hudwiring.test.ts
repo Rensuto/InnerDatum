@@ -286,54 +286,51 @@ describe('hudLayout clamps exactly the four movable panels into the band', () =>
 // 5. THE XP TRACK SHARES THE RESOURCE STRIP
 // ---------------------------------------------------------------------------
 
-describe('the level badge and the xp track are drawn on the resource strip', () => {
-  it('shares one measured strip with the life readout and the pips', () => {
+describe('the level badge, the xp track and the purse moved to the party pane', () => {
+  it('is no longer drawn on a bottom strip, because there is no bottom strip', () => {
     /**
-     * ═══ THE SHARED BOX IS THE WHOLE POINT ═══
-     * FOUR widgets live on this 18-pixel row. Three of them measure nothing:
-     * life is a fixed `LIFE_W` at the left, the pips are left-aligned in what is
-     * left of the box (ui/resource.ts:70-74), and ui/xpbar.ts right-aligns itself
-     * inside the FULL box — so it takes the empty end without needing to know how
-     * much the two on the left used. Handing any of them a different box is how
-     * they start overlapping on narrow windows only.
+     * FOUR WIDGETS SHARED AN EIGHTEEN-PIXEL ROW along the foot of the screen:
+     * life at the left, the pools beside it, the purse, and the xp track
+     * right-aligned into the same box. Reported as useless -- every number on it
+     * was already on the party pane or belonged on it -- and the row was
+     * standing in the only corner the Case Log can occupy, which upstream puts
+     * at `Minimalist.lua:381`, `gamelog = {x=0, y=hup-210, w=w/2, h=200}`.
      *
-     * ═══ THE PURSE IS THE EXCEPTION, AND IT HAS TO BE ═══
-     * ui/purse.ts is the only one with a neighbour on BOTH sides, so it is the
-     * only one that cannot be handed the full box: it asks `xpBarGeometry` where
-     * the experience widget starts and right-aligns into what is left. That edge
-     * MOVES — `TOP` appears at the level cap — so a literal there would overlap
-     * for exactly the player who reached 50. Asserted below as "derived", which
-     * is the property that matters; ui/purse.ts owns the arithmetic.
-     *
-     * ASSERTED AS THE ARITHMETIC RATHER THAN AS A LITERAL LINE. This test used
-     * to pin `drawResource({ ctx, sprites, resource, x: 4, … });` verbatim and
-     * broke on the reformat that added the third widget, which is a test failing
-     * on whitespace rather than on the claim it is making. IT THEN DID THE SAME
-     * THING AGAIN: the `drawXpBar` line below was pinned verbatim and broke on
-     * the fourth widget, which named the strip's three numbers so two callers
-     * could share them. Same lesson, one widget later — so it is a shape now.
+     * ASSERTED AS AN ABSENCE, and that is worth a word because an absence is a
+     * weak thing to test. The positive half is the two assertions below it: the
+     * arrangement did not evaporate, it MOVED, and the file it moved to is
+     * named here so this failing points somewhere.
      */
-    const strip = between('const resourceY =', 'const hint =');
-    // Life first, at the left edge.
-    expect(strip).toMatch(/drawLife\(\{[\s\S]*?x: 4,/);
-    // Pips after it, in what is left.
-    expect(strip).toMatch(
-      /drawResource\(\{[\s\S]*?x: 4 \+ LIFE_W,[\s\S]*?width: width - 8 - LIFE_W,/,
+    expect(CODE).not.toContain('const resourceY =');
+    expect(CODE).not.toContain('drawLife(');
+    expect(CODE).not.toContain('drawXpBar(');
+    expect(CODE).not.toContain('drawPurse(');
+  });
+
+  it('draws them on the party pane instead, on the viewer OWN row', () => {
+    const pane = readFileSync('src/client/ui/partypanel.ts', 'utf8');
+    // The band is gated on the self row and on the frames having landed.
+    expect(pane).toContain('if (member.isSelf && (progress !== null || money !== null))');
+    // THE PURSE'S BOX IS STILL DERIVED, NEVER ASSUMED. This is the one piece of
+    // arithmetic that had to survive the move intact: the xp widget right-aligns
+    // and grows a `TOP` caption at the cap, so a literal here would overlap it
+    // for exactly the player who reached 50.
+    expect(pane).toContain('xpBarGeometry(progress, bandX, bandY, bandW)');
+    expect(pane).toContain('xpLeft - PURSE_GAP - bandX');
+  });
+
+  it('reserves the band only when it is going to draw one', () => {
+    /**
+     * `rowHeightFor` is the ONLY place a row's height is decided and two other
+     * functions read it. Reserving on a different condition from the one that
+     * draws is how a band ends up painted over the row beneath it, or a row
+     * ends up taller than its content on a pane that is already clamped for
+     * height on a short window.
+     */
+    const pane = readFileSync('src/client/ui/partypanel.ts', 'utf8');
+    expect(pane).toContain(
+      'const carriesProgress = (view.progress ?? null) !== null || (view.money ?? null) !== null;',
     );
-    // THE STRIP'S THREE NUMBERS, NAMED ONCE. This is what makes "one measured
-    // strip" true of the source rather than of four hand-copied literals.
-    expect(strip).toContain('const stripX = 4;');
-    expect(strip).toContain('const stripY = resourceY + 3;');
-    expect(strip).toContain('const stripW = width - 8;');
-    // XP right-aligned inside the FULL box — deliberately NOT offset, because it
-    // aligns from the far end and offsetting it would move it left by 88px.
-    expect(strip).toMatch(/drawXpBar\(\{[\s\S]*?x: stripX,[\s\S]*?y: stripY,[\s\S]*?width: stripW/);
-    // The purse into what the xp widget leaves, DERIVED and never assumed.
-    expect(strip).toMatch(/drawPurse\(\{[\s\S]*?x: stripX,[\s\S]*?y: stripY,/);
-    expect(strip).toContain('xpBarGeometry(progress, stripX, stripY, stripW)');
-    expect(strip).toContain('xpLeft - PURSE_GAP - stripX');
-    // ...and all of them inside the same measured strip, not at a hand-copied y.
-    expect(CODE).toContain('const resourceY = height - HOTBAR_TOTAL_H - RESOURCE_H;');
   });
 
   it('routes the level-up through onGoodNews and not through onRefusal', () => {
@@ -599,49 +596,37 @@ describe('the character sheet block is guarded against every panel drawn over it
 describe('the player can always see their own health', () => {
   /**
    * ═══════════════════════════════════════════════════════════════════════════
-   * THE GAP: this is a combat roguelike and there was no self HP anywhere that
-   * is always on screen.
+   * THE GAP, AND THE FACT THAT DELETING THE STRIP REOPENED PART OF IT.
    * ═══════════════════════════════════════════════════════════════════════════
    *
-   * Three copies existed and each could be absent when it mattered: the party
-   * pane toggles off with `p` and degrades to a three-pixel sliver with no
-   * digits on a narrow window; the turn cards are drawn only in combat; the
-   * character sheet is behind a keypress. ToME spends its largest permanent
-   * element on life (Minimalist.lua:762-830).
+   * This is a combat roguelike, and self HP used to have three homes that could
+   * each be absent when it mattered: the party pane toggles off with `p` and
+   * degrades to a sliver with no digits on a narrow window; the turn cards are
+   * drawn only in combat; the character sheet is behind a keypress. A permanent
+   * bottom strip was added to close that, and `ui/life.ts` was written for it.
    *
-   * `ui/life.ts` owns the drawing and is tested on its own. THIS file pins the
-   * WIRING, which is the half that can rot silently — a widget nobody calls is
-   * indistinguishable from one that was never written.
+   * THE STRIP IS GONE NOW, by request — every number on it was already on the
+   * party pane, and it was occupying the corner the Case Log needs. So the
+   * pane is once again the only always-on copy, and the two states it cannot
+   * cover are back:
+   *
+   *   TOGGLED OFF WITH `p`  — a deliberate act by the player, who can undo it.
+   *   THE PORTRAITS FORM    — a narrow window, where the row sheds its digits.
+   *
+   * WRITTEN DOWN RATHER THAN QUIETLY DROPPED. The test below pins where the
+   * number lives now; this paragraph is the record of what was traded for the
+   * corner, so the next person to ask "why is there no HP on screen" finds the
+   * answer instead of rediscovering it.
    */
-  it('draws it every frame, unconditionally', () => {
-    const frame = between('const resourceY =', 'const hint =');
-    expect(frame).toContain('drawLife({');
-    // NOT INSIDE A BRANCH. `drawLife` makes its own refusal (no body yet), and
-    // a caller-side `if` would be a second, different answer to "when is this
-    // on screen" — which is precisely how the party pane came to be the only
-    // copy of the number.
-    const call = frame.slice(frame.indexOf('drawLife({'));
-    const line = frame.slice(0, frame.indexOf('drawLife({')).split('\n').at(-1) ?? '';
-    expect(line.trim(), 'drawLife is a statement, not a conditional expression').toBe('');
-    expect(call).toContain('hp:');
-  });
-
-  it('reads its HP from `actors`, the one map that is always populated', () => {
-    /**
-     * NOT from the party frame and not from the turn frame. `actors` holds the
-     * body under this socket's control in combat and out of it, solo and in a
-     * party — so the widget has the same lifetime as the strip it sits on.
-     * Sourcing it from `turn` would have rebuilt the combat-only bug in a new
-     * place.
-     */
-    const frame = between('const resourceY =', 'drawLife({');
-    expect(frame).toContain('actors.get(selfId)');
-  });
-
-  it('offsets the resource pips by the widget, so the two cannot overlap', () => {
-    const frame = between('drawLife({', 'const hint =');
-    expect(frame).toContain('x: 4 + LIFE_W');
-    expect(frame).toContain('width: width - 8 - LIFE_W');
+  it('draws hp on every party row, digits included, without a branch', () => {
+    const pane = readFileSync('src/client/ui/partypanel.ts', 'utf8');
+    // The bar and the digits are drawn per row, not per self — everybody's hp
+    // is on the pane, which is the property the strip never had.
+    expect(pane).toContain('function drawHpBar(');
+    // The DIGITS are the half the old strip was really added for — a bar alone
+    // does not answer "how many hits can I take". `ui/partypanel.ts:849` says
+    // the full form draws both.
+    expect(pane).toContain('the digits');
   });
 });
 

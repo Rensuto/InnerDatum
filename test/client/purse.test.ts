@@ -215,23 +215,49 @@ describe('the call site', () => {
    * quietly replacing the derived edge with a literal. This scrapes the source
    * to say it has not, the way test/client/assets.test.ts guards the painters.
    */
-  const source = readFileSync(new URL('../../src/client/main.ts', import.meta.url), 'utf8');
+  /**
+   * THE CALL SITE MOVED FROM main.ts TO THE PARTY PANE, and this scrape moved
+   * with it. The purse used to sit on a bottom strip beside the pools and the
+   * xp track; that strip was deleted to give the Case Log the bottom-left
+   * corner it occupies upstream, and every widget on it that had nowhere else
+   * to be went onto the viewer's own row on the pane.
+   *
+   * WHAT IS BEING GUARDED IS UNCHANGED: `purseBox` in this file RESTATES the
+   * arithmetic of the real call site, so the one thing that would silently
+   * invalidate every assertion above is the real one replacing its derived edge
+   * with a literal.
+   */
+  const source = readFileSync(
+    new URL('../../src/client/ui/partypanel.ts', import.meta.url),
+    'utf8',
+  );
 
   it('derives the purse’s box from xpBarGeometry, never from a literal', () => {
     const call = source.slice(source.indexOf('drawPurse({'));
     expect(call).not.toBe('');
 
     // The edge is ASKED FOR, not assumed.
-    expect(source).toContain('xpBarGeometry(progress, stripX, stripY, stripW)');
+    expect(source).toContain('xpBarGeometry(progress, bandX, bandY, bandW)');
     // ...and it is the caption-or-track edge, because `TOP` widens the widget
     // at the level cap and the badge alone would be the wrong edge.
     expect(source).toContain('(xpGeometry.caption ?? xpGeometry.track).x');
     // ...and the purse is placed against it, minus this file's own gap.
-    expect(call.slice(0, call.indexOf('})'))).toContain('xpLeft - PURSE_GAP - stripX');
+    expect(call.slice(0, call.indexOf('})'))).toContain('xpLeft - PURSE_GAP - bandX');
   });
 
   it('passes null rather than zero when no inventory frame has arrived', () => {
+    /**
+     * THE COALESCE MOVED UP A LAYER, and stayed one. `main.ts` now writes
+     * `money: inventory?.money ?? null` into the pane's VIEW rather than into
+     * this call, and `drawRow` normalises it a second time with `?? null` --
+     * because a fixture-built view can be missing the field entirely and
+     * `undefined` would sail past a `!== null` guard into a TypeError. Both are
+     * asserted, because either one alone leaves a route in.
+     */
     const call = source.slice(source.indexOf('drawPurse({'));
-    expect(call.slice(0, call.indexOf('})'))).toContain('inventory?.money ?? null');
+    expect(call.slice(0, call.indexOf('})'))).toContain('money,');
+    expect(source).toContain('const money = self.money ?? null;');
+    const entry = readFileSync(new URL('../../src/client/main.ts', import.meta.url), 'utf8');
+    expect(entry).toContain('money: inventory?.money ?? null,');
   });
 });
