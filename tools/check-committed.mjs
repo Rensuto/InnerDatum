@@ -35,12 +35,21 @@
  *
  * ── WHAT IT DOES AND WHAT IT DELIBERATELY DOES NOT ──
  *
- * TYPECHECK ONLY, all three projects. That is the whole failure class: a
- * commit missing lines is a commit that does not compile. Lint, format and
- * 4,600 tests would find it too, and would turn a 40-second guard into a
- * four-minute one at the exact moment somebody is trying to push a hotfix
- * during a live session. `npm run check` already ran all of that against a
- * tree that is a SUPERSET of the commit.
+ * TYPECHECK AND LINT, and the lint was added the first time this guard let one
+ * through. A partial commit had dropped a `panelBand` line, which the typecheck
+ * caught; the amend that fixed it left two now-unused imports behind, which the
+ * typecheck did NOT catch and `npm run lint` would have. A guard that says a
+ * commit is sound while `npm run check` would reject it is worse than the hole
+ * it was closing, because the next reader trusts it.
+ *
+ * TYPECHECK FIRST, all three projects, and lint only if they pass — a commit
+ * that does not compile has nothing useful to say about its own style.
+ *
+ * AND STILL NOT THE TESTS. 4,655 of them turn a forty-second guard into a
+ * four-minute one at the exact moment somebody is pushing a hotfix during a
+ * live session, which is how a gate gets `--no-verify`d. `npm run check` has
+ * already run them against a tree that is a SUPERSET of the commit; what it
+ * cannot do is notice that the commit is a SUBSET.
  *
  * THE TIP ONLY, not every commit in the push. Bisecting through a broken
  * middle commit is a real cost and this does not pay it; walking a weekend of
@@ -115,6 +124,11 @@ try {
 
   console.log(`check-committed: ${sha}  ${subject}`);
 
+  /**
+   * The three projects, then ESLint over the whole checkout. `eslint .` is a few
+   * seconds against `tsc`'s tens — the cost argument in the header is about the
+   * 4,600 tests, not about this.
+   */
   for (const project of ['tsconfig.shared.json', 'tsconfig.server.json', 'tsconfig.client.json']) {
     const res = run(process.execPath, [tsc, '-p', project, '--noEmit'], { cwd: tree });
     if (res.status === 0) {
@@ -127,6 +141,25 @@ try {
     // directory the reader has never heard of. Say which is which rather than
     // leaving them to work it out from a temp path.
     console.error(res.out.trim().replace(/^/gm, '        '));
+  }
+
+  if (!failed) {
+    const eslint = path.join(modules, 'eslint', 'bin', 'eslint.js');
+    if (!fs.existsSync(eslint)) {
+      console.error('  SKIP  eslint is not installed');
+    } else {
+      // `--max-warnings` is deliberately NOT set: `npm run check` lets warnings
+      // through, and a guard stricter than the gate it stands in for would fail
+      // commits the gate would accept.
+      const res = run(process.execPath, [eslint, '.'], { cwd: tree });
+      if (res.status === 0) {
+        console.log('  ok    eslint');
+      } else {
+        failed = true;
+        console.error('  FAIL  eslint');
+        console.error(res.out.trim().replace(/^/gm, '        '));
+      }
+    }
   }
 } finally {
   // `--force` because the worktree has a node_modules link git did not put
