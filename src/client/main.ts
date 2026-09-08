@@ -9681,13 +9681,11 @@ async function boot(): Promise<void> {
        * the player would have clicked and always the one they can see on top.
        */
       if (closeTopPanel()) return;
-      // BOTH LANES SNAP TOGETHER. `toBottom` reports whether it actually moved,
-      // and Escape means "put the log back where it was" as one action — leaving
-      // the Margin scrolled up because only the Record had moved would make the
-      // key feel like it half worked.
-      const record = caseLog?.toBottom(LogLane.Record) ?? false;
-      const margin = caseLog?.toBottom(LogLane.Margin) ?? false;
-      if (record || margin) return;
+      // ONE VIEW, ONE SNAP. This used to call `toBottom` twice, once per lane,
+      // so that Escape meant "put the log back" as ONE act rather than leaving
+      // the other band scrolled up. The log is a single stream now and the
+      // second call has nothing to address.
+      if (caseLog?.toBottom() === true) return;
       // ═══════════════════════════════════════════════════════════════════════
       // THE TAIL LINK: WITH THE CHAIN GENUINELY EMPTY, ESCAPE OPENS THE MENU.
       // ═══════════════════════════════════════════════════════════════════════
@@ -9778,7 +9776,12 @@ async function boot(): Promise<void> {
       // SHIFT PICKS THE MARGIN. That mapping lives here and not in keys.ts,
       // because which lane a modifier selects is a fact about a panel and keys.ts
       // deliberately knows nothing about panels.
-      caseLog?.scroll(alternate ? LogLane.Margin : LogLane.Record, steps * SCROLL_STEP);
+      // `alternate` (Shift) USED TO PICK THE LANE and now picks nothing: there
+      // is one stream and one offset. The tab strip is what chooses WHAT is in
+      // the view, and it is a pointer control on the panel rather than a
+      // modifier, for the reason keys.ts gives about panels.
+      void alternate;
+      caseLog?.scroll(steps * SCROLL_STEP);
     },
   });
 
@@ -10317,8 +10320,8 @@ async function boot(): Promise<void> {
        * lane can claim the wheel, which is what the fall-through below already
        * handles; it is not a reason to skip the occlusion guards.
        */
-      const lane = caseLog?.laneAt(point.x, point.y) ?? null;
-      if (lane === null) {
+      const overLog = caseLog?.bodyAt(point.x, point.y) === true;
+      if (!overLog) {
         /**
          * ═══════════════════════════════════════════════════════════════════
          * NOTHING CLAIMED THE WHEEL, SO IT ZOOMS. THE POSITION OF THIS LINE IS
@@ -10349,9 +10352,9 @@ async function boot(): Promise<void> {
       event.preventDefault();
       // Wheel up (negative deltaY) goes BACK in time, which is what every
       // document and every chat client does.
-      // A lane can only be non-null if the log exists, but the compiler cannot
-      // see that across the branch above.
-      caseLog?.scroll(lane, event.deltaY < 0 ? SCROLL_STEP : -SCROLL_STEP);
+      // The log can only have claimed the wheel if it exists, but the compiler
+      // cannot see that across the branch above.
+      caseLog?.scroll(event.deltaY < 0 ? SCROLL_STEP : -SCROLL_STEP);
     },
     { passive: false },
   );
@@ -11343,6 +11346,19 @@ async function boot(): Promise<void> {
      * handler keeps throughout: HIT-TEST ORDER MIRRORS PAINT ORDER.
      */
     if (point !== null && layout.log !== null) {
+      /**
+       * THE TABS, BEFORE THE GRIP AND BEFORE THE HEADER STRIP. They sit under
+       * the header inside the panel body, so they overlap neither — the order
+       * here is paint order, and a press that lands on a tab must switch the
+       * view rather than begin a drag of the panel it is drawn on.
+       */
+      const tab = caseLog?.tabAt(point.x, point.y) ?? null;
+      if (tab !== null) {
+        event.preventDefault();
+        caseLog?.selectTab(tab);
+        requestDraw();
+        return;
+      }
       if (logGripAt(layout.log, point.x, point.y)) {
         event.preventDefault();
         beginDrag({ kind: DragKind.Resize, panel: DraggablePanel.Log }, point.x, point.y, null);

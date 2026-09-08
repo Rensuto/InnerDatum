@@ -1,31 +1,41 @@
 /**
- * THE CASE LOG. Two lanes, and the separation between them is the whole design.
+ * THE CASE LOG. One running stream, and tabs to ask a question of it.
  *
  * ===========================================================================
- * WHY TWO LANES AND NOT ONE LIST WITH TWO COLOURS
+ * IT WAS TWO LANES, AND THE ARGUMENT FOR THAT IS WORTH KEEPING
  * ===========================================================================
  * game-design.md § 11 writes the log as **Record** (terse, mechanical, cream)
  * and **Margin** (italic, violet — the Index's voice, and the players' own).
- * They are not two styles of the same stream. They are two different kinds of
- * utterance arriving at wildly different rates:
+ * They arrive at wildly different rates:
  *
  *   RECORD — what the rules did. One Alchemic Vial produces five lines; a sweep
- *     of eight monsters produces twenty. It is machine-generated, and in a fight
- *     it is a firehose.
- *   MARGIN — what a PERSON said, and where a person pointed. Perhaps three lines
- *     a minute, and every one of them is the reason four people are in a voice
- *     channel playing this instead of playing it alone.
+ *     of eight monsters produces twenty. In a fight it is a firehose.
+ *   MARGIN — what a PERSON said. Perhaps three lines a minute, and every one of
+ *     them is the reason four people are in a voice channel playing this
+ *     instead of playing it alone.
  *
- * Interleave them and the Record buries the Margin inside one turn of combat.
- * Not "makes it harder to find" — buries it: twenty lines of arithmetic scroll
- * past between "get to me" and anyone reading it. The moment that happens the
- * log stops being a place people talk and becomes a debug console, and the
- * social half of the MVP is gone with it.
+ * So the Margin held a RESERVED BAND at the foot of the panel that the Record
+ * could not spend, with its own scroll position. The Record could be as loud as
+ * it liked and the last three things anybody said were still on screen.
  *
- * So the Margin gets a RESERVED BAND at the bottom of the panel that the Record
- * cannot spend, plus its own scroll position. The Record can be as loud as it
- * likes and the last three things anybody said are still on screen. That
- * reservation is the feature; everything else here is presentation.
+ * ===========================================================================
+ * IT IS ONE STREAM NOW, BY REQUEST, AND THE TABS ARE WHAT PAY FOR IT
+ * ===========================================================================
+ * Asked for as *"one merged stream, but have TABS in the box to separate the
+ * other game information, player chat, etc."*
+ *
+ * THE RISK THE OLD DESIGN NAMED IS REAL AND IS NOW LIVE: in a fight, twenty
+ * lines of arithmetic scroll past between "get to me" and anyone reading it.
+ * What answers it is no longer a reserved band but a filter — the MARGIN tab
+ * shows the conversation with no combat between it, which the two-band layout
+ * could not do at all. A reserved three rows and a tab that shows every line
+ * anybody has said are different answers to the same question, and the second
+ * one is what was asked for.
+ *
+ * ONE BUFFER, AND IT HAS TO BE. Two arrays cannot be merged back into arrival
+ * order after the fact: `seq` would order the server's lines but a
+ * client-authored one carries `seq = 0`, so sorting by it piles every refusal
+ * at the top of the log. See `STREAM_CAP`.
  *
  * ===========================================================================
  * IT IS A MUD. THE LOG IS A SURFACE, NOT A CONSOLE
@@ -79,8 +89,28 @@ import type { PanelRect } from './panel.ts';
  * Both are hard caps rather than a byte budget — a `say` is capped at 500
  * characters by the schema, so the worst case is bounded and small.
  */
-const RECORD_CAP = 320;
-const MARGIN_CAP = 160;
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * ONE BUFFER, AND IT HAS TO BE ONE FOR THE STREAM TO INTERLEAVE AT ALL.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * This was two: 320 Record lines and 160 Margin ones, in separate arrays. Two
+ * arrays cannot be merged back into arrival order after the fact — `seq` is the
+ * server's monotonic counter and would do it for server lines, but a
+ * client-authored line carries `seq = 0` (see `note`), so sorting by it would
+ * pile every refusal and every combat crossing at the very top of the log.
+ *
+ * So the stream is stored in the order it arrived, which is the order it
+ * happened, and the tabs FILTER it rather than the buffers dividing it.
+ *
+ * THE CAP IS THE OLD TWO ADDED TOGETHER, so a session holds as much history as
+ * it did. What it no longer holds is a GUARANTEED share for conversation: a
+ * long fight can now push chat out of the buffer, which two capped arrays made
+ * impossible. That is the cost of the merge, and the TALK tab is what pays for
+ * it — the lines are still there while they are in the buffer at all, and the
+ * tab shows them with no combat between them.
+ */
+const STREAM_CAP = 320 + 160;
 
 /** One row of text, in logical pixels. 10px glyphs with 2px of leading. */
 const ROW_H = 12;
@@ -98,8 +128,53 @@ const INDENT_PX = 8;
  * in whatever is left, because the Record has the status line, the party panel
  * and the whole map echoing it and the Margin has nowhere else to be.
  */
-const MARGIN_SHARE = 0.36;
-const MARGIN_MIN_ROWS = 3;
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE TABS. Requested as *"TABS in the box to separate the other game
+ * information, player chat, etc."*
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * ═══ UPSTREAM'S HUD LOG HAS NONE, AND ITS POPUP DOES ═══
+ * `engine/LogDisplay.lua` is 317 lines with no tab, channel or stream concept —
+ * it renders exactly one list. `UserChat.lua:747-762` CAN draw channel tabs and
+ * both shipped uisets switch them off (`Minimalist.lua:480`, `Classic.lua:79`).
+ * Where tabs actually live in ToME is the full-screen popup,
+ * `dialogs/ShowChatLog.lua:46-55`, whose row is `[Game Log]` followed by one
+ * tab per chat channel.
+ *
+ * So this is ToME's tab row on ToME's log box — the two halves it keeps apart,
+ * put together, which is what was asked for.
+ *
+ * ═══ THREE, AND THE THIRD CANNOT BE NARROWED ═══
+ * `LogLine.lane` is the only thing on the wire that separates one kind of line
+ * from another, so the tabs are ALL, the RECORD lane, and the MARGIN lane.
+ *
+ * "MARGIN" AND NOT "CHAT", because it is not only chat: a player's `say` and an
+ * NPC's greeting are byte-identical on the wire — both arrive as
+ * `{ lane: Margin, speaker: <name> }` — so a tab labelled CHAT would quietly
+ * include everything the townsfolk say. Margin is this game's own word for the
+ * lane (game-design.md § 11) and it is the honest one. Separating a person from
+ * a character would need a new wire field, not a new filter.
+ */
+export const LogTab = {
+  All: 'all',
+  Record: 'record',
+  Margin: 'margin',
+} as const;
+export type LogTab = (typeof LogTab)[keyof typeof LogTab];
+
+export const LOG_TABS: readonly LogTab[] = [LogTab.All, LogTab.Record, LogTab.Margin];
+
+/** What each tab is called on its button. Short: the strip is one row. */
+const TAB_LABEL: Readonly<Record<LogTab, string>> = {
+  [LogTab.All]: 'ALL',
+  [LogTab.Record]: 'RECORD',
+  [LogTab.Margin]: 'MARGIN',
+};
+
+const TAB_H = 12;
+const TAB_PAD = 6;
+const TAB_GAP = 2;
 
 /** Rows a wheel notch or a PageUp moves. Three lines keeps the eye's place. */
 export const SCROLL_STEP = 3;
@@ -160,20 +235,24 @@ export type CaseLog = {
   /** Drop everything. A `welcome` replaces the world, and the log with it. */
   readonly clear: () => void;
   readonly draw: (options: CaseLogDrawOptions) => void;
-  /** Move one lane's view. Positive scrolls BACK in time. Returns true if it moved. */
-  readonly scroll: (lane: LogLane, rows: number) => boolean;
-  /** Jump a lane to the newest line. What Escape and a fresh turn do. */
-  readonly toBottom: (lane: LogLane) => boolean;
+  /** Move the view. Positive scrolls BACK in time. Returns true if it moved. */
+  readonly scroll: (rows: number) => boolean;
+  /** Jump to the newest line. What Escape and a fresh turn do. */
+  readonly toBottom: () => boolean;
   /**
-   * Which lane a LOGICAL backbuffer point is over, or null. Uses the rects from
+   * Is a LOGICAL backbuffer point over the scrollable body? Uses the rect from
    * the LAST draw, which is correct by construction: the pixels the player is
    * pointing at are the last frame.
+   *
+   * `laneAt`'s replacement — that answered WHICH of two bands, because each had
+   * its own scroll position. There is one now.
    */
-  readonly laneAt: (px: number, py: number) => LogLane | null;
-  readonly visible: () => boolean;
-  readonly toggle: () => boolean;
-  /** The newest Margin line, for the DOM's `aria-live` mirror. Null if none. */
-  readonly lastMargin: () => LogLine | null;
+  readonly bodyAt: (px: number, py: number) => boolean;
+  /** Which tab button a point is on, or null. */
+  readonly tabAt: (px: number, py: number) => LogTab | null;
+  /** Show a different tab. Returns true if it changed. */
+  readonly selectTab: (tab: LogTab) => boolean;
+  readonly activeTab: () => LogTab;
 };
 
 type Lane = {
@@ -254,13 +333,39 @@ function turnRule(ctx: CanvasRenderingContext2D, gameTurn: number, maxPx: number
 }
 
 export function createCaseLog(options: CaseLogOptions): CaseLog {
-  const record = makeLane(RECORD_CAP);
-  const margin = makeLane(MARGIN_CAP);
-  let shown = true;
+  const stream = makeLane(STREAM_CAP);
+  /**
+   * ALWAYS TRUE, AND KEPT AS A NAMED CONSTANT RATHER THAN DELETED.
+   *
+   * `toggle()` and `visible()` were removed with the two-lane API — they had
+   * zero callers anywhere in src/ or test/, because visibility is main.ts's
+   * `logVisible`, which drives whether `unmovedPanelRect` returns a rect at all.
+   * The widget is never asked to draw itself hidden.
+   *
+   * The guards that read this stay: they are what makes `draw` and the two hit
+   * tests refuse in one place if that ever stops being true.
+   */
+  const shown = true;
+  /** Which tab is showing. `All` is the one the log opens on. */
+  let tab: LogTab = LogTab.All;
+  /** The tab buttons from the LAST draw, for the hit test. Empty before one. */
+  let tabRects: readonly { readonly tab: LogTab; readonly rect: PanelRect }[] = [];
   /** Highest `seq` accepted. The de-duplication, and it is one comparison. */
   let highWater = 0;
 
-  const laneOf = (lane: LogLane): Lane => (lane === LogLane.Margin ? margin : record);
+  /**
+   * The lines the active tab shows, oldest first.
+   *
+   * FILTERED AT DRAW TIME rather than kept as three arrays. The buffer is the
+   * history and a tab is a QUESTION about it; three arrays would be three
+   * things to cap, three to scroll-anchor and three to keep in step, to save a
+   * walk over at most 480 entries once per frame — and the renderer is a
+   * dirty-flag one, so that frame only happens when something changed.
+   */
+  function visible(): readonly LogLine[] {
+    if (tab === LogTab.All) return stream.lines;
+    return stream.lines.filter((line) => line.lane === tab);
+  }
 
   function push(lane: Lane, line: LogLine): void {
     lane.lines.push({ ...line, text: flatten(line.text) });
@@ -271,7 +376,7 @@ export function createCaseLog(options: CaseLogOptions): CaseLog {
       // the reader's anchor. Clamp rather than let it point past the start.
       lane.offset = Math.min(lane.offset, Math.max(0, lane.lines.length - 1));
     }
-    if (lane.offset > 0) {
+    if (stream.offset > 0) {
       // Scrolled up: hold the view still by walking the anchor along with the
       // arrival, and count what was missed.
       lane.offset = Math.min(lane.offset + 1, Math.max(0, lane.lines.length - 1));
@@ -286,7 +391,7 @@ export function createCaseLog(options: CaseLogOptions): CaseLog {
       // comparison rejects every duplicate without a set to maintain.
       if (line.seq <= highWater) continue;
       highWater = line.seq;
-      push(laneOf(line.lane), line);
+      push(stream, line);
       landed = true;
     }
     if (landed) options.onChange();
@@ -301,37 +406,64 @@ export function createCaseLog(options: CaseLogOptions): CaseLog {
    * reader would have to learn which is which.
    */
   function note(line: Omit<LogLine, 'seq'>): void {
-    push(laneOf(line.lane), { ...line, seq: LOCAL_SEQ });
+    push(stream, { ...line, seq: LOCAL_SEQ });
     options.onChange();
   }
 
   function clear(): void {
-    record.lines.length = 0;
-    margin.lines.length = 0;
-    record.offset = 0;
-    margin.offset = 0;
-    record.unread = 0;
-    margin.unread = 0;
+    stream.lines.length = 0;
+    stream.offset = 0;
+    stream.unread = 0;
     highWater = 0;
     options.onChange();
   }
 
-  function scroll(lane: LogLane, rows: number): boolean {
-    const target = laneOf(lane);
-    const max = Math.max(0, target.lines.length - 1);
-    const next = Math.min(max, Math.max(0, target.offset + rows));
-    if (next === target.offset) return false;
-    target.offset = next;
-    if (next === 0) target.unread = 0;
+  /**
+   * Move the view. Positive scrolls BACK in time.
+   *
+   * IT TAKES NO LANE ANY MORE. There was one offset per lane and a caller had to
+   * say which — the keyboard used Shift to pick, and the wheel asked `laneAt`
+   * which band the pointer was over. With one stream there is one view, and the
+   * question "which of these am I scrolling" has stopped existing.
+   *
+   * COUNTED IN ENTRIES OF THE FILTERED LIST, so a tab showing thirty lines
+   * scrolls through thirty rather than through the whole buffer behind it.
+   */
+  function scroll(rows: number): boolean {
+    const max = Math.max(0, visible().length - 1);
+    const next = Math.min(max, Math.max(0, stream.offset + rows));
+    if (next === stream.offset) return false;
+    stream.offset = next;
+    if (next === 0) stream.unread = 0;
     options.onChange();
     return true;
   }
 
-  function toBottom(lane: LogLane): boolean {
-    const target = laneOf(lane);
-    if (target.offset === 0 && target.unread === 0) return false;
-    target.offset = 0;
-    target.unread = 0;
+  function toBottom(): boolean {
+    if (stream.offset === 0 && stream.unread === 0) return false;
+    stream.offset = 0;
+    stream.unread = 0;
+    options.onChange();
+    return true;
+  }
+
+  /**
+   * Switch tab, and go to the bottom when it changes.
+   *
+   * THE OFFSET IS RESET RATHER THAN REMEMBERED PER TAB. It counts entries back
+   * from the newest of the FILTERED list, so the same number means a different
+   * place in each tab — carrying it across would drop the reader somewhere
+   * arbitrary, and remembering three would be three anchors to keep valid
+   * against one buffer that is still being appended to and capped.
+   *
+   * Going to the bottom is also what a player pressing a tab means: show me
+   * this, now.
+   */
+  function selectTab(next: LogTab): boolean {
+    if (next === tab) return false;
+    tab = next;
+    stream.offset = 0;
+    stream.unread = 0;
     options.onChange();
     return true;
   }
@@ -345,18 +477,26 @@ export function createCaseLog(options: CaseLogOptions): CaseLog {
    * drawn top-down, which is what puts the newest line flush with the bottom
    * edge even when the band is not an exact multiple of the row height.
    */
-  function drawLane(
+  function drawStream(
     ctx: CanvasRenderingContext2D,
-    lane: Lane,
-    kind: LogLane,
+    lines: readonly LogLine[],
     rect: PanelRect,
   ): void {
-    lane.rect = rect;
+    stream.rect = rect;
     const rows = Math.floor(rect.h / ROW_H);
     if (rows <= 0) return;
 
-    const isMargin = kind === LogLane.Margin;
-    ctx.font = isMargin ? FONT_MARGIN : FONT_RECORD;
+    /**
+     * ═══ THE FONT IS CHOSEN PER ENTRY NOW, AND IT WAS CHOSEN PER BAND ═══
+     * This was one `ctx.font = isMargin ? FONT_MARGIN : FONT_RECORD` above the
+     * loop, which was right while a band held one lane and only one. In a merged
+     * stream the italic belongs to the LINE, and — the half that would have been
+     * a silent bug — `wrapText` measures against whatever font is current, so
+     * leaving it hoisted would have wrapped every conversational line to the
+     * width of the upright face it is not drawn in.
+     */
+    const fontFor = (line: LogLine): string =>
+      line.lane === LogLane.Margin ? FONT_MARGIN : FONT_RECORD;
 
     /** One drawable row, already wrapped. */
     type Row = {
@@ -370,18 +510,28 @@ export function createCaseLog(options: CaseLogOptions): CaseLog {
     };
 
     const collected: Row[] = [];
-    const anchor = lane.lines.length - 1 - lane.offset;
+    const anchor = lines.length - 1 - stream.offset;
     let previousTurn: number | null = null;
 
     for (let i = anchor; i >= 0 && collected.length < rows; i -= 1) {
-      const line = lane.lines[i];
+      const line = lines[i];
       if (line === undefined) continue;
 
-      // The turn separator belongs ABOVE the first line of its turn, so it is
-      // emitted when the entry BELOW it (already collected) came from a later
-      // turn. Record lane only: the Margin is conversation and cutting it into
-      // turns would imply people speak on the clock.
-      if (!isMargin && previousTurn !== null && previousTurn !== line.gameTurn) {
+      ctx.font = fontFor(line);
+
+      /**
+       * The turn separator belongs ABOVE the first line of its turn, so it is
+       * emitted when the entry BELOW it (already collected) came from a later
+       * turn.
+       *
+       * RECORD ENTRIES ONLY, AND THE TEST IS ON THE LINE NOW. It was
+       * `!isMargin` — a fact about the BAND — which meant exactly the same
+       * thing while a band held one lane. In a merged stream that test is
+       * always true, so every conversational line would be cut into turns, and
+       * the reason it never was is the reason it still must not be: the Margin
+       * is people talking, and ruling it by the clock implies they speak on it.
+       */
+      if (line.lane !== LogLane.Margin && previousTurn !== null && previousTurn !== line.gameTurn) {
         collected.push({
           text: turnRule(ctx, previousTurn, rect.w),
           indent: 0,
@@ -411,7 +561,9 @@ export function createCaseLog(options: CaseLogOptions): CaseLog {
         const plain = ctx.measureText(prefix).width;
         ctx.font = FONT_SPEAKER;
         boldDebt = Math.max(0, ctx.measureText(prefix).width - plain);
-        ctx.font = isMargin ? FONT_MARGIN : FONT_RECORD;
+        // BACK TO THIS ENTRY'S OWN FACE, not the band's. `wrapText` on the next
+        // line measures against whatever is current.
+        ctx.font = fontFor(line);
       }
       const wrapped = wrapText(ctx, body, rect.w - indent - boldDebt);
 
@@ -441,10 +593,13 @@ export function createCaseLog(options: CaseLogOptions): CaseLog {
       const x = rect.x + row.indent;
 
       if (row.rule) {
-        // The LANE'S font, not the header's: `turnRule` counted its dashes
-        // against whatever font was current when it was built, and measuring in
-        // one font while drawing in another is how a rule ends up a character
-        // too long and wraps. Only the colour changes.
+        // THE FACE `turnRule` MEASURED ITSELF IN. It counted its dashes against
+        // whatever font was current when it was built, and measuring in one
+        // font while drawing in another is how a rule ends up a character too
+        // long and wraps. That used to be guaranteed by the band's single
+        // `ctx.font`; in a merged stream the previous row may have left the
+        // italic set, so it is stated.
+        ctx.font = FONT_RECORD;
         ctx.fillStyle = PALETTE.GREY;
         ctx.fillText(row.text, x, y);
         continue;
@@ -455,14 +610,20 @@ export function createCaseLog(options: CaseLogOptions): CaseLog {
       // line look like Sam said it — the attribution is a different font and a
       // different colour because it comes from a different field.
       const speaker = row.line?.speaker;
+      /**
+       * PER ROW, from the entry the row came from — the band no longer answers
+       * this. A rule row has no line and takes the upright face, which is what
+       * it was drawn in before and what `turnRule` measured itself against.
+       */
+      const rowMargin = row.line !== null && row.line.lane === LogLane.Margin;
       if (row.lead && speaker !== undefined) {
         const prefix = `${speaker}:`;
         ctx.font = FONT_SPEAKER;
         const prefixW = ctx.measureText(prefix).width;
         ctx.fillStyle = PALETTE.GOLD;
         ctx.fillText(prefix, x, y);
-        ctx.font = isMargin ? FONT_MARGIN : FONT_RECORD;
-        ctx.fillStyle = isMargin ? PALETTE.VIOLET_HI : PALETTE.PARCHMENT;
+        ctx.font = rowMargin ? FONT_MARGIN : FONT_RECORD;
+        ctx.fillStyle = rowMargin ? PALETTE.VIOLET_HI : PALETTE.PARCHMENT;
         // `row.text` starts with the prefix by construction — `wrapText` broke
         // `"Sam: hello"` on spaces — so the remainder is what follows it. The
         // guard covers a nickname long enough to be chopped mid-word.
@@ -471,18 +632,21 @@ export function createCaseLog(options: CaseLogOptions): CaseLog {
         continue;
       }
 
-      ctx.fillStyle = isMargin ? PALETTE.VIOLET_HI : PALETTE.PARCHMENT;
+      ctx.font = rowMargin ? FONT_MARGIN : FONT_RECORD;
+      ctx.fillStyle = rowMargin ? PALETTE.VIOLET_HI : PALETTE.PARCHMENT;
       ctx.fillText(row.text, x, y);
     }
 
     // THE "YOU ARE NOT LIVE" BANNER. Words and a count, not a shade: a log that
     // has quietly stopped following the fight is the one state a reader must
     // never have to infer.
-    if (lane.offset > 0) {
+    if (stream.offset > 0) {
       ctx.font = FONT_META;
       ctx.fillStyle = PALETTE.ORANGE;
       const note =
-        lane.unread > 0 ? `▲ scrolled back — ${lane.unread} new` : `▲ scrolled back ${lane.offset}`;
+        stream.unread > 0
+          ? `▲ scrolled back — ${stream.unread} new`
+          : `▲ scrolled back ${stream.offset}`;
       const text = fitText(ctx, note, rect.w);
       const w = Math.ceil(ctx.measureText(text).width) + 4;
       ctx.fillStyle = PALETTE.INK;
@@ -495,8 +659,8 @@ export function createCaseLog(options: CaseLogOptions): CaseLog {
   function draw(opts: CaseLogDrawOptions): void {
     const { ctx, sprites, rect, gameTurn } = opts;
     if (!shown || rect.w <= 0 || rect.h <= 0) {
-      record.rect = NO_RECT;
-      margin.rect = NO_RECT;
+      stream.rect = NO_RECT;
+      tabRects = [];
       return;
     }
 
@@ -522,49 +686,90 @@ export function createCaseLog(options: CaseLogOptions): CaseLog {
       h: rect.y + rect.h - headerBottom,
     });
     if (inner.h < ROW_H) {
-      record.rect = NO_RECT;
-      margin.rect = NO_RECT;
+      stream.rect = NO_RECT;
+      tabRects = [];
       ctx.restore();
       return;
     }
 
-    // THE SPLIT. The Margin's floor wins over the Record's share — see the note
-    // on MARGIN_MIN_ROWS. `divider` is one pixel of SLATE plus a labelled tab,
-    // because two bands of text with no rule between them read as one list.
-    const totalRows = Math.floor(inner.h / ROW_H);
-    const wantMargin = Math.max(MARGIN_MIN_ROWS, Math.round(totalRows * MARGIN_SHARE));
-    const marginRows = Math.min(totalRows, wantMargin);
-    const recordRows = Math.max(0, totalRows - marginRows - 1);
-
-    const recordH = recordRows * ROW_H;
-    drawLane(ctx, record, LogLane.Record, { x: inner.x, y: inner.y, w: inner.w, h: recordH });
-
-    const dividerY = inner.y + recordH + Math.floor(ROW_H / 2);
-    ctx.fillStyle = PALETTE.SLATE;
-    ctx.fillRect(inner.x, dividerY, inner.w, 1);
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * THE TAB STRIP, WHERE THE DIVIDER USED TO BE.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * The panel used to be split into two bands with a labelled rule between
+     * them, the Margin holding a reserved share the Record could not spend.
+     * There is one band now and the tabs choose what is in it.
+     *
+     * ACROSS THE TOP, under the header, because that is where
+     * `ShowChatLog.lua:46-55` puts its row and because a strip at the FOOT would
+     * sit where the newest line is — the one place in a log a reader's eye is
+     * already fixed.
+     *
+     * MEASURED, NOT LAID OUT ON A GRID. `ui/panel.ts` has no button row and the
+     * three labels differ in width, so each takes the width of its own text
+     * plus a pad, which is `Tab.lua:49`'s `w = text_w + 11` in this client's
+     * units.
+     */
     ctx.font = FONT_META;
-    ctx.fillStyle = PALETTE.INK;
-    ctx.fillRect(inner.x, dividerY - 5, 44, 10);
-    ctx.fillStyle = PALETTE.VIOLET_HI;
-    ctx.fillText('MARGIN', inner.x + 2, dividerY);
+    const placed: { tab: LogTab; rect: PanelRect }[] = [];
+    let tabX = inner.x;
+    for (const each of LOG_TABS) {
+      const label = TAB_LABEL[each];
+      const w = Math.ceil(ctx.measureText(label).width) + TAB_PAD;
+      const box: PanelRect = { x: tabX, y: inner.y, w, h: TAB_H };
+      placed.push({ tab: each, rect: box });
 
-    const marginY = dividerY + 2;
-    drawLane(ctx, margin, LogLane.Margin, {
+      const active = each === tab;
+      ctx.fillStyle = active ? PALETTE.SLATE : PALETTE.INK;
+      ctx.fillRect(box.x, box.y, box.w, box.h);
+      // THE ACTIVE ONE IS UNDERLINED AS WELL AS FILLED. Colour alone is never
+      // the only signal on this surface -- the rule the party pane keeps.
+      if (active) {
+        ctx.fillStyle = PALETTE.GOLD;
+        ctx.fillRect(box.x, box.y + box.h - 1, box.w, 1);
+      }
+      ctx.fillStyle = active ? PALETTE.GOLD : PALETTE.GREY_HI;
+      ctx.fillText(label, box.x + Math.floor(TAB_PAD / 2), box.y + TAB_H / 2);
+      tabX += w + TAB_GAP;
+    }
+    tabRects = placed;
+
+    const bodyY = inner.y + TAB_H + 2;
+    drawStream(ctx, visible(), {
       x: inner.x,
-      y: marginY,
+      y: bodyY,
       w: inner.w,
-      h: Math.max(0, inner.y + inner.h - marginY),
+      h: Math.max(0, inner.y + inner.h - bodyY),
     });
 
     ctx.restore();
   }
 
-  function laneAt(px: number, py: number): LogLane | null {
+  const inside = (r: PanelRect, px: number, py: number): boolean =>
+    r.w > 0 && px >= r.x - PANEL_PAD && px < r.x + r.w + PANEL_PAD && py >= r.y && py < r.y + r.h;
+
+  /**
+   * Is a LOGICAL backbuffer point over the scrollable body?
+   *
+   * `laneAt`'s replacement. That answered WHICH of two bands the pointer was
+   * over, because each had its own scroll position; there is one now, so the
+   * only question left is whether the wheel belongs to the log at all — and if
+   * it does not, main.ts falls through to the map zoom.
+   *
+   * Uses the rect from the LAST draw, which is correct by construction: the
+   * pixels the player is pointing at are the last frame.
+   */
+  function bodyAt(px: number, py: number): boolean {
+    return shown && inside(stream.rect, px, py);
+  }
+
+  /** Which tab button a point is on, or null. Rects from the last draw. */
+  function tabAt(px: number, py: number): LogTab | null {
     if (!shown) return null;
-    const inside = (r: PanelRect): boolean =>
-      r.w > 0 && px >= r.x - PANEL_PAD && px < r.x + r.w + PANEL_PAD && py >= r.y && py < r.y + r.h;
-    if (inside(margin.rect)) return LogLane.Margin;
-    if (inside(record.rect)) return LogLane.Record;
+    for (const placed of tabRects) {
+      if (inside(placed.rect, px, py)) return placed.tab;
+    }
     return null;
   }
 
@@ -575,14 +780,10 @@ export function createCaseLog(options: CaseLogOptions): CaseLog {
     draw,
     scroll,
     toBottom,
-    laneAt,
-    visible: () => shown,
-    toggle: () => {
-      shown = !shown;
-      options.onChange();
-      return shown;
-    },
-    lastMargin: () => margin.lines[margin.lines.length - 1] ?? null,
+    bodyAt,
+    tabAt,
+    selectTab,
+    activeTab: () => tab,
   };
 }
 

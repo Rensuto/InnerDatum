@@ -538,13 +538,18 @@ describe('the Escape chain gained three head links and one tail link', () => {
 
   it('does not touch the five links in between', () => {
     // The whole point of inserting at the ENDS: travel, targeting, the armed
-    // revive and both log lanes keep their existing order, and
-    // travelwiring.test.ts's interrupt (3) still describes where it sits.
+    // revive and the log keep their existing order, and travelwiring.test.ts's
+    // interrupt (3) still describes where it sits.
+    //
+    // "BOTH LOG LANES" WAS TWO LINKS AND IS NOW ONE. The log was two bands with
+    // a scroll position each, so Escape snapped both and the chain tested the
+    // pair; it is one merged stream with one offset, and `toBottom` takes no
+    // argument.
     const token = at('if (tokenMenu?.close() === true) return;', body);
     const travel = at('if (cancelTravelIfActive()) return;', body);
     const targeting = at('if (targeting !== null && targeting.active()) {', body);
     const revive = at('if (reviveArmed) {', body);
-    const lanes = at('const record = caseLog?.toBottom(LogLane.Record) ?? false;', body);
+    const lanes = at('if (caseLog?.toBottom() === true) return;', body);
     expect(token).toBeLessThan(travel);
     expect(travel).toBeLessThan(targeting);
     expect(targeting).toBeLessThan(revive);
@@ -559,9 +564,12 @@ describe('the Escape chain gained three head links and one tail link', () => {
     // one press would both wipe a refusal off the screen AND open a menu over
     // the map. The explicit test is the only shape that keeps one press to one
     // thing.
+    //
+    // The two-lane form of that mistake is gone with the two lanes, so the
+    // guard below is the log's single link rather than a test of two booleans.
     expect(body).not.toContain('if (!record && !margin) clearNotice();');
 
-    const guard = at('if (record || margin) return;', body);
+    const guard = at('if (caseLog?.toBottom() === true) return;', body);
     const noticeTest = at('if (notice !== null) {', body);
     const open = at('openMenu();', body);
     expect(guard).toBeLessThan(noticeTest);
