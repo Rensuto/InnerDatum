@@ -1010,10 +1010,48 @@ const LOOT_PILE_OFFSET = 3;
  * not "whose side" — orange means one more hit whoever is wearing it, which is
  * exactly the focus-fire signal. The ring says whose side.
  */
-const LIFE_BAR_W = 2;
-const LIFE_BAR_INSET = 1;
-/** Matches the pip column's top inset, so the two edges start on one line. */
-const LIFE_BAR_PAD = 2;
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * UNDER THE MODEL, WHICH IS UPSTREAM'S OTHER BRANCH — Actor.lua:1026-1043.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `smallTacticalFrame` draws one of two shapes depending on
+ * `config.settings.tome.small_frame_side`:
+ *
+ *   THE SIDE BAR (`:939-958`) is vertical, in the tile's left or right gutter
+ *     depending on faction, filling bottom-up. This is what was ported first,
+ *     as a two-pixel sliver down the left edge.
+ *   THE UNDER BAR (`:1026-1043`) is horizontal, along the bottom of the tile,
+ *     filling left to right. This is the one now.
+ *
+ * TWO PIXELS OF VERTICAL SLIVER WAS THE COMPLAINT. On a 64-pixel tile it is
+ * 0.5% of the cell, in the gutter, against terrain art — findable only if you
+ * already know it is there. The under bar is fifty-three pixels long on the
+ * same tile, in the one strip a bottom-centred sprite reliably leaves clear.
+ *
+ * THE FOUR RATIOS ARE UPSTREAM'S, VERBATIM:
+ *
+ *     local sx = w * .078125          local sy = h * .9375
+ *     local dx = w * .90625 - sx      local dy = h * .984375 - sy
+ *
+ * At `TILE_PX` 64 that is a 53x3 bar at (+5, +60).
+ */
+const LIFE_BAR_LEFT = 0.078125;
+const LIFE_BAR_RIGHT = 0.90625;
+const LIFE_BAR_TOP = 0.9375;
+const LIFE_BAR_BOTTOM = 0.984375;
+
+/**
+ * ONE PIXEL OF DARK, PROUD OF THE BAR ON EVERY SIDE — and this is the part that
+ * is NOT upstream's.
+ *
+ * ToME gets its contrast from a translucent backing in the same hue as the fill
+ * (alpha 128 under alpha 255, `Actor.lua:1032-1043`), which reads because its
+ * tileset is uniformly dark. Ours is not: the local tile art runs from
+ * near-black flagstone to pale sand, and a gold bar three pixels tall on sand is
+ * a smudge. The outline is what makes it legible on BOTH.
+ */
+const LIFE_BAR_OUTLINE = 1;
 
 /** Where a token's life bar goes and how much of it is filled. */
 export type LifeBar = {
@@ -1022,9 +1060,22 @@ export type LifeBar = {
   readonly y: number;
   readonly w: number;
   readonly h: number;
-  /** The filled part, measured from the bottom. `fillH` is 0 for a dead body. */
-  readonly fillY: number;
-  readonly fillH: number;
+  /**
+   * The filled part, measured from the LEFT — upstream's `dx * lp` with the
+   * quad anchored at `x + sx` (`Actor.lua:1034`). It was measured from the
+   * BOTTOM while this was the side bar; a horizontal bar that drained upward
+   * would be a shape nobody has ever drawn.
+   *
+   * 0 for a dead body.
+   */
+  readonly fillW: number;
+  /** The outline, one pixel proud on every side. See `LIFE_BAR_OUTLINE`. */
+  readonly outline: {
+    readonly x: number;
+    readonly y: number;
+    readonly w: number;
+    readonly h: number;
+  };
   /** True under `shared/vitals.ts`'s one threshold — the caller picks the ink. */
   readonly low: boolean;
 };
@@ -1037,22 +1088,32 @@ export type LifeBar = {
  * inside `createRenderer` cannot be called by a test.
  */
 export function lifeBar(hp: number, maxHp: number, cellX: number, cellY: number): LifeBar {
-  const h = Math.max(0, TILE_PX - LIFE_BAR_PAD * 2);
-  const filled = Math.round(h * lifeFraction(hp, maxHp));
+  const sx = Math.round(TILE_PX * LIFE_BAR_LEFT);
+  const sy = Math.round(TILE_PX * LIFE_BAR_TOP);
+  const w = Math.max(0, Math.round(TILE_PX * LIFE_BAR_RIGHT) - sx);
+  const h = Math.max(0, Math.round(TILE_PX * LIFE_BAR_BOTTOM) - sy);
+  const filled = Math.round(w * lifeFraction(hp, maxHp));
   /**
    * A BODY WITH ANYTHING LEFT KEEPS A PIXEL. Rounding a sliver to zero draws an
    * empty bar over something still standing, and "it is already dead" is the one
    * thing this must never say wrongly — it is the difference between walking
    * past a husk and turning your back on one.
    */
-  const fillH = hp > 0 ? Math.min(h, Math.max(1, filled)) : 0;
+  const fillW = hp > 0 ? Math.min(w, Math.max(1, filled)) : 0;
+  const x = cellX + sx;
+  const y = cellY + sy;
   return {
-    x: cellX + LIFE_BAR_INSET,
-    y: cellY + LIFE_BAR_PAD,
-    w: LIFE_BAR_W,
+    x,
+    y,
+    w,
     h,
-    fillY: cellY + LIFE_BAR_PAD + h - fillH,
-    fillH,
+    fillW,
+    outline: {
+      x: x - LIFE_BAR_OUTLINE,
+      y: y - LIFE_BAR_OUTLINE,
+      w: w + LIFE_BAR_OUTLINE * 2,
+      h: h + LIFE_BAR_OUTLINE * 2,
+    },
     low: isLowLife(hp, maxHp),
   };
 }
@@ -2618,17 +2679,35 @@ export function createRenderer(options: RendererOptions): Renderer {
    */
   function paintLifeBar(actor: ActorView, cellX: number, cellY: number): void {
     const bar = lifeBar(actor.hp, actor.maxHp, cellX, cellY);
-    if (bar.h <= 0) return;
+    if (bar.h <= 0 || bar.w <= 0) return;
 
-    // THE BACKING IS ALWAYS THE FULL HEIGHT, so the bar is legible on a pale
-    // floor and so the EMPTY part is visible — a bar with no backing shows a
-    // short gold stub and says nothing about how short it is.
+    /**
+     * THREE PASSES, OUTSIDE IN, AND THE ORDER IS THE LEGIBILITY ARGUMENT:
+     *
+     *   THE OUTLINE, so the bar has an edge on terrain of ANY brightness. Ours
+     *     runs from near-black flagstone to pale sand; upstream's does not,
+     *     which is why it can get away with a translucent same-hue backing and
+     *     we cannot. See `LIFE_BAR_OUTLINE`.
+     *   THE BACKING, always the full width, so the EMPTY part is visible — a
+     *     bar with no backing shows a short gold stub and says nothing about
+     *     how short it is. SLATE and not INK: the outline is already INK, and
+     *     the same colour twice would fuse them into one block, so the outline
+     *     would stop being an edge and the missing health would stop reading.
+     *   THE FILL, gold or orange under `shared/vitals.ts`'s one threshold.
+     *
+     * BOTH SIDES GET ONE. The colour answers "in trouble" rather than "whose
+     * side" — orange means one more hit whoever is wearing it, which is exactly
+     * the focus-fire signal. The ring under the token says whose side.
+     */
     backCtx.fillStyle = PALETTE.INK;
+    backCtx.fillRect(bar.outline.x, bar.outline.y, bar.outline.w, bar.outline.h);
+
+    backCtx.fillStyle = PALETTE.SLATE;
     backCtx.fillRect(bar.x, bar.y, bar.w, bar.h);
 
-    if (bar.fillH <= 0) return;
+    if (bar.fillW <= 0) return;
     backCtx.fillStyle = bar.low ? PALETTE.ORANGE : PALETTE.GOLD;
-    backCtx.fillRect(bar.x, bar.fillY, bar.w, bar.fillH);
+    backCtx.fillRect(bar.x, bar.y, bar.fillW, bar.h);
   }
 
   function paintStatusPips(effects: readonly EffectView[], cellX: number, cellY: number): void {
