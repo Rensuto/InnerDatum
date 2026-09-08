@@ -188,6 +188,16 @@ import {
 // from shared/protocol.ts, and content/items.ts imports TYPES ONLY (from
 // engine/derived.ts). So this edge is persist -> content -> shared and stops
 // there. It does not put engine code on the save path and it closes no cycle.
+/**
+ * ═══ ONE SCHEMA AND ITS TYPE, AND THE EDGE IS THE SAME ONE RESOLVE.TS TAKES ═══
+ * `PanelLayoutSchema` bounds the panel table that arrives from a socket, and
+ * `parsePanels` below validates the FILE through it rather than keeping a second
+ * hand-written copy of the same bounds. persist -> shared, which is the
+ * direction the note above already permits (`content/resolve.ts` imports a
+ * constant from here) and closes no cycle.
+ */
+import { PanelLayoutSchema } from '../../shared/protocol.ts';
+import type { PanelLayoutView } from '../../shared/protocol.ts';
 import { resolveItem } from '../content/resolve.ts';
 import { CURRENT_VERSIONS, MigrateOutcome, SchemaKind, migrateDoc } from './migrate.ts';
 import { backupPathFor, errorCode, writeFileAtomic } from './atomic.ts';
@@ -694,6 +704,8 @@ export type CharacterFile = {
   readonly zoom?: number;
   /** HOW BIG THIS PLAYER WANTS THE INTERFACE. `zoom`'s twin; see `parseUiScale`. */
   readonly uiScale?: number;
+  /** WHERE THEY LEFT THEIR PANELS. `zoom`'s twin; see `parsePanels`. */
+  readonly panels?: PanelLayoutView;
   /**
    * ═══════════════════════════════════════════════════════════════════════════
    * WHAT THIS CHARACTER HAS EXPLORED OF THE OVERWORLD — base64 of a bitset.
@@ -1111,6 +1123,8 @@ export type CharacterInit = {
   readonly zoom?: number;
   /** HOW BIG THIS PLAYER WANTS THE INTERFACE. `zoom`'s twin; see `parseUiScale`. */
   readonly uiScale?: number;
+  /** WHERE THEY LEFT THEIR PANELS. `zoom`'s twin; see `parsePanels`. */
+  readonly panels?: PanelLayoutView;
   /** base64 bitset of the overworld this character has explored. See CharacterFile. */
   readonly explored?: string;
   /** The same, for every OTHER overworld, keyed by realm id. See CharacterFile. */
@@ -1184,6 +1198,7 @@ export function createCharacterFile(init: CharacterInit): CharacterFile {
     knownLore: init.knownLore,
     zoom: init.zoom,
     uiScale: init.uiScale,
+    panels: init.panels,
     explored: init.explored,
     // STAMPED WHENEVER FOG IS WRITTEN, so the file always says which moor its
     // bitset belongs to. See `CharacterFile.layoutRevision`.
@@ -1791,6 +1806,33 @@ function parseUiScale(value: unknown, problems: string[]): number | undefined {
   );
 }
 
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * WHERE THEY LEFT THEIR PANELS. Absent stays absent; anything else is REPAIRED.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `parseZoom` and `parseUiScale`'s sibling, keeping their one rule: this file
+ * NEVER rejects a character over a display preference. A save whose panel table
+ * is corrupt loads with the panels at their computed positions and says so in
+ * `problems`, because refusing somebody's character over where they put a
+ * window would be the worst trade available.
+ *
+ * IT VALIDATES THROUGH THE WIRE SCHEMA rather than by hand. `PanelLayoutSchema`
+ * already bounds the offsets, the sizes, the key count and the key length — it
+ * has to, because the same shape arrives from a socket — and a second
+ * hand-written copy of those bounds here is exactly where two copies drift.
+ *
+ * THE FILE IS NOT MORE TRUSTED THAN THE WIRE. It is written by this process and
+ * it is also a file on a disk that a person can open.
+ */
+function parsePanels(value: unknown, problems: string[]): PanelLayoutView | undefined {
+  if (value === undefined || value === null) return undefined;
+  const parsed = PanelLayoutSchema.safeParse(value);
+  if (parsed.success) return parsed.data;
+  problems.push('panels was not a readable layout; panels back to their default positions');
+  return undefined;
+}
+
 /** The shared body of the two above. Absent stays absent; anything else is repaired. */
 function parseStep(
   value: unknown,
@@ -2132,6 +2174,7 @@ export function parseCharacterFile(doc: unknown): ParseResult {
       knownLore: parseUnlockedTrees(doc.knownLore, problems),
       zoom: parseZoom(doc.zoom, problems),
       uiScale: parseUiScale(doc.uiScale, problems),
+      panels: parsePanels(doc.panels, problems),
       // REPAIR, NEVER REJECT, like every other field here: anything that is not
       // a string is dropped and the character loads with no fog rather than
       // failing to load at all. `fogFromBase64` is itself lenient about length.
@@ -2328,6 +2371,7 @@ export function serialiseCharacter(file: CharacterFile): string {
     knownLore,
     zoom: file.zoom,
     uiScale: file.uiScale,
+    panels: file.panels,
     /**
      * ═════════════════════════════════════════════════════════════════════════
      * AND THE FOUR THAT WERE NEVER WRITTEN DOWN AT ALL.
@@ -3350,6 +3394,8 @@ export type SavedPrefs = {
   readonly zoom?: number;
   /** HOW BIG THIS PLAYER WANTS THE INTERFACE. `zoom`'s twin; see `parseUiScale`. */
   readonly uiScale?: number;
+  /** WHERE THEY LEFT THEIR PANELS. `zoom`'s twin; see `parsePanels`. */
+  readonly panels?: PanelLayoutView;
   /** base64 bitset of the overworld this character has explored. See CharacterFile. */
   readonly explored?: string;
   /** The same, for every OTHER overworld, keyed by realm id. See CharacterFile. */
@@ -3465,6 +3511,8 @@ type Binding = {
   readonly zoom?: number;
   /** HOW BIG THIS PLAYER WANTS THE INTERFACE. `zoom`'s twin; see `parseUiScale`. */
   readonly uiScale?: number;
+  /** WHERE THEY LEFT THEIR PANELS. `zoom`'s twin; see `parsePanels`. */
+  readonly panels?: PanelLayoutView;
   /** base64 bitset of the overworld this character has explored. See CharacterFile. */
   readonly explored?: string;
   /** The same, for every OTHER overworld, keyed by realm id. See CharacterFile. */
@@ -3623,6 +3671,9 @@ export function createCharacterBridge(options: CharacterBridgeOptions): PersistP
       // THE SAME CARRY-FORWARD, for the same reason: a producer with no opinion
       // about the interface size must not erase one the player set.
       uiScale: snapshot.uiScale ?? binding.uiScale,
+      // THE SAME CARRY-FORWARD ONCE MORE: a producer with no opinion about
+      // the panel layout must not erase one the player arranged.
+      panels: snapshot.panels ?? binding.panels,
       // THE SAME CARRY-FORWARD RULE, and for the same reason: a producer that
       // cannot say what has been explored leaves the disk exactly as it found
       // it. Losing a map to a build that had not been taught to fill this in
@@ -3749,6 +3800,7 @@ export function createCharacterBridge(options: CharacterBridgeOptions): PersistP
       keybinds: file?.keybinds,
       zoom: file?.zoom,
       uiScale: file?.uiScale,
+      panels: file?.panels,
       // NO `??` ON ANY OF THESE THREE EITHER, and the keymap's sentence covers
       // all of them: an absent bar or an unbought discipline is carried forward
       // AS an absence, so `fileFor` leaves the key off the file rather than
@@ -3842,6 +3894,8 @@ export function createCharacterBridge(options: CharacterBridgeOptions): PersistP
       // AND HOW BIG THEY LIKE THEIR TILES, on the same argument.
       zoom: file.zoom,
       uiScale: file.uiScale,
+      // AND WHERE THEY PUT THEIR PANELS, on the same argument again.
+      panels: file.panels,
       /**
        * ═══════════════════════════════════════════════════════════════════════
        * AND THE BAR AND THE DISCIPLINES COMING BACK — THE OTHER HALF, A FOURTH

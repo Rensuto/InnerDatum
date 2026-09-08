@@ -461,6 +461,10 @@ const NEEDED_ASSET_PREFIXES = [
   // and the fallback then looks like a deliberate art choice rather than a bug.
   // test/client/assets.test.ts greps this list for that reason.
   'tile_ow_',
+  // PLAYER-SCALE TERRAIN. TileCode is gameplay data and survives a realm
+  // crossing; its picture does not. One world cell can summarize a building,
+  // while one local cell is measured against a 48x64 standing human.
+  'tile_local_',
   'ui_token_ring_',
   'ui_tile_marker_',
   'ui_icon_turn_',
@@ -8997,6 +9001,17 @@ async function boot(): Promise<void> {
          * drag was what they wanted after all.
          */
         for (const panel of DRAGGABLE_PANELS) panelOffsets[panel] = NO_OFFSET;
+        /**
+         * AND THE SIZE, WHICH IS PART OF WHERE A PANEL IS. `RESET PANELS` reads
+         * as "put my screen back"; leaving the Case Log at whatever the player
+         * had dragged it to would be putting back four of five things and
+         * saying it had put back everything. Null is "never resized", so the
+         * log returns to the computed default rather than to a stored number.
+         */
+        logSize = null;
+        // PERSISTED, or the reset is undone by the next reload — which is the
+        // one outcome that would make this row read as broken.
+        savePanelLayout();
         showNotice('panels put back');
         requestDraw();
         return;
@@ -10753,6 +10768,7 @@ async function boot(): Promise<void> {
       // UPSTREAM CLAMPS HERE AND ONLY HERE — `boundPlaces` is called from
       // `saveSettings`, which is the resize drag's `on_done`.
       if (logSize !== null) logSize = sizeIntoBand(logSize, band, logicalW);
+      savePanelLayout();
       return;
     }
     if (subject.kind !== DragKind.Panel) return;
@@ -10767,6 +10783,41 @@ async function boot(): Promise<void> {
       band,
       logicalW,
     );
+    savePanelLayout();
+  }
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * TELL THE SERVER WHERE THE PANELS ARE. Upstream's `saveSettings`.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `Minimalist.lua:393` writes the whole `places` table in one act, from a
+   * drag's `on_done` and never per motion. This is the same: one frame per
+   * gesture rather than one per pixel of pointer travel — a drag fires
+   * continuously for a second or more, and a frame per mousemove would put a
+   * hundred writes on somebody's character file to record one decision.
+   *
+   * IT IS SILENT ABOUT FAILURE, where `applyZoom` and `applyUiScale` both say so
+   * out loud. Those answer a KEYPRESS: the player pressed something and is owed
+   * a word about whether it stuck. This is the tail of a drag they have already
+   * watched happen — the panel is where they put it either way — and a notice
+   * reading "not connected" every time somebody nudges a window would attach
+   * noise to the wrong act. The next `settings` frame is the correction, exactly
+   * as it is for the other two.
+   */
+  function savePanelLayout(): void {
+    const offsets: Record<string, { dx: number; dy: number }> = {};
+    for (const panel of DRAGGABLE_PANELS) {
+      const offset = panelOffsets[panel];
+      /**
+       * ONLY WHAT HAS MOVED. An untouched panel gets no entry rather than a pair
+       * of zeroes, so the file records what the player DID — and a panel added
+       * later takes its computed position instead of inheriting somebody's
+       * stored 0,0 as though it had been placed there.
+       */
+      if (offset.dx !== 0 || offset.dy !== 0) offsets[panel] = { dx: offset.dx, dy: offset.dy };
+    }
+    socket.send({ v: PROTOCOL_VERSION, t: 'set_panel_layout', layout: { offsets, logSize } });
   }
 
   /**
@@ -13125,6 +13176,31 @@ function applyServerMessage(msg: ServerMsg): void {
       // in the boot closure. `onMessage` is the wrapper that can see both.
       storedZoom = msg.zoom;
       storedUiScale = msg.uiScale;
+      /**
+       * ═══════════════════════════════════════════════════════════════════════
+       * AND WHERE THEY LEFT THEIR PANELS.
+       * ═══════════════════════════════════════════════════════════════════════
+       *
+       * APPLIED HERE AND NOT DEFERRED like the two steps above it. Those are
+       * held in `storedZoom`/`storedUiScale` because they need the RENDERER,
+       * which belongs to `boot`'s closure and may not exist yet; a panel offset
+       * is module state in this file and can be written the moment it lands.
+       *
+       * AN UNKNOWN KEY IS DROPPED, which is the whole reason the wire carries a
+       * record rather than a fixed shape. A save written when there were five
+       * panels, loaded by a client that has four, applies the four it knows —
+       * `DRAGGABLE_PANELS` is the authority on what exists, not the file.
+       */
+      for (const panel of DRAGGABLE_PANELS) {
+        panelOffsets[panel] = msg.panels.offsets[panel] ?? NO_OFFSET;
+      }
+      logSize = msg.panels.logSize;
+      /**
+       * NO `requestDraw` HERE. `applyServerMessage` is module scope and the
+       * dirty flag belongs to `boot`'s closure — the seam `storedZoom`'s own
+       * note describes. The caller redraws after applying a frame, which is
+       * what every other branch in this switch relies on too.
+       */
       zoomPersisted = msg.persisted;
       break;
 

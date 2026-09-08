@@ -93,6 +93,10 @@ const RUNS = [
     argv: ['tools/origin-live.mjs', '31991'],
   },
   {
+    what: 'panels-live — a panel layout reaches the body and a later frame reports it',
+    argv: ['tools/panels-live.mjs', '31992'],
+  },
+  {
     what: 'class-live inspector — its pool reaches its sheet',
     argv: ['tools/class-live.mjs', 'inspector', '31985'],
   },

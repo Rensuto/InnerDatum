@@ -64,6 +64,7 @@ import { HEAL_FACTOR_MAX, HEAL_FACTOR_MIN, healingFactor } from './derived.ts';
 import { createEnergyActor } from '../../shared/energy.ts';
 import { spendForAction } from '../../shared/energy.ts';
 import { ActorKind, ActorRank } from '../../shared/protocol.ts';
+import type { PanelLayoutView } from '../../shared/protocol.ts';
 import type { EnergyActor } from '../../shared/energy.ts';
 import { DIR_ORDER, DIR_VECTORS } from '../../shared/coords.ts';
 import type { Dir, TileXY } from '../../shared/coords.ts';
@@ -692,6 +693,25 @@ type ActorCommon = {
    * factor from the map's — see `UI_SCALE_MIN`.
    */
   uiScale?: number;
+
+  /**
+   * WHERE THIS PLAYER LEFT THEIR PANELS, and how big they made the Case Log.
+   *
+   * `zoom` and `uiScale`'s twin, and carried on the body for the same two
+   * reasons those are: it belongs to the PERSON rather than to the socket, so
+   * it survives a reconnect, and the character file is what makes it survive a
+   * session.
+   *
+   * ABSENT IS NOT EMPTY. Absent means this character has never moved a panel,
+   * so every one takes its computed position; an empty `offsets` record means
+   * they moved something and then put it back, which `RESET PANELS` produces
+   * and which must not be confused with never having tried.
+   *
+   * NOTHING IN engine/ MAY READ IT. It is a fact about a screen, exactly like
+   * the two above, and a rule that consulted it would be a rule that behaved
+   * differently for a player who had dragged a window.
+   */
+  panels?: PanelLayoutView;
 
   // --- talents --------------------------------------------------------------
   /**

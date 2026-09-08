@@ -322,6 +322,7 @@ import type {
   ClientUnlockTree,
   UnlockableTree,
   ClientSetKeybinds,
+  ClientSetPanelLayout,
   ClientSetUiScale,
   ClientSetZoom,
   ClientSpendPoint,
@@ -7670,6 +7671,13 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       // independent -- `hudScale` is not the map's magnification -- so a player
       // who has moved one and not the other gets their value and the default.
       uiScale: body?.uiScale ?? 0,
+      /**
+       * THE EMPTY LAYOUT FOR A BODY WITH NO OPINION, which is the same shape as
+       * the two zeroes above and means the same thing: every panel takes its
+       * computed position and the log its computed size. `logSize: null` is what
+       * "never resized" looks like on the wire — see `PanelLayoutSchema`.
+       */
+      panels: body?.panels ?? { offsets: {}, logSize: null },
       persisted:
         session.ownerId !== null &&
         opts.persist !== undefined &&
@@ -15050,6 +15058,45 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    * a handler that differed only in its durability would be a difference nobody
    * could explain later.
    */
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * `set_panel_layout` -- "THIS IS WHERE I PUT MY PANELS." STORE IT, ECHO IT.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `handleSetZoom` and `handleSetUiScale`'s third sibling, and it repeats their
+   * structure rather than sharing it, for the reason `applyZoom` gives on the
+   * client side: the three differ in their field, their bound and their
+   * sentence, so a shared helper would be three parameters and a worse read.
+   *
+   * NO NO-OP CHECK, WHICH IS WHERE IT DIVERGES FROM THE TWO ABOVE. Those compare
+   * an integer and skip the write when it has not moved. This carries a record
+   * and comparing two of those means a deep walk on every settle of every drag
+   * -- to save one assignment and one echo of a frame the client already asked
+   * for. The echo is not free but it is not a broadcast either: `sendSettings`
+   * goes to ONE socket, and it is the socket that just spoke.
+   */
+  const handleSetPanelLayout = (session: Session, msg: ClientSetPanelLayout): void => {
+    const { world } = realmFor(session);
+    const actorId = session.actorId;
+    if (actorId === null) {
+      sendError(
+        session.socket,
+        ErrorCode.NotAuthenticated,
+        'send hello before arranging your panels',
+      );
+      return;
+    }
+    const body = world.getActor(actorId);
+    if (body === undefined) {
+      sendError(session.socket, ErrorCode.Internal, 'your body is not in the world');
+      return;
+    }
+
+    body.panels = msg.layout;
+    queueSave('panels');
+    sendSettings(session);
+  };
+
   const handleSetUiScale = (session: Session, msg: ClientSetUiScale): void => {
     const { world } = realmFor(session);
     const actorId = session.actorId;
@@ -15283,6 +15330,9 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
         return;
       case 'set_ui_scale':
         handleSetUiScale(session, msg);
+        return;
+      case 'set_panel_layout':
+        handleSetPanelLayout(session, msg);
         return;
       case 'set_keybinds':
         handleSetKeybinds(session, msg);

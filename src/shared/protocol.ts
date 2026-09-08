@@ -3594,6 +3594,87 @@ const SetUiScaleSchema = z.strictObject({
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════
+ * `set_panel_layout` — "THIS IS WHERE I HAVE PUT MY PANELS, AND HOW BIG."
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `set_zoom` and `set_ui_scale` above are the same shape: a preference the
+ * player set with a gesture, echoed back on `settings` and written to the
+ * character file. Panel positions were the one that was NOT — they lived in a
+ * module-scope record in main.ts and reset on every reload, so a player who
+ * arranged their screen did it again every session.
+ *
+ * Upstream persists all of it, and as ONE TABLE: `Minimalist.lua:393`'s
+ * `saveSettings` writes the whole `places` map — every zone's x, y, w and h —
+ * in a single act. This is that table.
+ *
+ * ═══ KEYED BY STRING RATHER THAN BY A SHARED ENUM ═══
+ * The obvious alternative is a `PanelId` union here that the client's
+ * `DraggablePanel` must match. That is two declarations of one set, and
+ * `src/shared/` may not import the client's, so nothing could hold them
+ * together — the first panel renamed on one side would be a silent data loss on
+ * the other.
+ *
+ * A RECORD IGNORES WHAT IT DOES NOT KNOW, which is the behaviour that degrades
+ * correctly in both directions: a saved panel the client no longer has is
+ * dropped when it is applied, and a new panel simply has no entry and takes its
+ * computed position. Upstream's `places` is a keyed table for the same reason.
+ *
+ * ═══ BOUNDED, BECAUSE THE CLIENT IS NOT TRUSTED ═══
+ * Every number here arrived from a socket. The offsets are LOGICAL backbuffer
+ * pixels and the interface floors at 640x320, so nothing legitimate is more
+ * than a few thousand from home; the cap is what stops a hostile client writing
+ * a megabyte of NaN-adjacent junk into somebody's save file. The key count is
+ * capped for the same reason — there are five panels.
+ */
+const PANEL_OFFSET_MAX = 4096;
+const PANEL_SIZE_MAX = 4096;
+const PANEL_KEYS_MAX = 16;
+const PANEL_KEY_CHARS_MAX = 32;
+
+const panelOffsetSchema = z.strictObject({
+  dx: z.number().int().min(-PANEL_OFFSET_MAX).max(PANEL_OFFSET_MAX),
+  dy: z.number().int().min(-PANEL_OFFSET_MAX).max(PANEL_OFFSET_MAX),
+});
+
+const panelSizeSchema = z.strictObject({
+  w: z.number().int().min(1).max(PANEL_SIZE_MAX),
+  h: z.number().int().min(1).max(PANEL_SIZE_MAX),
+});
+
+/**
+ * WHERE THE PANELS ARE, AS THE WIRE CARRIES IT.
+ *
+ * `logSize` is NULLABLE and null is not zero: it means "the player has never
+ * resized this", which is what lets the untouched default stay a function of
+ * the viewport (upstream's `math.floor(w/2)`) while a dragged one is absolute.
+ * See `PanelSize` in the client's ui/drag.ts.
+ */
+export const PanelLayoutSchema = z.strictObject({
+  /**
+   * THE KEY COUNT IS BOUNDED AS WELL AS THE KEY LENGTH, and the two are
+   * different holes. A capped key length alone still admits ten thousand
+   * thirty-character keys, which is a megabyte of junk this server would write
+   * into somebody's character file without complaint — `z.record` has no size
+   * of its own, so the refinement is the bound.
+   */
+  offsets: z
+    .record(z.string().min(1).max(PANEL_KEY_CHARS_MAX), panelOffsetSchema)
+    .refine((table) => Object.keys(table).length <= PANEL_KEYS_MAX, {
+      message: `at most ${String(PANEL_KEYS_MAX)} panels`,
+    }),
+  logSize: panelSizeSchema.nullable(),
+});
+
+export type PanelLayoutView = z.infer<typeof PanelLayoutSchema>;
+
+const SetPanelLayoutSchema = z.strictObject({
+  v: envelopeVersion,
+  t: z.literal('set_panel_layout'),
+  layout: PanelLayoutSchema,
+});
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
  * `set_hotbar` — "THIS IS HOW I HAVE ARRANGED MY BAR."
  * ═══════════════════════════════════════════════════════════════════════════
  *
@@ -3790,6 +3871,7 @@ export const ClientMsg = z.discriminatedUnion('t', [
   SetKeybindsSchema,
   SetZoomSchema,
   SetUiScaleSchema,
+  SetPanelLayoutSchema,
   PingSchema,
 ]);
 export type ClientMsg = z.infer<typeof ClientMsg>;
@@ -3826,6 +3908,7 @@ export type ClientUnlockTree = z.infer<typeof UnlockTreeSchema>;
 export type ClientSetKeybinds = z.infer<typeof SetKeybindsSchema>;
 export type ClientSetZoom = z.infer<typeof SetZoomSchema>;
 export type ClientSetUiScale = z.infer<typeof SetUiScaleSchema>;
+export type ClientSetPanelLayout = z.infer<typeof SetPanelLayoutSchema>;
 export type ClientPing = z.infer<typeof PingSchema>;
 
 // ---------------------------------------------------------------------------
@@ -6416,6 +6499,24 @@ export type SettingsMsg = {
    * `UI_SCALE_MIN` and test/client/hudscale.test.ts.
    */
   uiScale: number;
+  /**
+   * WHERE THIS PLAYER LEFT THEIR PANELS, and how big the Case Log is.
+   *
+   * `zoom` and `uiScale`'s third sibling, on the same frame because it is the
+   * same kind of thing: a preference set with a gesture, stored on the
+   * character, echoed so the client never guesses what the server kept.
+   *
+   * Upstream saves the equivalent in ONE act and as one table —
+   * `Minimalist.lua:393`'s `saveSettings` writes the whole `places` map, every
+   * zone's x, y, w and h together — which is why this is one field rather than
+   * an offset frame and a size frame.
+   *
+   * AN EMPTY `offsets` IS NOT AN ABSENT ONE. Empty means the player moved
+   * something and put it back (which `RESET PANELS` produces); the frame is
+   * absolute, so it is the honest wire value for "nothing is moved" in exactly
+   * the way `zoom: 0` is for "the default step".
+   */
+  panels: PanelLayoutView;
   /**
    * Whether the value above will outlive the tab.
    *

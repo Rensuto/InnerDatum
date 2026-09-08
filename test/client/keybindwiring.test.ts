@@ -329,6 +329,18 @@ describe('the menu is a PANEL, and its rect is where that is decided', () => {
       // echoed, and nothing in the scheduler ever hears about it.
       'set_hotbar',
       'set_keybinds',
+      /**
+       * AND THE PANEL LAYOUT'S. The third preference verb, and it is listed here
+       * for the reason the two around it are: a PREFERENCE, never an intent, so
+       * the barrier does not wait for it and it costs the sender no turn.
+       *
+       * It exists because panel positions were the one display preference that
+       * did NOT persist — they lived in a module-scope record and reset on every
+       * reload, so a player who arranged their screen did it again each session.
+       * Upstream saves the equivalent table in one act (`Minimalist.lua:393`),
+       * which is why this carries the whole layout rather than one panel.
+       */
+      'set_panel_layout',
       // AND THE INTERFACE SIZE'S, `set_zoom`'s twin below in every respect that
       // matters here: a PREFERENCE and not an intent, so the barrier never waits
       // for it. Asked for as "an option in the settings for UI scaling to lower

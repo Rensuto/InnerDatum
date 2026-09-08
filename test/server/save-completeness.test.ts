@@ -77,6 +77,19 @@ const FULL = {
   // down that can mean anything. This guard is what caught the field being added
   // without a round trip through the save, which is exactly its job.
   uiScale: 2,
+  /**
+   * WHERE THEY LEFT THEIR PANELS, and the log's size. `zoom`'s third sibling.
+   *
+   * ONLY THE PANELS THAT MOVED get an entry — the client sends it that way
+   * deliberately, so the file records what the player DID and a panel added
+   * later takes its computed position rather than inheriting a stored 0,0.
+   * A `logSize` of null is "never resized"; this fixture has resized it, or the
+   * round trip would not exercise the number at all.
+   */
+  panels: {
+    offsets: { log: { dx: 40, dy: -12 }, sheet: { dx: -8, dy: 6 } },
+    logSize: { w: 420, h: 180 },
+  },
   // AND THE TWO THE FIXED GUARD BELOW IMMEDIATELY EXPOSED. Both were declared,
   // parsed and serialised the whole time; nothing here had ever exercised them.
   spentStats: { str: 2, con: 1 },
