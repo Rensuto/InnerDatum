@@ -178,7 +178,14 @@ import {
   soonestImpact,
 } from './state/projectiles.ts';
 import { orbsOnMyLine } from '../shared/flight.ts';
-import { createCaseLog, drawLogGrip, logDragAt, logGripAt, SCROLL_STEP } from './ui/caselog.ts';
+import {
+  createCaseLog,
+  DEFAULT_LOG_STYLE,
+  drawLogGrip,
+  logDragAt,
+  logGripAt,
+  SCROLL_STEP,
+} from './ui/caselog.ts';
 import {
   charSheetHitAt,
   charSheetTabAt,
@@ -6662,6 +6669,18 @@ async function boot(): Promise<void> {
     onChange: () => {
       requestDraw();
     },
+    /**
+     * A COGWHEEL PRESS IS A PREFERENCE, so it goes down the same pipe the panel
+     * offsets and the log's size go down — `set_panel_layout` carries all three
+     * as one table, which is upstream's `Minimalist.lua:393` shape.
+     *
+     * The widget owns the value and this only persists it; reading it back out
+     * of the widget rather than being handed it would be a second copy to keep
+     * in step.
+     */
+    onStyleChange: () => {
+      savePanelLayout();
+    },
   });
 
   // --- the combat crossing -------------------------------------------------
@@ -10918,7 +10937,23 @@ async function boot(): Promise<void> {
        */
       if (offset.dx !== 0 || offset.dy !== 0) offsets[panel] = { dx: offset.dx, dy: offset.dy };
     }
-    socket.send({ v: PROTOCOL_VERSION, t: 'set_panel_layout', layout: { offsets, logSize } });
+    /**
+     * THE STYLE IS SENT ONLY ONCE IT DIFFERS FROM THE DEFAULT, for `offsets`'
+     * reason one paragraph up: a file that records what the player DID is one
+     * whose defaults can change later without overwriting a choice nobody made.
+     */
+    // NULL BEFORE `boot` RUNS, and a layout saved then carries no style rather
+    // than a fabricated default — the same "record what the player DID" rule.
+    const style = caseLog?.style() ?? DEFAULT_LOG_STYLE;
+    const touched =
+      style.font !== DEFAULT_LOG_STYLE.font ||
+      style.opacity !== DEFAULT_LOG_STYLE.opacity ||
+      style.spacing !== DEFAULT_LOG_STYLE.spacing;
+    socket.send({
+      v: PROTOCOL_VERSION,
+      t: 'set_panel_layout',
+      layout: { offsets, logSize, logStyle: touched ? style : null },
+    });
   }
 
   /**
@@ -11504,6 +11539,35 @@ async function boot(): Promise<void> {
        * here is paint order, and a press that lands on a tab must switch the
        * view rather than begin a drag of the panel it is drawn on.
        */
+      /**
+       * ═══════════════════════════════════════════════════════════════════════
+       * THE OPEN POPOVER GETS FIRST REFUSAL, ABOVE EVERYTHING ELSE ON THE LOG.
+       * ═══════════════════════════════════════════════════════════════════════
+       *
+       * It is painted LAST, over the tabs and the rows, so by this handler's own
+       * rule — hit-test order mirrors paint order — it is asked first. It
+       * swallows presses on its background as well as on its buttons, which is
+       * why this returns on `true` rather than only when a stepper moved: a
+       * press inside an open menu must never reach what the menu is covering.
+       */
+      if (caseLog?.settingsPress(point.x, point.y) === true) {
+        event.preventDefault();
+        requestDraw();
+        return;
+      }
+      /**
+       * THE COGWHEEL, ABOVE THE HEADER STRIP IT SITS IN. `logDragAt` carves
+       * `PANEL_PAD + COG_PX` out of its right end so they no longer overlap,
+       * and this order is the belt to that braces: were the carve-out ever
+       * reverted, the button would still work rather than starting a drag that
+       * moves the panel and then fires on mouseup.
+       */
+      if (caseLog?.cogAt(point.x, point.y) === true) {
+        event.preventDefault();
+        caseLog.toggleSettings();
+        requestDraw();
+        return;
+      }
       const tab = caseLog?.tabAt(point.x, point.y) ?? null;
       if (tab !== null) {
         event.preventDefault();
@@ -13296,6 +13360,13 @@ function applyServerMessage(msg: ServerMsg): void {
         panelOffsets[panel] = msg.panels.offsets[panel] ?? NO_OFFSET;
       }
       logSize = msg.panels.logSize;
+      /**
+       * THE STYLE GOES TO THE WIDGET, which owns it. `caseLog` is created in
+       * `boot` and this runs at module scope, so it may be null on the very
+       * first frame of a reconnect — the guard is the same one every other
+       * `caseLog` reader in this file carries.
+       */
+      caseLog?.setStyle(msg.panels.logStyle);
       /**
        * NO `requestDraw` HERE. `applyServerMessage` is module scope and the
        * dirty flag belongs to `boot`'s closure — the seam `storedZoom`'s own

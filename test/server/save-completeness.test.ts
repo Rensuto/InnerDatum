@@ -89,6 +89,7 @@ const FULL = {
   panels: {
     offsets: { log: { dx: 40, dy: -12 }, sheet: { dx: -8, dy: 6 } },
     logSize: { w: 420, h: 180 },
+    logStyle: { font: 13, opacity: 70, spacing: 14 },
   },
   // AND THE TWO THE FIXED GUARD BELOW IMMEDIATELY EXPOSED. Both were declared,
   // parsed and serialised the whole time; nothing here had ever exercised them.

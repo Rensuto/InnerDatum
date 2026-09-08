@@ -66,6 +66,7 @@ import { DAMAGE_INK, PALETTE } from '../render/canvas.ts';
 import {
   HEADER_H,
   drawHeader,
+  headerDragRect,
   drawPanel,
   fitText,
   PANEL_PAD,
@@ -112,7 +113,14 @@ import type { PanelRect } from './panel.ts';
  */
 const STREAM_CAP = 320 + 160;
 
-/** One row of text, in logical pixels. 10px glyphs with 2px of leading. */
+/**
+ * One row of text, in logical pixels — 10px glyphs with 2px of leading.
+ *
+ * IT IS THE DEFAULT NOW, NOT THE VALUE. The cogwheel's LEAD setting is the row
+ * height, so every drawing site reads `style.spacing`; this constant survives as
+ * the one place that number is written down, and `DEFAULT_LOG_STYLE` takes it
+ * from here so the two cannot drift.
+ */
 const ROW_H = 12;
 
 /** Indent per `LogLine.depth` level. One level is the sample log's two spaces. */
@@ -212,14 +220,120 @@ const TAB_GAP = 2;
 /** Rows a wheel notch or a PageUp moves. Three lines keeps the eye's place. */
 export const SCROLL_STEP = 3;
 
-const FONT_RECORD = '10px ui-monospace, Consolas, monospace';
-const FONT_MARGIN = 'italic 10px ui-monospace, Consolas, monospace';
-const FONT_SPEAKER = 'bold 10px ui-monospace, Consolas, monospace';
-const FONT_META = 'bold 10px ui-monospace, Consolas, monospace';
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE FOUR FACES, AS A FUNCTION OF ONE SIZE.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * These were four frozen strings with `10px` written into each. The cogwheel
+ * makes the size a preference, and the thing that had to not happen is three of
+ * them following it while the fourth stayed at ten — which is not a crash, it is
+ * a log where the speaker's name is a different size from what they said.
+ *
+ * `FONT_META` is deliberately NOT one of them. It draws the header and the tab
+ * strip, which are CHROME: they sit in a header of fixed height and a tab row of
+ * fixed height, and growing their text does not grow the boxes it is in. The
+ * setting is "how big is the log's text", not "how big is the window's
+ * furniture" — upstream draws the same line, its font option changing body text
+ * while the frames around it stay put.
+ */
+const STACK = 'ui-monospace, Consolas, monospace';
+const fontRecord = (px: number): string => `${String(px)}px ${STACK}`;
+const fontMargin = (px: number): string => `italic ${String(px)}px ${STACK}`;
+const fontSpeaker = (px: number): string => `bold ${String(px)}px ${STACK}`;
+const FONT_META = `bold 10px ${STACK}`;
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * WHAT THE COGWHEEL SETS. Three lists of named steps, which is upstream's shape.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `GameOptions.lua:205-211` offers font size as a THREE-ITEM LIST POPUP —
+ * Small, Normal, Big — not a slider and not a number field. That is the choice
+ * worth copying: a player adjusting a log wants it readable, and three named
+ * answers gets there in one press where a slider gets there in six and can stop
+ * on a value that renders badly.
+ *
+ * Ours differ from upstream's in two ways, both improvements it could not make:
+ * it is PER PANEL rather than global, and it applies IMMEDIATELY where
+ * upstream's says "You must restart the game for the change to take effect".
+ *
+ * SPACING IS SEPARATE FROM SIZE on purpose. Tying leading to the font is the
+ * obvious economy and it takes away the actual request: a reader who wants more
+ * text on screen shrinks the leading and keeps the glyphs legible, and one
+ * reading across a room does the opposite.
+ */
+export type LogStyle = {
+  /** Point size of the body text. */
+  readonly font: number;
+  /** Backing opacity, as a percentage. 100 is opaque. */
+  readonly opacity: number;
+  /** Height of one row, in logical pixels. */
+  readonly spacing: number;
+};
+
+const FONT_STEPS = [9, 10, 13] as const;
+const OPACITY_STEPS = [40, 60, 80, 100] as const;
+const SPACING_STEPS = [10, 12, 14, 17] as const;
+
+/** What the log looks like before anybody touches the cogwheel. */
+export const DEFAULT_LOG_STYLE: LogStyle = { font: 10, opacity: 100, spacing: ROW_H };
+
+/**
+ * The nearest step to a value, and the reason the wire carries values.
+ *
+ * A save from a build with a different step list lands on the closest thing
+ * this one can draw rather than being rejected — the same degrade-don't-fail
+ * the `offsets` record uses for a panel it no longer has.
+ */
+function snapIndex(steps: readonly number[], value: number): number {
+  let best = 0;
+  for (let i = 1; i < steps.length; i += 1) {
+    if (Math.abs((steps[i] ?? 0) - value) < Math.abs((steps[best] ?? 0) - value)) best = i;
+  }
+  return best;
+}
+
+/** Pull a style onto this build's steps. Anything unreachable becomes reachable. */
+export function snapStyle(style: LogStyle): LogStyle {
+  return {
+    font: FONT_STEPS[snapIndex(FONT_STEPS, style.font)] ?? DEFAULT_LOG_STYLE.font,
+    opacity: OPACITY_STEPS[snapIndex(OPACITY_STEPS, style.opacity)] ?? DEFAULT_LOG_STYLE.opacity,
+    spacing: SPACING_STEPS[snapIndex(SPACING_STEPS, style.spacing)] ?? DEFAULT_LOG_STYLE.spacing,
+  };
+}
+
+/** Move one step along a list, without wrapping. Returns the new value. */
+function step(steps: readonly number[], value: number, by: number): number {
+  const at = snapIndex(steps, value);
+  const next = Math.max(0, Math.min(steps.length - 1, at + by));
+  return steps[next] ?? value;
+}
+
+/** One row of the settings popover: what it reads, and how it moves. */
+const STYLE_ROWS = [
+  {
+    key: 'font',
+    label: 'SIZE',
+    steps: FONT_STEPS,
+    /** Named, because "Small" is what a reader is choosing; "9" is a detail. */
+    names: ['Small', 'Normal', 'Big'],
+  },
+  { key: 'opacity', label: 'FADE', steps: OPACITY_STEPS, names: null },
+  { key: 'spacing', label: 'LEAD', steps: SPACING_STEPS, names: null },
+] as const;
+
+type StyleKey = (typeof STYLE_ROWS)[number]['key'];
 
 export type CaseLogOptions = {
   /** Something drawable changed: a line landed, or the scroll moved. */
   readonly onChange: () => void;
+  /**
+   * The player moved a cogwheel stepper. Distinct from `onChange` because it
+   * has to be PERSISTED as well as redrawn, and persisting is a socket message:
+   * firing the save on every redraw would send one per log line.
+   */
+  readonly onStyleChange?: (style: LogStyle) => void;
 };
 
 export type CaseLogDrawOptions = {
@@ -286,6 +400,21 @@ export type CaseLog = {
   /** Show a different tab. Returns true if it changed. */
   readonly selectTab: (tab: LogTab) => boolean;
   readonly activeTab: () => LogTab;
+  /** Is a point on the cogwheel in the header's right end? */
+  readonly cogAt: (px: number, py: number) => boolean;
+  /** Open or close the settings popover. Always returns true — it always moved. */
+  readonly toggleSettings: () => boolean;
+  /** Is the popover open? The panel's drag and scroll ask, so it can shield them. */
+  readonly settingsOpen: () => boolean;
+  /**
+   * Handle a press inside the open popover. Returns whether it was CONSUMED —
+   * true for a stepper and also for a press on the popover's own background,
+   * which must not fall through to the log rows underneath it.
+   */
+  readonly settingsPress: (px: number, py: number) => boolean;
+  readonly style: () => LogStyle;
+  /** Apply a saved style. Snapped to this build's steps; fires no change event. */
+  readonly setStyle: (style: LogStyle | null) => void;
 };
 
 /**
@@ -412,6 +541,26 @@ export function createCaseLog(options: CaseLogOptions): CaseLog {
   const shown = true;
   /** Which tab is showing. `All` is the one the log opens on. */
   let tab: LogTab = LogTab.All;
+  /** How it is drawn. Replaced wholesale by `settings`, stepped by the cogwheel. */
+  let style: LogStyle = DEFAULT_LOG_STYLE;
+  /** Is the cogwheel's popover showing? */
+  let settingsShown = false;
+  /** The popover's stepper buttons from the LAST draw. Empty while it is shut. */
+  let stepRects: readonly {
+    readonly key: StyleKey;
+    readonly by: number;
+    readonly rect: PanelRect;
+  }[] = [];
+  /** The popover's own outer rect, for the swallow-the-click test. */
+  let popRect: PanelRect = NO_RECT;
+  /**
+   * The PANEL's outer rect from the last draw — not the body's.
+   *
+   * `stream.rect` is the scrollable band and stops below the tabs, so the
+   * cogwheel is nowhere inside it. Every other hit test here reads a rect the
+   * draw captured; this is the one the header controls need.
+   */
+  let lastRect: PanelRect = NO_RECT;
   /** The tab buttons from the LAST draw, for the hit test. Empty before one. */
   let tabRects: readonly { readonly tab: LogTab; readonly rect: PanelRect }[] = [];
   /** Highest `seq` accepted. The de-duplication, and it is one comparison. */
@@ -547,12 +696,12 @@ export function createCaseLog(options: CaseLogOptions): CaseLog {
     rect: PanelRect,
   ): void {
     stream.rect = rect;
-    const rows = Math.floor(rect.h / ROW_H);
+    const rows = Math.floor(rect.h / style.spacing);
     if (rows <= 0) return;
 
     /**
      * ═══ THE FONT IS CHOSEN PER ENTRY NOW, AND IT WAS CHOSEN PER BAND ═══
-     * This was one `ctx.font = isMargin ? FONT_MARGIN : FONT_RECORD` above the
+     * This was one `ctx.font = isMargin ? italic : upright` above the
      * loop, which was right while a band held one lane and only one. In a merged
      * stream the italic belongs to the LINE, and — the half that would have been
      * a silent bug — `wrapText` measures against whatever font is current, so
@@ -560,7 +709,7 @@ export function createCaseLog(options: CaseLogOptions): CaseLog {
      * width of the upright face it is not drawn in.
      */
     const fontFor = (line: Entry): string =>
-      line.lane === LogLane.Margin ? FONT_MARGIN : FONT_RECORD;
+      line.lane === LogLane.Margin ? fontMargin(style.font) : fontRecord(style.font);
 
     /**
      * MEASURED ONCE, FROM A SAMPLE, in the upright face every stamp is drawn in.
@@ -568,7 +717,7 @@ export function createCaseLog(options: CaseLogOptions): CaseLog {
      * hour rolled over, and measuring in whatever font the last row left set is
      * the hoisted-font bug this file already carries a note about.
      */
-    ctx.font = FONT_RECORD;
+    ctx.font = fontRecord(style.font);
     const stampW = Math.ceil(ctx.measureText('0'.repeat(STAMP_TEXT_MAX)).width) + STAMP_GAP;
 
     /** One drawable row, already wrapped. */
@@ -640,7 +789,7 @@ export function createCaseLog(options: CaseLogOptions): CaseLog {
       if (speaker !== undefined) {
         const prefix = `${speaker}:`;
         const plain = ctx.measureText(prefix).width;
-        ctx.font = FONT_SPEAKER;
+        ctx.font = fontSpeaker(style.font);
         boldDebt = Math.max(0, ctx.measureText(prefix).width - plain);
         // BACK TO THIS ENTRY'S OWN FACE, not the band's. `wrapText` on the next
         // line measures against whatever is current.
@@ -674,7 +823,7 @@ export function createCaseLog(options: CaseLogOptions): CaseLog {
     for (let i = 0; i < drawn; i += 1) {
       const row = collected[i];
       if (row === undefined) continue;
-      const y = bottom - (i + 1) * ROW_H + ROW_H / 2;
+      const y = bottom - (i + 1) * style.spacing + style.spacing / 2;
       const x = rect.x + stampW + row.indent;
 
       /**
@@ -683,7 +832,7 @@ export function createCaseLog(options: CaseLogOptions): CaseLog {
        * sentence would read as three events.
        */
       if (row.line !== null && row.first) {
-        ctx.font = FONT_RECORD;
+        ctx.font = fontRecord(style.font);
         ctx.fillStyle = PALETTE.GREY;
         ctx.fillText(stampText(row.line.at), rect.x, y);
       }
@@ -695,7 +844,7 @@ export function createCaseLog(options: CaseLogOptions): CaseLog {
         // long and wraps. That used to be guaranteed by the band's single
         // `ctx.font`; in a merged stream the previous row may have left the
         // italic set, so it is stated.
-        ctx.font = FONT_RECORD;
+        ctx.font = fontRecord(style.font);
         ctx.fillStyle = PALETTE.GREY;
         ctx.fillText(row.text, x, y);
         continue;
@@ -736,11 +885,11 @@ export function createCaseLog(options: CaseLogOptions): CaseLog {
           : DAMAGE_INK[element];
       if (row.lead && speaker !== undefined) {
         const prefix = `${speaker}:`;
-        ctx.font = FONT_SPEAKER;
+        ctx.font = fontSpeaker(style.font);
         const prefixW = ctx.measureText(prefix).width;
         ctx.fillStyle = PALETTE.GOLD;
         ctx.fillText(prefix, x, y);
-        ctx.font = rowMargin ? FONT_MARGIN : FONT_RECORD;
+        ctx.font = rowMargin ? fontMargin(style.font) : fontRecord(style.font);
         ctx.fillStyle = ink;
         // `row.text` starts with the prefix by construction — `wrapText` broke
         // `"Sam: hello"` on spaces — so the remainder is what follows it. The
@@ -750,7 +899,7 @@ export function createCaseLog(options: CaseLogOptions): CaseLog {
         continue;
       }
 
-      ctx.font = rowMargin ? FONT_MARGIN : FONT_RECORD;
+      ctx.font = rowMargin ? fontMargin(style.font) : fontRecord(style.font);
       ctx.fillStyle = ink;
       ctx.fillText(row.text, x, y);
     }
@@ -768,9 +917,9 @@ export function createCaseLog(options: CaseLogOptions): CaseLog {
       const text = fitText(ctx, note, rect.w);
       const w = Math.ceil(ctx.measureText(text).width) + 4;
       ctx.fillStyle = PALETTE.INK;
-      ctx.fillRect(rect.x, rect.y, Math.min(w, rect.w), ROW_H);
+      ctx.fillRect(rect.x, rect.y, Math.min(w, rect.w), style.spacing);
       ctx.fillStyle = PALETTE.ORANGE;
-      ctx.fillText(text, rect.x + 2, rect.y + ROW_H / 2);
+      ctx.fillText(text, rect.x + 2, rect.y + style.spacing / 2);
     }
   }
 
@@ -779,14 +928,33 @@ export function createCaseLog(options: CaseLogOptions): CaseLog {
     if (!shown || rect.w <= 0 || rect.h <= 0) {
       stream.rect = NO_RECT;
       tabRects = [];
+      stepRects = [];
+      lastRect = NO_RECT;
       return;
     }
+    lastRect = rect;
 
     ctx.save();
     ctx.imageSmoothingEnabled = false;
     ctx.textAlign = 'left';
     ctx.textBaseline = 'middle';
 
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * THE FADE IS ON THE FRAME AND NEVER ON THE TEXT.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * Asked for as *"an opacy setting"*, and the naive reading — set
+     * `globalAlpha` for the whole panel and restore at the end — is the one that
+     * makes the feature useless. At 40% the words go with the backing and the
+     * player has traded a log they can read for a log they can see through.
+     *
+     * What a transparent log window is actually FOR is seeing the map underneath
+     * while still reading the words on top. So the alpha covers the backing and
+     * the header strip, and everything drawn into them — rows, tabs, timestamps,
+     * the cogwheel — is painted at full strength afterwards.
+     */
+    ctx.globalAlpha = style.opacity / PERCENT;
     drawPanel(ctx, sprites, PanelSkin.Inset, rect);
     ctx.font = FONT_META;
     const headerBottom = drawHeader(
@@ -796,6 +964,7 @@ export function createCaseLog(options: CaseLogOptions): CaseLog {
       rect,
       FONT_META,
     );
+    ctx.globalAlpha = 1;
 
     const inner = panelInner({
       x: rect.x,
@@ -803,9 +972,22 @@ export function createCaseLog(options: CaseLogOptions): CaseLog {
       w: rect.w,
       h: rect.y + rect.h - headerBottom,
     });
-    if (inner.h < ROW_H) {
+    if (inner.h < style.spacing) {
       stream.rect = NO_RECT;
       tabRects = [];
+      /**
+       * THE COGWHEEL AND ITS MENU BOTH STAY LIVE on a panel too short to draw a
+       * row in. It is the control that makes the rows fit again — a player who
+       * squeezed the log and then raised the leading would otherwise be
+       * stranded with no way back.
+       *
+       * `drawSettings` is called rather than skipped for a second reason: it is
+       * what CLEARS `stepRects` when the menu is shut. Returning early past it
+       * would leave the last full draw's buttons in place — invisible, and still
+       * answering presses.
+       */
+      drawSettings(ctx, sprites, rect, inner);
+      drawLogCog(ctx, rect, settingsShown);
       ctx.restore();
       return;
     }
@@ -861,7 +1043,128 @@ export function createCaseLog(options: CaseLogOptions): CaseLog {
       h: Math.max(0, inner.y + inner.h - bodyY),
     });
 
+    drawSettings(ctx, sprites, rect, inner);
+    drawLogCog(ctx, rect, settingsShown);
+
     ctx.restore();
+  }
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE COGWHEEL'S POPOVER: three rows of `- value +`, over the log's own body.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * STEPPERS RATHER THAN A SLIDER, which is `GameOptions.lua:208`'s list popup
+   * in the space available: three named answers reached in one press. A slider
+   * on a canvas is a drag gesture, and this panel already has two of those
+   * (move by the header, resize by the grip) — a third that starts inside the
+   * body would have to be disentangled from the scroll.
+   *
+   * DRAWN LAST AND OVER THE BODY, not beside it. There is nowhere beside it: the
+   * log is docked to the bottom-left corner and can be resized down to 160x72,
+   * so a popover anchored outside would be off-screen at the size the player is
+   * most likely to have chosen. Over the body it is always reachable, and the
+   * body is the one thing whose appearance the player is currently judging —
+   * three rows of chrome across it is a fair price for seeing the change land.
+   *
+   * IT IS CLAMPED INTO THE PANEL, not merely positioned inside it. On a log
+   * squeezed to its floor the popover is taller than the body; it takes the
+   * space it needs and the rows behind it are simply covered, which is honest,
+   * where a popover drawn past the edge would have half its buttons unpressable.
+   */
+  function drawSettings(
+    ctx: CanvasRenderingContext2D,
+    sprites: SpriteSource,
+    outer: PanelRect,
+    inner: PanelRect,
+  ): void {
+    if (!settingsShown) {
+      stepRects = [];
+      popRect = NO_RECT;
+      return;
+    }
+
+    ctx.font = FONT_META;
+    const w = Math.min(POP_W, Math.max(PANEL_MIN_POP_W, outer.w - PANEL_PAD * 2));
+    const h = STYLE_ROWS.length * POP_ROW_H + PANEL_PAD * 2;
+    // Right-aligned under the cogwheel it belongs to, then pulled back inside.
+    const x = Math.max(outer.x + PANEL_PAD, outer.x + outer.w - PANEL_PAD - w);
+    /**
+     * IT PREFERS THE TOP OF THE BODY AND IS PULLED UP TO FIT.
+     *
+     * At the panel's floor (72 tall, 24 of it header) the popover is taller than
+     * the body it is drawn in, and it HANGS below the panel rather than being
+     * cropped or squeezed. That is the deliberate choice of the two: a menu with
+     * a row off the bottom edge has a control nobody can press, and shaving the
+     * rows until three of them fit inside 48 pixels makes every one of them
+     * unreadable. It is painted last and over the map, and it never leaves the
+     * viewport — the log's band already reserves the hotbar's height beneath it.
+     *
+     * The cost is that it covers the resize grip. That is why the press handler
+     * asks the popover BEFORE the grip: while the menu is open the pixels belong
+     * to what the player can see.
+     */
+    const y = Math.max(outer.y + HEADER_H, Math.min(inner.y, outer.y + outer.h - PANEL_PAD - h));
+    const box: PanelRect = { x, y, w, h };
+    popRect = box;
+
+    // THE CASE-FILE SKIN, WHICH IS THE OTHER ONE. The log itself is Inset — a
+    // recess in the interface — and a popover drawn in the same skin would look
+    // like a hole inside a hole. CaseFile reads as a card laid on top, which is
+    // what this is.
+    drawPanel(ctx, sprites, PanelSkin.CaseFile, box);
+
+    const placed: { key: StyleKey; by: number; rect: PanelRect }[] = [];
+    for (let i = 0; i < STYLE_ROWS.length; i += 1) {
+      const row = STYLE_ROWS[i];
+      if (row === undefined) continue;
+      const rowY = box.y + PANEL_PAD + i * POP_ROW_H;
+      const mid = rowY + POP_ROW_H / 2;
+
+      ctx.font = FONT_META;
+      ctx.fillStyle = PALETTE.GREY_HI;
+      ctx.fillText(row.label, box.x + PANEL_PAD, mid);
+
+      const value = style[row.key];
+      const at = snapIndex(row.steps, value);
+      // NAMED WHERE UPSTREAM NAMES IT, numeric where a number is the thing:
+      // "Small" is what a reader is choosing for a size, but nobody wants "Fade:
+      // Medium" when the honest answer is a percentage they can compare.
+      const shownValue =
+        row.names === null
+          ? row.key === 'opacity'
+            ? `${String(value)}%`
+            : String(value)
+          : (row.names[at] ?? String(value));
+
+      const minusX = box.x + box.w - PANEL_PAD - POP_BTN * 2 - POP_VALUE_W - POP_GAP * 2;
+      const valueX = minusX + POP_BTN + POP_GAP;
+      const plusX = valueX + POP_VALUE_W + POP_GAP;
+
+      for (const [bx, by, glyph] of [
+        [minusX, -1, '−'],
+        [plusX, 1, '+'],
+      ] as const) {
+        const btn: PanelRect = { x: bx, y: rowY + 1, w: POP_BTN, h: POP_ROW_H - 2 };
+        placed.push({ key: row.key, by, rect: btn });
+        // AT AN END, THE BUTTON IS DIM AND STILL PRESSABLE. `step` clamps, so
+        // the press is a no-op; greying it says so before the player wonders
+        // whether the control is broken.
+        const dead = by < 0 ? at === 0 : at === row.steps.length - 1;
+        ctx.fillStyle = PALETTE.INK;
+        ctx.fillRect(btn.x, btn.y, btn.w, btn.h);
+        ctx.fillStyle = dead ? PALETTE.GREY : PALETTE.GOLD;
+        ctx.textAlign = 'center';
+        ctx.fillText(glyph, btn.x + btn.w / 2, mid);
+        ctx.textAlign = 'left';
+      }
+
+      ctx.fillStyle = PALETTE.PARCHMENT;
+      ctx.textAlign = 'center';
+      ctx.fillText(fitText(ctx, shownValue, POP_VALUE_W), valueX + POP_VALUE_W / 2, mid);
+      ctx.textAlign = 'left';
+    }
+    stepRects = placed;
   }
 
   const inside = (r: PanelRect, px: number, py: number): boolean =>
@@ -882,6 +1185,48 @@ export function createCaseLog(options: CaseLogOptions): CaseLog {
     return shown && inside(stream.rect, px, py);
   }
 
+  function toggleSettings(): boolean {
+    settingsShown = !settingsShown;
+    options.onChange();
+    return true;
+  }
+
+  /**
+   * A press inside the open popover.
+   *
+   * IT SWALLOWS EVERY PRESS ON ITSELF, not only the ones that land on a button.
+   * The popover floats over the log's rows, and a press on its background that
+   * fell through would scroll or select whatever is underneath — which reads as
+   * the panel doing something at random while a menu is open.
+   */
+  function settingsPress(px: number, py: number): boolean {
+    if (!shown || !settingsShown) return false;
+    for (const btn of stepRects) {
+      if (!inside(btn.rect, px, py)) continue;
+      const row = STYLE_ROWS.find((each) => each.key === btn.key);
+      if (row === undefined) return true;
+      const next = step(row.steps, style[btn.key], btn.by);
+      if (next === style[btn.key]) return true;
+      style = { ...style, [btn.key]: next };
+      options.onChange();
+      options.onStyleChange?.(style);
+      return true;
+    }
+    return inside(popRect, px, py);
+  }
+
+  /**
+   * Take a saved style, or reset to the default when there is none.
+   *
+   * SNAPPED, and it fires no `onStyleChange`: this is the SERVER telling the
+   * client what the player chose, and echoing it straight back would be a write
+   * caused by a read — on every `settings` frame, including the one at join.
+   */
+  function setStyle(next: LogStyle | null): void {
+    style = next === null ? DEFAULT_LOG_STYLE : snapStyle(next);
+    options.onChange();
+  }
+
   /** Which tab button a point is on, or null. Rects from the last draw. */
   function tabAt(px: number, py: number): LogTab | null {
     if (!shown) return null;
@@ -898,6 +1243,13 @@ export function createCaseLog(options: CaseLogOptions): CaseLog {
     draw,
     scroll,
     toBottom,
+    cogAt: (px: number, py: number): boolean =>
+      shown && lastRect.w > 0 && logCogAt(lastRect, px, py),
+    toggleSettings,
+    settingsOpen: (): boolean => settingsShown,
+    settingsPress,
+    style: (): LogStyle => style,
+    setStyle,
     bodyAt,
     tabAt,
     selectTab,
@@ -988,5 +1340,96 @@ export function drawLogGrip(ctx: CanvasRenderingContext2D, rect: PanelRect): voi
  * mouse button upstream happened to choose.
  */
 export function logDragAt(rect: PanelRect, px: number, py: number): boolean {
-  return px >= rect.x && px < rect.x + rect.w && py >= rect.y && py < rect.y + HEADER_H;
+  const strip = headerDragRect(rect, PANEL_PAD + COG_PX);
+  return px >= strip.x && px < strip.x + strip.w && py >= strip.y && py < strip.y + strip.h;
 }
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE COGWHEEL, IN THE HEADER'S RIGHT END.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Asked for as *"a cogwheel settings button ... on the case log pane at the top
+ * right of the pane"*, and it is where the other panels put their close control
+ * — the right end of the header strip is this client's settled place for a
+ * header button, and a player looking for one looks there.
+ *
+ * THE HANDLE HAS TO GIVE UP THE PIXELS, which is why `logDragAt` above is now
+ * `headerDragRect(rect, PANEL_PAD + COG_PX)` and not the full strip it used to
+ * be. `ui/panel.ts` carries the note about what happens otherwise: a header that
+ * looks grabbable everywhere starts a drag when you press the control, which
+ * then fires on mouseup having moved the panel first. That is not a hypothetical
+ * here — the full-width version shipped, and the cogwheel is the first thing to
+ * be put in the strip it was claiming.
+ */
+export const COG_PX = 13;
+
+export function logCogRect(rect: PanelRect): PanelRect {
+  return {
+    x: rect.x + rect.w - PANEL_PAD - COG_PX,
+    y: rect.y + Math.floor((HEADER_H - COG_PX) / 2),
+    w: COG_PX,
+    h: COG_PX,
+  };
+}
+
+/** True when a LOGICAL backbuffer point is on the cogwheel. */
+export function logCogAt(rect: PanelRect, px: number, py: number): boolean {
+  const cog = logCogRect(rect);
+  return px >= cog.x && px < cog.x + cog.w && py >= cog.y && py < cog.y + cog.h;
+}
+
+/**
+ * A GEAR, DRAWN RATHER THAN BLITTED, for `drawLogGrip`'s reason: a control that
+ * is the only way to reach a setting must not be invisible behind a missing PNG.
+ * `icon_ui_cog` is logged in ASSETS-REQUIRED.md to replace it; until then this
+ * is a hub, a bore and six teeth, which at thirteen pixels is all a gear is.
+ *
+ * It brightens when the popover is open, so the button says whether the thing it
+ * opens is showing — the same signal the tab strip gives.
+ */
+export function drawLogCog(ctx: CanvasRenderingContext2D, rect: PanelRect, open: boolean): void {
+  const cog = logCogRect(rect);
+  const cx = cog.x + cog.w / 2;
+  const cy = cog.y + cog.h / 2;
+  const outer = cog.w / 2;
+
+  ctx.save();
+  ctx.fillStyle = open ? PALETTE.GOLD : PALETTE.GREY_HI;
+  // The teeth: six spokes, each a short stroke from the body out to the rim.
+  ctx.strokeStyle = open ? PALETTE.GOLD : PALETTE.GREY_HI;
+  ctx.lineWidth = 2;
+  for (let i = 0; i < COG_TEETH; i += 1) {
+    const angle = (i / COG_TEETH) * Math.PI * 2;
+    ctx.beginPath();
+    ctx.moveTo(cx + Math.cos(angle) * (outer - 3), cy + Math.sin(angle) * (outer - 3));
+    ctx.lineTo(cx + Math.cos(angle) * outer, cy + Math.sin(angle) * outer);
+    ctx.stroke();
+  }
+  // The body, then the bore punched back out of it in the header's own colour.
+  ctx.beginPath();
+  ctx.arc(cx, cy, outer - 3, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = PALETTE.INK;
+  ctx.beginPath();
+  ctx.arc(cx, cy, Math.max(1, outer - 3 - 2), 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+}
+
+const COG_TEETH = 6;
+
+/**
+ * The popover's numbers. `POP_W` is what the three rows want; a log narrower
+ * than that gets `PANEL_MIN_POP_W` and the value column ellipsises, which is
+ * better than buttons that overlap.
+ */
+const POP_W = 168;
+const PANEL_MIN_POP_W = 120;
+const POP_ROW_H = 16;
+const POP_BTN = 14;
+const POP_GAP = 3;
+const POP_VALUE_W = 52;
+
+/** Denominator for the opacity percentage. */
+const PERCENT = 100;

@@ -3665,6 +3665,42 @@ const panelSizeSchema = z.strictObject({
 });
 
 /**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * HOW THE CASE LOG IS DRAWN — the three things its cogwheel sets.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Asked for as *"an opacy setting (make cogwheel settings button for chat box
+ * for font fize, opacy, spacing, etc)"*.
+ *
+ * ═══ VALUES, NOT STEP INDICES ═══
+ * The client offers each of these as a short list of named steps, and the
+ * tempting thing is to send the INDEX into that list. It is one byte and it
+ * cannot be out of range.
+ *
+ * It is also a number whose meaning lives entirely in a client-side array, so
+ * the day a step is inserted every saved preference silently becomes a
+ * different one — everybody who chose "Big" wakes up on "Normal" and there is
+ * nothing in the save file to say what went wrong. A stored 13 is still 13.
+ * The client snaps an unrecognised value to its nearest step, which degrades
+ * the same way `offsets` does: a save from a newer build is approximated
+ * rather than rejected.
+ *
+ * ═══ BOUNDED HERE, CLAMPED THERE ═══
+ * These bounds are the TRUST boundary, not the design: they are wide enough to
+ * admit any step list this client might ship and narrow enough that a hostile
+ * value cannot make text a thousand pixels tall. The client's own tables are
+ * what a player can actually reach.
+ */
+const logStyleSchema = z.strictObject({
+  /** Point size of the log's body text. */
+  font: z.number().int().min(6).max(32),
+  /** Backing opacity as a percentage. 100 is opaque; the text never fades. */
+  opacity: z.number().int().min(10).max(100),
+  /** Height of one row, in logical pixels. */
+  spacing: z.number().int().min(6).max(40),
+});
+
+/**
  * WHERE THE PANELS ARE, AS THE WIRE CARRIES IT.
  *
  * `logSize` is NULLABLE and null is not zero: it means "the player has never
@@ -3686,6 +3722,20 @@ export const PanelLayoutSchema = z.strictObject({
       message: `at most ${String(PANEL_KEYS_MAX)} panels`,
     }),
   logSize: panelSizeSchema.nullable(),
+  /**
+   * NULLABLE AND DEFAULTED, and the default is what makes this safe to add.
+   *
+   * This schema also validates what comes back OUT of a character file, and
+   * every save written before the cogwheel existed has no `logStyle` at all. A
+   * required field would fail those saves — and `parsePanels` drops a layout it
+   * cannot parse, so the visible bug would not be "the log looks wrong", it
+   * would be every panel on the screen jumping back to its computed position
+   * for everyone who had already arranged one.
+   *
+   * `.default(null)` makes the key optional coming in and present going out, so
+   * an old save reads as "never touched this" — which is exactly what it is.
+   */
+  logStyle: logStyleSchema.nullable().default(null),
 });
 
 export type PanelLayoutView = z.infer<typeof PanelLayoutSchema>;

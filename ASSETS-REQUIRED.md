@@ -308,3 +308,28 @@ PLAN AROUND: the whole mechanic is that you can see the tax rising and choose
 whether to pay it again.
 
 **Acceptance test:** `npm run art:needs` reports `missing art: 0`.
+
+## `icon_ui_cog` — the case log's settings button, and it is a nicety
+
+**Not outstanding in the sense the two above are.** The button is DRAWN — a hub,
+a bore and six teeth, at thirteen pixels — so it is visible, pressable and
+correct on a bare clone with no art at all. `npm run art:needs` does not demand
+it, because no source line names it.
+
+**Why it is written down anyway:** the drawn version is a gear the way a wire
+frame is a chair. It sits in the case log's header beside a painted 9-slice
+panel and a painted header strip, and it is the only element in that strip that
+is obviously not of the same hand.
+
+**What it should look like:** a small mechanical gear in the interface's brass
+and slate, reading at 13x13 in the header and still legible at 26x26 on a
+doubled UI scale. It is a CONTROL, not decoration — it needs a silhouette that
+survives being tinted gold when the menu under it is open.
+
+**Cut it at 64x64**, matching every other `icon_ui_*` on disk; the header scales
+it down.
+
+**Until it exists nothing is lost**, which is why this is at the bottom of the
+file rather than the top. `drawLogCog` in `src/client/ui/caselog.ts` is the
+fallback, and it is the same bargain `drawLogGrip` above it makes: a widget that
+needs art to be USABLE cannot ship behind a missing file.

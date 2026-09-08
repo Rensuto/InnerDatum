@@ -7678,7 +7678,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
        * computed position and the log its computed size. `logSize: null` is what
        * "never resized" looks like on the wire — see `PanelLayoutSchema`.
        */
-      panels: body?.panels ?? { offsets: {}, logSize: null },
+      panels: body?.panels ?? { offsets: {}, logSize: null, logStyle: null },
       persisted:
         session.ownerId !== null &&
         opts.persist !== undefined &&
