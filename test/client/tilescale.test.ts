@@ -6,7 +6,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { DEFAULT_VIEWPORT, viewLayout } from '../../src/client/render/canvas.ts';
-import { TILE_PX } from '../../src/shared/version.ts';
+import { TILE_PX, ZOOM_MAX, ZOOM_MIN } from '../../src/shared/version.ts';
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════
@@ -65,7 +65,19 @@ const WINDOWS: readonly Window[] = [
   { deviceW: 2560, deviceH: 1440, dpr: 1, name: '1440p', css: 128, tilesW: 20, tilesH: 11 },
   { deviceW: 3840, deviceH: 2160, dpr: 2, name: '4K at dpr 2', css: 96, tilesW: 20, tilesH: 11 },
   { deviceW: 5120, deviceH: 1440, dpr: 1, name: 'ultrawide', css: 128, tilesW: 30, tilesH: 11 },
-  { deviceW: 800, deviceH: 600, dpr: 1, name: 'a small window', css: 64, tilesW: 16, tilesH: 9 },
+  /**
+   * WAS 16 ACROSS, AND 16 × 64 IS 1024 IN AN 800-PIXEL WINDOW.
+   *
+   * The buffer used to floor at `DEFAULT_VIEWPORT`'s 16 columns whether or not
+   * the window could hold them, so `offsetX` went negative and 112 pixels of map
+   * were cut off each side. This row pinned that as correct, which is why it had
+   * to change: `viewLayout` now takes as many whole tiles as FIT.
+   *
+   * The same floor on the vertical axis is what put two thirds of a player's own
+   * sprite above the top of the screen at 1262×428 — see the note on `fitTilesH`
+   * in render/canvas.ts, and `the map never overflows the window` below.
+   */
+  { deviceW: 800, deviceH: 600, dpr: 1, name: 'a small window', css: 64, tilesW: 12, tilesH: 9 },
 ];
 
 /**
@@ -150,5 +162,86 @@ describe('how big a cell is', () => {
     const iframe = viewLayout(1248, 860, DEFAULT_VIEWPORT, 0, 1);
     expect(asItShipped(1248, 860).tilesW).toBe(39);
     expect(iframe.logicalW / TILE_PX).toBe(19);
+  });
+});
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE MAP NEVER OVERFLOWS THE WINDOW, AND YOUR OWN BODY IS NEVER CUT OFF.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `viewLayout` used to floor the tile count at `DEFAULT_VIEWPORT`, arguing
+ * "never show LESS than was asked for". That is right whenever the window can
+ * hold the request and silently wrong when it cannot: the backbuffer is then
+ * bigger than the canvas, `offset*` goes negative, and the edges of the map are
+ * simply gone.
+ *
+ * WHICH INCLUDES YOU. `cameraAxis` CLAMPS at the level edge rather than
+ * centring — it has to, or the camera would show the void beyond the map — so a
+ * player standing on the top row of a level is drawn at backbuffer y 0. At
+ * 1262×428, where `offsetY` was -42, that put screen y at -42: two thirds of
+ * your own character above the top of the screen, on the window this game is
+ * actually played in.
+ *
+ * The two assertions are separate because they fail for different reasons. The
+ * first is arithmetic about the buffer; the second is what a player sees, and
+ * it is the one that would still catch this if somebody re-introduced the floor
+ * somewhere other than here.
+ */
+describe('the map never overflows the window', () => {
+  const EDGES: readonly (readonly [number, number, number])[] = [
+    [1262, 428, 1],
+    [1280, 720, 1],
+    [1920, 1080, 1],
+    [2318, 1102, 2],
+    [800, 600, 1],
+    [640, 320, 1],
+  ];
+
+  it('draws no more map than the canvas can hold, at any zoom', () => {
+    for (const [w, h, dpr] of EDGES) {
+      for (const zoom of [ZOOM_MIN, 0, ZOOM_MAX]) {
+        const got = viewLayout(w, h, DEFAULT_VIEWPORT, zoom, dpr);
+        expect(
+          got.logicalW * got.scale,
+          `${String(w)}x${String(h)} zoom ${String(zoom)} too wide`,
+        ).toBeLessThanOrEqual(w);
+        expect(
+          got.logicalH * got.scale,
+          `${String(w)}x${String(h)} zoom ${String(zoom)} too tall`,
+        ).toBeLessThanOrEqual(h);
+        // The letterbox is what centres it, and it cannot be negative if the
+        // two above hold — asserted anyway, because it is the number the
+        // painter actually uses.
+        expect(got.offsetX, `${String(w)}x${String(h)} offsetX`).toBeGreaterThanOrEqual(0);
+        expect(got.offsetY, `${String(w)}x${String(h)} offsetY`).toBeGreaterThanOrEqual(0);
+      }
+    }
+  });
+
+  it('keeps a player standing on a level edge fully on screen', () => {
+    /**
+     * The camera arithmetic `cameraAxis` performs, at the one position that
+     * exposes the clamp: the top-left corner of a level far bigger than the
+     * view. A centred camera would hide this — the bug only appears where the
+     * clamp stops the camera following.
+     */
+    const world = 100 * TILE_PX;
+    for (const [w, h, dpr] of EDGES) {
+      const got = viewLayout(w, h, DEFAULT_VIEWPORT, 0, dpr);
+      const camY = Math.min(
+        Math.max(Math.floor(TILE_PX / 2 - got.logicalH / 2), 0),
+        world - got.logicalH,
+      );
+      const top = (0 * TILE_PX - camY) * got.scale + got.offsetY;
+      expect(
+        top,
+        `${String(w)}x${String(h)}: the player's own tile starts above the screen`,
+      ).toBeGreaterThanOrEqual(0);
+      expect(
+        top + TILE_PX * got.scale,
+        `${String(w)}x${String(h)}: the player's own tile ends below the screen`,
+      ).toBeLessThanOrEqual(h);
+    }
   });
 });

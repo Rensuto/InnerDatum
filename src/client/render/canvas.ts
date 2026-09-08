@@ -717,13 +717,40 @@ export function viewLayout(
   const fitScale = Math.floor(Math.min(deviceW / minLogicalW, deviceH / minLogicalH));
   const scale = Math.max(1, fitScale + zoomStep);
 
-  // Then fill the box with whole tiles at that scale. Clamped below by the
-  // requested minimum (never show LESS than was asked for) and above by
-  // MAX_TILES_* (never shrink the world to unreadable specks).
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THEN FILL THE BOX WITH WHOLE TILES — AS MANY AS FIT, AND NO MORE.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Capped above by `MAX_TILES_*` (never shrink the world to unreadable specks)
+   * and floored at one, because a zero-tile buffer is a zero-sized canvas.
+   *
+   * ═══ IT USED TO BE FLOORED AT THE REQUESTED MINIMUM, AND THAT CLIPPED YOU ═══
+   * The line read `max(minTilesH, fitTilesH)` and argued "never show LESS than
+   * was asked for". That is right whenever the window can hold the request and
+   * silently wrong when it cannot: the buffer is then TALLER THAN THE SCREEN and
+   * `offsetY` goes negative, so the top and bottom of the map are cut off.
+   *
+   * MEASURED, at 1262x428 — the window this game is actually played in.
+   * `DEFAULT_VIEWPORT` asks for 8 rows, 8 x 64 = 512 against a 428-pixel window,
+   * so `offsetY` was -42 and 84 pixels of map were off-screen. `cameraAxis`
+   * clamps at the level edge rather than centring, so a player standing on the
+   * TOP ROW of a level was drawn at buffer y 0 — screen y -42 to 22. TWO THIRDS
+   * OF YOUR OWN CHARACTER WAS ABOVE THE TOP OF THE SCREEN.
+   *
+   * The cost of the fix is 0.68 of a row of visibility on such a window: six
+   * whole rows instead of six-and-two-thirds clipped ones. A character you
+   * cannot see is worse than a row you cannot see, and the request still does
+   * the job it is really for — it sets the SCALE, one rule up, which is how big
+   * a tile is. How many of them you get is a fact about the window.
+   *
+   * `minTilesW`/`minTilesH` therefore no longer appear here at all. They are not
+   * dead: `minLogicalW`/`minLogicalH` above are what `fitScale` divides by.
+   */
   const fitTilesW = Math.floor(deviceW / (TILE_PX * scale));
   const fitTilesH = Math.floor(deviceH / (TILE_PX * scale));
-  const tilesW = Math.min(MAX_TILES_W, Math.max(minTilesW, fitTilesW));
-  const tilesH = Math.min(MAX_TILES_H, Math.max(minTilesH, fitTilesH));
+  const tilesW = Math.min(MAX_TILES_W, Math.max(1, fitTilesW));
+  const tilesH = Math.min(MAX_TILES_H, Math.max(1, fitTilesH));
   const logicalW = tilesW * TILE_PX;
   const logicalH = tilesH * TILE_PX;
 
