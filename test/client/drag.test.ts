@@ -996,3 +996,77 @@ describe('the painter and the settle agree about the resizable panel', () => {
     );
   });
 });
+
+describe('the case log keeps its size when a fight starts', () => {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * REPORTED AS "each area we enter causes the log to reset its size".
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Combat is what does it. `turnHudHeight` is `TURN_BAR_H +
+   * turnCardsHeight(turn)`, and `turnCardsHeight` is ZERO out of combat and
+   * `TURN_CARDS_H` in it — so the band's top jumps the instant something is in
+   * the initiative. Correct for the band; wrong for everything the log derives
+   * from it, because `defaultLogH` is a FRACTION of the band and the anchor and
+   * the height cap are both computed from that.
+   *
+   * And `settlePanel` wrote the shorter value into the STORE, which is what made
+   * it permanent: every walk into a fight ratcheted the box down and leaving the
+   * fight never gave it back.
+   */
+  const H = 428;
+  const QUIET = { top: 3 + 14, bottom: H - 60 - 3 };
+  const FIGHTING = { top: 3 + 14 + 52, bottom: H - 60 - 3 };
+
+  it('the two bands really do differ, or this file is testing nothing', () => {
+    // The fixture has to exercise the thing. A band that did not move would
+    // make every assertion below true of any implementation at all.
+    expect(FIGHTING.top, 'the card strip does not move the band').toBeGreaterThan(QUIET.top);
+  });
+
+  it('derives the log’s own geometry from a band the cards cannot move', () => {
+    const source = readFileSync('src/client/main.ts', 'utf8');
+    expect(source, 'the quiet band is gone').toContain(
+      'function quietLogBand(height: number): { top: number; bottom: number } {',
+    );
+    // The anchor and the default size.
+    expect(source, 'the log sizes itself from the live band again').toContain(
+      'const own = quietLogBand(height);',
+    );
+    // And the settle, which is where the ratchet lived.
+    expect(source, 'the settle clamps the STORE against a band combat shrinks').toContain(
+      'logSize = sizeIntoBand(logSize, quietLogBand(logicalH), logicalW);',
+    );
+  });
+
+  it('the cap that actually moved is the ANCHOR, not the band height', () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * THE FIRST VERSION OF THIS TEST BLAMED THE WRONG CLAMP.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * `sizeIntoBand` caps the height against the band's own HEIGHT — 296 while
+     * fighting at this window — so a 200-tall log sails through it and the
+     * assertion passed for both bands. That is the shape this project keeps
+     * getting caught by: an arithmetic model that agrees with the code and says
+     * nothing about the bug.
+     *
+     * The cap that moves is `resizeIntoBand`'s: `h <= band.bottom - y`, where
+     * the log's anchor is `bottom - defaultLogH(band)` and `defaultLogH` is a
+     * FRACTION of the band. So the reachable height IS `defaultLogH`, and it
+     * falls from 157 to 133 the instant the cards appear.
+     */
+    const DEFAULT_FRACTION = 0.45;
+    const capFor = (band: { top: number; bottom: number }): number => {
+      const anchor = band.bottom - Math.round((band.bottom - band.top) * DEFAULT_FRACTION);
+      const landed = resizeIntoBand({ x: 3, y: anchor, w: 640, h: 9000 }, NO_OFFSET, band, 1280);
+      return landed.h;
+    };
+    expect(capFor(FIGHTING), 'the fixture no longer exercises the drop').toBeLessThan(
+      capFor(QUIET),
+    );
+    // ...and the fix is that the log never asks the fighting band at all.
+    const source = readFileSync('src/client/main.ts', 'utf8');
+    expect(source).not.toContain('const own = logBand(height, band.top - DOCK_MARGIN);');
+  });
+});

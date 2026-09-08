@@ -699,6 +699,39 @@ function logBand(height: number, hudTop: number): { top: number; bottom: number 
   };
 }
 
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE LOG'S BAND AS IF NOBODY WERE FIGHTING — the one its OWN SIZE is from.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Reported as *"each area we enter causes the log to reset its size to
+ * original"*, and combat is what actually does it.
+ *
+ * `turnHudHeight` is `TURN_BAR_H + turnCardsHeight(turn)`, and
+ * `turnCardsHeight` is ZERO out of combat and `TURN_CARDS_H` in it. So the
+ * band's top JUMPS the moment a fight starts and drops back when it ends —
+ * which is correct for the band (the cards need that room) and wrong for
+ * everything the log derives from it:
+ *
+ *   `defaultLogH` is a FRACTION of the band, so it shrank;
+ *   the anchor is `bottom - defaultLogH`, so the top moved;
+ *   the height cap is `bottom - anchor`, so the box was capped shorter;
+ *   and `settlePanel` then wrote the shorter value into the STORE.
+ *
+ * That last step is what made it permanent. Every walk into a fight ratcheted
+ * the log down and leaving the fight never gave it back — at 1262x428 the cap
+ * falls from 157 to 133 the instant a monster is in the initiative, and stays.
+ *
+ * ═══ THE CARDS ARE AT THE TOP AND THE LOG IS AT THE BOTTOM ═══
+ * They do not overlap at any size a default log reaches, so pinning the log's
+ * geometry to the quiet band costs nothing and buys a box that does not move
+ * when something walks into view. The LIVE band still clamps where a MOVED log
+ * may sit, so a log dragged up cannot be drawn under the cards.
+ */
+function quietLogBand(height: number): { top: number; bottom: number } {
+  return logBand(height, TURN_BAR_H);
+}
+
 function panelBand(height: number, hudTop: number): { top: number; bottom: number } {
   return {
     top: hudTop + DOCK_MARGIN,
@@ -3546,7 +3579,9 @@ function unmovedPanelRect(
      */
     case DraggablePanel.Log: {
       if (!logVisible || width < DOCK_MIN_VIEWPORT_W) return null;
-      const own = logBand(height, band.top - DOCK_MARGIN);
+      // THE QUIET BAND for the size and the anchor — see `quietLogBand`. A box
+      // that changed shape because a fight started is the reported bug.
+      const own = quietLogBand(height);
       const size = logRectSize(own, width);
       if (size.h < PANEL_MIN_H) return null;
       /**
@@ -10663,7 +10698,14 @@ async function boot(): Promise<void> {
    */
   function liveLogSize(): PanelSize {
     const { hudW: logicalW, hudH: logicalH } = renderer.metrics();
-    return logRectSize(logBand(logicalH, turnHudHeight(turnView())), logicalW);
+    /**
+     * THE QUIET BAND. `sizeIntoBand` caps the height against the band's own
+     * HEIGHT, which is the one term that really does shrink when the cards
+     * appear — so a size read during a fight came back smaller than the box the
+     * player had. It feeds `sizeAtGrab`, and `cancelDrag` writes that back, so
+     * pressing Escape mid-resize in combat used to shrink the log.
+     */
+    return logRectSize(quietLogBand(logicalH), logicalW);
   }
 
   /**
@@ -11072,8 +11114,14 @@ async function boot(): Promise<void> {
       // settle against the shorter panel band would cap the height below what
       // the box is allowed to occupy, so the last few pixels of every resize
       // would snap away on release.
+      /**
+       * AGAINST THE QUIET BAND, and this line is where the ratchet lived. It
+       * clamped the STORE to a band that is shorter during a fight, so walking
+       * into combat and resizing — or merely resizing while a fight was on —
+       * wrote the smaller number down permanently.
+       */
       if (logSize !== null) {
-        logSize = sizeIntoBand(logSize, logBand(logicalH, turnHudHeight(turnView())), logicalW);
+        logSize = sizeIntoBand(logSize, quietLogBand(logicalH), logicalW);
       }
       savePanelLayout();
       return;
