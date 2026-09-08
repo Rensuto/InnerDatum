@@ -10,6 +10,10 @@ import {
   nextOffset,
   passesThreshold,
   settleOffset,
+  PANEL_MIN_H,
+  PANEL_MIN_W,
+  nextSize,
+  sizeIntoBand,
 } from '../../src/client/ui/drag.ts';
 import { SHEET_TABS, charSheetRect, charSheetRows } from '../../src/client/ui/charsheet.ts';
 import type { CharSheetView } from '../../src/client/ui/charsheet.ts';
@@ -522,14 +526,26 @@ describe('the offset store', () => {
     }
   });
 
-  it('names exactly the four panels the decision lists, and nothing else', () => {
-    // The exclusions are load-bearing, not omissions: the class picker is a
-    // scrimmed full-viewport modal, the party pane and the Case Log are the two
-    // halves of the `rightReserved` handshake (main.ts:2090-2092), and the
-    // hotbar is the anchor `panelBand`'s bottom is derived from (main.ts:534-541).
-    expect([...DRAGGABLE_PANELS].sort()).toEqual(['inventory', 'menu', 'sheet', 'talents']);
+  it('names exactly the five panels the decision lists, and nothing else', () => {
+    /**
+     * THE EXCLUSIONS ARE LOAD-BEARING, NOT OMISSIONS: the class picker is a
+     * scrimmed full-viewport modal, and the hotbar is the anchor `panelBand`'s
+     * bottom is derived from.
+     *
+     * ═══ THE CASE LOG WAS ON THAT LIST OF EXCLUSIONS AND IS NOW A MEMBER ═══
+     * It was excluded because it and the party pane were the two halves of one
+     * `rightReserved` handshake — the log was a dock down the right-hand side
+     * and the pane sized itself from what the log left. That reason died with
+     * the dock: the log is a bottom-left window now (`Minimalist.lua:381`) and
+     * reserves nothing from a pane in the top-left, so `rightReserved` is 0 and
+     * the two are independent.
+     *
+     * The pane itself is still excluded, and still for its own reason.
+     */
+    expect([...DRAGGABLE_PANELS].sort()).toEqual(['inventory', 'log', 'menu', 'sheet', 'talents']);
     expect(Object.keys(createPanelOffsets()).sort()).toEqual([
       'inventory',
+      'log',
       'menu',
       'sheet',
       'talents',
@@ -543,7 +559,7 @@ describe('the offset store', () => {
     expect(b[DraggablePanel.Menu]).toEqual({ dx: 0, dy: 0 });
   });
 
-  it('DragKind is the four things a drag can carry', () => {
+  it('DragKind is the five things a drag can carry', () => {
     /**
      * A CLOSED SET, ASSERTED WHOLE. Every drop target in the client switches on
      * this and the compiler checks exhaustiveness — so a fifth member breaks
@@ -553,8 +569,20 @@ describe('the offset store', () => {
      * `talent` is the fourth. It arrived with the rebindable bar: the six keyed
      * slots hold a binding rather than `loadout[n]`, so a talent has to be able
      * to travel from the panel to a slot.
+     *
+     * `resize` IS THE FIFTH, and it is a separate kind rather than a flag on
+     * `panel` because the two gestures WRITE DIFFERENT THINGS: a move writes an
+     * offset and a resize writes a size. Sharing one kind would put a boolean
+     * in front of every settle path and every drop target, which is the shape
+     * this union exists to refuse.
      */
-    expect(Object.values(DragKind).sort()).toEqual(['carried', 'panel', 'talent', 'worn']);
+    expect(Object.values(DragKind).sort()).toEqual([
+      'carried',
+      'panel',
+      'resize',
+      'talent',
+      'worn',
+    ]);
   });
 });
 
@@ -644,5 +672,74 @@ describe('headerDragRect', () => {
   it('a zero reservation is the whole strip', () => {
     const handle = headerDragRect({ x: 7, y: 9, w: 200, h: 100 }, 0);
     expect(handle).toEqual({ x: 7, y: 9, w: 200, h: HEADER_H });
+  });
+});
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * RESIZING A PANEL — the size half of a gesture whose position half is above.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Ported from `Minimalist.lua:596-605`. Upstream floors each axis at 20 during
+ * the drag and bounds the box at drag END, from `saveSettings` -> `boundPlaces`
+ * (`:393-395`); the split is deliberate there and is kept here, because a box
+ * that stopped following the pointer mid-gesture reads as the drag breaking.
+ */
+describe('nextSize', () => {
+  it('grows from the size at the grab, by however far the pointer went', () => {
+    const grown = nextSize({ w: 300, h: 200 }, 100, 100, 140, 130);
+    expect(grown).toEqual({ w: 340, h: 230 });
+  });
+
+  it('is a function of the GRAB, not of the last frame', () => {
+    /**
+     * The same purity `nextOffset` has and for the same reason: a dropped frame
+     * must not cost the gesture anything, so two calls with the same grab and
+     * the same pointer are the same answer however many came between.
+     */
+    const a = nextSize({ w: 300, h: 200 }, 100, 100, 160, 100);
+    const b = nextSize({ w: 300, h: 200 }, 100, 100, 160, 100);
+    expect(a).toEqual(b);
+  });
+
+  it('floors each axis independently, like upstream', () => {
+    // `w = math.max(20, ...)` and `h = math.max(20, ...)` are two separate
+    // statements up there — dragging the corner past the left edge must not
+    // also collapse the height.
+    const squashed = nextSize({ w: 300, h: 200 }, 100, 100, -5000, 130);
+    expect(squashed.w).toBe(PANEL_MIN_W);
+    expect(squashed.h, 'the height collapsed with the width').toBe(230);
+  });
+
+  it('does NOT cap during the gesture', () => {
+    // Upstream's resize callback has no ceiling; `boundPlaces` runs at drag end.
+    const huge = nextSize({ w: 300, h: 200 }, 0, 0, 9000, 9000);
+    expect(huge.w).toBeGreaterThan(5000);
+  });
+});
+
+describe('sizeIntoBand', () => {
+  const band = { top: 40, bottom: 400 };
+
+  it('is what caps it, at settle time', () => {
+    const capped = sizeIntoBand({ w: 9000, h: 9000 }, band, 800);
+    expect(capped.w).toBe(800);
+    expect(capped.h).toBe(band.bottom - band.top);
+  });
+
+  it('keeps the floor it was given', () => {
+    const tiny = sizeIntoBand({ w: 1, h: 1 }, band, 800);
+    expect(tiny).toEqual({ w: PANEL_MIN_W, h: PANEL_MIN_H });
+  });
+
+  it('survives a band shorter than the minimum', () => {
+    /**
+     * A stored size outlives the window it was chosen in, and a band can be
+     * shorter than `PANEL_MIN_H` on a very short viewport. The floor wins —
+     * returning a negative height would be a canvas of negative size, which
+     * throws rather than degrading.
+     */
+    const squeezed = sizeIntoBand({ w: 300, h: 300 }, { top: 0, bottom: 10 }, 800);
+    expect(squeezed.h).toBe(PANEL_MIN_H);
   });
 });

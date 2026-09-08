@@ -873,6 +873,11 @@ function isItemDrag(drag: DragSubject | null | undefined): boolean {
     case DragKind.Carried:
     case DragKind.Worn:
       return true;
+    // A RESIZE IS NOT AN ITEM DRAG, and it cannot reach the bar for the reason
+    // the header gives about `Panel`: the gesture belongs to a panel clamped
+    // inside `panelBand`, which stops above the hotbar.
+    case DragKind.Resize:
+      return false;
     // A TALENT IS NOT AN ITEM DRAG. It lights up the other half of the bar —
     // see `isTalentDrag` below — and the two are kept apart rather than merged
     // into one `isBindableDrag` precisely so a talent cannot light an item

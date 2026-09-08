@@ -178,7 +178,7 @@ import {
   soonestImpact,
 } from './state/projectiles.ts';
 import { orbsOnMyLine } from '../shared/flight.ts';
-import { createCaseLog, SCROLL_STEP } from './ui/caselog.ts';
+import { createCaseLog, drawLogGrip, logDragAt, logGripAt, SCROLL_STEP } from './ui/caselog.ts';
 import {
   charSheetHitAt,
   charSheetTabAt,
@@ -199,6 +199,9 @@ import {
   DragKind,
   DraggablePanel,
   DRAGGABLE_PANELS,
+  PANEL_MIN_H,
+  nextSize,
+  sizeIntoBand,
   NO_OFFSET,
   createPanelOffsets,
   moveIntoBand,
@@ -281,7 +284,6 @@ import {
   partyPaneLayout,
   partyPaneTipAt,
   partyPaneView,
-  PARTY_PANE_MARGIN,
 } from './ui/partypanel.ts';
 // THE CEILING RULE, SHARED WITH THE SERVER THAT ENFORCES IT. One function, so
 // a greyed `+` and a refused frame can never disagree about where the limit is.
@@ -329,7 +331,6 @@ import {
   CROSSING_INK,
   doorwayAt,
   doorwayLine,
-  minimapReserveH,
   MINIMAP_RADIUS,
   mapTileAt,
   ZONE_LABEL_FONT,
@@ -397,7 +398,7 @@ import type {
 } from '../shared/protocol.ts';
 import type { CommandContext, RosterEntry } from './input/commands.ts';
 import type { KeyRemap } from './input/keymap.ts';
-import type { DragSubject, PanelOffset } from './ui/drag.ts';
+import type { DragSubject, PanelOffset, PanelSize } from './ui/drag.ts';
 import type {
   ArmedCapture,
   EscapeMenuView,
@@ -635,11 +636,17 @@ const TRAVEL_STEP_MS = 150;
  * squeezed one: a 120-pixel log is not a readable log, and a player on a small
  * window would rather have the map.
  */
-const DOCK_W = 208;
 const DOCK_MARGIN = 3;
 const DOCK_MIN_VIEWPORT_W = 480;
 /** Below this the dock is dropped entirely — a panel too short to read is noise. */
-const DOCK_MIN_H = 84;
+
+/**
+ * The Case Log's untouched height: upstream's 200 as a CEILING on a proportion
+ * of the band. `Minimalist.lua:381` uses a flat `h=200`, which is 18% of ToME's
+ * 1080-tall window and 47% of the 428-tall one this game is played in.
+ */
+const LOG_DEFAULT_H = 200;
+const LOG_DEFAULT_BAND_FRACTION = 0.45;
 
 /**
  * The band both side panels live in: under the top HUD, above the bottom bands.
@@ -687,37 +694,39 @@ function panelBand(height: number, hudTop: number): { top: number; bottom: numbe
 // MINIMAP_MAX_H and over-reserved by 31 pixels, which is what made the Case Log
 // disappear on a 384-tall viewport the moment the turn cards appeared.
 
-function logPanelRect(
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * HOW BIG THE CASE LOG IS: what the player dragged it to, or upstream's shape.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `logSize` is null until somebody grabs the corner grip, and null means "the
+ * layout's own answer" rather than a default written out — see
+ * `drag.ts#PanelSize`. That is what lets the untouched default be a function of
+ * the viewport (upstream's `math.floor(w/2)`) while a dragged one is absolute.
+ *
+ * CLAMPED THROUGH `sizeIntoBand` ON BOTH PATHS. A stored size outlives the
+ * window it was chosen in — drag the log wide on a maximised window, restore
+ * the window, and the size is now wider than the screen. Clamping at READ time
+ * rather than only at settle time is what makes that shrink back instead of
+ * hanging off the edge, and it costs one call.
+ */
+function logRectSize(
+  band: { readonly top: number; readonly bottom: number },
   width: number,
-  height: number,
-  hudTop: number,
-  showLog: boolean,
-): PanelRect | null {
-  if (!showLog || width < DOCK_MIN_VIEWPORT_W) return null;
-  const band = panelBand(height, hudTop);
-  /**
-   * ═══════════════════════════════════════════════════════════════════════════
-   * THE LOG STARTS BELOW THE MINIMAP, BECAUSE THEY SHARE A CORNER.
-   * ═══════════════════════════════════════════════════════════════════════════
-   * Both are top-right: the log because that is where this game's dock has
-   * always been, the minimap because that is where every game puts one. The
-   * minimap is drawn LATER, so it won — the top of the transcript disappeared
-   * under it, which is exactly where the newest lines are on the Margin lane.
-   *
-   * Yielding the space is the right way round rather than moving the minimap:
-   * the log can lose a line and still be a log, and a minimap pushed anywhere
-   * else stops being where a player's eye goes for it.
-   *
-   * The reserve is unconditional, even when the world map has replaced the
-   * minimap for a moment. A dock whose height depended on whether an overlay
-   * happened to be open would re-lay the transcript every time somebody pressed
-   * M, and a log that reflows on a keypress is worse than one that is a few
-   * pixels short.
-   */
-  const top = band.top + minimapReserveH(width);
-  const h = band.bottom - top;
-  if (h < DOCK_MIN_H) return null;
-  return { x: width - DOCK_W - DOCK_MARGIN, y: top, w: DOCK_W, h };
+): { readonly w: number; readonly h: number } {
+  if (logSize !== null) return sizeIntoBand(logSize, band, width);
+  const tall = band.bottom - band.top;
+  return sizeIntoBand(
+    {
+      // `math.floor(w/2)`, verbatim — Minimalist.lua:381.
+      w: Math.floor(width / 2),
+      // See the arm in `unmovedPanelRect`: upstream's 200 as a ceiling on a
+      // proportion, so a short window gets a log rather than a wall.
+      h: Math.min(LOG_DEFAULT_H, Math.round(tall * LOG_DEFAULT_BAND_FRACTION)),
+    },
+    band,
+    width,
+  );
 }
 
 /** True when a LOGICAL backbuffer point is over either dock panel. */
@@ -1354,6 +1363,25 @@ let partyVisible = true;
 const panelOffsets: Record<DraggablePanel, PanelOffset> = createPanelOffsets();
 
 /**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * HOW BIG THE PLAYER HAS DRAGGED THE CASE LOG, or null for "never touched".
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * ONE PANEL AND ONE VARIABLE, NOT A RECORD LIKE `panelOffsets`. Exactly one
+ * panel in this game resizes, and a `Record<DraggablePanel, PanelSize | null>`
+ * would be four permanent nulls plus a lookup — a framework built for a second
+ * case that does not exist. The day a second panel grows a grip, this becomes
+ * that record and the compiler names every site.
+ *
+ * NOT PERSISTED, exactly like `panelOffsets` above and for the same reason its
+ * own note gives. Upstream DOES persist (`Minimalist.lua:393`, `saveSettings`
+ * writes `places` out), so this is a real divergence and the natural next
+ * commit — it needs a wire verb beside `set_zoom` and `set_ui_scale`, because
+ * browser storage is refused here by test as well as by argument.
+ */
+let logSize: PanelSize | null = null;
+
+/**
  * THE GESTURE IN PROGRESS, or null. There is never more than one — a pointer has
  * one button down at a time and a second press cancels the first (see the guard
  * at the head of `mousedown`).
@@ -1376,6 +1404,13 @@ type LiveDrag = {
   readonly grabY: number;
   /** The subject panel's offset when it was grabbed. Unused for item drags. */
   readonly offsetAtGrab: PanelOffset;
+  /**
+   * The subject panel's SIZE when it was grabbed, for a `Resize`. Null for every
+   * other kind, and for a panel that had never been resized — which is the same
+   * "the layout's own answer" that `logSize` means, carried into the gesture so
+   * the first drag grows from the size actually on screen rather than from zero.
+   */
+  readonly sizeAtGrab: PanelSize | null;
   /** What a sub-threshold release means, or null when the press means nothing. */
   readonly click: (() => void) | null;
   /** Has the pointer travelled past `DRAG_THRESHOLD_PX`? */
@@ -3353,13 +3388,52 @@ function unmovedPanelRect(
       // side: this resolver is what both the painter and the hit test read, so
       // a keys screen that grew for one and not the other is unreachable.
       return menuOpen ? escapeMenuRect({ ...options, screen: menuScreen }) : null;
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * THE CASE LOG — bottom-left, and the shape is upstream's.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * `Minimalist.lua:381`:
+     *
+     *     gamelog = {x=0, y=hup-210, w=math.floor(w/2), h=200, scale=1, a=1}
+     *
+     * where `hup` is the top of the hotkey bar — so the box sits in the bottom
+     * left, half the window wide, with a ten-pixel gap above the bar. Every
+     * part of that is ported: `x` at the margin rather than 0 because this
+     * client insets its panels, `w` as `floor(width / 2)` verbatim, and the
+     * bottom edge on `band.bottom`, which is this client's `hup` — the first
+     * pixel of the strips no panel may cover.
+     *
+     * THE HEIGHT IS PROPORTIONAL WITH UPSTREAM'S NUMBER AS ITS CEILING, and
+     * that is the one divergence. 200 pixels is 18% of ToME's 1080-tall window
+     * and 47% of the 428-tall one this game is played in, where it would bury
+     * the map. So it is 45% of the band, capped at the 200 upstream chose —
+     * which lands ON 200 for any window tall enough to have meant it.
+     */
+    case DraggablePanel.Log: {
+      if (!logVisible || width < DOCK_MIN_VIEWPORT_W) return null;
+      const size = logRectSize(band, width);
+      if (size.h < PANEL_MIN_H) return null;
+      return { x: DOCK_MARGIN, y: band.bottom - size.h, w: size.w, h: size.h };
+    }
   }
 }
 
 function hudLayout(width: number, height: number): HudLayout {
   const hudTop = turnHudHeight(turnView());
   const band = panelBand(height, hudTop);
-  const log = logPanelRect(width, height, hudTop, logVisible);
+  /**
+   * THROUGH `movePanel`, LIKE THE FOUR BELOW IT AND UNLIKE ITS OLD SELF. The
+   * log was a fixed dock; it is a window now, so the same two steps apply — the
+   * arm in `unmovedPanelRect` decides the SHAPE and the null, and this slides
+   * the result by however far it has been dragged and clamps it back.
+   */
+  const log = movePanel(
+    DraggablePanel.Log,
+    unmovedPanelRect(DraggablePanel.Log, width, height, band),
+    band,
+    width,
+  );
   const view = partyView();
   const pane =
     view === null || !partyVisible
@@ -3369,9 +3443,20 @@ function hudLayout(width: number, height: number): HudLayout {
           width,
           top: band.top,
           bottom: band.bottom,
-          // What the log is taking on the other side, so the pane can work out
-          // how much map is left before it decides which form to wear.
-          rightReserved: log === null ? 0 : log.w + PARTY_PANE_MARGIN * 2,
+          /**
+           * ═══ NOTHING IS RESERVED ANY MORE, AND THAT IS THE POINT OF THE MOVE ═══
+           * This was `log.w + PARTY_PANE_MARGIN * 2`: the log was a dock down
+           * the RIGHT-HAND side and the pane is top-left, so the two were two
+           * halves of one handshake — the pane chose Rows or Portraits by
+           * measuring what the log had left it.
+           *
+           * The log is a bottom-left window now (`Minimalist.lua:381`), which
+           * takes nothing from the pane's row. Keeping the handshake would have
+           * been worse than useless once the log could be RESIZED: dragging the
+           * log wider would silently flip the party pane to faces, which is a
+           * panel changing shape because a different panel was touched.
+           */
+          rightReserved: 0,
         });
 
   return {
@@ -3959,6 +4044,11 @@ function draggedItem(): ItemBinding | null {
     // which is the frame a talent's name and icon actually live in.
     case DragKind.Talent:
       return null;
+    // A RESIZE NEEDS NO GHOST FOR THE SAME REASON A MOVE DOES NOT: the panel
+    // itself is following the pointer, through `logSize` rather than through
+    // `panelOffsets`.
+    case DragKind.Resize:
+      return null;
     case DragKind.Panel:
       // A panel drag needs no ghost: the PANEL is the ghost. `panelOffsets`
       // moves it under the pointer directly, which is the whole gesture.
@@ -4163,6 +4253,9 @@ const paintHud: HudPainter = (ctx, width, height) => {
   }
   if (layout.log !== null && caseLog !== null) {
     caseLog.draw({ ctx, sprites, rect: layout.log, gameTurn: turn?.gameTurn ?? -1 });
+    // THE GRIP LAST, so it is drawn over the panel's own border rather than
+    // under it — see `drawLogGrip`. It is the only control on this box.
+    drawLogGrip(ctx, layout.log);
   }
 
   /**
@@ -10307,6 +10400,19 @@ async function boot(): Promise<void> {
    * a panel HEADER passes null: a header has never done anything on click, so a
    * sub-threshold release correctly does nothing at all.
    */
+  /**
+   * The Case Log's size AS DRAWN — what the player is actually grabbing.
+   *
+   * NOT `logSize`, and the difference is the whole reason this exists: on the
+   * first ever resize `logSize` is null and the box on screen is the default
+   * computed from the band. Growing from null would mean growing from nothing.
+   */
+  function liveLogSize(): PanelSize {
+    const { hudW: logicalW, hudH: logicalH } = renderer.metrics();
+    const band = panelBand(logicalH, turnHudHeight(turnView()));
+    return logRectSize(band, logicalW);
+  }
+
   function beginDrag(
     subject: DragSubject,
     grabX: number,
@@ -10318,6 +10424,9 @@ async function boot(): Promise<void> {
       grabX,
       grabY,
       offsetAtGrab: subject.kind === DragKind.Panel ? panelOffsets[subject.panel] : NO_OFFSET,
+      // THE SIZE ON SCREEN, not `logSize` — the two differ on the first drag,
+      // when `logSize` is null and what the player is grabbing is the default.
+      sizeAtGrab: subject.kind === DragKind.Resize ? liveLogSize() : null,
       click,
       moved: false,
       at: { x: grabX, y: grabY },
@@ -10363,6 +10472,20 @@ async function boot(): Promise<void> {
     if (subject.kind === DragKind.Panel) {
       panelOffsets[subject.panel] = nextOffset(
         live.offsetAtGrab,
+        live.grabX,
+        live.grabY,
+        point.x,
+        point.y,
+      );
+    } else if (subject.kind === DragKind.Resize) {
+      /**
+       * FLOORED BUT NOT CAPPED, which is upstream's own behaviour: the resize
+       * callback clamps only the minimum (`Minimalist.lua:600-601`) and
+       * `boundPlaces` runs from `saveSettings` at drag END. A box that stopped
+       * following the pointer mid-gesture reads as the drag having broken.
+       */
+      logSize = nextSize(
+        live.sizeAtGrab ?? liveLogSize(),
         live.grabX,
         live.grabY,
         point.x,
@@ -10621,9 +10744,15 @@ async function boot(): Promise<void> {
    * ONLY A PANEL DRAG HAS AN OFFSET. An item drag's whole effect is `resolveDrop`.
    */
   function settlePanel(subject: DragSubject): void {
-    if (subject.kind !== DragKind.Panel) return;
     const { hudW: logicalW, hudH: logicalH } = renderer.metrics();
     const band = panelBand(logicalH, turnHudHeight(turnView()));
+    if (subject.kind === DragKind.Resize) {
+      // UPSTREAM CLAMPS HERE AND ONLY HERE — `boundPlaces` is called from
+      // `saveSettings`, which is the resize drag's `on_done`.
+      if (logSize !== null) logSize = sizeIntoBand(logSize, band, logicalW);
+      return;
+    }
+    if (subject.kind !== DragKind.Panel) return;
     const unmoved = unmovedPanelRect(subject.panel, logicalW, logicalH, band);
     // NULL MEANS THE PANEL IS NOT DRAWABLE — shut, or a band too short to hold it.
     // There is no position to settle to, and the raw offset is left alone so that
@@ -10699,6 +10828,12 @@ async function boot(): Promise<void> {
         // fresh store is `NO_OFFSET`. So a cancel can never reinstate an
         // overshoot that `settlePanel` would have to undo later.
         panelOffsets[live.subject.panel] = live.offsetAtGrab;
+      }
+      // THE SAME ARGUMENT ONE KIND OVER: `sizeAtGrab` is whatever was on screen
+      // when the grip was taken, and every normal end runs `settlePanel`, so it
+      // is always a settled value.
+      if (live.subject.kind === DragKind.Resize) {
+        logSize = live.sizeAtGrab;
       }
       // Same rule as `endDrag`: only a gesture that actually TRAVELLED left the
       // hover state frozen, because only then was the canvas `mousemove` handler
@@ -11193,6 +11328,33 @@ async function boot(): Promise<void> {
     // last control that may be ambiguous. Below it, `escapeMenuHitAt` is reached
     // only for a press that was NOT on the handle, which is what keeps
     // twenty-six rows from being rebuilt every time somebody grabs the title bar.
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * THE CASE LOG'S TWO GESTURES — grip before header, both before the rows.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * THE GRIP IS ASKED FIRST because it sits INSIDE the box, at the corner
+     * (`logGripRect`, ported from `Minimalist.lua:310`). Asking the header
+     * first would not shadow it — they do not overlap — but asking the log's
+     * CONTENT first would: the grip is over the transcript, and a press there
+     * has to mean resize rather than a click into the lane under it.
+     *
+     * ABOVE THE MENU, which is the same order the paint uses. See the rule this
+     * handler keeps throughout: HIT-TEST ORDER MIRRORS PAINT ORDER.
+     */
+    if (point !== null && layout.log !== null) {
+      if (logGripAt(layout.log, point.x, point.y)) {
+        event.preventDefault();
+        beginDrag({ kind: DragKind.Resize, panel: DraggablePanel.Log }, point.x, point.y, null);
+        return;
+      }
+      if (logDragAt(layout.log, point.x, point.y)) {
+        event.preventDefault();
+        beginDrag({ kind: DragKind.Panel, panel: DraggablePanel.Log }, point.x, point.y, null);
+        return;
+      }
+    }
+
     if (point !== null && layout.menu !== null) {
       if (escapeMenuDragAt(layout.menu, point.x, point.y) !== null) {
         event.preventDefault();

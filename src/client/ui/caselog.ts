@@ -54,6 +54,7 @@
 import { LogLane } from '../../shared/protocol.ts';
 import { PALETTE } from '../render/canvas.ts';
 import {
+  HEADER_H,
   drawHeader,
   drawPanel,
   fitText,
@@ -583,4 +584,90 @@ export function createCaseLog(options: CaseLogOptions): CaseLog {
     },
     lastMargin: () => margin.lines[margin.lines.length - 1] ?? null,
   };
+}
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE CORNER GRIP — one square, at the box's inside bottom-right.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Ported from `Minimalist.lua:310`:
+ *
+ *     gamelog = { x = function(self) return self.logdisplay.w - move_handle[6] end,
+ *                 y = function(self) return self.logdisplay.h - move_handle[6] end }
+ *
+ * — the handle's own width subtracted from the box's, on both axes, so it sits
+ * INSIDE the corner rather than hanging off it. Upstream's is a loaded PNG whose
+ * pixel size this tree does not carry (no `.png` exists anywhere under
+ * `reference/`, the media is not redistributable), so the number below is ours;
+ * the placement arithmetic is upstream's exactly.
+ *
+ * ═══ ONE HANDLE, TWO GESTURES, WHICH IS ALSO UPSTREAM'S ═══
+ * `Minimalist.lua:1693` registers this same zone for both: a LEFT drag moves the
+ * box (`:578`) and a RIGHT drag resizes it (`:585`, `mode = "resize"`). Two
+ * separate grips would be this client inventing a control ToME does not have,
+ * on a box whose whole point is to be the one ToME ships.
+ */
+export const LOG_GRIP_PX = 12;
+
+/** Where the grip is, for the painter and the hit test to share one answer. */
+export function logGripRect(rect: PanelRect): PanelRect {
+  return {
+    x: rect.x + rect.w - LOG_GRIP_PX,
+    y: rect.y + rect.h - LOG_GRIP_PX,
+    w: LOG_GRIP_PX,
+    h: LOG_GRIP_PX,
+  };
+}
+
+/** True when a LOGICAL backbuffer point is on the grip. */
+export function logGripAt(rect: PanelRect, px: number, py: number): boolean {
+  const grip = logGripRect(rect);
+  return px >= grip.x && px < grip.x + grip.w && py >= grip.y && py < grip.y + grip.h;
+}
+
+/**
+ * Three diagonal ticks in the corner, which is the vocabulary every resizable
+ * window on every desktop uses. Upstream blits an authored PNG; this is drawn,
+ * for `ASSETS-REQUIRED.md`'s reason — a widget that needs art to be USABLE
+ * cannot ship behind a missing file.
+ */
+export function drawLogGrip(ctx: CanvasRenderingContext2D, rect: PanelRect): void {
+  const grip = logGripRect(rect);
+  ctx.save();
+  ctx.strokeStyle = PALETTE.GREY_HI;
+  ctx.lineWidth = 1;
+  for (let i = 1; i <= 3; i += 1) {
+    const inset = i * 3;
+    ctx.beginPath();
+    // +0.5 so a one-pixel line lands ON a pixel rather than across two.
+    ctx.moveTo(grip.x + grip.w - inset + 0.5, grip.y + grip.h - 0.5);
+    ctx.lineTo(grip.x + grip.w - 0.5, grip.y + grip.h - inset + 0.5);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE HEADER STRIP IS THE MOVE HANDLE — and this is a DIVERGENCE, stated.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Upstream drives BOTH gestures off the corner handle: left-drag moves the box
+ * and right-drag resizes it (`Minimalist.lua:578` and `:585`, one zone
+ * registered for both at `:1693`).
+ *
+ * THE RIGHT BUTTON IS ALREADY SPOKEN FOR HERE. It scrolls the view, everywhere,
+ * on every pixel of the canvas — so a right-drag that resized the log would be
+ * a second meaning for a button a player is already holding to look around, and
+ * the two would fight on exactly the box they overlap.
+ *
+ * So the gestures split the way THIS client already splits them: the four
+ * panels that move all move by their header, and a corner grip is the universal
+ * vocabulary for a resize. A player who has dragged the character sheet knows
+ * how to move this without being told, which is worth more than matching which
+ * mouse button upstream happened to choose.
+ */
+export function logDragAt(rect: PanelRect, px: number, py: number): boolean {
+  return px >= rect.x && px < rect.x + rect.w && py >= rect.y && py < rect.y + HEADER_H;
 }

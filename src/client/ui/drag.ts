@@ -100,6 +100,23 @@ export const DraggablePanel = {
   Talents: 'talents',
   Inventory: 'inventory',
   Menu: 'menu',
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE CASE LOG, AND IT IS THE ONLY ONE THAT ALSO RESIZES.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * It was a fixed vertical dock down the right-hand side, and the note that
+   * used to sit below this list explained why it was NOT draggable: it and the
+   * party pane were two halves of one `rightReserved` handshake, and a
+   * free-floating log would have made that meaningless.
+   *
+   * THE HANDSHAKE IS GONE because the log is not on that side any more. Upstream
+   * puts it bottom-left — `Minimalist.lua:381`,
+   * `gamelog = {x=0, y=hup-210, w=math.floor(w/2), h=200}` — and a box in the
+   * bottom-left corner reserves nothing from a pane in the top-left, so the pane
+   * chooses its form from the window alone.
+   */
+  Log: 'log',
 } as const;
 export type DraggablePanel = (typeof DraggablePanel)[keyof typeof DraggablePanel];
 
@@ -115,6 +132,7 @@ export const DRAGGABLE_PANELS: readonly DraggablePanel[] = [
   DraggablePanel.Talents,
   DraggablePanel.Inventory,
   DraggablePanel.Menu,
+  DraggablePanel.Log,
 ] as const;
 
 /**
@@ -347,6 +365,17 @@ export const DragKind = {
    * changes or a cooldown starts. The id is the only field that cannot rot.
    */
   Talent: 'talent',
+  /**
+   * A PANEL'S CORNER GRIP, not its header. The subject is which panel, exactly
+   * as `Panel` above — the two gestures differ in what they write, not in what
+   * they are about.
+   *
+   * SEPARATE FROM `Panel` RATHER THAN A FLAG ON IT. A move writes an offset and
+   * a resize writes a size; sharing one kind would mean every drop target and
+   * every settle path asking a boolean before it knew which of two different
+   * things had just happened, which is the shape this union exists to refuse.
+   */
+  Resize: 'resize',
 } as const;
 export type DragKind = (typeof DragKind)[keyof typeof DragKind];
 
@@ -367,4 +396,99 @@ export type DragSubject =
   | { readonly kind: typeof DragKind.Panel; readonly panel: DraggablePanel }
   | { readonly kind: typeof DragKind.Carried; readonly itemId: string }
   | { readonly kind: typeof DragKind.Worn; readonly slot: Slot }
-  | { readonly kind: typeof DragKind.Talent; readonly talentId: string };
+  | { readonly kind: typeof DragKind.Talent; readonly talentId: string }
+  | { readonly kind: typeof DragKind.Resize; readonly panel: DraggablePanel };
+
+// ---------------------------------------------------------------------------
+// RESIZE — the same shape as the move, one axis pair over
+// ---------------------------------------------------------------------------
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * HOW BIG A RESIZABLE PANEL HAS BEEN MADE, or null for "however big it comes".
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * ═══ AN ABSOLUTE SIZE, WHERE `PanelOffset` IS A DELTA — AND THE DIFFERENCE IS
+ * DELIBERATE ═══
+ * A position must be a delta, because the rect it is applied to is recomputed
+ * from the viewport on every frame and a stored position would fight that. A
+ * SIZE has no such derivation to preserve: a player who dragged the log to 400
+ * wide wants it 400 wide, not "half the window plus 84" — the window growing
+ * should give them more map, not a log that grows with it.
+ *
+ * NULL IS NOT ZERO AND NOT A DEFAULT WRITTEN OUT. It means the player has never
+ * resized this panel, so the layout's own answer stands — which is how the
+ * default can be a function of the viewport (upstream's `math.floor(w/2)`) and
+ * still be overridable by a drag.
+ */
+export type PanelSize = {
+  readonly w: number;
+  readonly h: number;
+};
+
+/**
+ * The smallest a resizable panel may be dragged, in logical pixels.
+ *
+ * UPSTREAM'S FLOOR IS 20 (`Minimalist.lua:600-601`,
+ * `w = math.max(20, x - places.x + ox)`) AND OURS IS NOT, which is a divergence
+ * worth stating rather than hiding behind a ported line number. Twenty pixels
+ * of a ToME log is twenty pixels of bare text over the map — it draws no frame
+ * at all when the interface is locked. Ours is drawn on a nine-slice skin with
+ * a header and a gutter, so at twenty pixels there is no content area left and
+ * the player has dragged the panel into something they cannot drag back.
+ *
+ * These are the smallest box that still shows its header and one wrapped line.
+ */
+export const PANEL_MIN_W = 160;
+export const PANEL_MIN_H = 72;
+
+/**
+ * The size a resize gesture has reached: the size at the grab plus how far the
+ * pointer has travelled, floored.
+ *
+ * `nextOffset`'s twin, and pure for the same reason — it is a function of the
+ * size captured at the GRAB rather than of whatever the last frame left behind,
+ * so a gesture cannot accumulate rounding or drift if a frame is dropped.
+ *
+ * UPSTREAM CLAMPS ONLY THE FLOOR HERE and lets the box grow past the screen
+ * edge during the drag, snapping it back on release (`boundPlaces` runs from
+ * `saveSettings`, `Minimalist.lua:393-395`, and NOT from the resize callback).
+ * We do the same: the ceiling belongs to `sizeIntoBand` at settle time, and
+ * clamping live would make the box stop following the pointer, which reads as
+ * the drag having broken.
+ */
+export function nextSize(
+  sizeAtGrab: PanelSize,
+  grabX: number,
+  grabY: number,
+  x: number,
+  y: number,
+): PanelSize {
+  return {
+    w: Math.max(PANEL_MIN_W, sizeAtGrab.w + (x - grabX)),
+    h: Math.max(PANEL_MIN_H, sizeAtGrab.h + (y - grabY)),
+  };
+}
+
+/**
+ * The size a resize SETTLES at: never bigger than the band can hold.
+ *
+ * `settleOffset`'s twin. Upstream's equivalent is the `d.w and d.h` branch of
+ * `boundPlaces` (`Minimalist.lua:388-400`), which bounds the whole box inside
+ * the window rather than merely its handle — and runs at drag end, not during.
+ *
+ * THE BAND AND NOT THE VIEWPORT, because that is what a panel is clamped into
+ * everywhere else in this client: `moveIntoBand` puts a moved panel inside
+ * `[band.top, band.bottom]`, and a resize that could exceed it would let a
+ * player make a box the move gesture then refuses to place.
+ */
+export function sizeIntoBand(
+  size: PanelSize,
+  band: { readonly top: number; readonly bottom: number },
+  width: number,
+): PanelSize {
+  return {
+    w: Math.max(PANEL_MIN_W, Math.min(size.w, width)),
+    h: Math.max(PANEL_MIN_H, Math.min(size.h, Math.max(PANEL_MIN_H, band.bottom - band.top))),
+  };
+}
