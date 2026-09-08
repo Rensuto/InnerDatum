@@ -15,6 +15,7 @@ import {
   talentPanelGeometry,
   talentPanelHitAt,
   talentPanelRect,
+  TALENT_PANEL_WIDE_W,
   STAT_ROWS,
   drawTalentPanel,
   statPlusRect,
@@ -1404,10 +1405,35 @@ describe('the talent panel uses the room it has', () => {
     return Array.from({ length: n }, (_, i) => ({ ...first, name: `Tree ${String(i)}` }));
   }
 
-  it('takes a share of the viewport rather than a fixed tier', () => {
-    const rect = rectAt(REAL);
-    expect(rect.w, 'the panel is back on a fixed width tier').toBeGreaterThan(600);
-    expect(rect.w, 'the panel overran the viewport').toBeLessThanOrEqual(REAL.width);
+  it('is as wide as its content and not a pixel wider', () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * THIS TEST USED TO ASSERT THE OPPOSITE, AND IT WAS RIGHT AT THE TIME.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * It read "takes a share of the viewport rather than a fixed tier", and the
+     * panel took `max(tier, min(width * 0.9, room))` — because the grid PACKED
+     * ITSELF INTO THE WIDTH, so extra width really did become another column of
+     * categories.
+     *
+     * `const columns = 2` fixed the grid at two panes and the fill rule was
+     * never revisited. Extra width bought nothing but whitespace after that:
+     * measured at 1280x720, a 1152-wide panel around 782 pixels of content, 319
+     * of it pure centring slack, with about 22% of the box inked. Reported as
+     * "the talents panel is quite massive. we want to accomodate without
+     * wasting space."
+     *
+     * The tiers were always the content widths. Now one of them IS the width.
+     */
+    const wide = rectAt({ width: 1280, height: 720, top: 17, bottom: 629 });
+    expect(wide.w, 'the panel is spending the viewport on whitespace again').toBeLessThanOrEqual(
+      TALENT_PANEL_WIDE_W,
+    );
+    expect(wide.w, 'the panel stopped reaching its widest shape').toBe(TALENT_PANEL_WIDE_W);
+    // AND IT STILL NEVER OVERRUNS. A tier is a promise about a shape, not a
+    // licence to exceed the window it is drawn in.
+    const tight = rectAt(REAL);
+    expect(tight.w, 'the panel overran the viewport').toBeLessThanOrEqual(REAL.width);
   });
 
   it('grows with the viewport instead of snapping', () => {

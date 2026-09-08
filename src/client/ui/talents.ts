@@ -360,6 +360,31 @@ const DETAIL_MIN_PANEL_W = 1000;
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════
+ * THE SAME QUESTION, ASKED OF THE WINDOW — because the panel stopped being
+ * `game.w * 0.9`.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * The constant above is `LevelupDialog.lua:90`'s `game.w * 0.9 >= 1000`, and
+ * its note explains that comparing it against OUR PANEL was the same comparison
+ * *"because upstream's dialog IS `game.w * 0.9`, which is what
+ * `talentPanelRect` computes"*.
+ *
+ * That premise is gone. `talentPanelRect` sizes the panel to its CONTENT now
+ * (see its note: the 0.9 fill outlived the reflowing grid that justified it),
+ * so the panel is 852 at every window wide enough to hold it and `rect.w >=
+ * 1000` could never be true again — the description column would have been
+ * silently deleted from the game.
+ *
+ * So the test is applied to the thing upstream actually measures: nine tenths
+ * of the WINDOW. That is more faithful than it was, not less — the number and
+ * the quantity it is compared against now come from the same line of Lua.
+ */
+function windowWantsDetail(width: number): boolean {
+  return Math.floor(width * PANEL_MAX_FILL_H) >= DETAIL_MIN_PANEL_W;
+}
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
  * THE ATTRIBUTE COLUMN — ToME'S LEVELUP DIALOG PUTS THE STATS DOWN THE LEFT.
  * ═══════════════════════════════════════════════════════════════════════════
  *
@@ -1274,35 +1299,58 @@ export function talentPanelRect(options: {
   // width hands back every size between the tiers, and a column born narrow is a
   // column that is useless on exactly the windows it is least useful on.
   const room = width - PANEL_MARGIN * 2;
+  /**
+   * THE WIDE TIER NOW ALSO ASKS THE WINDOW, and the two questions are different.
+   * `room >= PANEL_W_WIDE` says the description column would FIT; upstream's
+   * `game.w * 0.9 >= 1000` says it is WANTED. Below that upstream keeps the
+   * floating tooltip and gives the list every pixel, and so do we — a panel that
+   * grew a prose column just because it could would be spending 266 pixels on
+   * the windows least able to spare them.
+   */
   const tier =
-    room >= PANEL_W_WIDE
+    room >= PANEL_W_WIDE && windowWantsDetail(width)
       ? PANEL_W_WIDE
       : room >= PANEL_W_STATS
         ? PANEL_W_STATS
         : Math.min(PANEL_W, room);
   /**
    * ═══════════════════════════════════════════════════════════════════════════
-   * THE TIER IS A FLOOR, NOT A CEILING — LevelupDialog.lua:89's `game.w * 0.9`.
+   * THE TIER IS THE WIDTH. IT WAS A FLOOR UNDER `game.w * 0.9`, AND THAT
+   * PREMISE HAS GONE.
    * ═══════════════════════════════════════════════════════════════════════════
    *
-   * The tiers above decide WHICH COLUMNS APPEAR: the stats strip needs room, the
-   * description pane needs more, and a column born narrow is useless on exactly
-   * the windows it is least useful on. That argument is intact and is why the
-   * tier is still computed and still the minimum.
+   * Reported as *"the talents panel is quite massive. we want to accomodate
+   * without wasting space."*
    *
-   * ═══ WHAT IT MUST NOT DO IS CAP THE PANEL ═══
-   * Taking the tier as the final width meant the panel was 572 wide on a
-   * 772-pixel viewport — TWO HUNDRED PIXELS UNUSED — while the category grid ran
-   * out of vertical room and dropped whole talent trees with a row saying so.
-   * At 1280 it was 852 against 428 spare. The panel was refusing width it had
-   * while telling the player it was too small.
+   * ═══ WHAT THE OLD RULE SAID, AND WHY IT WAS RIGHT AT THE TIME ═══
+   * It read: *"a window with room to spare gets more grid columns instead of
+   * whitespace"*, and took `max(tier, min(width * 0.9, room))`. That was true
+   * while the grid PACKED ITSELF INTO THE WIDTH — extra width really did become
+   * another column of categories.
    *
-   * Upstream takes nine tenths of the screen. The tier stays as the floor, so a
-   * window too narrow for the description pane still gets the whole shape it can
-   * hold, and a window with room to spare gets more grid columns instead of
-   * whitespace.
+   * `const columns = 2` fixed the grid at two panes, on the player's own
+   * request, and this line was never revisited. Extra width has bought nothing
+   * but whitespace ever since. Measured at 1280x720: a 1152-wide panel around
+   * 782 pixels of content — 319 of pure centring slack, 28% of the inner width
+   * — with about 22% of the box inked.
+   *
+   * ═══ THE TIER IS ALREADY THE ANSWER ═══
+   * `PANEL_W_WIDE` IS the content width by construction: the grid, plus the
+   * stats strip, plus the description column, plus the gaps between them. There
+   * is nothing to add and nothing to derive — the widest tier is the whole
+   * shape, so taking it is taking exactly what the content needs.
+   *
+   * The tiers still decide WHICH COLUMNS APPEAR, which is the half of the old
+   * docblock that was never about the fill: a narrow window drops the
+   * description, a narrower one drops the stats strip, and a column born narrow
+   * is useless on exactly the windows it is least useful on.
+   *
+   * ═══ THIS IS A DIVERGENCE FROM `LevelupDialog.lua:89` AND IT IS DELIBERATE ═══
+   * Upstream takes nine tenths of the screen because ITS grid reflows into the
+   * width it is given — the same reason ours used to. Ours cannot. Copying the
+   * fraction without the reflow copies the number and not the behaviour.
    */
-  const w = Math.max(tier, Math.min(Math.floor(width * PANEL_MAX_FILL_H), room));
+  const w = Math.min(tier, room);
   /**
    * AGAINST THE WHOLE WINDOW, THEN FITTED TO THE BAND — LevelupDialog.lua:89
    * measures `game.h`, the entire screen, and the band is already that screen
@@ -1753,9 +1801,19 @@ export function talentPanelGeometry(
    * The hover card still stands up wherever the column stands down — the
    * geometry owns that decision and this is still the single place it is made.
    */
+  /**
+   * THE PANEL GOT THE WIDE SHAPE, which is now the whole question — see
+   * `windowWantsDetail`. This read `rect.w >= DETAIL_MIN_PANEL_W`, comparing a
+   * content-sized panel against a threshold derived from a fraction of the
+   * WINDOW; the two stopped being the same number when the panel stopped
+   * filling the window, and the column would have vanished for good.
+   *
+   * The second term stays: a tier is a promise about the OUTER width and this
+   * is the inner one, so a panel whose insets ate the difference must still
+   * decline rather than draw a column it cannot fit.
+   */
   const hasDetail =
-    rect.w >= DETAIL_MIN_PANEL_W &&
-    fullW >= COL_W * 2 + COL_GAP + COL_GAP + STATS_W + COL_GAP + DETAIL_W;
+    rect.w >= PANEL_W_WIDE && fullW >= COL_W * 2 + COL_GAP + COL_GAP + STATS_W + COL_GAP + DETAIL_W;
   const detail: PanelRect | null = hasDetail
     ? {
         x: x + fullW - DETAIL_W,
@@ -3411,5 +3469,14 @@ export function drawTalentPanel(options: TalentPanelDrawOptions): void {
 export const TALENT_PANEL_MIN_H = PANEL_MIN_H;
 /** As above, for the width. */
 export const TALENT_PANEL_MIN_W = PANEL_MIN_W;
+/**
+ * THE WIDEST SHAPE — grid, stats strip, description column and the gaps.
+ *
+ * Exported so a test can assert the panel is exactly its content width without
+ * restating the sum, which is the arithmetic-model trap this suite keeps
+ * falling into: a test that re-adds the terms agrees with any implementation
+ * that adds them the same way, including a wrong one.
+ */
+export const TALENT_PANEL_WIDE_W = PANEL_W_WIDE;
 /** The air the panel leaves around itself inside its band. */
 export const TALENT_PANEL_MARGIN = PANEL_MARGIN;
