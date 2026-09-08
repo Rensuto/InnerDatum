@@ -10,7 +10,7 @@ import { readFileSync } from 'node:fs';
 
 import { describe, expect, it } from 'vitest';
 
-import { LogTab, createCaseLog } from '../../src/client/ui/caselog.ts';
+import { LogTab, createCaseLog, stampText } from '../../src/client/ui/caselog.ts';
 import { DAMAGE_INK, PALETTE } from '../../src/client/render/canvas.ts';
 import { DAMAGE_TYPES, DamageType } from '../../src/shared/damagetype.ts';
 import { LogLane } from '../../src/shared/protocol.ts';
@@ -228,5 +228,67 @@ describe('the element colour', () => {
     expect(painter).toContain('rowMargin\n        ? PALETTE.VIOLET_HI');
     // And no element means the ordinary ink, not a default one.
     expect(painter).toContain('? PALETTE.PARCHMENT');
+  });
+});
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * TIMESTAMPS — and the clock is the CLIENT'S, which is the whole design.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * There is no wall-clock anywhere on the wire, deliberately twice over:
+ * `src/shared/` is pure and cannot call `Date.now()`, and two protocol
+ * docblocks refuse absolute time because "the client's clock is not the
+ * server's". And `gameTurn` cannot stand in — it is a COMPLETED-TURN COUNTER,
+ * so an eight-line area attack stamps eight lines with one value and a
+ * client-authored line carries -1.
+ *
+ * So the stamp is when the line ARRIVED HERE, which is what a chat timestamp
+ * means anywhere else.
+ */
+describe('timestamps', () => {
+  it('renders HH:MM, zero-padded, in the viewer’s own timezone', () => {
+    const at = new Date(2026, 8, 8, 9, 7, 45).getTime();
+    expect(stampText(at)).toBe('09:07');
+    const noon = new Date(2026, 8, 8, 14, 30, 0).getTime();
+    expect(stampText(noon)).toBe('14:30');
+  });
+
+  it('is always the same width, so the text column cannot step sideways', () => {
+    /**
+     * The gutter is measured once from a sample rather than per line. A stamp
+     * that changed width at 09:59 -> 10:00 would move every line's left edge on
+     * the hour.
+     */
+    const widths = new Set(
+      [
+        new Date(2026, 0, 1, 0, 0).getTime(),
+        new Date(2026, 0, 1, 9, 9).getTime(),
+        new Date(2026, 0, 1, 23, 59).getTime(),
+      ].map((at) => stampText(at).length),
+    );
+    expect(widths.size, 'the stamp is not a fixed width').toBe(1);
+  });
+
+  it('stamps the first row of every entry, not only the ones with a speaker', () => {
+    /**
+     * `lead` already existed and means "first row of an entry that HAS a
+     * speaker" — it is there for the bold `Sam:` prefix. Reusing it for the
+     * stamp would have timestamped conversation and nothing else, which is the
+     * mistake this assertion exists to keep fixed.
+     */
+    const painter = readFileSync('src/client/ui/caselog.ts', 'utf8');
+    expect(painter).toContain('first: r === 0,');
+    expect(painter, 'the stamp rides `lead`, so only spoken lines get one').toContain(
+      'if (row.line !== null && row.first) {',
+    );
+  });
+
+  it('takes its gutter out of the wrap width rather than painting over the text', () => {
+    // Wrapping to the full width and then drawing a stamp on top is how a
+    // column ends up sitting on the first word of every line.
+    const painter = readFileSync('src/client/ui/caselog.ts', 'utf8');
+    expect(painter).toContain('rect.w - stampW - indent - boldDebt');
+    expect(painter).toContain('const x = rect.x + stampW + row.indent;');
   });
 });

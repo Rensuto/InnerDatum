@@ -172,6 +172,39 @@ const TAB_LABEL: Readonly<Record<LogTab, string>> = {
   [LogTab.Margin]: 'MARGIN',
 };
 
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE TIMESTAMP GUTTER. `HH:MM`, in its own colour, on the first row of an
+ * entry only.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * SIMPLE MEANS HOURS AND MINUTES. Seconds would change the column's width
+ * every wrap and buy nothing a reader of a log wants — this answers "roughly
+ * when", which is the question a scrollback asks.
+ *
+ * ON THE LEAD ROW ONLY, never on a wrapped continuation. A stamp repeated down
+ * the left of a three-row sentence reads as three events.
+ *
+ * GREY, WHICH IS THE POINT OF "coloured differently". It is metadata about the
+ * line rather than part of it, so it must not compete with either the ordinary
+ * ink or an element's — and this is the one place `GREY` proper is right rather
+ * than `GREY_HI`, because a column the eye can skip is exactly what is wanted.
+ *
+ * THE WIDTH IS FIXED AND MEASURED FROM A SAMPLE, not from each line: a
+ * proportional-looking column would make the text start in a different place
+ * on the hour a digit is added, and the font is fixed-advance anyway.
+ */
+const STAMP_TEXT_MAX = 5;
+const STAMP_GAP = 4;
+
+/** `14:07`, from a millisecond clock, in the viewer's own timezone. */
+export function stampText(at: number): string {
+  const when = new Date(at);
+  const hh = String(when.getHours()).padStart(2, '0');
+  const mm = String(when.getMinutes()).padStart(2, '0');
+  return `${hh}:${mm}`;
+}
+
 const TAB_H = 12;
 const TAB_PAD = 6;
 const TAB_GAP = 2;
@@ -255,8 +288,39 @@ export type CaseLog = {
   readonly activeTab: () => LogTab;
 };
 
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * ONE LINE AS THIS CLIENT HOLDS IT: the wire's line, plus when it got here.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Asked for as *"give simple timestamps (colored differently)"*.
+ *
+ * ═══ THE CLOCK IS THE CLIENT'S, AND IT HAS TO BE ═══
+ * There is no wall-clock anywhere on the wire, and that is deliberate twice
+ * over: `src/shared/` is pure and cannot call `Date.now()` at all, and two
+ * protocol docblocks explicitly refuse to send absolute time because *"the
+ * client's clock is not the server's"*. Adding one would contradict both.
+ *
+ * `gameTurn` cannot serve either, and this is the part worth writing down: it
+ * is a COMPLETED-TURN COUNTER, not a clock. An eight-line area attack stamps
+ * eight lines with one identical value, and a client-authored line carries -1.
+ * A column of `turn 12` repeated eight times is not a timestamp.
+ *
+ * ═══ SO IT IS WHEN THE LINE ARRIVED HERE, which is what a chat timestamp
+ * MEANS ═══
+ * Not when the rules ran — when you saw it. The two differ only on a resync,
+ * where the server resends a tail and this client stamps all of it "now". That
+ * is a real limitation and it is the honest one to have: the alternative is a
+ * server clock rendered in a viewer's timezone, which is wrong in a different
+ * and less obvious way.
+ */
+type Entry = LogLine & {
+  /** Milliseconds since the epoch, from THIS machine, at the moment it landed. */
+  readonly at: number;
+};
+
 type Lane = {
-  readonly lines: LogLine[];
+  readonly lines: Entry[];
   readonly cap: number;
   /** Entries back from the newest. 0 is pinned to the bottom and live. */
   offset: number;
@@ -362,13 +426,13 @@ export function createCaseLog(options: CaseLogOptions): CaseLog {
    * walk over at most 480 entries once per frame — and the renderer is a
    * dirty-flag one, so that frame only happens when something changed.
    */
-  function visible(): readonly LogLine[] {
+  function visible(): readonly Entry[] {
     if (tab === LogTab.All) return stream.lines;
     return stream.lines.filter((line) => line.lane === tab);
   }
 
   function push(lane: Lane, line: LogLine): void {
-    lane.lines.push({ ...line, text: flatten(line.text) });
+    lane.lines.push({ ...line, text: flatten(line.text), at: Date.now() });
     if (lane.lines.length > lane.cap) {
       const dropped = lane.lines.length - lane.cap;
       lane.lines.splice(0, dropped);
@@ -479,7 +543,7 @@ export function createCaseLog(options: CaseLogOptions): CaseLog {
    */
   function drawStream(
     ctx: CanvasRenderingContext2D,
-    lines: readonly LogLine[],
+    lines: readonly Entry[],
     rect: PanelRect,
   ): void {
     stream.rect = rect;
@@ -495,16 +559,32 @@ export function createCaseLog(options: CaseLogOptions): CaseLog {
      * leaving it hoisted would have wrapped every conversational line to the
      * width of the upright face it is not drawn in.
      */
-    const fontFor = (line: LogLine): string =>
+    const fontFor = (line: Entry): string =>
       line.lane === LogLane.Margin ? FONT_MARGIN : FONT_RECORD;
+
+    /**
+     * MEASURED ONCE, FROM A SAMPLE, in the upright face every stamp is drawn in.
+     * Measuring per line would make the text column step left and right as the
+     * hour rolled over, and measuring in whatever font the last row left set is
+     * the hoisted-font bug this file already carries a note about.
+     */
+    ctx.font = FONT_RECORD;
+    const stampW = Math.ceil(ctx.measureText('0'.repeat(STAMP_TEXT_MAX)).width) + STAMP_GAP;
 
     /** One drawable row, already wrapped. */
     type Row = {
       readonly text: string;
       readonly indent: number;
-      readonly line: LogLine | null;
+      readonly line: Entry | null;
       /** True only for the first wrapped row of an entry that has a speaker. */
       readonly lead: boolean;
+      /**
+       * True for the first wrapped row of ANY entry — which `lead` is not.
+       * `lead` also requires a speaker, because it exists for the bold `Sam:`
+       * prefix; the timestamp belongs on the first row of every entry, speaker
+       * or not, and reusing `lead` would have stamped conversation only.
+       */
+      readonly first: boolean;
       /** A `── turn 12 ──` rule rather than a log line. */
       readonly rule: boolean;
     };
@@ -537,6 +617,7 @@ export function createCaseLog(options: CaseLogOptions): CaseLog {
           indent: 0,
           line: null,
           lead: false,
+          first: false,
           rule: true,
         });
         if (collected.length >= rows) break;
@@ -565,7 +646,10 @@ export function createCaseLog(options: CaseLogOptions): CaseLog {
         // line measures against whatever is current.
         ctx.font = fontFor(line);
       }
-      const wrapped = wrapText(ctx, body, rect.w - indent - boldDebt);
+      // THE GUTTER IS TAKEN OUT OF THE WRAP WIDTH, not painted over the text.
+      // Wrapping to the full width and then drawing a stamp on top is how a
+      // column ends up sitting on the first word of every line.
+      const wrapped = wrapText(ctx, body, rect.w - stampW - indent - boldDebt);
 
       // Reverse, because `collected` is being built newest-first and each entry
       // must keep its own rows in reading order once the whole thing is flipped.
@@ -577,6 +661,7 @@ export function createCaseLog(options: CaseLogOptions): CaseLog {
           indent,
           line,
           lead: r === 0 && speaker !== undefined,
+          first: r === 0,
           rule: false,
         });
       }
@@ -590,7 +675,18 @@ export function createCaseLog(options: CaseLogOptions): CaseLog {
       const row = collected[i];
       if (row === undefined) continue;
       const y = bottom - (i + 1) * ROW_H + ROW_H / 2;
-      const x = rect.x + row.indent;
+      const x = rect.x + stampW + row.indent;
+
+      /**
+       * THE STAMP, ON THE FIRST ROW OF AN ENTRY ONLY. A rule row has no line
+       * and gets none; a wrapped continuation gets none either, or a three-row
+       * sentence would read as three events.
+       */
+      if (row.line !== null && row.first) {
+        ctx.font = FONT_RECORD;
+        ctx.fillStyle = PALETTE.GREY;
+        ctx.fillText(stampText(row.line.at), rect.x, y);
+      }
 
       if (row.rule) {
         // THE FACE `turnRule` MEASURED ITSELF IN. It counted its dashes against
