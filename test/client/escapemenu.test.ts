@@ -1352,6 +1352,30 @@ describe('the zoom row', () => {
     expect(labelAt(9)).toBe('ZOOM: BIGGER');
   });
 
+  it('is greyed with a reason on a window that cannot zoom', () => {
+    /**
+     * The same treatment UI SIZE gets, found by asking the same question of
+     * this control -- and it answers yes more often. Measured across six
+     * viewports, zoom yields ONE map scale on everything narrower than 1280,
+     * so on the window this game is played in the row cycled three words and
+     * the map never moved.
+     */
+    const row = entryRows(escapeMenuRows(view({ zoomFixed: true })))[2];
+    expect(row?.enabled).toBe(false);
+    expect(row?.reason).toBe('this window fits one size');
+  });
+
+  it('keeps its key printed even while greyed', () => {
+    /**
+     * `zoom_in` exists whatever this window can do and the Keys screen lists
+     * it, so blanking it here would make two screens disagree about the
+     * keyboard. The PRESS is what says why -- `applyZoom` shows a notice --
+     * which is the half UI SIZE never needed because it has no binding.
+     */
+    const row = entryRows(escapeMenuRows(view({ zoomFixed: true })))[2];
+    expect(row?.keyLabel).toBe(labelFor('zoom_in', DEFAULT_KEYMAP));
+  });
+
   it('carries its own effect kind and shows the live key beside it', () => {
     const row = entryRows(escapeMenuRows(view()))[2];
     // NOT A `ui` COMMAND: every one of those opens or closes a panel, and this

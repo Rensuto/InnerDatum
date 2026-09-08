@@ -649,6 +649,33 @@ export function uiScaleFixed(deviceW: number, deviceH: number, dpr: number): boo
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════
+ * IS THE ZOOM CONTROL INERT ON THIS WINDOW? `uiScaleFixed`'s twin, and it
+ * answers TRUE far more often.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * FOUND BY ASKING THE SAME QUESTION OF THE OTHER CONTROL. The interface step
+ * was greyed on windows with no room for a second factor; nobody had asked
+ * whether the MAP's step had the same problem. It does, and worse — measured
+ * across six viewports, zoom produces ONE distinct map scale on everything
+ * narrower than 1280, including the 1262x428 window this game is played in.
+ *
+ * `scale` is `max(1, floor(min(device / minLogical)) + zoomStep)`. On a window
+ * where the fit is already 1, zooming out clamps back to 1 and zooming in needs
+ * room for a whole second factor. So SMALLER does nothing on ANY window tested
+ * — the floor eats it — and BIGGER does nothing below 1280 wide.
+ *
+ * THE VIEWPORT IS A PARAMETER because it is what `minLogical` is measured from,
+ * and a realm that asks for more tiles has a lower fit and therefore less room
+ * to zoom. Asking this question of the wrong viewport would answer it for a
+ * different realm than the player is standing in.
+ */
+export function zoomFixed(deviceW: number, deviceH: number, viewport: Viewport): boolean {
+  const at = (step: number): number => viewLayout(deviceW, deviceH, viewport, step, 1).scale;
+  return at(ZOOM_MIN) === at(ZOOM_MAX);
+}
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
  * THE WHOLE OF THE SIZING ARITHMETIC, AS A FUNCTION OF THE DEVICE BOX.
  * ═══════════════════════════════════════════════════════════════════════════
  *
@@ -776,6 +803,11 @@ export type Renderer = {
    * value read once at startup would go stale the first time somebody resized.
    */
   readonly uiScaleFixed: () => boolean;
+  /**
+   * Whether this window has room for a second MAP scale. `uiScaleFixed`'s
+   * twin; the escape menu greys the ZOOM row on true.
+   */
+  readonly zoomFixed: () => boolean;
   /** The current zoom step. -1 out, 0 default, +1 in. */
   readonly zoom: () => number;
   readonly draw: (scene: Scene) => void;
@@ -1793,6 +1825,15 @@ export function createRenderer(options: RendererOptions): Renderer {
    */
   function rendererUiScaleFixed(): boolean {
     return uiScaleFixed(deviceW, deviceH, dpr);
+  }
+
+  /**
+   * `rendererUiScaleFixed`'s twin for the MAP's step, and it takes the LIVE
+   * viewport rather than a default: a realm asking for more tiles has less room
+   * to zoom, so the answer is a property of where the player is standing.
+   */
+  function rendererZoomFixed(): boolean {
+    return zoomFixed(deviceW, deviceH, viewport);
   }
 
   function resize(): boolean {
@@ -2872,5 +2913,6 @@ export function createRenderer(options: RendererOptions): Renderer {
     setUiScale,
     uiScale,
     uiScaleFixed: rendererUiScaleFixed,
+    zoomFixed: rendererZoomFixed,
   };
 }

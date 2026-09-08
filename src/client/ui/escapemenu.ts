@@ -725,6 +725,15 @@ export type EscapeMenuView = {
    */
   readonly uiScaleFixed?: boolean;
   /**
+   * DOES THIS WINDOW HAVE ROOM FOR A SECOND MAP SCALE? `uiScaleFixed`'s twin,
+   * and it is true on more windows than that one -- measured, zoom produces a
+   * single map scale on everything narrower than 1280.
+   *
+   * ABSENT READS AS FALSE, so a caller that has not been taught to measure gets
+   * the live row.
+   */
+  readonly zoomFixed?: boolean;
+  /**
    * HAS ANY PANEL BEEN DRAGGED? Decides only whether RESET PANELS is greyed.
    *
    * GREYED, NOT DROPPED — the rule this menu follows everywhere: a row that
@@ -884,13 +893,25 @@ function rootRows(view: EscapeMenuView): readonly MenuRow[] {
      * already has keys and they are already on the Keys screen; this row is the
      * pointer route to the same preference, not a second way to own it.
      */
+    /**
+     * GREYED WHERE THE WINDOW HAS NO ROOM, exactly as UI SIZE is one rule
+     * down -- and this row needed it more. Measured across six viewports:
+     * zoom yields ONE map scale on everything narrower than 1280, and
+     * SMALLER moves nothing on any of them, because `scale` floors at 1.
+     *
+     * THE KEY STILL PRINTS. `zoom_in` exists whatever this window can do,
+     * the Keys screen lists it, and blanking it here would make the row
+     * disagree with that screen. The key press says why instead -- see
+     * `applyZoom` in main.ts, which is the half UI SIZE never needed
+     * because it has no binding.
+     */
     entryRow(
       2,
       { kind: 'zoom' },
       `ZOOM: ${zoomWord(view.zoom ?? 0)}`,
       labelFor('zoom_in', keymap),
-      true,
-      null,
+      view.zoomFixed !== true,
+      view.zoomFixed === true ? 'this window fits one size' : null,
     ),
     /**
      * BESIDE ZOOM, WHICH IS THE ONLY PLACE IT MAKES SENSE. The two are the same

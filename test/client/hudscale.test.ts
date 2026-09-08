@@ -11,6 +11,7 @@ import {
   HUD_MIN_W,
   uiScaleFixed,
   viewLayout,
+  zoomFixed,
 } from '../../src/client/render/canvas.ts';
 import {
   TILE_PX,
@@ -469,5 +470,73 @@ describe('uiScaleFixed', () => {
   it('stays free where only the smaller step has room', () => {
     expect(uiScaleFixed(900, 500, 2), 'dpr 2 makes step -1 meaningful').toBe(false);
     expect(factorsOn(900, 500, 2).size, 'exactly two factors: the auto one and one below').toBe(2);
+  });
+});
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE MAP'S STEP HAS THE SAME DEAD ZONE, AND NOBODY HAD ASKED.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `uiScaleFixed` above greys the interface step where the window has no room
+ * for a second factor. Zoom is the same shape and was never checked: `scale` is
+ * `max(1, fit + step)`, so on a window whose fit is already 1, SMALLER clamps
+ * straight back and BIGGER needs room for a whole second factor.
+ *
+ * Measured when this was written — zoom produces exactly ONE map scale on every
+ * viewport narrower than 1280, and SMALLER moves nothing on any viewport at
+ * all. The 1262x428 window this game is actually played in is one of the dead
+ * ones, so the ZOOM row and both its keys did nothing there.
+ */
+describe('zoomFixed', () => {
+  const BOXES: readonly (readonly [number, number])[] = [
+    [1920, 1080],
+    [1280, 720],
+    [1262, 428],
+    [900, 500],
+    [640, 320],
+  ];
+
+  /** Every distinct map scale `viewLayout` will produce on a window. */
+  function scalesOn(w: number, h: number): ReadonlySet<number> {
+    const seen = new Set<number>();
+    for (let z = ZOOM_MIN; z <= ZOOM_MAX; z += 1) {
+      seen.add(viewLayout(w, h, DEFAULT_VIEWPORT, z, 1).scale);
+    }
+    return seen;
+  }
+
+  it('agrees with viewLayout on every viewport', () => {
+    for (const [w, h] of BOXES) {
+      expect(
+        zoomFixed(w, h, DEFAULT_VIEWPORT),
+        `${String(w)}x${String(h)}: ${String(scalesOn(w, h).size)} distinct map scale(s)`,
+      ).toBe(scalesOn(w, h).size === 1);
+    }
+  });
+
+  /**
+   * THE WINDOW THIS GAME IS PLAYED IN, named rather than derived — it is the
+   * case that made the row worth greying, and a regression that gave it range
+   * back would mean the map scale had changed under everybody.
+   */
+  it('is fixed on a 1262x428 window and free on 1280x720', () => {
+    expect(zoomFixed(1262, 428, DEFAULT_VIEWPORT), '1262x428 has no room to zoom').toBe(true);
+    expect(zoomFixed(1280, 720, DEFAULT_VIEWPORT), '1280x720 has room for one step').toBe(false);
+  });
+
+  /**
+   * AND THE HALF THAT IS TRUE EVERYWHERE. Zooming OUT is dead on every viewport
+   * tested, because the fit floors at 1 and cannot go below it. That is not
+   * this commit's to fix — it is what `scale`'s floor means — but it is worth
+   * pinning, because a change that made SMALLER work would be a change to how
+   * big the world looks for everybody and should not pass silently.
+   */
+  it('never has room to zoom out, on any viewport', () => {
+    for (const [w, h] of BOXES) {
+      const out = viewLayout(w, h, DEFAULT_VIEWPORT, ZOOM_MIN, 1).scale;
+      const normal = viewLayout(w, h, DEFAULT_VIEWPORT, 0, 1).scale;
+      expect(out, `${String(w)}x${String(h)} zoomed out below the floor`).toBe(normal);
+    }
   });
 });

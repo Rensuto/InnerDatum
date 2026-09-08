@@ -1881,6 +1881,12 @@ let liveUiScale = 0;
 let liveUiScaleFixed = false;
 
 /**
+ * WHETHER THIS WINDOW HAS ROOM FOR A SECOND MAP SCALE. `liveUiScaleFixed`'s
+ * twin, refreshed at the same moment and for the same reason.
+ */
+let liveZoomFixed = false;
+
+/**
  * PUT EVERY PIECE OF THE MENU'S STATE BACK, AND NOTHING ELSE.
  *
  * ═══ WHY THIS IS MODULE SCOPE WHEN `closeMenu` IS NOT ═══
@@ -3105,6 +3111,8 @@ function escapeMenuView(zoom: number, uiScale: number): EscapeMenuView {
     // ONLY WHETHER THE ROW CAN DO ANYTHING HERE, never what it would do — the
     // same shape as `panelsMoved` below.
     uiScaleFixed: liveUiScaleFixed,
+    // AND ITS TWIN, which is true on more windows than that one.
+    zoomFixed: liveZoomFixed,
     // ONLY WHETHER, never which: the row is greyed or it is not.
     panelsMoved: DRAGGABLE_PANELS.some(
       (panel) => panelOffsets[panel].dx !== 0 || panelOffsets[panel].dy !== 0,
@@ -5624,6 +5632,7 @@ async function boot(): Promise<void> {
   // AFTER the first layout, never before: the accessor reads the live device box
   // and answers "fixed" while that box is still 0x0.
   liveUiScaleFixed = renderer.uiScaleFixed();
+  liveZoomFixed = renderer.zoomFixed();
 
   // --- draw scheduling ------------------------------------------------------
   // One pending rAF at a time. `frameHandle` doubles as the dirty flag: nonzero
@@ -6546,6 +6555,7 @@ async function boot(): Promise<void> {
     // and a mirror that updated only on the frames somebody else cared about is
     // the kind of mirror that goes stale.
     liveUiScaleFixed = renderer.uiScaleFixed();
+    liveZoomFixed = renderer.zoomFixed();
     // ═══════════════════════════════════════════════════════════════════════
     // AND THE MENU'S OWN REFUSAL IS RE-APPLIED, BECAUSE THIS IS THE OTHER
     // MOMENT ITS RECT CAN DISAPPEAR.
@@ -8704,6 +8714,29 @@ async function boot(): Promise<void> {
     const before = renderer.zoom();
     const got = renderer.setZoom(next);
     liveZoom = got;
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * THE STEP MOVED AND THE MAP DID NOT — say so, because nothing else can.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * `setZoom` clamps the STEP, and the step is not the picture: `scale` is
+     * `max(1, fit + step)`, so on a window whose fit is already 1 the step goes
+     * from 0 to -1 and the map stays exactly where it was. Measured across six
+     * viewports, SMALLER moves nothing on any of them and BIGGER moves nothing
+     * below 1280 wide — including the 1262x428 window this game is played in.
+     *
+     * THE MENU ROW IS GREYED FOR THIS (`EscapeMenuView.zoomFixed`) and that is
+     * not enough on its own: zoom is the one preference with KEY BINDINGS, so
+     * a player who never opens the menu presses `=` and watches nothing happen.
+     * The interface step needed no equivalent because it has no key.
+     *
+     * ONLY WHEN THE STEP ITSELF MOVED. Pressing zoom-in at the cap already
+     * changes nothing and always has; saying "too small" there would be a
+     * refusal wearing the wrong reason.
+     */
+    if (got !== before && renderer.zoomFixed()) {
+      showNotice('this window is too small to zoom');
+    }
     if (got !== before) {
       if (!socket.send({ v: PROTOCOL_VERSION, t: 'set_zoom', zoom: got })) {
         showNotice('not connected — that zoom was not saved');
