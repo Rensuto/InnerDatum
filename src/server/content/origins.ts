@@ -70,6 +70,7 @@ import { highbornsBloom } from '../talents/highborns_bloom.ts';
 import { resilienceOfTheArchived } from '../talents/resilience_of_the_archived.ts';
 import { unshackled } from '../talents/unshackled.ts';
 import { wrathOfTheWoods } from '../talents/wrath_of_the_woods.ts';
+import { phaseDoorRune } from '../talents/phase_door_rune.ts';
 import { shieldingRune } from '../talents/shielding_rune.ts';
 import { luckOfTheFootnoted } from '../talents/luck_of_the_footnoted.ts';
 import { overseerOfNations } from '../talents/overseer_of_nations.ts';
@@ -287,8 +288,8 @@ export const UNFILED: OriginDef = Object.freeze({
   // No `copy_add`, no `extra_*_every` — see the note on the Indexed.
   // `talents = { [T_THALOREN_WRATH] = 1 }` (elf.lua).
   //
-  // THREE TALENTS, the most of any origin but the Indexed, and the tree entry
-  // names the ones that are missing with the system each would need.
+  // FOUR TALENTS, the most of any origin, and the tree entry names the ones
+  // that are missing with the system each would need.
   //
   /**
    * ═══════════════════════════════════════════════════════════════════════════
@@ -296,7 +297,12 @@ export const UNFILED: OriginDef = Object.freeze({
    * this game does not have.
    * ═══════════════════════════════════════════════════════════════════════════
    *
-   *     resolvers.inscription("RUNE:_SHIELDING", {cooldown=14, dur=5, power=100})
+   *     resolvers.inscription("RUNE:_SHIELDING",   {cooldown=14, dur=5, power=100})
+   *     resolvers.inscription("RUNE:_PHASE_DOOR", {cooldown=7, range=10, dur=5, power=15})
+   *
+   * BOTH of them, because they are one kit rather than two picks — a Shalore is
+   * born with a shield and an escape and no infusion at all, which is the whole
+   * shape of the subrace.
    *
    * ═══ WE HAVE ONE ELF WHERE UPSTREAM HAS TWO, AND THAT IS THE DIVERGENCE ═══
    * `elf.lua` describes the Shalore (:81-113) and the Thalore (:118-150), and
@@ -321,7 +327,7 @@ export const UNFILED: OriginDef = Object.freeze({
    * is the thing that matters mechanically: the cooldown tax lands in the rune
    * pool rather than the infusion one.
    */
-  talents: [wrathOfTheWoods, unshackled, shieldingRune],
+  talents: [wrathOfTheWoods, unshackled, shieldingRune, phaseDoorRune],
 });
 
 /**

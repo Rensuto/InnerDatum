@@ -212,6 +212,11 @@ export const EffectId = {
    * see `DAMAGE_SHIELD` and `shieldAbsorber`.
    */
   DamageShield: 'effect:damage_shield',
+  /**
+   * WHAT A BLINK LEAVES BEHIND — magical.lua:2277-2303. Three defences at once,
+   * and the only source of `reduceDetrimentalTime` in the game.
+   */
+  OutOfPhase: 'effect:out_of_phase',
 } as const;
 export type EffectId = (typeof EffectId)[keyof typeof EffectId];
 
@@ -1787,6 +1792,98 @@ export const DAMAGE_SHIELD: EffectDef = Object.freeze({
   parameters: { power: 100 },
 } satisfies EffectDef);
 
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * OUT OF PHASE — magical.lua:2277-2303. What a teleport leaves behind.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `Rune: Phase Door` does not only move you; it leaves you briefly hard to
+ * touch. That second half is most of why the rune is the button ToME players
+ * press more than any other — a blink alone buys distance, and distance against
+ * something faster than you is a turn. The phase is what makes the escape stick.
+ *
+ * ═══ THREE CHANNELS, `activate` UPSTREAM AND `wielder` HERE ═══
+ *
+ *     eff.defid  = self:addTemporaryValue("combat_def", eff.defense)
+ *     eff.resid  = self:addTemporaryValue("resists", {all=eff.resists})
+ *     eff.durid  = self:addTemporaryValue("reduce_detrimental_status_effects_time", ...)
+ *
+ * Upstream adds three temporary values on activate and removes them on
+ * deactivate. This codebase composes instead: `wielder` is asked for a
+ * contribution and `recomputeAttributes` folds it, so there is nothing to
+ * un-add and no id to lose track of. `HIGHBORNS_BLOOM` and `SPELLSHOCKED` are
+ * the precedents for `def` and `resistAll`; the third channel is new and is
+ * built as a channel rather than as a flag on this effect precisely because
+ * upstream has several sources for it.
+ *
+ * ═══ ONE POWER FOR ALL THREE, WHICH IS WHAT THE RUNE PASSES ═══
+ * `inscriptions.lua:1327-1330` computes `(data.power or data.range) +
+ * inc_stat * 3` once and hands the same figure to all three fields. We have no
+ * `inc_stat` — an inscription's power comes from the inscription — so one
+ * `power` parameter is the whole of it.
+ *
+ * ═══ NO `on_merge` CAP ═══
+ * Upstream's merge takes the MAX of old and new and then bounds each channel
+ * (50 defence, 40 resist, 60 reduction) because a character can carry several
+ * teleports. One rune exists here and it is on a cooldown longer than this
+ * effect lasts, so `Refresh` is that function's behaviour for every input that
+ * can occur — the argument `DAMAGE_SHIELD` makes one effect up.
+ */
+/** magical.lua:2284 — `parameters = { power=10 }`. */
+export const OUT_OF_PHASE_POWER = 10;
+
+export const OUT_OF_PHASE: EffectDef = Object.freeze({
+  id: EffectId.OutOfPhase,
+  /** 'Ph'. */
+  badge: 'Ph',
+  displayName: 'Out of Phase',
+  description: 'You are out of phase with reality: harder to hit, hurt or hold.',
+  /**
+   * magical.lua:2279-2280 states all three numbers, and it has to — a player
+   * cannot decide whether the phase is worth staying inside without them.
+   */
+  describe: (instance: EffectInstance): string => {
+    const power = Math.round(instance.params.power ?? 0);
+    return (
+      `Out of phase with reality: +${String(power)} defence, ` +
+      `+${String(power)}% to all resistances, and new afflictions last ` +
+      `${String(power)}% less time.`
+    );
+  },
+  // magical.lua:2281 — `type = "magical"`, upstream's own.
+  type: SaveChannel.Magical,
+  status: EffectStatus.Beneficial,
+  stackMode: StackMode.Refresh,
+  // magical.lua:2282 — `subtype = { teleport=true }`.
+  subtypes: ['teleport'],
+  decrease: 1,
+  icon: 'icon_status_out_of_phase',
+  parameters: { power: OUT_OF_PHASE_POWER },
+  /**
+   * TWO CHANNELS HERE AND THE THIRD BELOW, AND THE SPLIT IS NOT COSMETIC.
+   *
+   * `wielder` composes into the COMBAT SHEET — it is the same block a worn item
+   * hands back, which is why `def` and `resistAll` belong here (`SPELLSHOCKED`
+   * and `HIGHBORNS_BLOOM` are the precedents). `modifiers` composes into
+   * `StatusFlags`, which is a different table read by different code.
+   *
+   * `setEffect` reads the duration reduction off `target.combat.flags`, so it
+   * has to travel by `modifiers`. Putting all three in `wielder` type-checked
+   * and delivered the third one nowhere.
+   */
+  wielder: (instance) => {
+    const power = Number(instance.params['power'] ?? 0);
+    return { mods: { def: power }, resistAll: power };
+  },
+  /**
+   * THE THIRD CHANNEL. The value here is the DEFINITION's — `parameters.power`
+   * above — and the fold prefers the INSTANCE's when it carries one, exactly as
+   * `CONFUSED` and `INFUSION_SATURATION` do. The rune passes 15; this 10 is what
+   * an effect applied without a power would be worth.
+   */
+  modifiers: { reduceDetrimentalTime: OUT_OF_PHASE_POWER },
+} satisfies EffectDef);
+
 export const MVP_EFFECTS: readonly EffectDef[] = Object.freeze([
   STUNNED,
   BLEEDING,
@@ -1809,6 +1906,7 @@ export const MVP_EFFECTS: readonly EffectDef[] = Object.freeze([
   INFUSION_SATURATION,
   RUNE_SATURATION,
   DAMAGE_SHIELD,
+  OUT_OF_PHASE,
 ]);
 
 /** Effect ids, for a content-completeness check and for the client's badge atlas. */

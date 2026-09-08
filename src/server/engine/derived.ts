@@ -326,6 +326,12 @@ export type StatusFlags = {
    */
   readonly runeSaturation?: number;
   /**
+   * ToME's `reduce_detrimental_status_effects_time` — a PERCENTAGE off the
+   * duration of every new detrimental effect, read at `Actor.lua:7047-7050`.
+   * See `EffectModifiers` for the bound and why it is a channel.
+   */
+  readonly reduceDetrimentalTime?: number;
+  /**
    * Stunned. Read by NO getter in this file — it is a flat ×0.4 applied to
    * outgoing damage inside the projector (damage_types.lua:150-153).
    *

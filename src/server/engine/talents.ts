@@ -139,6 +139,7 @@ import {
 } from './derived.ts';
 import type { Dir, TileXY } from '../../shared/coords.ts';
 import type { ActorKind, LevelView } from '../../shared/protocol.ts';
+import { canWalk } from '../../shared/level.ts';
 import type { Rng } from '../../shared/rng.ts';
 import type { StatusApply, StatusCure, StatusExtend, StatusHas } from './effects.ts';
 import type { World } from '../world/world.ts';
@@ -1256,6 +1257,28 @@ export type TalentWorld = {
   actorAt(x: number, y: number): TalentActor | undefined;
   allActors(): TalentActor[];
   tryMove(id: string, dir: Dir): { ok: true; x: number; y: number } | { ok: false; reason: string };
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * PUT A BODY ON A NAMED TILE. Placement, not movement — and a talent may.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `tryMove` is a STEP: one direction, one tile, subject to the corner rule
+   * and to whatever is standing in the way. A teleport is none of those things
+   * — `engine/Actor.lua:350` ends `teleportRandom` with `self:move(pos, true)`, the
+   * FORCED move, precisely because the destination is not reachable by walking.
+   * Routing a blink through `tryMove` would path it through the wall it exists
+   * to get past.
+   *
+   * IT STILL REFUSES a solid or occupied tile, so this is not a way to stand a
+   * body inside a wall — it is the same contract `World.placeAt` already had for
+   * realm crossings, exposed rather than reimplemented.
+   *
+   * RECORDED LIKE A STEP. `recordingWorld` wraps this too, and it has to: the
+   * whole reason `ActorMove` exists is that three talents moved people and no
+   * client was ever told, permanently. A teleport that skipped the recorder
+   * would be that bug again, at ten tiles instead of three.
+   */
+  placeAt(id: string, tile: TileXY): boolean;
 };
 
 /**
@@ -2890,6 +2913,23 @@ function recordingWorld(world: TalentWorld, into: Map<string, ActorMove>): Talen
     getActor: (id) => world.getActor(id),
     actorAt: (x, y) => world.actorAt(x, y),
     allActors: () => world.allActors(),
+    /**
+     * THE SAME LEDGER AS `tryMove`, and the reason is the note on
+     * `TalentWorld.placeAt`: a body a talent teleported is a body every client
+     * is still drawing where it was. A blink is one hop, which is exactly what
+     * the wire's `move` frame carries, so it needs no collapsing — but it must
+     * respect a `from` an earlier step already claimed, or a talent that walks
+     * and then blinks would report the second half only.
+     */
+    placeAt: (id, tile) => {
+      const before = world.getActor(id);
+      const from = before === undefined ? undefined : { x: before.x, y: before.y };
+      const ok = world.placeAt(id, tile);
+      if (!ok || from === undefined) return ok;
+      const seen = into.get(id);
+      into.set(id, { id, from: seen?.from ?? from, to: { x: tile.x, y: tile.y } });
+      return true;
+    },
     tryMove: (id, dir) => {
       const before = world.getActor(id);
       const from = before === undefined ? undefined : { x: before.x, y: before.y };
@@ -3221,6 +3261,72 @@ export function stepToward(
     moved += 1;
   }
   return moved;
+}
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * BLINK — `engine/Actor.lua:331-351`, `teleportRandom`, ported whole.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ *     for i = x - dist, x + dist do for j = y - dist, y + dist do
+ *         if isBound(i,j) and distance(x,y,i,j) <= dist and canMove(i,j)
+ *            and not attrs(i,j,"no_teleport") then poss[#poss+1] = {i,j} end
+ *     end end
+ *     if #poss == 0 then return false end
+ *     local pos = poss[rng.range(1, #poss)]
+ *     return self:move(pos[1], pos[2], true)
+ *
+ * ═══ COLLECT THEN PICK, NEVER PICK THEN RETRY ═══
+ * The obvious shortcut is to draw a random tile in the box and re-draw if it is
+ * illegal. It is fewer lines and it is a different mechanic: the distribution is
+ * no longer uniform over LEGAL tiles, a body in a corridor blinks along the
+ * corridor far more often than upstream's would, and the loop has no bound —
+ * on a level where nothing in range is free it spins instead of answering.
+ * Upstream builds the list, and the list is also what makes "nowhere to go" a
+ * clean `false` rather than a hang.
+ *
+ * ═══ EUCLIDEAN, WHICH IS WHY IT IS A DISC AND NOT THE BOX IT SCANS ═══
+ * `core.fov.distance` is `sqrt(dx² + dy²)`, so the square loop above is only the
+ * bounding box and the `<= dist` test carves the circle out of it. Chebyshev
+ * here would hand out corners a tenth of a tile further than the sentence
+ * promises, which is the same trap `DEFAULT_SIGHT_RADIUS` documents.
+ *
+ * ═══ ONE DRAW, LABELLED ═══
+ * `rng.range(1, #poss)`. shared/rng.ts's rule is that adding or removing a draw
+ * always alters a replay, so this takes exactly one and names it.
+ *
+ * Returns true if the body moved. `no_teleport` has no analogue here yet — no
+ * tile in this game carries the attribute — so that clause is unreachable
+ * rather than skipped, and becomes reachable the day one does.
+ */
+export function teleportRandom(
+  world: TalentWorld,
+  actor: TalentActor,
+  dist: number,
+  rng: Rng,
+  minDist = 0,
+): boolean {
+  const reach = Math.floor(dist);
+  const floor = Math.floor(minDist);
+  const options: TileXY[] = [];
+  for (let x = actor.x - reach; x <= actor.x + reach; x += 1) {
+    for (let y = actor.y - reach; y <= actor.y + reach; y += 1) {
+      const away = Math.hypot(x - actor.x, y - actor.y);
+      if (away > reach || away < floor) continue;
+      if (!canWalk(world.level, x, y)) continue;
+      // `canMove` upstream is terrain AND nobody standing there. `canWalk` is
+      // the first half; this is the second. The caster's own tile is excluded
+      // by it, which is right — a blink that lands you where you were is a
+      // spent cooldown and a lie.
+      if (world.actorAt(x, y) !== undefined) continue;
+      options.push({ x, y });
+    }
+  }
+  if (options.length === 0) return false;
+  // `rng.range(1, #poss)` — inclusive both ends upstream, which is 0..n-1 here.
+  const pick = options[rng.int('talent.teleport.tile', 0, options.length - 1)];
+  if (pick === undefined) return false;
+  return world.placeAt(actor.id, pick);
 }
 
 /** Shove `victim` directly away from `origin`. Returns tiles actually moved. */

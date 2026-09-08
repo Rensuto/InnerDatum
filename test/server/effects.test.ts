@@ -1223,6 +1223,9 @@ describe('the status roster (game-design.md § 12)', () => {
       // THE FIRST THING THAT STANDS BETWEEN A BLOW AND A BODY, rather than
       // making the blow smaller. See `DamageTarget.absorb`.
       EffectId.DamageShield,
+      // WHAT A BLINK LEAVES BEHIND, and the only source of a duration
+      // reduction in the game — magical.lua:2277-2303.
+      EffectId.OutOfPhase,
     ]);
     expect(MVP_EFFECTS.map((def) => def.icon)).toEqual([
       'icon_status_stunned',
@@ -1246,6 +1249,7 @@ describe('the status roster (game-design.md § 12)', () => {
       'icon_status_infusion_saturation',
       'icon_status_rune_saturation',
       'icon_status_damage_shield',
+      'icon_status_out_of_phase',
     ]);
   });
 
@@ -1369,6 +1373,8 @@ describe('the status roster (game-design.md § 12)', () => {
       // magical.lua:737 — `type = "magical"`, upstream's own. Nothing rolls
       // against it; a shield is granted, never resisted.
       [EffectId.DamageShield]: SaveChannel.Magical,
+      // magical.lua:2281 — `type = "magical"`, upstream's own.
+      [EffectId.OutOfPhase]: SaveChannel.Magical,
     });
   });
 

@@ -293,6 +293,14 @@ export type EffectModifiers = {
    */
   readonly runeSaturation?: number;
   /**
+   * ToME's `reduce_detrimental_status_effects_time` — read at
+   * `tome/class/Actor.lua:7047-7050` and bounded to 0..100 there. A PERCENTAGE off the
+   * duration of every new DETRIMENTAL effect. Being out of phase is the first
+   * source; upstream has several, which is why it is a channel rather than a
+   * flag on one effect.
+   */
+  readonly reduceDetrimentalTime?: number;
+  /**
    * MONSTERS ONLY. Added to the energy GAIN multiplier — ToME's
    * `global_speed_add` (physical.lua:632, `-eff.power`). NEGATIVE slows.
    *
@@ -1367,6 +1375,9 @@ function crossTierEffect(
   setEffect(state, target, crossTierId, getTierDiff(applyPower, save), {}, rng, ctx);
 }
 
+/** Upstream bounds the reduction to 0..100 — `util.bound(..., 0, 100)` at :7049. */
+const PERCENT = 100;
+
 export function setEffect(
   state: EffectState,
   target: EffectActor,
@@ -1484,6 +1495,43 @@ export function setEffect(
       // — so refusing is the same outcome by a shorter path.
       return refusal(SetEffectOutcome.Resisted, maximum, roll.chance, channel);
     }
+  }
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * BEING HARD TO PIN DOWN — tome/class/Actor.lua:7047-7050, and it is NOT a save.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   *     if e.status == "detrimental" and e.type ~= "other"
+   *        and self:attr("reduce_detrimental_status_effects_time") then
+   *         local power = util.bound(self.reduce_detrimental_status_effects_time, 0, 100)
+   *         p.dur = math.ceil(p.dur * (1 - (power/100)))
+   *     end
+   *
+   * ═══ OUTSIDE THE SAVE BRANCH ON PURPOSE ═══
+   * Upstream applies this AFTER the whole `apply_power` block and outside it, so
+   * it shortens an effect that rolled no save at all — one applied by another
+   * effect, or by a talent that names no power. Putting it inside the branch
+   * would make the reduction silently conditional on being attacked in a
+   * particular way, which is not what "your afflictions are shorter" says.
+   *
+   * ═══ DETRIMENTAL ONLY, WHICH IS THE WHOLE POINT ═══
+   * A body out of phase does not lose its own shield early. `e.status ==
+   * "detrimental"` is upstream's gate and it is the difference between a defence
+   * and a curse.
+   *
+   * ═══ `ceil`, SO IT CAN NEVER ERASE ONE ═══
+   * At 100% reduction `ceil(3 * 0)` is 0, which would delete the affliction
+   * outright — so upstream ALSO bounds the attribute to 0..100 and registers it
+   * as `perc_inv` (tome/class/Actor.lua:111, commented *"Prevent effect reduction from
+   * hitting 100%"*). The bound is here; the stacking rule is not, because
+   * nothing in this game stacks two sources of it yet.
+   *
+   * NO DRAW. It is arithmetic on a number the body already had.
+   */
+  const shorten = Math.max(0, Math.min(PERCENT, target.combat?.flags?.reduceDetrimentalTime ?? 0));
+  if (def.status === EffectStatus.Detrimental && shorten > 0) {
+    dur = Math.ceil(dur * (1 - shorten / PERCENT));
   }
 
   const instance: EffectInstance = {
@@ -1859,6 +1907,7 @@ export function effectModifiers(state: EffectState, actorId: string): EffectModi
   let confusedPercent = 0;
   let infusionSaturation = 0;
   let runeSaturation = 0;
+  let reduceDetrimentalTime = 0;
 
   for (const [effectId, live] of table) {
     const mods = state.defs.get(effectId)?.modifiers;
@@ -1902,6 +1951,21 @@ export function effectModifiers(state: EffectState, actorId: string): EffectModi
       const own = live.params['power'];
       runeSaturation += typeof own === 'number' ? own : mods.runeSaturation;
     }
+    /**
+     * THE INSTANCE'S POWER WHERE IT HAS ONE, like the two above and for the
+     * same reason: `OUT_OF_PHASE` is authored at 10 and the rune applies it at
+     * 15, so composing the definition's number would hand every phase the same
+     * strength however it was raised.
+     *
+     * ADDITIVE ACROSS SOURCES. Upstream registers this as `perc_inv`
+     * (tome/class/Actor.lua:111) so several sources compose multiplicatively and can never
+     * reach 100%; with one source in the game that is the same number, and the
+     * bound at the read site is what actually holds the ceiling.
+     */
+    if (mods.reduceDetrimentalTime !== undefined) {
+      const own = live.params['power'];
+      reduceDetrimentalTime += typeof own === 'number' ? own : mods.reduceDetrimentalTime;
+    }
   }
 
   return {
@@ -1917,6 +1981,7 @@ export function effectModifiers(state: EffectState, actorId: string): EffectModi
     confusedPercent,
     infusionSaturation,
     runeSaturation,
+    reduceDetrimentalTime,
   };
 }
 
@@ -2040,6 +2105,7 @@ export function recomputeAttributes(state: EffectState, actor: EffectActor): voi
     // so two saturating effects on one body are twice the tax and not one.
     infusionSaturation: (base?.infusionSaturation ?? 0) + (mods.infusionSaturation ?? 0),
     runeSaturation: (base?.runeSaturation ?? 0) + (mods.runeSaturation ?? 0),
+    reduceDetrimentalTime: (base?.reduceDetrimentalTime ?? 0) + (mods.reduceDetrimentalTime ?? 0),
   };
   // A FRESH OBJECT, never a write into `sheet`. Stage two hands this stage a
   // FROZEN sheet (`composeSheet` freezes its output), and an in-place write onto

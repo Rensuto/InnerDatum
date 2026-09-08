@@ -19,6 +19,7 @@ import { composeWielders } from '../../src/server/engine/equipment.ts';
 import type { EffectActor, EquippedActor } from '../../src/server/engine/effects.ts';
 import { createRng } from '../../src/shared/rng.ts';
 import { combatStatScale } from '../../src/shared/scale.ts';
+import { phaseDoorRune } from '../../src/server/talents/phase_door_rune.ts';
 import { shieldingRune } from '../../src/server/talents/shielding_rune.ts';
 import { unshackled } from '../../src/server/talents/unshackled.ts';
 import { wrathOfTheWoods } from '../../src/server/talents/wrath_of_the_woods.ts';
@@ -201,9 +202,10 @@ describe('the origin that grants them', () => {
   });
 
   /** Both ported talents, in upstream's tier order. */
-  it('grants the three talents an elf is born with', () => {
+  it('grants the four talents an elf is born with', () => {
     /**
-     * THE THIRD IS THE SHALORE'S — `elf.lua:107`, and it is the one divergence
+     * THE LAST TWO ARE THE SHALORE'S — `elf.lua:107-108`, one kit rather than
+     * two picks, and together they are the one divergence
      * this origin carries. Upstream's elves are two subraces with opposite
      * birth kits: the Shalore get two RUNES and no infusion, the Thalore get the
      * ordinary two infusions. Every other line of `UNFILED` is Thalore — the
@@ -218,6 +220,7 @@ describe('the origin that grants them', () => {
       wrathOfTheWoods.id,
       unshackled.id,
       shieldingRune.id,
+      phaseDoorRune.id,
     ]);
   });
 

@@ -162,6 +162,14 @@ function fixture(
     getActor: (id) => actors.find((a) => a.id === id),
     actorAt: (x, y) => actors.find((a) => a.alive && a.x === x && a.y === y),
     allActors: () => [...actors],
+    /**
+     * A FIXTURE THAT CANNOT TELEPORT, and refusing is the honest answer.
+     *
+     * `TalentWorld` gained `placeAt` when the blink landed. This stub has no
+     * terrain model to place onto, so a talent that teleports is refused here
+     * rather than silently landing on a tile the fixture never had.
+     */
+    placeAt: (): boolean => false,
     tryMove: (id, dir) => {
       const actor = actors.find((a) => a.id === id);
       if (actor === undefined) return { ok: false, reason: 'no_actor' };
