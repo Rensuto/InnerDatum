@@ -405,7 +405,16 @@ describe('every row that already worked still works', () => {
 
   const COMMANDS: readonly (readonly [KeyInit, TurnCommand])[] = [
     [{ key: ' ' }, TurnCommand.Commit],
-    [{ key: 'Enter' }, TurnCommand.Commit],
+    /**
+     * NO BARE `Enter` ROW. It opens the command line now, and the dispatcher
+     * reads the UI table before the key-keyed command table.
+     *
+     * THE NUMPAD ONE STAYS, and it is the assertion worth keeping: NumpadEnter
+     * reports `event.key === 'Enter'` too, so it is the press that `say` would
+     * have stolen. It survives because the CODE-keyed command lookup runs
+     * before the key-keyed verbs — `commit` freezes that binding so the numpad
+     * hand can always end a turn.
+     */
     [{ key: 'Enter', code: 'NumpadEnter' }, TurnCommand.Commit],
     [{ key: '.' }, TurnCommand.Hold],
     // NumLock on reports '5' and off reports 'Clear'; neither is bindable, which
@@ -456,8 +465,9 @@ describe('every row that already worked still works', () => {
   const UI_ROWS: readonly (readonly [string, UiCommand])[] = [
     ['e', UiCommand.Revive],
     ['f', UiCommand.Respawn],
-    ['t', UiCommand.Say],
-    ['/', UiCommand.Say],
+    // ENTER, AND IT USED TO BE `t` AND `/`. Asked for as "we will not use the /
+    // or t button but instead just the enter key to active".
+    ['enter', UiCommand.Say],
     ['c', UiCommand.ShowSheet],
     ['g', UiCommand.ShowTalents],
     ['v', UiCommand.ToggleLog],

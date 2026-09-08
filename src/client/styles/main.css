@@ -124,8 +124,33 @@ body {
  * one click on a row that reads "T or / to talk" moved focus off the canvas, and
  * from there keys.ts's `isTextEntry` dropped every key the modal advertises.
  */
+/*
+ * ═══════════════════════════════════════════════════════════════════════════
+ * OUT OF THE COLUMN AND OVER THE CASE LOG. It used to be a row under the map.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Asked for as "the chat bar below it needs to be removed and added to the
+ * 'case log'". The four box properties are written per frame by
+ * `placeCommandLine` in main.ts, from the panel rect the canvas actually drew,
+ * converted through `renderer.hudRectToClient`. The values here are only what
+ * the row looks like before the first paint.
+ *
+ * `position: fixed` and NOT `absolute`: the row is positioned from
+ * `getBoundingClientRect`, which is viewport-relative, and `fixed` resolves
+ * against the same viewport. `absolute` would resolve against the nearest
+ * positioned ancestor and agree only while there is none — and disagree the
+ * moment a mobile soft keyboard offsets the visual viewport, which is exactly
+ * when a chat box is on screen.
+ *
+ * IT IS OUT OF FLOW, which is what makes the `[hidden]` rule below able to be
+ * `display: none` at last. See that block.
+ */
 #cmdrow {
-  flex: 0 0 auto;
+  position: fixed;
+  left: 0;
+  top: 0;
+  width: 0;
+  height: 0;
   display: flex;
   align-items: stretch;
   border-top: 1px solid #36303e; /* SLATE */
@@ -134,44 +159,34 @@ body {
 
 /*
  * ═══════════════════════════════════════════════════════════════════════════
- * `visibility`, NOT `display`. THE ROW GOES AWAY; ITS BOX MUST NOT.
+ * `display: none` NOW — AND THE OLD RULE'S ARGUMENT IS WHY IT COULD NOT BE.
  * ═══════════════════════════════════════════════════════════════════════════
  *
  * THE RULE IS STILL REQUIRED, AND THAT IS STILL NOT OBVIOUS. `[hidden]` is
  * `display: none` in the USER-AGENT stylesheet, and the author `display: flex`
  * directly above BEATS it — so without an explicit `#cmdrow[hidden]` rule the
  * attribute toggle in `setCommandLineReachable` is a silent no-op and the row
- * sits there in front of a modal inviting a click. Keep both halves: delete the
- * `display: flex` above and this rule is doing work the UA would have done
- * anyway; delete this rule and the attribute stops meaning anything. The
- * functional half of the gate (`disabled` + `tabIndex = -1` + `blur()`) would
- * still hold either way, which is exactly why the omission would never be
- * noticed.
+ * sits there in front of a modal inviting a click. Keep both halves.
  *
- * WHY IT IS NOT `display: none`. This row is ~29px of a flex COLUMN, and `#game`
- * is the `flex: 1 1 auto; min-height: 0` sibling that absorbs whatever the other
- * rows do not take. Taking the row out of layout therefore handed those 29px to
- * the canvas, the ResizeObserver fired, and canvas.ts's `resize` (:697-747) does
- * not merely re-letterbox — it recomputes tilesW/tilesH from the new device box
- * (:727-730), reassigns logicalW/logicalH and rebuilds the backbuffer
- * (:732-742). At 1280x720/dpr1 that is one whole extra tile row, the panel band
- * moves, the camera clamp shifts, and the map jumps under the player at the
- * instant the Escape menu (or the class picker) opens — and jumps back when it
- * closes. `visibility: hidden` leaves the box in the column, so the measured
- * rect never changes and `resize` returns false at its early-out (:707).
+ * ═══ IT USED TO BE `visibility: hidden`, AND THE REASON HAS GONE ═══
+ * The old note ran to a page: this row was ~29px of a flex COLUMN, `#game` was
+ * the `flex: 1 1 auto` sibling that absorbed whatever the other rows left, so
+ * taking the row OUT OF LAYOUT handed the canvas 29px, fired the
+ * ResizeObserver, and `resize()` rebuilt the backbuffer — one whole extra tile
+ * row at 1280x720, the panel band moving and the map jumping under the player
+ * at the instant a modal opened, and jumping back when it closed.
  *
- * AND IT STRENGTHENS THE FOCUS GATE RATHER THAN WEAKENING IT. Per spec a
- * `visibility: hidden` element (and its subtree) is not a focusable area: it is
- * out of the sequential focus order and out of the accessibility tree, and it
- * takes no pointer events. So `#cmd` — the only tabbable element on the page,
- * and the reason this gate exists at all — is unreachable by Tab, by click and
- * by screen-reader cursor while the attribute is set, on top of the three
- * functional guards main.ts sets. `opacity: 0` would NOT do this and must never
- * be substituted here: it leaves the field focusable and clickable, which is the
- * shipped bug the block above `#cmdrow` describes.
+ * The row is `position: fixed` now. It is not in the column, `#game` does not
+ * absorb its box, and nothing it does can change the canvas's measured rect.
+ * The entire mechanism that forbade `display: none` is gone, and `display:
+ * none` is the stronger gate: `visibility: hidden` leaves the element rendered,
+ * where this removes it outright.
+ *
+ * `opacity: 0` REMAINS FORBIDDEN and that has not changed: it leaves the field
+ * focusable and clickable, which is the shipped bug the block above describes.
  */
 #cmdrow[hidden] {
-  visibility: hidden;
+  display: none;
 }
 
 #cmdlabel {

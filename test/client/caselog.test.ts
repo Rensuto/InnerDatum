@@ -17,6 +17,7 @@ import {
   logCogAt,
   logCogRect,
   logDragAt,
+  logComposerRect,
   logGripRect,
   snapStyle,
   stampText,
@@ -423,5 +424,100 @@ describe('the three settings', () => {
     // Growing their text would not grow the boxes it sits in.
     const source = readFileSync('src/client/ui/caselog.ts', 'utf8');
     expect(source).toMatch(/const FONT_META = `bold 10px \$\{STACK\}`;/);
+  });
+});
+
+const logFixture = log;
+
+describe('the composer strip', () => {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE CHAT BOX MOVED INTO THE CASE LOG.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Asked for as *"the chat bar below it needs to be removed and added to the
+   * 'case log' to active chat, we will not use the / or t button but instead
+   * just the enter key to active and escape key to close it"*.
+   *
+   * The field itself is still a real DOM `<input>` — index.html argues that at
+   * length and none of it stopped being true — so what lives here is the BOX it
+   * is positioned into, and the box has to be a pure function or the painter,
+   * the hit test and the DOM placer would each have their own idea of where the
+   * player is typing.
+   */
+  const RECT = { x: 10, y: 20, w: 400, h: 240 };
+
+  it('sits at the foot, inside the panel', () => {
+    const box = logComposerRect(RECT);
+    expect(box, 'a panel this size has no composer').not.toBeNull();
+    if (box === null) return;
+    expect(box.y + box.h, 'the composer hangs out of the panel').toBeLessThanOrEqual(
+      RECT.y + RECT.h,
+    );
+    expect(box.y, 'the composer is not at the foot').toBeGreaterThan(RECT.y + RECT.h / 2);
+    expect(box.x, 'the composer starts outside the panel').toBeGreaterThanOrEqual(RECT.x);
+  });
+
+  it('stops short of the resize grip, or the log can never be resized again', () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * A DOM ELEMENT CANNOT BE HIT-TESTED THROUGH.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * The `<input>` is positioned over this box and it is opaque to the
+     * pointer. `logGripRect` is the bottom-right `LOG_GRIP_PX` square of the
+     * same panel, so a full-width composer would sit exactly on top of the grip
+     * — and the canvas `mousedown` that begins a resize would never fire again.
+     * Not a visual overlap: a control that has stopped existing.
+     */
+    const box = logComposerRect(RECT);
+    const grip = logGripRect(RECT);
+    expect(box).not.toBeNull();
+    if (box === null) return;
+    expect(box.x + box.w, 'the composer covers the resize grip').toBeLessThanOrEqual(grip.x);
+  });
+
+  it('refuses to exist rather than eat the last line of transcript', () => {
+    // A panel at its floor cannot hold a header, a tab row, a composer AND a
+    // line of log. The transcript wins: a log you cannot read is worse than one
+    // you cannot type into, and the box can always be made bigger.
+    expect(logComposerRect({ x: 0, y: 0, w: 400, h: PANEL_MIN_H })).toBeNull();
+  });
+
+  it('answers no press before anything has been drawn', () => {
+    // Same contract as `tabAt` and `bodyAt`: a widget that claimed a click it
+    // had never painted for would swallow presses meant for the map.
+    const { it: log } = logFixture();
+    expect(log.composerAt(15, 250)).toBe(false);
+    expect(log.composerBox()).toBeNull();
+  });
+});
+
+describe('Enter talks, and the numpad still commits', () => {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE COLLISION THIS PAIR EXISTS TO KEEP FIXED.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `say` ships on `key:enter`. `commit` FREEZES `code:NumpadEnter` so "the
+   * numpad hand can always end a turn without leaving the pad" — and a numpad
+   * press reports `event.key === 'Enter'`. The dispatcher used to consult the
+   * key-keyed UI table before the code-keyed command table, so the moment Enter
+   * learned to talk, the frozen binding was silently stolen: a numpad press
+   * opened the chat box, and the Keys screen went on reporting it as bound
+   * because `BASELINE` is computed from the defaults rather than from what the
+   * dispatcher can reach.
+   *
+   * The order is code-then-key now, which is what `resolveAction`'s own order
+   * sentence has said all along and what the `dir` and `slot` lookups already
+   * did.
+   */
+  it('reads the code-keyed commands before the key-keyed verbs', () => {
+    const source = readFileSync('src/client/input/keys.ts', 'utf8');
+    const byCode = source.indexOf('const byCode = keymap.commandByCode.get(event.code);');
+    const ui = source.indexOf('const ui = keymap.uiByKey.get(lower);');
+    expect(byCode, 'the code-keyed command lookup is gone').toBeGreaterThan(-1);
+    expect(ui).toBeGreaterThan(-1);
+    expect(byCode, 'a verb on `enter` steals the frozen NumpadEnter commit').toBeLessThan(ui);
   });
 });

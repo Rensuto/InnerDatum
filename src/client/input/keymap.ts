@@ -396,14 +396,28 @@ export const ACTIONS = [
     group: 'Turn',
     order: 9,
     effect: { kind: 'command', command: 'commit' },
-    // SPACE because it is the largest key on the board and this is the most
-    // pressed key in the game; ENTER because half the table will try it first.
-    defaults: [
-      { kind: 'key', value: ' ' },
-      { kind: 'key', value: 'enter' },
-    ],
-    // NumpadEnter is FROZEN so the numpad hand can always end a turn without
-    // leaving the pad, whatever the other two slots have been rewritten to.
+    /**
+     * SPACE because it is the largest key on the board and this is the most
+     * pressed key in the game.
+     *
+     * ═══ AND ENTER IS GONE, BECAUSE ENTER NOW TALKS ═══
+     * It read *"ENTER because half the table will try it first"*, which was
+     * true and is now impossible: the command line opens on Enter (see `say`),
+     * and the dispatcher consults the UI table BEFORE the command table. Enter
+     * left here rather than there would be a binding the Keys screen still
+     * lists and nothing can ever reach — and `BASELINE` is computed from these
+     * defaults, so a shipped collision is absorbed silently rather than
+     * reported as one.
+     */
+    defaults: [{ kind: 'key', value: ' ' }],
+    /**
+     * NumpadEnter is FROZEN so the numpad hand can always end a turn without
+     * leaving the pad, whatever the other slot has been rewritten to.
+     *
+     * IT SURVIVES ENTER MOVING, but only because the lookup is keyed on `code`
+     * and runs before the key-keyed one: a numpad press reports `event.key ===
+     * 'Enter'`, so a UI action holding 'enter' would otherwise steal it.
+     */
     fixed: [{ kind: 'code', value: 'NumpadEnter' }],
     rebindable: true,
   },
@@ -560,16 +574,30 @@ export const ACTIONS = [
   // ═══════════════════════════════════════════════════════════════════════════
   {
     id: 'say',
-    name: 'Open the command line',
+    name: 'Talk in the case log',
     group: 'Screens',
     order: 17,
     effect: { kind: 'ui', command: 'say' },
-    // `/` sits beside `t` because it is the chat key in every MUD, every IRC
-    // client and Discord itself, and half the table will reach for it first.
-    defaults: [
-      { kind: 'key', value: 't' },
-      { kind: 'key', value: '/' },
-    ],
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * ENTER, AND ONLY ENTER. It was `t` and `/`.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * Asked for as *"we will not use the / or t button but instead just the
+     * enter key to active and escape key to close it"*.
+     *
+     * The old note argued `/` "is the chat key in every MUD, every IRC client
+     * and Discord itself" — true, and it is also the key those clients use
+     * because their Enter is already the SEND key of an always-open box. Ours
+     * has no always-open box: the field appears on Enter and Escape puts it
+     * away, which is the arrangement Discord itself uses for a message you have
+     * not started typing.
+     *
+     * ONE SLOT, NOT TWO. A second default would be a second key doing the only
+     * job this action has, and the request names one. The slot stays rebindable
+     * and empty for a player who wants their `/` back.
+     */
+    defaults: [{ kind: 'key', value: 'enter' }],
     fixed: [],
     rebindable: true,
   },

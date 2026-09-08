@@ -578,6 +578,34 @@ export function bindGameKeys(
       return;
     }
 
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * THE CODE-KEYED COMMANDS COME BEFORE THE KEY-KEYED VERBS.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * A `code` binding names a PHYSICAL key; a `key` binding names a character.
+     * The physical one is the more specific claim, and the two tables can name
+     * the same press: `NumpadEnter` reports `event.key === 'Enter'`.
+     *
+     * IT BROKE THE MOMENT ENTER LEARNED TO TALK. `commit` freezes
+     * `code:NumpadEnter` so "the numpad hand can always end a turn without
+     * leaving the pad", and `say` now ships on `key:enter`. With the verb
+     * lookup first, a numpad press opened the chat box instead — a FROZEN
+     * binding, silently stolen, and the Keys screen would go on reporting it as
+     * bound because `BASELINE` is computed from the defaults rather than from
+     * what the dispatcher can actually reach.
+     *
+     * The `dir` and `slot` lookups above already read code before key. This
+     * makes the commands agree with them, which is what `resolveAction`'s order
+     * sentence has said all along.
+     */
+    const byCode = keymap.commandByCode.get(event.code);
+    if (byCode !== undefined) {
+      event.preventDefault();
+      handlers.onCommand(byCode);
+      return;
+    }
+
     const ui = keymap.uiByKey.get(lower);
     if (ui !== undefined) {
       event.preventDefault();

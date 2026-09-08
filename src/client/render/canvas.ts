@@ -183,6 +183,21 @@ export const MarkerKind = {
 } as const;
 export type MarkerKind = (typeof MarkerKind)[keyof typeof MarkerKind];
 
+/**
+ * The art contract for tile markers.
+ *
+ * Keep this literal rather than composing an id from `MarkerKind`: the asset
+ * audit can prove that literal ids exist, while a template string quietly
+ * turns every future enum member into an unrecorded commission.
+ */
+const MARKER_SPRITE: Readonly<Record<MarkerKind, string>> = {
+  [MarkerKind.Cursor]: 'ui_tile_marker_cursor',
+  [MarkerKind.Valid]: 'ui_tile_marker_valid',
+  [MarkerKind.Invalid]: 'ui_tile_marker_invalid',
+  [MarkerKind.Aoe]: 'ui_tile_marker_aoe',
+  [MarkerKind.MinRange]: 'ui_tile_marker_minrange',
+};
+
 export type TileOverlay = {
   readonly x: number;
   readonly y: number;
@@ -902,6 +917,17 @@ export type Renderer = {
    */
   readonly backbufferPoint: (clientX: number, clientY: number) => TileXY | null;
   /**
+   * An interface rect -> the CSS box it occupies on the page, or null before
+   * anything is laid out. The forward twin of `backbufferPoint`, and the only
+   * supported way to put a DOM element over something the canvas drew.
+   */
+  readonly hudRectToClient: (rect: {
+    readonly x: number;
+    readonly y: number;
+    readonly w: number;
+    readonly h: number;
+  }) => { left: number; top: number; width: number; height: number } | null;
+  /**
    * A pointer position (a MouseEvent's `clientX`/`clientY`) -> the tile under
    * it, or null when the pointer is on the letterbox or off the map.
    *
@@ -1525,9 +1551,9 @@ export const TILE_SPRITES: TerrainSpriteTable = {
     'tile_ow_field_e',
     'tile_ow_field_f',
   ],
-  [TileCode.VILLAGE_ROOF]: ['tile_ow_village_roof'],
-  [TileCode.TOWN_ROOF]: ['tile_ow_town_roof'],
-  [TileCode.CITY_ROOF]: ['tile_ow_city_roof'],
+  // Settlement roofs are coordinate-phase surfaces selected below. They are
+  // deliberately absent here so a missing phase falls back to one flat mass,
+  // never to the old complete-house stamp.
   [TileCode.TOWN_WALL]: ['tile_ow_wall'],
   [TileCode.MOUNTAIN]: [
     'tile_ow_mountain_b',
@@ -1566,6 +1592,84 @@ export const TILE_SPRITES: TerrainSpriteTable = {
     'tile_ow_charred_f',
   ],
 };
+
+/**
+ * Four-by-four source phases for each world-settlement roof material.
+ *
+ * A phase is a 64px crop of one closed 256px surface master. Selecting by
+ * world coordinate reconstructs that master across neighbouring cells, so a
+ * 3x4 roof footprint reads as one structure several player tokens across.
+ * These arrays stay literal so `art:needs` can prove all 48 files exist.
+ */
+export const SETTLEMENT_ROOF_PHASES: Partial<Record<TileCode, readonly string[]>> = {
+  [TileCode.VILLAGE_ROOF]: [
+    'tile_ow_village_roof_p00',
+    'tile_ow_village_roof_p01',
+    'tile_ow_village_roof_p02',
+    'tile_ow_village_roof_p03',
+    'tile_ow_village_roof_p10',
+    'tile_ow_village_roof_p11',
+    'tile_ow_village_roof_p12',
+    'tile_ow_village_roof_p13',
+    'tile_ow_village_roof_p20',
+    'tile_ow_village_roof_p21',
+    'tile_ow_village_roof_p22',
+    'tile_ow_village_roof_p23',
+    'tile_ow_village_roof_p30',
+    'tile_ow_village_roof_p31',
+    'tile_ow_village_roof_p32',
+    'tile_ow_village_roof_p33',
+  ],
+  [TileCode.TOWN_ROOF]: [
+    'tile_ow_town_roof_p00',
+    'tile_ow_town_roof_p01',
+    'tile_ow_town_roof_p02',
+    'tile_ow_town_roof_p03',
+    'tile_ow_town_roof_p10',
+    'tile_ow_town_roof_p11',
+    'tile_ow_town_roof_p12',
+    'tile_ow_town_roof_p13',
+    'tile_ow_town_roof_p20',
+    'tile_ow_town_roof_p21',
+    'tile_ow_town_roof_p22',
+    'tile_ow_town_roof_p23',
+    'tile_ow_town_roof_p30',
+    'tile_ow_town_roof_p31',
+    'tile_ow_town_roof_p32',
+    'tile_ow_town_roof_p33',
+  ],
+  [TileCode.CITY_ROOF]: [
+    'tile_ow_city_roof_p00',
+    'tile_ow_city_roof_p01',
+    'tile_ow_city_roof_p02',
+    'tile_ow_city_roof_p03',
+    'tile_ow_city_roof_p10',
+    'tile_ow_city_roof_p11',
+    'tile_ow_city_roof_p12',
+    'tile_ow_city_roof_p13',
+    'tile_ow_city_roof_p20',
+    'tile_ow_city_roof_p21',
+    'tile_ow_city_roof_p22',
+    'tile_ow_city_roof_p23',
+    'tile_ow_city_roof_p30',
+    'tile_ow_city_roof_p31',
+    'tile_ow_city_roof_p32',
+    'tile_ow_city_roof_p33',
+  ],
+};
+
+const SETTLEMENT_ROOF_PHASE_SIDE = 4;
+
+/** The exact roof phase for a world coordinate, or null for non-roof terrain. */
+export function settlementRoofSpriteId(code: TileCode, tx: number, ty: number): string | null {
+  const phases = SETTLEMENT_ROOF_PHASES[code];
+  if (phases === undefined) return null;
+  const column =
+    ((tx % SETTLEMENT_ROOF_PHASE_SIDE) + SETTLEMENT_ROOF_PHASE_SIDE) % SETTLEMENT_ROOF_PHASE_SIDE;
+  const row =
+    ((ty % SETTLEMENT_ROOF_PHASE_SIDE) + SETTLEMENT_ROOF_PHASE_SIDE) % SETTLEMENT_ROOF_PHASE_SIDE;
+  return phases[row * SETTLEMENT_ROOF_PHASE_SIDE + column] ?? null;
+}
 
 /**
  * Player-scale terrain for every world material currently used by a Common or
@@ -2104,11 +2208,14 @@ export function createRenderer(options: RendererOptions): Renderer {
     ty: number,
     sx: number,
     sy: number,
+    overrideId?: string,
   ): boolean {
     const ids = table[code];
-    if (ids === undefined) return false;
-
-    const id = ids.length === 1 ? ids[0] : ids[tileVariant(tx, ty, ids.length)];
+    let id = overrideId;
+    if (id === undefined) {
+      if (ids === undefined) return false;
+      id = ids.length === 1 ? ids[0] : ids[tileVariant(tx, ty, ids.length)];
+    }
     if (id === undefined) return false;
 
     const sprite: Sprite | undefined = sprites.sprite(id);
@@ -2264,10 +2371,11 @@ export function createRenderer(options: RendererOptions): Renderer {
    * ═══ WHAT IT LOOKED LIKE WHEN THEY SHARED A BLIT ═══
    * Reported with a screenshot the day the cell went to 64: *"the area boxes
    * when using abilities should be seamless and they are far apart now."* All
-   * thirteen marks in `ui/markers/` are authored 32x32, so every one drew at
+   * thirteen marks in `ui/markers/` were authored 32x32, so every one drew at
    * quarter area in the middle of its cell — an area-of-effect that looked like
    * scattered confetti rather than a contiguous shape, and a token ring half
-   * the width of the body standing in it.
+   * the width of the body standing in it. They are native 64x64 now; this
+   * history remains because it explains why `blitCell` is still the invariant.
    *
    * ═══ SCALED RATHER THAN ANCHORED, AND THAT IS THE INVARIANT, NOT A PATCH ═══
    * The art is being regenerated at 64 so this draws 1:1 — but the rule has to
@@ -2306,8 +2414,9 @@ export function createRenderer(options: RendererOptions): Renderer {
     // allowed to be bigger than its tile — the M6 bestiary has 48x64 ogres —
     // and when it is, it must overflow UPWARD and sideways, never downward:
     // the feet are what tell the player which tile the thing occupies.
-    //   24x32 -> dx = +4,  dy =   0
-    //   48x64 -> dx = -8,  dy = -32
+    //   24x32  -> dx = +20, dy = +32
+    //   48x64  -> dx =  +8, dy =   0
+    //   96x128 -> dx = -16, dy = -64
     const dx = cellX + Math.round((TILE_PX - sprite.w) / 2);
     const dy = cellY + (TILE_PX - sprite.h);
     backCtx.drawImage(sprite.image, dx, dy, sprite.w, sprite.h);
@@ -2338,7 +2447,8 @@ export function createRenderer(options: RendererOptions): Renderer {
         // cell — no flat fill under it, no grid line over it. See `paintTerrain`.
         // THE LINE OVER THE GROUND. Only when a terrain sprite actually
         // drew — see `paintTransport`.
-        if (paintTerrain(table, code, tx, ty, sx, sy)) {
+        const roofId = paintsWorldTopology ? settlementRoofSpriteId(code, tx, ty) : null;
+        if (paintTerrain(table, code, tx, ty, sx, sy, roofId ?? undefined)) {
           // Road/rail/bridge overlays describe whole overworld connections.
           // Reusing them inside a town puts a map-scale junction on one patch
           // of player-scale paving, the same category error this table split
@@ -2399,7 +2509,7 @@ export function createRenderer(options: RendererOptions): Renderer {
         backCtx.fillRect(cellX, cellY, TILE_PX, TILE_PX);
         backCtx.restore();
       }
-      if (cell.marker !== null) blitCell(`ui_tile_marker_${cell.marker}`, cellX, cellY);
+      if (cell.marker !== null) blitCell(MARKER_SPRITE[cell.marker], cellX, cellY);
     }
   }
 
@@ -2935,7 +3045,7 @@ export function createRenderer(options: RendererOptions): Renderer {
       for (const overlay of scene.overlays ?? []) {
         const cellX = overlay.x * TILE_PX - camX;
         const cellY = overlay.y * TILE_PX - camY;
-        if (visible(cellX, cellY)) blitCell(`ui_tile_marker_${overlay.kind}`, cellX, cellY);
+        if (visible(cellX, cellY)) blitCell(MARKER_SPRITE[overlay.kind], cellX, cellY);
       }
 
       // Pings LAST, above even the sweep. A person pointing is the one overlay
@@ -3022,6 +3132,58 @@ export function createRenderer(options: RendererOptions): Renderer {
     };
   }
 
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE FORWARD MAP: an interface rect -> the CSS box it occupies on the page.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `backbufferPoint` below undoes CSS -> device -> interface for a pointer.
+   * This does the same three steps the other way for a RECT, and it exists for
+   * one caller: the command line is a real DOM `<input>` (index.html says at
+   * length why — IME, clipboard, caret, undo, screen reader) and it now has to
+   * sit inside a box the CANVAS drew. Something has to convert one space to the
+   * other.
+   *
+   * ═══ IT LIVES HERE FOR THE REASON `tileAtClient` GIVES ═══
+   * That function's own note: undoing the transform in the input layer "would be
+   * a second copy of `cameraAxis`, and it would go wrong first at the map edges".
+   * The same applies forwards. `hudScale`, `deviceW` and the measured rect are
+   * all private to this file, and a copy in main.ts would be a second answer to
+   * where a logical pixel is.
+   *
+   * ═══ THE MEASURED RECT, NEVER `dpr` ═══
+   * `devicePoint` uses `deviceW / rect.width` rather than `dpr` and states why:
+   * the two agree only while the canvas is laid out at exactly its backbuffer
+   * size, and the letterbox is precisely when it is not. This shares that
+   * function's arithmetic rather than restating it.
+   *
+   * NO LETTERBOX TERM, for `backbufferPoint`'s reason: the interface buffer is
+   * blitted at the origin and covers the device box. It is the MAP that is
+   * centred.
+   *
+   * Returns null when there is nothing laid out yet — the same guard, so a
+   * caller that is safe against one is safe against both.
+   */
+  function hudRectToClient(rect: {
+    readonly x: number;
+    readonly y: number;
+    readonly w: number;
+    readonly h: number;
+  }): { left: number; top: number; width: number; height: number } | null {
+    if (deviceW === 0 || deviceH === 0) return null;
+    const box = canvas.getBoundingClientRect();
+    if (box.width <= 0 || box.height <= 0) return null;
+
+    const perX = box.width / deviceW;
+    const perY = box.height / deviceH;
+    return {
+      left: box.left + rect.x * hudScale * perX,
+      top: box.top + rect.y * hudScale * perY,
+      width: rect.w * hudScale * perX,
+      height: rect.h * hudScale * perY,
+    };
+  }
+
   function backbufferPoint(clientX: number, clientY: number): TileXY | null {
     const device = devicePoint(clientX, clientY);
     if (device === null) return null;
@@ -3064,6 +3226,7 @@ export function createRenderer(options: RendererOptions): Renderer {
     draw,
     metrics,
     backbufferPoint,
+    hudRectToClient,
     tileAtClient,
     setZoom,
     zoom,

@@ -119,7 +119,10 @@ describe('the defaults compile to the seven tables keys.ts used to declare', () 
     expect(entries(DEFAULT_KEYMAP.commandByKey)).toEqual(
       sorted([
         [' ', TurnCommand.Commit],
-        ['enter', TurnCommand.Commit],
+        // NO `enter` ROW. It opens the command line now — see `uiByKey` below —
+        // and the dispatcher reads that table first, so a commit binding on
+        // Enter would be one nothing could reach. `NumpadEnter` still commits,
+        // because that lookup is keyed on `code` and runs before this one.
         ['.', TurnCommand.Hold],
         [',', TurnCommand.Pickup],
         // TWO LETTERS AMONG THE PUNCTUATION, and they are the reason the note
@@ -144,13 +147,14 @@ describe('the defaults compile to the seven tables keys.ts used to declare', () 
     );
   });
 
-  it('KEY_TO_UI — every row for every verb, `/` beside `t`', () => {
+  it('KEY_TO_UI — every row for every verb, and Enter talks', () => {
     expect(entries(DEFAULT_KEYMAP.uiByKey)).toEqual(
       sorted([
         ['e', UiCommand.Revive],
         ['f', UiCommand.Respawn],
-        ['t', UiCommand.Say],
-        ['/', UiCommand.Say],
+        // ENTER, AND IT USED TO BE `t` AND `/`. Asked for as "we will not use
+        // the / or t button but instead just the enter key to active".
+        ['enter', UiCommand.Say],
         ['c', UiCommand.ShowSheet],
         ['v', UiCommand.ToggleLog],
         ['m', UiCommand.ShowWorldMap],
@@ -241,7 +245,7 @@ describe('the action registry', () => {
 
 describe('an empty remap resolves to the defaults', () => {
   it('resolves both slots from `defaults` and nothing else', () => {
-    expect(resolve(def('say'), {})).toEqual([key('t'), key('/')]);
+    expect(resolve(def('say'), {})).toEqual([key('enter'), undefined]);
     expect(resolve(def('move_north'), {})).toEqual([key('k'), undefined]);
   });
 
@@ -255,7 +259,7 @@ describe('composition is PER SLOT, which is the property ToME lacks', () => {
     // `getBindTable` returns `binds_remap[type] or type.default`
     // (KeyBind.lua:114-116), so upstream's first rebind shadows the WHOLE array
     // and the alternate key vanishes with it. Ours does not.
-    expect(resolve(def('say'), { say: ['key:;'] })).toEqual([key(';'), key('/')]);
+    expect(resolve(def('say'), { say: ['key:;'] })).toEqual([key(';'), undefined]);
   });
 
   it('a remap of slot 1 alone leaves slot 0 at its default', () => {
@@ -264,7 +268,7 @@ describe('composition is PER SLOT, which is the property ToME lacks', () => {
     // word for "no override" — so a changed shipped default still reaches this
     // player in the slot they never touched.
     expect(remap.say).toEqual([SLOT_DEFAULT, 'key:;']);
-    expect(resolve(def('say'), remap)).toEqual([key('t'), key(';')]);
+    expect(resolve(def('say'), remap)).toEqual([key('enter'), key(';')]);
   });
 
   it('an absent action falls back to its defaults, so the store stays sparse', () => {
@@ -277,19 +281,19 @@ describe('composition is PER SLOT, which is the property ToME lacks', () => {
     // src/server/persist/saves.ts:1229-1236 keeps an action whose keys all
     // dropped as `[]` rather than deleting it, precisely so the resolver reads it
     // this way and nothing is bricked.
-    expect(resolve(def('say'), { say: [] })).toEqual([key('t'), key('/')]);
+    expect(resolve(def('say'), { say: [] })).toEqual([key('enter'), undefined]);
   });
 
   it("'none' is the cleared slot, and it is a different thing from absent", () => {
     // KeyBinder.lua:95-97's Backspace, which upstream can spell as a Lua nil in a
     // positional file and JSON cannot.
-    expect(resolve(def('say'), { say: [SLOT_NONE] })).toEqual([undefined, key('/')]);
+    expect(resolve(def('say'), { say: [SLOT_NONE] })).toEqual([undefined, undefined]);
   });
 
   it('an unreadable key string falls back to the default rather than to nothing', () => {
     // NEVER BRICK. "Your rebind was ignored" is recoverable; "your movement key
     // does nothing" is a player who cannot reach the menu that would fix it.
-    expect(resolve(def('say'), { say: ['not a key string'] })).toEqual([key('t'), key('/')]);
+    expect(resolve(def('say'), { say: ['not a key string'] })).toEqual([key('enter'), undefined]);
   });
 
   it('key-side values are lowercased, so a captured capital still matches', () => {
@@ -340,7 +344,7 @@ describe('a write never mutates the registry', () => {
     // ...and the shipped defaults are still the shipped defaults afterwards,
     // which is the half of the bug a shallow object comparison would miss.
     expect(resolve(def('move_north'), {})).toEqual([key('k'), undefined]);
-    expect(resolve(def('say'), {})).toEqual([key('t'), key('/')]);
+    expect(resolve(def('say'), {})).toEqual([key('enter'), undefined]);
   });
 
   it('each write allocates a new remap and a new slot array', () => {
@@ -361,7 +365,7 @@ describe('reset', () => {
     remap = setBinding(remap, 'say', 0, key(';'));
     remap = setBinding(remap, 'toggle_log', 0, key('q'));
     const after = resetOne(remap, 'say');
-    expect(resolve(def('say'), after)).toEqual([key('t'), key('/')]);
+    expect(resolve(def('say'), after)).toEqual([key('enter'), undefined]);
     expect(resolve(def('toggle_log'), after)).toEqual([key('q'), undefined]);
     expect(Object.keys(after)).toEqual(['toggle_log']);
   });
@@ -596,7 +600,10 @@ describe('labelFor never shows the stored form', () => {
   it('names a slot the way a player reads it', () => {
     expect(labelFor('move_north', DEFAULT_KEYMAP, 0)).toBe('K');
     expect(labelFor('commit', DEFAULT_KEYMAP, 0)).toBe('Space');
-    expect(labelFor('commit', DEFAULT_KEYMAP, 1)).toBe('Enter');
+    // Slot 1 is empty: Enter left `commit` for `say`. An unbound slot reads as
+    // a dash rather than as nothing, so the Keys screen has something to draw.
+    expect(labelFor('commit', DEFAULT_KEYMAP, 1)).toBe('--');
+    expect(labelFor('say', DEFAULT_KEYMAP, 0)).toBe('Enter');
     expect(labelFor('scroll_back', DEFAULT_KEYMAP, 0)).toBe('PgUp');
     // ToME does the same substitution on its own numpad names —
     // `sym:gsub("Keypad ", "k")`, KeyBind.lua:179.

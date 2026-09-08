@@ -415,6 +415,15 @@ export type CaseLog = {
   readonly style: () => LogStyle;
   /** Apply a saved style. Snapped to this build's steps; fires no change event. */
   readonly setStyle: (style: LogStyle | null) => void;
+  /** Is a point on the composer strip? The pointer-only route into chat. */
+  readonly composerAt: (px: number, py: number) => boolean;
+  /**
+   * Where the real `<input>` belongs, in LOGICAL pixels, or null when the panel
+   * is hidden or too short to hold a composer. From the LAST draw.
+   */
+  readonly composerBox: () => PanelRect | null;
+  /** Tell the strip whether the player is typing. Gold prompt, no hint. */
+  readonly setTyping: (typing: boolean) => void;
 };
 
 /**
@@ -553,6 +562,10 @@ export function createCaseLog(options: CaseLogOptions): CaseLog {
   }[] = [];
   /** The popover's own outer rect, for the swallow-the-click test. */
   let popRect: PanelRect = NO_RECT;
+  /** The composer strip from the LAST draw, or null when there was no room. */
+  let composerRect: PanelRect | null = null;
+  /** Is the player typing? Owned by main.ts, mirrored here for the paint. */
+  let typing = false;
   /**
    * The PANEL's outer rect from the last draw — not the body's.
    *
@@ -930,6 +943,7 @@ export function createCaseLog(options: CaseLogOptions): CaseLog {
       tabRects = [];
       stepRects = [];
       lastRect = NO_RECT;
+      composerRect = null;
       return;
     }
     lastRect = rect;
@@ -1036,12 +1050,49 @@ export function createCaseLog(options: CaseLogOptions): CaseLog {
     tabRects = placed;
 
     const bodyY = inner.y + TAB_H + 2;
+    /**
+     * THE TRANSCRIPT STOPS ABOVE THE COMPOSER. The real `<input>` is opaque and
+     * floats over the canvas, so any row drawn under it is permanently
+     * invisible — not dim, not clipped, gone.
+     */
+    const composer = logComposerRect(rect);
+    const bodyBottom = inner.y + inner.h - (composer === null ? 0 : LOG_COMPOSER_H);
     drawStream(ctx, visible(), {
       x: inner.x,
       y: bodyY,
       w: inner.w,
-      h: Math.max(0, inner.y + inner.h - bodyY),
+      h: Math.max(0, bodyBottom - bodyY),
     });
+
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * THE STRIP IS PAINTED WHETHER OR NOT THE INPUT IS SHOWING.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * Two reasons, and the second is the one that matters. It is the visible
+     * ANSWER to "where do I type" — Enter opens the field, and a player who has
+     * not learned that yet needs somewhere to point at. And the DOM row is
+     * hidden in every frame where the canvas is showing something else (the
+     * class picker, the world map, a modal), so without a painted strip the
+     * panel would change shape depending on what else is on screen.
+     */
+    if (composer !== null) {
+      ctx.fillStyle = PALETTE.SLATE;
+      ctx.fillRect(composer.x, composer.y, composer.w, 1);
+      ctx.font = FONT_META;
+      ctx.fillStyle = typing ? PALETTE.GOLD : PALETTE.GREY;
+      ctx.fillText('>', composer.x + 2, composer.y + LOG_COMPOSER_H / 2 + 1);
+      if (!typing) {
+        ctx.fillStyle = PALETTE.GREY;
+        ctx.font = fontRecord(style.font);
+        ctx.fillText(
+          fitText(ctx, 'Enter to talk', composer.w - COMPOSER_TEXT_X),
+          composer.x + COMPOSER_TEXT_X,
+          composer.y + LOG_COMPOSER_H / 2 + 1,
+        );
+      }
+    }
+    composerRect = composer;
 
     drawSettings(ctx, sprites, rect, inner);
     drawLogCog(ctx, rect, settingsShown);
@@ -1227,6 +1278,24 @@ export function createCaseLog(options: CaseLogOptions): CaseLog {
     options.onChange();
   }
 
+  /**
+   * Is a LOGICAL backbuffer point on the composer strip?
+   *
+   * Pointing at the place you type is the pointer-only route to chat, and it is
+   * the only one: `Enter` is a keyboard, and a Discord Activity on a tablet has
+   * no keyboard until something focuses a field.
+   */
+  function composerAt(px: number, py: number): boolean {
+    if (!shown || composerRect === null) return false;
+    const r = composerRect;
+    return px >= r.x && px < r.x + r.w && py >= r.y && py < r.y + r.h;
+  }
+
+  /** Where the DOM input goes, in LOGICAL pixels, or null when it cannot. */
+  function composerBox(): PanelRect | null {
+    return shown ? composerRect : null;
+  }
+
   /** Which tab button a point is on, or null. Rects from the last draw. */
   function tabAt(px: number, py: number): LogTab | null {
     if (!shown) return null;
@@ -1250,6 +1319,13 @@ export function createCaseLog(options: CaseLogOptions): CaseLog {
     settingsPress,
     style: (): LogStyle => style,
     setStyle,
+    composerAt,
+    composerBox,
+    setTyping: (next: boolean): void => {
+      if (next === typing) return;
+      typing = next;
+      options.onChange();
+    },
     bodyAt,
     tabAt,
     selectTab,
@@ -1279,6 +1355,54 @@ export function createCaseLog(options: CaseLogOptions): CaseLog {
  * separate grips would be this client inventing a control ToME does not have,
  * on a box whose whole point is to be the one ToME ships.
  */
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE COMPOSER STRIP — where you type, at the foot of the transcript.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Asked for as *"the chat bar below it needs to be removed and added to the
+ * 'case log' to active chat"*.
+ *
+ * ═══ AT THE FOOT, WHERE THE TABS ARE AT THE HEAD, AND THEY ARE NOT THE SAME
+ * KIND OF THING ═══
+ * The tab strip's own note argues for the top: *"a strip at the FOOT would sit
+ * where the newest line is — the one place in a log a reader's eye is already
+ * fixed"*. That is right about CHROME and wrong about a COMPOSER. Every chat
+ * client ever built puts the box you type into at the bottom, and the reason is
+ * the same adjacency the tabs were avoiding: what you are about to say belongs
+ * directly under the last thing that was said.
+ *
+ * ═══ IT STOPS SHORT OF THE GRIP, AND THAT IS NOT COSMETIC ═══
+ * `logGripRect` is the bottom-right `LOG_GRIP_PX` square of the OUTER rect. The
+ * real `<input>` is positioned over this box, and a DOM element cannot be
+ * hit-tested through — a full-width composer would sit on top of the resize
+ * grip and the Case Log could never be resized again.
+ *
+ * ═══ NULL WHEN THERE IS NO ROOM ═══
+ * A panel squeezed to its floor cannot hold a header, a tab row, a composer AND
+ * a line of transcript. The transcript wins: a log you cannot read is worse
+ * than a log you cannot type into, and the player can still talk by making the
+ * box bigger.
+ */
+export const LOG_COMPOSER_H = 18;
+
+export function logComposerRect(rect: PanelRect): PanelRect | null {
+  const inner = panelInner({
+    x: rect.x,
+    y: rect.y + HEADER_H,
+    w: rect.w,
+    h: rect.h - HEADER_H,
+  });
+  // The tab row and one row of transcript have to survive it.
+  if (inner.h < TAB_H + ROW_H + LOG_COMPOSER_H) return null;
+  return {
+    x: inner.x,
+    y: inner.y + inner.h - LOG_COMPOSER_H,
+    w: Math.max(0, inner.w - LOG_GRIP_PX),
+    h: LOG_COMPOSER_H,
+  };
+}
+
 export const LOG_GRIP_PX = 12;
 
 /** Where the grip is, for the painter and the hit test to share one answer. */
@@ -1430,6 +1554,9 @@ const POP_ROW_H = 16;
 const POP_BTN = 14;
 const POP_GAP = 3;
 const POP_VALUE_W = 52;
+
+/** Where the composer's text starts, past the `>` prompt. */
+const COMPOSER_TEXT_X = 10;
 
 /** Denominator for the opacity percentage. */
 const PERCENT = 100;

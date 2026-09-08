@@ -164,6 +164,7 @@ import { establishDiscordSession } from './net/discord.ts';
 import { connectGameSocket, SocketStatus } from './net/socket.ts';
 import { loadAssetLibrary } from './render/assets.ts';
 import { createRenderer, PALETTE } from './render/canvas.ts';
+import type { Renderer } from './render/canvas.ts';
 import { createSweepPlayback } from './render/sweep.ts';
 // v7 — THE ORB'S ONLY LOGIC, and it is three pure functions. It lives in its own
 // module rather than inline here for the reason state/projectiles.ts sets out:
@@ -938,6 +939,54 @@ function setCommandLineReachable(reachable: boolean): void {
  * down to press deliberately — a player reaching for it to BIND it must not
  * discover that the first press moved their focus instead.
  */
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * PUT THE COMMAND LINE OVER THE CASE LOG'S COMPOSER STRIP.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Asked for as *"the chat bar below it needs to be removed and added to the
+ * 'case log' to active chat"*.
+ *
+ * ═══ IT IS STILL A REAL `<input>`, AND THAT IS NOT NEGOTIABLE ═══
+ * index.html argues it at length and every word still holds: a canvas text
+ * field means reimplementing the caret, selection, clipboard, undo, IME
+ * composition and the mobile keyboard, and getting any one of them wrong makes
+ * the game unusable for somebody. So the element does not change — only where
+ * it is.
+ *
+ * ═══ THROUGH THE RENDERER, BECAUSE THE TRANSFORM LIVES THERE ═══
+ * The panel's rect is in LOGICAL interface pixels; CSS wants page pixels. The
+ * conversion is `hudScale` and the canvas's measured box, both private to
+ * render/canvas.ts, which is why `hudRectToClient` is there and not here. Its
+ * own note gives the rule: a second copy of the transform in the input layer
+ * goes wrong first at exactly the sizes nobody tests.
+ *
+ * ═══ HIDDEN RATHER THAN MOVED OFFSCREEN WHEN THERE IS NOWHERE TO PUT IT ═══
+ * The log can be shut (`m`), squeezed too short to hold a composer, or covered
+ * by a modal. `hidden` shuts the focus trap as well as the paint —
+ * `setCommandLineReachable` explains why both matter — and leaving a focused
+ * field parked under a modal is the trap that function exists to prevent.
+ */
+function placeCommandLine(box: PanelRect | null): void {
+  if (cmdRowEl === null) return;
+  const css =
+    box === null || rendererForPlacement === null
+      ? null
+      : rendererForPlacement.hudRectToClient(box);
+  if (css === null) {
+    cmdRowEl.toggleAttribute('hidden', true);
+    caseLog?.setTyping(false);
+    return;
+  }
+  // `hidden` is owned by `setCommandLineReachable` too — do not fight it. When
+  // the row is unreachable it stays hidden whatever the layout says.
+  if (cmdEl !== null && !cmdEl.disabled) cmdRowEl.toggleAttribute('hidden', false);
+  cmdRowEl.style.left = `${String(Math.round(css.left))}px`;
+  cmdRowEl.style.top = `${String(Math.round(css.top))}px`;
+  cmdRowEl.style.width = `${String(Math.round(css.width))}px`;
+  cmdRowEl.style.height = `${String(Math.round(css.height))}px`;
+}
+
 function syncCommandLineReach(): void {
   setCommandLineReachable(classOptions === null && !menuOpen);
 }
@@ -957,7 +1006,7 @@ function syncCommandLineReach(): void {
  */
 function syncCommandLinePlaceholder(): void {
   if (cmdEl === null) return;
-  cmdEl.placeholder = `${labelFor('say', gameKeymap.current)} to talk · Enter sends · Esc back to the map`;
+  cmdEl.placeholder = `${labelFor('say', gameKeymap.current)} to talk · Enter sends · Esc closes`;
 }
 
 /** textContent, never innerHTML: actor names come from Discord nicknames. */
@@ -2266,6 +2315,16 @@ let sweep: SweepPlayback | null = null;
 let sprites: SpriteSource | null = null;
 let targeting: Targeting | null = null;
 let caseLog: CaseLog | null = null;
+/**
+ * THE RENDERER, AT MODULE SCOPE, FOR ONE READER.
+ *
+ * `placeCommandLine` runs from the paint and needs `hudRectToClient` to turn a
+ * panel rect into a CSS box. The renderer is built inside `boot`'s closure like
+ * everything else that touches the canvas; this is the same borrow `caseLog`
+ * above already makes, and for the same reason — the paint is module scope and
+ * the machinery is not.
+ */
+let rendererForPlacement: Renderer | null = null;
 let combatBanner: CombatBanner | null = null;
 /**
  * THE TOKEN MENU. Created in boot() like every other widget, and null before it,
@@ -4390,6 +4449,9 @@ const paintHud: HudPainter = (ctx, width, height) => {
     // under it — see `drawLogGrip`. It is the only control on this box.
     drawLogGrip(ctx, layout.log);
   }
+  // THE REAL <input> FOLLOWS THE PANEL. Here because this is the only place that
+  // knows where the box actually landed — see `placeCommandLine`.
+  placeCommandLine(layout.log === null ? null : (caseLog?.composerBox() ?? null));
 
   /**
    * ═══════════════════════════════════════════════════════════════════════════
@@ -5813,6 +5875,7 @@ async function boot(): Promise<void> {
   sprites = library;
 
   const renderer = createRenderer({ canvas, sprites: library });
+  rendererForPlacement = renderer;
   renderer.resize();
   // AFTER the first layout, never before: the accessor reads the live device box
   // and answers "fixed" while that box is still 0x0.
@@ -7819,6 +7882,22 @@ async function boot(): Promise<void> {
         return;
     }
   }
+
+  /**
+   * THE PAINTED STRIP FOLLOWS THE FIELD'S FOCUS.
+   *
+   * The canvas draws the `>` prompt and, when nobody is typing, the words
+   * "Enter to talk". Those two states have to track the REAL focus rather than
+   * anything this file thinks it set, because focus leaves for reasons no game
+   * code initiates: a click on the map (the canvas `mousedown` blurs it
+   * deliberately), an alt-tab, a modal taking the row out of reach.
+   */
+  cmdEl?.addEventListener('focus', () => {
+    caseLog?.setTyping(true);
+  });
+  cmdEl?.addEventListener('blur', () => {
+    caseLog?.setTyping(false);
+  });
 
   cmdEl?.addEventListener('keydown', (event: KeyboardEvent) => {
     // The field swallows every game key by itself — keys.ts's `isTextEntry`
@@ -9867,12 +9946,18 @@ async function boot(): Promise<void> {
       openMenu();
     },
     onUi: (command) => {
-      // ═══ EVERY UI VERB IS SWALLOWED WHILE THE CHOOSER IS UP, AND `t` IS WHY ═══
+      // ═══ EVERY UI VERB IS SWALLOWED WHILE THE CHOOSER IS UP, AND `Say` IS WHY ═══
       //
-      // The others would merely be untimely — toggling a panel behind a scrim, or
-      // a revive attempt from a body with no class. `Say` is different in kind:
-      // `openCommandLine` focuses a REAL DOM `<input>`, so an ungated `t` would
-      // move focus outside the canvas with the modal still painted over it. From
+      // It read "and `t` IS WHY". The key moved to Enter, which makes the
+      // argument STRONGER rather than stale: Enter is also how the class picker
+      // is confirmed, so an ungated press would open a chat box on the exact
+      // key the modal is asking the player to press.
+      //
+      // The other verbs would merely be untimely — toggling a panel behind a
+      // scrim, or a revive attempt from a body with no class. `Say` is different
+      // in kind: `openCommandLine` focuses a REAL DOM `<input>`, so an ungated
+      // press would move focus outside the canvas with the modal still painted
+      // over it. From
       // there keys.ts's `isTextEntry` correctly drops every subsequent keypress,
       // which means the arrows, the digits and Enter all stop reaching the picker
       // — a player looking at a screen they cannot dismiss, typing into a field
@@ -10476,7 +10561,17 @@ async function boot(): Promise<void> {
        * lane can claim the wheel, which is what the fall-through below already
        * handles; it is not a reason to skip the occlusion guards.
        */
-      const overLog = caseLog?.bodyAt(point.x, point.y) === true;
+      /**
+       * NOT OVER THE COMPOSER. The DOM `<input>` sits on the strip, so a wheel
+       * there is the browser's to handle — and `bodyAt` answers about the
+       * SCROLLABLE BAND, which now stops above the strip. Asking both keeps the
+       * two in step: were `bodyAt` ever widened back to the panel's foot, this
+       * would still refuse to scroll the transcript from a place the transcript
+       * no longer occupies.
+       */
+      const overLog =
+        caseLog?.bodyAt(point.x, point.y) === true &&
+        caseLog.composerAt(point.x, point.y) === false;
       if (!overLog) {
         /**
          * ═══════════════════════════════════════════════════════════════════
@@ -11659,6 +11754,26 @@ async function boot(): Promise<void> {
        * reverted, the button would still work rather than starting a drag that
        * moves the panel and then fires on mouseup.
        */
+      /**
+       * ═══════════════════════════════════════════════════════════════════════
+       * A PRESS ON THE COMPOSER STARTS TYPING, and it is the only pointer route.
+       * ═══════════════════════════════════════════════════════════════════════
+       *
+       * Enter is a keyboard, and a Discord Activity on a tablet has none until
+       * something focuses a field. Without this the chat box would be
+       * unreachable on touch — which is how the old row's own note describes
+       * the trap it was written for, in reverse.
+       *
+       * IT DOES NOT `preventDefault`. This handler's own note explains that
+       * `preventDefault` on mousedown suppresses the browser's focus change,
+       * and a focus change is exactly what is wanted here. In practice the
+       * press usually lands on the `<input>` itself and never reaches the
+       * canvas at all; this is the frame where the row is hidden or a pixel out.
+       */
+      if (caseLog?.composerAt(point.x, point.y) === true) {
+        openCommandLine();
+        return;
+      }
       if (caseLog?.cogAt(point.x, point.y) === true) {
         event.preventDefault();
         caseLog.toggleSettings();

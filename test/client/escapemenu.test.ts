@@ -743,7 +743,7 @@ describe('applyCapture', () => {
 
     const after = keymapOf(outcome.remap);
     expect(labelFor('say', after, 0)).toBe('Q');
-    expect(labelFor('say', after, 1)).toBe('/');
+    expect(labelFor('say', after, 1)).toBe('--');
     expect(outcome.message).toContain('Q');
   });
 
@@ -807,7 +807,7 @@ describe('applyCapture', () => {
     if (outcome.kind !== CaptureKind.Cleared) throw new Error('expected cleared');
     const after = keymapOf(outcome.remap);
     expect(labelFor('say', after, 0)).toBe('--');
-    expect(labelFor('say', after, 1)).toBe('/');
+    expect(labelFor('say', after, 1)).toBe('--');
   });
 
   it('DISARMS on Escape and binds nothing', () => {
@@ -908,7 +908,7 @@ describe('reset', () => {
     expect(labelFor('say', compileKeymap(ACTIONS, rebound), 0)).toBe('Q');
 
     const after = resetOne(rebound, 'say');
-    expect(labelFor('say', compileKeymap(ACTIONS, after), 0)).toBe('T');
+    expect(labelFor('say', compileKeymap(ACTIONS, after), 0)).toBe('Enter');
     // ...and it leaves everything else exactly where the player put it.
     expect(labelFor('move_north', compileKeymap(ACTIONS, after), 0)).toBe('W');
   });
@@ -917,7 +917,7 @@ describe('reset', () => {
     // `binds: {}` on the wire is RESET ALL and is not a missing field.
     expect(resetAll()).toEqual({});
     const km = compileKeymap(ACTIONS, resetAll());
-    expect(labelFor('say', km, 0)).toBe('T');
+    expect(labelFor('say', km, 0)).toBe('Enter');
     expect(labelFor('move_north', km, 0)).toBe('K');
   });
 });

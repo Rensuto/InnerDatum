@@ -84,17 +84,42 @@ function ruleBody(selector: string): string {
 // ---------------------------------------------------------------------------
 
 describe('#cmdrow is hidden without leaving the layout', () => {
-  it('hides with visibility, never with display', () => {
-    // ═══ THIS IS THE WHOLE REGRESSION ═══
-    // `display: none` returns ~29px to `#game`, which is a real tile row at
-    // common viewport sizes. `visibility: hidden` keeps the box, so the rect
-    // canvas.ts measures is unchanged and `resize` returns false at its early
-    // out (canvas.ts:707) — the frame the menu opens on is drawn at exactly the
-    // same scale as the frame before it.
-    const body = ruleBody('#cmdrow[hidden]');
-    expect(body).toContain('visibility: hidden');
-    expect(body).not.toContain('display: none');
-    expect(body).not.toContain('display:none');
+  it('is out of the flex column, which is what lets it hide with display', () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * THIS TEST USED TO ASSERT THE EXACT OPPOSITE, AND IT WAS RIGHT TO.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * It read "hides with visibility, never with display", because the row was
+     * ~29px of the flex COLUMN and `#game` absorbed whatever the other rows
+     * left. `display: none` handed the canvas those pixels, fired the
+     * ResizeObserver, and `resize()` rebuilt the backbuffer — a whole extra tile
+     * row at 1280x720, the map jumping under the player at the instant a modal
+     * opened and jumping back when it closed.
+     *
+     * The row moved onto the Case Log's composer strip and is `position: fixed`.
+     * It is not in the column, so `#game` cannot absorb its box and nothing it
+     * does can change the canvas's measured rect. The mechanism that forbade
+     * `display: none` is gone, and `display: none` is the stronger gate.
+     *
+     * WHAT REPLACES THE OLD ASSERTION IS ITS PREMISE. `position: fixed` is the
+     * fact the whole argument now rests on — put the row back in the column and
+     * the resize bug returns with it, silently.
+     */
+    expect(ruleBody('#cmdrow')).toContain('position: fixed');
+    expect(ruleBody('#cmdrow[hidden]')).toContain('display: none');
+  });
+
+  it('is positioned from the panel the canvas drew, not from the page', () => {
+    // The four box properties are written per frame by `placeCommandLine`. A
+    // stylesheet that pinned them would fight the placer and the row would sit
+    // wherever the CSS said while the panel moved out from under it.
+    const source = readFileSync('src/client/main.ts', 'utf8');
+    expect(source, 'nothing places the row').toContain('function placeCommandLine(');
+    expect(source, 'the placer does not go through the renderer transform').toContain(
+      'rendererForPlacement.hudRectToClient(box)',
+    );
+    expect(source, 'the paint never calls the placer').toContain('placeCommandLine(');
   });
 
   it('still HAS a [hidden] rule at all, which is the other half of the trap', () => {
