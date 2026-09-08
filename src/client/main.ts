@@ -660,6 +660,35 @@ const LOG_DEFAULT_BAND_FRACTION = 0.45;
  * panels therefore give up 78 pixels when a fight starts and take them back when
  * it ends, which is the trade that lets the card strip be as tall as it is.
  */
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE CASE LOG'S BAND, WHICH REACHES FURTHER DOWN THAN EVERY OTHER PANEL'S.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `panelBand` stops two prose lines above the hotbar, because the targeting
+ * hint and the refusal notice are full-width strips and a panel resting on them
+ * would cover a sentence the player needs at exactly the moment it appears.
+ *
+ * THE LOG IS THE ONE PANEL THAT MAY HAVE THEM, reported as *"cannot move the
+ * box lower"* — and it is the right exception rather than a special case,
+ * because of what those two strips ARE. They are transient: a hint exists only
+ * while aiming and a notice for four seconds. The log is furniture, it lives in
+ * the corner they occupy, and upstream puts its own log ten pixels above the
+ * hotkey bar with nothing reserved between (`Minimalist.lua:381`, `hup - 210`
+ * where `hup` is the bar's top).
+ *
+ * THE OVERLAP IS REAL AND IS THE TRADE. When a notice fires it is drawn AFTER
+ * the panels, so it lands on top of the log for its four seconds — which is the
+ * correct precedence: a refusal a player cannot see is the worst outcome in the
+ * exchange, and it is the reason that line exists at all.
+ */
+function logBand(height: number, hudTop: number): { top: number; bottom: number } {
+  return {
+    top: hudTop + DOCK_MARGIN,
+    bottom: height - HOTBAR_TOTAL_H - DOCK_MARGIN,
+  };
+}
+
 function panelBand(height: number, hudTop: number): { top: number; bottom: number } {
   return {
     top: hudTop + DOCK_MARGIN,
@@ -714,19 +743,34 @@ function panelBand(height: number, hudTop: number): { top: number; bottom: numbe
  * rather than only at settle time is what makes that shrink back instead of
  * hanging off the edge, and it costs one call.
  */
+/**
+ * The Case Log's UNTOUCHED height for a band: upstream's 200 as a ceiling on a
+ * proportion of it. Its own function because `unmovedPanelRect` needs it to
+ * place the top ANCHOR — a y derived from the CURRENT height moves whenever the
+ * box is resized, which is the inversion this separation fixes.
+ */
+function defaultLogH(band: { readonly top: number; readonly bottom: number }): number {
+  const tall = band.bottom - band.top;
+  return Math.max(
+    PANEL_MIN_H,
+    Math.min(LOG_DEFAULT_H, Math.round(tall * LOG_DEFAULT_BAND_FRACTION)),
+  );
+}
+
 function logRectSize(
   band: { readonly top: number; readonly bottom: number },
   width: number,
 ): { readonly w: number; readonly h: number } {
   if (logSize !== null) return sizeIntoBand(logSize, band, width);
-  const tall = band.bottom - band.top;
   return sizeIntoBand(
     {
       // `math.floor(w/2)`, verbatim — Minimalist.lua:381.
       w: Math.floor(width / 2),
-      // See the arm in `unmovedPanelRect`: upstream's 200 as a ceiling on a
-      // proportion, so a short window gets a log rather than a wall.
-      h: Math.min(LOG_DEFAULT_H, Math.round(tall * LOG_DEFAULT_BAND_FRACTION)),
+      // ONE ANSWER, SHARED WITH THE ANCHOR. `unmovedPanelRect` places the top
+      // at exactly this height above the band's floor, so a default-sized log
+      // lands in the corner; two copies of the arithmetic would drift and the
+      // box would sit slightly off its own bottom edge.
+      h: defaultLogH(band),
     },
     band,
     width,
@@ -3416,9 +3460,31 @@ function unmovedPanelRect(
      */
     case DraggablePanel.Log: {
       if (!logVisible || width < DOCK_MIN_VIEWPORT_W) return null;
-      const size = logRectSize(band, width);
+      const own = logBand(height, band.top - DOCK_MARGIN);
+      const size = logRectSize(own, width);
       if (size.h < PANEL_MIN_H) return null;
-      return { x: DOCK_MARGIN, y: band.bottom - size.h, w: size.w, h: size.h };
+      /**
+       * ═══════════════════════════════════════════════════════════════════════
+       * THE TOP IS THE ANCHOR, AND IT USED TO BE THE BOTTOM.
+       * ═══════════════════════════════════════════════════════════════════════
+       *
+       * This read `y: band.bottom - size.h`, which pinned the BOTTOM edge — so
+       * growing the box moved its top upward while the bottom, where the resize
+       * grip is, stayed exactly where it was. Dragging the grip DOWN made the
+       * box grow UP and the grip not follow the pointer at all. Reported as
+       * *"the resizing reverses up and down"*, and that is precisely what it
+       * did.
+       *
+       * `y` is a function of the BAND ALONE now — where a default-sized log's
+       * top would be — so it does not move when `h` does. The box grows down
+       * from a fixed top and the grip stays under the pointer.
+       *
+       * A DEFAULT-SIZED LOG STILL SITS IN THE CORNER, because the anchor is
+       * exactly the default height above the band's floor. That is upstream's
+       * placement (`Minimalist.lua:381`) and it is unchanged by this.
+       */
+      const y = own.bottom - defaultLogH(own);
+      return { x: DOCK_MARGIN, y, w: size.w, h: size.h };
     }
   }
 }
@@ -3432,12 +3498,38 @@ function hudLayout(width: number, height: number): HudLayout {
    * arm in `unmovedPanelRect` decides the SHAPE and the null, and this slides
    * the result by however far it has been dragged and clamps it back.
    */
-  const log = movePanel(
+  /**
+   * CLAMPED IN THE LOG'S OWN BAND, which reaches to the hotbar — see `logBand`.
+   * Passing `band` here would place the box with one band and clamp it with a
+   * shorter one, so it would spring back up the instant it was dragged to where
+   * it is allowed to sit.
+   */
+  const own = logBand(height, hudTop);
+  const placed = movePanel(
     DraggablePanel.Log,
     unmovedPanelRect(DraggablePanel.Log, width, height, band),
-    band,
+    own,
     width,
   );
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * AND THE HEIGHT STOPS AT THE FLOOR, SO THE TOP NEVER MOVES.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `moveIntoBand` clamps y into `[top, bottom - h]`, which means a box grown
+   * taller than the room beneath it gets pushed UP — the top rises while the
+   * grip sits still against the floor. That is the same inversion the anchor
+   * fix removed, arriving by a different route at the limit.
+   *
+   * Capping the height instead leaves the top exactly where the player put it
+   * and stops the bottom at the hotbar, which is a boundary they can SEE. A
+   * player who wants a taller log moves it up first and then grows it — the
+   * gesture every window manager teaches.
+   */
+  const log =
+    placed === null
+      ? null
+      : { ...placed, h: Math.max(PANEL_MIN_H, Math.min(placed.h, own.bottom - placed.y)) };
   const view = partyView();
   const pane =
     view === null || !partyVisible
@@ -10427,8 +10519,7 @@ async function boot(): Promise<void> {
    */
   function liveLogSize(): PanelSize {
     const { hudW: logicalW, hudH: logicalH } = renderer.metrics();
-    const band = panelBand(logicalH, turnHudHeight(turnView()));
-    return logRectSize(band, logicalW);
+    return logRectSize(logBand(logicalH, turnHudHeight(turnView())), logicalW);
   }
 
   function beginDrag(
@@ -10767,7 +10858,14 @@ async function boot(): Promise<void> {
     if (subject.kind === DragKind.Resize) {
       // UPSTREAM CLAMPS HERE AND ONLY HERE — `boundPlaces` is called from
       // `saveSettings`, which is the resize drag's `on_done`.
-      if (logSize !== null) logSize = sizeIntoBand(logSize, band, logicalW);
+      //
+      // THE LOG'S OWN BAND, matching where `hudLayout` places and clamps it. A
+      // settle against the shorter panel band would cap the height below what
+      // the box is allowed to occupy, so the last few pixels of every resize
+      // would snap away on release.
+      if (logSize !== null) {
+        logSize = sizeIntoBand(logSize, logBand(logicalH, turnHudHeight(turnView())), logicalW);
+      }
       savePanelLayout();
       return;
     }
@@ -10780,7 +10878,10 @@ async function boot(): Promise<void> {
     panelOffsets[subject.panel] = settleOffset(
       unmoved,
       panelOffsets[subject.panel],
-      band,
+      // THE LOG SETTLES IN ITS OWN BAND, for `hudLayout`'s reason: settling
+      // against a shorter band than the one it is drawn in would jump the box
+      // upward the moment the button came up.
+      subject.panel === DraggablePanel.Log ? logBand(logicalH, turnHudHeight(turnView())) : band,
       logicalW,
     );
     savePanelLayout();

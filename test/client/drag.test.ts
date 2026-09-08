@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -741,5 +743,98 @@ describe('sizeIntoBand', () => {
      */
     const squeezed = sizeIntoBand({ w: 300, h: 300 }, { top: 0, bottom: 10 }, 800);
     expect(squeezed.h).toBe(PANEL_MIN_H);
+  });
+});
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * A RESIZE GRIP MUST FOLLOW THE POINTER. Reported: "the resizing reverses up
+ * and down".
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * The Case Log's rect was `y: band.bottom - size.h` — the BOTTOM edge pinned,
+ * so growing the box moved its top upward while the grip, which is at the
+ * bottom, stayed exactly where it was. Dragging down made the box grow up.
+ *
+ * The rule that fixes it is one sentence: THE TOP IS A FUNCTION OF THE BAND AND
+ * THE PLAYER'S OFFSET, NEVER OF THE HEIGHT. This models that arithmetic, because
+ * `unmovedPanelRect` is a closure over module state that a test cannot reach —
+ * the same reason `hudscale.test.ts` models `viewLayout`'s callers.
+ */
+describe('a bottom-right grip grows the box downward', () => {
+  const band = { top: 3, bottom: 656 };
+  const DEFAULT_H = 200;
+
+  /** Where the log's top goes: the band alone, never the current height. */
+  const anchor = (): number => band.bottom - DEFAULT_H;
+
+  it('leaves the top alone when the height changes', () => {
+    const top = anchor();
+    for (const h of [PANEL_MIN_H, DEFAULT_H, DEFAULT_H * 2]) {
+      void h;
+      expect(anchor(), 'the anchor moved with the height').toBe(top);
+    }
+  });
+
+  it('grows downward as the pointer goes down, and shrinks as it goes up', () => {
+    const grown = nextSize({ w: 400, h: DEFAULT_H }, 0, 0, 0, 40);
+    const shrunk = nextSize({ w: 400, h: DEFAULT_H }, 0, 0, 0, -40);
+    expect(grown.h, 'dragging the grip DOWN did not make the box taller').toBe(DEFAULT_H + 40);
+    expect(shrunk.h, 'dragging the grip UP did not make the box shorter').toBe(DEFAULT_H - 40);
+  });
+
+  it('stops the bottom at the floor rather than pushing the top up', () => {
+    /**
+     * THE INVERSION'S SECOND ROUTE, and the one that survived the anchor fix.
+     * `moveIntoBand` clamps y into `[top, bottom - h]`, so a box grown taller
+     * than the room beneath it is pushed UP — the top rises while the grip sits
+     * against the floor, which reads exactly like the bug that was fixed.
+     *
+     * Capping the height is what keeps the top still. `hudLayout` does it in one
+     * line after the move; this is that line's arithmetic.
+     */
+    const top = anchor();
+    const asked = 900;
+    const capped = Math.max(PANEL_MIN_H, Math.min(asked, band.bottom - top));
+    expect(top + capped, 'the box was allowed past the floor').toBeLessThanOrEqual(band.bottom);
+    expect(capped, 'the cap collapsed the box instead of stopping it').toBeGreaterThan(PANEL_MIN_H);
+  });
+
+  it('derives the top from the BAND in main.ts, not from the height', () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * THE TESTS ABOVE MODEL THE ARITHMETIC AND CANNOT SEE THE CODE.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * `unmovedPanelRect` is a module-scope function in main.ts that reads module
+     * state, so no test can call it — and MEASURED, that matters: restoring the
+     * original `y: own.bottom - size.h` leaves every assertion above GREEN,
+     * because they assert this file's model rather than the game's line.
+     *
+     * A model that agrees with a bug is worth nothing. This reads the source,
+     * which is how main.ts is guarded everywhere else in this suite.
+     */
+    const source = readFileSync('src/client/main.ts', 'utf8');
+    expect(source, 'the log anchors its top to the band').toContain(
+      'const y = own.bottom - defaultLogH(own);',
+    );
+    // THE BUG, NAMED. `size.h` here is the bottom-anchored form that made the
+    // grip run the wrong way.
+    expect(source, 'the log is bottom-anchored again — the grip will invert').not.toContain(
+      'own.bottom - size.h',
+    );
+    // And the cap that stops the top rising at the floor.
+    expect(source).toContain('Math.min(placed.h, own.bottom - placed.y)');
+  });
+
+  it('lets a box moved UP grow taller than one left in the corner', () => {
+    /**
+     * The consequence of the cap, and the reason it is not a limitation: the
+     * room below the anchor IS the height, so moving the box up buys height.
+     * That is the gesture every window manager teaches.
+     */
+    const inCorner = band.bottom - anchor();
+    const movedUp = band.bottom - (anchor() - 120);
+    expect(movedUp, 'moving the box up bought no extra height').toBeGreaterThan(inCorner);
   });
 });
