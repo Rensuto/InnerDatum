@@ -170,6 +170,8 @@ function fixture(
      * rather than silently landing on a tile the fixture never had.
      */
     placeAt: (): boolean => false,
+    /** No drawn rooms in a bare fixture, so no tile is inside one. */
+    vaultAt: (): undefined => undefined,
     tryMove: (id, dir) => {
       const actor = actors.find((a) => a.id === id);
       if (actor === undefined) return { ok: false, reason: 'no_actor' };

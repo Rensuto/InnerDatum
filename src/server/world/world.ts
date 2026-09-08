@@ -477,6 +477,12 @@ export type World = {
    */
   /** Put a body on a named tile. False if it is solid or taken. See the impl. */
   placeAt(id: string, tile: TileXY): boolean;
+  /**
+   * Which drawn room contains this tile, or undefined. Upstream's
+   * `map.attrs(x, y, "vault_id")` — see the implementation for why footprints
+   * rather than a per-tile layer, and why it must not reach the client.
+   */
+  vaultAt(x: number, y: number): string | undefined;
   placeAtSpawn(id: string): TileXY | undefined;
   /**
    * Remove a player outright.
@@ -1056,6 +1062,33 @@ export function createWorld(
    * the doorstep somebody walked in from) has already been placed somewhere
    * legal, so a refusal costs a step of accuracy and never a stuck body.
    */
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * WHICH DRAWN ROOM THIS TILE IS INSIDE, if any — `tome/class/Actor.lua:1573`.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Upstream reads `game.level.map.attrs(x, y, "vault_id")`, a per-tile
+   * attribute stamped when the room is placed. We keep the FOOTPRINTS instead:
+   * `AuthoredMap.vaults` already records `at`, `w` and `h` AFTER the turn,
+   * precisely so a reader never re-derives a rotated rectangle. Eight rooms on a
+   * floor is a linear scan; a per-tile layer would be a second copy of the same
+   * fact, kept in step by hand.
+   *
+   * ═══ SERVER-SIDE ONLY, AND THAT IS THE POINT ═══
+   * `AuthoredMap` never crosses the wire — `RealmMsg` carries a `LevelView`.
+   * Putting the footprints on `LevelView` so a talent could reach them would
+   * hand every client the location of every reward room on the floor, which is
+   * the one thing a drawn room is for.
+   */
+  const vaultAt = (x: number, y: number): string | undefined => {
+    for (const room of authored.vaults ?? []) {
+      if (x >= room.at.x && x < room.at.x + room.w && y >= room.at.y && y < room.at.y + room.h) {
+        return room.id;
+      }
+    }
+    return undefined;
+  };
+
   const placeAt = (id: string, tile: TileXY): boolean => {
     const actor = actors.get(id);
     if (actor === undefined) return false;
@@ -1190,6 +1223,7 @@ export function createWorld(
     reclothePlayer,
     addMonster,
     placeAt,
+    vaultAt,
     placeAtSpawn,
     removePlayer: removeActor,
     removeActor,

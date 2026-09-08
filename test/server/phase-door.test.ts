@@ -35,6 +35,7 @@ import {
 import { effectsOn, setEffect, statusApplier } from '../../src/server/engine/effects.ts';
 import { talentRuntimeFor } from '../../src/server/main.ts';
 import { createWorld } from '../../src/server/world/world.ts';
+import { makeTestMap } from '../../src/shared/level.ts';
 import { teleportRandom } from '../../src/server/engine/talents.ts';
 import { phaseDoorRune } from '../../src/server/talents/phase_door_rune.ts';
 import { UNFILED } from '../../src/server/content/origins.ts';
@@ -206,5 +207,92 @@ describe('being out of phase', () => {
     const shield = effectsOn(effects, 'p1').find((eff) => eff.effectId === EffectId.DamageShield);
     expect(shield?.dur, 'a beneficial effect was cut short by the phase').toBe(10);
     expect(held, 'the phase itself expired instantly').toBeGreaterThan(0);
+  });
+});
+
+describe('the vault rule', () => {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * YOU MAY BLINK OUT OF A DRAWN ROOM. YOU MAY NOT BLINK INTO ONE.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `tome/class/Actor.lua:1571-1578`. A destination inside a room is legal only
+   * if you are already inside THAT room, so the escape still works and the
+   * exploit does not — you cannot skip the guard and land on the loot.
+   *
+   * ═══ AND THE FIRST VERSION OF THIS FUNCTION HAD NONE OF IT ═══
+   * `engine/Actor.lua:331-351` is the engine's `teleportRandom` and ToME
+   * OVERRIDES it at `tome/class/Actor.lua:1540`. CLAUDE.md's rule is that the
+   * module wins; the sight radius shipped wrong for three commits on exactly
+   * this mistake, and so did this, for one.
+   */
+  const ROOM = { id: 'vault:test_room', at: { x: 10, y: 10 }, turn: 'none', w: 4, h: 4 };
+
+  /** A world whose authored map declares one drawn room. */
+  function withRoom() {
+    const base = makeTestMap();
+    const world = createWorld('vault-blink', { ...base, vaults: [ROOM] });
+    return world;
+  }
+
+  it('knows which tiles are inside the room and which are not', () => {
+    const world = withRoom();
+    expect(world.vaultAt(10, 10)).toBe(ROOM.id);
+    expect(world.vaultAt(13, 13)).toBe(ROOM.id);
+    // The footprint is half-open: `at + w` is the first tile OUTSIDE.
+    expect(world.vaultAt(14, 13)).toBeUndefined();
+    expect(world.vaultAt(9, 10)).toBeUndefined();
+    expect(world.vaultAt(0, 0)).toBeUndefined();
+  });
+
+  it('never lands a body inside a room it was not already in', () => {
+    /**
+     * The caster stands outside and blinks a hundred times with a range wide
+     * enough to cover the whole room. Not one destination may be inside it.
+     */
+    const world = withRoom();
+    const player = world.addPlayer('p1', 'Dalt');
+    for (let i = 0; i < 100; i += 1) {
+      player.x = 8;
+      player.y = 8;
+      if (!teleportRandom(world, player, 8, world.rng)) continue;
+      expect(
+        world.vaultAt(player.x, player.y),
+        `blinked into the drawn room from outside, landing at ${String(player.x)},${String(player.y)}`,
+      ).toBeUndefined();
+    }
+  });
+
+  it('still lets a body blink OUT of the room it is standing in', () => {
+    /**
+     * THE HALF THAT MUST KEEP WORKING. A rule that sealed the room both ways
+     * would turn the reward room into the one place your escape button does
+     * nothing — which is precisely where a player needs it.
+     */
+    const world = withRoom();
+    const player = world.addPlayer('p1', 'Dalt');
+    let escaped = 0;
+    for (let i = 0; i < 100; i += 1) {
+      player.x = 11;
+      player.y = 11;
+      if (!teleportRandom(world, player, 8, world.rng)) continue;
+      if (world.vaultAt(player.x, player.y) === undefined) escaped += 1;
+    }
+    expect(escaped, 'a body inside the room could never blink out of it').toBeGreaterThan(0);
+  });
+
+  it('lets a body move WITHIN the room it is already in', () => {
+    // Upstream's own arm: `if vault and attrs(i,j,"vault_id") == vault then
+    // poss[#poss+1] = {i,j} end`. Same room is always legal.
+    const world = withRoom();
+    const player = world.addPlayer('p1', 'Dalt');
+    let inside = 0;
+    for (let i = 0; i < 200; i += 1) {
+      player.x = 11;
+      player.y = 11;
+      if (!teleportRandom(world, player, 2, world.rng)) continue;
+      if (world.vaultAt(player.x, player.y) === ROOM.id) inside += 1;
+    }
+    expect(inside, 'a short blink inside the room never stayed inside it').toBeGreaterThan(0);
   });
 });

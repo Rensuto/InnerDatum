@@ -1279,6 +1279,12 @@ export type TalentWorld = {
    * would be that bug again, at ten tiles instead of three.
    */
   placeAt(id: string, tile: TileXY): boolean;
+  /**
+   * Which drawn room contains this tile, or undefined — upstream's
+   * `map.attrs(x, y, "vault_id")` at `tome/class/Actor.lua:1573`. Read by
+   * `teleportRandom`, and by nothing else so far.
+   */
+  vaultAt(x: number, y: number): string | undefined;
 };
 
 /**
@@ -2913,6 +2919,8 @@ function recordingWorld(world: TalentWorld, into: Map<string, ActorMove>): Talen
     getActor: (id) => world.getActor(id),
     actorAt: (x, y) => world.actorAt(x, y),
     allActors: () => world.allActors(),
+    // A PURE READ, so it passes straight through. Nothing to record.
+    vaultAt: (x, y) => world.vaultAt(x, y),
     /**
      * THE SAME LEDGER AS `tryMove`, and the reason is the note on
      * `TalentWorld.placeAt`: a body a talent teleported is a body every client
@@ -3265,8 +3273,16 @@ export function stepToward(
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════
- * BLINK — `engine/Actor.lua:331-351`, `teleportRandom`, ported whole.
+ * BLINK — `tome/class/Actor.lua:1540-1604`, and the MODULE'S version is the one.
  * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * ═══ THIS SHIPPED AS THE ENGINE'S FOR ONE COMMIT ═══
+ * `engine/Actor.lua:331-351` defines `teleportRandom`, and ToME OVERRIDES it at
+ * `tome/class/Actor.lua:1540`. CLAUDE.md's rule is that when the engine and the
+ * module disagree the module wins — it is the game being ported — and the sight
+ * radius shipped wrong for three commits on exactly this mistake. The first
+ * version of this function was the engine's, which is a fair sketch of the
+ * search and is missing every rule ToME wraps around it.
  *
  *     for i = x - dist, x + dist do for j = y - dist, y + dist do
  *         if isBound(i,j) and distance(x,y,i,j) <= dist and canMove(i,j)
@@ -3295,9 +3311,27 @@ export function stepToward(
  * `rng.range(1, #poss)`. shared/rng.ts's rule is that adding or removing a draw
  * always alters a replay, so this takes exactly one and names it.
  *
- * Returns true if the body moved. `no_teleport` has no analogue here yet — no
- * tile in this game carries the attribute — so that clause is unreachable
- * rather than skipped, and becomes reachable the day one does.
+ * ═══ WHAT THE MODULE DOES THAT THIS DOES NOT, AND WHAT WOULD MAKE IT REACH ═══
+ * Named rather than dropped, because "we did not port it" and "there is nothing
+ * to port onto" are different facts and only one of them is a gap:
+ *
+ *   `cant_teleport` / `encased_in_ice` (:1542-1543) — nothing in this game
+ *     grants either attribute. Reachable the day an effect anchors somebody.
+ *   `EFF_DIMENSIONAL_ANCHOR` (:1544) — that effect is not ported.
+ *   `no_teleport_south` (:1547) — level data for one upstream zone.
+ *   the `dist == 0` free-grid search (:1553) — for PRECISE teleports, which is
+ *     `Rune: Controlled Phase Door`. Our rune passes a range of ten.
+ *   `dropNoTeleportObjects` (:1587) — no object carries `no_teleport`.
+ *   `runStop`/`restStop("teleported")` (:1594-1595) — a body cannot be
+ *     travelling while pressing its own talent, so this reaches nothing until
+ *     something ELSE teleports you. It is the first thing to add when a monster
+ *     can.
+ *   the `defense_on_teleport` trio (:1598-1599) — a SECOND path to
+ *     `OUT_OF_PHASE`, for bodies that phase on ANY teleport rather than on this
+ *     rune. No item or talent grants those attributes here; the rune applies
+ *     the effect itself, which is `inscriptions.lua:1321-1327`'s own route.
+ *
+ * Returns true if the body moved.
  */
 export function teleportRandom(
   world: TalentWorld,
@@ -3319,6 +3353,37 @@ export function teleportRandom(
       // by it, which is right — a blink that lands you where you were is a
       // spent cooldown and a lie.
       if (world.actorAt(x, y) !== undefined) continue;
+      /**
+       * ═══════════════════════════════════════════════════════════════════════
+       * YOU MAY BLINK OUT OF A DRAWN ROOM. YOU MAY NOT BLINK INTO ONE.
+       * ═══════════════════════════════════════════════════════════════════════
+       *
+       * `tome/class/Actor.lua:1571-1578`, verbatim in shape:
+       *
+       *     if game.level.map.attrs(i, j, "no_teleport") then
+       *         local vault = game.level.map.attrs(self.x, self.y, "vault_id")
+       *         if vault and game.level.map.attrs(i, j, "vault_id") == vault then
+       *             poss[#poss+1] = {i,j}
+       *         end
+       *     else poss[#poss+1] = {i,j} end
+       *
+       * A destination inside a room is legal only if you are already inside THAT
+       * room. Which means the escape still works — everything outside is an
+       * ordinary tile — and the exploit does not: you cannot skip the guard and
+       * land on the loot.
+       *
+       * ═══ EVERY ROOM, WHERE UPSTREAM FLAGS THEM ONE BY ONE ═══
+       * Upstream keys this on a `no_teleport` attribute its map files set —
+       * `setStatusAll{no_teleport=true}` in the greater vaults, the Zigur town,
+       * the Amon Sul crypt — because it has hundreds of rooms and most are
+       * ordinary. We have eight, `shared/vaults.ts` authors all of them, and
+       * every one is a guarded reward room: the exact case upstream flags. A
+       * per-vault flag here would be a field with no `false` in it.
+       *
+       * `vaultAt` is server-side by construction — see its note in world.ts.
+       */
+      const theirs = world.vaultAt(x, y);
+      if (theirs !== undefined && theirs !== world.vaultAt(actor.x, actor.y)) continue;
       options.push({ x, y });
     }
   }

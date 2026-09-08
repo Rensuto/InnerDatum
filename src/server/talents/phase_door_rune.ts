@@ -4,7 +4,8 @@
 //   t-engine4 game/modules/tome/data/talents/misc/inscriptions.lua:1313-1344 ("Rune: Phase Door" —
 //              `is_teleport = true`, `self:teleportRandom(self.x, self.y, data.range)`,
 //              then `EFF_OUT_OF_PHASE` for `data.dur`)
-//   t-engine4 game/engines/default/engine/Actor.lua:331-351 (`teleportRandom` itself)
+//   t-engine4 game/modules/tome/class/Actor.lua:1540-1604 (`teleportRandom` — the MODULE'S,
+//              which overrides `engine/Actor.lua:331` and adds the vault rule)
 //   t-engine4 game/modules/tome/data/birth/races/elf.lua:108 (the Shalore are born with one:
 //              `{cooldown=7, range=10, dur=5, power=15}`)
 // T-Engine4 (C) 2009-2018 Nicolas Casalini "DarkGod" — https://te4.org/license
