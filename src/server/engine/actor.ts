@@ -57,6 +57,7 @@
  * clock or an entropy source; damage rolls take an `Rng` from the caller.
  */
 
+import type { DamageType as DamageTypeValue } from './damage.ts';
 import type { PassiveContribution } from './equipment.ts';
 import type { BoundHooks, TurnProcs } from './hooks.ts';
 import { bound } from '../../shared/scale.ts';
@@ -440,6 +441,19 @@ type ActorCommon = {
   talentHooks?: readonly BoundHooks[];
   /** The per-turn latch those hooks read. Borrowed from the sheet, never copied. */
   turnProcs?: TurnProcs;
+  /**
+   * WHAT THIS BODY'S SHIELD WILL EAT — `DamageTarget.absorb`.
+   *
+   * A CLOSURE OVER THE EFFECT STATE, bound in the same pass as `talentHooks`
+   * and for the same reason: `applyDamage` folds what it is given and looks
+   * nothing up. The pool it spends lives on the effect instance, which is why
+   * this is a function and not a number — see `shieldAbsorber`.
+   *
+   * BOUND ONCE PER BODY AND NOT PER SHEET CHANGE, unlike the hooks beside it.
+   * It closes over the STATE rather than over a shield, so a shield applied
+   * after this was set is still found; there is nothing here to go stale.
+   */
+  absorb?: (dam: number, type: DamageTypeValue) => number;
   /**
    * ═══════════════════════════════════════════════════════════════════════════
    * THE ATTRIBUTE POINTS THIS CHARACTER HAS SPENT, AS A DELTA OVER THE CLASS.

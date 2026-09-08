@@ -320,6 +320,12 @@ export type StatusFlags = {
    */
   readonly infusionSaturation?: number;
   /**
+   * THE RUNE POOL — `EFF_RUNE_COOLDOWN` (other.lua:114-127), read separately
+   * from the infusion one at `Actor.lua:6360-6362`. See `EffectModifiers` for
+   * why the two are not one counter.
+   */
+  readonly runeSaturation?: number;
+  /**
    * Stunned. Read by NO getter in this file — it is a flat ×0.4 applied to
    * outgoing damage inside the projector (damage_types.lua:150-153).
    *

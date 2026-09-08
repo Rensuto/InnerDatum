@@ -281,6 +281,18 @@ export type EffectModifiers = {
    */
   readonly infusionSaturation?: number;
   /**
+   * THE RUNE POOL, SEPARATE FROM THE ONE ABOVE — `EFF_RUNE_COOLDOWN`
+   * (other.lua:114-127), read at `Actor.lua:6360-6362`.
+   *
+   * TWO FIELDS RATHER THAN ONE, AND THE DUPLICATION IS THE PORT. Upstream
+   * branches on the inscription's TYPE at both the set site (:5851/:5855) and
+   * the read site (:6356/:6360), so a body carrying an infusion and a rune is
+   * taxed on each independently. One shared counter would make drinking a
+   * healing infusion slow down a shielding rune, which is a mechanic ToME
+   * deliberately does not have.
+   */
+  readonly runeSaturation?: number;
+  /**
    * MONSTERS ONLY. Added to the energy GAIN multiplier — ToME's
    * `global_speed_add` (physical.lua:632, `-eff.power`). NEGATIVE slows.
    *
@@ -1846,6 +1858,7 @@ export function effectModifiers(state: EffectState, actorId: string): EffectModi
   let movementSpeedAdd = 0;
   let confusedPercent = 0;
   let infusionSaturation = 0;
+  let runeSaturation = 0;
 
   for (const [effectId, live] of table) {
     const mods = state.defs.get(effectId)?.modifiers;
@@ -1878,12 +1891,16 @@ export function effectModifiers(state: EffectState, actorId: string): EffectModi
       const own = live.params['power'];
       confusedPercent += typeof own === 'number' ? own : mods.confusedPercent;
     }
-    // THE SECOND ONE, and the same argument exactly: this effect's power GROWS
-    // on merge (other.lua:106-110), so the definition's 1 is the value it was
-    // authored with rather than the one the body is carrying.
     if (mods.infusionSaturation !== undefined) {
       const own = live.params['power'];
       infusionSaturation += typeof own === 'number' ? own : mods.infusionSaturation;
+    }
+    // THE RUNE POOL, and the same argument exactly: this effect's power GROWS
+    // on merge (other.lua:122-126), so the definition's 1 is the value it was
+    // authored with rather than the one the body is carrying.
+    if (mods.runeSaturation !== undefined) {
+      const own = live.params['power'];
+      runeSaturation += typeof own === 'number' ? own : mods.runeSaturation;
     }
   }
 
@@ -1899,6 +1916,7 @@ export function effectModifiers(state: EffectState, actorId: string): EffectModi
     movementSpeedAdd,
     confusedPercent,
     infusionSaturation,
+    runeSaturation,
   };
 }
 
@@ -2021,6 +2039,7 @@ export function recomputeAttributes(state: EffectState, actor: EffectActor): voi
     // ADDED, like `confused`: other.lua:108 is `old_eff.power + new_eff.power`,
     // so two saturating effects on one body are twice the tax and not one.
     infusionSaturation: (base?.infusionSaturation ?? 0) + (mods.infusionSaturation ?? 0),
+    runeSaturation: (base?.runeSaturation ?? 0) + (mods.runeSaturation ?? 0),
   };
   // A FRESH OBJECT, never a write into `sheet`. Stage two hands this stage a
   // FROZEN sheet (`composeSheet` freezes its output), and an in-place write onto
@@ -2478,6 +2497,60 @@ export type StatusExtend = (
   turns: number,
   max: number,
 ) => readonly string[];
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE SHIELD THAT EATS THE BLOW — Actor.lua:2304-2348.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Returns the function `DamageTarget.absorb` calls. It answers how much of a
+ * blow the body's shield claimed; whatever it does not claim lands.
+ *
+ * A FACTORY OVER THE STATE, exactly like `statusExtender` below it, and for the
+ * same reason: `applyDamage` must not learn that effects exist. It calls a
+ * function and adds up the answer.
+ *
+ * ═══ THE POOL IS `params.power`, WHICH IS THE ONE MUTABLE FIELD ═══
+ * `EffectInstance.params.power` is declared without `readonly` precisely so a
+ * magnitude can move — `INFUSION_SATURATION`'s merge already writes it. Here it
+ * is the capacity REMAINING, so upstream's `eff.power` (the original size) and
+ * `self.damage_shield_absorb` (what is left) collapse into one number. We have
+ * no Aegis and nothing else reads the original, so the second field would be a
+ * value kept only to be kept in step.
+ *
+ * ═══ A SPENT SHIELD IS RETIRED BY THE SWEEP, NOT FROM INSIDE THE BLOW ═══
+ * Upstream calls `removeEffect` on the spot (Actor.lua:2346). Ours sets the
+ * duration to zero and lets the per-turn tick take it, and the reason is a rule
+ * this codebase enforces harder than upstream does: `removeEffect` fires the
+ * definition's `deactivate` hook and therefore needs an `Rng`, and
+ * engine/damage.ts states at length that ADDING A DRAW inside `applyDamage`
+ * shifts every subsequent draw in the session — "a monster that dies changes
+ * what the next monster rolls to hit". Reaching an rng into this path to remove
+ * an effect would put a draw one careless `deactivate` away from the hottest
+ * function in the engine.
+ *
+ * NOTHING IS LOST MECHANICALLY. A pool at zero absorbs zero, so a spent shield
+ * is already inert against every blow between here and the sweep. What lingers
+ * is the badge, for at most one turn.
+ */
+export function shieldAbsorber(state: EffectState, shieldId: string): ShieldAbsorb {
+  return (actorId, dam) => {
+    if (dam <= 0) return 0;
+    const eff = state.byActor.get(actorId)?.get(shieldId);
+    if (eff === undefined) return 0;
+    const pool = eff.params.power ?? 0;
+    if (pool <= 0) return 0;
+
+    // :2317-2325 — the two arms, and they differ only in which side runs out.
+    const taken = Math.min(pool, dam);
+    eff.params.power = pool - taken;
+    if (eff.params.power <= 0) eff.dur = 0;
+    return taken;
+  };
+}
+
+/** What `shieldAbsorber` returns. Named so the actor field can be typed. */
+export type ShieldAbsorb = (actorId: string, dam: number) => number;
 
 export function statusExtender(state: EffectState): StatusExtend {
   return (target, status, turns, max) => {

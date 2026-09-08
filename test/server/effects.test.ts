@@ -1215,6 +1215,14 @@ describe('the status roster (game-design.md § 12)', () => {
       EffectId.EternalWrath,
       EffectId.FootnotedLuck,
       EffectId.InfusionSaturation,
+      // THE RUNE TWIN. A second saturation pool rather than a shared counter —
+      // upstream branches on the inscription's type at both the set site
+      // (Actor.lua:5850-5856) and the read site (:6356-6362), so drinking an
+      // infusion does not slow a rune down.
+      EffectId.RuneSaturation,
+      // THE FIRST THING THAT STANDS BETWEEN A BLOW AND A BODY, rather than
+      // making the blow smaller. See `DamageTarget.absorb`.
+      EffectId.DamageShield,
     ]);
     expect(MVP_EFFECTS.map((def) => def.icon)).toEqual([
       'icon_status_stunned',
@@ -1236,6 +1244,8 @@ describe('the status roster (game-design.md § 12)', () => {
       'icon_status_eternal_wrath',
       'icon_status_footnoted_luck',
       'icon_status_infusion_saturation',
+      'icon_status_rune_saturation',
+      'icon_status_damage_shield',
     ]);
   });
 
@@ -1353,6 +1363,12 @@ describe('the status roster (game-design.md § 12)', () => {
        * the argument HIGHBORNS_BLOOM makes for the same reason.
        */
       [EffectId.InfusionSaturation]: SaveChannel.Physical,
+      // other.lua:117 is `type = "other"` too — the rune twin of the line
+      // above, and it takes the same nearest-true label for the same reason.
+      [EffectId.RuneSaturation]: SaveChannel.Physical,
+      // magical.lua:737 — `type = "magical"`, upstream's own. Nothing rolls
+      // against it; a shield is granted, never resisted.
+      [EffectId.DamageShield]: SaveChannel.Magical,
     });
   });
 

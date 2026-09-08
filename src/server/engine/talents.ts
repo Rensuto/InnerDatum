@@ -1427,7 +1427,7 @@ export type TalentCallCtx = {
    * OPTIONAL, so every fixture that builds a runtime by hand keeps compiling
    * and simply runs without saturation -- the shape `status` already has.
    */
-  readonly inscriptionUsed?: (actor: TalentActor, kind: 'infusion') => void;
+  readonly inscriptionUsed?: (actor: TalentActor, kind: InscriptionKind) => void;
 };
 
 /**
@@ -1543,6 +1543,16 @@ export function talentRefused(reason: TalentRefusal): TalentOutcome {
  * not import the talent files, or `engine → talents → engine` is a cycle and
  * the module graph stops being one-way.
  */
+/**
+ * The inscription families this game has content for.
+ *
+ * `type = {"inscriptions/infusions", 1}` and `{"inscriptions/runes", 1}`
+ * upstream. Taints exist there too and have no content here, so they are not in
+ * the union — an unported family that compiles is a family that can be typed by
+ * accident.
+ */
+export type InscriptionKind = 'infusion' | 'rune';
+
 export type Talent = {
   readonly id: string;
   readonly name: string;
@@ -1625,12 +1635,13 @@ export type Talent = {
    * `rangeAt` states one screen up. The talent declares its own family and
    * the engine branches on the declaration.
    *
-   * ONE VALUE TODAY. Runes and taints are upstream families this game has no
-   * content for; the union is written out so the day one arrives, the two
-   * sites that read this fail to compile rather than silently taxing it as an
-   * infusion.
+   * TWO VALUES NOW, AND THE PROMISE ABOVE WAS KEPT. This read *"one value
+   * today ... the union is written out so the day one arrives, the two sites
+   * that read this fail to compile rather than silently taxing it as an
+   * infusion"*. Rune: Shielding arrived; both sites went red; both were taught
+   * the second pool. Taints remain unported.
    */
-  readonly inscriptionKind?: 'infusion';
+  readonly inscriptionKind?: InscriptionKind;
   /**
    * `manifest.icons` key.
    *
@@ -3029,10 +3040,22 @@ export function useTalent(
    * ordering — the cooldown is set from the saturation as it stands, and the
    * caller raises it afterwards.
    */
+  /**
+   * THE MATCHING POOL, AND THERE ARE TWO OF THEM — `Actor.lua:6356-6362`.
+   *
+   * Upstream reads `EFF_INFUSION_COOLDOWN` under `inscriptions/infusions` and
+   * `EFF_RUNE_COOLDOWN` under `inscriptions/runes`, in two arms of one branch.
+   * Reading a single counter here would tax a rune for the infusion you drank,
+   * which is the mechanic ToME deliberately does not have.
+   */
   const saturation =
     talent.inscriptionKind === undefined
       ? 0
-      : tomeCooldownToTurns(actor.combat?.flags?.infusionSaturation ?? 0);
+      : tomeCooldownToTurns(
+          (talent.inscriptionKind === 'rune'
+            ? actor.combat?.flags?.runeSaturation
+            : actor.combat?.flags?.infusionSaturation) ?? 0,
+        );
   // engine/actor.ts owns the store AND the once-per-game-turn decrement.
   setCooldown(actor, talent.id, talent.cooldownTurns + saturation);
   // AND THEN THE TAX GOES UP -- Actor.lua:5851-5853. Strictly after the line

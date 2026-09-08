@@ -655,6 +655,34 @@ export type DamageTarget = {
   readonly maxHp?: number;
   readonly x?: number;
   readonly y?: number;
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE BODY'S LAST CHANCE TO EAT THE BLOW — Actor.lua:2304-2348.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Returns how much of `dam` was ABSORBED. Everything it does not claim lands.
+   *
+   * ═══ THIS FILE'S SCOPE NOTE SAID SHIELDS WERE ABSENT, AND IT HAD ROTTED ═══
+   * The note above still reads "None of those talents exist here (PLAN.md caps
+   * MVP at 12), so none of their hooks do either". The talent cap was passed
+   * long ago and the first shield has arrived, so the hook does too. Only the
+   * absorb step is here; wards, parries, reflect and iceblocks remain out.
+   *
+   * ═══ A CALLBACK, NOT AN `absorb: number` FIELD, AND THE POOL IS WHY ═══
+   * A shield DEPLETES. A number on the target would be read here and written
+   * back by somebody else, which is two owners for one pool — and the owner has
+   * to be whatever holds the state, because the pool has to survive the blow and
+   * the effect has to vanish when it empties. So the target exposes a function,
+   * the effect layer owns what it closes over, and `applyDamage` still looks
+   * nothing up. `talentHooks` makes the same bargain one field above.
+   *
+   * ═══ AFTER THE REWRITE CHAIN, NEVER BEFORE ═══
+   * `fireTakeDamage` holds the percentage rewrites — "no single blow takes more
+   * than a quarter of you". A quarter of a blow the shield has already eaten is
+   * not the number that sentence promises, so the percentage runs first, on the
+   * figure it describes, and the shield eats what actually arrives.
+   */
+  readonly absorb?: (dam: number, type: DamageType) => number;
 };
 
 /**
@@ -787,6 +815,15 @@ export type DamageOutcome = {
   readonly killed: boolean;
   readonly type: DamageType;
   readonly source: string;
+  /**
+   * How much a shield ate before the rest landed. 0 when nothing did.
+   *
+   * IT IS REPORTED RATHER THAN SWALLOWED because upstream prints it —
+   * `delayedLogDamage(... "#SLATE#(%d absorbed)#LAST#")` at Actor.lua:2326. A
+   * shield that silently reduced the number would look like the attacker
+   * rolling badly, and the whole point of pressing the rune is watching it work.
+   */
+  readonly absorbed: number;
 };
 
 /**
@@ -909,6 +946,7 @@ export function applyDamage(
     killed: false,
     type,
     source: source.id,
+    absorbed: 0,
   };
 
   // A swing at a corpse still consumed its draws above — that is intentional, so
@@ -964,7 +1002,34 @@ export function applyDamage(
   // simply did not take it.
   if (after <= 0) return empty;
 
-  const dealt = Math.min(target.hp, after);
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE SHIELD, LAST — Actor.lua:2304-2348.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * See `DamageTarget.absorb` for why this is a callback and why it runs after
+   * the rewrite chain rather than before it. Everything the pool does not claim
+   * lands, and a pool that swallowed the blow whole is NOT `empty` — `absorbed`
+   * has to reach the log, or a shield doing its job is indistinguishable from an
+   * attacker missing.
+   */
+  const absorbed =
+    target.absorb === undefined ? 0 : Math.max(0, Math.min(after, target.absorb(after, type)));
+  const landing = after - absorbed;
+  /**
+   * ALL THREE RETURNS BELOW CARRY `absorbed`, AND THE COMPILER CANNOT CHECK IT.
+   *
+   * Every exit from here is `{ ...empty, ... }`, and `empty` already has
+   * `absorbed: 0` — so a return that forgets to override it type-checks
+   * perfectly and reports zero. That shipped for the length of one test run:
+   * the whole-blow case was right, the SPILL case reported `dealt: 30` beside
+   * `absorbed: 0`, and the only thing that noticed was an assertion looking at
+   * both numbers at once. A spread defeats a required field; if a fourth exit is
+   * ever added, this is the line it has to be checked against.
+   */
+  if (landing <= 0) return { ...empty, absorbed };
+
+  const dealt = Math.min(target.hp, landing);
   target.hp -= dealt;
 
   if (target.hp <= 0) {
@@ -1013,9 +1078,9 @@ export function applyDamage(
      */
     target.alive = false;
     notifySource(source, target.id ?? '', dealt, type, resolved.crit, true);
-    return { ...empty, dealt, killed: true };
+    return { ...empty, dealt, killed: true, absorbed };
   }
 
   notifySource(source, target.id ?? '', dealt, type, resolved.crit, false);
-  return { ...empty, dealt };
+  return { ...empty, dealt, absorbed };
 }

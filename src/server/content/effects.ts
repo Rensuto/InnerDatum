@@ -200,6 +200,18 @@ export const EffectId = {
    * THE OTHER HALF OF EVERY `no_energy` INFUSION -- see `INFUSION_SATURATION`.
    */
   InfusionSaturation: 'effect:infusion_saturation',
+  /**
+   * THE RUNE TWIN OF THE ONE ABOVE -- other.lua:114-127, a verbatim copy of
+   * `INFUSION_COOLDOWN` with `subtype = { rune = true }`. Upstream keeps two
+   * pools DELIBERATELY: drinking infusions must not tax your runes, or a body
+   * carrying both is taxed twice for one press.
+   */
+  RuneSaturation: 'effect:rune_saturation',
+  /**
+   * THE FIRST THING IN THIS GAME THAT STANDS BETWEEN A BLOW AND A BODY --
+   * see `DAMAGE_SHIELD` and `shieldAbsorber`.
+   */
+  DamageShield: 'effect:damage_shield',
 } as const;
 export type EffectId = (typeof EffectId)[keyof typeof EffectId];
 
@@ -1654,6 +1666,127 @@ export const INFUSION_SATURATION: EffectDef = Object.freeze({
   },
 } satisfies EffectDef);
 
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * RUNIC SATURATION — other.lua:114-127. The rune half, and a SECOND pool.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Upstream's is a verbatim copy of `INFUSION_COOLDOWN` differing only in
+ * `subtype = { rune = true }` and its icon, and `Actor.lua:5854-5856` sets it
+ * from the other arm of the same branch:
+ *
+ *     if t.type[1] == "inscriptions/runes" then
+ *         self:setEffect(self.EFF_RUNE_COOLDOWN, 10, {power=1})
+ *
+ * ═══ TWO POOLS, NOT ONE, AND THAT IS THE MECHANIC ═══
+ * Folding runes into `INFUSION_SATURATION` would be one fewer effect and one
+ * fewer flag, and it would tax a body carrying both twice for one press: drink
+ * a healing infusion and your shielding rune comes back slower, which upstream
+ * deliberately does not do. `Actor.lua:6356-6362` reads the two separately at
+ * the cooldown site for exactly this reason.
+ *
+ * Everything else — the escalating merge, the ten upstream turns, the power
+ * left unconverted so `setCooldown` converts it once — is `INFUSION_SATURATION`
+ * verbatim, and its docblock carries the arguments.
+ */
+export const RUNE_SATURATION: EffectDef = Object.freeze({
+  id: EffectId.RuneSaturation,
+  /** 'Ru'. Two letters, like every other mark in this file. */
+  badge: 'Ru',
+  displayName: 'Runic Saturation',
+  description: 'Your runes are recharging more slowly. Each one you use makes it worse.',
+  describe: (instance: EffectInstance): string => {
+    const power = instance.params.power ?? 1;
+    const turns = tomeCooldownToTurns(power);
+    return (
+      'Your runes are recharging more slowly: ' +
+      `+${String(turns)} turn${turns === 1 ? '' : 's'} on each. ` +
+      'Every one you use makes it worse.'
+    );
+  },
+  type: SaveChannel.Physical,
+  status: EffectStatus.Detrimental,
+  stackMode: StackMode.Stack,
+  subtypes: ['rune'],
+  decrease: 1,
+  icon: 'icon_status_rune_saturation',
+  parameters: { power: 1 },
+  modifiers: { runeSaturation: 1 },
+  /** other.lua:122-126 — refresh the duration, ADD the power. */
+  onMerge: ({ eff, incoming }: EffectHookArgs & { incoming: EffectInstance }): EffectInstance => {
+    eff.dur = incoming.dur;
+    eff.params.power = (eff.params.power ?? 1) + (incoming.params.power ?? 1);
+    eff.totalDur = Math.max(eff.totalDur, eff.dur);
+    return eff;
+  },
+} satisfies EffectDef);
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * DAMAGE SHIELD — magical.lua:733-745, and the absorb at Actor.lua:2304-2348.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * A pool of hit points that is spent before yours are. It is the first thing in
+ * this game that stands BETWEEN a blow and a body — every other defence makes
+ * the blow smaller, and engine/damage.ts's scope note said so:
+ *
+ *     ~90% of both is one-off talent interception: shields, wards, parries...
+ *     None of those talents exist here (PLAN.md caps MVP at 12), so none of
+ *     their hooks do either.
+ *
+ * That note had ROTTED. The talent cap was passed long ago; this is the first
+ * shield to arrive, so the hook arrives with it. Only the absorb step — wards,
+ * parries, reflect and iceblocks are still out.
+ *
+ * ═══ `params.power` IS WHAT IS LEFT, NOT WHAT IT STARTED AT ═══
+ * `shieldAbsorber` decrements it and zeroes the duration when it empties. See
+ * that function for why the retirement waits for the sweep instead of removing
+ * the effect from inside the blow.
+ *
+ * ═══ NO REFLECT, AND THAT IS A SCOPE LINE RATHER THAN AN OMISSION ═══
+ * `damage_shield_reflect` (Actor.lua:2311-2335) belongs to Rune: Reflection
+ * Shield, which is a different inscription. Absorbing and reflecting are
+ * separable upstream and they are separated here.
+ *
+ * ═══ NO `on_merge`, WHICH IS A DELIBERATE SIMPLIFICATION ═══
+ * Upstream's is thirty lines (magical.lua:745-786) arbitrating shield_factor,
+ * shield_dur, Aegis and reflection between an old shield and a new one. We have
+ * none of those attributes and one shield source, so `StackMode.Refresh` — take
+ * the newer one — is that whole function's behaviour for the inputs that can
+ * actually occur here. The rune also refuses to fire while a shield is up
+ * (`on_pre_use` at inscriptions.lua:330), so the common case never merges at all.
+ */
+export const DAMAGE_SHIELD: EffectDef = Object.freeze({
+  id: EffectId.DamageShield,
+  /** 'Sh'. */
+  badge: 'Sh',
+  displayName: 'Damage Shield',
+  description: 'A shield is absorbing damage aimed at you.',
+  /**
+   * magical.lua:735 states the REMAINING capacity, and it is the number a
+   * player is deciding on: "absorbing %d/%d damage before it crumbles". Ours
+   * carries one figure because one is all we keep — see the header.
+   */
+  describe: (instance: EffectInstance): string => {
+    const left = Math.max(0, Math.round(instance.params.power ?? 0));
+    return `A shield is absorbing damage aimed at you: ${String(left)} left before it crumbles.`;
+  },
+  // magical.lua:737 — `type = "magical"`. Nothing rolls against it; a shield is
+  // granted, never resisted, so the channel is a label. HIGHBORNS_BLOOM's note
+  // carries the argument for picking the nearest true one.
+  type: SaveChannel.Magical,
+  status: EffectStatus.Beneficial,
+  // See the header: upstream's thirty-line `on_merge` has one reachable
+  // behaviour given the attributes we have, and this is it.
+  stackMode: StackMode.Refresh,
+  // magical.lua:738 — `subtype = { arcane=true, shield=true }`.
+  subtypes: ['arcane', 'shield'],
+  decrease: 1,
+  icon: 'icon_status_damage_shield',
+  // magical.lua:739 — `parameters = { power=100 }`.
+  parameters: { power: 100 },
+} satisfies EffectDef);
+
 export const MVP_EFFECTS: readonly EffectDef[] = Object.freeze([
   STUNNED,
   BLEEDING,
@@ -1674,6 +1807,8 @@ export const MVP_EFFECTS: readonly EffectDef[] = Object.freeze([
   ETERNAL_WRATH,
   FOOTNOTED_LUCK,
   INFUSION_SATURATION,
+  RUNE_SATURATION,
+  DAMAGE_SHIELD,
 ]);
 
 /** Effect ids, for a content-completeness check and for the client's badge atlas. */

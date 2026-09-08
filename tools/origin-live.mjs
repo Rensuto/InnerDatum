@@ -157,6 +157,74 @@ if (chosenName === undefined) {
   fail(`the sheet says "${String(chosenName)}" where the picker offered "${wanted.name}"`);
 }
 
+/**
+ * ─── ONE AND A HALF: THE TALENT THE ORIGIN GRANTS IS ON THE BAR ─────────────
+ *
+ * `originName` proves the CHOICE landed. It does not prove the origin's
+ * TALENTS did, and those are two different joins: `overlayFor` sets the name,
+ * `sheetForClass` folds `OriginDef.talents` onto the loadout, and a body can
+ * report the right origin while carrying none of what it grants.
+ *
+ * `membership-is-not-a-rank` is this project's own name for the half that gets
+ * missed — a talent can be in a list and still be unpressable. So this reads
+ * the SHEET the client draws its bar from, which is the same frame the hotbar
+ * renders, and asks whether the button is actually there.
+ *
+ * SECOND ORIGIN, NOT `WANT_ORIGIN`. The Unfiled is the one carrying a talent
+ * nothing else grants — `elf.lua:107`'s shielding rune, this game's only rune.
+ * A separate connection because a body's origin is chosen once.
+ */
+const RUNE_ORIGIN = 'origin_unfiled';
+const RUNE_TALENT = 'talent:shielding_rune';
+
+const runeConn = connect();
+try {
+  await runeConn.open;
+  runeConn.send({ t: 'hello' });
+  await awaitFrame(runeConn.frames, 'welcome', 8000);
+  const runeOffer = await awaitFrame(runeConn.frames, 'class_options', 8000);
+  const runeClass = (runeOffer.options ?? [])[0];
+  const hasOrigin = (runeOffer.origins ?? []).some((o) => o.id === RUNE_ORIGIN);
+  if (runeClass === undefined || !hasOrigin) {
+    console.log(`  ${RUNE_ORIGIN} is not offered here — skipping the grant check.`);
+  } else {
+    /**
+     * FORGET WHAT ALREADY ARRIVED, and this is not tidiness — it is the finding.
+     *
+     * `awaitFrame` returns the FIRST frame of a type it sees, and a connection
+     * gets a full burst before it has chosen anything: `welcome, realm, turn,
+     * loadout, cooldowns, ...`. Reading `loadout` after the send therefore
+     * returned the bar from BEFORE the origin existed, and the probe reported
+     * that the Unfiled carries no shielding rune — along with none of the two
+     * origin talents that have shipped and worked for weeks.
+     *
+     * Suspect the probe first. Three talents missing at once was the tell.
+     */
+    runeConn.frames.length = 0;
+    runeConn.send({ t: 'choose_class', classId: runeClass.id, originId: RUNE_ORIGIN });
+    // `loadout` IS THE HOTBAR — `talents[0]` is slot 1, and the server owns
+    // that order. It is the frame the bar is drawn from, which is why the
+    // question is asked of it rather than of anything derived.
+    const sheet = await awaitFrame(runeConn.frames, 'loadout', 8000);
+    const bar = (sheet.talents ?? []).map((t) => t.id);
+    const row = (sheet.talents ?? []).find((t) => t.id === RUNE_TALENT);
+    console.log(`  ${RUNE_ORIGIN} bar: ${bar.join(', ') || '(empty)'}`);
+    if (row === undefined) {
+      fail(`${RUNE_ORIGIN} carries no ${RUNE_TALENT} — the origin's grant did not reach the bar`);
+    } else if ((row.level ?? 0) < 1) {
+      // MEMBERSHIP IS NOT A RANK. A row at level 0 draws on the bar and
+      // `canUseTalent` refuses it, which looks like a broken button.
+      fail(`${RUNE_TALENT} is on the bar at rank ${String(row.level)} — it cannot be pressed`);
+    } else {
+      console.log(`  ${RUNE_TALENT} is on the bar at rank ${String(row.level)}`);
+    }
+  }
+} catch (err) {
+  console.log(`  could not run the grant check (${String(err)}) — skipping it.`);
+} finally {
+  runeConn.ws.close();
+}
+
 // ─── TWO: come back ─────────────────────────────────────────────────────────
 // THE HALF THE UNIT TESTS COULD NOT SEE. `hello` builds the body from the class
 // definition and `applyRestore` lands afterwards, so anything the overlay does

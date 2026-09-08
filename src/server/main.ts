@@ -51,6 +51,7 @@ import {
   statusApplier,
   statusCurer,
   statusHolder,
+  shieldAbsorber,
   statusExtender,
 } from './engine/effects.ts';
 import type { StatusApply, StatusCure, StatusExtend, StatusHas } from './engine/effects.ts';
@@ -85,7 +86,13 @@ import { isPlayer } from './engine/actor.ts';
 import type { EngineActor } from './engine/actor.ts';
 import { breakDamageSensitive } from './engine/effects.ts';
 import type { TalentResolutionResult } from './engine/scheduler.ts';
-import type { GuardCounter, TalentActor, TalentEngine, TalentSheet } from './engine/talents.ts';
+import type {
+  GuardCounter,
+  InscriptionKind,
+  TalentActor,
+  TalentEngine,
+  TalentSheet,
+} from './engine/talents.ts';
 import type { MonsterCast } from './ai/npc.ts';
 import type { ReapingTurnEngine, TalentRuntime } from './turn-engine.ts';
 import type { World } from './world/world.ts';
@@ -414,13 +421,27 @@ export function talentRuntimeFor(
           ...(status === undefined
             ? {}
             : {
-                inscriptionUsed: (user: TalentActor, kind: 'infusion'): void => {
-                  if (kind !== 'infusion') return;
+                /**
+                 * TWO ARMS OF ONE BRANCH — `Actor.lua:5850-5856`:
+                 *
+                 *     if t.type[1] == "inscriptions/infusions" then
+                 *         self:setEffect(self.EFF_INFUSION_COOLDOWN, 10, {power=1})
+                 *     elseif t.type[1] == "inscriptions/runes" then
+                 *         self:setEffect(self.EFF_RUNE_COOLDOWN, 10, {power=1})
+                 *
+                 * The kind picks the pool and nothing else differs — same ten
+                 * upstream turns, same power of one. `setCooldown` reads the
+                 * matching one back.
+                 */
+                inscriptionUsed: (user: TalentActor, kind: InscriptionKind): void => {
                   // other.lua:105 — `parameters = { power = 1 }`, and 10 upstream
                   // turns is `TOME_ACTIONS_PER_TURN` of ours.
-                  status(user, EffectId.InfusionSaturation, SATURATION_TURNS, {
-                    power: SATURATION_POWER,
-                  });
+                  status(
+                    user,
+                    kind === 'rune' ? EffectId.RuneSaturation : EffectId.InfusionSaturation,
+                    SATURATION_TURNS,
+                    { power: SATURATION_POWER },
+                  );
                 },
               }),
         },
@@ -970,6 +991,24 @@ export function buildServer() {
    * landed — so there is no draw to keep deterministic and no realm to key on.
    */
   const extendFor = (): StatusExtend => statusExtender(effects);
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE ONE ABSORBER, SHARED BY EVERY BODY IN THE GAME.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * NO WORLD AND NO RNG, for `hasStatusFor`'s reason and one stronger: spending
+   * a shield reads and writes the effect table and draws NOTHING, deliberately.
+   * engine/damage.ts states at length that adding a draw inside `applyDamage`
+   * shifts every subsequent draw for the rest of the session, so the absorber is
+   * built without a stream it could accidentally reach for.
+   *
+   * ONE CLOSURE FOR ALL OF THEM, keyed on the actor id at CALL time rather than
+   * one bound per body. `effects` is a single table for the whole process, so a
+   * per-actor closure would be N copies of one function differing in a string —
+   * and every one of them would have to be rebound the day the state was
+   * replaced. This cannot go stale.
+   */
+  const absorbShield = shieldAbsorber(effects, EffectId.DamageShield);
 
   const engineFor = (forWorld: World): ReapingTurnEngine =>
     createTurnEngine({
@@ -1329,6 +1368,22 @@ export function buildServer() {
      * hooks existed, and `applyDamage` short-circuits on an absent array.
      */
     actor.talentHooks = bound.length > 0 ? bound : undefined;
+    /**
+     * AND THE SHIELD, WHICH IS NOT A HOOK AND SITS HERE ANYWAY.
+     *
+     * `applyDamage` reads `target.absorb` off the body, so something has to put
+     * it there, and this is the pass that runs whenever a body is composed. It
+     * is the SAME closure for everyone (see `absorbShield`) and it keys on the
+     * id at call time, so unlike the hooks above it never needs rebinding — a
+     * shield applied a minute from now is found by the function set here.
+     *
+     * ALWAYS SET, NEVER CONDITIONAL. The hooks beside it are left `undefined`
+     * when empty so a body without passives composes byte-identically to how it
+     * did before passives existed; there is no such history here, and a body
+     * that had the field only while a shield was up would be a second place
+     * that knows whether a shield is up.
+     */
+    actor.absorb = (dam: number): number => absorbShield(actor.id, dam);
     /**
      * AND THE LATCH THE HOOKS READ, which lives on the SHEET and is borrowed
      * here rather than copied. Two latches — one on the body, one on the sheet

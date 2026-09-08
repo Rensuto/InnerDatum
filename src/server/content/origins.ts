@@ -70,6 +70,7 @@ import { highbornsBloom } from '../talents/highborns_bloom.ts';
 import { resilienceOfTheArchived } from '../talents/resilience_of_the_archived.ts';
 import { unshackled } from '../talents/unshackled.ts';
 import { wrathOfTheWoods } from '../talents/wrath_of_the_woods.ts';
+import { shieldingRune } from '../talents/shielding_rune.ts';
 import { luckOfTheFootnoted } from '../talents/luck_of_the_footnoted.ts';
 import { overseerOfNations } from '../talents/overseer_of_nations.ts';
 import type { Talent } from '../engine/talents.ts';
@@ -286,9 +287,41 @@ export const UNFILED: OriginDef = Object.freeze({
   // No `copy_add`, no `extra_*_every` — see the note on the Indexed.
   // `talents = { [T_THALOREN_WRATH] = 1 }` (elf.lua).
   //
-  // TWO TALENTS, the most of any origin but the Indexed, and the tree entry
-  // names the two that are missing with the system each would need.
-  talents: [wrathOfTheWoods, unshackled],
+  // THREE TALENTS, the most of any origin but the Indexed, and the tree entry
+  // names the ones that are missing with the system each would need.
+  //
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * AND THE SHIELDING RUNE — `elf.lua:107`, which upstream gives to a subrace
+   * this game does not have.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   *     resolvers.inscription("RUNE:_SHIELDING", {cooldown=14, dur=5, power=100})
+   *
+   * ═══ WE HAVE ONE ELF WHERE UPSTREAM HAS TWO, AND THAT IS THE DIVERGENCE ═══
+   * `elf.lua` describes the Shalore (:81-113) and the Thalore (:118-150), and
+   * they are born with opposite kits: the Shalore get two RUNES and no
+   * infusion, the Thalore get the ordinary two infusions. Every other line of
+   * this origin is Thalore — the stat spread, the life rating, the 1.35
+   * experience penalty, `T_THALOREN_WRATH`.
+   *
+   * ONE ORIGIN CANNOT BE BOTH SUBRACES, so it is the one elf this game has, and
+   * the rune comes with it. The alternative was a sixth origin — a full port of
+   * `elf.lua:81-113`, its own Birther row and its own place in the class matrix
+   * — which is a feature rather than a line, and is the honest way to do this if
+   * the split ever matters.
+   *
+   * ═══ AS A TALENT AND NOT AS AN INSCRIPTION, DELIBERATELY ═══
+   * `content/inscriptions.ts` grants three at birth to everybody, matching
+   * `max_inscriptions = 3` (ActorInscriptions.lua:29) exactly — upstream's
+   * Shalore also carry three, they are simply DIFFERENT three. A fourth
+   * inscription for one origin would break that ceiling; an origin talent is
+   * the grant route this codebase already has for "some bodies, not all", and
+   * `higher_heal` is the precedent. What `inscriptionKind: 'rune'` still buys
+   * is the thing that matters mechanically: the cooldown tax lands in the rune
+   * pool rather than the infusion one.
+   */
+  talents: [wrathOfTheWoods, unshackled, shieldingRune],
 });
 
 /**
