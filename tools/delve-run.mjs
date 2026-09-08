@@ -35,7 +35,7 @@ import { SITES, RealmKind, createRealms } from '../src/server/world/realms.ts';
 import { createTurnEngine } from '../src/server/turn-engine.ts';
 import { createDownedState, isDowned } from '../src/server/engine/downed.ts';
 import { createMvpEffectState } from '../src/server/content/effects.ts';
-import { recomposeCombat } from '../src/server/engine/effects.ts';
+import { effectsOn, recomposeCombat } from '../src/server/engine/effects.ts';
 import { resolveItem } from '../src/server/content/resolve.ts';
 import {
   CLASSES,
@@ -428,6 +428,58 @@ function run(site, size, seed) {
       }
       tally.moved += 1;
       const moved = realm.engine.submitMove(b.id, dir);
+      /**
+       * ═══════════════════════════════════════════════════════════════════════
+       * `DELVE_DIAG=stuck` — WHY A BODY IS NOT MOVING, in one line per sample.
+       * ═══════════════════════════════════════════════════════════════════════
+       *
+       * The `2` trace above shows a leader FROZEN at one tile for 600 turns at
+       * full health. That is the symptom; this is the question. Every field here
+       * exists because it eliminated a hypothesis:
+       *
+       *   `energy`   — 1000 means the body never SPENT a turn. A refused player
+       *                intent is refunded and re-prompted (scheduler.ts:2090),
+       *                so a driver re-issuing one direction spins at full energy.
+       *   `party`    — 1 rules out allies blocking the corridor, which is the
+       *                cause the driver's own notes were written for.
+       *   `effects`  — a permanent stun would look exactly like this. It is not.
+       *   `target`   — the tile the order actually names, its terrain and its
+       *                occupant. `walk true occupant none` is the finding: the
+       *                order is legal and it does not happen.
+       *
+       * WHAT IT LEAVES: a solo body, no effects, full energy, ordering a move
+       * onto an adjacent empty walkable tile, `submitMove` returning ok and
+       * `pump` returning an event — and the body does not move, for 750 turns.
+       * The remaining suspect is the BARRIER holding the intent rather than
+       * `resolveIntent` refusing it: the Move arm reads clean, and a monster on
+       * the same floor is frozen too.
+       */
+      if (process.env.DELVE_DIAG === 'stuck' && turns % 150 === 0 && b.id === bodies[0].body.id) {
+        const DELTA = {
+          n: [0, -1],
+          ne: [1, -1],
+          e: [1, 0],
+          se: [1, 1],
+          s: [0, 1],
+          sw: [-1, 1],
+          w: [-1, 0],
+          nw: [-1, -1],
+        };
+        const [dx, dy] = DELTA[dir] ?? [0, 0];
+        const tx = b.x + dx;
+        const ty = b.y + dy;
+        const who = realm.world.actorAt(tx, ty);
+        console.log(
+          `  [stuck t${String(turns)}] ${b.id} at ${String(b.x)},${String(b.y)} -> ${String(dir)} ${String(tx)},${String(ty)}` +
+            ` | walk ${String(canWalk(realm.world.level, tx, ty))} occupant ${who === undefined ? 'none' : String(who.id)}` +
+            ` | party ${String(bodies.length)} energy ${String(b.energy)}` +
+            ` | effects ${
+              effectsOn(effects, b.id)
+                .map((e) => `${e.effectId}:${String(e.dur)}`)
+                .join(',') || 'none'
+            }`,
+        );
+      }
       if (process.env.DELVE_DIAG === '1' && moved?.ok === false && turns > 20 && turns < 24) {
         console.log(
           `  [diag] ${b.id} move ${dir} refused at gap ${String(near.d)}: ${JSON.stringify(moved)}`,
@@ -457,6 +509,11 @@ function run(site, size, seed) {
      * so it is read here rather than inferred from the wreckage.
      */
     const pumped = realm.engine.pump();
+    if (process.env.DELVE_DIAG === 'stuck' && turns % 300 === 0 && turns > 0) {
+      console.log(
+        `  [pump t${String(turns)}] returned ${pumped === undefined ? 'undefined' : pumped === null ? 'null' : `{events ${String(pumped.playerEvents?.length ?? 0)} sweep ${String(pumped.sweep?.length ?? 0)}}`}`,
+      );
+    }
     for (const ev of [...(pumped?.playerEvents ?? []), ...(pumped?.sweep ?? [])]) {
       if (ev.k === 'erased' && ev.reason === ErasedReason.Wipe) wipes += 1;
     }
@@ -473,6 +530,38 @@ function run(site, size, seed) {
         .filter((a) => a.kind === ActorKind.Monster && a.alive)
         .map((f) => ({ f, d: Math.max(Math.abs(f.x - me.x), Math.abs(f.y - me.y)) }))
         .sort((x, y) => x.d - y.d)[0];
+      /**
+       * ═══════════════════════════════════════════════════════════════════════
+       * WHY IT CANNOT MOVE — the eight tiles around it, terrain and bodies.
+       * ═══════════════════════════════════════════════════════════════════════
+       *
+       * The trace above shows a leader FROZEN at one tile for 600 turns at full
+       * health, ordering a move every turn and never arriving, with the nearest
+       * foe equally frozen. `moved 900 held 0` says the driver kept trying. That
+       * is not a slow grind and it is not a kiter — it is a body that cannot
+       * take a step, and the only thing that tells you which is to look at what
+       * is around it.
+       */
+      const ring = [];
+      for (const [dx, dy] of [
+        [0, -1],
+        [1, -1],
+        [1, 0],
+        [1, 1],
+        [0, 1],
+        [-1, 1],
+        [-1, 0],
+        [-1, -1],
+      ]) {
+        const nx = me.x + dx;
+        const ny = me.y + dy;
+        const walk = canWalk(realm.world.level, nx, ny);
+        const who = realm.world.actorAt(nx, ny);
+        ring.push(
+          !walk ? '#' : who !== undefined ? (who.kind === ActorKind.Monster ? 'M' : 'P') : '.',
+        );
+      }
+      console.log(`  [t${String(turns)}] ring N,NE,E,SE,S,SW,W,NW = ${ring.join('')}`);
       console.log(
         `  [t${String(turns)}] leader ${String(Math.round(me.hp))}/${String(me.maxHp)} at ${String(me.x)},${String(me.y)}` +
           (nearest === undefined
