@@ -100,17 +100,11 @@ body {
  * does collapse the double spaces in the `  ·  ` separator to single ones —
  * cosmetic, and the same trade `#margin` already makes.
  */
-#log {
-  flex: 0 0 auto;
-  height: calc(1.5rem + 11px);
-  padding: 5px 10px;
-  border-top: 1px solid #36303e; /* SLATE */
-  background: #312938; /* PANEL */
-  color: #ede6c2; /* PARCHMENT */
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
+/*
+ * The same: `#log`'s visual rule went with the row. `.st-world` / `.st-session`
+ * below stay — `setStatusParts` still builds those spans, because the DOM order
+ * IS the announced sentence order, and they cost nothing while clipped.
+ */
 
 /*
  * THE COMMAND LINE (M4).
@@ -219,18 +213,11 @@ body {
  * something" cue for a player whose eyes are on the far side of the map, which
  * is the same reason the canvas lane exists.
  */
-#margin {
-  flex: 0 0 auto;
-  min-height: 1.5rem;
-  padding: 3px 10px;
-  border-top: 1px solid #36303e; /* SLATE */
-  background: #0a0813; /* INK */
-  color: #a670e0; /* VIOLET_HI */
-  font-style: italic;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
+/*
+ * ITS VISUAL RULE IS GONE, NOT COMMENTED OUT. See the clipped-rows block at the
+ * foot of this file: the row is off the screen, so a colour, an italic and an
+ * ellipsis on it were properties nothing could ever apply.
+ */
 
 /*
  * ═══════════════════════════════════════════════════════════════════════════
@@ -250,11 +237,6 @@ body {
  * changes no geometry — under pressure the WORLD group is what survives, which
  * is the right half to keep.
  */
-#log {
-  display: flex;
-  align-items: baseline;
-  gap: 0;
-}
 
 .st-world {
   overflow: hidden;
@@ -268,4 +250,68 @@ body {
   color: #8b849a; /* GREY_HI — present, never first */
   white-space: nowrap;
   flex: 0 0 auto;
+}
+
+/*
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE TWO TEXT ROWS ARE OFF THE SCREEN AND STILL IN THE ACCESSIBILITY TREE.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Asked for as *"the line at the bottom of the screen for it needs to be
+ * removed"* (the violet Margin row) and *"the entire line of text at the bottom
+ * can be removed because similar info is at the top ... either way, the bottom
+ * bar of info needs to be removed"* (the status row).
+ *
+ * ═══ HIDDEN, NOT DELETED, AND THE DIFFERENCE IS THE WHOLE POINT ═══
+ * `#margin` is `role="log" aria-live="polite"` and `#log` is `role="status"
+ * aria-live="polite"`. They are the only things in this application that SPEAK:
+ * the game is one <canvas>, and a canvas announces nothing at all. Deleting the
+ * elements — or hiding them with `display: none` or `visibility: hidden`, which
+ * this file already records as taking an element "out of the sequential focus
+ * order and out of the accessibility tree" — would silently convert the only
+ * spoken route to what another player SAID into silence.
+ *
+ * So they are clipped instead: rendered, announced, and one pixel of nothing in
+ * the corner. The screen loses two rows; a screen reader loses nothing.
+ *
+ * ═══ `position: absolute` IS LOAD-BEARING, NOT TIDINESS ═══
+ * It takes both rows OUT OF THE FLEX COLUMN, which is what gives their height
+ * back to `#game`. Clipping them in place would leave two empty boxes still
+ * costing the canvas ~50 logical pixels — most of a tile row at the reference
+ * window.
+ *
+ * AND IT FIXES A SHIPPED BUG ON THE WAY. `#margin`'s `min-height: 1.5rem` is a
+ * FLOOR, so the row was 18px empty and 25px once a line landed in it — the
+ * canvas lost seven pixels of height the first time anybody spoke, which fires
+ * the ResizeObserver and rebuilds the backbuffer mid-session. Out of flow it
+ * cannot do that at any content length.
+ *
+ * ═══ WHAT IS ON SCREEN INSTEAD ═══
+ * Both lanes are already drawn by the Case Log (ui/caselog.ts), which is where
+ * the RECORD and MARGIN tabs live. The Case Log can be toggled off with `m`,
+ * and a player who does that is choosing to hide the transcript — the same
+ * choice as closing any other panel.
+ */
+#margin {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  border: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+#log {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  border: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
 }

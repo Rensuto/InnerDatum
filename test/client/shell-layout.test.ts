@@ -123,36 +123,81 @@ describe('#cmdrow is hidden without leaving the layout', () => {
 // 2. THE STATUS LINE MUST NOT GROW
 // ---------------------------------------------------------------------------
 
-describe('#log is exactly one line tall whatever it is asked to say', () => {
-  it('fixes its height instead of declaring a floor', () => {
-    const body = ruleBody('#log');
-    // `min-height` is a FLOOR: the box grows past it the moment the content
-    // wraps, which is the whole bug. `height` under `box-sizing: border-box` is
-    // the box, full stop.
-    expect(body).toMatch(/(^|[\s;])height:/);
-    expect(body).not.toContain('min-height');
-    expect(body).not.toContain('max-height');
+describe('the two text rows are off the screen and still announced', () => {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THIS BLOCK USED TO GUARD A ROW THAT NO LONGER EXISTS ON SCREEN.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * It read "#log is exactly one line tall whatever it is asked to say", and
+   * every assertion in it was about a VISIBLE box that must not grow: a fixed
+   * `height` rather than a `min-height` floor, `nowrap`, `overflow: hidden`,
+   * `text-overflow: ellipsis`. All of that was right while the row was drawn.
+   *
+   * Both rows are clipped out of the flex column now, so none of those
+   * properties can apply to anything. Keeping the assertions would be pinning
+   * declarations that cannot run — which is how a guard starts passing for a
+   * reason nobody intended. What replaces them is the property that actually
+   * matters and is easy to destroy by accident: the elements are still THERE,
+   * and still in the accessibility tree.
+   */
+  it('takes both rows out of the flex column, or the canvas keeps paying for them', () => {
+    for (const row of ['#margin', '#log']) {
+      const body = ruleBody(row);
+      // `position: absolute` is what returns the height to `#game`. Clipping them
+      // in place would leave two empty boxes still costing the canvas most of a
+      // tile row at the reference window.
+      expect(body, `${row} is still in the flex column`).toContain('position: absolute');
+      expect(body, `${row} is not clipped`).toContain('clip-path: inset(50%)');
+    }
   });
 
-  it('clips rather than wraps, the same way #margin already does', () => {
-    const body = ruleBody('#log');
-    // Three declarations working together and none of them is optional:
-    // `nowrap` stops the second line existing, `overflow: hidden` stops it
-    // escaping the fixed box, `text-overflow: ellipsis` tells the player the
-    // sentence continues. `pre-wrap` is the value that had the bug.
-    expect(body).toContain('white-space: nowrap');
-    expect(body).not.toContain('pre-wrap');
-    expect(body).toContain('overflow: hidden');
-    expect(body).toContain('text-overflow: ellipsis');
+  it('never hides them with display:none or visibility:hidden', () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * THE ONE MISTAKE THAT WOULD BE SILENT.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * Both are the tidier-looking way to hide a row and both REMOVE THE ELEMENT
+     * FROM THE ACCESSIBILITY TREE — this file's own `#cmdrow` block says so of
+     * `visibility: hidden` in as many words. `#margin` is `role="log"` and
+     * `#log` is `role="status"`, both `aria-live="polite"`, and the game is one
+     * canvas that announces nothing. They are the only things here that SPEAK,
+     * so hiding them that way converts what another player said into silence,
+     * with nothing on screen to show for it either way.
+     */
+    for (const row of ['#margin', '#log']) {
+      const body = ruleBody(row);
+      expect(body, `${row}: display:none leaves the accessibility tree`).not.toContain(
+        'display: none',
+      );
+      expect(body, `${row}: visibility:hidden leaves the accessibility tree`).not.toContain(
+        'visibility',
+      );
+    }
   });
 
-  it('is the same treatment #margin gets, so the two rows cannot drift', () => {
-    // If somebody ever decides a wrapping status line is worth the resize, they
-    // have to argue with the Margin lane too — which has shipped nowrap +
-    // ellipsis since M4 without anybody minding.
-    const margin = ruleBody('#margin');
-    expect(margin).toContain('white-space: nowrap');
-    expect(margin).toContain('text-overflow: ellipsis');
+  it('leaves both elements in index.html — hidden is not deleted', () => {
+    // The CSS above is worth nothing if the markup goes. A future tidy-up that
+    // removes an element "nothing displays" takes the announcement with it.
+    const html = readFileSync('index.html', 'utf8');
+    expect(html).toContain('id="margin"');
+    expect(html).toContain('id="log"');
+    expect(html, 'the Margin lane stopped being a live region').toContain(
+      'role="log" aria-live="polite"',
+    );
+    expect(html, 'the status line stopped being a live region').toContain(
+      'role="status" aria-live="polite"',
+    );
+  });
+
+  it('has no leftover rule that pretends either row is still drawn', () => {
+    // Two statements about one element is how a file becomes archaeology: the
+    // guards above would read the dead rule and pass while the live one did
+    // something else entirely. That is exactly what happened on the first pass
+    // at this change.
+    expect(CSS.indexOf('min-height: 1.5rem'), 'the Margin row kept its floor').toBe(-1);
+    expect(CSS.indexOf('height: calc(1.5rem + 11px)'), 'the status row kept its height').toBe(-1);
   });
 });
 
