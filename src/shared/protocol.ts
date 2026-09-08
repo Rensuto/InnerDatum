@@ -1440,6 +1440,29 @@ export type LogLine = {
    * "Dalt: " must not be able to forge another player's attribution.
    */
   speaker?: string;
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * WHICH ELEMENT THIS LINE IS ABOUT, so the client can colour the word.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Upstream gives every damage type a `text_color` on its own definition
+   * (`damage_types.lua` — `#LIGHT_RED#` for fire, `#ROYAL_BLUE#` for lightning,
+   * and so on) and writes its combat log in it. The prose half of that was
+   * already here: the server interpolates the element's name into the sentence.
+   * This is the half that lets the client paint it.
+   *
+   * ABSENT MEANS SAY NOTHING, never "physical". It is the same contract
+   * `DamageEvent.type` states a thousand lines down, and for the same reason: a
+   * heal rides the damage frame and has no element, a Margin line is somebody
+   * talking, and defaulting either to a colour would tint a line about nothing.
+   * The client falls back to its ordinary ink.
+   *
+   * PRESENTATION ONLY. Nothing may branch on this — the rules already happened,
+   * and the number in `text` is what they produced. It exists so a player can
+   * tell at a glance which of six things just hit them, which is the question a
+   * log full of identical cream sentences cannot answer.
+   */
+  damage?: DamageType;
 };
 
 /**

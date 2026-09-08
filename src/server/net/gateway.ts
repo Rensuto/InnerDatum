@@ -155,6 +155,7 @@ import { STANDING_LEVEL, specForActorId } from '../content/townsfolk.ts';
 import { healActor } from '../engine/talents.ts';
 import type { TalentEffect } from '../engine/talents.ts';
 import type { ClientUse, TopicId } from '../../shared/protocol.ts';
+import type { DamageType } from '../../shared/damagetype.ts';
 import { buyPrice, sellPrice, stockLevelFor } from '../content/shops.ts';
 import { addSoldItem, catchUpShop, takeFromShelf } from '../world/shopstate.ts';
 import { resolveItem } from '../content/resolve.ts';
@@ -10678,7 +10679,18 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    * saying it twice is how a two-line log starts reading like a receipt. A
    * bleed tick has no line above it at all, and read as damage from nobody.
    */
-  const recordFor = (event: TurnEvent, headlined: boolean): { text: string; depth: number }[] => {
+  /**
+   * ═══ `damage` IS OPTIONAL AND IS THE FIRST NON-PROSE FIELD THIS RETURNS ═══
+   * Widening this type is HALF the change and the half that does nothing on its
+   * own: `broadcastRecord`'s emit loop builds the `LogLine` field by field, so a
+   * field added here and not copied there is silently dropped at the hop. This
+   * codebase has been bitten by exactly that twice — `Blow` losing `type` and
+   * `hitToWire` losing `crit`, both recorded at protocol.ts:4104-4110.
+   */
+  const recordFor = (
+    event: TurnEvent,
+    headlined: boolean,
+  ): { text: string; depth: number; damage?: DamageType }[] => {
     switch (event.k) {
       case 'move': {
         /**
@@ -10818,6 +10830,11 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
               ` damage${from}${event.crit === true ? ' (critical)' : ''}. ` +
               `${nameOf(event.id)} ${Math.max(0, Math.ceil(event.hp))}/${event.maxHp}.`,
             depth: 1,
+            // THE ELEMENT, FOR THE COLOUR ONLY — see `LogLine.damage`. Spread
+            // rather than assigned so an absent type stays ABSENT: the heal that
+            // returns earlier from this same arm has no element, and `?? 'physical'`
+            // here would paint every heal as a physical blow.
+            ...(event.type === undefined ? {} : { damage: event.type }),
           },
         ];
       }
@@ -11070,6 +11087,10 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
           gameTurn,
           text: line.text,
           depth: line.depth,
+          // THE HOP `recordFor`'s OWN NOTE WARNS ABOUT. This literal is built
+          // field by field, so anything it does not name is dropped between the
+          // sentence and the wire, with nothing to say it happened.
+          ...(line.damage === undefined ? {} : { damage: line.damage }),
         });
       }
     };

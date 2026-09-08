@@ -62,7 +62,7 @@
  */
 
 import { LogLane } from '../../shared/protocol.ts';
-import { PALETTE } from '../render/canvas.ts';
+import { DAMAGE_INK, PALETTE } from '../render/canvas.ts';
 import {
   HEADER_H,
   drawHeader,
@@ -616,6 +616,28 @@ export function createCaseLog(options: CaseLogOptions): CaseLog {
        * it was drawn in before and what `turnRule` measured itself against.
        */
       const rowMargin = row.line !== null && row.line.lane === LogLane.Margin;
+      /**
+       * ═══════════════════════════════════════════════════════════════════════
+       * THE ELEMENT TINTS THE LINE — `LogLine.damage`, and `DAMAGE_INK` for the
+       * colour upstream gives it.
+       * ═══════════════════════════════════════════════════════════════════════
+       *
+       * ABSENT MEANS THE ORDINARY INK, never a default element: a heal rides the
+       * same frame with no type at all, and every Record line that is not a blow
+       * has none either. Tinting those would say six things happened when one
+       * did.
+       *
+       * THE MARGIN OUTRANKS IT AND CANNOT LOSE. A conversational line is violet
+       * because of WHO said it, which is a fact about the lane rather than about
+       * the rules; the wire cannot put a `damage` on one today, and if it ever
+       * could, a person's words must not be repainted by an element.
+       */
+      const element = row.line?.damage;
+      const ink = rowMargin
+        ? PALETTE.VIOLET_HI
+        : element === undefined
+          ? PALETTE.PARCHMENT
+          : DAMAGE_INK[element];
       if (row.lead && speaker !== undefined) {
         const prefix = `${speaker}:`;
         ctx.font = FONT_SPEAKER;
@@ -623,7 +645,7 @@ export function createCaseLog(options: CaseLogOptions): CaseLog {
         ctx.fillStyle = PALETTE.GOLD;
         ctx.fillText(prefix, x, y);
         ctx.font = rowMargin ? FONT_MARGIN : FONT_RECORD;
-        ctx.fillStyle = rowMargin ? PALETTE.VIOLET_HI : PALETTE.PARCHMENT;
+        ctx.fillStyle = ink;
         // `row.text` starts with the prefix by construction — `wrapText` broke
         // `"Sam: hello"` on spaces — so the remainder is what follows it. The
         // guard covers a nickname long enough to be chopped mid-word.
@@ -633,7 +655,7 @@ export function createCaseLog(options: CaseLogOptions): CaseLog {
       }
 
       ctx.font = rowMargin ? FONT_MARGIN : FONT_RECORD;
-      ctx.fillStyle = rowMargin ? PALETTE.VIOLET_HI : PALETTE.PARCHMENT;
+      ctx.fillStyle = ink;
       ctx.fillText(row.text, x, y);
     }
 

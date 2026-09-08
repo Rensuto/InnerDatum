@@ -6,9 +6,13 @@
 // tab row) and game/engines/default/engine/LogDisplay.lua (the stream).
 // T-Engine4 (C) 2009-2018 Nicolas Casalini "DarkGod" -- https://te4.org/license
 
+import { readFileSync } from 'node:fs';
+
 import { describe, expect, it } from 'vitest';
 
 import { LogTab, createCaseLog } from '../../src/client/ui/caselog.ts';
+import { DAMAGE_INK, PALETTE } from '../../src/client/render/canvas.ts';
+import { DAMAGE_TYPES, DamageType } from '../../src/shared/damagetype.ts';
 import { LogLane } from '../../src/shared/protocol.ts';
 import type { LogLine } from '../../src/shared/protocol.ts';
 
@@ -152,5 +156,77 @@ describe('the tabs', () => {
     const { it } = log();
     expect(it.tabAt(10, 10)).toBeNull();
     expect(it.bodyAt(10, 10)).toBe(false);
+  });
+});
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE ELEMENT COLOURS THE LINE — and the field crosses two hops to get here.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `LogLine.damage` is composed in the gateway's `recordFor`, returned through a
+ * type that has to name it, and copied into the wire object by an emit loop
+ * that builds the line FIELD BY FIELD. A field added to one and not the other
+ * is dropped silently — the shape this codebase has been bitten by twice
+ * (`Blow` losing `type`, `hitToWire` losing `crit`).
+ *
+ * The widget half is here; the server half is asserted against the source,
+ * because the gateway is not importable from a client test.
+ */
+describe('the element colour', () => {
+  it('has one ink for every damage type this game has, and no gaps', () => {
+    /**
+     * SIX, and the table is total over them so the compiler names every site
+     * the day a seventh arrives. There is no poison and no green — "fill the
+     * gaps" is a closed set here, which is why this counts rather than spot-
+     * checking.
+     */
+    expect(DAMAGE_TYPES.length).toBe(6);
+    for (const type of DAMAGE_TYPES) {
+      expect(DAMAGE_INK[type], `${type} has no ink`).toMatch(/^#[0-9a-f]{6}$/i);
+    }
+  });
+
+  it('gives the four elements upstream tints their own colour, all distinct', () => {
+    /**
+     * Physical is upstream's `#WHITE#`, which in a ToME log is the UNTINTED
+     * default — so it shares the ordinary ink here rather than being a seventh
+     * colour. The other five must differ from each other, or the whole point
+     * (tell at a glance which of six hit you) is lost.
+     */
+    expect(DAMAGE_INK[DamageType.Physical]).toBe(PALETTE.PARCHMENT);
+    const tinted = [
+      DamageType.Fire,
+      DamageType.Cold,
+      DamageType.Lightning,
+      DamageType.Darkness,
+      DamageType.Mind,
+    ].map((type) => DAMAGE_INK[type]);
+    expect(new Set(tinted).size, 'two elements share an ink').toBe(tinted.length);
+  });
+
+  it('carries the field from the sentence to the wire, through BOTH hops', () => {
+    const source = readFileSync('src/server/net/gateway.ts', 'utf8');
+    // The seam's return type names it...
+    expect(source, "recordFor's return type dropped the element").toContain(
+      'depth: number; damage?: DamageType',
+    );
+    // ...and the emit loop copies it onto the line that actually reaches the
+    // wire. Either one alone is the silent-drop bug.
+    expect(source, 'the emit loop builds the LogLine without the element').toContain(
+      '...(line.damage === undefined ? {} : { damage: line.damage })',
+    );
+    // ABSENT STAYS ABSENT. A heal returns from the same arm with no type, and
+    // `?? 'physical'` anywhere here would paint every heal as a blow.
+    expect(source).toContain('...(event.type === undefined ? {} : { damage: event.type })');
+  });
+
+  it('leaves an untyped line alone and never repaints a person', () => {
+    const painter = readFileSync('src/client/ui/caselog.ts', 'utf8');
+    // The Margin wins outright — a person's words are violet because of WHO
+    // said them, and an element must not repaint that.
+    expect(painter).toContain('rowMargin\n        ? PALETTE.VIOLET_HI');
+    // And no element means the ordinary ink, not a default one.
+    expect(painter).toContain('? PALETTE.PARCHMENT');
   });
 });

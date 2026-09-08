@@ -93,6 +93,7 @@ import type {
   ProjectileView,
   SiteView,
 } from '../../shared/protocol.ts';
+import { DamageType } from '../../shared/damagetype.ts';
 import type { Sprite, SpriteSource } from './assets.ts';
 
 /** Sampled from the real art. The only colours this game is allowed to use. */
@@ -122,7 +123,57 @@ export const PALETTE = {
   CRIMSON: '#961e2c',
 } as const;
 
-/** Tile overlay markers. Ids are `ui_tile_marker_${kind}` in the manifest. */
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * WHAT COLOUR AN ELEMENT WRITES IN. Ported from `damage_types.lua`.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Reported: *"the text output from fighting, taking damage etc, should account
+ * for element (lightning is a lightning blue text color, fire is a red text
+ * color, poison green, etc - fill the gaps)"*.
+ *
+ * THERE IS NO POISON IN THIS GAME, and no green. `shared/damagetype.ts` has
+ * exactly six members and this table is total over them, so the compiler names
+ * every site the day a seventh arrives — which is what "fill the gaps" has to
+ * mean when the gaps are a closed set.
+ *
+ * ═══ EVERY VALUE IS UPSTREAM'S OWN `text_color`, READ OFF THE DEFINITION ═══
+ * Each `newDamageType` carries one, and these are those, verbatim where the
+ * token is a literal and resolved through `engine/colors.lua` where it is a
+ * name:
+ *
+ *   physical   `#WHITE#`       damage_types.lua:704
+ *   fire       `#LIGHT_RED#`   :728   -> colors.lua:116, 0xFF0068
+ *   cold       `#1133F3#`      :756   (a literal upstream, not a named colour)
+ *   lightning  `#ROYAL_BLUE#`  :775   -> colors.lua:131, 0x006CFF
+ *   darkness   `#GREY#`        :857
+ *   mind       `#YELLOW#`      :877
+ *
+ * ═══ TWO ARE MAPPED ONTO THE PALETTE RATHER THAN PORTED RAW, AND WHY ═══
+ * PHYSICAL is upstream's WHITE, which in a ToME log is simply the UNTINTED
+ * default. Ours is `PARCHMENT`, so physical takes it: a "colour" that means "no
+ * colour" must be the same ink every other line uses, or the commonest damage
+ * type in the game becomes the one that stands out.
+ *
+ * DARKNESS is upstream's GREY, and this file's `GREY` is `#5c5d63` — legible on
+ * ToME's grounds and nearly invisible on the log's dark inset. `GREY_HI` is the
+ * same intent at a brightness this panel can actually show.
+ *
+ * The other four are upstream's numbers unchanged, and they are deliberately NOT
+ * added to `PALETTE`: that set is sampled from the art and is what the interface
+ * is built from. These are semantic marks on a word, ported from another game's
+ * data, and folding them in would license their use as chrome.
+ */
+export const DAMAGE_INK: Readonly<Record<DamageType, string>> = {
+  [DamageType.Physical]: PALETTE.PARCHMENT,
+  [DamageType.Fire]: '#ff0068',
+  [DamageType.Cold]: '#1133f3',
+  [DamageType.Lightning]: '#006cff',
+  [DamageType.Darkness]: PALETTE.GREY_HI,
+  [DamageType.Mind]: PALETTE.GOLD,
+};
+
+/** Tile overlay markers. Every member has an explicit manifest id below. */
 export const MarkerKind = {
   Cursor: 'cursor',
   Valid: 'valid',
