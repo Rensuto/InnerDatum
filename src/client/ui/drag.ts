@@ -453,21 +453,120 @@ export const PANEL_MIN_H = 72;
  * UPSTREAM CLAMPS ONLY THE FLOOR HERE and lets the box grow past the screen
  * edge during the drag, snapping it back on release (`boundPlaces` runs from
  * `saveSettings`, `Minimalist.lua:393-395`, and NOT from the resize callback).
- * We do the same: the ceiling belongs to `sizeIntoBand` at settle time, and
- * clamping live would make the box stop following the pointer, which reads as
- * the drag having broken.
+ *
+ * ═══════════════════════════════════════════════════════════════════════════
+ * ABSOLUTE, NOT A DELTA — AND THE DELTA WAS THE SECOND HALF OF THE BUG.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `Minimalist.lua:600-601` is:
+ *
+ *     places[id].w = math.max(20, x - places[id].x + drag.payload.ox)
+ *     places[id].h = math.max(20, y - places[id].y + drag.payload.oy)
+ *
+ * — the size derived from the pointer's position relative to the panel's OWN
+ * origin, plus how far into the handle the grab landed. Not `sizeAtGrab + (x -
+ * grabX)`, which is what this used to be.
+ *
+ * The two agree exactly while nothing clamps, which is why the delta form looked
+ * right. They diverge the moment the paint caps the box: a delta keeps banking
+ * growth the player cannot see, and every banked pixel has to be dragged back
+ * before the box responds. Drag the grip to the floor, keep going, then come
+ * back — under the delta form the box sat still for as far as you had overshot.
+ * Under this form there is nothing to unwind, because the size is recomputed
+ * from where the pointer IS.
+ *
+ * ═══ AND THE CALLER STORES WHAT WAS DRAWN ═══
+ * Upstream can store an uncapped size because `boundPlaces` fixes it at drag
+ * end and its box floats. Ours is pinned to the band floor, so the caller
+ * clamps through `resizeIntoBand` before storing — otherwise the slack simply
+ * moves from this function into the store.
  */
 export function nextSize(
-  sizeAtGrab: PanelSize,
-  grabX: number,
-  grabY: number,
+  origin: { readonly x: number; readonly y: number },
+  gripOffset: PanelOffset,
   x: number,
   y: number,
 ): PanelSize {
   return {
-    w: Math.max(PANEL_MIN_W, sizeAtGrab.w + (x - grabX)),
-    h: Math.max(PANEL_MIN_H, sizeAtGrab.h + (y - grabY)),
+    w: Math.max(PANEL_MIN_W, x - gripOffset.dx - origin.x),
+    h: Math.max(PANEL_MIN_H, y - gripOffset.dy - origin.y),
   };
+}
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * WHERE A RESIZABLE PANEL LANDS — and it is NOT `moveIntoBand`.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `moveIntoBand` clamps `y` into `[band.top, band.bottom - rect.h]`. For a panel
+ * whose height never changes that is exactly right. For one with a grip it is
+ * the bug: the taller the box, the further UP the clamp pushes its origin, so
+ * growing the box moves its TOP while its bottom stays welded to the floor —
+ * and the grip, which lives at the bottom-right, does not follow the pointer at
+ * all. Reported as *"if you drag in another direction like down, it still
+ * resizes it vertically if at the window border"*, and that is precisely it.
+ *
+ * ═══ THE ORIGIN IS CLAMPED AS THOUGH THE BOX WERE AT ITS FLOOR SIZE ═══
+ * So where the panel SITS stops being a function of how big it is. Then the
+ * size is capped to the room that leaves. The top does not move when the height
+ * changes, the bottom stops at the floor, and the grip stays under the pointer —
+ * which is the whole of what a corner grip promises.
+ *
+ * ═══ IT IS THE SAME SHAPE ON BOTH AXES ═══
+ * `x` is clamped to `[0, width - PANEL_MIN_W]` and `w` capped to what is left,
+ * for the same reason: a box docked against the right edge must not start
+ * walking left when it is widened.
+ *
+ * ═══ A MOVE MAY NEVER RESIZE ═══
+ * This is for the RESIZABLE panel only. `moveIntoBand`'s own note forbids a
+ * clamp that shrinks a panel to make it fit ("a drag moves a panel, it does not
+ * resize one"), and that rule is intact: the cap here only ever runs against a
+ * height the player chose with the grip. A panel with no grip keeps
+ * `moveIntoBand`, and `movePanel`/`settlePanel` must branch the SAME way — two
+ * answers to "where is this panel" is what `settleOffset` exists to prevent.
+ */
+export function resizeIntoBand(
+  rect: PanelRect,
+  offset: PanelOffset,
+  band: { readonly top: number; readonly bottom: number },
+  width: number,
+): PanelRect {
+  const maxY = band.bottom - PANEL_MIN_H;
+  const wantY = rect.y + offset.dy;
+  const y = maxY <= band.top ? band.top : Math.min(Math.max(wantY, band.top), maxY);
+
+  const maxX = width - PANEL_MIN_W;
+  const wantX = rect.x + offset.dx;
+  const x = maxX <= 0 ? 0 : Math.min(Math.max(wantX, 0), maxX);
+
+  return {
+    x,
+    y,
+    w: Math.max(PANEL_MIN_W, Math.min(rect.w, width - x)),
+    h: Math.max(PANEL_MIN_H, Math.min(rect.h, band.bottom - y)),
+  };
+}
+
+/**
+ * `settleOffset`'s twin for a panel with a grip.
+ *
+ * IT EXISTS BECAUSE THE PAINTER AND THE SETTLE MUST AGREE TO THE PIXEL.
+ * `settleOffset` calls `moveIntoBand`; a resizable panel drawn through
+ * `resizeIntoBand` and settled through `settleOffset` would be two producers of
+ * "where is this panel", and the settle would bank an offset the painter never
+ * drew. `settleOffset`'s own note states the cost: *"a settle that rounded
+ * differently from the draw would put the panel one pixel from where it was
+ * released"* — here it would be hundreds of pixels, because the two clamps
+ * disagree by the whole difference between the box's height and its floor.
+ */
+export function settleResize(
+  rect: PanelRect,
+  offset: PanelOffset,
+  band: { readonly top: number; readonly bottom: number },
+  width: number,
+): PanelOffset {
+  const landed = resizeIntoBand(rect, offset, band, width);
+  return { dx: landed.x - rect.x, dy: landed.y - rect.y };
 }
 
 /**

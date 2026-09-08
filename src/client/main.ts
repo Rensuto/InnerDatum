@@ -208,6 +208,8 @@ import {
   DRAGGABLE_PANELS,
   PANEL_MIN_H,
   nextSize,
+  resizeIntoBand,
+  settleResize,
   sizeIntoBand,
   NO_OFFSET,
   createPanelOffsets,
@@ -1466,6 +1468,15 @@ type LiveDrag = {
    * the first drag grows from the size actually on screen rather than from zero.
    */
   readonly sizeAtGrab: PanelSize | null;
+  /**
+   * WHERE AN ABSOLUTE RESIZE GROWS FROM — the panel's origin at the grab, and
+   * how far into the grip the press landed. Null for every other gesture, and
+   * for a resize begun while the log was not drawable.
+   */
+  readonly resizeAtGrab: {
+    readonly origin: { readonly x: number; readonly y: number };
+    readonly gripOffset: PanelOffset;
+  } | null;
   /** What a sub-threshold release means, or null when the press means nothing. */
   readonly click: (() => void) | null;
   /** Has the pointer travelled past `DRAG_THRESHOLD_PX`? */
@@ -3392,7 +3403,16 @@ function movePanel(
   band: { readonly top: number; readonly bottom: number },
   width: number,
 ): PanelRect | null {
-  return rect === null ? null : moveIntoBand(rect, panelOffsets[panel], band, width);
+  if (rect === null) return null;
+  /**
+   * THE ONE PANEL WITH A GRIP TAKES THE OTHER CLAMP — see `resizeIntoBand`.
+   * `settlePanel` branches on exactly this condition and must keep doing so:
+   * a panel drawn by one clamp and settled by the other is two answers to
+   * "where is this panel", and the settle would bank an offset never drawn.
+   */
+  return panel === DraggablePanel.Log
+    ? resizeIntoBand(rect, panelOffsets[panel], band, width)
+    : moveIntoBand(rect, panelOffsets[panel], band, width);
 }
 
 /**
@@ -3533,10 +3553,20 @@ function hudLayout(width: number, height: number): HudLayout {
    * player who wants a taller log moves it up first and then grows it — the
    * gesture every window manager teaches.
    */
-  const log =
-    placed === null
-      ? null
-      : { ...placed, h: Math.max(PANEL_MIN_H, Math.min(placed.h, own.bottom - placed.y)) };
+  /**
+   * NO CAP HERE ANY MORE, AND THE ONE THAT WAS HERE NEVER FIRED.
+   *
+   * It read `h: Math.max(PANEL_MIN_H, Math.min(placed.h, own.bottom - placed.y))`
+   * and was meant to stop the box passing the floor. It could not: `movePanel`
+   * ran `moveIntoBand` first, which clamps `y` to `band.bottom - h` and so
+   * GUARANTEES `own.bottom - placed.y >= h` in every branch but the degenerate
+   * one. The cap was arithmetic on a value that had already been made to fit —
+   * by moving the top, which is the bug it was written to prevent.
+   *
+   * `resizeIntoBand` does both jobs in one place now: it clamps the origin
+   * without consulting the height, then caps the height to the room left.
+   */
+  const log = placed;
   const view = partyView();
   const pane =
     view === null || !partyVisible
@@ -10541,6 +10571,20 @@ async function boot(): Promise<void> {
     return logRectSize(logBand(logicalH, turnHudHeight(turnView())), logicalW);
   }
 
+  /**
+   * THE LOG AS IT IS ACTUALLY DRAWN, or null when it is not.
+   *
+   * `liveLogSize` above answers how big; a resize also needs to know from WHERE,
+   * because `nextSize` is absolute. Through `hudLayout` rather than rebuilding
+   * the arithmetic, for the reason `unmovedPanelRect` gives at length: one
+   * producer of every rect on screen, or the gesture works against a box the
+   * painter never drew.
+   */
+  function liveLogRect(): PanelRect | null {
+    const { hudW: logicalW, hudH: logicalH } = renderer.metrics();
+    return hudLayout(logicalW, logicalH).log;
+  }
+
   function beginDrag(
     subject: DragSubject,
     grabX: number,
@@ -10554,7 +10598,42 @@ async function boot(): Promise<void> {
       offsetAtGrab: subject.kind === DragKind.Panel ? panelOffsets[subject.panel] : NO_OFFSET,
       // THE SIZE ON SCREEN, not `logSize` — the two differ on the first drag,
       // when `logSize` is null and what the player is grabbing is the default.
+      //
+      // IT NO LONGER DRIVES THE SIZING. `nextSize` is absolute now (see its
+      // note), so this survives for `cancelDrag` alone — Escape mid-resize puts
+      // back what was on screen when the grab happened.
       sizeAtGrab: subject.kind === DragKind.Resize ? liveLogSize() : null,
+      /**
+       * ═══════════════════════════════════════════════════════════════════════
+       * WHAT AN ABSOLUTE RESIZE NEEDS: the origin, and the grab's place in the grip.
+       * ═══════════════════════════════════════════════════════════════════════
+       *
+       * `Minimalist.lua:600-601` sizes from `x - places[id].x + ox`, where `ox`
+       * is how far into the handle the press landed. Both terms are captured
+       * here rather than re-read per frame, and that is exact rather than
+       * merely cheap: `resizeIntoBand` clamps the origin as though the box were
+       * at its floor size, so the origin CANNOT move while the box is being
+       * resized. A value that cannot change is a value to capture once.
+       *
+       * `gripOffset` is measured from the panel's bottom-right corner, which is
+       * where `logGripRect` puts the grip — so it is zero or negative, and it is
+       * what keeps the grabbed pixel under the pointer instead of snapping the
+       * corner to it.
+       */
+      resizeAtGrab:
+        subject.kind === DragKind.Resize
+          ? (() => {
+              const rect = liveLogRect();
+              if (rect === null) return null;
+              return {
+                origin: { x: rect.x, y: rect.y },
+                gripOffset: {
+                  dx: grabX - (rect.x + rect.w),
+                  dy: grabY - (rect.y + rect.h),
+                },
+              };
+            })()
+          : null,
       click,
       moved: false,
       at: { x: grabX, y: grabY },
@@ -10607,18 +10686,34 @@ async function boot(): Promise<void> {
       );
     } else if (subject.kind === DragKind.Resize) {
       /**
-       * FLOORED BUT NOT CAPPED, which is upstream's own behaviour: the resize
-       * callback clamps only the minimum (`Minimalist.lua:600-601`) and
-       * `boundPlaces` runs from `saveSettings` at drag END. A box that stopped
-       * following the pointer mid-gesture reads as the drag having broken.
+       * ═══════════════════════════════════════════════════════════════════════
+       * CLAMPED LIVE, WHICH REVERSES WHAT THIS USED TO SAY.
+       * ═══════════════════════════════════════════════════════════════════════
+       *
+       * It read: *"FLOORED BUT NOT CAPPED, which is upstream's own behaviour …
+       * A box that stopped following the pointer mid-gesture reads as the drag
+       * having broken."* The first half is upstream's behaviour and the second
+       * half is true — but together they produced the opposite of both, because
+       * the PAINT capped what the STORE did not. Every pixel dragged past the
+       * floor was banked invisibly and had to be dragged back before the box
+       * moved at all, which is a box that has stopped following the pointer.
+       *
+       * Upstream can leave it uncapped because its box floats and `boundPlaces`
+       * bounds it at drag end. Ours is pinned to the band floor. So the store
+       * holds what was DRAWN, and there is nothing to unwind.
        */
-      logSize = nextSize(
-        live.sizeAtGrab ?? liveLogSize(),
-        live.grabX,
-        live.grabY,
-        point.x,
-        point.y,
+      const at = live.resizeAtGrab;
+      const { hudW: sizeW, hudH: sizeH } = renderer.metrics();
+      const own = logBand(sizeH, turnHudHeight(turnView()));
+      const asked =
+        at === null ? liveLogSize() : nextSize(at.origin, at.gripOffset, point.x, point.y);
+      const landed = resizeIntoBand(
+        { x: at?.origin.x ?? DOCK_MARGIN, y: at?.origin.y ?? own.top, ...asked },
+        NO_OFFSET,
+        own,
+        sizeW,
       );
+      logSize = { w: landed.w, h: landed.h };
     } else {
       springInventoryTab(point);
     }
@@ -10894,7 +10989,9 @@ async function boot(): Promise<void> {
     // There is no position to settle to, and the raw offset is left alone so that
     // a window which grows back restores what the player chose.
     if (unmoved === null) return;
-    panelOffsets[subject.panel] = settleOffset(
+    // THE SAME BRANCH THE PAINTER TAKES, and it has to be — see `movePanel`.
+    const settle = subject.panel === DraggablePanel.Log ? settleResize : settleOffset;
+    panelOffsets[subject.panel] = settle(
       unmoved,
       panelOffsets[subject.panel],
       // THE LOG SETTLES IN ITS OWN BAND, for `hudLayout`'s reason: settling

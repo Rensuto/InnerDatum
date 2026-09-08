@@ -15,6 +15,8 @@ import {
   PANEL_MIN_H,
   PANEL_MIN_W,
   nextSize,
+  resizeIntoBand,
+  settleResize,
   sizeIntoBand,
 } from '../../src/client/ui/drag.ts';
 import { SHEET_TABS, charSheetRect, charSheetRows } from '../../src/client/ui/charsheet.ts';
@@ -22,6 +24,9 @@ import type { CharSheetView } from '../../src/client/ui/charsheet.ts';
 import { HEADER_H, PANEL_PAD, headerDragRect } from '../../src/client/ui/panel.ts';
 import type { PanelOffset } from '../../src/client/ui/drag.ts';
 import type { PanelRect } from '../../src/client/ui/panel.ts';
+
+/** An untouched panel. `main.ts` has its own; a test may not reach it. */
+const NO_OFFSET: PanelOffset = { dx: 0, dy: 0 };
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════
@@ -688,19 +693,45 @@ describe('headerDragRect', () => {
  * that stopped following the pointer mid-gesture reads as the drag breaking.
  */
 describe('nextSize', () => {
-  it('grows from the size at the grab, by however far the pointer went', () => {
-    const grown = nextSize({ w: 300, h: 200 }, 100, 100, 140, 130);
-    expect(grown).toEqual({ w: 340, h: 230 });
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * ABSOLUTE, LIKE `Minimalist.lua:600-601`. It was a delta, and that was half
+   * the resize bug.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   *     places[id].w = math.max(20, x - places[id].x + drag.payload.ox)
+   *
+   * The size comes from where the pointer IS relative to the panel's own origin,
+   * plus how far into the handle the grab landed — never from an accumulated
+   * `sizeAtGrab + (x - grabX)`.
+   */
+  const ORIGIN = { x: 100, y: 100 };
+  /** Grabbed exactly on the panel's bottom-right corner: no inset. */
+  const CORNER = { dx: 0, dy: 0 };
+
+  it('sizes from the pointer, measured off the panel’s own origin', () => {
+    expect(nextSize(ORIGIN, CORNER, 440, 330)).toEqual({ w: 340, h: 230 });
   });
 
-  it('is a function of the GRAB, not of the last frame', () => {
+  it('keeps the grabbed pixel under the pointer', () => {
+    /**
+     * `ox` upstream. A press 5px inside the grip must not snap the corner to the
+     * pointer — the box should be 5px smaller than the pointer's own offset, so
+     * the pixel under the cursor stays under it.
+     */
+    const inset = { dx: -5, dy: -3 };
+    expect(nextSize(ORIGIN, inset, 440, 330)).toEqual({ w: 345, h: 233 });
+  });
+
+  it('is a function of the pointer, not of the last frame', () => {
     /**
      * The same purity `nextOffset` has and for the same reason: a dropped frame
-     * must not cost the gesture anything, so two calls with the same grab and
-     * the same pointer are the same answer however many came between.
+     * must not cost the gesture anything. Stronger here than it was under the
+     * delta form — there is no accumulated state left for a dropped frame to
+     * corrupt.
      */
-    const a = nextSize({ w: 300, h: 200 }, 100, 100, 160, 100);
-    const b = nextSize({ w: 300, h: 200 }, 100, 100, 160, 100);
+    const a = nextSize(ORIGIN, CORNER, 460, 200);
+    const b = nextSize(ORIGIN, CORNER, 460, 200);
     expect(a).toEqual(b);
   });
 
@@ -708,15 +739,27 @@ describe('nextSize', () => {
     // `w = math.max(20, ...)` and `h = math.max(20, ...)` are two separate
     // statements up there — dragging the corner past the left edge must not
     // also collapse the height.
-    const squashed = nextSize({ w: 300, h: 200 }, 100, 100, -5000, 130);
+    const squashed = nextSize(ORIGIN, CORNER, -5000, 330);
     expect(squashed.w).toBe(PANEL_MIN_W);
     expect(squashed.h, 'the height collapsed with the width').toBe(230);
   });
 
-  it('does NOT cap during the gesture', () => {
-    // Upstream's resize callback has no ceiling; `boundPlaces` runs at drag end.
-    const huge = nextSize({ w: 300, h: 200 }, 0, 0, 9000, 9000);
-    expect(huge.w).toBeGreaterThan(5000);
+  it('banks nothing when the pointer overshoots and comes back', () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * THE BUG THIS FORM EXISTS TO KILL.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * Under the delta form the store kept growing past whatever the paint
+     * capped, so dragging back had to unwind the overshoot before the box moved
+     * at all — a box that has stopped following the pointer, which is exactly
+     * what was reported. Absolute sizing cannot bank: the answer for a pointer
+     * is the same whether or not it has been further out.
+     */
+    const far = nextSize(ORIGIN, CORNER, 9000, 9000);
+    expect(far.h).toBeGreaterThan(8000);
+    const back = nextSize(ORIGIN, CORNER, 440, 330);
+    expect(back, 'the overshoot was banked and had to be unwound').toEqual({ w: 340, h: 230 });
   });
 });
 
@@ -764,40 +807,78 @@ describe('sizeIntoBand', () => {
 describe('a bottom-right grip grows the box downward', () => {
   const band = { top: 3, bottom: 656 };
   const DEFAULT_H = 200;
+  const W = 1280;
 
   /** Where the log's top goes: the band alone, never the current height. */
   const anchor = (): number => band.bottom - DEFAULT_H;
+  /** The unmoved log, as `unmovedPanelRect` builds it. */
+  const unmoved = (h: number): PanelRect => ({ x: 3, y: anchor(), w: 640, h });
 
-  it('leaves the top alone when the height changes', () => {
+  it('leaves the top where it is however tall the box gets', () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * THIS DRIVES THE REAL FUNCTION NOW, AND THE OLD VERSION COULD NOT.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * It used to assert `anchor()` against itself in a loop that discarded its
+     * own variable (`void h`) — an identity, true of this file's model and
+     * silent about the game. The rule lives in `resizeIntoBand`, which is pure
+     * and exported precisely so it can be asked.
+     */
     const top = anchor();
-    for (const h of [PANEL_MIN_H, DEFAULT_H, DEFAULT_H * 2]) {
-      void h;
-      expect(anchor(), 'the anchor moved with the height').toBe(top);
+    for (const h of [PANEL_MIN_H, DEFAULT_H, DEFAULT_H * 3, 9000]) {
+      const landed = resizeIntoBand(unmoved(h), NO_OFFSET, band, W);
+      expect(landed.y, `a box ${String(h)} tall moved its own top`).toBe(top);
     }
-  });
-
-  it('grows downward as the pointer goes down, and shrinks as it goes up', () => {
-    const grown = nextSize({ w: 400, h: DEFAULT_H }, 0, 0, 0, 40);
-    const shrunk = nextSize({ w: 400, h: DEFAULT_H }, 0, 0, 0, -40);
-    expect(grown.h, 'dragging the grip DOWN did not make the box taller').toBe(DEFAULT_H + 40);
-    expect(shrunk.h, 'dragging the grip UP did not make the box shorter').toBe(DEFAULT_H - 40);
   });
 
   it('stops the bottom at the floor rather than pushing the top up', () => {
     /**
-     * THE INVERSION'S SECOND ROUTE, and the one that survived the anchor fix.
+     * THE INVERSION'S SECOND ROUTE, AND IT SHIPPED.
+     *
      * `moveIntoBand` clamps y into `[top, bottom - h]`, so a box grown taller
      * than the room beneath it is pushed UP — the top rises while the grip sits
-     * against the floor, which reads exactly like the bug that was fixed.
+     * against the floor. `hudLayout` had a line meant to stop that
+     * (`Math.min(placed.h, own.bottom - placed.y)`) and it never fired once,
+     * because `moveIntoBand` had already made the height fit BY MOVING THE TOP.
      *
-     * Capping the height is what keeps the top still. `hudLayout` does it in one
-     * line after the move; this is that line's arithmetic.
+     * The old version of this test computed the cap itself and asserted its own
+     * arithmetic, so it stayed green through the whole of that.
      */
-    const top = anchor();
-    const asked = 900;
-    const capped = Math.max(PANEL_MIN_H, Math.min(asked, band.bottom - top));
-    expect(top + capped, 'the box was allowed past the floor').toBeLessThanOrEqual(band.bottom);
-    expect(capped, 'the cap collapsed the box instead of stopping it').toBeGreaterThan(PANEL_MIN_H);
+    const landed = resizeIntoBand(unmoved(900), NO_OFFSET, band, W);
+    expect(landed.y, 'the top rose to make room').toBe(anchor());
+    expect(landed.y + landed.h, 'the box was allowed past the floor').toBe(band.bottom);
+    expect(landed.h, 'the cap collapsed the box instead of stopping it').toBeGreaterThan(
+      PANEL_MIN_H,
+    );
+  });
+
+  it('lets a box that was moved UP grow taller than the default', () => {
+    // The other half of a fixed top: the way to a taller log is to move it up
+    // first, exactly as it is for any window whose bottom is against an edge.
+    const landed = resizeIntoBand(unmoved(900), { dx: 0, dy: -300 }, band, W);
+    expect(landed.y).toBe(anchor() - 300);
+    expect(landed.h, 'moving the box up bought no extra height').toBe(DEFAULT_H + 300);
+  });
+
+  it('clamps the origin without consulting the height — the whole rule', () => {
+    /**
+     * Two boxes at the same offset and different heights must land at the same
+     * PLACE. Under `moveIntoBand` they do not, and that difference is the bug.
+     */
+    const short = resizeIntoBand(unmoved(PANEL_MIN_H), { dx: 0, dy: 40 }, band, W);
+    const tall = resizeIntoBand(unmoved(600), { dx: 0, dy: 40 }, band, W);
+    expect(tall.y, 'the taller box was placed somewhere else').toBe(short.y);
+  });
+
+  it('never lets a move shrink a panel that has no grip', () => {
+    // `moveIntoBand`'s own rule, and the reason `resizeIntoBand` is not simply
+    // swapped in everywhere: a drag moves a panel, it does not resize one.
+    const moved = moveIntoBand({ x: 3, y: 400, w: 640, h: 300 }, { dx: 0, dy: 9000 }, band, W);
+    expect(moved.h, 'a move resized the panel').toBe(300);
+    expect(moved.y + moved.h, 'a move pushed the panel past the floor').toBeLessThanOrEqual(
+      band.bottom,
+    );
   });
 
   it('derives the top from the BAND in main.ts, not from the height', () => {
@@ -836,5 +917,82 @@ describe('a bottom-right grip grows the box downward', () => {
     const inCorner = band.bottom - anchor();
     const movedUp = band.bottom - (anchor() - 120);
     expect(movedUp, 'moving the box up bought no extra height').toBeGreaterThan(inCorner);
+  });
+});
+
+describe('the painter and the settle agree about the resizable panel', () => {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * TWO ANSWERS TO "WHERE IS THIS PANEL" IS THE FAILURE THIS PAIR PREVENTS.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `movePanel` draws the Log through `resizeIntoBand` and every other panel
+   * through `moveIntoBand`. `settlePanel` must branch on the SAME condition, or
+   * the offset banked when the button comes up is one the painter never drew.
+   *
+   * The cost is not a pixel. Modelled at 1280x720 with a stored height of 400:
+   * a box drawn by one clamp and settled by the other jumps by the whole
+   * difference between its height and its floor — hundreds of pixels, after a
+   * drag that went the other way. `settleOffset`'s own note argues the same
+   * thing for one pixel of rounding.
+   */
+  const band = { top: 3, bottom: 656 };
+  const W = 1280;
+  const rect: PanelRect = { x: 3, y: 456, w: 640, h: 400 };
+
+  it('settles to exactly where it draws, at every offset', () => {
+    for (const dy of [-900, -300, -1, 0, 1, 200, 900]) {
+      const offset = { dx: 0, dy };
+      const drawn = resizeIntoBand(rect, offset, band, W);
+      const settled = settleResize(rect, offset, band, W);
+      const redrawn = resizeIntoBand(rect, settled, band, W);
+      expect(redrawn.y, `dy=${String(dy)} settled somewhere it was not drawn`).toBe(drawn.y);
+      expect(redrawn.h, `dy=${String(dy)} changed height on the settle`).toBe(drawn.h);
+    }
+  });
+
+  it('is idempotent: settling twice moves nothing', () => {
+    // A gesture that banked a different offset the second time would creep the
+    // panel a little further every time it was touched.
+    const once = settleResize(rect, { dx: 0, dy: -1000 }, band, W);
+    const twice = settleResize(rect, once, band, W);
+    expect(twice).toEqual(once);
+  });
+
+  it('main.ts branches on the same condition in both places', () => {
+    /**
+     * The two call sites are a module-scope function and a closure, so no test
+     * can call either. This reads the source, which is how main.ts is guarded
+     * everywhere else in this suite — and it is the assertion that would have
+     * caught the plan that changed the painter and left the settle alone.
+     */
+    const source = readFileSync('src/client/main.ts', 'utf8');
+    expect(source, 'the painter does not take the resize clamp').toContain(
+      'panel === DraggablePanel.Log\n    ? resizeIntoBand(rect, panelOffsets[panel], band, width)',
+    );
+    expect(source, 'the settle does not branch with the painter').toContain(
+      'const settle = subject.panel === DraggablePanel.Log ? settleResize : settleOffset;',
+    );
+  });
+
+  it('the inert cap in hudLayout is gone, not merely bypassed', () => {
+    /**
+     * It never fired once, because `moveIntoBand` had already made the height
+     * fit BY MOVING THE TOP. Leaving it beside `resizeIntoBand` would be a
+     * second authority on the cap.
+     *
+     * ASSERTED AS CODE, NOT AS A STRING. The first version of this checked that
+     * the expression was absent from the file and went red immediately — the
+     * docblock explaining the removal quotes it, which is exactly what a
+     * docblock explaining a removal should do. A negative assertion has to name
+     * a shape prose cannot contain.
+     */
+    const source = readFileSync('src/client/main.ts', 'utf8');
+    expect(source, 'the cap that never fired is still applied').not.toContain(
+      '{ ...placed, h: Math.max(PANEL_MIN_H',
+    );
+    expect(source, 'the layout no longer takes the placed rect whole').toContain(
+      'const log = placed;',
+    );
   });
 });

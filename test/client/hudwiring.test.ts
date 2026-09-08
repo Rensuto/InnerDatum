@@ -484,7 +484,32 @@ describe('endDrag settles the panel offset', () => {
     // directly.
     const fn = between('function settlePanel(subject: DragSubject): void {', '\n  }');
     expect(fn).toContain('unmovedPanelRect(subject.panel, logicalW, logicalH, band)');
-    expect(fn).toContain('settleOffset(');
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * THE SETTLE IS A BRANCH NOW, AND THE BRANCH IS THE POINT.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * This read `toContain('settleOffset(')`. The Log grew a resize grip, and a
+     * panel whose height the player controls cannot take `moveIntoBand`'s clamp
+     * — that clamp slides the ORIGIN to fit the height, so growing the box moves
+     * its top and the grip stops following the pointer. The Log takes
+     * `resizeIntoBand`, and this file's own rule then requires the settle to
+     * take `settleResize` in exactly the same case.
+     *
+     * ASSERTED AS THE PAIR rather than as either name: one producer means the
+     * two conditions are the same condition, and the failure mode is that
+     * somebody changes the painter and leaves the settle. Modelled, that is not
+     * a few pixels — it is the whole difference between the box's height and
+     * its floor, after a drag that went the other way.
+     */
+    expect(fn).toContain(
+      'const settle = subject.panel === DraggablePanel.Log ? settleResize : settleOffset;',
+    );
+    expect(fn).toContain('panelOffsets[subject.panel] = settle(');
+    expect(
+      between('function movePanel(', '\n}'),
+      'the painter does not branch where the settle does',
+    ).toContain('panel === DraggablePanel.Log');
     // The band is recomputed the same way `hudLayout` computes it, from the live
     // turn HUD height rather than from anything cached.
     expect(fn).toContain('panelBand(logicalH, turnHudHeight(turnView()))');
