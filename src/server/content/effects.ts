@@ -1709,6 +1709,8 @@ export function createMvpEffectState(): EffectState {
  *     letting anyone notice the number was wrong.
  */
 /** Two characters fit the 24px box; three collide with its border. */
+/** One character at least: an empty badge is a box with nothing in it. */
+const BADGE_MIN = 1;
 const BADGE_MAX = 2;
 
 export function validateEffect(def: EffectDef): readonly string[] {
@@ -1716,8 +1718,12 @@ export function validateEffect(def: EffectDef): readonly string[] {
 
   // ONE OR TWO CHARACTERS. The badge box is 24px and centres its text; three
   // would overflow the border this file's fallback draws around it.
-  if (def.badge.length < 1 || def.badge.length > BADGE_MAX) {
-    problems.push(`badge must be 1-2 characters, got "${def.badge}"`);
+  if (def.badge.length < BADGE_MIN || def.badge.length > BADGE_MAX) {
+    // The bound, not a restatement of it. Raise `BADGE_MAX` and the sentence
+    // used to go on demanding 1-2 while the check allowed three.
+    problems.push(
+      `badge must be ${String(BADGE_MIN)}-${String(BADGE_MAX)} characters, got "${def.badge}"`,
+    );
   }
 
   if (!def.id.startsWith(EFFECT_ID_PREFIX)) {

@@ -149,12 +149,117 @@ for (const [file, src] of sources) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// SECOND PASS — THE SAME MISTAKE IN A STRING RATHER THAN IN A COMMENT
+// ---------------------------------------------------------------------------
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * A SENTENCE THE PLAYER READS IS A PROMISE, AND IT DRIFTS THE SAME WAY.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * The pass above checks COMMENTS, and on 2026-09-07 that turned out to be half
+ * the problem. Four magnitudes reached the player as bare numerals inside
+ * strings while the maths read them from a constant:
+ *
+ *     Stunned       "Deals 40% damage"     vs 0.4 in engine/damage.ts
+ *     Stunned       "Three ready talents"  vs STUN_TALENT_LOCKOUT
+ *     Off-balance   "15% less damage"      vs OFF_BALANCE_NUMBED
+ *     Spellshocked  "by 20%"               vs SPELLSHOCK_RESIST
+ *
+ * MEASURED: moving `SPELLSHOCK_RESIST` from 20 to 25 left this gate green and
+ * the sentence still promising 20%. A comment that lies costs the next reader
+ * an hour; a status description that lies is the game explaining its own rules
+ * wrongly to somebody who cannot read the source.
+ *
+ * ═══ SAME FILE ONLY, WHICH IS TWO OF THOSE FOUR ═══
+ * A numeral matched against every constant in the codebase matches almost
+ * everything — 1, 2, 3 and 4 are declared dozens of times — so this resolves
+ * against the file's OWN declarations, exactly as the pass above prefers them.
+ * That catches the Off-balance and Spellshocked shapes and NOT the Stunned one,
+ * whose constant lived in another module. Naming that constant is what fixed
+ * it, and no cheap check finds the next one of those; a rule that fires on 1s
+ * and 2s across the tree would be switched off within a week, which protects
+ * nothing.
+ *
+ * ═══ WHAT COUNTS AS A SENTENCE ═══
+ * A quoted literal of twelve characters or more containing a space, on a line
+ * that is not a comment, in `content/` or `talents/` — the two directories
+ * where authored player text lives. Template holes are blanked first, because
+ * `${String(FOO)}` is the composed form this check exists to encourage.
+ *
+ * A LINE WITH UNBALANCED BACKTICKS IS SKIPPED. A template literal spanning
+ * several lines presents each middle line as a fragment with one backtick, and
+ * the fragment is CODE — that produced the only false positive this rule had,
+ * `shops.ts`'s `" ? 12 : item.tier === "`, which is the text between two holes
+ * of a multi-line template and is not a sentence at all.
+ */
+const PROSE_ROOTS = ['src/server/content', 'src/server/talents'];
+const LITERAL_MIN = 12;
+const AS_PERCENT = 100;
+
+/**
+ * Quoted literals on a line, with template holes blanked to a non-digit.
+ *
+ * ═══ SCANNED LEFT TO RIGHT, BECAUSE A REGEX CANNOT PAIR QUOTES ═══
+ * The first version used `/'([^'\n\\]{12,})'/g` and reported `shops.ts`'s
+ * `rarity: item.tier === 'rare' ? 12 : item.tier === 'uncommon' ? 6 : 3` as a
+ * sentence saying 12. It had matched from the CLOSING quote of `'rare'` to the
+ * OPENING quote of `'uncommon'` — the code between two strings, which is not a
+ * string at all. Consuming each literal and resuming after it is the fix, and
+ * it is the difference between a rule with a permanent allowlist entry and a
+ * rule that is simply right.
+ */
+function sentencesOn(line) {
+  const out = [];
+  for (let i = 0; i < line.length; i += 1) {
+    const quote = line[i];
+    if (quote !== "'" && quote !== '`') continue;
+    let j = i + 1;
+    while (j < line.length && line[j] !== quote) j += line[j] === '\\' ? 2 : 1;
+    // An unterminated literal is a template spanning lines: the rest of this
+    // line is CODE, so take nothing from it.
+    if (j >= line.length) break;
+    const text = line.slice(i + 1, j);
+    if (text.length >= LITERAL_MIN && text.includes(' ')) {
+      out.push(quote === '`' ? text.replaceAll(/\$\{[^}]*\}/g, 'X') : text);
+    }
+    i = j;
+  }
+  return out;
+}
+
+const prose = [];
+let sentences = 0;
+for (const [file, src] of sources) {
+  if (!PROSE_ROOTS.some((root) => file.split(path.sep).join('/').startsWith(root))) continue;
+  const here = perFile.get(file);
+  if (here === undefined || here.size === 0) continue;
+
+  for (const [i, line] of src.split('\n').entries()) {
+    const trimmed = line.trim();
+    if (trimmed.startsWith('*') || trimmed.startsWith('//') || trimmed.startsWith('/*')) continue;
+    for (const text of sentencesOn(line)) {
+      sentences += 1;
+      for (const num of text.match(/(?<![\w.X])\d+(?:\.\d+)?(?![\w])/g) ?? []) {
+        for (const [name, raw] of here) {
+          const value = Number(raw);
+          const asWritten = value === Number(num);
+          const asPercent =
+            value > 0 && value < 1 && Math.round(value * AS_PERCENT) === Number(num);
+          if (asWritten || asPercent) {
+            prose.push({ at: `${file}:${String(i + 1)}`, name, value: raw, num, text });
+          }
+        }
+      }
+    }
+  }
+}
+
 console.log('\nconstants in prose');
 console.log(`  ok    ${String(checked)} comment(s) state a constant's value`);
 
 if (wrong.length === 0) {
   console.log('  ok    every one of them matches the declaration');
-  console.log('\nconstants in prose OK');
 } else {
   for (const w of wrong) {
     console.log(`  FAIL  ${w.at}`);
@@ -164,6 +269,26 @@ if (wrong.length === 0) {
     `\nconstants in prose FAILED — ${String(wrong.length)} comment(s) state a value the\n` +
       'declaration disagrees with. If the sentence is HISTORY, say "was" rather than\n' +
       '"is"; the tense is what tells a reader whether to trust it.',
+  );
+  process.exit(1);
+}
+
+console.log(`  ok    ${String(sentences)} authored sentence(s) in content/ and talents/`);
+if (prose.length === 0) {
+  console.log('  ok    none of them restates a number the same file declares');
+  console.log('\nconstants in prose OK');
+} else {
+  for (const p of prose) {
+    console.log(`  FAIL  ${p.at}`);
+    console.log(`          "${p.text.slice(0, 68)}"`);
+    console.log(`          says ${p.num}, and this file declares \`${p.name}\` = ${p.value}`);
+  }
+  console.log(
+    `\nconstants in prose FAILED — ${String(prose.length)} authored sentence(s) state a\n` +
+      'number the same file also declares as a constant. Compose it — `${String(FOO)}` —\n' +
+      'so the sentence cannot drift from the maths. If the numeral genuinely has\n' +
+      'nothing to do with that constant, rewording is the fix; this rule resolves\n' +
+      'same-file only precisely so a coincidence is rare enough to be worth a look.',
   );
   process.exit(1);
 }
