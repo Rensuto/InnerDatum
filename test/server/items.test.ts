@@ -122,7 +122,7 @@ function fullSlotSpread(): Item[] {
 }
 
 describe('the item catalogue', () => {
-  it('ships 29 worn items and one you drink', () => {
+  it('ships 31 worn items and one you drink', () => {
     // 23 `item_*` ids exist in the manifest. 22 are authored as equipment. The
     // 23rd `item_*` id is the ingot, and cutting it is a decision rather than an
     // oversight — see FORBIDDEN_IDS above; it draws the MONEY pile instead
@@ -136,15 +136,20 @@ describe('the item catalogue', () => {
     // missing sprite and has for a long time (ui/inventory.ts:2754-2763), so the
     // catalogue's old refusal was enforcing a hazard that no longer existed —
     // and capping the content at whatever had been drawn.
-    expect(ITEMS).toHaveLength(30);
-    expect(ITEMS.filter((item) => item.slot !== undefined)).toHaveLength(29);
+    //
+    // ═══ AND TWO MORE AHEAD OF THEIR ART: A TWO-HANDER AND AN OFF-HAND PAIR ═══
+    // `item_bailiffs_maul` carries `forbids: Slot.Offhand` — upstream's
+    // `slot_forbid` (`2hswords.lua:23`) — and `item_paired_shivs` is the thing
+    // it locks you out of holding.
+    expect(ITEMS).toHaveLength(32);
+    expect(ITEMS.filter((item) => item.slot !== undefined)).toHaveLength(31);
     expect(ITEMS.filter((item) => item.use !== undefined)).toHaveLength(1);
     // 23 DRAWN ICONS still, and 26 items: the three weapons name commissioned
     // ids instead. The 23rd icon is the ability vial (see the list above) and
     // the draught is what names it — the first thing in this game you buy in
     // order to SPEND it.
     expect(MANIFEST_ITEM_ICONS).toHaveLength(23);
-    expect(ITEM_CATALOGUE.size).toBe(30);
+    expect(ITEM_CATALOGUE.size).toBe(32);
   });
 
   it('names only icons that exist in the committed manifest', () => {
@@ -331,7 +336,7 @@ describe('the item catalogue', () => {
     }
   });
 
-  it('lines its three tiers up with the three drop tables, 10 / 13 / 7', () => {
+  it('lines its three tiers up with the three drop tables, 10 / 14 / 8', () => {
     // NOT COSMETIC. The roster's drop tables are meant to select on `tier`
     // rather than re-listing 23 ids somewhere else that has to stay in sync:
     //   common   = every LEGS and FEET item, plus the leather chest
@@ -344,8 +349,8 @@ describe('the item catalogue', () => {
     // make about drinking it.
     const byTier = (tier: string): Item[] => ITEMS.filter((item) => item.tier === tier);
     expect(byTier('common')).toHaveLength(10);
-    expect(byTier('uncommon')).toHaveLength(13);
-    expect(byTier('rare')).toHaveLength(7);
+    expect(byTier('uncommon')).toHaveLength(14);
+    expect(byTier('rare')).toHaveLength(8);
     expect(byTier('common').length + byTier('uncommon').length + byTier('rare').length).toBe(
       ITEMS.length,
     );

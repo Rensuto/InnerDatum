@@ -2025,6 +2025,83 @@ describe('drawing', () => {
     expect(off.asked).not.toContain('ui_inventory_cell_hover');
   });
 
+  it('lights NO plate for a shield while a two-hander is held, and says why', () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * A PLATE THAT SAYS YES AND A SERVER THAT SAYS NO IS A BROKEN BUTTON.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * `handleEquip` refuses a `slot_forbid` collision in both directions
+     * (`ActorInventory.lua:437-457`). This is the client's half: it does not
+     * decide anything, it only declines to OFFER a drop it can see will be
+     * refused — off the same two facts the server reads.
+     *
+     * Both directions are driven, because `dropSlotFor` asks twice and a
+     * version that asked once would pass whichever half it kept.
+     */
+    const maulOn = frame({
+      equipped: { mainhand: { ...worn('item_maul', 'Maul', ItemTier.Rare), forbids: 'offhand' } },
+      carried: [bagged('item_buckler', 'Buckler', ItemTier.Uncommon, 'offhand')],
+    });
+    const shieldDrag = paintWithArt(
+      view({ inventory: maulOn, drag: { kind: DragKind.Carried, itemId: 'item_buckler' } }),
+    );
+    expect(shieldDrag.asked, 'the off hand lit up while a two-hander was held').not.toContain(
+      'ui_inventory_cell_hover',
+    );
+
+    // THE OTHER DIRECTION: the two-hander itself, with the off hand full.
+    const buckledUp = frame({
+      equipped: { offhand: worn('item_buckler', 'Buckler', ItemTier.Uncommon) },
+      carried: [{ ...bagged('item_maul', 'Maul', ItemTier.Rare, 'mainhand'), forbids: 'offhand' }],
+    });
+    const maulDrag = paintWithArt(
+      view({ inventory: buckledUp, drag: { kind: DragKind.Carried, itemId: 'item_maul' } }),
+    );
+    expect(maulDrag.asked, 'the weapon hand lit up while the off hand was full').not.toContain(
+      'ui_inventory_cell_hover',
+    );
+
+    // AND IT STILL LIGHTS WHEN THE RULE DOES NOT BITE — the guard must refuse
+    // this drop, not every drop. A check written on `forbids !== undefined`
+    // alone would pass both assertions above and make the maul undroppable.
+    const handsFree = frame({
+      equipped: {},
+      carried: [{ ...bagged('item_maul', 'Maul', ItemTier.Rare, 'mainhand'), forbids: 'offhand' }],
+    });
+    const free = paintWithArt(
+      view({ inventory: handsFree, drag: { kind: DragKind.Carried, itemId: 'item_maul' } }),
+    );
+    expect(free.asked, 'the weapon hand refused a maul with both hands free').toContain(
+      'ui_inventory_cell_hover',
+    );
+  });
+
+  it('puts the two-handed rule on the card, from the bag and from the doll', () => {
+    // tome/class/Object.lua:1175 — `desc:add("It must be held with both
+    // hands.")`. A rule the player only meets as an error toast is a bug
+    // report; on the card it is a weapon with a trade-off.
+    const inBag = frame({
+      carried: [{ ...bagged('item_maul', 'Maul', ItemTier.Rare, 'mainhand'), forbids: 'offhand' }],
+    });
+    const bagCard = detailOf(
+      inventoryPanelRows(view({ inventory: inBag, focus: { kind: 'item', itemId: 'item_maul' } })),
+    );
+    expect(bagCard.useText).toBe('It must be held with both hands.');
+
+    // AND ON THE DOLL, which is where a player looks to work out why their
+    // shield arm will not fill. This row's prose was hard-`''` on the argument
+    // that nothing is wearable and drinkable — true, and not the only prose a
+    // worn item can have.
+    const onDoll = frame({
+      equipped: { mainhand: { ...worn('item_maul', 'Maul', ItemTier.Rare), forbids: 'offhand' } },
+    });
+    const dollCard = detailOf(
+      inventoryPanelRows(view({ inventory: onDoll, focus: { kind: 'item', itemId: 'item_maul' } })),
+    );
+    expect(dollCard.useText).toBe('It must be held with both hands.');
+  });
+
   it('is reachable: carried onto the doll, with no tab to cross', () => {
     /**
      * ═══════════════════════════════════════════════════════════════════════

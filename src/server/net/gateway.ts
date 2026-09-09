@@ -14224,6 +14224,55 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       return;
     }
 
+    /**
+     * ═════════════════════════════════════════════════════════════════════════
+     * TWO HANDS ARE ONE PAIR OF HANDS — `slot_forbid`, BOTH DIRECTIONS.
+     * ═════════════════════════════════════════════════════════════════════════
+     *
+     * Ported from engine/interface/ActorInventory.lua:437-457 (`canWearObject`).
+     * Upstream asks it twice and so does this: does the thing going ON forbid a
+     * slot that is FULL, and does anything already WORN forbid the slot this is
+     * going into. One field, two questions, because either alone is a hole —
+     * check only the first and a shield goes on over a greatsword; check only
+     * the second and the greatsword goes on over a shield.
+     *
+     * ═══ IT REFUSES, IT DOES NOT UNDRESS YOU ═══
+     * The tempting alternative is to take the shield off for you, and upstream
+     * pointedly does not: `return nil, "cannot use currently due to an other
+     * worn object"`. A click that silently removes a piece of armour you spent
+     * money on is a click you cannot take back, and the player who lost the
+     * shield finds out from the armour number three fights later.
+     *
+     * ═══ THE ITEM LEAVING IS NOT ASKED ═══
+     * The worn loop skips whatever occupies `item.slot`, because that piece is
+     * on its way into the bag on the next line. Upstream has no such skip and
+     * does not need one — nothing upstream forbids its own slot. Ours would
+     * SOFT-LOCK if something ever did: the only way to take the thing off would
+     * be an unequip, and the swap a player actually reaches for would refuse
+     * forever with no way to see why.
+     */
+    const forbidWord = (slot: Slot): string => SLOT_WORDS[slot];
+    if (item.forbids !== undefined && body.equipped?.[item.forbids] !== undefined) {
+      sendError(
+        session.socket,
+        ErrorCode.BadMessage,
+        `you cannot hold that and what is on your ${forbidWord(item.forbids)}`,
+      );
+      return;
+    }
+    for (const slot of SLOT_ORDER) {
+      if (slot === item.slot) continue;
+      const wornId: string | undefined = body.equipped?.[slot];
+      if (wornId === undefined) continue;
+      if (resolveItem(wornId)?.forbids !== item.slot) continue;
+      sendError(
+        session.socket,
+        ErrorCode.BadMessage,
+        `you cannot hold that and what is in your ${forbidWord(slot)}`,
+      );
+      return;
+    }
+
     const previous = body.equipped?.[item.slot];
     // The bag, with the incoming item out and the outgoing one in. Built as one
     // new array rather than two splices — see engine/actor.ts on `carried`.

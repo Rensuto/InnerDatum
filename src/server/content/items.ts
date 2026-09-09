@@ -561,6 +561,29 @@ export type Item = {
   readonly combat?: Weapon;
   /**
    * ═══════════════════════════════════════════════════════════════════════════
+   * A SLOT THIS ITEM KEEPS EMPTY WHILE IT IS WORN — `slot_forbid`.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Asked for as *"2 handed weapons should consume both slots"*.
+   *
+   * Upstream's is `slot_forbid = "OFFHAND"` on `BASE_GREATSWORD`
+   * (`2hswords.lua:23`), enforced in BOTH DIRECTIONS at
+   * `engine/interface/ActorInventory.lua:438-452`: the greatsword refuses to go
+   * on while something is in the off hand, and a shield refuses to go on while
+   * the greatsword is held. One field, two refusals, and neither silently
+   * unequips anything — which matters because the alternative is a click that
+   * takes off a shield the player did not mean to remove.
+   *
+   * ═══ A FIELD ON THE ITEM, NOT A FLAG ON THE WEAPON ═══
+   * `twohanded` is what upstream CALLS it, but `slot_forbid` is what upstream
+   * ENFORCES, and the two are different shapes: the first is a property of a
+   * sword, the second is a rule about slots that a cloak or a quiver could want
+   * just as well. Naming the slot keeps the mechanism general and keeps the
+   * refusal message honest — it says which slot, because it knows.
+   */
+  readonly forbids?: Slot;
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
    * WHAT DRINKING IT DOES. Absent on everything that is not a consumable.
    * ═══════════════════════════════════════════════════════════════════════════
    *
@@ -754,6 +777,8 @@ export const PENDING_ICON_IDS: readonly string[] = Object.freeze([
   'item_archivists_mantle',
   'item_evidence_belt',
   'item_handlers_gloves',
+  'item_bailiffs_maul',
+  'item_paired_shivs',
 ]);
 
 // ---------------------------------------------------------------------------
@@ -1212,6 +1237,54 @@ const WEAPONS: readonly Item[] = [
  * batch lands as more PLACES to fill rather than as a power spike, and there is
  * room above them for what comes next.
  */
+const TWO_HANDED_AND_OFFHAND: readonly Item[] = [
+  {
+    id: 'item_bailiffs_maul',
+    name: "Bailiff's Maul",
+    slot: Slot.Mainhand,
+    icon: 'item_bailiffs_maul',
+    tier: 'rare',
+    wielder: {},
+    /**
+     * A TWO-HANDER: it takes the off hand with it. `2hswords.lua:23`'s
+     * `slot_forbid = "OFFHAND"`, and the trade is upstream's own — a greatsword
+     * out-damages a one-hander by roughly the shield you are not carrying.
+     *
+     * Priced against `item_writ_of_seizure`, the other rare weapon: +30% damage
+     * and +1 armour penetration, against a buckler's 2 defence and 1 armour.
+     */
+    combat: { dam: 60, apr: 6, physCrit: 4 },
+    forbids: Slot.Offhand,
+  },
+  {
+    id: 'item_paired_shivs',
+    name: 'Paired Shivs',
+    slot: Slot.Offhand,
+    icon: 'item_paired_shivs',
+    tier: 'uncommon',
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * A WEAPON IN THE OFF HAND, WHICH IS NOT THE WEAPON YOU SWING.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * Asked for as *"offhand slot for dual-wield specific classes or shields"*.
+     *
+     * `composeSheet` names the MAINHAND, so this does not replace what you
+     * attack with — upstream is the same: `Combat.lua:175-192` walks the main
+     * hand, and an off-hand weapon only ever swings through a TALENT that says
+     * so (`attackTargetWith(self:getInven("OFFHAND")[1], ...)`). We have no such
+     * talent yet, so what a second blade gives you here is what upstream's
+     * gives an untalented character: the accuracy and the edge of holding it,
+     * and no second swing.
+     *
+     * IT IS NOT A LIE ABOUT ITS DAMAGE. `combat` is deliberately ABSENT rather
+     * than set to a number nothing reads — an item whose stated damage never
+     * lands is worse than one that never claimed any.
+     */
+    wielder: { mods: { atk: 3, physCrit: 2 } },
+  },
+];
+
 const SECOND_BATCH: readonly Item[] = [
   {
     id: 'item_witness_locket',
@@ -1265,6 +1338,12 @@ export const ITEMS: readonly Item[] = Object.freeze([
   ...WEAPONS,
   ...SECOND_BATCH,
   ...DRAUGHTS,
+  // LAST, AND THAT IS THE RULE RATHER THAN A TIDY-UP. `monsterDropPool`
+  // (content/monsters.ts:262-269) is `ITEMS.filter(tier)` and its note says it
+  // is seed-stable "as long as `ITEMS` is" — so an insertion mid-array moves
+  // every later item's index within its tier and changes what an existing seed
+  // drops. Appending only ever adds an entry at the end of a pool.
+  ...TWO_HANDED_AND_OFFHAND,
 ]);
 
 /** Everything a player can drink. The shop and the inventory both ask. */

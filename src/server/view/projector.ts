@@ -1859,6 +1859,9 @@ function toItemView(item: Item, drinker?: Combatant): Omit<ItemView, 'compare'> 
     name: item.name,
     icon: item.icon,
     tier: item.tier,
+    // WHAT IT KEEPS EMPTY, forwarded verbatim. The panel turns it into a
+    // sentence; see `ItemView.forbids` on why the sentence is not made here.
+    ...(item.forbids === undefined ? {} : { forbids: item.forbids }),
     ...(item.use === undefined ? {} : { use: useText(item.use, drinker) }),
   };
 }
@@ -2670,6 +2673,8 @@ export function projectShop(name: string, stock: readonly string[], level: numbe
       // WHERE IT WOULD GO, omitted for a consumable exactly as the bag omits it
       // — absence is what tells the client there is no slot to compare against.
       ...(item.slot === undefined ? {} : { slot: item.slot }),
+      // AND WHAT IT WOULD KEEP EMPTY, before the money changes hands.
+      ...(item.forbids === undefined ? {} : { forbids: item.forbids }),
       // AND WHAT DRINKING IT DOES, for a consumable on a shelf. No drinker to
       // render against here: a shelf is a broadcast and the sentence would
       // differ per viewer, so this is the authored figure. `projectInventory`

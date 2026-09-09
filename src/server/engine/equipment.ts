@@ -111,13 +111,13 @@
  * guaranteed to agree.
  */
 
-import { SLOT_ORDER } from '../content/items.ts';
+import { SLOT_ORDER, Slot } from '../content/items.ts';
 import { STAT_BASE } from './derived.ts';
 import { DAMAGE_TYPES } from '../../shared/damagetype.ts';
 import { IMMUNITY_KEYS } from '../../shared/immunity.ts';
 import { bound } from '../../shared/scale.ts';
 import type { ImmunitySubtype } from '../../shared/immunity.ts';
-import type { AdditiveMods, AdditiveStats, Item, ItemCatalogue, Slot } from '../content/items.ts';
+import type { AdditiveMods, AdditiveStats, Item, ItemCatalogue } from '../content/items.ts';
 import type { CombatSheet } from './combat.ts';
 import type { OnHitStatus } from './actor.ts';
 import type { DamageType } from '../../shared/damagetype.ts';
@@ -315,7 +315,24 @@ export function composeSheet(base: CombatSheet, worn: readonly Item[]): CombatSh
    * same class the moment it was picked up, so a weapon replaces `damMod` only
    * if it names one of its own.
    */
-  const armed = worn.find((item) => item.combat !== undefined)?.combat;
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE MAINHAND, BY NAME — and `find` was a latent bug the moment an OFFHAND
+   * could hold a weapon.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * This read `worn.find((item) => item.combat !== undefined)`, which takes the
+   * first item in `SLOT_ORDER` order that has a combat table. That was
+   * indistinguishable from correct while `mainhand` was the only slot a weapon
+   * could occupy — and `offhand` precedes it in that order, so the first
+   * dual-wield blade or a shield with a combat table would have become the
+   * weapon you swing.
+   *
+   * `Combat.lua:175-192` walks MAINHAND specifically. So does this.
+   */
+  const armed = worn.find(
+    (item) => item.slot === Slot.Mainhand && item.combat !== undefined,
+  )?.combat;
   if (armed === undefined) return folded;
   return {
     ...folded,

@@ -1302,7 +1302,31 @@ function dropSlotFor(inventory: InventoryMsg, drag: DragSubject | null | undefin
   const item = inventory.carried.find((entry) => entry.itemId === drag.itemId);
   // `?? null` FOR A DRAUGHT: it has no slot, so there is no plate on the doll
   // that will take it and the drag has nowhere legal to land.
-  return item === undefined ? null : (item.slot ?? null);
+  const slot = item === undefined ? null : (item.slot ?? null);
+  if (item === undefined || slot === null) return null;
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * AND NOT A PLATE THE SERVER IS GOING TO REFUSE.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `handleEquip` refuses a `slot_forbid` collision in both directions
+   * (`ActorInventory.lua:437-457`). Without this the doll would light the off
+   * hand up as a legal target while a two-hander is held, the player would drag
+   * a shield onto a plate that says yes, and the drop would come back as an
+   * error toast — which reads as a broken button, not as a rule.
+   *
+   * ═══ THE CLIENT IS NOT DECIDING ANYTHING ═══
+   * This is not a second opinion about whether the equip is legal; the server
+   * still asks both questions and still refuses. This only declines to OFFER a
+   * drop, off the same two facts the server reads, so a stale frame's worst
+   * case is a drag the server then refuses — exactly what happens today.
+   */
+  if (item.forbids !== undefined && inventory.equipped[item.forbids] !== undefined) return null;
+  for (const worn of SLOT_ORDER) {
+    if (worn === slot) continue;
+    if (inventory.equipped[worn]?.forbids === slot) return null;
+  }
+  return slot;
 }
 
 /** Break a flat list of cells into rows of at most `cols`. */
@@ -1319,6 +1343,29 @@ function intoRows(cells: readonly InventoryCell[]): readonly InventoryRow[] {
 }
 
 /** The tier, as a word. A switch, so a fourth `ItemTier` is a compile error. */
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * "IT MUST BE HELD WITH BOTH HANDS." — the rule, said before it refuses.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Ported from tome/class/Object.lua:1175, which is one line and reads
+ * `if self.slot_forbid == "OFFHAND" then desc:add("It must be held with both
+ * hands.", true) end` — upstream special-cases the off hand in prose too,
+ * because a greatsword is the only thing in fifteen years that has needed it.
+ *
+ * ═══ THE OTHER SLOTS GET A SENTENCE ANYWAY ═══
+ * Upstream prints NOTHING for a `slot_forbid` naming any other slot, so an item
+ * forbidding, say, the belt would be silently unwearable there. Ours says the
+ * general form instead. The specific sentence is better English for the case
+ * that exists; the general one is the difference between a rule and a bug for
+ * every case that comes later, and it costs one branch.
+ */
+function forbidText(forbids: Slot | undefined): string {
+  if (forbids === undefined) return '';
+  if (forbids === 'offhand') return 'It must be held with both hands.';
+  return `It keeps your ${forbids} empty while worn.`;
+}
 
 function tierWord(tier: ItemTier): string {
   switch (tier) {
@@ -1466,7 +1513,7 @@ function detailRow(view: InventoryPanelView, inventory: InventoryMsg | null): In
        * Absent on everything that is not usable, so every other row is the row
        * it has always been.
        */
-      useText: carried.use ?? '',
+      useText: carried.use ?? forbidText(carried.forbids),
       rows: carried.compare,
       // DROP IS OFFERED FOR A CARRIED ITEM ONLY. ToME's `playerDrop`
       // (Game.lua:2173-2176 -> `DROP_FLOOR`) drops out of INVEN, and taking a
@@ -1497,8 +1544,10 @@ function detailRow(view: InventoryPanelView, inventory: InventoryMsg | null): In
       // NO `· worn`. The item is ON THE DOLL, which is what the word says; ToME
       // conveys worn-state by which grid a thing is in and never writes it.
       meta: `${tierWord(worn.tier)} · ${slot}`,
-      // NOTHING IS WEARABLE AND DRINKABLE, so the doll never has prose at all.
-      useText: '',
+      // NOTHING IS WEARABLE AND DRINKABLE, so the only prose a worn item ever
+      // has is the rule about what it keeps empty — and the doll is exactly
+      // where a player looks to work out why their shield arm will not fill.
+      useText: forbidText(worn.forbids),
       /**
        * ═══ WHAT THIS COAT IS ACTUALLY GIVING YOU ═══
        * `rows: []` was here because the wire had nothing to put in them —
@@ -1540,7 +1589,7 @@ function detailRow(view: InventoryPanelView, inventory: InventoryMsg | null): In
       // OWN bag for a description when the shelf sent none, which answered for a
       // coat you already owned and for nothing else. `use` rides the shelf frame
       // directly, and gear on a shelf is described by its name and its price.
-      useText: shelved.use ?? '',
+      useText: shelved.use ?? forbidText(shelved.forbids),
       /**
        * ═══════════════════════════════════════════════════════════════════════
        * THE COMPARISON, AND IT ONLY EVER WORKED FOR A COAT YOU ALREADY OWNED.

@@ -1005,6 +1005,42 @@ describe('a weapon in the hand replaces the class table', () => {
     expect(bow.weapon?.damMod).toEqual({ dex: 0.7 });
   });
 
+  it('swings the MAIN hand, and a blade in the off hand is not it', () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * THE `find` THAT WAS RIGHT UNTIL AN OFF HAND COULD HOLD A WEAPON.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * This composed with `worn.find((item) => item.combat !== undefined)` — the
+     * first worn item with a combat table, in `SLOT_ORDER` order. `offhand`
+     * PRECEDES `mainhand` in that order, so the first dual-wield blade would
+     * have silently become the weapon you swing and the sword in your right
+     * hand would have counted for nothing.
+     *
+     * `Combat.lua:175-192` walks MAINHAND by name. The order of this array is
+     * deliberately off-hand-first, because that is the order `wornOf` produces
+     * and the order that made the old code wrong.
+     */
+    const offhandBlade = {
+      id: 'item_test_offhand',
+      name: 'Test Offhand',
+      slot: Slot.Offhand,
+      icon: 'item_service_baton',
+      tier: 'common',
+      wielder: {},
+      combat: { dam: 99, apr: 99, physCrit: 99 },
+    } as unknown as Item;
+
+    const armed = composeSheet(CLASS_SHEET, [offhandBlade, sword()]);
+    expect(armed.weapon?.dam, 'the off hand became the weapon you swing').toBe(33);
+    expect(armed.weapon?.apr).toBe(4);
+
+    // AND WITH NOTHING IN THE MAIN HAND IT IS STILL NOT THE WEAPON. A second
+    // blade gives an untalented character what upstream's gives one: the
+    // accuracy of holding it and no second swing. The class table stands.
+    expect(composeSheet(CLASS_SHEET, [offhandBlade])).toEqual(CLASS_SHEET);
+  });
+
   it('is chosen, not folded — two weapons do not add', () => {
     // The property that kept it off `Wielder`. Only one can be worn in practice
     // (one mainhand), but the composer must not be the thing relying on that.

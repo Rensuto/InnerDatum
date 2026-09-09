@@ -391,3 +391,27 @@ ragged for two commits.
 grey text. That is the designed drop policy and there is a test that a shed row
 is always accompanied by that note — a slot may be held back, never silently
 lost.
+
+## The two-hander and the off hand — `item_bailiffs_maul`, `item_paired_shivs`
+
+**The rule these two exist to teach.** `slot_forbid` is ported
+(`engine/interface/ActorInventory.lua:437-457`): a two-hander refuses to go on
+while the off hand is full, and anything for the off hand refuses while the
+two-hander is held. Upstream carries the rule on exactly one weapon family —
+`BASE_GREATSWORD`, `2hswords.lua:23` — and the whole trade is legible only if the
+player can see, at a glance, that one weapon is *big* and the other is *a pair*.
+The silhouette is doing the teaching here, more than for any other item so far.
+
+Both are in `PENDING_ICON_IDS` (`src/server/content/items.ts`) and render as a
+letter in the cell until the art lands.
+
+| id | tier | what it is |
+|---|---|---|
+| `item_bailiffs_maul` | rare | A long two-handed enforcement maul — a squared iron head on a shafted haft, municipal seal stamped into the cheek. It should read as needing a shoulder behind it. Read the length: this is the only item in the game whose picture has to say "both hands" before the tooltip does. |
+| `item_paired_shivs` | uncommon | TWO short blades drawn as a pair — crossed, or one behind the other — improvised from case-file tools: a letter opener and a filed-down pen knife, taped grips. The pairing is the whole read; a single blade here would be indistinguishable from a one-handed weapon. |
+
+**Cut them at 64x64**, matching every other `item_*` file on disk.
+
+**Acceptance:** as for the first three weapons — each id resolves in the
+manifest, and moving it from `PENDING_ICON_IDS` to `KNOWN_ICON_IDS` keeps
+`npm run check` green.

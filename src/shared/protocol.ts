@@ -2262,6 +2262,25 @@ export type ItemView = {
    * correct rendering; inventing a "no change" line is not this type's job.
    */
   readonly compare: readonly InspectRow[];
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * A SLOT THIS ITEM KEEPS EMPTY — so the refusal is READABLE BEFORE it happens.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `Item.forbids`, upstream's `slot_forbid` (`2hswords.lua:23`). The server
+   * refuses the equip in both directions (`handleEquip`, citing
+   * `ActorInventory.lua:437-457`), and a refusal a player could not have seen
+   * coming reads as a broken button rather than a rule.
+   *
+   * ═══ A FACT, NOT A SENTENCE ═══
+   * Upstream renders `"It must be held with both hands."` in the object
+   * description (`tome/class/Object.lua:1175`), and this deliberately does NOT
+   * carry that string: the wording is the panel's business. The server sends
+   * prose in `use` for one reason only — that text has NUMBERS in it, computed
+   * against this viewer's own stats. This has none, so it stays a slot token
+   * and the client says it in the client's own voice.
+   */
+  readonly forbids?: Slot;
 };
 
 /**
@@ -5814,6 +5833,12 @@ export type ShopItemView = {
   readonly name: string;
   /** A manifest asset key, never a path. */
   readonly icon: string;
+  /**
+   * WHAT IT KEEPS EMPTY — the same field and the same meaning as
+   * `ItemView.forbids`, named again because a shelf row is not an `ItemView`.
+   * A two-hander you can SEE takes both hands before you pay for it.
+   */
+  readonly forbids?: Slot;
   readonly tier: ItemTier;
   /** What it costs YOU, in whole gold. Never zero — nothing here is free. */
   readonly buy: number;

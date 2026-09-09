@@ -2022,4 +2022,90 @@ describe('what you put on changes how much of you there is', () => {
       LORE_IDS[0],
     );
   });
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * TWO HANDS ARE ONE PAIR OF HANDS — `slot_forbid`, asked from both sides.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `ActorInventory.lua:437-457` runs two separate checks and a port that runs
+   * one is a hole in whichever direction it skipped. So both are driven here
+   * over a real socket, and each asserts the OTHER slot is untouched — the
+   * failure mode worth catching is not "it allowed it", it is "it allowed it by
+   * quietly taking the shield off for you".
+   */
+  it('refuses a two-hander while the off hand is full, and takes nothing off', async () => {
+    server = await boot('loot-twohander-blocked');
+    const ren = await connect(server.port);
+    playsThe(WATCHMAN);
+    const body = bodyOf(await ren.hello('ren-handle'));
+    body.carried = ['item_bailiffs_maul'];
+    body.equipped = { offhand: 'item_watchmans_buckler' };
+    ren.clear();
+
+    ren.send({ t: 'equip', itemId: 'item_bailiffs_maul' });
+    await ren.settle();
+
+    expect(ren.last('error')?.['code']).toBe('bad_message');
+    // THE BUCKLER IS STILL ON. A refusal that undressed you would pass an
+    // "is the maul equipped" assertion and lose the player their armour.
+    expect(body.equipped).toEqual({ offhand: 'item_watchmans_buckler' });
+    expect(body.carried).toEqual(['item_bailiffs_maul']);
+  });
+
+  it('refuses an off-hand item while a two-hander is held, and keeps the maul', async () => {
+    server = await boot('loot-offhand-blocked');
+    const ren = await connect(server.port);
+    playsThe(WATCHMAN);
+    const body = bodyOf(await ren.hello('ren-handle'));
+    body.carried = ['item_watchmans_buckler'];
+    body.equipped = { mainhand: 'item_bailiffs_maul' };
+    ren.clear();
+
+    ren.send({ t: 'equip', itemId: 'item_watchmans_buckler' });
+    await ren.settle();
+
+    expect(ren.last('error')?.['code']).toBe('bad_message');
+    expect(body.equipped).toEqual({ mainhand: 'item_bailiffs_maul' });
+    expect(body.carried).toEqual(['item_watchmans_buckler']);
+  });
+
+  it('lets the two-hander on once the off hand is clear', async () => {
+    // THE OTHER HALF OF THE RULE, and the one that catches a check written too
+    // wide: a guard that refused on `forbids !== undefined` alone would pass
+    // both tests above and make the maul unequippable by anyone, ever.
+    server = await boot('loot-twohander-allowed');
+    const ren = await connect(server.port);
+    playsThe(WATCHMAN);
+    const body = bodyOf(await ren.hello('ren-handle'));
+    body.carried = ['item_bailiffs_maul'];
+    body.equipped = {};
+    ren.clear();
+
+    ren.send({ t: 'equip', itemId: 'item_bailiffs_maul' });
+    await ren.settle();
+
+    expect(ren.last('error'), 'the maul was refused with both hands free').toBeUndefined();
+    expect(body.equipped?.mainhand).toBe('item_bailiffs_maul');
+  });
+
+  it('swaps one main-hand weapon for another while the maul is not involved', async () => {
+    // THE SKIP IN THE WORN LOOP. A port without it soft-locks: the maul forbids
+    // the OFF hand, so this passes either way — but write the loop without the
+    // `slot === item.slot` skip and an item that forbade its own slot could
+    // never be replaced. Driven because the skip is otherwise unexercised.
+    server = await boot('loot-twohander-swap');
+    const ren = await connect(server.port);
+    playsThe(WATCHMAN);
+    const body = bodyOf(await ren.hello('ren-handle'));
+    body.carried = ['item_writ_of_seizure'];
+    body.equipped = { mainhand: 'item_bailiffs_maul' };
+    ren.clear();
+
+    ren.send({ t: 'equip', itemId: 'item_writ_of_seizure' });
+    await ren.settle();
+
+    expect(ren.last('error')).toBeUndefined();
+    expect(body.equipped?.mainhand).toBe('item_writ_of_seizure');
+    expect(body.carried).toEqual(['item_bailiffs_maul']);
+  });
 });
