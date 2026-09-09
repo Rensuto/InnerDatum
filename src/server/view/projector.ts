@@ -106,7 +106,12 @@ import { composeSheet, composeWielders, wornOf } from '../engine/equipment.ts';
 import { aimTile, currentTile, turnsToImpact } from '../engine/projectile.ts';
 import { DAMAGE_TYPES, damageTypeName } from '../../shared/damagetype.ts';
 import { IMMUNITY_KEYS } from '../../shared/immunity.ts';
-import { combatGetDamageIncrease, combatGetResist, combatGetResistPen } from '../engine/damage.ts';
+import {
+  combatGetAffinity,
+  combatGetDamageIncrease,
+  combatGetResist,
+  combatGetResistPen,
+} from '../engine/damage.ts';
 import type {
   ActorEffects,
   ActorView,
@@ -2380,6 +2385,10 @@ function compareRows(base: CombatSheet, worn: readonly Item[], candidate: Item):
       ['resist', (c: CombatSheet) => combatGetResist(c.profile ?? {}, type)],
       ['damage', (c: CombatSheet) => combatGetDamageIncrease(c.increase, type)],
       ['penetration', (c: CombatSheet) => combatGetResistPen(c.penetration, type)],
+      // `damage_affinity`. A percentage like the three above it, so it joins
+      // the loop rather than the flat one below; upstream compares it from the
+      // same helper as the rest (`Object.lua:1420`, format `"%+d%%"`).
+      ['affinity', (c: CombatSheet) => combatGetAffinity(c.profile ?? {}, type)],
     ] as const) {
       const delta = Math.round(read(withIt)) - Math.round(read(before));
       const own = Math.round(read(alone)) - Math.round(read(bare));

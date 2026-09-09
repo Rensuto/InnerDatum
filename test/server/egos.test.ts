@@ -124,6 +124,9 @@ describe('the ego roster', () => {
       'ub',
       'kn',
       'lm',
+      // AND `damage_affinity` — an element that HEALS the wearer. Appended to
+      // the suffixes for the same genprob-order reason as everything above it.
+      'sn',
     ]);
   });
 

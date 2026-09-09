@@ -121,7 +121,7 @@ import type { AdditiveMods, AdditiveStats, Item, ItemCatalogue } from '../conten
 import type { CombatSheet } from './combat.ts';
 import type { OnHitStatus } from './actor.ts';
 import type { DamageType } from '../../shared/damagetype.ts';
-import type { TypeTable } from './damage.ts';
+import type { DamageProfile, TypeTable } from './damage.ts';
 import type { CombatMods, PrimaryStats } from './derived.ts';
 
 /**
@@ -378,6 +378,7 @@ export function composeWielders(
   const statDelta = new Map<keyof AdditiveStats, number>();
   const modDelta = new Map<keyof AdditiveMods, number>();
   const resistDelta = new Map<DamageType | 'all', number>();
+  const affinityDelta = new Map<DamageType, number>();
   // THE TWO ATTACKER-SIDE TABLES. Same shape, same fixed key list, same reason.
   const damageDelta = new Map<DamageType | 'all', number>();
   const penDelta = new Map<DamageType, number>();
@@ -434,6 +435,21 @@ export function composeWielders(
         const value = resists[key];
         if (value === undefined) continue;
         resistDelta.set(key, (resistDelta.get(key) ?? 0) + value);
+      }
+    }
+    /**
+     * AND THE OTHER HALF OF A DEFENSIVE BUILD — `damage_affinity`, which does
+     * not reduce anything. ADDITIVE and not multiplicative, because that is
+     * what `combatGetAffinity` is (Combat.lua:2241-2244, a plain sum of `all`
+     * and the typed row) — unlike `resists` above it, whose composition happens
+     * at read time. Two affinity pieces are worth the sum of their numbers.
+     */
+    const affinity = wielder.affinity;
+    if (affinity !== undefined) {
+      for (const key of DAMAGE_TYPES) {
+        const value = affinity[key];
+        if (value === undefined) continue;
+        affinityDelta.set(key, (affinityDelta.get(key) ?? 0) + value);
       }
     }
     /**
@@ -585,12 +601,36 @@ export function composeWielders(
     out.onHit = Object.freeze([...(base.onHit ?? []), ...riders]);
   }
 
-  if (resistDelta.size > 0) {
-    const resists: { -readonly [K in keyof TypeTable]: TypeTable[K] } = {
-      ...base.profile?.resists,
+  /**
+   * ONE `out.profile`, WRITTEN ONCE, AND THAT WAS A LATENT BUG THE MOMENT A
+   * SECOND PROFILE CHANNEL EXISTED.
+   *
+   * This was `if (resistDelta.size > 0) { out.profile = {...base.profile, resists} }`.
+   * A second block of the same shape for `affinity` would spread `base.profile`
+   * again and drop the resists the first block had just written — silently, and
+   * only on a body wearing gear that granted both, which is precisely the
+   * pairing upstream's lite egos are built around (`egos/lite.lua:39-57`).
+   * So both tables are built first and the profile is emitted once.
+   */
+  if (resistDelta.size > 0 || affinityDelta.size > 0) {
+    const profile: { -readonly [K in keyof DamageProfile]: DamageProfile[K] } = {
+      ...base.profile,
     };
-    for (const [key, delta] of resistDelta) resists[key] = (resists[key] ?? 0) + delta;
-    out.profile = Object.freeze({ ...base.profile, resists: Object.freeze(resists) });
+    if (resistDelta.size > 0) {
+      const resists: { -readonly [K in keyof TypeTable]: TypeTable[K] } = {
+        ...base.profile?.resists,
+      };
+      for (const [key, delta] of resistDelta) resists[key] = (resists[key] ?? 0) + delta;
+      profile.resists = Object.freeze(resists);
+    }
+    if (affinityDelta.size > 0) {
+      const affinity: { -readonly [K in keyof TypeTable]: TypeTable[K] } = {
+        ...base.profile?.affinity,
+      };
+      for (const [key, delta] of affinityDelta) affinity[key] = (affinity[key] ?? 0) + delta;
+      profile.affinity = Object.freeze(affinity);
+    }
+    out.profile = Object.freeze(profile);
   }
 
   /**

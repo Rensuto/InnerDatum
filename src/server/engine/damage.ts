@@ -88,7 +88,7 @@
 import { FLAT_RESIST_INTERVAL, bound, rescaleCombatStats } from '../../shared/scale.ts';
 import type { Rng } from '../../shared/rng.ts';
 import { HEAL_FACTOR_MAX, HEAL_FACTOR_MIN, healingFactor, ignoreDirectCrits } from './derived.ts';
-import type { Combatant, PrimaryStats } from './derived.ts';
+import type { CombatMods, Combatant, PrimaryStats } from './derived.ts';
 import { fireDealDamage, fireKill, fireTakeDamage } from './hooks.ts';
 import type { BoundHooks, HookHost, TurnProcs } from './hooks.ts';
 
@@ -179,6 +179,16 @@ export type DamageProfile = {
   readonly resistsCap?: TypeTable;
   /** `flat_damage_armor` — subtracted flat, AFTER percentages (damage_types.lua:404-409). */
   readonly flatDamageArmour?: TypeTable;
+  /**
+   * `damage_affinity` — a PERCENTAGE OF THE BLOW, RESTORED AS HEALTH.
+   *
+   * The one entry on this profile that does not reduce anything. Damage lands
+   * in full and the body is healed for a fraction of it afterwards
+   * (damage_types.lua:307-310 captures, :550-551 spends), so an affinity is
+   * worth more the harder you are hit — the exact opposite shape to
+   * `flatDamageArmour` beside it, and why the two are worth carrying together.
+   */
+  readonly affinity?: TypeTable;
 };
 
 /**
@@ -245,6 +255,29 @@ export function combatGetFlatResist(profile: DamageProfile, type: DamageType): n
   const flat = profile.flatDamageArmour;
   if (flat === undefined) return 0;
   return rescaleCombatStats(tableAll(flat) + tableValue(flat, type), FLAT_RESIST_INTERVAL);
+}
+
+/**
+ * AFFINITY — Combat.lua:2241-2244. ADDITIVE, `all` + typed, exactly as
+ * penetration is and NOT as `resists` is.
+ *
+ * ```lua
+ * function _M:combatGetAffinity(type)
+ *   if not self.damage_affinity then return 0 end
+ *   return (self.damage_affinity.all or 0) + (self.damage_affinity[type] or 0)
+ * ```
+ *
+ * NO RESCALE AND NO CAP, and both absences are upstream's. `combatGetResist`
+ * clamps because its composition inverts above 100 and `combatGetFlatResist`
+ * rescales because flat reduction needs a flatter curve; this is a plain sum
+ * that a caller turns into a fraction of one blow. Nothing about it misbehaves
+ * at large values — 100% affinity is "this element heals you for what it would
+ * have cost", which is a real thing upstream builds around.
+ */
+export function combatGetAffinity(profile: DamageProfile, type: DamageType): number {
+  const affinity = profile.affinity;
+  if (affinity === undefined) return 0;
+  return tableAll(affinity) + tableValue(affinity, type);
 }
 
 /** DAMAGE INCREASE — Combat.lua:2252-2256. ADDITIVE percentages, `all` + typed. */
@@ -461,6 +494,16 @@ export type DamageResolution = {
   readonly beforeResists: number;
   /** The composed resistance percentage actually used, post-penetration inputs. */
   readonly resist: number;
+  /**
+   * What `damage_affinity` will hand back as health once the blow has landed.
+   *
+   * COMPUTED HERE AND SPENT ELSEWHERE, which is upstream's own shape:
+   * damage_types.lua:307-310 captures it into a local at a specific point in
+   * the pipeline and :550-551 spends it at the end, with the comment *"we store
+   * it to apply it after damage is resolved"*. It has to be captured mid-flight
+   * because the number it is a fraction OF stops existing three lines later.
+   */
+  readonly affinityHeal: number;
 };
 
 /**
@@ -573,6 +616,34 @@ export function resolveDamage(
   const inc = combatGetDamageIncrease(spec.increase, spec.type);
   if (inc !== 0) dam = dam + (dam * inc) / 100;
 
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * 6b. AFFINITY IS CAPTURED HERE — damage_types.lua:307-310 — AND SPENT LATER.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * ```lua
+   * -- affinity healing, we store it to apply it after damage is resolved
+   * local affinity_heal = 0
+   * if target.damage_affinity then
+   *   affinity_heal = math.max(0, dam * target:combatGetAffinity(type) / 100)
+   * end
+   * ```
+   *
+   * ═══ THE POSITION IS THE WHOLE MECHANIC, AND IT IS NOT WHERE IT LOOKS ═══
+   * Upstream's line 308 sits AFTER `src.inc_damage` (:200) and BEFORE the
+   * target's resistances (:345) — so the heal is a fraction of the blow the
+   * ATTACKER threw, not of the one that got through. A body with 50% fire
+   * resist and 15% fire affinity takes half and is healed 15% of the WHOLE, so
+   * the two stack in the defender's favour instead of multiplying against each
+   * other. Move this three lines down and the affix quietly becomes worth half
+   * as much to exactly the builds that would buy it.
+   *
+   * `math.max(0, ...)` is upstream's, and it is not redundant: a NEGATIVE
+   * affinity would otherwise be a heal that subtracts hit points through a
+   * function whose whole contract is that it only ever adds.
+   */
+  const affinityHeal = Math.max(0, (dam * combatGetAffinity(target, spec.type)) / 100);
+
   // 7. RESISTANCES — damage_types.lua:345-352, with the Combat.lua:2227-2228
   //    clamps inside `combatGetResist`. Penetration is MULTIPLICATIVE.
   const resist = combatGetResist(target, spec.type);
@@ -598,7 +669,7 @@ export function resolveDamage(
     dam = Math.max(0, dam - dec);
   }
 
-  return { amount: dam, crit, beforeResists, resist };
+  return { amount: dam, crit, beforeResists, resist, affinityHeal };
 }
 
 // ---------------------------------------------------------------------------
@@ -624,6 +695,20 @@ export type DamageTarget = {
   readonly combat?: {
     readonly profile?: DamageProfile;
     readonly stats?: PrimaryStats;
+    /**
+     * `mods` ARRIVED WITH `damage_affinity`, and for the same reason `stats`
+     * arrived with `ignore_direct_crits`: the pipeline started reading it.
+     *
+     * An affinity heal goes through `healActor`, which applies the RECEIVER's
+     * healing factor (`onHeal`, Actor.lua:2086-2089) — and that factor lives on
+     * `mods`. Without this line the heal would silently use the default of 1 on
+     * a body whose sheet says otherwise, which is the same class of bug as the
+     * gear-Constitution one: a stat read somewhere other than the sheet.
+     *
+     * Optional like its two siblings, so the fixtures that pass `{ hp, alive }`
+     * are untouched and a body with no sheet simply heals at the default rate.
+     */
+    readonly mods?: CombatMods;
   };
   /**
    * ═══════════════════════════════════════════════════════════════════════════
@@ -824,6 +909,15 @@ export type DamageOutcome = {
    * rolling badly, and the whole point of pressing the rune is watching it work.
    */
   readonly absorbed: number;
+  /**
+   * What `damage_affinity` handed back as health. 0 when nothing did.
+   *
+   * REPORTED FOR `absorbed`'S REASON — upstream prints it
+   * (`delayedLogMessage(target, nil, "Affinity"..type, "#Source# HEALS from ...
+   * damage!")`, damage_types.lua:552), and a body quietly going UP mid-fight
+   * with no line under it reads as the attacker having missed.
+   */
+  readonly affinityHealed: number;
 };
 
 /**
@@ -856,7 +950,20 @@ export type DamageOutcome = {
  */
 export type HealTarget = {
   hp: number;
-  readonly maxHp: number;
+  /**
+   * OPTIONAL, AND AN ABSENT ONE IS A REFUSAL RATHER THAN AN ERROR.
+   *
+   * It was required while every caller was a talent handed a real `Actor`. The
+   * affinity heal in `applyDamage` is handed a `DamageTarget`, whose `maxHp` is
+   * optional so that the dozens of `{ hp, alive }` fixtures in this suite keep
+   * working — and `Math.min(undefined, n)` is `NaN`, which would put a body on
+   * `NaN/NaN` hit points with nothing throwing anywhere.
+   *
+   * So the ceiling is checked instead of assumed. Every production caller has
+   * one; a fixture without one heals nothing, which is the only honest answer to
+   * "heal this thing up to a maximum it does not have".
+   */
+  readonly maxHp?: number;
   readonly alive: boolean;
   /**
    * A `Combatant`, not a `CombatSheet`. The wider type lives in
@@ -871,6 +978,9 @@ export type HealTarget = {
 /** Restore HP, clamped at max. Returns what was actually restored. */
 export function healActor(target: HealTarget, amount: number): number {
   if (!target.alive || amount <= 0) return 0;
+  // See `HealTarget.maxHp`. No ceiling, no heal — never `NaN` hit points.
+  const maxHp = target.maxHp;
+  if (maxHp === undefined) return 0;
   /**
    * ═══════════════════════════════════════════════════════════════════════════
    * THE RECEIVER'S CONSTITUTION DECIDES WHAT A HEAL IS WORTH. Actor.lua:2086-2089.
@@ -899,8 +1009,58 @@ export function healActor(target: HealTarget, amount: number): number {
   const scaled = Math.round(amount * factor);
   if (scaled <= 0) return 0;
   const before = target.hp;
-  target.hp = Math.min(target.maxHp, target.hp + scaled);
+  target.hp = Math.min(maxHp, target.hp + scaled);
   return target.hp - before;
+}
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * `damage_affinity` — THE BLOW COMES BACK AS HEALTH. damage_types.lua:549-552.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * ```lua
+ * -- damage affinity healing
+ * if not target.dead and affinity_heal > 0 then
+ *   target:heal(affinity_heal, src)
+ * ```
+ *
+ * ═══ AFTER THE BLOW, WHICH IS WHY IT IS A HELPER AND NOT A LINE ═══
+ * Upstream's :550 runs AFTER `takeHit`, so `not target.dead` is asked of a body
+ * that has already taken the hit: a KILLING blow pays nothing. An affinity
+ * cannot save you, it can only pay you for surviving. Heal first and the affix
+ * becomes a second life — a body on 5 hp with a large affinity walks away from
+ * blows that should have finished it — which is a different and much stronger
+ * item than the one upstream priced.
+ *
+ * THE ORDER IS THE GUARD, AND THE `!target.alive` LINE BELOW IS BELT AND
+ * BRACES. Moving this call above `target.hp -= dealt` fails three tests;
+ * deleting the `alive` check on its own fails none, because by the time the
+ * death path returns, `target.alive` is already false and `healActor` refuses a
+ * dead body anyway. Both are kept — the check is upstream's literal `not
+ * target.dead` and it is what makes the helper safe to call from any exit.
+ *
+ * ═══ AND IT IS PAID EVEN WHEN NOTHING GOT THROUGH ═══
+ * The guard is `not target.dead`, not "and the blow landed". `affinityHeal` was
+ * captured from the PRE-RESISTANCE figure (step 6b in `resolveDamage`), so a
+ * body that shrugged the element off entirely is healed anyway — and that is
+ * the intended build rather than a corner case. Upstream's own "of the sun"
+ * lite ego grants `resists { DARKNESS }` and `damage_affinity { LIGHT }` in one
+ * wielder table (`egos/lite.lua:39-57`): the affix exists to be paired with
+ * resistance, and the pairing only pays if the heal survives a blow that dealt
+ * nothing.
+ *
+ * ═══ THROUGH `healActor`, WHICH IS WHY THAT FUNCTION MOVED INTO THIS FILE ═══
+ * Upstream calls `target:heal`, i.e. `onHeal`, i.e. the RECEIVER's healing
+ * factor (Actor.lua:2086-2089). Writing `hp = min(maxHp, hp + n)` here would be
+ * the fifth site to skip it; `healActor`'s docblock is about the four that did.
+ *
+ * `maxHp` IS OPTIONAL ON A `DamageTarget` and required by `healActor`, so a
+ * fixture with no ceiling heals nothing rather than to `NaN`. Every production
+ * caller passes an `Actor`, which has one.
+ */
+function pay(target: DamageTarget, resolved: DamageResolution): number {
+  if (!target.alive) return 0;
+  return healActor(target, resolved.affinityHeal);
 }
 
 /**
@@ -1024,11 +1184,14 @@ export function applyDamage(
     type,
     source: source.id,
     absorbed: 0,
+    affinityHealed: 0,
   };
 
   // A swing at a corpse still consumed its draws above — that is intentional, so
   // the stream does not depend on whether the target happened to die first.
-  if (!target.alive || resolved.amount <= 0) return empty;
+  if (!target.alive) return empty;
+
+  if (resolved.amount <= 0) return { ...empty, affinityHealed: pay(target, resolved) };
 
   /**
    * ═══════════════════════════════════════════════════════════════════════════
@@ -1077,7 +1240,7 @@ export function applyDamage(
   // A CHAIN THAT REFUSED THE BLOW OUTRIGHT still consumed the draws above and
   // still reports the pipeline figure as `raw` — the roll happened; this body
   // simply did not take it.
-  if (after <= 0) return empty;
+  if (after <= 0) return { ...empty, affinityHealed: pay(target, resolved) };
 
   /**
    * ═══════════════════════════════════════════════════════════════════════════
@@ -1104,7 +1267,7 @@ export function applyDamage(
    * both numbers at once. A spread defeats a required field; if a fourth exit is
    * ever added, this is the line it has to be checked against.
    */
-  if (landing <= 0) return { ...empty, absorbed };
+  if (landing <= 0) return { ...empty, absorbed, affinityHealed: pay(target, resolved) };
 
   const dealt = Math.min(target.hp, landing);
   target.hp -= dealt;
@@ -1154,10 +1317,14 @@ export function applyDamage(
      * inside `applyDamage`, and say in the commit what it costs.
      */
     target.alive = false;
+    // NO AFFINITY ON THE BLOW THAT KILLED — upstream's guard at
+    // damage_types.lua:550 is `not target.dead`, evaluated after `takeHit`. The
+    // one exit in this function that pays nothing, and the reason `pay` exists
+    // as a helper rather than as a line at the bottom. See its docblock.
     notifySource(source, target.id ?? '', dealt, type, resolved.crit, true);
     return { ...empty, dealt, killed: true, absorbed };
   }
 
   notifySource(source, target.id ?? '', dealt, type, resolved.crit, false);
-  return { ...empty, dealt, absorbed };
+  return { ...empty, dealt, absorbed, affinityHealed: pay(target, resolved) };
 }

@@ -1723,6 +1723,25 @@ describe('what an item is worth, wherever it appears', () => {
     ).toBe(true);
   });
 
+  it('prices an AFFINITY, the channel that turns an element into healing', () => {
+    // Upstream compares it on this screen from the same helper as the resists —
+    // `compare_table_fields(w, ..., "damage_affinity", "%+d%%",
+    // "Damage affinity(heal): ", ...)` at Object.lua:1420. A percentage, so it
+    // joins the per-type loop rather than the flat one beside it.
+    const world = room();
+    const body = watchman(world);
+    const sunless = 'item_watchmans_cap~sn3';
+    expect(resolveItem(sunless)?.wielder?.affinity, 'the cap lost its affinity').toBeDefined();
+
+    const bag = projectInventory(Object.assign(body, { carried: [sunless] })).carried;
+    const rows = bag.find((row) => row.itemId === sunless)?.compare;
+    expect(
+      rows?.some((row) => row.label === 'Darkness affinity'),
+      JSON.stringify(rows),
+    ).toBe(true);
+    expect(rows?.find((row) => row.label === 'Darkness affinity')?.value).toContain('%');
+  });
+
   it('prices the two FLAT tables, which are points and which read as nothing', () => {
     /**
      * ═══════════════════════════════════════════════════════════════════════

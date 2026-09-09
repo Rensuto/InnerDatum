@@ -537,3 +537,191 @@ describe('applyDamage — step 9, ActorLife.lua:71-81', () => {
     expect(target.hp).toBe(40);
   });
 });
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * `damage_affinity` — THE ELEMENT THAT FEEDS YOU. damage_types.lua:307-310, :549-552.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * ```lua
+ * -- affinity healing, we store it to apply it after damage is resolved
+ * local affinity_heal = 0
+ * if target.damage_affinity then
+ *   affinity_heal = math.max(0, dam * target:combatGetAffinity(type) / 100)
+ * end
+ * ...
+ * if not target.dead and affinity_heal > 0 then target:heal(affinity_heal, src) end
+ * ```
+ *
+ * TWO POSITIONS DECIDE EVERYTHING ABOUT THIS AFFIX AND NEITHER IS OBVIOUS:
+ *
+ *   THE CAPTURE, at :308, sits AFTER the attacker's `inc_damage` (:200) and
+ *   BEFORE the target's resistances (:345). The heal is a fraction of the blow
+ *   THROWN, not the blow TAKEN — so resistance and affinity add up for the
+ *   defender instead of multiplying against each other.
+ *
+ *   THE SPEND, at :550, sits AFTER `takeHit`. So the guard `not target.dead`
+ *   means a KILLING blow pays nothing: an affinity buys you payment for
+ *   surviving, never survival itself.
+ *
+ * Both are pinned below, because both are one line away from a version that
+ * looks right, passes every plumbing test, and prices the affix wrongly.
+ */
+describe('damage affinity — the blow comes back as health', () => {
+  const body = (hp: number, maxHp: number, profile: DamageProfile): DamageTarget => ({
+    hp,
+    maxHp,
+    alive: true,
+    combat: { profile },
+  });
+
+  it('heals a percentage of the blow, and the percentage is ADDITIVE', () => {
+    // `combatGetAffinity` is `(all or 0) + (typed or 0)` — Combat.lua:2241-2244,
+    // penetration's shape and not `resists`' multiplicative one.
+    const target = body(50, 100, { affinity: { all: 10, darkness: 20 } });
+    const out = applyDamage(target, 40, DamageType.Darkness, { id: 'a' }, scriptedRng([]));
+
+    expect(out.dealt).toBeCloseTo(40, 10);
+    // 30% of 40 = 12, so 50 - 40 + 12.
+    expect(out.affinityHealed).toBe(12);
+    expect(target.hp).toBeCloseTo(22, 10);
+  });
+
+  it('takes its fraction BEFORE resistance, which is the whole affix', () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * ONE LINE LOWER AND THE AFFIX IS WORTH HALF AS MUCH TO ITS OWN BUILD.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * 50% resist and 20% affinity against a 40-point blow: 20 lands, and the
+     * heal is 20% of FORTY rather than of twenty. Move the capture below
+     * `combatGetResist` and this test reads 4 instead of 8 — no crash, no type
+     * error, and the strongest defensive pairing in the game quietly halved for
+     * exactly the players who assembled it.
+     */
+    const target = body(50, 100, { resists: { fire: 50 }, affinity: { fire: 20 } });
+    const out = applyDamage(target, 40, DamageType.Fire, { id: 'a' }, scriptedRng([]));
+
+    expect(out.dealt, 'resistance stopped applying').toBeCloseTo(20, 10);
+    expect(out.affinityHealed, 'the heal was taken from the resisted figure').toBe(8);
+  });
+
+  it('pays even when the blow was resisted to NOTHING', () => {
+    /**
+     * The guard upstream writes is `not target.dead`, not "and it hurt". This
+     * is the shape upstream's own lite egos are sold as — resist one element,
+     * feed on another — and the pairing only pays if a fully-shrugged blow
+     * still hands its share back. It is also the reason `applyDamage`'s
+     * `amount <= 0` early return had to be split from the `!alive` one.
+     */
+    const target = body(50, 100, { resists: { cold: 100 }, affinity: { cold: 20 } });
+    const out = applyDamage(target, 40, DamageType.Cold, { id: 'a' }, scriptedRng([]));
+
+    expect(out.dealt, 'a fully resisted blow dealt damage').toBe(0);
+    expect(out.affinityHealed).toBe(8);
+    expect(target.hp).toBe(58);
+  });
+
+  it('pays NOTHING on the blow that killed — an affinity is not a second life', () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * THE FIXTURE IS SIZED SO THAT HEALING FIRST WOULD CHANGE THE OUTCOME.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * :550 runs after `takeHit`, so the guard is evaluated against a body that
+     * has already taken the blow. Five hit points, a forty-point hit, and an
+     * affinity big enough to pay eighty: in upstream's order the body dies and
+     * is paid nothing; in the reversed order it goes to 85, takes 40, and walks
+     * away on 45.
+     *
+     * A SMALLER AFFINITY WOULD NOT HAVE PROVEN IT. The first draft used 50%,
+     * where healing first still ends in a corpse — so reversing the order
+     * changed nothing and the test passed against the mutation. That is the
+     * membership-versus-rank mistake in miniature: the assertion was true of the
+     * fixture rather than of the rule.
+     */
+    const target = body(5, 100, { affinity: { mind: 200 } });
+    const out = applyDamage(target, 40, DamageType.Mind, { id: 'a' }, scriptedRng([]));
+
+    expect(out.killed).toBe(true);
+    expect(out.affinityHealed).toBe(0);
+    expect(target.hp).toBe(0);
+    expect(target.alive).toBe(false);
+  });
+
+  it('goes through the healing factor, like every other heal in the game', () => {
+    /**
+     * Upstream calls `target:heal`, i.e. `onHeal` (Actor.lua:2086-2089), i.e.
+     * the RECEIVER's `healing_factor`. `healActor` moved into damage.ts for
+     * this line: a hand-written `hp = min(maxHp, hp + n)` here would have been
+     * the fifth site in the codebase to skip it.
+     */
+    const sheet = (healMod: number): DamageTarget => ({
+      hp: 50,
+      maxHp: 100,
+      alive: true,
+      combat: { profile: { affinity: { fire: 20 } }, mods: { healMod } },
+    });
+
+    // 20% of 40 is 8. `healingFactor` is `1 + con term + healMod` (derived.ts),
+    // and at base Constitution the con term is 0 — so +0.5 makes the factor 1.5.
+    const boosted = applyDamage(sheet(0.5), 40, DamageType.Fire, { id: 'a' }, scriptedRng([]));
+    expect(boosted.affinityHealed).toBe(12);
+
+    // AND THE CLAMP IS THE FACTOR'S, NOT THE AFFINITY'S. `healActor` bounds
+    // through `HEAL_FACTOR_MIN`/`MAX` exactly where upstream's `onHeal` does
+    // (`util.bound((self.healing_factor or 1), 0, 2.5)`), so an absurd modifier
+    // tops out at two and a half rather than running away. Pinned because the
+    // affinity is the first heal in the game whose SIZE is set by the attacker.
+    const absurd = applyDamage(sheet(50), 40, DamageType.Fire, { id: 'a' }, scriptedRng([]));
+    expect(absurd.affinityHealed).toBe(20);
+  });
+
+  it('is clamped at the ceiling, and answers 0 for a body that has none', () => {
+    // `healActor` clamps at `maxHp`; an affinity cannot overheal any more than
+    // a bandage can. And `DamageTarget.maxHp` is optional for the fixtures in
+    // this file — no ceiling is a refusal rather than `NaN` hit points.
+    const nearlyFull = body(98, 100, { affinity: { all: 50 } });
+    applyDamage(nearlyFull, 40, DamageType.Physical, { id: 'a' }, scriptedRng([]));
+    expect(nearlyFull.hp).toBe(78);
+
+    const ceilingless: DamageTarget = {
+      hp: 50,
+      alive: true,
+      combat: { profile: { affinity: { all: 50 } } },
+    };
+    const out = applyDamage(ceilingless, 40, DamageType.Physical, { id: 'a' }, scriptedRng([]));
+    expect(out.affinityHealed).toBe(0);
+    expect(Number.isNaN(ceilingless.hp)).toBe(false);
+  });
+
+  it('costs no draw, so adding one to a sheet cannot shift a replay', () => {
+    // Every number here is arithmetic on values already rolled. shared/rng.ts:
+    // adding or removing a draw always alters a replay, and this adds none.
+    const withAffinity = scriptedRng([25, 100]);
+    applyDamage(
+      body(50, 100, { affinity: { all: 20 } }),
+      40,
+      DamageType.Physical,
+      { id: 'a' },
+      withAffinity,
+      {
+        damageRange: 1.5,
+        critChance: 50,
+      },
+    );
+    const without = scriptedRng([25, 100]);
+    applyDamage(body(50, 100, {}), 40, DamageType.Physical, { id: 'a' }, without, {
+      damageRange: 1.5,
+      critChance: 50,
+    });
+    expect(drawCount(withAffinity)).toBe(drawCount(without));
+  });
+
+  it('answers 0 for a sheet with no affinity table at all', () => {
+    const target = body(50, 100, { resists: { fire: 10 } });
+    const out = applyDamage(target, 40, DamageType.Fire, { id: 'a' }, scriptedRng([]));
+    expect(out.affinityHealed).toBe(0);
+    expect(target.hp).toBeCloseTo(14, 10);
+  });
+});

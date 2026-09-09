@@ -211,6 +211,21 @@ export type Ego = {
      */
     readonly retaliation?: Partial<Record<DamageType, EgoGrant>>;
     /**
+     * `damage_affinity` — the element that FEEDS the wearer. See
+     * `Wielder.affinity` for the mechanic and where in the projector it is
+     * captured.
+     *
+     * ═══ A GREATER-EGO SHAPE, AND THE RARITY IS THE PORT ═══
+     * Upstream never puts this on a common affix. The two lite suffixes are
+     * `rarity 30, level_range {30,50}, greater_ego = 1` with a flat 5
+     * (`egos/lite.lua:39-57` and :59-77), and the antimagic glove prefix is
+     * rarity 40 with `mbonus_material(10, 5)` (`egos/gloves.lua:419-444`).
+     * Turning an element into healing is the strongest defensive shape in the
+     * game; fifteen years of tuning put it behind a rarity almost nothing else
+     * here reaches.
+     */
+    readonly affinity?: Partial<Record<DamageType, EgoGrant>>;
+    /**
      * `*_immune`. See `Wielder.immunities` — the answer to being DISABLED
      * rather than to being hurt, which until now the game had none of.
      *
@@ -900,6 +915,54 @@ const SUFFIXES: readonly Ego[] = [
     grants: { resists: { [DamageType.Darkness]: { floor: 5, step: 2 } } },
     cost: 55,
   },
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE ELEMENT THAT FEEDS YOU — `damage_affinity`. Upstream's rarest shape.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Ported from the two lite suffixes, which are the same affix twice:
+   * " of the sun" grants `damage_affinity { LIGHT } = 5` and " of the moons"
+   * grants `damage_affinity { DARKNESS } = 5` (`egos/lite.lua:39-57` and
+   * :59-77). Both are `greater_ego = 1, rarity = 30, level_range = {30, 50}`.
+   *
+   * ═══ ONE, NOT TWO, AND IT IS THE DARKNESS ONE ═══
+   * Upstream can afford the pair because Light is a damage type its content
+   * throws at you. `DAMAGE_TYPES` here has six and Light is not among them; the
+   * Redaction deals Darkness, so that is the affinity worth carrying. Same
+   * argument the two brands make (`Ego.grants.brand`) and the same one
+   * ` of the Lamp` above makes about Darkness resistance.
+   *
+   * ═══ THE AFFINITY ALONE, WITHOUT UPSTREAM'S COMPANION RESIST ═══
+   * Each lite suffix also carries `resists` and `inc_damage` in the OPPOSITE
+   * element — sun resists darkness, moons resist light. That pairing is
+   * thematic rather than mechanical (the favourable stacking is resist and
+   * affinity in the SAME element, which neither ego does), and its other half
+   * is a damage type this game does not have. Porting it would mean choosing a
+   * partner element upstream never chose, which is inventing a curve rather
+   * than using one.
+   *
+   * ═══ FLAT, BECAUSE UPSTREAM'S IS A LITERAL ═══
+   * `damage_affinity = { [DamageType.LIGHT] = 5 }` is not an
+   * `mbonus_material` roll, so there is no curve to port. `assertGrant` permits
+   * a zero step: its rule is that every resolved value is a positive integer,
+   * not that everything must scale.
+   *
+   * ═══ LEVEL THIRTY IS UPSTREAM'S AND IS HEADROOM TODAY ═══
+   * The deepest delve authors level fifteen, so this will not roll until the
+   * map goes further — exactly as `Case-Hardened ` at 28 and ` of the Far Map`
+   * at 30 already do not. Gating it where our content currently ends would put
+   * the strongest defensive affix in the game in a level-15 pocket, on a curve
+   * nobody upstream drew.
+   */
+  {
+    code: 'sn',
+    name: ' of the Sunless Year',
+    tag: EgoSlotTag.Suffix,
+    rarity: 30,
+    levelRange: [30, 50],
+    grants: { affinity: { [DamageType.Darkness]: { floor: 5, step: 0 } } },
+    cost: 30,
+  },
 ];
 
 /** Every authored ego, prefixes then suffixes. Order is `EGO_TAG_ORDER`. */
@@ -997,6 +1060,7 @@ export function validateEgos(egos: readonly Ego[]): readonly Ego[] {
     const penGrants = Object.entries(ego.grants.penetration ?? {});
     const brandGrants = Object.entries(ego.grants.brand ?? {});
     const retaliationGrants = Object.entries(ego.grants.retaliation ?? {});
+    const affinityGrants = Object.entries(ego.grants.affinity ?? {});
     const immunityGrants = Object.entries(ego.grants.immunities ?? {});
     if (
       statGrants.length === 0 &&
@@ -1006,6 +1070,7 @@ export function validateEgos(egos: readonly Ego[]): readonly Ego[] {
       penGrants.length === 0 &&
       brandGrants.length === 0 &&
       retaliationGrants.length === 0 &&
+      affinityGrants.length === 0 &&
       immunityGrants.length === 0
     ) {
       throw new Error(
@@ -1026,6 +1091,7 @@ export function validateEgos(egos: readonly Ego[]): readonly Ego[] {
       ...penGrants,
       ...brandGrants,
       ...retaliationGrants,
+      ...affinityGrants,
     ]) {
       if (!DAMAGE_TYPES.includes(key as DamageType)) {
         throw new Error(
@@ -1074,6 +1140,7 @@ export function validateEgos(egos: readonly Ego[]): readonly Ego[] {
       ...penGrants,
       ...brandGrants,
       ...retaliationGrants,
+      ...affinityGrants,
       ...immunityGrants,
     ]) {
       if (DEAD_GRANT_KEYS.includes(key)) {
@@ -1224,6 +1291,12 @@ export function egoWielder(ego: Ego, power: number, tier: ItemTier): Wielder {
     retaliation[key as DamageType] = grantValue(grant, power, tier);
   }
 
+  const affinity: Partial<Record<DamageType, number>> = {};
+  for (const [key, grant] of Object.entries(ego.grants.affinity ?? {})) {
+    if (grant === undefined) continue;
+    affinity[key as DamageType] = grantValue(grant, power, tier);
+  }
+
   const immunities: Partial<Record<ImmunitySubtype, number>> = {};
   for (const [key, grant] of Object.entries(ego.grants.immunities ?? {})) {
     if (grant === undefined) continue;
@@ -1242,6 +1315,7 @@ export function egoWielder(ego: Ego, power: number, tier: ItemTier): Wielder {
     penetration?: typeof penetration;
     brand?: typeof brand;
     retaliation?: typeof retaliation;
+    affinity?: typeof affinity;
     immunities?: typeof immunities;
   } = {};
   if (Object.keys(stats).length > 0) out.stats = stats;
@@ -1251,6 +1325,7 @@ export function egoWielder(ego: Ego, power: number, tier: ItemTier): Wielder {
   if (Object.keys(penetration).length > 0) out.penetration = penetration;
   if (Object.keys(brand).length > 0) out.brand = brand;
   if (Object.keys(retaliation).length > 0) out.retaliation = retaliation;
+  if (Object.keys(affinity).length > 0) out.affinity = affinity;
   if (Object.keys(immunities).length > 0) out.immunities = immunities;
   return out;
 }

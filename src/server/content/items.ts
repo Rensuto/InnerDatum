@@ -462,6 +462,35 @@ export type Wielder = {
   readonly retaliation?: Partial<Record<DamageType, number>>;
   /**
    * ═══════════════════════════════════════════════════════════════════════════
+   * `damage_affinity` — THE ELEMENT THAT FEEDS YOU. A percentage, healed back.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * The only defensive channel in this file that does not reduce anything.
+   * Damage lands in full and the body is healed for a fraction of it after —
+   * `affinity_heal = max(0, dam * combatGetAffinity(type) / 100)` captured at
+   * damage_types.lua:307-310 and spent at :549-552.
+   *
+   * ═══ THE FRACTION IS OF THE BLOW THROWN, NOT THE BLOW TAKEN ═══
+   * The capture sits after the attacker's `inc_damage` (:200) and BEFORE the
+   * target's resistances (:345). So resistance and affinity stack in the
+   * defender's favour rather than multiplying against each other, and the
+   * intended build is to carry both in the same element — which is exactly what
+   * upstream's "of the sun" lite ego does, granting `resists { DARKNESS }` and
+   * `damage_affinity { LIGHT }` in one wielder table (`egos/lite.lua:39-57`).
+   *
+   * ═══ IT IS A GREATER-EGO AFFIX UPSTREAM, AND THE MAGNITUDES ARE SMALL ═══
+   * Flat 5 on the two lite suffixes (rarity 30, `level_range {30,50}`), and
+   * `mbonus_material(10, 5)` on the antimagic glove prefix (rarity 40,
+   * `egos/gloves.lua:429-444`). Nothing common carries it: an affix that turns
+   * an element into healing is the strongest defensive shape in the game and
+   * fifteen years of tuning put it behind rarity 30.
+   *
+   * A KILLING BLOW PAYS NOTHING — upstream's guard is `not target.dead`,
+   * evaluated after the hit lands. See `pay` in engine/damage.ts.
+   */
+  readonly affinity?: Partial<Record<DamageType, number>>;
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
    * `inc_damage` — HOW MUCH HARDER THIS ELEMENT LANDS. A percentage.
    * ═══════════════════════════════════════════════════════════════════════════
    *
@@ -1588,6 +1617,22 @@ export const MAX_ITEM_DAMAGE = 20;
  */
 export const MAX_ITEM_FLAT_DAMAGE = 35;
 
+/**
+ * The most one item may put on `affinity`, as a percentage of the blow.
+ *
+ * Its own ceiling rather than `MAX_ITEM_DAMAGE`'s, because it is the only
+ * channel here that turns an attack into healing and the arithmetic runs the
+ * other way: at 100 an element stops being a threat at all and becomes a
+ * resource, which is a thing upstream builds whole characters around and not a
+ * thing one affix should hand over.
+ *
+ * Upstream's own generated rolls are far under this — flat 5 on the two lite
+ * suffixes and `mbonus_material(10, 5)` on the antimagic gloves, all of them
+ * `greater_ego` at rarity 30 or 40. The bound is set to leave room for a
+ * deliberately strong artifact later without leaving room for a mistake.
+ */
+export const MAX_ITEM_AFFINITY = 25;
+
 export const DEAD_MOD_KEYS: readonly string[] = Object.freeze([
   /**
    * ═══════════════════════════════════════════════════════════════════════════
@@ -1733,6 +1778,7 @@ export function validateItems(items: readonly Item[]): readonly Item[] {
     for (const [table, cap, units] of [
       [item.wielder.damage, MAX_ITEM_DAMAGE, 'whole percentages'] as const,
       [item.wielder.penetration, 100, 'whole percentages'] as const,
+      [item.wielder.affinity, MAX_ITEM_AFFINITY, 'whole percentages'] as const,
       [item.wielder.brand, MAX_ITEM_FLAT_DAMAGE, 'whole points of flat damage'] as const,
       [item.wielder.retaliation, MAX_ITEM_FLAT_DAMAGE, 'whole points of flat damage'] as const,
     ]) {

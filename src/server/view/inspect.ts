@@ -40,7 +40,12 @@ import { hitChance } from '../../shared/checkhit.ts';
 import { chebyshev } from '../../shared/coords.ts';
 import { IMMUNITY_KEYS } from '../../shared/immunity.ts';
 import { DAMAGE_TYPES, damageTypeName } from '../../shared/damagetype.ts';
-import { combatGetDamageIncrease, combatGetResist, combatGetResistPen } from '../engine/damage.ts';
+import {
+  combatGetAffinity,
+  combatGetDamageIncrease,
+  combatGetResist,
+  combatGetResistPen,
+} from '../engine/damage.ts';
 import { ActorKind, InspectGroup } from '../../shared/protocol.ts';
 import { classById } from '../content/classes.ts';
 import { originOf } from '../content/origins.ts';
@@ -165,6 +170,31 @@ function pushResistRows(rows: InspectRow[], c: CombatSheet, group?: InspectGroup
     if (value === 0) continue;
     rows.push({
       label: `${damageTypeName(type)} resist`,
+      value: `${String(value)}%`,
+      ...(group === undefined ? {} : { group }),
+    });
+  }
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * AND THE ELEMENT THAT FEEDS YOU — `damage_affinity`, on the same card.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Upstream keeps them together too: `CharacterSheet.lua:1425-1445` prints the
+   * affinity block immediately beside the resistances, and `Object.lua:1420`
+   * labels it `"Damage affinity(heal): "` — the parenthetical being the whole
+   * reason it needs a word rather than a number. A row reading "Darkness 5%"
+   * next to "Fire resist 23%" would read as a very small resistance.
+   *
+   * IN THIS FUNCTION rather than its own, because it belongs in the same GROUP
+   * and the group is decided by the caller: both are `Defence`, and a separate
+   * push would have to be threaded to both of this function's two call sites
+   * with the same argument.
+   */
+  for (const type of DAMAGE_TYPES) {
+    const value = Math.round(combatGetAffinity(c.profile ?? {}, type));
+    if (value === 0) continue;
+    rows.push({
+      label: `${damageTypeName(type)} affinity`,
       value: `${String(value)}%`,
       ...(group === undefined ? {} : { group }),
     });

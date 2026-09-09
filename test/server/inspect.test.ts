@@ -957,6 +957,28 @@ describe('what a body shrugs off is finally on a screen', () => {
     );
   });
 
+  it('names the element that HEALS a body, beside the ones it resists', async () => {
+    /**
+     * `damage_affinity`. Upstream keeps the two together on this screen —
+     * `CharacterSheet.lua:1425-1445` prints the affinity block immediately after
+     * the resistances — and labels it `"Damage affinity(heal): "` at
+     * `Object.lua:1420`. The word is what stops "Darkness 5%" reading as a very
+     * small resistance next to "Fire resist 23%".
+     */
+    const floor = await scene();
+    const me = floor.viewer;
+    me.combat = {
+      ...(me.combat ?? {}),
+      profile: { resists: { fire: 23 }, affinity: { darkness: 5 } },
+    };
+
+    const rows = rowsOf(viewOf(await floor.client.inspect(floor.viewer.id)));
+    expect(rows).toContainEqual(expect.objectContaining({ label: 'Fire resist', value: '23%' }));
+    expect(rows).toContainEqual(
+      expect.objectContaining({ label: 'Darkness affinity', value: '5%' }),
+    );
+  });
+
   it('prints the brand and the spikes, the last two channels with no readout', async () => {
     /**
      * ═══════════════════════════════════════════════════════════════════════

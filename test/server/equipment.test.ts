@@ -6,7 +6,7 @@ import { ITEMS, SLOT_ORDER, Slot, itemById } from '../../src/server/content/item
 import { EffectId } from '../../src/server/content/effects.ts';
 import { resolveItem } from '../../src/server/content/resolve.ts';
 import { composeSheet, composeWielders, wornOf } from '../../src/server/engine/equipment.ts';
-import { applyDamage, combatGetResist } from '../../src/server/engine/damage.ts';
+import { applyDamage, combatGetAffinity, combatGetResist } from '../../src/server/engine/damage.ts';
 import { DamageType } from '../../src/shared/damagetype.ts';
 import { createRng } from '../../src/shared/rng.ts';
 import {
@@ -754,6 +754,8 @@ describe('gear can finally answer an element', () => {
    */
   const resistOf = (sheet: { profile?: unknown }, type: DamageType): number =>
     Math.round(combatGetResist((sheet as { profile?: object }).profile ?? {}, type));
+  const affinityOf = (sheet: { profile?: unknown }, type: DamageType): number =>
+    Math.round(combatGetAffinity((sheet as { profile?: object }).profile ?? {}, type));
 
   it('carries a resistance from a worn item onto the sheet', () => {
     const sheet = composeWielders(WATCHMAN.combat, [{ resists: { [FIRE]: 15 } }]);
@@ -796,6 +798,43 @@ describe('gear can finally answer an element', () => {
     const before = structuredClone(WATCHMAN.combat.profile ?? null);
     composeWielders(WATCHMAN.combat, [{ resists: { [FIRE]: 15 } }]);
     expect(WATCHMAN.combat.profile ?? null).toEqual(before);
+  });
+
+  it('carries a RESIST and an AFFINITY from one loadout without losing either', () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * TWO CHANNELS, ONE `profile`, AND THE SECOND ONE USED TO EAT THE FIRST.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * The fold writes `out.profile` as a fresh object spread from
+     * `base.profile`. While `resists` was the only channel under it, one such
+     * block was correct. A second block of the same shape for `affinity` spreads
+     * `base.profile` AGAIN — dropping the resists the first block had just
+     * written, silently, and only for a body wearing gear that granted both.
+     *
+     * Which is the exact pairing the channel exists for: upstream's lite egos
+     * put a resistance and an affinity in ONE wielder table
+     * (`egos/lite.lua:39-57`). So the failure would have shown up first on the
+     * only loadout anybody would assemble on purpose.
+     */
+    const sheet = composeWielders(WATCHMAN.combat, [
+      { resists: { [FIRE]: 15 } },
+      { affinity: { [COLD]: 20 } },
+    ]);
+    expect(resistOf(sheet, FIRE), 'the affinity block overwrote the resists').toBe(15);
+    expect(affinityOf(sheet, COLD)).toBe(20);
+  });
+
+  it('adds affinity across pieces, and answers zero without any', () => {
+    // ADDITIVE, like penetration and unlike `resists` — `combatGetAffinity` is a
+    // plain sum of the `all` row and the typed one (Combat.lua:2241-2244).
+    const sheet = composeWielders(WATCHMAN.combat, [
+      { affinity: { [COLD]: 8 } },
+      { affinity: { [COLD]: 7, [FIRE]: 5 } },
+    ]);
+    expect(affinityOf(sheet, COLD)).toBe(15);
+    expect(affinityOf(sheet, FIRE)).toBe(5);
+    expect(affinityOf(composeWielders(WATCHMAN.combat, []), COLD)).toBe(0);
   });
 
   it('keeps the cap and the flat reduction it was given', () => {

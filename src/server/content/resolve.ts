@@ -501,6 +501,10 @@ export function resolveItem(id: string): Item | undefined {
   for (const [key, value] of Object.entries(base.wielder.retaliation ?? {})) {
     retaliation[key] = atMaterial(value, material);
   }
+  const affinity: Record<string, number> = {};
+  for (const [key, value] of Object.entries(base.wielder.affinity ?? {})) {
+    affinity[key] = atMaterial(value, material);
+  }
   /**
    * AND THE STATUS DEFENCE, on the grade curve with everything else — "it is
    * better at everything", the rule stated above.
@@ -559,6 +563,9 @@ export function resolveItem(id: string): Item | undefined {
     for (const [key, value] of Object.entries(wielder.retaliation ?? {})) {
       retaliation[key] = (retaliation[key] ?? 0) + value;
     }
+    for (const [key, value] of Object.entries(wielder.affinity ?? {})) {
+      affinity[key] = (affinity[key] ?? 0) + value;
+    }
     /**
      * THE LINE WHOSE ABSENCE MADE THE WHOLE IMMUNITY CHANNEL INVISIBLE.
      *
@@ -582,6 +589,7 @@ export function resolveItem(id: string): Item | undefined {
     penetration?: typeof penetration;
     brand?: typeof brand;
     retaliation?: typeof retaliation;
+    affinity?: typeof affinity;
     immunities?: typeof immunities;
   } = {};
   if (Object.keys(stats).length > 0) merged.stats = stats;
@@ -591,6 +599,7 @@ export function resolveItem(id: string): Item | undefined {
   if (Object.keys(penetration).length > 0) merged.penetration = penetration;
   if (Object.keys(brand).length > 0) merged.brand = brand;
   if (Object.keys(retaliation).length > 0) merged.retaliation = retaliation;
+  if (Object.keys(affinity).length > 0) merged.affinity = affinity;
   if (Object.keys(immunities).length > 0) merged.immunities = immunities;
 
   // Prefixes carry their own trailing space and suffixes their own leading one
