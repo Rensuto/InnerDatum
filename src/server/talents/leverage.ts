@@ -39,7 +39,7 @@
  */
 
 import { combatTalentScale } from '../../shared/scale.ts';
-import { healActor } from '../engine/talents.ts';
+import { healActor } from '../engine/damage.ts';
 import { EffectId } from '../content/effects.ts';
 import { EffectStatus, SetEffectOutcome } from '../engine/effects.ts';
 import { combatPhysicalpower, TalentPower } from '../engine/derived.ts';

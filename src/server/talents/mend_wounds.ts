@@ -54,13 +54,12 @@
  */
 
 import { combatTalentScale } from '../../shared/scale.ts';
-import { DamageType } from '../engine/damage.ts';
+import { DamageType, healActor } from '../engine/damage.ts';
 import {
   Affinity,
   ClassId,
   ballTiles,
   actorsInShape,
-  healActor,
   talentId,
   percent,
   talentDone,

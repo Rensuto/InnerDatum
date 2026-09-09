@@ -59,12 +59,12 @@ import {
   TalentKind,
   TalentRefusal,
   TargetShape,
-  healActor,
   talentDone,
   talentId,
   talentRefused,
   tomeCooldownToTurns,
 } from '../engine/talents.ts';
+import { healActor } from '../engine/damage.ts';
 import type { Talent } from '../engine/talents.ts';
 
 /** `inscription_data.heal = 50` (human.lua:55). See the header for why it fits. */

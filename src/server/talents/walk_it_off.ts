@@ -48,7 +48,7 @@
  */
 
 import { combatTalentScale } from '../../shared/scale.ts';
-import { healActor } from '../engine/talents.ts';
+import { healActor } from '../engine/damage.ts';
 import { DamageType } from '../engine/damage.ts';
 import { Affinity, TalentKind, TargetShape } from '../engine/talents.ts';
 import type { Talent } from '../engine/talents.ts';

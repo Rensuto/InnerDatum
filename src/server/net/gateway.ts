@@ -152,7 +152,7 @@ import { monsterById } from '../content/monsters.ts';
 import type { MonsterTemplate } from '../content/monsters.ts';
 import type { Combatant, PrimaryStats } from '../engine/derived.ts';
 import { STANDING_LEVEL, specForActorId } from '../content/townsfolk.ts';
-import { healActor } from '../engine/talents.ts';
+import { healActor } from '../engine/damage.ts';
 import type { TalentEffect } from '../engine/talents.ts';
 import type { ClientUse, TopicId } from '../../shared/protocol.ts';
 import type { DamageType } from '../../shared/damagetype.ts';

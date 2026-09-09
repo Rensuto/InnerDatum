@@ -61,9 +61,9 @@ import {
   talentRefused,
   targetActor,
   percent,
-  healActor,
 } from '../engine/talents.ts';
 import { MELEE_REACH } from '../engine/combat.ts';
+import { healActor } from '../engine/damage.ts';
 import type { Talent } from '../engine/talents.ts';
 
 const AP_COST = 3;

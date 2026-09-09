@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import { ITEMS, isConsumable, itemById } from '../../src/server/content/items.ts';
 import { resolveMBonus } from '../../src/server/content/resolvers.ts';
-import { healActor } from '../../src/server/engine/talents.ts';
+import { healActor } from '../../src/server/engine/damage.ts';
 import { wsGateway } from '../../src/server/net/gateway.ts';
 import { createTurnEngine } from '../../src/server/turn-engine.ts';
 import { createWorld } from '../../src/server/world/world.ts';

@@ -16,8 +16,8 @@ import {
 } from '../../src/server/engine/derived.ts';
 import { actBase, createMonsterActor, AiProfile } from '../../src/server/engine/actor.ts';
 import { composeWielders } from '../../src/server/engine/equipment.ts';
-import { healActor } from '../../src/server/engine/talents.ts';
-import type { HealTarget } from '../../src/server/engine/talents.ts';
+import { healActor } from '../../src/server/engine/damage.ts';
+import type { HealTarget } from '../../src/server/engine/damage.ts';
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════

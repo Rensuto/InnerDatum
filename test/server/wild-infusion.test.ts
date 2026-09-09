@@ -17,7 +17,7 @@ import { createRng } from '../../src/shared/rng.ts';
 import { wildInfusion } from '../../src/server/talents/wild_infusion.ts';
 import { higherHeal } from '../../src/server/talents/higher_heal.ts';
 import { regenerationInfusion } from '../../src/server/talents/regeneration_infusion.ts';
-import { healActor } from '../../src/server/engine/talents.ts';
+import { healActor } from '../../src/server/engine/damage.ts';
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════

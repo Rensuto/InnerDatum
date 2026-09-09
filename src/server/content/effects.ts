@@ -53,7 +53,8 @@
 
 import { bound } from '../../shared/scale.ts';
 import { DamageType, STUNNED_DAMAGE_MULT, applyDamage } from '../engine/damage.ts';
-import { healActor, tomeCooldownToTurns } from '../engine/talents.ts';
+import { tomeCooldownToTurns } from '../engine/talents.ts';
+import { healActor } from '../engine/damage.ts';
 import {
   EffectStatus,
   SaveChannel,

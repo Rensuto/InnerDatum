@@ -51,7 +51,6 @@ import {
   TalentKind,
   TalentRefusal,
   TargetShape,
-  healActor,
   percent,
   talentDone,
   talentId,
@@ -59,6 +58,7 @@ import {
   tomeCooldownToTurns,
 } from '../engine/talents.ts';
 import { EMPTY_PASSIVE_VIEW } from '../engine/hooks.ts';
+import { healActor } from '../engine/damage.ts';
 import type { Talent } from '../engine/talents.ts';
 
 const CURVE = 0.75;

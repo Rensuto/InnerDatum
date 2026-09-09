@@ -87,8 +87,8 @@
 
 import { FLAT_RESIST_INTERVAL, bound, rescaleCombatStats } from '../../shared/scale.ts';
 import type { Rng } from '../../shared/rng.ts';
-import { ignoreDirectCrits } from './derived.ts';
-import type { PrimaryStats } from './derived.ts';
+import { HEAL_FACTOR_MAX, HEAL_FACTOR_MIN, healingFactor, ignoreDirectCrits } from './derived.ts';
+import type { Combatant, PrimaryStats } from './derived.ts';
 import { fireDealDamage, fireKill, fireTakeDamage } from './hooks.ts';
 import type { BoundHooks, HookHost, TurnProcs } from './hooks.ts';
 
@@ -825,6 +825,83 @@ export type DamageOutcome = {
    */
   readonly absorbed: number;
 };
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * `healActor` LIVES HERE NOW, AND THE MOVE IS ABOUT WHO NEEDS TO CALL IT.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * It was written in `engine/talents.ts` because four talents healed, and its
+ * own docblock below records why it exists at all: those four had each written
+ * `hp = min(maxHp, hp + n)` by hand and every one of them skipped the healing
+ * factor.
+ *
+ * The projector heals too. Upstream's `defaultProjector` calls
+ * `target:heal(affinity_heal, src)` at damage_types.lua:551 — inside the same
+ * function that applies the damage, which is `applyDamage` here — and
+ * `talents.ts` already imports `damage.ts`, so reaching the other way would be
+ * a cycle. Every caller's import path moved with it; there is still exactly one
+ * answer to "what is a heal worth", which is the whole point of the function.
+ */
+/**
+ * What `healActor` needs of a body — hit points and a sheet to read Constitution
+ * off, and nothing else.
+ *
+ * A NARROW STRUCTURAL SLICE rather than `TalentActor`, for `DamageTarget`'s and
+ * `PooledBody`'s reason: a passive hook is handed a `HookSelf`, which has no
+ * `kind` and no `cooldowns`, so requiring the full actor is what pushed four
+ * talent heals into writing `hp = min(maxHp, hp + n)` by hand instead — and
+ * every one of them then skipped the healing factor this function exists to
+ * apply.
+ */
+export type HealTarget = {
+  hp: number;
+  readonly maxHp: number;
+  readonly alive: boolean;
+  /**
+   * A `Combatant`, not a `CombatSheet`. The wider type lives in
+   * `engine/combat.ts`, which imports THIS file — naming it here would be the
+   * cycle the move was made to avoid. `healingFactor` takes a `Combatant` and
+   * reads nothing else, so the narrower type is what the function has always
+   * actually needed; a `CombatSheet` still satisfies it.
+   */
+  readonly combat?: Combatant;
+};
+
+/** Restore HP, clamped at max. Returns what was actually restored. */
+export function healActor(target: HealTarget, amount: number): number {
+  if (!target.alive || amount <= 0) return 0;
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE RECEIVER'S CONSTITUTION DECIDES WHAT A HEAL IS WORTH. Actor.lua:2086-2089.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * ```lua
+   * function _M:onHeal(value, src)
+   *   value = value * util.bound((self.healing_factor or 1), 0, 2.5)
+   * ```
+   *
+   * THE TARGET'S, NOT THE CASTER'S, and that is the whole shape of it: a bandage
+   * is worth more on somebody built to survive. It is also why this belongs HERE
+   * rather than in each of the four talents that heal — upstream puts it on
+   * `onHeal` for the same reason, so a fifth heal added later cannot forget it.
+   *
+   * BOUNDED AT THE POINT OF USE, exactly as upstream bounds it: the getter
+   * returns the raw factor so a debuff that pushes it negative stays visible to
+   * whatever reads it, and the clamp lives on the one line that spends it.
+   *
+   * ROUNDED, because hit points are integers everywhere else in this engine and
+   * a fractional heal would put a body on 41.6/72 — a number no readout in the
+   * game can draw. Rounded rather than floored so the factor cannot make a heal
+   * of 1 into a heal of 0, which would read as a talent that did nothing.
+   */
+  const factor = bound(healingFactor(target.combat ?? {}), HEAL_FACTOR_MIN, HEAL_FACTOR_MAX);
+  const scaled = Math.round(amount * factor);
+  if (scaled <= 0) return 0;
+  const before = target.hp;
+  target.hp = Math.min(target.maxHp, target.hp + scaled);
+  return target.hp - before;
+}
 
 /**
  * STEP 9 — `takeHit`. ActorLife.lua:71-81.

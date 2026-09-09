@@ -18,7 +18,7 @@ import type { MonsterTemplate } from '../../src/server/content/monsters.ts';
 import { applyDamage } from '../../src/server/engine/damage.ts';
 import { DamageType } from '../../src/shared/damagetype.ts';
 import { healingFactor, ignoreDirectCrits } from '../../src/server/engine/derived.ts';
-import { healActor } from '../../src/server/engine/talents.ts';
+import { healActor } from '../../src/server/engine/damage.ts';
 import { combatStatLimit } from '../../src/shared/scale.ts';
 import { scriptedRng } from '../helpers/scripted-rng.ts';
 import { ActorKind } from '../../src/shared/protocol.ts';
