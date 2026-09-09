@@ -227,6 +227,141 @@ describe('reach and sight', () => {
 });
 
 describe('attackTarget — the resolution order, Combat.lua:505-546', () => {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE BRAND — `melee_project`, Combat.lua:723-732.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Upstream's three clauses, one test each, plus the two properties that make
+   * it a separate pipeline pass rather than a number added to the swing.
+   */
+  describe('a branded weapon leaves typed damage in the wound', () => {
+    // A REAL SHEET, NOT A CAST. `brand` is a first-class `CombatSheet` field, so
+    // the fixture type-checks on its own — and a fixture that needs a double
+    // cast is a fixture that would keep compiling after the field was renamed.
+    const branded = (dam: Partial<Record<DamageType, number>>): CombatSheet => ({ brand: dam });
+
+    it('adds its damage on a landed blow, reported apart from the swing', () => {
+      const target = actor('t', 2, 1);
+      // Roll 1 -> hit, 100 -> no crit. The brand takes NO further draws: it does
+      // not re-roll a damage band and it cannot crit, which is what upstream's
+      // flat `projector(self, x, y, typ, dam)` call means.
+      const rng = scriptedRng([1, 100]);
+      const result = attackTarget(
+        actor('a', 1, 1, { combat: branded({ [DamageType.Fire]: 6 }) }),
+        target,
+        world(),
+        rng,
+      );
+
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      // THE SWING IS UNCHANGED. A brand that quietly inflated the physical
+      // number would be indistinguishable from a damage bonus, which is the one
+      // thing `melee_project` is not.
+      expect(result.damage, 'the brand changed the swing').toBe(4);
+      /**
+       * CLOSE TO, NOT EQUAL, AND THAT IS THE PIPELINE RATHER THAN THE BRAND.
+       * `dealt` is never rounded (damage.ts) — the only truncation in the whole
+       * pipeline is the damage-RANGE roll at :274-275, which a swing goes
+       * through and a flat brand does not. So 6 comes back as 5.999999999999999
+       * exactly as a talent's flat damage does, and rounding it here would be
+       * inventing a rule the rest of the engine does not have.
+       */
+      expect(result.brandDamage, 'the brand landed nothing').toBeCloseTo(6, 6);
+    });
+
+    it('leaves nothing on a MISS — upstream guards on `hitted`', () => {
+      // Roll 100 -> miss. The whole brand block is unreachable behind the early
+      // return, and this is the assertion that says so out loud.
+      const result = attackTarget(
+        actor('a', 1, 1, { combat: branded({ [DamageType.Fire]: 6 }) }),
+        actor('t', 2, 1),
+        world(),
+        scriptedRng([100]),
+      );
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.hit).toBe(false);
+      expect(result.brandDamage).toBe(0);
+    });
+
+    it('does not burn a body the swing already killed — `not target.dead`', () => {
+      // 4 hp against a 4-damage swing: the swing kills, and the brand must not
+      // fire afterwards. Without the guard this is damage applied to a corpse.
+      const target = actor('t', 2, 1, { hp: 4 });
+      const rng = scriptedRng([1, 100]);
+      const result = attackTarget(
+        actor('a', 1, 1, { combat: branded({ [DamageType.Fire]: 6 }) }),
+        target,
+        world(),
+        rng,
+      );
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.killed, 'the swing should have killed').toBe(true);
+      expect(result.brandDamage, 'a corpse took a brand').toBe(0);
+      /**
+       * ═══ THIS PINS THE PROPERTY, NOT THE GUARD, AND THE DIFFERENCE IS REAL ═══
+       * Deleting `if (!outcome.killed)` in combat.ts does NOT fail this test,
+       * and that was worth finding out rather than assuming. `applyDamage`
+       * refuses a dead target on its own (damage.ts:954) and — measured —
+       * a flat brand takes no draw at all, because with no `critChance` and no
+       * `damageRange` there is nothing for `resolveDamage` to roll. Two draws
+       * with a brand, two without.
+       *
+       * So the source guard is upstream's shape and belt-and-braces, not the
+       * thing enforcing this. What is asserted here is the BEHAVIOUR a player
+       * would see, which holds however it is enforced — and the draw count is
+       * asserted beside it so that the day a brand gains a crit roll, the
+       * redundancy stops being free and this test says so.
+       */
+      expect(drawCount(rng), 'the corpse pass consumed a draw').toBe(2);
+    });
+
+    it('CAN kill on its own, because the guard is about the swing not the brand', () => {
+      /**
+       * The subtle half of `not target.dead`. It asks whether the SWING already
+       * finished them — not whether a brand is allowed to. A body left at 2hp by
+       * the swing and burned for 6 is a real kill, and `killed` has to say so or
+       * the reaper never runs and the corpse keeps taking turns.
+       */
+      const target = actor('t', 2, 1, { hp: 6 });
+      const result = attackTarget(
+        actor('a', 1, 1, { combat: branded({ [DamageType.Fire]: 6 }) }),
+        target,
+        world(),
+        scriptedRng([1, 100]),
+      );
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.damage).toBe(4);
+      expect(result.brandDamage).toBeGreaterThan(0);
+      expect(result.killed, 'the brand finished it and nobody was told').toBe(true);
+      expect(target.alive).toBe(false);
+    });
+
+    it('skips a zero entry rather than projecting it — `if dam > 0`', () => {
+      // A zero brand lands nothing and costs nothing. Like the corpse case
+      // above, deleting the `amount <= 0` half of the guard does not fail this:
+      // `applyDamage` returns empty for `resolved.amount <= 0` (damage.ts:954)
+      // and draws nothing on the way. The clause is upstream's `if dam > 0` and
+      // is kept for the same reason — it is free now and stops being free the
+      // moment a brand can crit.
+      const rng = scriptedRng([1, 100]);
+      const result = attackTarget(
+        actor('a', 1, 1, { combat: branded({ [DamageType.Fire]: 0 }) }),
+        actor('t', 2, 1),
+        world(),
+        rng,
+      );
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.brandDamage).toBe(0);
+      expect(drawCount(rng), 'a zero brand took a draw').toBe(2);
+    });
+  });
+
   it('reports the accuracy, defence and chance the combat log prints', () => {
     // game-design.md § 11: "Hits Bent Watchman (acc 41 vs def 33, 70%)".
     const result = attackTarget(actor('a', 1, 1), actor('t', 2, 1), world(), scriptedRng([1, 100]));
@@ -257,6 +392,10 @@ describe('attackTarget — the resolution order, Combat.lua:505-546', () => {
       crit: false,
       killed: false,
       type: DamageType.Physical,
+      // NOTHING BRANDED. `melee_project` is a separate pipeline pass and this
+      // sheet grants none, so the field is present and zero — which is the whole
+      // point of asserting the SHAPE here rather than picking fields off it.
+      brandDamage: 0,
     });
     expect(target.hp).toBe(16);
     expect(drawCount(rng)).toBe(2);

@@ -383,6 +383,44 @@ export type Wielder = {
   readonly onHit?: OnHitStatus;
   /**
    * ═══════════════════════════════════════════════════════════════════════════
+   * `melee_project` — THE OTHER HALF. TYPED DAMAGE ON EVERY BLOW: A BRAND.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Ported from tome/class/interface/Combat.lua:723-732, which is TWO loops over
+   * the same field and applies each entry through the full damage projector:
+   *
+   *     if hitted and not target.dead and weapon and weapon.melee_project then
+   *       for typ, dam in pairs(weapon.melee_project) do
+   *         if dam > 0 then DamageType:get(typ).projector(self, target.x, target.y, typ, dam) end
+   *
+   * ═══ WE PORTED THE NAME AND HALF THE FIELD ═══
+   * `onHit` above cites `melee_project` and carries only its STATUS half — a cut
+   * that bleeds, a blow that dazes. Upstream's field is a table of DAMAGE TYPE to
+   * NUMBER, and the statuses are a different mechanism entirely (`special_on_hit`).
+   * So the most common thing a ToME weapon affix does — *"+6 fire damage on every
+   * hit"* — could not be written here at all, and elemental identity could only
+   * ever come from a class sheet.
+   *
+   * ═══ AND IT IS AN EGO GRANT, WHICH `onHit`'S NOTE SAID IT WOULD TAKE AN
+   *     ARGUMENT TO BECOME ═══
+   * That note refused riders on `Ego.grants` because *"`EgoGrant` is a rolled
+   * RANGE and a rider is a discrete row that either fires or does not"*. The
+   * objection is exactly right about statuses and does not apply here: a brand IS
+   * a number, and upstream rolls it — `melee_project={[DamageType.ACID] =
+   * resolvers.mbonus_material(15, 5)}` on the "acidic " prefix
+   * (`egos/weapon.lua:222-238`), which is 5 at material level 1 rising to 15 at
+   * 5. `Ego.grants` is a floor plus a step times the tier, and `egos.ts` already
+   * states that `ItemTier` IS upstream's material level. The shapes are the same
+   * shape.
+   *
+   * FIRES ONLY ON A LANDED BLOW AGAINST A LIVING TARGET, and it can kill: the
+   * upstream guard is `not target.dead`, which asks whether the swing already
+   * finished them, not whether the brand is allowed to. See the application in
+   * `engine/scheduler.ts`.
+   */
+  readonly brand?: Partial<Record<DamageType, number>>;
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
    * `inc_damage` — HOW MUCH HARDER THIS ELEMENT LANDS. A percentage.
    * ═══════════════════════════════════════════════════════════════════════════
    *

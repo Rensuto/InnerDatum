@@ -381,6 +381,7 @@ export function composeWielders(
   // THE TWO ATTACKER-SIDE TABLES. Same shape, same fixed key list, same reason.
   const damageDelta = new Map<DamageType | 'all', number>();
   const penDelta = new Map<DamageType, number>();
+  const brandDelta = new Map<DamageType, number>();
   const immunityDelta = new Map<ImmunitySubtype, number>();
   /**
    * THE ONE CHANNEL THAT IS NOT A NUMBER. Every other delta above is a running
@@ -458,6 +459,20 @@ export function composeWielders(
         const value = pen[key];
         if (value === undefined) continue;
         penDelta.set(key, (penDelta.get(key) ?? 0) + value);
+      }
+    }
+
+    /**
+     * THE BRAND — `melee_project`'s numeric half. Additive for the same reason
+     * every other table here is: upstream runs one loop over the FOLDED field
+     * (Combat.lua:728), so two branded pieces both land and their numbers add.
+     */
+    const brand = wielder.brand;
+    if (brand !== undefined) {
+      for (const key of DAMAGE_TYPES) {
+        const value = brand[key];
+        if (value === undefined) continue;
+        brandDelta.set(key, (brandDelta.get(key) ?? 0) + value);
       }
     }
     /**
@@ -585,6 +600,12 @@ export function composeWielders(
     const table: { -readonly [K in keyof TypeTable]: TypeTable[K] } = { ...base.penetration };
     for (const [key, delta] of penDelta) table[key] = (table[key] ?? 0) + delta;
     out.penetration = Object.freeze(table);
+  }
+
+  if (brandDelta.size > 0) {
+    const table: { -readonly [K in keyof TypeTable]: TypeTable[K] } = { ...base.brand };
+    for (const [key, delta] of brandDelta) table[key] = (table[key] ?? 0) + delta;
+    out.brand = Object.freeze(table);
   }
 
   /**

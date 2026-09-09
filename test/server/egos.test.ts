@@ -81,6 +81,12 @@ describe('the ego roster', () => {
       // keeps its position.
       'kp',
       'ct',
+      // THE TWO BRANDS, and APPENDED rather than inserted. `pickEntity` walks a
+      // cumulative genprob list in order (rarity.ts:162-172), so a new entry in
+      // the middle shifts every later window and changes which ego an existing
+      // seed rolls. Last in PREFIXES leaves every prefix before it untouched.
+      'qk',
+      'bb',
       // The shallow suffixes.
       'lg',
       'lw',

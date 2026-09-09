@@ -157,6 +157,30 @@ export type Ego = {
     /** `resists_pen`. See `Wielder.penetration` — the Redactor's answer. */
     readonly penetration?: Partial<Record<DamageType, EgoGrant>>;
     /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * `melee_project` — TYPED DAMAGE ON EVERY LANDED BLOW. THE BRAND AFFIX.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * Upstream's is `melee_project = {[DamageType.ACID] =
+     * resolvers.mbonus_material(15, 5)}` on the "acidic " prefix
+     * (`general/objects/egos/weapon.lua:222-238`), and `mbonus_material(15, 5)`
+     * is 5 at material level 1 rising to 15 at material level 5.
+     *
+     * WHICH IS EXACTLY `EgoGrant`. This file's header already argues that
+     * `ItemTier` IS upstream's `material_level` and that a magnitude is
+     * `floor + step × power × tierWeight`; a brand needs `floor: 5` and a step
+     * that reaches 15 at the top tier, and nothing new. `grantValue` is not told
+     * which channel it serves and still must not be.
+     *
+     * ═══ NOT LIMITED TO WEAPONS, WHICH IS ALSO UPSTREAM ═══
+     * Combat.lua runs TWO loops: `weapon.melee_project` and then
+     * `self.melee_project` (:723 and :728). The second is the actor's folded
+     * attribute, contributed by ANY worn thing — which is why upstream also puts
+     * brands on gloves. Ours folds through `composeWielders` and lands in the
+     * same place, so a branded gauntlet burns exactly as a branded blade does.
+     */
+    readonly brand?: Partial<Record<DamageType, EgoGrant>>;
+    /**
      * `*_immune`. See `Wielder.immunities` — the answer to being DISABLED
      * rather than to being hurt, which until now the game had none of.
      *
@@ -235,9 +259,12 @@ const PREFIXES: readonly Ego[] = [
     tag: EgoSlotTag.Prefix,
     rarity: 6,
     levelRange: [1, 26],
-    // Offhand and trinket only: this is a thing you hit with, and there is no
-    // weapon slot (items.ts:52-60 — the four weapon icons do not exist on disk).
-    slots: [Slot.Offhand, Slot.Trinket],
+    // A thing you hit WITH, so it goes where hitting happens. This read
+    // "offhand and trinket only ... there is no weapon slot", which stopped
+    // being true when `Slot.Mainhand` and three weapons shipped: the one slot
+    // this ego was always describing now exists, and leaving it out would make
+    // the commonest weapon affix in the game unable to land on a weapon.
+    slots: [Slot.Mainhand, Slot.Offhand, Slot.Trinket],
     grants: { mods: { dam: { floor: 2, step: 2 }, atk: { floor: 2, step: 1 } } },
     cost: 20,
   },
@@ -385,6 +412,58 @@ const PREFIXES: readonly Ego[] = [
       },
     },
     cost: 110,
+  },
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE TWO BRANDS — `melee_project`, the commonest thing a ToME weapon affix
+   * does and the one this game could not say until now.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Upstream ships a family of these on `general/objects/egos/weapon.lua`:
+   * "acidic " (:222-238), "arcing " (:241-...), and their fire and cold twins,
+   * every one of them `rarity = 5`, `level_range = {1, 50}`, and
+   * `melee_project = {[TYPE] = resolvers.mbonus_material(15, 5)}`.
+   *
+   * `mbonus_material(15, 5)` is 5 at material level 1 rising to 15 at material
+   * level 5. Ours is `floor + step × power × tierWeight` with power 0-3 and
+   * tierWeight 1-3, so `{ floor: 5, step: 1 }` is 5 at the bottom and 14 at the
+   * top — upstream's curve, in whole numbers, which `validateEgos` requires.
+   *
+   * ═══ TWO, NOT FOUR, AND THE TWO ARE THE ONES THE WORLD ALREADY HAS ═══
+   * Upstream can afford four because it has four elemental identities in its
+   * ego pool. Ours has damage types the CONTENT actually uses: fire is the
+   * Alchemist and the Row, cold is the moor and the Weir. A lightning brand
+   * with no lightning anywhere else would be an affix that reads as an import.
+   *
+   * ═══ THE NAMES ARE CLERICAL, LIKE EVERY OTHER AFFIX HERE ═══
+   * "Reinforced", "Oiled", "Weighted", "Sealed" — a prefix is a thing that was
+   * DONE to the object by somebody with a job. "Flaming " would be the only
+   * word in the set from a different game.
+   */
+  {
+    code: 'qk',
+    name: 'Quicklimed ',
+    tag: EgoSlotTag.Prefix,
+    // Upstream's brand rarity, unchanged. It is common on purpose: a brand is
+    // the affix a player is supposed to meet early and keep wanting.
+    rarity: 5,
+    levelRange: [1, 50],
+    // Where hitting happens. Upstream runs the brand loop over the WEAPON and
+    // then over the wielder's folded attribute (Combat.lua:723 and :728), which
+    // is why it also puts brands on gloves — so gauntlets belong here too.
+    slots: [Slot.Mainhand, Slot.Offhand, Slot.Hands],
+    grants: { brand: { fire: { floor: 5, step: 1 } } },
+    cost: 35,
+  },
+  {
+    code: 'bb',
+    name: 'Brine-Bitten ',
+    tag: EgoSlotTag.Prefix,
+    rarity: 5,
+    levelRange: [1, 50],
+    slots: [Slot.Mainhand, Slot.Offhand, Slot.Hands],
+    grants: { brand: { cold: { floor: 5, step: 1 } } },
+    cost: 35,
   },
 ];
 
@@ -849,6 +928,7 @@ export function validateEgos(egos: readonly Ego[]): readonly Ego[] {
     const resistGrants = Object.entries(ego.grants.resists ?? {});
     const damageGrants = Object.entries(ego.grants.damage ?? {});
     const penGrants = Object.entries(ego.grants.penetration ?? {});
+    const brandGrants = Object.entries(ego.grants.brand ?? {});
     const immunityGrants = Object.entries(ego.grants.immunities ?? {});
     if (
       statGrants.length === 0 &&
@@ -856,6 +936,7 @@ export function validateEgos(egos: readonly Ego[]): readonly Ego[] {
       resistGrants.length === 0 &&
       damageGrants.length === 0 &&
       penGrants.length === 0 &&
+      brandGrants.length === 0 &&
       immunityGrants.length === 0
     ) {
       throw new Error(
@@ -870,7 +951,7 @@ export function validateEgos(egos: readonly Ego[]): readonly Ego[] {
      * ego that silently grants nothing — which is the exact failure the
      * "grants nothing" check above exists to prevent, arriving by another door.
      */
-    for (const [key] of [...resistGrants, ...damageGrants, ...penGrants]) {
+    for (const [key] of [...resistGrants, ...damageGrants, ...penGrants, ...brandGrants]) {
       if (!DAMAGE_TYPES.includes(key as DamageType)) {
         throw new Error(
           `egos: ${ego.code} resists '${key}', which is not one of the ` +
@@ -916,6 +997,7 @@ export function validateEgos(egos: readonly Ego[]): readonly Ego[] {
       ...resistGrants,
       ...damageGrants,
       ...penGrants,
+      ...brandGrants,
       ...immunityGrants,
     ]) {
       if (DEAD_GRANT_KEYS.includes(key)) {
@@ -1054,6 +1136,12 @@ export function egoWielder(ego: Ego, power: number, tier: ItemTier): Wielder {
     penetration[key as DamageType] = grantValue(grant, power, tier);
   }
 
+  const brand: Partial<Record<DamageType, number>> = {};
+  for (const [key, grant] of Object.entries(ego.grants.brand ?? {})) {
+    if (grant === undefined) continue;
+    brand[key as DamageType] = grantValue(grant, power, tier);
+  }
+
   const immunities: Partial<Record<ImmunitySubtype, number>> = {};
   for (const [key, grant] of Object.entries(ego.grants.immunities ?? {})) {
     if (grant === undefined) continue;
@@ -1070,6 +1158,7 @@ export function egoWielder(ego: Ego, power: number, tier: ItemTier): Wielder {
     resists?: typeof resists;
     damage?: typeof damage;
     penetration?: typeof penetration;
+    brand?: typeof brand;
     immunities?: typeof immunities;
   } = {};
   if (Object.keys(stats).length > 0) out.stats = stats;
@@ -1077,6 +1166,7 @@ export function egoWielder(ego: Ego, power: number, tier: ItemTier): Wielder {
   if (Object.keys(resists).length > 0) out.resists = resists;
   if (Object.keys(damage).length > 0) out.damage = damage;
   if (Object.keys(penetration).length > 0) out.penetration = penetration;
+  if (Object.keys(brand).length > 0) out.brand = brand;
   if (Object.keys(immunities).length > 0) out.immunities = immunities;
   return out;
 }

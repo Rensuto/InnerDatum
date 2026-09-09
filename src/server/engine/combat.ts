@@ -129,6 +129,7 @@
 
 import { checkHit } from '../../shared/checkhit.ts';
 import { hasLineOfSight } from '../../shared/sight.ts';
+import { DAMAGE_TYPES } from '../../shared/damagetype.ts';
 import { DamageType, applyDamage } from './damage.ts';
 import {
   combatAPR,
@@ -186,6 +187,19 @@ export type CombatSheet = Combatant & {
   readonly profile?: DamageProfile;
   /** `inc_damage` — additive damage bonuses. Read when this actor ATTACKS. */
   readonly increase?: TypeTable;
+  /**
+   * `melee_project` — TYPED DAMAGE ADDED TO EVERY LANDED BLOW. A brand.
+   *
+   * Combat.lua:723-732. Read when this actor ATTACKS, like `increase` — but it
+   * is not a modifier on the swing's damage, it is a SEPARATE application
+   * through the full pipeline, which is why it sits beside `increase` rather
+   * than inside it. A fire brand on a weapon is resisted by fire resistance and
+   * amplified by fire increase; the swing that carried it is neither.
+   *
+   * See `Wielder.brand` for the channel and `engine/scheduler.ts` for the two
+   * conditions upstream puts on it.
+   */
+  readonly brand?: TypeTable;
   /** `resists_pen` — resistance penetration. Read when this actor ATTACKS. */
   readonly penetration?: TypeTable;
   /**
@@ -281,6 +295,17 @@ export type AttackResult =
       readonly crit: boolean;
       readonly killed: boolean;
       readonly type: DamageType;
+      /**
+       * WHAT THE BRAND ADDED, on top of `damage`. 0 when nothing is branded.
+       *
+       * SEPARATE FROM `damage` RATHER THAN SUMMED INTO IT, because upstream is
+       * separate: `melee_project` runs its own `projector` call per type
+       * (Combat.lua:723-732), so each element is resisted, penetrated and
+       * amplified on its own terms. Folding it into the swing's number would
+       * report a fire brand as physical damage on the one surface — the case
+       * log — that exists to tell a party what is actually hurting things.
+       */
+      readonly brandDamage: number;
     };
 
 /** Everything a template can leave unsaid. */
@@ -507,6 +532,11 @@ export function attackTarget(
       crit: false,
       killed: false,
       type,
+      // A MISS LEAVES NOTHING. Upstream's brand loop is guarded by `hitted`, and
+      // this is that guard: the field is named rather than spread in, so a new
+      // required member of `AttackResult` is a compile error on every exit
+      // instead of a silent zero on one of them.
+      brandDamage: 0,
     };
   }
 
@@ -535,6 +565,79 @@ export function attackTarget(
     penetration: self.penetration,
   });
 
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * AND WHAT THE WEAPON LEAVES BEHIND — `melee_project`, Combat.lua:723-732.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   *     if hitted and not target.dead then for typ, dam in pairs(self.melee_project) do
+   *       if dam > 0 then DamageType:get(typ).projector(self, target.x, target.y, typ, dam) end
+   *
+   * THREE CLAUSES, ALL THREE PORTED:
+   *
+   *   `hitted`            — unreachable otherwise; the miss path returned above.
+   *   `not target.dead`   — a corpse takes no brand. NOT "a brand cannot kill":
+   *                         the guard asks whether the SWING already finished
+   *                         them, and a brand that lands on a living target goes
+   *                         through the same projector everything else does. So
+   *                         `killed` below is an OR, and a fire brand finishing a
+   *                         husk the swing left at 2hp is a real kill with a real
+   *                         reaping.
+   *
+   *                         KEPT THOUGH IT IS CURRENTLY REDUNDANT, and measured
+   *                         rather than assumed: `applyDamage` already refuses a
+   *                         dead target (damage.ts:954) and a flat brand takes
+   *                         no RNG draw doing it, so deleting this line changes
+   *                         nothing observable today. It is upstream's shape, it
+   *                         saves a call per corpse, and it is the line that
+   *                         stops being free the day a brand gains a crit roll —
+   *                         at which point `resolveDamage` would draw at :929,
+   *                         BEFORE the alive check, and shift the stream.
+   *   `if dam > 0`        — a zero entry is skipped rather than projected.
+   *                         Redundant today for the same measured reason as the
+   *                         clause above — `applyDamage` returns empty for a
+   *                         non-positive amount and draws nothing — and kept for
+   *                         the same reason: it is upstream's, and it is free.
+   *
+   * ═══ ITS OWN PIPELINE PASS, NOT A NUMBER ADDED TO THE SWING ═══
+   * Each type is a separate `applyDamage`, so a fire brand meets fire resistance
+   * and the target's armour is applied to it independently. That is upstream's
+   * `projector` call per type, and it is the whole reason a brand is worth
+   * carrying against an armoured foe when raw damage is not.
+   *
+   * ═══ NO CRIT, NO RANGE ROLL, AND THAT IS UPSTREAM'S SHAPE ═══
+   * The projector takes a flat `dam`. It is not a second swing — it does not
+   * re-roll the damage band and it cannot crit, so the spec passed here carries
+   * neither. `increase` and `penetration` DO apply: they are properties of the
+   * attacker's sheet that upstream's projector reads on any typed damage.
+   *
+   * DRAW ORDER: strictly after the swing's own draws, so a branded weapon
+   * consumes a suffix of the RNG stream rather than shifting the roll that
+   * produced it. Same rule the status riders in `engine/scheduler.ts` follow.
+   */
+  let brandDamage = 0;
+  let killedByBrand = false;
+  if (!outcome.killed) {
+    for (const brandType of DAMAGE_TYPES) {
+      // `TypeTable` admits `'all'` and a brand never uses it: upstream's
+      // `melee_project` is keyed by real damage types only, and walking
+      // `DAMAGE_TYPES` is what keeps an `all` entry from silently becoming a
+      // ninth element nothing resists.
+      const amount: number | undefined = self.brand?.[brandType];
+      if (amount === undefined || amount <= 0) continue;
+      if (killedByBrand) break;
+      const burn = applyDamage(target, amount, brandType, attacker, rng, {
+        armour: combatArmor(foe),
+        hardiness: combatArmorHardiness(foe),
+        apr: combatAPR(self),
+        increase: self.increase,
+        penetration: self.penetration,
+      });
+      brandDamage += burn.dealt;
+      if (burn.killed) killedByBrand = true;
+    }
+  }
+
   return {
     ok: true,
     targetId: target.id,
@@ -544,7 +647,8 @@ export function attackTarget(
     chance: roll.chance,
     damage: outcome.dealt,
     crit: outcome.crit,
-    killed: outcome.killed,
+    killed: outcome.killed || killedByBrand,
     type,
+    brandDamage,
   };
 }
