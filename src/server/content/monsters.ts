@@ -2938,6 +2938,12 @@ export function monsterInit(template: MonsterTemplate, at: TileXY, level: number
   return {
     name: template.displayName,
     sprite: template.sprite,
+    // ═══ THE NUMBER THIS FUNCTION HAS ALWAYS COMPUTED AND NEVER RETURNED ═══
+    // Every line above grows a stat, a life total or a talent rank off `grown`,
+    // and the body then went out with no record of it — so nothing downstream
+    // could ask how deep a corpse came from. `worthExp` is the reader that
+    // needed it. See `MonsterActor.level`.
+    level: grown,
     // ABSENT RATHER THAN EMPTY for a creature that knows nothing, so a template
     // authored before this field produces the byte-identical body it always did.
     ...(talents === undefined ? {} : { talents }),

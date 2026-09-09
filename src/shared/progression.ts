@@ -357,6 +357,14 @@ export function expChart(level: number, expMod = 1): number {
 export const XP_WORTH_MULT = 4;
 
 /**
+ * How far beneath you a corpse may be and still pay — Actor.lua:6514's `- 7`.
+ *
+ * Named rather than inlined because it is the whole anti-farming rule and a
+ * reader hunting "why did that husk pay nothing" needs one symbol to grep.
+ */
+export const EXP_LEVEL_FLOOR = 7;
+
+/**
  * The rank ladder — Actor.lua:6520-6528. (NOT :6519-6527: :6519 is the
  * `if not game.zone.infinite_dungeon then` guard, which is not part of the
  * ladder, and the quoted block's own closing `end` is :6528. Copying the old
@@ -423,66 +431,73 @@ export function rankWorth(rank: ActorRank): number {
  * `1 × 0.8 = 0.8` xp forever, and 2,700 xp at 0.8 a kill is **3,375 kills** to
  * reach level 10. That is not a long game; it is a broken one.
  *
- * THE SUBSTITUTION, AND ITS ARITHMETIC. Swap the victim's level for the
- * KILLER'S and apply ToME's own `exp_worth_mult` at 4 (`XP_WORTH_MULT`). Award
- * against a normal becomes `killerLevel × 3.2`, and kills-to-next-level runs:
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE SUBSTITUTION IS OVER. THIS IS THE CHANGELOG IT ASKED FOR.
+ * ═══════════════════════════════════════════════════════════════════════════
  *
- *     level 1→2   8.4        level 4→5  13.6        level 7→8   20.2
- *     level 2→3   9.5        level 5→6  15.9        level 8→9   22.3
- *     level 3→4  11.5        level 6→7  18.0        level 9→10  24.4
+ * For as long as every husk in the game was level 1, porting `self.level`
+ * verbatim paid a flat `1 × 0.8 × 4 = 3.2` a kill forever — 3,375 kills to reach
+ * level 10, which is not a long game but a broken one. So this function took the
+ * level of the actor BEING PAID instead, and its own note set the expiry
+ * condition: *"the day floors and monster levels land, this MUST be swapped back
+ * to the victim's level"*.
  *
- * ≈144 kills (145 walked as whole kills, which is what the pacing test counts) —
- * an evening for 3-6 friends. Note what it does NOT do: it reproduces ToME's
- * per-level pacing RATIO exactly, because the chart is untouched and only a
- * scalar changed. Re-tuning the curve instead would have been inventing one.
+ * That day arrived. `DELVES` authors eleven sites at fixed levels 1 to 15,
+ * `delveLevel` resolves one per site, and `monsterInit` — which had grown stats
+ * off a level since delves shipped and then thrown the number away — now records
+ * it on the body (`MonsterActor.level`). So the corpse can be asked how deep it
+ * came from, which is the only thing upstream's version ever needed.
  *
- * ═══ THE WART, NAMED RATHER THAN HIDDEN ═══
- * A level-9 player earns NINE TIMES what a level-1 player earns from the same
- * husk. That is backwards on its face, and it is a real, observable property of
- * this build rather than a rounding error.
+ * ═══ WHAT IT CHANGES, AND WHAT IT DELIBERATELY DOES NOT ═══
+ * A player fighting content at their own level sees NO CHANGE AT ALL: with
+ * `victimLevel === recipientLevel` this is arithmetically the old substitution,
+ * so the pacing table the curve was tuned against — 8.4 kills for 1→2 rising to
+ * 24.4 for 9→10, about 145 kills and an evening for 3-6 friends — is untouched.
+ * That is not luck; it is why upstream's version works, and it is why the fix
+ * could be taken without re-tuning `exp_chart` or `XP_WORTH_MULT`.
  *
- * THIS PARAGRAPH USED TO CLAIM IT WAS UNOBSERVABLE, and the claim was wrong.
- * The argument was: the full-share rule (DECISIONS.md D12) keeps everyone in the
- * party at the same level, so nobody can compare. NOTHING ENFORCES THAT. Parties
- * are invite/accept (src/server/engine/party.ts), so a fifth friend can join at
- * level 1 at nine o'clock and stand next to four level-8 friends — at which
- * point the premise is false and stays false for the rest of the evening. It was
- * presented as a proof and it was a description of the only case anybody had
- * tried.
+ * What DOES change is everything either side of level-appropriate:
  *
- * WHAT ACTUALLY CONTAINS IT NOW: `awardExperience` computes this function ONCE
- * PER RECIPIENT, from the RECIPIENT'S OWN LEVEL, inside the payout loop. So the
- * wart is confined to a single character's own rate — a level-9 player levels
- * more slowly than the chart alone would suggest, which is a pacing choice —
- * and it can no longer leak sideways into anybody else's progression or make the
- * party's rate depend on who landed the last blow. The parameter is named
- * `killerLevel` for its history; read it as "the level of the actor being paid",
- * which is what the `@param` below has always said.
+ *     a level-8 player, per Normal kill      old       new
+ *     Drowned Chapel (corpse level 1)        25.6       3.2
+ *     Underworks (3)                         25.6       9.6
+ *     Gearford Ward (13)                     25.6      41.6
  *
- * **The day floors and monster levels land, this MUST be swapped back to the
- * victim's level** — at that point the victim's level tracks progress again,
- * which is the only thing upstream's version ever needed, the wart disappears
- * entirely, and this comment becomes the changelog for doing it.
+ * The safest room in the game was strictly the best one to farm. It is now worth
+ * an eighth of the deepest, and at level 9 and above it is worth NOTHING, by the
+ * floor below.
  *
- * ═══ THE LINE THAT IS DELIBERATELY NOT PORTED ═══
- * Actor.lua:6514 is the anti-farming floor:
+ * ═══ AND THE WART IS GONE ═══
+ * The old note named it: *"a level-9 player earns NINE TIMES what a level-1
+ * player earns from the same husk ... backwards on its face"*. Two players of
+ * different levels standing over one body are now paid the same number, because
+ * the number is a fact about the body.
  *
- *     if not target.level or self.level < target.level - 7 then return 0 end
- *
- * "a corpse more than seven levels beneath you is worth nothing". Under the
- * substitution `self.level` and `target.level` are the SAME NUMBER, so it reads
- * `killerLevel < killerLevel - 7` and is never true — porting it would be
- * porting a no-op and pretending it did something. Worse, porting it *against
- * the victim's level* while the roster is uniformly level 1 would zero every
- * award in the game the moment a player hit level 9, with no error, no log line
- * and no way to tell it from a bug in the barrier. It goes back in the same
- * commit the victim's level does, and not before.
- *
- * @param killerLevel the level of the actor being PAID. See above.
- * @param victimRank the rank of the body that died.
+ * @param victimLevel the level of the body that died — Actor.lua:6530's `self`.
+ * @param victimRank the rank of that same body.
+ * @param recipientLevel the level of the actor being PAID. Read ONLY by the
+ *   anti-farming floor; it does not scale the award.
  */
-export function worthExp(killerLevel: number, victimRank: ActorRank): number {
-  return killerLevel * rankWorth(victimRank) * XP_WORTH_MULT;
+export function worthExp(
+  victimLevel: number,
+  victimRank: ActorRank,
+  recipientLevel: number,
+): number {
+  /**
+   * Actor.lua:6514 — `if not target.level or self.level < target.level - 7 then
+   * return 0 end`, where `self` is the CORPSE and `target` is the actor being
+   * paid (the function's own `@param` says so). A body more than seven levels
+   * beneath you is worth nothing.
+   *
+   * IT WAS A NO-OP UNDER THE SUBSTITUTION and is not one now: with both sides
+   * the same number it read `L < L - 7`, never true. Against a real corpse level
+   * it is upstream's anti-farming floor, and it is the half of this port that
+   * actually closes the exploit — without it, shallow content still pays, just
+   * less.
+   */
+
+  if (victimLevel < recipientLevel - EXP_LEVEL_FLOOR) return 0;
+  return victimLevel * rankWorth(victimRank) * XP_WORTH_MULT;
 }
 
 /** What `gainExp` returns: the new level, the new PER-LEVEL xp, and the delta. */

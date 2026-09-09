@@ -3775,6 +3775,18 @@ function awardExperience(run: Run, killerId: string, victim: EngineActor): void 
   if (killer === undefined) return;
 
   /**
+   * ═════════════════════════════════════════════════════════════════════════
+   * HOW DEEP THE CORPSE CAME FROM — read ONCE, off the body that died.
+   * ═════════════════════════════════════════════════════════════════════════
+   *
+   * Actor.lua:6530's `self.level`, where `self` is the thing being asked what it
+   * is worth. Read here rather than inside the payout loop because it is a fact
+   * about the CORPSE and cannot vary per recipient — where the recipient's own
+   * level, which the floor at :6514 compares it against, obviously can.
+   */
+  const victimLevel = victim.level;
+
+  /**
    * 2. AND IT MAY BE A MONSTER — BEFORE ANY party.ts CALL, WHICH IS THE WHOLE
    *    POINT OF THE ORDER. Monster-kills-monster is representable (a stray orb,
    *    a future charm) and `partyOf` MUTATES: it mints a party on demand and says
@@ -3807,10 +3819,15 @@ function awardExperience(run: Run, killerId: string, victim: EngineActor): void 
      * 6. THE AWARD IS COMPUTED PER RECIPIENT, FROM THE RECIPIENT'S OWN LEVEL.
      * ═════════════════════════════════════════════════════════════════════════
      *
-     * `worthExp` is `level × rankWorth(rank) × XP_WORTH_MULT`, and the `level`
-     * it wants is the level of THE ACTOR BEING PAID — which is what its own
-     * `@param` says, and which is a deliberate deviation from Actor.lua:6513-6531
-     * (upstream uses the victim's) argued at length in src/shared/progression.ts.
+     * `worthExp` is `victimLevel × rankWorth(rank) × XP_WORTH_MULT`, which is
+     * Actor.lua:6513-6531 as written — and it takes the RECIPIENT'S level too,
+     * for the anti-farming floor at :6514.
+     *
+     * ═══ IT USED TO BE THE RECIPIENT'S LEVEL, AND THAT WAS A STATED DEVIATION ═══
+     * src/shared/progression.ts carried the substitution and its own expiry
+     * condition: *"the day floors and monster levels land, this MUST be swapped
+     * back to the victim's level"*. Delves ship monster levels 1 to 15 and
+     * `monsterInit` now records them, so this is that day.
      *
      * ═══ IT USED TO BE COMPUTED ONCE, FROM THE KILLER, AND PAID TO EVERYBODY ═══
      * The defence was that the difference is unobservable "because full-share
@@ -3833,7 +3850,7 @@ function awardExperience(run: Run, killerId: string, victim: EngineActor): void 
      * with, and the only one the old claim was true for — sees byte-identical
      * numbers, because every recipient's level IS the killer's.
      */
-    const award = worthExp(member.level, victim.rank);
+    const award = worthExp(victimLevel, victim.rank, member.level);
 
     /**
      * `gainExp` IS PURE AND RETURNS A NEW PAIR — it does not mutate, so the

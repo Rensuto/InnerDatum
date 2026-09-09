@@ -53,16 +53,25 @@ import type { World } from '../../src/server/world/world.ts';
  * proximity, and no filter on being upright.
  */
 
-/** `worthExp(1, ActorRank.Normal)` — level 1 × rank 0.8 × XP_WORTH_MULT 4. */
+/** `worthExp(1, ActorRank.Normal, …)` — a level-1 CORPSE × rank 0.8 × mult 4. */
 const AWARD = 1 * 0.8 * 4;
 /**
- * `worthExp(2, ActorRank.Normal)`. The SAME husk pays a level-2 character twice
- * what it pays a level-1 one, because `awardExperience` computes the award once
- * PER RECIPIENT from the recipient's own level — see the deviation note on
- * `worthExp` in src/shared/progression.ts, which is where the whole of that
- * wart is argued.
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE SAME NUMBER AS `AWARD`, AND THAT IS THE WHOLE OF A FIX.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * This used to be `2 * 0.8 * 4` — the same husk paying a level-2 character
+ * TWICE what it paid a level-1 one, because the award was computed from the
+ * RECIPIENT's level. `worthExp`'s own note called that a wart and named the
+ * condition for removing it; monster levels landed and it was removed.
+ *
+ * An award is now a fact about the CORPSE (Actor.lua:6530's `self.level`), so
+ * every recipient standing over one body is paid the same. Kept as its own name
+ * rather than folded into `AWARD` because the assertion below is specifically
+ * about a character who CROSSED A LEVEL between the two kills, and the reader
+ * needs to see that the crossing changes nothing.
  */
-const AWARD_AT_2 = 2 * 0.8 * 4;
+const AWARD_AT_2 = AWARD;
 
 /**
  * A weapon that always lands and always rolls the SAME NUMBER.
@@ -405,10 +414,11 @@ describe('the award at the one kill site', () => {
 
     const ren = scene.actor('p1');
     // The golden, written as the arithmetic rather than as 3.2, so the number
-    // and its provenance cannot drift apart: the KILLER's level (a deliberate
-    // deviation from Actor.lua:6513-6531, argued in src/shared/progression.ts),
-    // the Normal rank's 0.8 (Actor.lua:6521) and ToME's own `exp_worth_mult`
-    // dial at 4 (Actor.lua:6516).
+    // and its provenance cannot drift apart: the VICTIM's level (Actor.lua:6530
+    // `self.level`, where `self` is the corpse — this said "the KILLER's level,
+    // a deliberate deviation" until monster levels landed), the Normal rank's
+    // 0.8 (Actor.lua:6521) and ToME's own `exp_worth_mult` dial at 4
+    // (Actor.lua:6516).
     expect(ren.xp).toBe(AWARD);
     // 3.2 is nowhere near `expChart(2)` = 27, so nothing else may have happened.
     expect(ren.level).toBe(1);
@@ -728,23 +738,21 @@ describe('levels land on the base clock, never mid-pump', () => {
     const settled = scene.actor('p1');
     expect(settled.level).toBe(2);
     /**
-     * ═══ THE TWO AWARDS ARE NOT THE SAME SIZE, AND THAT IS THE POINT ═══
+     * ═══ THE TWO AWARDS ARE THE SAME SIZE, AND *THAT* IS NOW THE POINT ═══
      * p1 is level 1 when the first husk falls and level 2 when the second does,
-     * and `awardExperience` computes `worthExp` ONCE PER RECIPIENT inside the
-     * payout loop — from the RECIPIENT's own level, never the killer's. So the
-     * second kill pays p1 6.4 even though p2, who landed it, is still level 1.
+     * and both husks are level 1 bodies — so both pay 3.2. Crossing a level
+     * mid-pump changes what p1 can SPEND and nothing about what p1 EARNS.
      *
-     * THIS EXPRESSION USED TO READ `26 + AWARD + AWARD - 27`, back when the
-     * award was computed once from the KILLER and paid identically to everybody.
-     * That rule was defended on the grounds that the difference is unobservable
-     * "because full-share keeps the party at one level" — and THIS VERY SCENE is
-     * a counterexample to it, because p1 crosses a level mid-pump and p2 does
-     * not. It also meant the party's whole xp rate was set by whoever happened
-     * to land the killing blow, which a mid-session join turns into an eightfold
-     * swing.
+     * THIS EXPRESSION HAS READ THREE THINGS. `26 + AWARD + AWARD - 27` when the
+     * award came from the KILLER and was paid identically to everybody;
+     * `26 + AWARD - 27 + AWARD_AT_2` when it came from each RECIPIENT and this
+     * scene's level crossing therefore doubled the second one; and this, now
+     * that it comes from the CORPSE. The shape did not change — the provenance
+     * did, twice — which is why the expression is left in terms of the two
+     * named awards rather than collapsed to a number.
      *
      * `toBeCloseTo` only because the engine subtracts the threshold BETWEEN the
-     * two awards ((26 + 3.2 - 27) + 6.4) and the expression here does not, which
+     * two awards ((26 + 3.2 - 27) + 3.2) and the expression here does not, which
      * is a different rounding of the same arithmetic and nothing more.
      */
     expect(settled.xp).toBeCloseTo(26 + AWARD - 27 + AWARD_AT_2, 10);

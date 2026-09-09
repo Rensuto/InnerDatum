@@ -1080,6 +1080,30 @@ export type MonsterActor = ActorCommon & {
   readonly kind: typeof ActorKind.Monster;
   /**
    * ═══════════════════════════════════════════════════════════════════════════
+   * HOW DEEP THIS THING CAME FROM — and the field that was COMPUTED AND THROWN
+   * AWAY.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `monsterInit` has taken a `level` since delves shipped: it grows the stat
+   * spread, the life rating and the talent ranks off it, and then returned a
+   * body with nowhere to record it. `level` lived on `PlayerActor` alone, so the
+   * number that decides how hard a creature is could not be read back off the
+   * creature.
+   *
+   * WHAT THAT COST: `worthExp` is upstream's `self.level * mult`, where `self`
+   * is the CORPSE — and with no corpse level to read, this game paid experience
+   * from the RECIPIENT'S level instead (src/shared/progression.ts argues the
+   * substitution in full, and names this commit as the one that undoes it). A
+   * level-15 body in Blackwood and a level-1 body in the Drowned Chapel paid the
+   * same, so the safest room in the game was strictly the best one to farm.
+   *
+   * ONE PER BODY, NOT PER TEMPLATE. Two husks from the same template are
+   * different levels in different delves — that is the whole point of
+   * `delveLevel` — so this belongs on the actor and never on `MonsterTemplate`.
+   */
+  level: number;
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
    *   WHAT THIS CREATURE CAN DO BESIDES WALK AT YOU. Talent ids, or absent.
    * ═══════════════════════════════════════════════════════════════════════════
    *
@@ -1414,6 +1438,12 @@ export type PlayerInit = {
 
 export type MonsterInit = {
   /**
+   * What `monsterInit` grew this body to. Absent means 1 — the level every
+   * creature was before delves had depth, so a caller that does not say still
+   * gets the body it always got.
+   */
+  readonly level?: number;
+  /**
    * WHAT IT KNOWS. Talent ids, absent for a creature that can only swing.
    *
    * ═══ DECLARED HERE *AND* CONSTRUCTED BELOW, AND BOTH ARE LOAD-BEARING ═══
@@ -1629,6 +1659,9 @@ export function createMonsterActor(id: string, init: MonsterInit): MonsterActor 
     name: init.name,
     sprite: init.sprite,
     rank: init.rank ?? ActorRank.Normal,
+    // DEFAULT 1, matching `monsterInit`'s own default: a caller that never had
+    // a level to give gets the body it has always had. See `MonsterActor.level`.
+    level: init.level ?? 1,
     x: init.x,
     y: init.y,
     speedFactor: init.speedFactor ?? 1,

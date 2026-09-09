@@ -103,20 +103,64 @@ describe('expChart — load.lua:193-206', () => {
   });
 });
 
-describe('worthExp — Actor.lua:6513-6531, with the killer-level substitution', () => {
-  it('pays killerLevel * 0.8 * 4 for a Normal', () => {
-    expect(worthExp(1, ActorRank.Normal)).toBeCloseTo(1 * 0.8 * XP_WORTH_MULT, 10);
-    expect(worthExp(7, ActorRank.Normal)).toBeCloseTo(7 * 0.8 * XP_WORTH_MULT, 10);
+describe('worthExp — Actor.lua:6513-6531, on the VICTIM level as upstream writes it', () => {
+  it('pays victimLevel * 0.8 * 4 for a Normal', () => {
+    expect(worthExp(1, ActorRank.Normal, 1)).toBeCloseTo(1 * 0.8 * XP_WORTH_MULT, 10);
+    expect(worthExp(7, ActorRank.Normal, 7)).toBeCloseTo(7 * 0.8 * XP_WORTH_MULT, 10);
   });
 
-  it('pays killerLevel * 3 * 4 for an Elite', () => {
-    expect(worthExp(1, ActorRank.Elite)).toBeCloseTo(1 * 3 * XP_WORTH_MULT, 10);
-    expect(worthExp(7, ActorRank.Elite)).toBeCloseTo(7 * 3 * XP_WORTH_MULT, 10);
+  it('pays victimLevel * 3 * 4 for an Elite', () => {
+    expect(worthExp(1, ActorRank.Elite, 1)).toBeCloseTo(1 * 3 * XP_WORTH_MULT, 10);
+    expect(worthExp(7, ActorRank.Elite, 7)).toBeCloseTo(7 * 3 * XP_WORTH_MULT, 10);
   });
 
-  it('pays killerLevel * 25 * 4 for a Boss', () => {
-    expect(worthExp(1, ActorRank.Boss)).toBeCloseTo(1 * 25 * XP_WORTH_MULT, 10);
-    expect(worthExp(7, ActorRank.Boss)).toBeCloseTo(7 * 25 * XP_WORTH_MULT, 10);
+  it('pays victimLevel * 25 * 4 for a Boss', () => {
+    expect(worthExp(1, ActorRank.Boss, 1)).toBeCloseTo(1 * 25 * XP_WORTH_MULT, 10);
+    expect(worthExp(7, ActorRank.Boss, 7)).toBeCloseTo(7 * 25 * XP_WORTH_MULT, 10);
+  });
+
+  it('pays for the CORPSE, so depth pays and the shallow room does not', () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * THE WHOLE POINT: `self.level` at Actor.lua:6530 IS THE THING THAT DIED.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * This game paid from the RECIPIENT's level for as long as every husk was
+     * level 1 (progression.ts carries the substitution and its expiry). Delves
+     * ship monster levels 1 to 15, so a Gearford body is worth more than a
+     * Drowned Chapel one to the same player — which is the only thing that makes
+     * going somewhere dangerous pay.
+     */
+    const player = 8;
+    const shallow = worthExp(3, ActorRank.Normal, player);
+    const deep = worthExp(13, ActorRank.Normal, player);
+    expect(deep, 'a deeper corpse paid no more').toBeGreaterThan(shallow);
+    expect(deep / shallow).toBeCloseTo(13 / 3, 10);
+
+    // AND THE RECIPIENT'S OWN LEVEL DOES NOT CHANGE THE AWARD. Two players of
+    // different levels standing over the same body are paid the same — which is
+    // what stops the party's rate depending on who is in it.
+    expect(worthExp(13, ActorRank.Normal, 4)).toBeCloseTo(worthExp(13, ActorRank.Normal, 9), 10);
+  });
+
+  it('pays nothing for a corpse more than seven levels beneath — Actor.lua:6514', () => {
+    /**
+     * `if not target.level or self.level < target.level - 7 then return 0 end`,
+     * with `self` the corpse and `target` the actor being paid.
+     *
+     * This clause was UNPORTABLE under the old substitution — both sides were
+     * the same number, so it read `L < L - 7` and never fired. It is the half
+     * that actually closes the farming loop: without it a level-15 player still
+     * earns something for clearing the Drowned Chapel over and over.
+     */
+    // Exactly seven beneath still pays: the comparison is strict.
+    expect(worthExp(3, ActorRank.Normal, 10)).toBeGreaterThan(0);
+    // Eight beneath pays nothing at all.
+    expect(worthExp(2, ActorRank.Normal, 10)).toBe(0);
+    expect(worthExp(1, ActorRank.Boss, 20), 'even a boss, if it is trivial').toBe(0);
+    // AND IT NEVER BITES UPWARDS. Diving below your level is the behaviour the
+    // rule exists to encourage, so a corpse ABOVE you is always worth full.
+    expect(worthExp(15, ActorRank.Normal, 1)).toBeCloseTo(15 * 0.8 * XP_WORTH_MULT, 10);
   });
 
   it('keeps the upstream rank ratios exactly — 0.8 / 3 / 25', () => {
@@ -134,7 +178,7 @@ describe('worthExp — Actor.lua:6513-6531, with the killer-level substitution',
     // because every husk on our single hand-authored map is level 1 forever.
     // If this ever stops being linear in the first argument, the pacing test
     // below is measuring something else than it claims to.
-    expect(worthExp(4, ActorRank.Normal)).toBeCloseTo(4 * worthExp(1, ActorRank.Normal), 10);
+    expect(worthExp(4, ActorRank.Normal, 4)).toBeCloseTo(4 * worthExp(1, ActorRank.Normal, 1), 10);
   });
 });
 
@@ -310,7 +354,10 @@ describe('PACING — kills from level 1 to the cap', () => {
      */
     let previous = 0;
     for (let level = 2; level <= MAX_CHARACTER_LEVEL; level += 1) {
-      const kills = expChart(level) / worthExp(level, ActorRank.Normal);
+      // A PLAYER FIGHTING CONTENT ITS OWN LEVEL, which is what the curve is
+      // shaped for and the case the victim-level port leaves byte-identical:
+      // `victimLevel === recipientLevel` is exactly the old substitution.
+      const kills = expChart(level) / worthExp(level, ActorRank.Normal, level);
       expect(kills, `level ${String(level)} is cheaper than the one before`).toBeGreaterThan(
         previous,
       );
@@ -319,8 +366,8 @@ describe('PACING — kills from level 1 to the cap', () => {
   });
 
   it('a Boss is worth about thirty-one normals, as upstream priced it', () => {
-    const boss = worthExp(5, ActorRank.Boss);
-    const normal = worthExp(5, ActorRank.Normal);
+    const boss = worthExp(5, ActorRank.Boss, 5);
+    const normal = worthExp(5, ActorRank.Normal, 5);
     expect(boss / normal).toBeCloseTo(25 / 0.8, 10);
   });
 });

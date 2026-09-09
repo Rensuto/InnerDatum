@@ -229,7 +229,7 @@ describe('the filled width', () => {
   it('turns a FRACTIONAL xp into a whole number of pixels, never a NaN', () => {
     // One normal husk at level 1 pays exactly 3.2 (progression.ts:313-315), so a
     // fractional numerator is the ORDINARY case here and not an exotic one.
-    const oneKill = worthExp(1, ActorRank.Normal);
+    const oneKill = worthExp(1, ActorRank.Normal, 1);
     expect(Number.isInteger(oneKill)).toBe(false);
 
     for (const xp of [oneKill, oneKill * 2, oneKill * 3, 0.5, 119.9999]) {
