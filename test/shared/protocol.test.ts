@@ -1278,9 +1278,10 @@ describe('the four loot verbs at the trust boundary', () => {
     // change without a bump anyway, so the enum costs no coupling and buys a
     // refusal one layer earlier.
     //
-    // EIGHT NOW. `mainhand` was added — see `Slot` in the server's items.ts —
-    // and it is the first of ToME's fifteen worn inventories this game lacked.
-    expect(SLOT_ORDER).toHaveLength(8);
+    // TWELVE NOW: the original seven, `mainhand`, and the second batch —
+    // `neck`, `cloak`, `belt`, `hands`. ToME defines fifteen worn inventories
+    // (`load.lua:120-134`) and this game is porting them.
+    expect(SLOT_ORDER).toHaveLength(12);
     for (const slot of SLOT_ORDER) {
       expect(parseClientMsg({ v: V, t: 'unequip', slot }).ok, `${slot} must parse`).toBe(true);
     }
@@ -1290,7 +1291,7 @@ describe('the four loot verbs at the trust boundary', () => {
 
     const bad: unknown[] = [
       'finger', // ToME's own name for what we call `ring`
-      'neck', // one of the seven of ToME's fifteen still to come
+      'lite', // one of the three of ToME's fifteen still to come
       'BODY', // upstream's casing; ours is lowercased
       'inven',
       '',
@@ -1582,7 +1583,20 @@ describe('the floor is broadcast and the bag is not', () => {
     // per class — because the floor pile is unowned and a drop only one class can
     // wear is dead on arrival most of the time it appears.
     expect(Object.values(Slot).sort()).toEqual(
-      ['body', 'feet', 'head', 'legs', 'mainhand', 'offhand', 'ring', 'trinket'].sort(),
+      [
+        'belt',
+        'body',
+        'cloak',
+        'feet',
+        'hands',
+        'head',
+        'legs',
+        'mainhand',
+        'neck',
+        'offhand',
+        'ring',
+        'trinket',
+      ].sort(),
     );
     /**
      * ═══════════════════════════════════════════════════════════════════════

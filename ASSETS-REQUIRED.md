@@ -365,3 +365,29 @@ should look like something a case officer would actually carry:
 `PENDING_ICON_IDS` to `KNOWN_ICON_IDS` keeps `npm run check` green — there is a
 test asserting the two lists are disjoint, so the move is the signal that the art
 arrived.
+
+## The second slot batch — neck, cloak, belt, hands
+
+Four more of ToME's fifteen worn inventories (`load.lua:124, :127, :129, :130`),
+each with one item so the slot has something to find. Same arrangement as the
+weapons above: the ids are in `PENDING_ICON_IDS` and read as a letter until the
+art lands.
+
+| id | slot | tier | what it is |
+|---|---|---|---|
+| `item_witness_locket` | neck | common | A hinged tin locket on a cord, a stranger's photograph inside. Worn by someone who took a statement they could not forget. |
+| `item_archivists_mantle` | cloak | uncommon | A heavy dust-cape, ink-stained at the cuffs, shoulders worn pale from a strap. |
+| `item_evidence_belt` | belt | common | A wide leather belt hung with numbered brass tags and empty loops. |
+| `item_handlers_gloves` | hands | uncommon | Close-fitting gloves, palms reinforced, one fingertip cut away for a pen. |
+
+**Cut them at 64x64**, matching every other `item_*` file.
+
+**Why four at once:** the paper doll's capacity is `COLS * DOLL_ROWS` minus the
+four cells the portrait occupies — eight at three rows, twelve at four. A fourth
+row buys exactly four slots, so adding them one at a time would leave the grid
+ragged for two commits.
+
+**The doll now sheds its tail row at the 480 floor** and says so in a line of
+grey text. That is the designed drop policy and there is a test that a shed row
+is always accompanied by that note — a slot may be held back, never silently
+lost.

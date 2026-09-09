@@ -350,7 +350,7 @@ const CAPTION_BASELINE = 6;
  * budget first — which is now understated rather than overstated, since at the
  * real 320 floor even the third row is already being shed.
  */
-const DOLL_ROWS = 3;
+const DOLL_ROWS = 4;
 /** Three cells tall with two gaps between them, and no trailing gap. */
 const DOLL_H = DOLL_ROWS * CELL_PX + (DOLL_ROWS - 1) * CELL_GAP;
 
@@ -394,6 +394,15 @@ const DOLL_PLACES: Readonly<Record<Slot, DollPlace>> = {
    * hand goes at the body's side where a hand is.
    */
   mainhand: { col: 2, row: 2 },
+  /**
+   * THE FOURTH ROW. Read as a body rather than as a list: the left column is
+   * what the off hand carries, the right column is the torso from the head
+   * down, and the two middle cells of each lower row are what is left.
+   */
+  hands: { col: 0, row: 3 },
+  belt: { col: 1, row: 3 },
+  neck: { col: 2, row: 3 },
+  cloak: { col: 3, row: 3 },
 };
 
 /**

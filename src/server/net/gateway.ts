@@ -10057,6 +10057,10 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     // WHERE IT COMES OFF, in the same idiom as the six above: this table is
     // read into a sentence about a body, not a slot name.
     mainhand: 'weapon hand',
+    neck: 'throat',
+    cloak: 'shoulders',
+    belt: 'waist',
+    hands: 'hands',
   };
 
   const handleShopBuy = (session: Session, msg: ClientShopBuy): void => {

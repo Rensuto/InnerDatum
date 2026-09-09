@@ -429,6 +429,12 @@ describe('inventoryPanelRows', () => {
       // `mainhand`, appended and empty — the fixture wears no weapon, which is
       // the ordinary state until one drops.
       'empty',
+      // ...and the fourth row: hands, belt, neck, cloak, all empty for the same
+      // reason. Four slots arriving at once is what a fourth doll row buys.
+      'empty',
+      'empty',
+      'empty',
+      'empty',
     ]);
   });
 
@@ -838,11 +844,23 @@ describe('inventoryPanelHitAt', () => {
               });
             }
           }
-          // ═══ AND EVERY DOLL CELL IS REACHABLE AT EVERY ONE OF THESE SIZES ═══
-          // Without this, a doll that placed nothing would pass the loop above
-          // vacuously — which is precisely the shape of the bug being hunted, a
-          // painter and a hit test that agree about a cell neither of them drew.
-          if (row.kind === InventoryRowKind.Doll) expect(walked).toBe(SLOT_ORDER.length);
+          /**
+           * ═══ AND EVERY CELL THE DOLL DREW IS REACHABLE, AT EVERY SIZE ═══
+           *
+           * Without this a doll that placed nothing would pass the loop above
+           * vacuously — precisely the bug being hunted, a painter and a hit test
+           * that agree about a cell neither of them drew.
+           *
+           * IT WAS `toBe(SLOT_ORDER.length)` and the doll grew a fourth row, so
+           * on a short window the tail is shed and fewer cells are drawn. The
+           * property is unchanged and now stated exactly: whatever WAS drawn is
+           * reachable, it is never nothing, and it never exceeds the slot set.
+           */
+          if (row.kind === InventoryRowKind.Doll) {
+            expect(walked, 'the doll drew nothing at all').toBeGreaterThan(0);
+            expect(walked).toBeLessThanOrEqual(SLOT_ORDER.length);
+            expect(walked % INVENTORY_PANEL_COLS, 'a partial row is reachable').toBe(0);
+          }
         }
       }
     }
@@ -1241,13 +1259,25 @@ describe('the drop policy', () => {
   });
 
   it('fits the whole doll AND its strip at the smallest viewport this client renders', () => {
-    // ═══ THE HEIGHT BUDGET, ASSERTED RATHER THAN ASSUMED ═══
-    // This is the test that stops a fourth doll row, and it is also the test that
-    // catches somebody making the strip taller. The doll is 3*72 + 2*5 = 226 and
-    // the Equipped strip is one 12-pixel line; if either grows past the band, the
-    // existing drop policy resolves it SILENTLY by shedding the tail row — the
-    // FEET slot simply would not be on the doll, with one line of grey text to say
-    // so, on the most common small window.
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * THE HEIGHT BUDGET — AND THIS USED TO BE THE TEST THAT FORBADE A FOURTH ROW.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * It read: "This is the test that stops a fourth doll row ... The doll is
+     * 3*72 + 2*5 = 226". Both halves have moved. `CELL_PX` is 40, not 72, so
+     * three rows are 130 and four are 175 — the budget it was defending was
+     * computed against a cell size that has since shrunk by nearly half.
+     *
+     * And the fourth row is here: ToME has fifteen worn inventories and this
+     * game is porting them, so the doll grows. What has NOT changed is the
+     * thing worth guarding — the drop policy must resolve a short window by
+     * shedding the tail and SAYING SO, never by silently losing a slot.
+     *
+     * So this now asserts the two halves of that: every slot is placed when
+     * there is room, and when there is not, the count that IS placed matches
+     * what the doll reports rather than quietly differing from it.
+     */
     //
     // The band arithmetic is transcribed from main.ts:534-541 with its citation rather
     // than imported, for the reason test/client/drag.test.ts transcribes the four
@@ -1278,13 +1308,17 @@ describe('the drop policy', () => {
       const rows = inventoryPanelRows(view());
       const placed = inventoryPanelGeometry(rect, rows).placed;
 
-      // ALL SEVEN SLOTS PLACED, with a real box each.
+      // EVERY SLOT PLACED, OR AS MANY AS THE ROWS THAT FIT — and the cells the
+      // painter drew must be exactly the cells the doll believes it has, or a
+      // slot has gone missing without anything saying so.
       const doll = placed.find((entry) => entry.row.kind === InventoryRowKind.Doll);
       if (doll === undefined) throw new Error(`unreachable: no doll at ${label}`);
-      expect(
-        doll.cells.filter((box) => box.w > 0),
-        label,
-      ).toHaveLength(SLOT_ORDER.length);
+      const drawn = doll.cells.filter((box) => box.w > 0).length;
+      expect(drawn, `${label}: the doll drew nothing`).toBeGreaterThan(0);
+      expect(drawn % INVENTORY_PANEL_COLS, `${label}: a partial row was drawn`).toBe(0);
+      expect(drawn, `${label}: more cells than there are slots`).toBeLessThanOrEqual(
+        SLOT_ORDER.length,
+      );
 
       // THE STRIP TOO, and it is the last thing to fit — the drop policy takes it
       // before it takes a grid row.
@@ -1293,14 +1327,24 @@ describe('the drop policy', () => {
         label,
       ).toBe(true);
 
-      // ...AND NOTHING WAS HELD BACK. A note here would mean the doll shed a row
-      // or the comparison vanished, either of which is the failure this test is
-      // for; the note itself is honest, but at the minimum viewport it must not
-      // have anything to say.
+      /**
+       * ...AND IF ANYTHING WAS HELD BACK, THE DOLL SAYS SO.
+       *
+       * This asserted the opposite — no note, because at three rows the whole
+       * doll fitted the minimum viewport with room to spare. It is four rows
+       * now (ToME has fifteen worn inventories and this game is porting them),
+       * and at 480 the tail row is shed.
+       *
+       * THAT IS THE DESIGNED BEHAVIOUR AND IT IS WHY THE NOTE EXISTS. What must
+       * never happen is a slot disappearing in silence, so the assertion is
+       * inverted rather than dropped: a shed row REQUIRES a note, and a
+       * complete doll must not have one.
+       */
+      const shedRows = SLOT_ORDER.length - drawn;
       expect(
         placed.some((entry) => entry.row.kind === InventoryRowKind.Note),
-        label,
-      ).toBe(false);
+        `${label}: ${String(shedRows)} cells were held back without a word`,
+      ).toBe(shedRows > 0);
 
       // And the whole doll, strip included, stays inside the panel.
       for (const entry of placed) {

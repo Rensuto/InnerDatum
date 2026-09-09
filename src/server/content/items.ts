@@ -182,6 +182,25 @@ export const Slot = {
    * and no replay.
    */
   Mainhand: 'mainhand',
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE SECOND BATCH — `load.lua:124, :127, :129, :130`.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * NECK ("Amulets are worn around the neck"), CLOAK ("can simply keep you warm
+   * or grant you wondrous powers"), BELT ("Belts are worn around your waist")
+   * and HANDS ("Various gloves can be worn on your hands"), each verbatim from
+   * upstream's own descriptions.
+   *
+   * FOUR AT ONCE BECAUSE THE DOLL TAKES FOUR AT ONCE. Its capacity is
+   * `COLS * DOLL_ROWS` minus the four the portrait occupies — 8 at three rows
+   * and 12 at four — so a fourth row buys exactly this many. Adding them one at
+   * a time would mean three commits that each leave the grid ragged.
+   */
+  Neck: 'neck',
+  Cloak: 'cloak',
+  Belt: 'belt',
+  Hands: 'hands',
 } as const;
 export type Slot = (typeof Slot)[keyof typeof Slot];
 
@@ -207,6 +226,10 @@ export const SLOT_ORDER = Object.freeze([
   Slot.Ring,
   Slot.Trinket,
   Slot.Mainhand,
+  Slot.Neck,
+  Slot.Cloak,
+  Slot.Belt,
+  Slot.Hands,
 ] as const) satisfies readonly Slot[];
 
 /**
@@ -727,6 +750,10 @@ export const PENDING_ICON_IDS: readonly string[] = Object.freeze([
   'item_service_baton',
   'item_bailiffs_hook',
   'item_writ_of_seizure',
+  'item_witness_locket',
+  'item_archivists_mantle',
+  'item_evidence_belt',
+  'item_handlers_gloves',
 ]);
 
 // ---------------------------------------------------------------------------
@@ -1165,12 +1192,78 @@ const WEAPONS: readonly Item[] = [
   },
 ];
 
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE SECOND BATCH OF SLOTS, ONE ITEM EACH — enough for each to be findable.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `validateItems` throws at module evaluation for a slot with nothing in it, and
+ * that guard is the reason a slot and its first item must land together: a slot
+ * a player can see and never fill is exactly the *"wasted empty slots"* this
+ * work was asked to remove.
+ *
+ * ONE EACH, AND SPREAD ACROSS THE TIERS rather than four commons. The tiers ARE
+ * the drop tables (see the tier test), so four items at one tier would make one
+ * table half weapons-and-gloves and leave the other two untouched.
+ *
+ * THE NUMBERS ARE SMALL ON PURPOSE. These are the first things in four new
+ * slots, and four slots arriving at once is already a step up in total worn
+ * stats — `composeWielders` adds every one of them. Modest pieces mean the
+ * batch lands as more PLACES to fill rather than as a power spike, and there is
+ * room above them for what comes next.
+ */
+const SECOND_BATCH: readonly Item[] = [
+  {
+    id: 'item_witness_locket',
+    name: 'Witness Locket',
+    slot: Slot.Neck,
+    icon: 'item_witness_locket',
+    tier: 'common',
+    /**
+     * THREE, NOT TWO, AND THE THRESHOLD IS ARITHMETIC RATHER THAN TASTE. A save
+     * is `(statA + statB + …) * 0.35` through `rescaleCombatStats`, so +2 is
+     * +0.7 and rounds away to nothing — an item that changes no number a player
+     * can see, which `equipment.test.ts` refuses by name. +3 is +1.05 and
+     * actually moves the mental and spell saves.
+     */
+    wielder: { stats: { wil: 3 } },
+  },
+  {
+    id: 'item_archivists_mantle',
+    name: "Archivist's Mantle",
+    slot: Slot.Cloak,
+    icon: 'item_archivists_mantle',
+    tier: 'uncommon',
+    // A cloak is upstream's defence-and-a-little-armour piece.
+    wielder: { mods: { def: 2, armour: 1 } },
+  },
+  {
+    id: 'item_evidence_belt',
+    name: 'Evidence Belt',
+    slot: Slot.Belt,
+    icon: 'item_evidence_belt',
+    tier: 'common',
+    // +3 for the locket's reason: below that a save rounds the item away.
+    wielder: { stats: { con: 3 } },
+  },
+  {
+    id: 'item_handlers_gloves',
+    name: "Handler's Gloves",
+    slot: Slot.Hands,
+    icon: 'item_handlers_gloves',
+    tier: 'uncommon',
+    // Gloves are where upstream puts accuracy and a little armour penetration.
+    wielder: { mods: { atk: 2, apr: 1 } },
+  },
+];
+
 export const ITEMS: readonly Item[] = Object.freeze([
   ...WATCHMAN_KIT,
   ...INSPECTOR_KIT,
   ...ALCHEMIST_KIT,
   ...GENERIC_ITEMS,
   ...WEAPONS,
+  ...SECOND_BATCH,
   ...DRAUGHTS,
 ]);
 

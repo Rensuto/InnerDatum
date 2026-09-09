@@ -2129,6 +2129,11 @@ export const Slot = {
   Trinket: 'trinket',
   /** The weapon hand — `load.lua:120`. See the server's `Slot` for the port. */
   Mainhand: 'mainhand',
+  /** `load.lua:124, :127, :129, :130` — see the server's `Slot` for the batch. */
+  Neck: 'neck',
+  Cloak: 'cloak',
+  Belt: 'belt',
+  Hands: 'hands',
 } as const;
 export type Slot = (typeof Slot)[keyof typeof Slot];
 
@@ -2160,6 +2165,10 @@ export const SLOT_ORDER = [
   // mid-list changes which item a pickup hands you first on a given seed —
   // see `Slot.Mainhand` in the server's items.ts.
   'mainhand',
+  'neck',
+  'cloak',
+  'belt',
+  'hands',
 ] as const satisfies readonly Slot[];
 
 /**

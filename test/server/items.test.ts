@@ -14,6 +14,7 @@ import {
   validateItems,
 } from '../../src/server/content/items.ts';
 import { EFFECT_IDS, EffectId } from '../../src/server/content/effects.ts';
+import { SLOT_ORDER as WIRE_SLOT_ORDER } from '../../src/shared/protocol.ts';
 import type { Item } from '../../src/server/content/items.ts';
 
 /**
@@ -121,7 +122,7 @@ function fullSlotSpread(): Item[] {
 }
 
 describe('the item catalogue', () => {
-  it('ships 25 worn items and one you drink', () => {
+  it('ships 29 worn items and one you drink', () => {
     // 23 `item_*` ids exist in the manifest. 22 are authored as equipment. The
     // 23rd `item_*` id is the ingot, and cutting it is a decision rather than an
     // oversight — see FORBIDDEN_IDS above; it draws the MONEY pile instead
@@ -135,15 +136,15 @@ describe('the item catalogue', () => {
     // missing sprite and has for a long time (ui/inventory.ts:2754-2763), so the
     // catalogue's old refusal was enforcing a hazard that no longer existed —
     // and capping the content at whatever had been drawn.
-    expect(ITEMS).toHaveLength(26);
-    expect(ITEMS.filter((item) => item.slot !== undefined)).toHaveLength(25);
+    expect(ITEMS).toHaveLength(30);
+    expect(ITEMS.filter((item) => item.slot !== undefined)).toHaveLength(29);
     expect(ITEMS.filter((item) => item.use !== undefined)).toHaveLength(1);
     // 23 DRAWN ICONS still, and 26 items: the three weapons name commissioned
     // ids instead. The 23rd icon is the ability vial (see the list above) and
     // the draught is what names it — the first thing in this game you buy in
     // order to SPEND it.
     expect(MANIFEST_ITEM_ICONS).toHaveLength(23);
-    expect(ITEM_CATALOGUE.size).toBe(26);
+    expect(ITEM_CATALOGUE.size).toBe(30);
   });
 
   it('names only icons that exist in the committed manifest', () => {
@@ -330,7 +331,7 @@ describe('the item catalogue', () => {
     }
   });
 
-  it('lines its three tiers up with the three drop tables, 8 / 11 / 7', () => {
+  it('lines its three tiers up with the three drop tables, 10 / 13 / 7', () => {
     // NOT COSMETIC. The roster's drop tables are meant to select on `tier`
     // rather than re-listing 23 ids somewhere else that has to stay in sync:
     //   common   = every LEGS and FEET item, plus the leather chest
@@ -342,8 +343,8 @@ describe('the item catalogue', () => {
     // and a party that can buy the good one on every visit has no decision to
     // make about drinking it.
     const byTier = (tier: string): Item[] => ITEMS.filter((item) => item.tier === tier);
-    expect(byTier('common')).toHaveLength(8);
-    expect(byTier('uncommon')).toHaveLength(11);
+    expect(byTier('common')).toHaveLength(10);
+    expect(byTier('uncommon')).toHaveLength(13);
     expect(byTier('rare')).toHaveLength(7);
     expect(byTier('common').length + byTier('uncommon').length + byTier('rare').length).toBe(
       ITEMS.length,
@@ -357,7 +358,9 @@ describe('the item catalogue', () => {
     // MAINHAND JOINS EVERY TIER, and that is the point of a weapon ladder: the
     // one slot whose upgrade is felt on every swing needs something to find at
     // each step, where a HEAD piece can sensibly exist at one tier only.
-    expect([...slotsOf('uncommon')].sort()).toEqual(['head', 'mainhand', 'offhand', 'trinket']);
+    expect([...slotsOf('uncommon')].sort()).toEqual(
+      ['cloak', 'hands', 'head', 'mainhand', 'offhand', 'trinket'].sort(),
+    );
     expect([...slotsOf('rare')].sort()).toEqual(['body', 'mainhand', 'ring']);
   });
 
@@ -489,5 +492,42 @@ describe('a worn rider names a real effect', () => {
       if (rider === undefined) continue;
       expect(rider.power, `${item.id} grants an unsaveable status`).toBeGreaterThan(0);
     }
+  });
+});
+
+describe('the two Slot unions agree, which nothing proved before', () => {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THERE ARE TWO, AND ONE COULD SILENTLY GET AHEAD OF THE OTHER.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `src/server/content/items.ts` declares `Slot` and so does
+   * `src/shared/protocol.ts` — deliberately, because `src/shared/` may not reach
+   * into `src/server/`, and both files say so. What neither says is how they are
+   * kept in step, and the answer was: they were not.
+   *
+   * `_MissingFromSlotOrder` proves the SHARED list covers the SHARED union.
+   * `_MissingFromServerSlotOrder` now proves the same on the server side. Across
+   * the two modules there was nothing at all — and the asymmetry is what makes
+   * it dangerous: `projectInventory` builds `{ [K in Slot]?: ItemView }` with
+   * the SERVER's union and returns it as `InventoryMsg.equipped`, typed with the
+   * SHARED one. A wider server union ASSIGNS CLEANLY to a narrower shared
+   * record, so "server ahead of shared" compiles, and the result is an item that
+   * is invisible on the doll and impossible to take off — `unequip` is a
+   * `z.enum` and has no member to name it.
+   *
+   * The reverse direction does error, which is why this was never noticed: half
+   * the mistake is caught and the dangerous half is not.
+   */
+  it('names exactly the same slots on both sides', () => {
+    expect(Object.values(Slot).sort()).toEqual([...WIRE_SLOT_ORDER].sort());
+  });
+
+  it('orders them identically, because the spill order is one of them', () => {
+    // `SLOT_ORDER` is the order a corpse gives up its gear
+    // (turn-engine.ts, citing `tome/class/Actor.lua:3038-3040`). Two orders
+    // would mean the server spilled in one and the client explained it in
+    // another.
+    expect([...SLOT_ORDER]).toEqual([...WIRE_SLOT_ORDER]);
   });
 });

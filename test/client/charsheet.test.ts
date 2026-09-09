@@ -672,9 +672,13 @@ describe('the equipment rows', () => {
       'Offhand',
       'Ring',
       'Trinket',
-      // APPENDED, like the slot itself — `SLOT_ORDER` is the corpse spill order
-      // and inserting mid-list would change what a pickup hands you first.
+      // APPENDED, like the slots themselves — `SLOT_ORDER` is the corpse spill
+      // order and inserting mid-list would change what a pickup hands you first.
       'Weapon',
+      'Neck',
+      'Cloak',
+      'Belt',
+      'Hands',
     ]);
     // AND THE ORDER IS `SLOT_ORDER`'s, not this file's opinion of it. The label
     // is a WORD, not the slot id, so the two are compared through the record.
