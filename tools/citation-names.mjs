@@ -214,6 +214,32 @@ function walk(dir, out) {
   return out;
 }
 
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * NO REFERENCE TREE IS NOT A FAILURE — IT IS EVERY CLONE BUT THIS ONE.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `reference/t-engine4` is gitignored and deliberately not distributed, so on a
+ * fresh clone this directory does not exist and `walk` threw `ENOENT` — which
+ * `npm run check` reported as a failed gate. Somebody cloning the repository to
+ * read it got a red build on their first command, caused by the one directory
+ * the repository tells them it does not ship.
+ *
+ * `check-citations.mjs` has had this guard since it was written and this tool,
+ * its younger sibling, never grew one. Skipping is the honest answer: the
+ * question this asks — does the cited Lua describe the talent it names — cannot
+ * be asked without the Lua, and a check that cannot reach its question has not
+ * failed, it has abstained. That is the same rule `npm run verify` states for
+ * its probes: exit 0 when you proved your thing OR could not get to it, so only
+ * a red line is ever a real fault.
+ */
+if (!fs.existsSync(REF)) {
+  console.log('\ncitation names');
+  console.log(`  skip  no ${REF} on this machine — nothing to check against`);
+  console.log('\ncitation names SKIPPED');
+  process.exit(0);
+}
+
 const byName = new Map();
 for (const p of walk(`${REF}/game`, [])) {
   const base = p.split('/').pop();

@@ -303,9 +303,9 @@ npm run verify          # live probes that boot real servers and walk into real 
 a gate that gets skipped — and each probe exits 0 when it proved its thing *or* could not
 reach the question, so only a red line is ever a fault.
 
-One honest caveat: two gates want the T-Engine4 reference tree, which is not distributed
-here. `check:citations` detects its absence and skips; `check:citation-names` does not and
-will exit 1 on a bare clone. `npm test` and `npm run smoke` are the clone-runnable ones.
+Two of the gates want the T-Engine4 reference tree, which is not distributed here. Both
+detect its absence and skip, because a check that cannot reach its question has not failed
+— it has abstained. Everything else runs on a bare clone.
 
 ### Layout
 
