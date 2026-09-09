@@ -509,20 +509,28 @@ function run(site, size, seed) {
        * direction re-sent forever: if the same blocked step is ordered twice
        * running from the same tile, hold instead and let the world move.
        */
-      const throughAlly = firstStep(clear, { x: b.x, y: b.y }, goal) === null;
       const dir =
         firstStep(clear, { x: b.x, y: b.y }, goal) ?? firstStep(terrain, { x: b.x, y: b.y }, goal);
+      /**
+       * ANY step ordered twice from the same tile, not just one through an ally.
+       * The engine is not frozen by a refusal — test/server/ally-swap.test.ts
+       * pins that a body pressing into a shopkeeper does not stop anybody else
+       * taking a turn — so a repeat here is purely the DRIVER wasting the floor's
+       * remaining turns on an order it has already watched fail. The refusals
+       * seen in practice are `occupied`, and an occupant may be a townsfolk or a
+       * downed body, neither of which an ally check would have caught.
+       */
       const repeat = lastOrder.get(b.id);
       if (
-        throughAlly &&
         dir !== null &&
         repeat !== undefined &&
         repeat.dir === dir &&
         repeat.x === b.x &&
         repeat.y === b.y
       ) {
-        // THE SAME BLOCKED ORDER, FROM THE SAME TILE, TWICE. Standing still is
-        // a turn the engine will actually take, which is the whole difference.
+        // THE SAME ORDER, FROM THE SAME TILE, TWICE — so the first one did not
+        // move this body. Standing still is a turn the engine will actually
+        // take, which is the whole difference.
         tally.held += 1;
         lastOrder.delete(b.id);
         realm.engine.hold(b.id);
@@ -658,6 +666,9 @@ function run(site, size, seed) {
       // on the refund path, which is the one thing that distinguishes "the
       // resolver said no" from "the loop never reached this body".
       const evs = [...(pumped?.playerEvents ?? []), ...(pumped?.sweep ?? [])];
+      for (const r of pumped?.refusals ?? []) {
+        console.log(`  [refused t${String(turns)}] ${String(r.id)}: ${String(r.reason)}`);
+      }
       console.log(
         `  [ev t${String(turns)}] ${evs.map((e) => `${String(e.t ?? e.k)}${e.reason === undefined ? '' : ':' + String(e.reason)}${e.id === undefined ? '' : '@' + String(e.id)}`).join(' ') || 'none'}`,
       );

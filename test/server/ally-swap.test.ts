@@ -199,6 +199,69 @@ describe('bumping into a body', () => {
     ).not.toEqual(afterFirst);
   });
 
+  it('does not let one body ordering a blocked step freeze everybody else', () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * THE REFUND RULE, SEEN FROM THE OTHER THREE PEOPLE IN THE VOICE CHANNEL.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * `actPlayer` returns `Park` on a refusal — energy unspent, *"the loop comes
+     * back to them before the world moves"*. That is right for a race: two
+     * players attack the same monster, the loser is refunded rather than
+     * charged for nothing.
+     *
+     * It is a hazard when the refusal is not a race but a WALL. A body ordering
+     * a step into terrain gets the same refusal every time, so a client that
+     * re-sends it holds the floor's clock for the whole party — and that is not
+     * hypothetical: it is four of the delve driver's remaining 900-turn stalls,
+     * `[refused] p2: occupied` on repeat.
+     *
+     * THIS TEST IS THE PROPERTY, NOT THE MECHANISM: whatever the engine does
+     * about it, a second player who orders a legal move must get to take it.
+     */
+    const { world, engine, a, b } = twoPlayers();
+    /**
+     * A DIRECTION THAT CANNOT WORK, MADE RATHER THAN FOUND. A wall would do and
+     * the spawn does not reliably have one beside it; a TOWNSFOLK is the same
+     * refusal by construction — the test above pins that a shopkeeper is never
+     * shoved — and it needs no assumption about the generated room.
+     */
+    const post = beside(world, a);
+    if (post === null) throw new Error('test fixture: no ground beside the spawn');
+    world.addMonster('shopkeep', husk('Merrow Stitch', post.x, post.y, Faction.Townsfolk));
+    const blocked = post.x > a.x ? 'e' : post.x < a.x ? 'w' : post.y > a.y ? 's' : 'n';
+
+    const startA = { x: a.x, y: a.y };
+    const startB = { x: b.x, y: b.y };
+    // TYPED AS `Dir`, not inferred as `string`: `submitMove` takes the union and
+    // a bare array literal widens.
+    const open = (['n', 's', 'e', 'w'] as const).find((dir) => {
+      const dx = dir === 'e' ? 1 : dir === 'w' ? -1 : 0;
+      const dy = dir === 'n' ? -1 : dir === 's' ? 1 : 0;
+      return (
+        canWalk(world.level, b.x + dx, b.y + dy) && world.actorAt(b.x + dx, b.y + dy) === undefined
+      );
+    });
+    if (open === undefined) throw new Error('test fixture: no open floor beside the second body');
+
+    // TEN ROUNDS of one body pressing into stone and the other walking. Ten
+    // because the stall this is about ran for nine hundred.
+    for (let i = 0; i < 10; i += 1) {
+      engine.submitMove('p1', blocked);
+      engine.submitMove('p2', open);
+      engine.pump();
+    }
+
+    expect(
+      { x: world.getActor('p2')?.x, y: world.getActor('p2')?.y },
+      'a body walking into a wall stopped everyone else from taking a turn',
+    ).not.toEqual(startB);
+    // AND THE BLOCKED STEP REALLY WAS BLOCKED. Without this the test passes if
+    // the shopkeeper turns out to be shovable after all — proving the party
+    // kept moving in a scenario that was never the one being tested.
+    expect({ x: world.getActor('p1')?.x, y: world.getActor('p1')?.y }).toEqual(startA);
+  });
+
   it('will not shove a townsfolk out of the way', () => {
     /**
      * ═══════════════════════════════════════════════════════════════════════
