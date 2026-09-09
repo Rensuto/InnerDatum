@@ -36,6 +36,7 @@
  */
 
 import { execFileSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
 
 /**
  * Extensions that are art, audio or fonts. Deliberately broad: the cost of a
@@ -101,3 +102,76 @@ if (files === null) {
     process.exitCode = 1;
   }
 }
+
+/**
+ * ============================================================================
+ * AND THE OTHER HALF: ART THAT IS OWED MUST BE WRITTEN DOWN.
+ * ============================================================================
+ *
+ * The rule above keeps art OUT of the repository. This one keeps the REQUEST
+ * for art in it, and it enforces a standing instruction rather than a licence:
+ * *"all art required as you proceed should have placeholder and logged for
+ * creation into the single running file"*.
+ *
+ * `PENDING_ICON_IDS` (src/server/content/items.ts) is the commission register —
+ * an id may name art that does not exist yet, and the renderer draws a LETTER
+ * in its place rather than the violet missing-asset box. That is what lets
+ * content ship ahead of the art. It also means an id can sit in that list
+ * forever with nobody having been ASKED to draw it: the game looks fine, the
+ * gate is green, and the only record of the debt is a constant nobody reads.
+ *
+ * ASSETS-REQUIRED.md is the single running file the instruction names. Every
+ * pending id must appear in it, with the brief. Adding an id and forgetting the
+ * brief is the exact failure this closes, and it is silent in every other way.
+ *
+ * DELIBERATELY NOT THE REVERSE. The file may describe art that no id references
+ * yet — a request written before the content that will name it is a perfectly
+ * good order of work, and refusing it would make the document harder to use
+ * than the constant it documents.
+ */
+const REGISTER = 'ASSETS-REQUIRED.md';
+
+async function checkPendingLogged() {
+  let pending;
+  try {
+    ({ PENDING_ICON_IDS: pending } = await import('../src/server/content/items.ts'));
+  } catch (error) {
+    console.error(`check-assets: could not read PENDING_ICON_IDS (${String(error)})`);
+    process.exitCode = 1;
+    return;
+  }
+
+  let doc;
+  try {
+    doc = readFileSync(new URL(`../${REGISTER}`, import.meta.url), 'utf8');
+  } catch (error) {
+    console.error(`check-assets: could not read ${REGISTER} (${String(error)})`);
+    process.exitCode = 1;
+    return;
+  }
+
+  const ids = [...(pending ?? [])];
+  const missing = ids.filter((id) => !doc.includes(id));
+
+  console.log('\ncommissioned art');
+  if (missing.length === 0) {
+    console.log(`  ok    all ${ids.length} pending icon id(s) are briefed in ${REGISTER}`);
+    console.log('\ncommissioned art OK');
+    return;
+  }
+
+  console.error(
+    `\ncheck-assets: ${missing.length} pending icon id(s) have no brief in ${REGISTER}.\n`,
+  );
+  for (const id of missing) console.error(`    ${id}`);
+  console.error(
+    '\n' +
+      'Every id in PENDING_ICON_IDS is art somebody has to draw. Add a section to\n' +
+      `${REGISTER} naming the id, its tier, what the thing IS, and the cut size —\n` +
+      'the existing entries are the template. An id with no brief is a debt with\n' +
+      'no record: the letter fallback makes the game look finished.\n',
+  );
+  process.exitCode = 1;
+}
+
+await checkPendingLogged();
