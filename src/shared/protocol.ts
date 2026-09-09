@@ -3723,6 +3723,29 @@ export const PanelLayoutSchema = z.strictObject({
     }),
   logSize: panelSizeSchema.nullable(),
   /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * AND THE PARTY PANE'S, which is the second panel with a grip.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * ═══ A SECOND NAMED FIELD, NOT A KEYED RECORD, AND THE CHOICE IS DELIBERATE ═══
+   * `offsets` above is a record because there are five of them and the set
+   * moves. Sizes are two, and turning `logSize` into a record would rewrite the
+   * shape of a field that already carries every existing character's log size —
+   * for no behaviour, on a schema `parsePanels` DROPS WHOLE when it cannot parse
+   * it. The visible failure of getting that wrong is not "the log is the wrong
+   * size", it is every panel on every screen jumping back to its computed
+   * position.
+   *
+   * A THIRD resizable panel is where the record becomes worth the migration, and
+   * that is the moment to do it — with both fields read for one release so
+   * nobody's layout is lost.
+   *
+   * `.default(null)` for `logStyle`'s reason, stated at length below: this
+   * schema validates what comes back OUT of a character file, and every save
+   * written before today has no `partySize` at all.
+   */
+  partySize: panelSizeSchema.nullable().default(null),
+  /**
    * NULLABLE AND DEFAULTED, and the default is what makes this safe to add.
    *
    * This schema also validates what comes back OUT of a character file, and

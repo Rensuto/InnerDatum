@@ -208,6 +208,7 @@ import {
   DraggablePanel,
   DRAGGABLE_PANELS,
   PANEL_MIN_H,
+  DEFAULT_PANEL_FLOOR,
   nextSize,
   resizeIntoBand,
   settleResize,
@@ -294,6 +295,8 @@ import {
   partyPaneLayout,
   partyPaneTipAt,
   partyPaneView,
+  PARTY_PANE_COMPACT_W,
+  PARTY_PANE_MIN_H,
 } from './ui/partypanel.ts';
 // THE CEILING RULE, SHARED WITH THE SERVER THAT ENFORCES IT. One function, so
 // a greyed `+` and a refused frame can never disagree about where the limit is.
@@ -804,7 +807,8 @@ function logRectSize(
   band: { readonly top: number; readonly bottom: number },
   width: number,
 ): { readonly w: number; readonly h: number } {
-  if (logSize !== null) return sizeIntoBand(logSize, band, width);
+  const stored = panelSizes[DraggablePanel.Log];
+  if (stored !== null) return sizeIntoBand(stored, band, width);
   return sizeIntoBand(
     {
       // `math.floor(w/2)`, verbatim — Minimalist.lua:381.
@@ -1503,22 +1507,35 @@ const panelOffsets: Record<DraggablePanel, PanelOffset> = createPanelOffsets();
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════
- * HOW BIG THE PLAYER HAS DRAGGED THE CASE LOG, or null for "never touched".
+ * HOW BIG THE PLAYER HAS DRAGGED EACH RESIZABLE PANEL, or null for "never
+ * touched".
  * ═══════════════════════════════════════════════════════════════════════════
  *
- * ONE PANEL AND ONE VARIABLE, NOT A RECORD LIKE `panelOffsets`. Exactly one
- * panel in this game resizes, and a `Record<DraggablePanel, PanelSize | null>`
- * would be four permanent nulls plus a lookup — a framework built for a second
- * case that does not exist. The day a second panel grows a grip, this becomes
- * that record and the compiler names every site.
+ * ═══ IT WAS ONE VARIABLE, AND ITS OWN NOTE SAID WHEN TO CHANGE IT ═══
+ * It read: *"ONE PANEL AND ONE VARIABLE, NOT A RECORD LIKE `panelOffsets`.
+ * Exactly one panel in this game resizes ... The day a second panel grows a
+ * grip, this becomes that record and the compiler names every site."*
  *
- * NOT PERSISTED, exactly like `panelOffsets` above and for the same reason its
- * own note gives. Upstream DOES persist (`Minimalist.lua:393`, `saveSettings`
- * writes `places` out), so this is a real divergence and the natural next
- * commit — it needs a wire verb beside `set_zoom` and `set_ui_scale`, because
- * browser storage is refused here by test as well as by argument.
+ * The party pane grew one. This is that record, and the compiler did name every
+ * site.
+ *
+ * NULL IS "NEVER RESIZED" and it is not a size. It is what lets an untouched
+ * panel keep a computed default that follows the viewport, while a dragged one
+ * is absolute — the same distinction `PanelLayoutSchema` records on the wire.
+ *
+ * PERSISTED NOW, unlike when that note was written. `set_panel_layout` carries
+ * it (see `savePanelLayout`), which is upstream's own arrangement —
+ * `Minimalist.lua:413`'s `saveSettings` writes the whole `places` table after
+ * `boundPlaces` has clamped it.
  */
-let logSize: PanelSize | null = null;
+const panelSizes: Record<DraggablePanel, PanelSize | null> = {
+  [DraggablePanel.Sheet]: null,
+  [DraggablePanel.Talents]: null,
+  [DraggablePanel.Inventory]: null,
+  [DraggablePanel.Menu]: null,
+  [DraggablePanel.Log]: null,
+  [DraggablePanel.Party]: null,
+};
 
 /**
  * THE GESTURE IN PROGRESS, or null. There is never more than one — a pointer has
@@ -3607,6 +3624,23 @@ function unmovedPanelRect(
       const y = own.bottom - defaultLogH(own);
       return { x: DOCK_MARGIN, y, w: size.w, h: size.h };
     }
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * THE PARTY PANE HAS NO UNMOVED RECT, AND THAT IS THE POINT.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * It is a DOCK: `partyPaneLayout` places it in the top-left corner and the
+     * map is laid out around what it leaves. It is in `DraggablePanel` for its
+     * SIZE — the player asked for it to resize the way the log does — and for
+     * nothing else.
+     *
+     * Null here is what makes that true rather than merely intended: `movePanel`
+     * returns null without touching the offset, and `settlePanel` returns before
+     * writing one. So the pane cannot acquire a position by accident, and
+     * `reset-panels` still walks it harmlessly.
+     */
+    case DraggablePanel.Party:
+      return null;
   }
 }
 
@@ -3670,6 +3704,9 @@ function hudLayout(width: number, height: number): HudLayout {
           width,
           top: band.top,
           bottom: band.bottom,
+          // WHAT THE PLAYER DRAGGED IT TO, or null. See `partyPaneLayout`: null
+          // keeps the clear-map heuristic this pane has always used.
+          size: panelSizes[DraggablePanel.Party],
           /**
            * ═══ NOTHING IS RESERVED ANY MORE, AND THAT IS THE POINT OF THE MOVE ═══
            * This was `log.w + PARTY_PANE_MARGIN * 2`: the log was a dock down
@@ -4477,6 +4514,10 @@ const paintHud: HudPainter = (ctx, width, height) => {
   // what the first real multiplayer session found nobody could answer.
   if (layout.pane !== null && layout.party !== null) {
     drawPartyPane({ ctx, sprites, view: layout.party, layout: layout.pane });
+    // THE SAME CORNER CONTROL THE CASE LOG HAS, and the same one drawing of it —
+    // `drawLogGrip` is the only copy of that arithmetic in the client, which is
+    // the rule `headerDragRect` states for the header's.
+    drawLogGrip(ctx, layout.pane.rect);
   }
   if (layout.log !== null && caseLog !== null) {
     caseLog.draw({ ctx, sprites, rect: layout.log, gameTurn: turn?.gameTurn ?? -1 });
@@ -9267,7 +9308,10 @@ async function boot(): Promise<void> {
          * saying it had put back everything. Null is "never resized", so the
          * log returns to the computed default rather than to a stored number.
          */
-        logSize = null;
+        // EVERY resizable panel, not just the log — `RESET PANELS` reads as
+        // "put my screen back" and a pane left at a dragged width would be
+        // putting back some of it while saying it had put back all.
+        for (const panel of DRAGGABLE_PANELS) panelSizes[panel] = null;
         // PERSISTED, or the reset is undone by the next reload — which is the
         // one outcome that would make this row read as broken.
         savePanelLayout();
@@ -10713,17 +10757,52 @@ async function boot(): Promise<void> {
   }
 
   /**
-   * THE LOG AS IT IS ACTUALLY DRAWN, or null when it is not.
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE THREE THINGS A RESIZE NEEDS, PER PANEL.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * The gesture was the log's alone, so each of these used to be an expression
+   * with `log` written into it. Two panels resize now and the differences are
+   * real: the party pane's narrow form is 52 wide against the log's 160 floor,
+   * and the two live in different bands.
+   *
+   * ONE `switch` PER QUESTION rather than a flag carried on the drag, so a
+   * third resizable panel is a compile error in three named places rather than
+   * a silent fall-through to the log's answers.
+   */
+  function panelFloor(panel: DraggablePanel): PanelSize {
+    return panel === DraggablePanel.Party
+      ? { w: PARTY_PANE_COMPACT_W, h: PARTY_PANE_MIN_H }
+      : DEFAULT_PANEL_FLOOR;
+  }
+
+  function panelResizeBand(
+    panel: DraggablePanel,
+    logicalH: number,
+  ): { top: number; bottom: number } {
+    // THE PANE IS A TOP-LEFT DOCK and lives in the ordinary panel band; the log
+    // has its own, deliberately independent of the combat card strip.
+    return panel === DraggablePanel.Party
+      ? panelBand(logicalH, turnHudHeight(turnView()))
+      : quietLogBand(logicalH);
+  }
+
+  /**
+   * THE PANEL AS IT IS ACTUALLY DRAWN, or null when it is not.
    *
    * `liveLogSize` above answers how big; a resize also needs to know from WHERE,
    * because `nextSize` is absolute. Through `hudLayout` rather than rebuilding
    * the arithmetic, for the reason `unmovedPanelRect` gives at length: one
    * producer of every rect on screen, or the gesture works against a box the
    * painter never drew.
+   *
+   * THIS REPLACED A LOG-ONLY TWIN. Two functions answering "where is the box I
+   * am resizing" would be two answers the day they disagreed.
    */
-  function liveLogRect(): PanelRect | null {
+  function panelLiveRect(panel: DraggablePanel): PanelRect | null {
     const { hudW: logicalW, hudH: logicalH } = renderer.metrics();
-    return hudLayout(logicalW, logicalH).log;
+    const layout = hudLayout(logicalW, logicalH);
+    return panel === DraggablePanel.Party ? (layout.pane?.rect ?? null) : layout.log;
   }
 
   function beginDrag(
@@ -10764,7 +10843,7 @@ async function boot(): Promise<void> {
       resizeAtGrab:
         subject.kind === DragKind.Resize
           ? (() => {
-              const rect = liveLogRect();
+              const rect = panelLiveRect(subject.panel);
               if (rect === null) return null;
               return {
                 origin: { x: rect.x, y: rect.y },
@@ -10845,16 +10924,18 @@ async function boot(): Promise<void> {
        */
       const at = live.resizeAtGrab;
       const { hudW: sizeW, hudH: sizeH } = renderer.metrics();
-      const own = logBand(sizeH, turnHudHeight(turnView()));
+      const own = panelResizeBand(subject.panel, sizeH);
+      const floor = panelFloor(subject.panel);
       const asked =
-        at === null ? liveLogSize() : nextSize(at.origin, at.gripOffset, point.x, point.y);
+        at === null ? liveLogSize() : nextSize(at.origin, at.gripOffset, point.x, point.y, floor);
       const landed = resizeIntoBand(
         { x: at?.origin.x ?? DOCK_MARGIN, y: at?.origin.y ?? own.top, ...asked },
         NO_OFFSET,
         own,
         sizeW,
+        floor,
       );
-      logSize = { w: landed.w, h: landed.h };
+      panelSizes[subject.panel] = { w: landed.w, h: landed.h };
     } else {
       springInventoryTab(point);
     }
@@ -11124,8 +11205,9 @@ async function boot(): Promise<void> {
        * into combat and resizing — or merely resizing while a fight was on —
        * wrote the smaller number down permanently.
        */
-      if (logSize !== null) {
-        logSize = sizeIntoBand(logSize, quietLogBand(logicalH), logicalW);
+      const held = panelSizes[subject.panel];
+      if (held !== null) {
+        panelSizes[subject.panel] = sizeIntoBand(held, quietLogBand(logicalH), logicalW);
       }
       savePanelLayout();
       return;
@@ -11196,7 +11278,12 @@ async function boot(): Promise<void> {
     socket.send({
       v: PROTOCOL_VERSION,
       t: 'set_panel_layout',
-      layout: { offsets, logSize, logStyle: touched ? style : null },
+      layout: {
+        offsets,
+        logSize: panelSizes[DraggablePanel.Log],
+        partySize: panelSizes[DraggablePanel.Party],
+        logStyle: touched ? style : null,
+      },
     });
   }
 
@@ -11267,7 +11354,7 @@ async function boot(): Promise<void> {
       // when the grip was taken, and every normal end runs `settlePanel`, so it
       // is always a settled value.
       if (live.subject.kind === DragKind.Resize) {
-        logSize = live.sizeAtGrab;
+        panelSizes[live.subject.panel] = live.sizeAtGrab;
       }
       // Same rule as `endDrag`: only a gesture that actually TRAVELLED left the
       // hover state frozen, because only then was the canvas `mousemove` handler
@@ -11849,6 +11936,29 @@ async function boot(): Promise<void> {
         beginDrag({ kind: DragKind.Panel, panel: DraggablePanel.Log }, point.x, point.y, null);
         return;
       }
+    }
+
+    /**
+     * ═══════════════════════════════════════════════════════════════════════════
+     * THE PARTY PANE'S GRIP, ABOVE ITS ROWS.
+     * ═══════════════════════════════════════════════════════════════════════════
+     *
+     * Asked for as *"we want to make the party panel resizable as well, same
+     * way the log panel is"*.
+     *
+     * BEFORE the pane's own hit tests for exactly the log's reason: the grip
+     * sits INSIDE the box, over the last row, and a press there has to mean
+     * resize rather than a click on whoever is standing in that row. The pane's
+     * rows carry a context menu, so getting this order wrong would open one on
+     * every attempt to resize.
+     *
+     * NO HEADER DRAG BESIDE IT. The pane is a dock — `unmovedPanelRect` returns
+     * null for it — so there is nothing to move and no handle to offer.
+     */
+    if (point !== null && layout.pane !== null && logGripAt(layout.pane.rect, point.x, point.y)) {
+      event.preventDefault();
+      beginDrag({ kind: DragKind.Resize, panel: DraggablePanel.Party }, point.x, point.y, null);
+      return;
     }
 
     if (point !== null && layout.menu !== null) {
@@ -13623,7 +13733,8 @@ function applyServerMessage(msg: ServerMsg): void {
       for (const panel of DRAGGABLE_PANELS) {
         panelOffsets[panel] = msg.panels.offsets[panel] ?? NO_OFFSET;
       }
-      logSize = msg.panels.logSize;
+      panelSizes[DraggablePanel.Log] = msg.panels.logSize;
+      panelSizes[DraggablePanel.Party] = msg.panels.partySize;
       /**
        * THE STYLE GOES TO THE WIDGET, which owns it. `caseLog` is created in
        * `boot` and this runs at module scope, so it may be null on the very

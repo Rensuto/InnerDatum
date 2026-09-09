@@ -117,6 +117,30 @@ export const DraggablePanel = {
    * chooses its form from the window alone.
    */
   Log: 'log',
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE PARTY PANE, AND IT IS THE SECOND ONE THAT RESIZES.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Asked for as *"we want to make the party panel resizable as well, same way
+   * the log panel is. the party panel should reformat and accomodate the
+   * resizing to 'fit better'."*
+   *
+   * ═══ IT RESIZES BUT IT DOES NOT MOVE, AND THAT IS DELIBERATE ═══
+   * It is a DOCK: `partyPaneLayout` puts it in the top-left corner and the map
+   * is laid out around what it leaves. Every other member of this union floats.
+   * Being in the union is what gives it a size and a settle; nothing gives it an
+   * offset, and `unmovedPanelRect` returns null for it so `movePanel` has
+   * nothing to slide.
+   *
+   * ═══ ITS FLOOR IS NOT THE SHARED ONE ═══
+   * `PANEL_MIN_W` is 160 and the pane's compact form is 52 wide. With the shared
+   * floor the narrow form would be unreachable by gesture — the player could see
+   * it on a small window and never choose it on a large one — so this panel
+   * carries its own, and `resizeIntoBand` takes a floor rather than reading the
+   * constants.
+   */
+  Party: 'party',
 } as const;
 export type DraggablePanel = (typeof DraggablePanel)[keyof typeof DraggablePanel];
 
@@ -133,6 +157,7 @@ export const DRAGGABLE_PANELS: readonly DraggablePanel[] = [
   DraggablePanel.Inventory,
   DraggablePanel.Menu,
   DraggablePanel.Log,
+  DraggablePanel.Party,
 ] as const;
 
 /**
@@ -443,6 +468,23 @@ export const PANEL_MIN_W = 160;
 export const PANEL_MIN_H = 72;
 
 /**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE SMALLEST A GIVEN PANEL MAY BE DRAGGED, which is not one number.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * The two constants above are the CASE LOG's floor and were the only floor
+ * while the log was the only panel with a grip. The party pane's narrow form is
+ * 52 wide — `PARTY_PANE_COMPACT_W` — so a shared 160 would make that form
+ * unreachable by gesture: the player would see it on a small window and be
+ * unable to choose it on a large one, and the box would snap out from under the
+ * pointer at the moment it was refused.
+ *
+ * So the clamps take a floor. Defaulted to the log's, so every existing caller
+ * and every existing test means exactly what it did.
+ */
+export const DEFAULT_PANEL_FLOOR: PanelSize = { w: PANEL_MIN_W, h: PANEL_MIN_H };
+
+/**
  * The size a resize gesture has reached: the size at the grab plus how far the
  * pointer has travelled, floored.
  *
@@ -486,10 +528,11 @@ export function nextSize(
   gripOffset: PanelOffset,
   x: number,
   y: number,
+  floor: PanelSize = DEFAULT_PANEL_FLOOR,
 ): PanelSize {
   return {
-    w: Math.max(PANEL_MIN_W, x - gripOffset.dx - origin.x),
-    h: Math.max(PANEL_MIN_H, y - gripOffset.dy - origin.y),
+    w: Math.max(floor.w, x - gripOffset.dx - origin.x),
+    h: Math.max(floor.h, y - gripOffset.dy - origin.y),
   };
 }
 
@@ -530,20 +573,21 @@ export function resizeIntoBand(
   offset: PanelOffset,
   band: { readonly top: number; readonly bottom: number },
   width: number,
+  floor: PanelSize = DEFAULT_PANEL_FLOOR,
 ): PanelRect {
-  const maxY = band.bottom - PANEL_MIN_H;
+  const maxY = band.bottom - floor.h;
   const wantY = rect.y + offset.dy;
   const y = maxY <= band.top ? band.top : Math.min(Math.max(wantY, band.top), maxY);
 
-  const maxX = width - PANEL_MIN_W;
+  const maxX = width - floor.w;
   const wantX = rect.x + offset.dx;
   const x = maxX <= 0 ? 0 : Math.min(Math.max(wantX, 0), maxX);
 
   return {
     x,
     y,
-    w: Math.max(PANEL_MIN_W, Math.min(rect.w, width - x)),
-    h: Math.max(PANEL_MIN_H, Math.min(rect.h, band.bottom - y)),
+    w: Math.max(floor.w, Math.min(rect.w, width - x)),
+    h: Math.max(floor.h, Math.min(rect.h, band.bottom - y)),
   };
 }
 
@@ -564,8 +608,9 @@ export function settleResize(
   offset: PanelOffset,
   band: { readonly top: number; readonly bottom: number },
   width: number,
+  floor: PanelSize = DEFAULT_PANEL_FLOOR,
 ): PanelOffset {
-  const landed = resizeIntoBand(rect, offset, band, width);
+  const landed = resizeIntoBand(rect, offset, band, width, floor);
   return { dx: landed.x - rect.x, dy: landed.y - rect.y };
 }
 
@@ -585,9 +630,10 @@ export function sizeIntoBand(
   size: PanelSize,
   band: { readonly top: number; readonly bottom: number },
   width: number,
+  floor: PanelSize = DEFAULT_PANEL_FLOOR,
 ): PanelSize {
   return {
-    w: Math.max(PANEL_MIN_W, Math.min(size.w, width)),
-    h: Math.max(PANEL_MIN_H, Math.min(size.h, Math.max(PANEL_MIN_H, band.bottom - band.top))),
+    w: Math.max(floor.w, Math.min(size.w, width)),
+    h: Math.max(floor.h, Math.min(size.h, Math.max(floor.h, band.bottom - band.top))),
   };
 }

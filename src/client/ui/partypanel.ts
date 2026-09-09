@@ -128,6 +128,7 @@ import type {
 } from '../../shared/protocol.ts';
 import type { SpriteSource } from '../render/assets.ts';
 import type { PanelRect } from './panel.ts';
+import type { PanelSize } from './drag.ts';
 import { HP_LOW } from '../../shared/vitals.ts';
 import { RESOURCE_H, drawResource, resourceStripH } from './resource.ts';
 import { PURSE_GAP, drawPurse } from './purse.ts';
@@ -218,7 +219,16 @@ const MAP_MIN_CLEAR_PX = 320;
  */
 const MAP_MIN_CLEAR_HARD_PX = 256;
 /** A pane shorter than a header plus one row is noise. */
-const PANE_MIN_H = HEADER_H + PARTY_ROW_H;
+/**
+ * THE SHORTEST THE PANE MAY BE — a header and one row.
+ *
+ * EXPORTED because it is the pane's resize FLOOR as well as its layout gate,
+ * and `main.ts` needs the same number the layout uses. Two copies of "how short
+ * is too short" would let the grip drag the box below what the layout will
+ * draw, which is a pane the player cannot get back.
+ */
+export const PARTY_PANE_MIN_H = HEADER_H + PARTY_ROW_H;
+const PANE_MIN_H = PARTY_PANE_MIN_H;
 
 /**
  * How tall ONE row is, and it is not a constant any more.
@@ -501,8 +511,24 @@ export function partyPaneLayout(options: {
   /** First pixel of the bottom bands (the hotbar and the prose lines). */
   readonly bottom: number;
   readonly rightReserved: number;
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * WHAT THE PLAYER DRAGGED THE PANE TO, or null for "never touched".
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Asked for as *"we want to make the party panel resizable as well, same way
+   * the log panel is. the party panel should reformat and accomodate the
+   * resizing to 'fit better'."*
+   *
+   * NULL KEEPS EVERY EXISTING ANSWER EXACTLY. The clear-map heuristic below is
+   * untouched on that path, so a player who never grabs the grip sees the pane
+   * this function has always produced — which is also what keeps every existing
+   * test in partypanel.test.ts true without an argument.
+   */
+  readonly size?: PanelSize | null;
 }): PartyPaneLayout | null {
   const { view, width, top, bottom, rightReserved } = options;
+  const chosen = options.size ?? null;
   // NEVER AN EMPTY BOX. No rows means no `party_state` yet — say nothing rather
   // than drawing a header over a void, and never invent a party of one before
   // the server has described it.
@@ -514,17 +540,52 @@ export function partyPaneLayout(options: {
   const clearWith = (paneW: number): number =>
     width - rightReserved - paneW - PARTY_PANE_MARGIN * 2;
 
-  const mode =
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE WIDTH DECIDES THE FORM, AND THAT IS WHAT "REFORMAT TO FIT" MEANS HERE.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * The pane already has two forms and already picks between them by width —
+   * `Rows` at 208 with names, bars and badges, `Portraits` at 52 with faces
+   * alone. All that changes is WHO chooses: the clear-map heuristic when nobody
+   * has dragged it, the player's own width when somebody has.
+   *
+   * So a drag past the threshold does not clip or squash anything; it changes
+   * the pane into its other form, which is the reflow the request asks for and
+   * the one this file was already built to do.
+   */
+  const heuristic =
     clearWith(PARTY_PANE_W) >= MAP_MIN_CLEAR_PX ? PartyPaneMode.Rows : PartyPaneMode.Portraits;
-  const paneW = mode === PartyPaneMode.Rows ? PARTY_PANE_W : PARTY_PANE_COMPACT_W;
-  if (clearWith(paneW) < MAP_MIN_CLEAR_HARD_PX) return null;
+  const paneW =
+    chosen === null
+      ? heuristic === PartyPaneMode.Rows
+        ? PARTY_PANE_W
+        : PARTY_PANE_COMPACT_W
+      : /**
+         * CLAMPED, NEVER NULLED. A player who drags the pane narrow must not be
+         * able to drag it out of existence — the map's hard floor still holds,
+         * but it holds by refusing to give up more width rather than by making
+         * the pane disappear mid-gesture.
+         */
+        Math.max(
+          PARTY_PANE_COMPACT_W,
+          Math.min(chosen.w, width - rightReserved - MAP_MIN_CLEAR_HARD_PX - PARTY_PANE_MARGIN * 2),
+        );
+  const mode = paneW >= PARTY_PANE_W ? PartyPaneMode.Rows : PartyPaneMode.Portraits;
+  if (chosen === null && clearWith(paneW) < MAP_MIN_CLEAR_HARD_PX) return null;
 
   return {
     rect: {
       x: PARTY_PANE_MARGIN,
       y: top,
+      // THE CONTENT'S HEIGHT IS STILL THE CEILING. A pane taller than its rows
+      // would be a header over a void, which this file refuses one screen up.
+      h: Math.min(
+        chosen === null ? partyPaneHeight(view, mode) : Math.max(PANE_MIN_H, chosen.h),
+        available,
+        partyPaneHeight(view, mode),
+      ),
       w: paneW,
-      h: Math.min(partyPaneHeight(view, mode), available),
     },
     mode,
   };

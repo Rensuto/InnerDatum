@@ -80,6 +80,7 @@ const { last } = await session(async (send, peek) => {
     layout: {
       offsets: { log: { dx: 40, dy: -12 }, sheet: { dx: -8, dy: 6 } },
       logSize: { w: 420, h: 180 },
+      partySize: { w: 240, h: 160 },
       logStyle: { font: 13, opacity: 60, spacing: 17 },
     },
   });
@@ -96,6 +97,8 @@ const panels = last('settings')?.panels ?? null;
 console.log('  re-read from the body:', JSON.stringify(panels));
 
 const ok =
+  panels?.partySize?.w === 240 &&
+  panels?.partySize?.h === 160 &&
   panels?.logStyle?.font === 13 &&
   panels?.logStyle?.opacity === 60 &&
   panels?.logStyle?.spacing === 17 &&

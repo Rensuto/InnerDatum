@@ -24,6 +24,7 @@ import type { CharSheetView } from '../../src/client/ui/charsheet.ts';
 import { HEADER_H, PANEL_PAD, headerDragRect } from '../../src/client/ui/panel.ts';
 import type { PanelOffset } from '../../src/client/ui/drag.ts';
 import type { PanelRect } from '../../src/client/ui/panel.ts';
+import { PARTY_PANE_COMPACT_W, PARTY_PANE_MIN_H } from '../../src/client/ui/partypanel.ts';
 
 /** An untouched panel. `main.ts` has its own; a test may not reach it. */
 const NO_OFFSET: PanelOffset = { dx: 0, dy: 0 };
@@ -533,7 +534,7 @@ describe('the offset store', () => {
     }
   });
 
-  it('names exactly the five panels the decision lists, and nothing else', () => {
+  it('names exactly the panels the decision lists, and nothing else', () => {
     /**
      * THE EXCLUSIONS ARE LOAD-BEARING, NOT OMISSIONS: the class picker is a
      * scrimmed full-viewport modal, and the hotbar is the anchor `panelBand`'s
@@ -547,13 +548,29 @@ describe('the offset store', () => {
      * reserves nothing from a pane in the top-left, so `rightReserved` is 0 and
      * the two are independent.
      *
-     * The pane itself is still excluded, and still for its own reason.
+     * ═══ AND THE PARTY PANE HAS JOINED THEM, FOR A NARROWER REASON ═══
+     * It was excluded as *"a DOCK, not a panel: the map is laid out around what
+     * it leaves"*, and that is STILL TRUE — it does not move, and
+     * `unmovedPanelRect` returns null for it so there is no offset to settle.
+     *
+     * It is here because membership is what gives a surface a SIZE and a
+     * settle, and the player asked for the pane to resize the way the log does.
+     * A panel can be in this union for its size alone; the two capabilities were
+     * one thing only while the log was the only member with either.
      */
-    expect([...DRAGGABLE_PANELS].sort()).toEqual(['inventory', 'log', 'menu', 'sheet', 'talents']);
+    expect([...DRAGGABLE_PANELS].sort()).toEqual([
+      'inventory',
+      'log',
+      'menu',
+      'party',
+      'sheet',
+      'talents',
+    ]);
     expect(Object.keys(createPanelOffsets()).sort()).toEqual([
       'inventory',
       'log',
       'menu',
+      'party',
       'sheet',
       'talents',
     ]);
@@ -1034,8 +1051,10 @@ describe('the case log keeps its size when a fight starts', () => {
       'const own = quietLogBand(height);',
     );
     // And the settle, which is where the ratchet lived.
+    // THE STORE IS A RECORD NOW — the party pane grew a grip, which is the
+    // condition `logSize`'s own note said would turn it into one.
     expect(source, 'the settle clamps the STORE against a band combat shrinks').toContain(
-      'logSize = sizeIntoBand(logSize, quietLogBand(logicalH), logicalW);',
+      'panelSizes[subject.panel] = sizeIntoBand(held, quietLogBand(logicalH), logicalW);',
     );
   });
 
@@ -1068,5 +1087,95 @@ describe('the case log keeps its size when a fight starts', () => {
     // ...and the fix is that the log never asks the fighting band at all.
     const source = readFileSync('src/client/main.ts', 'utf8');
     expect(source).not.toContain('const own = logBand(height, band.top - DOCK_MARGIN);');
+  });
+});
+
+describe('the party pane resizes, and its floor is not the log’s', () => {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * Asked for as "we want to make the party panel resizable as well, same way
+   * the log panel is. the party panel should reformat and accomodate the
+   * resizing to 'fit better'."
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * It is in `DraggablePanel` for its SIZE alone. It is a DOCK — the map is laid
+   * out around what it leaves — so it does not move, `unmovedPanelRect` returns
+   * null for it, and nothing can give it an offset by accident.
+   */
+  it('is in the union but has no unmoved rect', () => {
+    expect(DRAGGABLE_PANELS).toContain(DraggablePanel.Party);
+    const source = readFileSync('src/client/main.ts', 'utf8');
+    // The `switch` in `unmovedPanelRect` is exhaustive, so the null is a
+    // deliberate arm rather than a fall-through.
+    expect(source, 'the pane acquired a position it should not have').toContain(
+      'case DraggablePanel.Party:\n      return null;',
+    );
+  });
+
+  it('carries its own floor, or its narrow form is unreachable', () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * 52 AGAINST 160, AND THE SHARED FLOOR WOULD HAVE HIDDEN A WHOLE FORM.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * The pane has two forms and picks between them by width: Rows at 208,
+     * Portraits at 52. `PANEL_MIN_W` is 160 — the CASE LOG's floor, and the only
+     * floor while the log was the only panel with a grip. Clamping the pane to
+     * it would mean a player could see the narrow form on a small window and be
+     * unable to choose it on a large one, with the box snapping out from under
+     * the pointer at the moment it was refused.
+     */
+    expect(PARTY_PANE_COMPACT_W).toBeLessThan(PANEL_MIN_W);
+    const floor = { w: PARTY_PANE_COMPACT_W, h: PARTY_PANE_MIN_H };
+    const asked = nextSize({ x: 3, y: 3 }, NO_OFFSET, 3 + 60, 3 + 200, floor);
+    expect(asked.w, 'the pane was clamped to the log’s floor').toBe(60);
+    // ...and the default floor still holds for everything else.
+    expect(nextSize({ x: 3, y: 3 }, NO_OFFSET, 3 + 60, 3 + 200).w).toBe(PANEL_MIN_W);
+  });
+
+  it('clamps a dragged size to the floor without inflating an untouched one', () => {
+    // `resizeIntoBand` applies the floor unconditionally, so the floor has to be
+    // a size the pane can legitimately BE — not a number that would inflate a
+    // pane nobody has dragged. 52x58 is the pane's own narrow form.
+    const band = { top: 3, bottom: 400 };
+    const floor = { w: PARTY_PANE_COMPACT_W, h: PARTY_PANE_MIN_H };
+    const landed = resizeIntoBand({ x: 3, y: 3, w: 10, h: 10 }, NO_OFFSET, band, 1280, floor);
+    expect(landed.w).toBe(PARTY_PANE_COMPACT_W);
+    expect(landed.h).toBe(PARTY_PANE_MIN_H);
+  });
+
+  it('every clamp takes the floor on both axes', () => {
+    /**
+     * MEMORY, AND IT HAS HAPPENED TWICE IN THIS REPO: a parameter added to a
+     * signature and the body left reading the old constant. The floor must
+     * appear once per axis in each of the four clamps — two in `nextSize`, four
+     * in `resizeIntoBand` (the two maxima and the two sizes), one forwarded by
+     * `settleResize`, three in `sizeIntoBand`.
+     */
+    const source = readFileSync('src/client/ui/drag.ts', 'utf8');
+    /**
+     * PER FUNCTION, NOT A TOTAL. A count over the whole file catches prose —
+     * two docblocks here end a sentence with the word "floor." — and would go
+     * red for an edit to a comment while staying green for a body that kept
+     * reading `PANEL_MIN_W`. Ask each clamp about each axis instead.
+     */
+    const bodyOf = (name: string): string => {
+      const at = source.indexOf(`export function ${name}(`);
+      expect(at, `${name} is gone`).toBeGreaterThan(-1);
+      const end = source.indexOf('\n}', at);
+      return source.slice(at, end);
+    };
+    for (const name of ['nextSize', 'resizeIntoBand', 'sizeIntoBand']) {
+      const body = bodyOf(name);
+      expect(body, `${name} takes no floor`).toContain('floor: PanelSize = DEFAULT_PANEL_FLOOR');
+      expect(body, `${name} still reads PANEL_MIN_W`).not.toContain('PANEL_MIN_W,');
+      expect(body, `${name} ignores the floor's width`).toContain('floor.w');
+      expect(body, `${name} ignores the floor's height`).toContain('floor.h');
+    }
+    // `settleResize` does not clamp itself — it must FORWARD, or the settle and
+    // the paint would use different floors.
+    expect(bodyOf('settleResize'), 'the settle drops the floor').toContain(
+      'resizeIntoBand(rect, offset, band, width, floor)',
+    );
   });
 });
