@@ -111,7 +111,22 @@ export type PooledClass = {
 export function maxLifeOf(body: PooledBody, definition: PooledClass, rank: number): number {
   const classCon = definition.combat.stats?.con ?? STAT_BASE;
   const liveCon = body.combat?.stats?.con ?? classCon;
-  return maxLifeFor(definition.maxHp, definition.lifeRating, body.level, rank, liveCon - classCon);
+  /**
+   * ═══ AND WHAT YOU ARE WEARING, ADDED LAST — `max_life` ═══
+   * Upstream's 39 `wielder.max_life` items (`tome/class/Actor.lua:172`). Added
+   * to the composed figure rather than passed INTO `maxLifeFor`, because that
+   * function is the class/level/rank curve and a coat is not part of a curve:
+   * folding a flat grant in before the rating multiplied it would make the same
+   * coat worth four times as much at level 20 as at level 1.
+   *
+   * `body.combat` is the RECOMPOSED sheet — the same field `maxMoveOf` reads
+   * for `moveMp` — so this is gear, egos, passives and live effects together,
+   * and it moves the moment `refreshBody` runs.
+   */
+  const worn = body.combat?.mods?.maxHp ?? 0;
+  return (
+    maxLifeFor(definition.maxHp, definition.lifeRating, body.level, rank, liveCon - classCon) + worn
+  );
 }
 
 /**

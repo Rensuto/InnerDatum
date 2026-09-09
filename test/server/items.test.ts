@@ -122,7 +122,7 @@ function fullSlotSpread(): Item[] {
 }
 
 describe('the item catalogue', () => {
-  it('ships 31 worn items and one you drink', () => {
+  it('ships 33 worn items and one you drink', () => {
     // 23 `item_*` ids exist in the manifest. 22 are authored as equipment. The
     // 23rd `item_*` id is the ingot, and cutting it is a decision rather than an
     // oversight — see FORBIDDEN_IDS above; it draws the MONEY pile instead
@@ -141,15 +141,21 @@ describe('the item catalogue', () => {
     // `item_bailiffs_maul` carries `forbids: Slot.Offhand` — upstream's
     // `slot_forbid` (`2hswords.lua:23`) — and `item_paired_shivs` is the thing
     // it locks you out of holding.
-    expect(ITEMS).toHaveLength(32);
-    expect(ITEMS.filter((item) => item.slot !== undefined)).toHaveLength(31);
+    //
+    // ═══ AND TWO THAT GRANT VITALS, THE FIRST GEAR TO TOUCH EITHER ═══
+    // `wielder.max_life` and `wielder.life_regen` are the two most common things
+    // upstream gear does that ours could not do at all (39 and 42 items in
+    // `tome/data`). Both mechanics were already ported; only the channel was
+    // missing, and a channel nothing comes down is a channel nothing tests.
+    expect(ITEMS).toHaveLength(34);
+    expect(ITEMS.filter((item) => item.slot !== undefined)).toHaveLength(33);
     expect(ITEMS.filter((item) => item.use !== undefined)).toHaveLength(1);
     // 23 DRAWN ICONS still, and 26 items: the three weapons name commissioned
     // ids instead. The 23rd icon is the ability vial (see the list above) and
     // the draught is what names it — the first thing in this game you buy in
     // order to SPEND it.
     expect(MANIFEST_ITEM_ICONS).toHaveLength(23);
-    expect(ITEM_CATALOGUE.size).toBe(32);
+    expect(ITEM_CATALOGUE.size).toBe(34);
   });
 
   it('names only icons that exist in the committed manifest', () => {
@@ -336,7 +342,7 @@ describe('the item catalogue', () => {
     }
   });
 
-  it('lines its three tiers up with the three drop tables, 10 / 14 / 8', () => {
+  it('lines its three tiers up with the three drop tables, 11 / 14 / 9', () => {
     // NOT COSMETIC. The roster's drop tables are meant to select on `tier`
     // rather than re-listing 23 ids somewhere else that has to stay in sync:
     //   common   = every LEGS and FEET item, plus the leather chest
@@ -348,9 +354,9 @@ describe('the item catalogue', () => {
     // and a party that can buy the good one on every visit has no decision to
     // make about drinking it.
     const byTier = (tier: string): Item[] => ITEMS.filter((item) => item.tier === tier);
-    expect(byTier('common')).toHaveLength(10);
+    expect(byTier('common')).toHaveLength(11);
     expect(byTier('uncommon')).toHaveLength(14);
-    expect(byTier('rare')).toHaveLength(8);
+    expect(byTier('rare')).toHaveLength(9);
     expect(byTier('common').length + byTier('uncommon').length + byTier('rare').length).toBe(
       ITEMS.length,
     );
@@ -366,7 +372,11 @@ describe('the item catalogue', () => {
     expect([...slotsOf('uncommon')].sort()).toEqual(
       ['cloak', 'hands', 'head', 'mainhand', 'offhand', 'trinket'].sort(),
     );
-    expect([...slotsOf('rare')].sort()).toEqual(['body', 'mainhand', 'ring']);
+    // HANDS JOINED THE RARE TIER, and not as a style choice: `validateItems`
+    // requires whole-number wielder grants, so the smallest `life_regen` an item
+    // can carry is +1 — DOUBLE what every class authors. The guard picked the
+    // tier. See `item_tourniquet_band`.
+    expect([...slotsOf('rare')].sort()).toEqual(['body', 'hands', 'mainhand', 'ring']);
   });
 
   it('resolves every authored id through the catalogue map', () => {

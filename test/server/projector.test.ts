@@ -1723,6 +1723,43 @@ describe('what an item is worth, wherever it appears', () => {
     ).toBe(true);
   });
 
+  it('prices the two vitals, whose whole effect is a pool no getter reports', () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * AN APRON WORTH EIGHTEEN HIT POINTS AND AN EMPTY COMPARISON LIST.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * `wielder.max_life` and `wielder.life_regen` became grantable in the same
+     * commit as these rows, which is `COMPARE_ROWS`' own rule — *"Every other
+     * channel gear can move has been on this table since it was written"*.
+     *
+     * Without the rows the Coroner's Apron compares as `[]`, and
+     * `CarriedItemView.compare` defines an empty list as "this item changes
+     * nothing" — which its docblock calls a straight lie about an upgrade. It is
+     * the worst case of that lie in the catalogue, because hit points are the
+     * one number every player watches.
+     */
+    const world = room();
+    const body = watchman(world);
+    const rows = projectInventory(
+      Object.assign(body, { carried: ['item_coroners_apron', 'item_tourniquet_band'] }),
+    ).carried;
+
+    const apron = rows.find((row) => row.itemId === 'item_coroners_apron')?.compare;
+    expect(
+      apron?.some((row) => row.label === 'Max life'),
+      JSON.stringify(apron),
+    ).toBe(true);
+    expect(apron?.find((row) => row.label === 'Max life')?.value).toContain('+18');
+
+    const band = rows.find((row) => row.itemId === 'item_tourniquet_band')?.compare;
+    expect(
+      band?.some((row) => row.label === 'Life regen'),
+      JSON.stringify(band),
+    ).toBe(true);
+    expect(band?.find((row) => row.label === 'Life regen')?.value).toContain('+1');
+  });
+
   it('names those channels EXACTLY as the character card names them', () => {
     /**
      * Two surfaces describing one quantity must use one label. The Crit. power

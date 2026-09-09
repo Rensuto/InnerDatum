@@ -214,6 +214,23 @@ const WIELDER_MOD_KEYS: readonly (keyof AdditiveMods)[] = Object.freeze([
    * bites is the day it is hardest to see.
    */
   'moveMp',
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * AND THE TWO VITALS — the most common thing gear does upstream that gear
+   * here could not do at all.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `max_life` (39 items in `tome/data`) and `life_regen` (42). Both were
+   * complete mechanics on this side — `maxLifeOf` composes a ceiling and
+   * `actBase` ticks a drip, both ported with citations — and neither had a
+   * channel an item could reach them through.
+   *
+   * THEY ARE READ WHERE `moveMp` IS READ, not in a getter: a pool is refilled
+   * against a ceiling once per turn, so a getter would leave `actor.maxHp`
+   * disagreeing with the composed answer. See `CombatMods.maxHp`.
+   */
+  'maxHp',
+  'hpRegen',
 ]);
 
 /**

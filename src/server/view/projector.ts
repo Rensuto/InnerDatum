@@ -2100,6 +2100,36 @@ const COMPARE_ROWS: readonly (readonly [string, (c: Combatant) => number, Compar
   ['Physical save', combatPhysicalResist, CompareShape.Scalar],
   ['Spell save', combatSpellResist, CompareShape.Scalar],
   ['Mental save', combatMentalResist, CompareShape.Scalar],
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * AND THE TWO VITALS, ADDED IN THE COMMIT THAT MADE THEM GRANTABLE.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * This table's header states the rule — *"Every other channel gear can move
+   * has been on this table since it was written"* — and its neighbour states the
+   * cost of breaking it: `cb607dd` had to go back and print three channels that
+   * had shipped without a readout. `wielder.max_life` and `wielder.life_regen`
+   * became grantable in this commit, so their rows are in this commit.
+   *
+   * Without them the Coroner's Apron, whose ENTIRE effect is eighteen hit
+   * points, would compare as an empty list — which `CarriedItemView.compare`
+   * defines as "this item changes nothing" and its own docblock calls *"a
+   * straight lie about an upgrade"*.
+   *
+   * ═══ READ OFF `mods` RATHER THAN THROUGH A GETTER, AND THAT IS THE HONEST
+   *     SHAPE ═══
+   * Neither is composed on demand: `maxLifeOf` builds the ceiling out of the
+   * class curve plus this flat term, and `actBase` ticks the drip. Because the
+   * term is FLAT, the delta in `mods` IS the delta in the ceiling — so this row
+   * equals what the character sheet's number moves by, which is the property the
+   * shape note above demands of every row here.
+   *
+   * `Life regen` IS `inspect.ts:541`'s LABEL VERBATIM, per the note above on why
+   * two surfaces must not name one quantity differently. `Max life` is the
+   * ceiling `inspect.ts` prints as the hit-point pair.
+   */
+  ['Max life', (c: Combatant): number => c.mods?.maxHp ?? 0, CompareShape.Scalar],
+  ['Life regen', (c: Combatant): number => c.mods?.hpRegen ?? 0, CompareShape.Scalar],
 ];
 
 /**

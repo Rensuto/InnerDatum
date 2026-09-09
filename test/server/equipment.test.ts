@@ -114,6 +114,26 @@ const FULL_KIT: readonly Item[] = [
  * sheet, because the raw sheet is what `composeSheet` writes and the getters are
  * what the GAME reads. A change that survives one and not the other is a change
  * that is invisible in play — which is Trap 1 exactly.
+ *
+ * ═══════════════════════════════════════════════════════════════════════════
+ * AND THE TWO POOLS, WHICH HAVE NO GETTER AND ARE STILL NUMBERS A PLAYER READS.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `wielder.max_life` and `wielder.life_regen` moved the hit-point ceiling and
+ * the regeneration drip and this vector reported neither, so the first two items
+ * to grant them failed the "changes something visible" proof while being two of
+ * the most visible items in the game. The guard was RIGHT to fail — a vector
+ * that cannot see a channel cannot vouch for it — so the vector grew rather than
+ * the items being exempted.
+ *
+ * ═══ WHY THESE TWO ARE RAW AND EVERYTHING ABOVE IS A GETTER ═══
+ * A pool is not composed on demand: `maxLifeOf` builds the ceiling once per
+ * refold and `actBase` reads the drip once per turn, both from `mods` directly.
+ * There is no `combatMaxLife(sheet)` to call, and inventing one here would be a
+ * second opinion about a number the engine already answers — the exact shape
+ * `equipment.ts` refuses everywhere else. The compensating property is that
+ * neither can round away: both are added flat, which is why a `mods.apr` style
+ * silent-zero is not possible here.
  */
 function derivedVector(sheet: CombatSheet | undefined): readonly number[] {
   const c = sheet ?? {};
@@ -133,6 +153,9 @@ function derivedVector(sheet: CombatSheet | undefined): readonly number[] {
     combatPhysicalResist(c),
     combatSpellResist(c),
     combatMentalResist(c),
+    // THE POOLS — see the note above on why these are read raw.
+    c.mods?.maxHp ?? 0,
+    c.mods?.hpRegen ?? 0,
   ];
 }
 

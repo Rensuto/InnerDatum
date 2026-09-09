@@ -779,6 +779,8 @@ export const PENDING_ICON_IDS: readonly string[] = Object.freeze([
   'item_handlers_gloves',
   'item_bailiffs_maul',
   'item_paired_shivs',
+  'item_coroners_apron',
+  'item_tourniquet_band',
 ]);
 
 // ---------------------------------------------------------------------------
@@ -1285,6 +1287,71 @@ const TWO_HANDED_AND_OFFHAND: readonly Item[] = [
   },
 ];
 
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE TWO VITALS, NOW THAT GEAR CAN REACH THEM.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `wielder.max_life` and `wielder.life_regen` are the first and second most
+ * common thing a piece of gear does upstream that this game had no channel for
+ * — 39 and 42 items in `tome/data` respectively. Both mechanics were already
+ * ported and tuned (`maxLifeOf`, `actBase`'s `regenLife`); only the channel was
+ * missing, and a channel with nothing coming down it is untested.
+ *
+ * ═══ SIZED AGAINST WHAT CONSTITUTION BUYS, WHICH IS THE ONLY HONEST RULER ═══
+ * A point of Constitution is four hit points (`Actor.lua:3884-3885`), and the
+ * existing +3 CON items are therefore worth twelve. So:
+ *
+ *   - the apron's +18 is a CON item and a half, on a common BODY piece that
+ *     grants nothing else — the flat, boring, always-correct armour slot.
+ *   - the band's +1 regen DOUBLES a class's authored 0.5 — see its own note on
+ *     why the integer rule made that the floor, and why it is therefore rare.
+ *
+ * NEITHER IS AN UPGRADE PATH TO ITSELF. They are deliberately in DIFFERENT
+ * slots from the existing CON items so the choice is "which coat" rather than
+ * "the strictly better locket".
+ */
+const VITALS: readonly Item[] = [
+  {
+    id: 'item_coroners_apron',
+    name: "Coroner's Apron",
+    slot: Slot.Body,
+    icon: 'item_coroners_apron',
+    tier: 'common',
+    wielder: { mods: { maxHp: 18 } },
+  },
+  {
+    id: 'item_tourniquet_band',
+    name: 'Tourniquet Band',
+    slot: Slot.Hands,
+    icon: 'item_tourniquet_band',
+    tier: 'rare',
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * +1, AND IT IS RARE BECAUSE OF THAT — the guard picked the tier.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * This was authored at `0.4` on an uncommon, and `validateItems` refused it
+     * at module load: wielder values must be non-negative INTEGERS, because the
+     * fold in engine/equipment.ts is floating-point addition and
+     * test/server/equipment.test.ts proves it order-independent across all 5040
+     * permutations of a seven-piece kit. One fractional grant quietly turns that
+     * proof into a proof about one ordering.
+     *
+     * THE GUARD IS RIGHT AND THE ITEM WAS WRONG, so the item moved. The floor an
+     * integer imposes is +1, which is TWICE what every class authors (0.5), and
+     * a doubling is not an uncommon-tier effect. Rare, in the slot with the
+     * fewest rare competitors.
+     *
+     * The FIELD stays fractional — the classes' own 0.5 and the unrounded tick
+     * in `actBase` are why — and a talent or a timed effect may still grant a
+     * fraction. It is items specifically that must be whole, and only items go
+     * through this check.
+     */
+    wielder: { mods: { hpRegen: 1 } },
+  },
+];
+
 const SECOND_BATCH: readonly Item[] = [
   {
     id: 'item_witness_locket',
@@ -1344,6 +1411,7 @@ export const ITEMS: readonly Item[] = Object.freeze([
   // every later item's index within its tier and changes what an existing seed
   // drops. Appending only ever adds an entry at the end of a pool.
   ...TWO_HANDED_AND_OFFHAND,
+  ...VITALS,
 ]);
 
 /** Everything a player can drink. The shop and the inventory both ask. */

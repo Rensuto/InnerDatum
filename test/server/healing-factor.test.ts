@@ -15,6 +15,7 @@ import {
   healingFactor,
 } from '../../src/server/engine/derived.ts';
 import { actBase, createMonsterActor, AiProfile } from '../../src/server/engine/actor.ts';
+import { composeWielders } from '../../src/server/engine/equipment.ts';
 import { healActor } from '../../src/server/engine/talents.ts';
 import type { HealTarget } from '../../src/server/engine/talents.ts';
 
@@ -115,12 +116,39 @@ describe('regeneration — Actor.lua:2053-2056 `regenLife`', () => {
     expect(sturdy.hp).toBe(1000);
   });
 
-  it('does nothing at all to a body with no regeneration', () => {
+  it('does nothing at all to a body with no regeneration AND no worn grant', () => {
     // Every pre-existing fixture. `hpRegen: 0` must produce the byte-identical
     // turn it always did, factor or no factor.
     const idle = ticking(CON_100, 0);
     actBase(idle);
     expect(idle.hp).toBe(100);
+  });
+
+  it('adds what is WORN to the drip — `wielder.life_regen`, 42 items upstream', () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * THE CHANNEL, AND THE ZERO TEST THAT WOULD HAVE SWALLOWED IT.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * The guard read `actor.hpRegen !== 0` — which is every monster in the game
+     * and any class that regenerates nothing. A ring of regeneration on such a
+     * body would have ticked exactly zero, and the item would have looked broken
+     * to the one player most likely to seek it out. It reads the SUM now.
+     *
+     * The composed sheet is built through the real fold, not hand-written: if
+     * `hpRegen` ever left `WIELDER_MOD_KEYS` this fixture would stop expressing
+     * the case rather than failing.
+     */
+    const worn = ticking(composeWielders(CON_10, [{ mods: { hpRegen: 1 } }]), 0);
+    actBase(worn);
+    expect(worn.hp, 'a body with no innate regen got nothing from the ring').toBeCloseTo(101, 10);
+
+    // AND IT SUMS WITH THE BODY'S OWN before the factor multiplies, which is
+    // `Actor.lua:2055` — the factor scales the whole attribute, not one source
+    // of it. 100 Constitution is a factor of 1.5, so (4 + 1) * 1.5 = 7.5.
+    const both = ticking(composeWielders(CON_100, [{ mods: { hpRegen: 1 } }]), 4);
+    actBase(both);
+    expect(both.hp, 'the ring was paid outside the healing factor').toBeCloseTo(107.5, 10);
   });
 });
 
@@ -170,11 +198,18 @@ describe('the one door, so a fifth heal cannot forget', () => {
     // `member`, not `self`, since the rest bonus went party-wide — upstream
     // pays it to every member (Player.lua:983-993) and each one's own
     // Constitution decides what it is worth.
-    expect(engine).toContain('member.hpRegen * bonus * factor');
+    // ═══ THE SUM, NOT THE BODY'S OWN FIGURE ═══
+    // `wielder.life_regen` joined the fold, so both sites read
+    // `own + (combat?.mods?.hpRegen ?? 0)`. Pinning the bare `member.hpRegen`
+    // here would now pass while the ring did nothing on a rest — which is the
+    // exact split this test was written to refuse, one layer along.
+    expect(engine).toContain('member.hpRegen + (member.combat?.mods?.hpRegen ?? 0)');
+    expect(engine).toContain('regen * bonus * factor');
     const actor = readFileSync(
       new URL('../../src/server/engine/actor.ts', import.meta.url),
       'utf8',
     );
-    expect(actor).toContain('actor.hpRegen * factor');
+    expect(actor).toContain('actor.hpRegen + (actor.combat?.mods?.hpRegen ?? 0)');
+    expect(actor).toContain('regen * factor');
   });
 });

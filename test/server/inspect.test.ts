@@ -7,6 +7,7 @@ import { AiProfile } from '../../src/server/engine/actor.ts';
 import { INSPECTOR, WATCHMAN } from '../../src/server/content/classes.ts';
 import { AttackRefusal, canAttack, combatDistance } from '../../src/server/engine/combat.ts';
 import { createDownedState } from '../../src/server/engine/downed.ts';
+import { composeWielders } from '../../src/server/engine/equipment.ts';
 import { createEffectState, setEffect } from '../../src/server/engine/effects.ts';
 import { createRng } from '../../src/shared/rng.ts';
 import { MVP_EFFECTS, STUNNED } from '../../src/server/content/effects.ts';
@@ -722,6 +723,41 @@ describe('inspecting yourself', () => {
     // and one decimal place respectively.
     expect(value('Life regen')).toMatch(/^-?\d+\.\d$/);
     expect(value('(with heal mod)')).toMatch(/^-?\d+\.\d\d$/);
+  });
+
+  it('counts a worn `life_regen` in the row, because the tick counts it', async () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * THE ROW'S JUSTIFICATION IS THAT IT PRINTS THE NUMBER THE GAME USES.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * `wielder.life_regen` joined the fold, and `actBase` ticks
+     * `own + mods.hpRegen`. The card was handed `target.hpRegen` alone, so a
+     * player in a Tourniquet Band would have watched their hit points climb at
+     * twice the rate their own character sheet reported — the same split that
+     * made resting and waiting disagree, one layer further out.
+     *
+     * BOTH ROWS, because the second is the first through the healing factor and
+     * a fix applied to one of them would be the same bug with a smaller radius.
+     */
+    const floor = await scene();
+    const before = viewOf(await floor.client.inspect(floor.viewer.id));
+    const readBefore = (label: string): string =>
+      String(rowsOf(before).find((row) => row['label'] === label)?.['value']);
+    const baseline = Number(readBefore('Life regen'));
+
+    floor.viewer.combat = composeWielders(floor.viewer.combat ?? {}, [{ mods: { hpRegen: 1 } }]);
+
+    const after = viewOf(await floor.client.inspect(floor.viewer.id));
+    const readAfter = (label: string): string =>
+      String(rowsOf(after).find((row) => row['label'] === label)?.['value']);
+    expect(Number(readAfter('Life regen')), 'the band moved no row').toBeCloseTo(baseline + 1, 10);
+    // AND THE PRODUCT ROW MOVED WITH IT. It multiplies the same figure, so a
+    // fix that reached one and not the other would leave the two disagreeing on
+    // a card whose whole point is that the second explains the first.
+    expect(Number(readAfter('(with heal mod)'))).toBeGreaterThan(
+      Number(readBefore('(with heal mod)')),
+    );
   });
 
   it('emphasises nothing, because emphasis belongs to the hit chance', async () => {

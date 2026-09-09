@@ -58,7 +58,11 @@ function bare(definition: PooledClass, level = 1): number {
  * ever stopped carrying `con`, this fixture would stop expressing the case and
  * the test would go quietly green.
  */
-function wearing(definition: PooledClass, block: { stats?: { con?: number } }, level = 1): number {
+function wearing(
+  definition: PooledClass,
+  block: { stats?: { con?: number }; mods?: { maxHp?: number } },
+  level = 1,
+): number {
   const composed = composeWielders(definition.combat, [block]);
   return maxLifeOf(body(level, composed), definition, PLAYER_RANK);
 }
@@ -98,6 +102,54 @@ describe('hit points follow the Constitution a body is standing at', () => {
     const off = maxLifeOf(body(1, composeWielders(WATCHMAN.combat, [])), WATCHMAN, PLAYER_RANK);
     expect(on).toBeGreaterThan(before);
     expect(off).toBe(before);
+  });
+
+  it('adds a flat `max_life` grant, and adds it AFTER the level curve', () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * `wielder.max_life` — 39 items upstream, and no channel here until now.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * The mechanic was ported and tuned; only the grant was unreachable. This
+     * is the reachability half — it fails the moment `maxHp` leaves
+     * `WIELDER_MOD_KEYS`, which is the failure mode `moveMp` sat in silently.
+     */
+    expect(wearing(WATCHMAN, { mods: { maxHp: 18 } })).toBe(bare(WATCHMAN) + 18);
+
+    /**
+     * ═══ FLAT, AND THAT IS THE DECISION — not folded into the curve ═══
+     * `maxLifeFor` multiplies the class base by the life rating and the level.
+     * Passing a grant INTO it would make the same coat worth several times as
+     * much at level 20 as at level 1, which is not what upstream's `max_life`
+     * does and not what an eighteen-point number on a tooltip promises.
+     *
+     * Driven at two levels: the DIFFERENCE must be the same 18 at both, and a
+     * grant folded into the curve would widen it.
+     */
+    expect(wearing(WATCHMAN, { mods: { maxHp: 18 } }, 12) - bare(WATCHMAN, 12)).toBe(18);
+  });
+
+  it('stacks two max_life sources and gives them back together', () => {
+    // The same additive, order-independent property every other channel has,
+    // and the same unequip proof: the fold is re-run over the smaller set.
+    const two = maxLifeOf(
+      body(1, composeWielders(WATCHMAN.combat, [{ mods: { maxHp: 5 } }, { mods: { maxHp: 7 } }])),
+      WATCHMAN,
+      PLAYER_RANK,
+    );
+    expect(two).toBe(bare(WATCHMAN) + 12);
+    expect(maxLifeOf(body(1, composeWielders(WATCHMAN.combat, [])), WATCHMAN, PLAYER_RANK)).toBe(
+      bare(WATCHMAN),
+    );
+  });
+
+  it('survives the fold — `maxHp` is on WIELDER_MOD_KEYS or it is nothing', () => {
+    // THE DISCRIMINATING ONE, in `moveMp`'s exact shape. `composeWielders` only
+    // carries keys it was told about, so this is the assertion that fails if
+    // the key is dropped from the list — the tooltip would still promise the
+    // hit points and the body would never get them.
+    expect(composeWielders({}, [{ mods: { maxHp: 18 } }]).mods?.maxHp).toBe(18);
+    expect(composeWielders({}, [{ mods: { hpRegen: 1 } }]).mods?.hpRegen).toBe(1);
   });
 
   it('leaves a fresh character on exactly its authored base', () => {

@@ -1829,9 +1829,21 @@ export function actBase(actor: EngineActor, statusPass?: StatusPass): void {
    * (`hpRegen` is authored fractional) and rounding each tick would quantise a
    * slow drip to nothing or to double. `hp` is already fractional on this path.
    */
-  if (actor.hpRegen !== 0 && actor.hp < actor.maxHp) {
+  /**
+   * ═══ PLUS WHAT IS WORN — `wielder.life_regen`, 42 items upstream ═══
+   * Summed BEFORE the healing factor, because `Actor.lua:2055` multiplies the
+   * whole of `self.life_regen` by the factor and a worn grant is part of that
+   * attribute upstream rather than a second source applied after it.
+   *
+   * AND THE ZERO TEST MOVED ONTO THE SUM. It read `actor.hpRegen !== 0`, which
+   * is every monster in the game — so a ring of regeneration on a body whose
+   * class regenerates nothing would have done nothing, and the item would have
+   * looked broken to the one player most likely to want it.
+   */
+  const regen = actor.hpRegen + (actor.combat?.mods?.hpRegen ?? 0);
+  if (regen !== 0 && actor.hp < actor.maxHp) {
     const factor = bound(healingFactor(actor.combat ?? {}), HEAL_FACTOR_MIN, HEAL_FACTOR_MAX);
-    actor.hp = Math.min(actor.maxHp, actor.hp + actor.hpRegen * factor);
+    actor.hp = Math.min(actor.maxHp, actor.hp + regen * factor);
   }
 
   // tome/class/Actor.lua:597 — `self:timedEffects()`. Status durations tick HERE, before

@@ -415,3 +415,26 @@ letter in the cell until the art lands.
 **Acceptance:** as for the first three weapons — each id resolves in the
 manifest, and moving it from `PENDING_ICON_IDS` to `KNOWN_ICON_IDS` keeps
 `npm run check` green.
+
+## The two vitals — `item_coroners_apron`, `item_tourniquet_band`
+
+**Why these two exist.** `wielder.max_life` and `wielder.life_regen` are the two
+most common things a piece of gear does in `tome/data` — 39 and 42 items — and
+this game had both mechanics ported and neither reachable from an item. These
+are the first two pieces of gear whose entire effect is a pool rather than a
+combat getter, so their pictures have to say "you last longer" and not "you hit
+harder": nothing on them is sharp.
+
+Both are in `PENDING_ICON_IDS` (`src/server/content/items.ts`) and render as a
+letter in the cell until the art lands.
+
+| id | tier | what it is |
+|---|---|---|
+| `item_coroners_apron` | common | A heavy waxed-canvas apron over the chest, dark and practical, straps crossed at the back. Stains that have been scrubbed and did not come out. It is a BODY piece that is not armour — protection from the work rather than from a blow. |
+| `item_tourniquet_band` | rare | A wound strap for the hand and forearm — a buckled leather band with a windlass rod through it, cord neatly wrapped. Field-surgical, not decorative. It should read as something you would use on yourself, mid-corridor, in a hurry. |
+
+**Cut them at 64x64**, matching every other `item_*` file on disk.
+
+**Acceptance:** as for the weapons — each id resolves in the manifest, and
+moving it from `PENDING_ICON_IDS` to `KNOWN_ICON_IDS` keeps `npm run check`
+green.

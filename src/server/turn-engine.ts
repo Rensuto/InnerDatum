@@ -2659,7 +2659,14 @@ export function createTurnEngine(opts: TurnEngineOptions): ReapingTurnEngine {
                 HEAL_FACTOR_MIN,
                 HEAL_FACTOR_MAX,
               );
-              member.hp = Math.min(member.maxHp, member.hp + member.hpRegen * bonus * factor);
+              // AND WHAT THEY ARE WEARING — `wielder.life_regen`, summed with
+              // the body's own before anything multiplies it, exactly as
+              // `actBase` does. The two sites must agree about what a ring is
+              // worth or resting and waiting pay differently for the same gear,
+              // which is what the source-scrape in
+              // test/server/healing-factor.test.ts exists to catch.
+              const regen = member.hpRegen + (member.combat?.mods?.hpRegen ?? 0);
+              member.hp = Math.min(member.maxHp, member.hp + regen * bonus * factor);
             }
 
             /**

@@ -785,10 +785,17 @@ export function inspectActor(
     // `hpRegen` AS A NUMBER, NOT THE ACTOR. The note above forbids handing the
     // actor to this builder; a single value off it carries no such risk and is
     // the only thing the regen rows need that a sheet does not have.
+    //
+    // ═══ PLUS WHAT IS WORN, BECAUSE `actBase` TICKS THE SUM ═══
+    // `wielder.life_regen` joined the fold, and this row's whole justification
+    // is that it prints "the number the game actually uses". The body's own
+    // figure alone would leave a player wearing a ring of regeneration watching
+    // their hit points climb faster than the sheet says they should — the same
+    // split, one layer up, that made the rest and the ordinary turn disagree.
     pushSelfSheet(
       rows,
       combatantOf(target),
-      target.hpRegen,
+      target.hpRegen + (target.combat?.mods?.hpRegen ?? 0),
       // THE SAME EXPRESSION THE `progress` FRAME USES for `statBase`
       // (gateway.ts:4893), so the two screens cannot disagree about what a
       // player bought.

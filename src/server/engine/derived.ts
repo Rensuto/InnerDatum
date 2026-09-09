@@ -218,15 +218,47 @@ export type CombatMods = {
    * folded into `TalentSheet.maxMp` by the same pass that already derives
    * `maxHp`, and the refill reads the ceiling it always read.
    *
-   * ═══ AN ITEM MAY NOT GRANT IT, THIS COMMIT ═══
-   * `AdditiveMods` omits it (content/items.ts), and this docblock's neighbour
-   * fourteen lines up demands that decision be made HERE rather than left. Boots
-   * that let you cover an extra tile are the obvious next step and a good one;
-   * they are also a loot-balance change, and shipping the channel and the loot
-   * table in one commit would make it impossible to tell which of them was
-   * wrong. Talents first.
+   * ═══ AN ITEM MAY GRANT IT, AND THIS PARAGRAPH SAID OTHERWISE FOR MONTHS ═══
+   * It read *"AN ITEM MAY NOT GRANT IT, THIS COMMIT — `AdditiveMods` omits
+   * it"*. `AdditiveMods` is `Omit<CombatMods, 'physSpeed'>`, so it has never
+   * omitted this, and `moveMp` joined `WIELDER_MOD_KEYS` when the fold's own
+   * docblock worked out that the type permitted a grant the fold then dropped.
+   * The sentence was a deferral that outlived its deferral — the thing it named
+   * shipped, in a commit that had no reason to be reading this file.
    */
   readonly moveMp?: number;
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * `max_life` — FLAT HIT POINTS FROM WHAT YOU ARE WEARING.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Ported from tome/class/Actor.lua:172 (`max_life` is an actor attribute) and
+   * granted by 39 items in `tome/data`, which makes it one of the most common
+   * things a piece of gear does upstream and one this game could not express.
+   *
+   * ═══ A POOL, SO IT IS READ WHERE `moveMp` IS READ ═══
+   * `maxLifeOf` (engine/pools.ts) composes the ceiling out of the class figure,
+   * the life rating, the level, the rank and the Constitution bought — and now
+   * this, added last. It is NOT a getter in this file for the reason `moveMp`'s
+   * note gives: a ceiling is refilled against once per turn, not composed on
+   * demand, so folding it in a getter would leave `actor.maxHp` disagreeing
+   * with the getter and the health bar reading one of the two at random.
+   */
+  readonly maxHp?: number;
+  /**
+   * `life_regen` — HIT POINTS BACK PER GAME TURN, from gear.
+   *
+   * tome/class/Actor.lua:525 (`regenLife`), granted by 42 items upstream. Added
+   * to the actor's own `hpRegen` in `actBase`, which then multiplies the sum by
+   * the healing factor exactly as `Actor.lua:2055` does — so a ring of
+   * regeneration is worth more to a body with high Constitution, which is
+   * upstream's arithmetic and not a choice made here.
+   *
+   * FRACTIONAL BY DESIGN. The classes author `0.5`, and the tick is deliberately
+   * unrounded (see `actBase`), so an item granting `0.3` is a real 60% increase
+   * rather than a number that rounds away.
+   */
+  readonly hpRegen?: number;
   /**
    * ═══════════════════════════════════════════════════════════════════════════
    * `numbed` — OUTGOING DAMAGE REDUCED BY A PERCENTAGE (damage_types.lua:158-160).
