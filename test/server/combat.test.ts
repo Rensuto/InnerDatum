@@ -360,6 +360,45 @@ describe('attackTarget — the resolution order, Combat.lua:505-546', () => {
       expect(result.brandDamage).toBe(0);
       expect(drawCount(rng), 'a zero brand took a draw').toBe(2);
     });
+
+    it('IGNORES the defender armour, because a projector never sees it', () => {
+      /**
+       * ═══════════════════════════════════════════════════════════════════════
+       * THE ONE ARGUMENT THE FIRST PORT PASSED THAT UPSTREAM NEVER HAD.
+       * ═══════════════════════════════════════════════════════════════════════
+       *
+       * `combat_armor` is subtracted in exactly one place upstream —
+       * `attackTargetWith`, at Combat.lua:439 (read), :506 (hardiness) and :540
+       * (`armor = math.max(0, armor - apr)`, then the blend on :541). It is a
+       * property of the WEAPON SWING.
+       *
+       * `melee_project` does not call `attackTargetWith`. It calls
+       * `DamageType:get(typ).projector(...)` directly (Combat.lua:723-732), and
+       * the default projector (damage_types.lua:48) contains no armour step at
+       * all: the only flat reduction in it is `flat_damage_armor` at :404, a
+       * separate stat nothing in this game grants. Resistance, `inc_damage` and
+       * `resists_pen` ARE in it — which is why those three are still passed.
+       *
+       * So a brand meeting armour is upstream's whole point: it is the damage
+       * that keeps working when the swing stops. The first port handed it
+       * `armour`/`hardiness`/`apr` and cost it `hardiness`% of its value against
+       * every armoured body in the game, and every test above passed because no
+       * fixture had ever worn any.
+       */
+      const rng = scriptedRng([1, 100]);
+      const result = attackTarget(
+        actor('a', 1, 1, { combat: branded({ [DamageType.Fire]: 6 }) }),
+        // `armourHardiness` is ADDITIVE on the base 30 (derived.ts:556), so 60
+        // means pres = 0.9: the old blend gave max(6*0.9 - 20, 0) + 6*0.1, i.e.
+        // 0.6 out of 6. Nine tenths of the brand, gone, on a body wearing plate.
+        actor('t', 2, 1, { combat: { mods: { armour: 20, armourHardiness: 60 } } }),
+        world(),
+        rng,
+      );
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.brandDamage, 'armour bit into a brand').toBeCloseTo(6, 6);
+    });
   });
 
   it('reports the accuracy, defence and chance the combat log prints', () => {

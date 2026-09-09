@@ -601,15 +601,31 @@ export function attackTarget(
    *
    * ═══ ITS OWN PIPELINE PASS, NOT A NUMBER ADDED TO THE SWING ═══
    * Each type is a separate `applyDamage`, so a fire brand meets fire resistance
-   * and the target's armour is applied to it independently. That is upstream's
-   * `projector` call per type, and it is the whole reason a brand is worth
-   * carrying against an armoured foe when raw damage is not.
+   * independently of the physical blow that carried it. That is upstream's
+   * `projector` call per type.
    *
-   * ═══ NO CRIT, NO RANGE ROLL, AND THAT IS UPSTREAM'S SHAPE ═══
-   * The projector takes a flat `dam`. It is not a second swing — it does not
-   * re-roll the damage band and it cannot crit, so the spec passed here carries
-   * neither. `increase` and `penetration` DO apply: they are properties of the
-   * attacker's sheet that upstream's projector reads on any typed damage.
+   * ═══ NO CRIT, NO RANGE ROLL, AND — CORRECTED — NO ARMOUR ═══
+   * The projector takes a flat `dam`. It is not a second swing: it does not
+   * re-roll the damage band, it cannot crit, and IT DOES NOT MEET ARMOUR.
+   *
+   * The first port of this block passed `armour`, `hardiness` and `apr`, on the
+   * stated reasoning that armour "is applied to it independently ... which is
+   * the whole reason a brand is worth carrying against an armoured foe". The
+   * conclusion was right and the code did the opposite of it. Upstream reads
+   * `combat_armor` in exactly one function — `attackTargetWith`, at
+   * Combat.lua:439, :506 and :540 — and `melee_project` (:723-732) never calls
+   * it. It calls `DamageType:get(typ).projector` directly, and the default
+   * projector (damage_types.lua:48) has no armour step: its one flat reduction
+   * is `flat_damage_armor` at :404, a stat nothing in this game grants.
+   *
+   * The cost was `hardiness`% of every brand against every armoured body — up
+   * to nine tenths of it against plate — and no test caught it because no
+   * fixture in the suite had ever worn armour. `test/server/combat.test.ts`
+   * now has one that does.
+   *
+   * `increase` and `penetration` DO apply and are still passed: both ARE in the
+   * default projector (`src.inc_damage`, `src.resists_pen`), alongside the
+   * target's resistance, which is the whole list of what a projector consults.
    *
    * DRAW ORDER: strictly after the swing's own draws, so a branded weapon
    * consumes a suffix of the RNG stream rather than shifting the roll that
@@ -627,9 +643,6 @@ export function attackTarget(
       if (amount === undefined || amount <= 0) continue;
       if (killedByBrand) break;
       const burn = applyDamage(target, amount, brandType, attacker, rng, {
-        armour: combatArmor(foe),
-        hardiness: combatArmorHardiness(foe),
-        apr: combatAPR(self),
         increase: self.increase,
         penetration: self.penetration,
       });
