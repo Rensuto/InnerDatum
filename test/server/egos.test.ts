@@ -87,6 +87,9 @@ describe('the ego roster', () => {
       // seed rolls. Last in PREFIXES leaves every prefix before it untouched.
       'qk',
       'bb',
+      // AND THE BRAND REVERSED — `on_melee_hit`, damage paid by whoever hits
+      // YOU. Appended for the same reason the two above it were.
+      'sp',
       // The shallow suffixes.
       'lg',
       'lw',

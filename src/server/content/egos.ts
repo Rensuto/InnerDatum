@@ -163,13 +163,20 @@ export type Ego = {
      *
      * Upstream's is `melee_project = {[DamageType.ACID] =
      * resolvers.mbonus_material(15, 5)}` on the "acidic " prefix
-     * (`general/objects/egos/weapon.lua:222-238`), and `mbonus_material(15, 5)`
-     * is 5 at material level 1 rising to 15 at material level 5.
+     * (`general/objects/egos/weapon.lua:222-238`).
      *
-     * WHICH IS EXACTLY `EgoGrant`. This file's header already argues that
+     * `resolvers.calc.mbonus_material` (resolvers.lua:594-613) is
+     * `ceil(rng.mbonus(max, level, 90) * material_level / 5) + add`, so the
+     * SECOND argument is a guaranteed floor and the FIRST is the ceiling of the
+     * part that scales with character level and material. `(15, 5)` therefore
+     * means "5 always, plus up to 15 more as the item gets better", not the
+     * 5-at-material-1-to-15-at-material-5 curve an earlier draft of this
+     * paragraph described.
+     *
+     * WHICH IS STILL EXACTLY `EgoGrant`. This file's header already argues that
      * `ItemTier` IS upstream's `material_level` and that a magnitude is
      * `floor + step × power × tierWeight`; a brand needs `floor: 5` and a step
-     * that reaches 15 at the top tier, and nothing new. `grantValue` is not told
+     * that climbs from there, and nothing new. `grantValue` is not told
      * which channel it serves and still must not be.
      *
      * ═══ NOT LIMITED TO WEAPONS, WHICH IS ALSO UPSTREAM ═══
@@ -180,6 +187,29 @@ export type Ego = {
      * same place, so a branded gauntlet burns exactly as a branded blade does.
      */
     readonly brand?: Partial<Record<DamageType, EgoGrant>>;
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * `on_melee_hit` — WHAT IT COSTS TO PUT A HAND ON THE WEARER.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * The brand's mirror, and upstream puts it on ORDINARY gear rather than
+     * artifacts: `"spiked "` is a body-armour prefix at `rarity 6,
+     * level_range {5, 50}` with
+     * `on_melee_hit={[DamageType.PHYSICAL] = resolvers.mbonus_material(10, 10)}`
+     * (`egos/armor.lua:147-157`), and `"flaming "`, `"icy "` and `"shocking "`
+     * are rarity-8 shield prefixes carrying the same field
+     * (`egos/shield.lua:157-208`).
+     *
+     * `mbonus_material(10, 10)` is a guaranteed 10 plus up to 10 more, by the
+     * argument order worked out on `brand` above — the widest FLOOR upstream
+     * puts on an ordinary generated affix, and roughly double the brand's.
+     * Retaliation is priced higher than a brand because it is the affix that
+     * pays a defender for doing nothing, which is a thing a game has to be
+     * careful about wanting.
+     *
+     * See `Wielder.retaliation` for the channel.
+     */
+    readonly retaliation?: Partial<Record<DamageType, EgoGrant>>;
     /**
      * `*_immune`. See `Wielder.immunities` — the answer to being DISABLED
      * rather than to being hurt, which until now the game had none of.
@@ -424,10 +454,12 @@ const PREFIXES: readonly Ego[] = [
    * every one of them `rarity = 5`, `level_range = {1, 50}`, and
    * `melee_project = {[TYPE] = resolvers.mbonus_material(15, 5)}`.
    *
-   * `mbonus_material(15, 5)` is 5 at material level 1 rising to 15 at material
-   * level 5. Ours is `floor + step × power × tierWeight` with power 0-3 and
-   * tierWeight 1-3, so `{ floor: 5, step: 1 }` is 5 at the bottom and 14 at the
-   * top — upstream's curve, in whole numbers, which `validateEgos` requires.
+   * `mbonus_material(15, 5)` is a guaranteed 5 plus up to 15 more as level and
+   * material climb — see the argument order worked out on `Ego.grants.brand`.
+   * Ours is `floor + step × power × tierWeight` with power 0-3 and tierWeight
+   * 1-3, so `{ floor: 5, step: 1 }` is 5 at the bottom and 14 at the top:
+   * upstream's floor exactly, and a shorter climb, in the whole numbers
+   * `validateEgos` requires.
    *
    * ═══ TWO, NOT FOUR, AND THE TWO ARE THE ONES THE WORLD ALREADY HAS ═══
    * Upstream can afford four because it has four elemental identities in its
@@ -464,6 +496,41 @@ const PREFIXES: readonly Ego[] = [
     slots: [Slot.Mainhand, Slot.Offhand, Slot.Hands],
     grants: { brand: { cold: { floor: 5, step: 1 } } },
     cost: 35,
+  },
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * AND THE BRAND POINTING THE OTHER WAY — `on_melee_hit`. Spiked plate.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Upstream's `"spiked "` (`general/objects/egos/armor.lua:147-157`), ported
+   * with its own numbers: `rarity = 6`, `level_range = {5, 50}`,
+   * `on_melee_hit={[DamageType.PHYSICAL] = resolvers.mbonus_material(10, 10)}`.
+   *
+   * ═══ THE LEVEL FLOOR IS UPSTREAM'S AND IS THE POINT ═══
+   * Every other prefix here starts at 1. This one does not, and the difference
+   * is deliberate rather than copied: an affix that damages whoever touches you
+   * is worth most to the body with the least to do, and handing it to a level-1
+   * character makes standing in a doorway the correct opening move of the game.
+   * ToME waits five levels before offering it, by which point a husk's swing is
+   * a real risk rather than a free trade.
+   *
+   * ═══ WHY IT IS NOT ON THE WEAPON SLOTS ═══
+   * Upstream puts `on_melee_hit` on armour, shields, gloves and helms and never
+   * on a weapon, because the field is read off the DEFENDER: a blade only
+   * retaliates on the turns you are not using it. `Slot.Body` is upstream's
+   * "spiked " exactly and `Slot.Offhand` is its three shield twins
+   * (`egos/shield.lua:157-208`), which is where a player who has decided to be
+   * hit is already looking.
+   */
+  {
+    code: 'sp',
+    name: 'Spiked ',
+    tag: EgoSlotTag.Prefix,
+    rarity: 6,
+    levelRange: [5, 50],
+    slots: [Slot.Body, Slot.Offhand],
+    grants: { retaliation: { physical: { floor: 10, step: 1 } } },
+    cost: 7,
   },
 ];
 
@@ -929,6 +996,7 @@ export function validateEgos(egos: readonly Ego[]): readonly Ego[] {
     const damageGrants = Object.entries(ego.grants.damage ?? {});
     const penGrants = Object.entries(ego.grants.penetration ?? {});
     const brandGrants = Object.entries(ego.grants.brand ?? {});
+    const retaliationGrants = Object.entries(ego.grants.retaliation ?? {});
     const immunityGrants = Object.entries(ego.grants.immunities ?? {});
     if (
       statGrants.length === 0 &&
@@ -937,6 +1005,7 @@ export function validateEgos(egos: readonly Ego[]): readonly Ego[] {
       damageGrants.length === 0 &&
       penGrants.length === 0 &&
       brandGrants.length === 0 &&
+      retaliationGrants.length === 0 &&
       immunityGrants.length === 0
     ) {
       throw new Error(
@@ -951,7 +1020,13 @@ export function validateEgos(egos: readonly Ego[]): readonly Ego[] {
      * ego that silently grants nothing — which is the exact failure the
      * "grants nothing" check above exists to prevent, arriving by another door.
      */
-    for (const [key] of [...resistGrants, ...damageGrants, ...penGrants, ...brandGrants]) {
+    for (const [key] of [
+      ...resistGrants,
+      ...damageGrants,
+      ...penGrants,
+      ...brandGrants,
+      ...retaliationGrants,
+    ]) {
       if (!DAMAGE_TYPES.includes(key as DamageType)) {
         throw new Error(
           `egos: ${ego.code} resists '${key}', which is not one of the ` +
@@ -998,6 +1073,7 @@ export function validateEgos(egos: readonly Ego[]): readonly Ego[] {
       ...damageGrants,
       ...penGrants,
       ...brandGrants,
+      ...retaliationGrants,
       ...immunityGrants,
     ]) {
       if (DEAD_GRANT_KEYS.includes(key)) {
@@ -1142,6 +1218,12 @@ export function egoWielder(ego: Ego, power: number, tier: ItemTier): Wielder {
     brand[key as DamageType] = grantValue(grant, power, tier);
   }
 
+  const retaliation: Partial<Record<DamageType, number>> = {};
+  for (const [key, grant] of Object.entries(ego.grants.retaliation ?? {})) {
+    if (grant === undefined) continue;
+    retaliation[key as DamageType] = grantValue(grant, power, tier);
+  }
+
   const immunities: Partial<Record<ImmunitySubtype, number>> = {};
   for (const [key, grant] of Object.entries(ego.grants.immunities ?? {})) {
     if (grant === undefined) continue;
@@ -1159,6 +1241,7 @@ export function egoWielder(ego: Ego, power: number, tier: ItemTier): Wielder {
     damage?: typeof damage;
     penetration?: typeof penetration;
     brand?: typeof brand;
+    retaliation?: typeof retaliation;
     immunities?: typeof immunities;
   } = {};
   if (Object.keys(stats).length > 0) out.stats = stats;
@@ -1167,6 +1250,7 @@ export function egoWielder(ego: Ego, power: number, tier: ItemTier): Wielder {
   if (Object.keys(damage).length > 0) out.damage = damage;
   if (Object.keys(penetration).length > 0) out.penetration = penetration;
   if (Object.keys(brand).length > 0) out.brand = brand;
+  if (Object.keys(retaliation).length > 0) out.retaliation = retaliation;
   if (Object.keys(immunities).length > 0) out.immunities = immunities;
   return out;
 }

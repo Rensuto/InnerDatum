@@ -200,6 +200,19 @@ export type CombatSheet = Combatant & {
    * conditions upstream puts on it.
    */
   readonly brand?: TypeTable;
+  /**
+   * `on_melee_hit` — TYPED DAMAGE PAID BY WHOEVER LANDS A BLOW ON THIS ACTOR.
+   *
+   * Combat.lua:851-891. The brand's mirror image, and the only table on this
+   * sheet that is read when the actor is neither swinging nor being asked to
+   * resist: it is read off the DEFENDER and spent ON THE ATTACKER, which is why
+   * neither `increase` (attacker-side) nor `profile` (target-side) is the right
+   * home for it.
+   *
+   * See `Wielder.retaliation` for the channel and `noteRetaliation` in
+   * `engine/scheduler.ts` for the application.
+   */
+  readonly retaliation?: TypeTable;
   /** `resists_pen` — resistance penetration. Read when this actor ATTACKS. */
   readonly penetration?: TypeTable;
   /**

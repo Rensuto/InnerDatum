@@ -382,6 +382,7 @@ export function composeWielders(
   const damageDelta = new Map<DamageType | 'all', number>();
   const penDelta = new Map<DamageType, number>();
   const brandDelta = new Map<DamageType, number>();
+  const retaliationDelta = new Map<DamageType, number>();
   const immunityDelta = new Map<ImmunitySubtype, number>();
   /**
    * THE ONE CHANNEL THAT IS NOT A NUMBER. Every other delta above is a running
@@ -473,6 +474,21 @@ export function composeWielders(
         const value = brand[key];
         if (value === undefined) continue;
         brandDelta.set(key, (brandDelta.get(key) ?? 0) + value);
+      }
+    }
+    /**
+     * AND THE SAME SUM POINTING THE OTHER WAY — `on_melee_hit`. Additive for
+     * the identical reason and by the identical route: upstream's block at
+     * Combat.lua:854 loops over `target.on_melee_hit`, the FOLDED actor field,
+     * so spiked armour and a spiked shield are two separate projections and
+     * their numbers add rather than the larger winning.
+     */
+    const retaliation = wielder.retaliation;
+    if (retaliation !== undefined) {
+      for (const key of DAMAGE_TYPES) {
+        const value = retaliation[key];
+        if (value === undefined) continue;
+        retaliationDelta.set(key, (retaliationDelta.get(key) ?? 0) + value);
       }
     }
     /**
@@ -606,6 +622,12 @@ export function composeWielders(
     const table: { -readonly [K in keyof TypeTable]: TypeTable[K] } = { ...base.brand };
     for (const [key, delta] of brandDelta) table[key] = (table[key] ?? 0) + delta;
     out.brand = Object.freeze(table);
+  }
+
+  if (retaliationDelta.size > 0) {
+    const table: { -readonly [K in keyof TypeTable]: TypeTable[K] } = { ...base.retaliation };
+    for (const [key, delta] of retaliationDelta) table[key] = (table[key] ?? 0) + delta;
+    out.retaliation = Object.freeze(table);
   }
 
   /**

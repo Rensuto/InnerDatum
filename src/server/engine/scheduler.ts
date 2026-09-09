@@ -101,6 +101,8 @@ import {
 } from './downed.ts';
 import { membersOf, partyIdOf } from './party.ts';
 import { combatAPR } from './derived.ts';
+import { applyDamage } from './damage.ts';
+import { DAMAGE_TYPES } from '../../shared/damagetype.ts';
 import { DEFAULT_PROJECTILE_DAMAGE_TYPE, stepProjectile } from './projectile.ts';
 import type { Dir, TileXY } from '../../shared/coords.ts';
 import type { EnergyActor } from '../../shared/energy.ts';
@@ -2001,6 +2003,9 @@ function actPlayer(actor: PlayerActor, run: Run): ActResult {
     // player-on-player case today — `resolveGuardCounter` refuses a guardian who
     // is not the attacker's enemy — and costs one Map miss to say so.
     noteGuardCounter(outcome.effect, run, null, actor.id);
+    // AND WHAT THE BODY THEY HIT MADE THEM PAY FOR IT. After the counter, so a
+    // Watchman's punish narrates before the spikes on the thing he punished.
+    noteRetaliation(outcome.effect, run, null, actor.id);
     /**
      * ═════════════════════════════════════════════════════════════════════════
      * THE ROUND MAY STAY OPEN — `DECISIONS.md` D1, four milestones late.
@@ -2149,6 +2154,11 @@ function actMonster(actor: MonsterActor, run: Run): ActResult {
     // one near-inert case: the countered monster is reaped and re-seeded by
     // `resetFloor` moments later.
     noteGuardCounter(outcome.effect, run, gameTurn, actor.id);
+    // ═══ AND THE SPIKES — THE LANE `on_melee_hit` WAS WRITTEN FOR ═══
+    // A husk swings at a detective in spiked plate and bleeds for it. Both lanes
+    // rather than only this one, for `noteGuardCounter`'s reason: the rule is a
+    // property of "a blow landed", not of whose turn it was.
+    noteRetaliation(outcome.effect, run, gameTurn, actor.id);
   }
 
   // ToME-native cost: ENERGY_TO_ACT * speedFactor (Actor.lua:1353-1360, 5863).
@@ -3520,6 +3530,139 @@ function noteGuardCounter(
   const counterEffect: Effect = { kind: 'attack', ...blow };
   noteBlows(counterEffect, run);
   noteCasualty(counterEffect, run, sweepTurn, counter.guardianId);
+}
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * AND WHAT IT COST TO LAND THAT BLOW — `on_melee_hit`, Combat.lua:851-891.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * The whole upstream rule, with the one talent that modifies it (Close Combat
+ * Management, which sets `fa` and `pct` and which this game does not have)
+ * absent so that both are 0:
+ *
+ * ```lua
+ * if hitted then
+ *   for typ, dam in pairs(target.on_melee_hit) do
+ *     if dam > 0 then DT.projector(target, self.x, self.y, typ, dam) end
+ * ```
+ *
+ * `target` is the defender and `self.x, self.y` is the ATTACKER's tile: the
+ * defender is the SOURCE and the attacker is what gets hit. Spiked armour.
+ *
+ * ═══ WHY IT IS A SIBLING OF `noteGuardCounter` AND NOT PART OF THE SWING ═══
+ * Identical reasoning, and that function's docblock is the long version: a blow
+ * that travels the other way has a DIFFERENT KILLER, and `noteCasualty` spends
+ * exactly one `killerId` on `noteKill` and `awardExperience`. Retaliation that
+ * rode on the attacker's own effect would pay the attacker's kill credit for
+ * killing themselves. So it is re-entered as its own one-blow effect with the
+ * DEFENDER's id, and every rule downstream applies to it unchanged.
+ *
+ * ═══ THE GUARD IS `hit` AND NOTHING ELSE, WHICH IS NOT WHAT THE COUNTER DOES ═══
+ * `noteGuardCounter` additionally requires `effect.damage > 0`, on the stated
+ * ground that a fully-armoured 0 is a non-event. That is a local rule and a good
+ * one for a Watchman's punish; it is NOT this rule. Upstream sets `hitted = true`
+ * at Combat.lua:621 unconditionally inside the branch where the blow connected,
+ * after armour and after any parry — so a blow that a breastplate reduced to
+ * nothing still connected, and the spikes still went in. Being untouchable and
+ * being unhittable are different, and the affix is bought for the first.
+ *
+ * ═══ NO `not target.dead`, AND THE ABSENCE IS THE PORT ═══
+ * The brand at Combat.lua:723 carries that guard. The Acid Blood block two lines
+ * BELOW this one, at :893, carries that guard. This block does not, in a file
+ * where the surrounding code plainly knows how to write it. So a defender killed
+ * by the blow still burns the hand that did it, and a body can trade its last
+ * moment for the kill. `world.getActor` still resolves it: `noteCasualty` ENROLS
+ * a dead monster and the caller buries it after the pump returns.
+ *
+ * ═══ IT TAKES NO DRAW, SO ITS POSITION CANNOT MOVE THE STREAM ═══
+ * A flat `applyDamage` with no `damageRange` and no `critChance` reaches
+ * `resolveDamage` and consumes nothing — the same measured property the brand
+ * relies on (test/server/combat.test.ts counts the draws). Placed after
+ * `noteCasualty` anyway, so the narration order is "the blow, then who fell,
+ * then what it cost", and so the position stays true if that ever changes.
+ *
+ * ═══ WHAT IS DELIBERATELY NOT WIRED ═══
+ * A guard counter does not trigger the countered body's retaliation, and a
+ * talent's melee blow does not trigger the defender's. Both are the same gap
+ * `noteGuardCounter` already has and for the same reason — this lane keys off
+ * the `attack` Effect, and a talent produces a `talent` Effect with blows inside
+ * it. Upstream has neither gap, because upstream's `attackTargetWith` IS the one
+ * function all three go through. Closing it means giving `TalentHit` the same
+ * re-entry these two have, not moving this code.
+ */
+function noteRetaliation(
+  effect: Effect,
+  run: Run,
+  sweepTurn: number | null,
+  attackerId: string,
+): void {
+  if (effect.kind !== 'attack') return;
+  if (!effect.hit) return;
+
+  const defender = run.world.getActor(effect.targetId);
+  if (defender === undefined) return;
+  const table = defender.combat?.retaliation;
+  if (table === undefined) return;
+
+  const attacker = run.world.getActor(attackerId);
+  if (attacker === undefined) return;
+
+  let damage = 0;
+  let killed = false;
+  let type: DamageType | undefined;
+  // `TypeTable` admits `'all'` and `on_melee_hit` never uses it — walking
+  // `DAMAGE_TYPES` is what stops an `all` row becoming a ninth projection
+  // nothing resists. Same rule, same reason, as the brand loop in combat.ts.
+  for (const key of DAMAGE_TYPES) {
+    const amount: number | undefined = table[key];
+    if (amount === undefined || amount <= 0) continue;
+    const burn = applyDamage(attacker, amount, key, defender, run.world.rng, {
+      // THE DEFENDER'S, because the defender is the source. `defaultProjector`
+      // (damage_types.lua:48) reads `src.inc_damage` and `src.resists_pen` off
+      // whoever is projecting, and here that is the body being hit. Armour is
+      // NOT passed, and that is the whole finding of the commit before this one:
+      // `combat_armor` lives in `attackTargetWith` and a projector never sees it.
+      ...(defender.combat?.increase === undefined ? {} : { increase: defender.combat.increase }),
+      ...(defender.combat?.penetration === undefined
+        ? {}
+        : { penetration: defender.combat.penetration }),
+    });
+    damage += burn.dealt;
+    if (burn.killed) killed = true;
+    // THE FIRST TYPE THAT ACTUALLY LANDED, for the one `type` a `Blow` carries.
+    // Upstream projects each separately and logs each separately; the wire has
+    // one row per blow, and `brandDamage` already aggregates on the same terms.
+    if (type === undefined && burn.dealt > 0) type = key;
+  }
+
+  // Nothing was authored, or everything authored was zero. No event, and
+  // nothing downstream to run — `noteBlows` would refuse to pay Resolve for it
+  // and `noteCasualty` has no body.
+  if (damage <= 0 && !killed) return;
+
+  // `hp` and `at` one line after the blow, for `strike`'s reason: a `Blow`
+  // snapshots the two things that stop being true immediately.
+  const blow: Blow = {
+    targetId: attacker.id,
+    hit: true,
+    crit: false,
+    ...(type === undefined ? {} : { type }),
+    damage,
+    killed,
+    hp: attacker.hp,
+    maxHp: attacker.maxHp,
+    at: { x: attacker.x, y: attacker.y },
+  };
+
+  // THE ORDINARY `attacked` EVENT, ATTRIBUTED TO THE DEFENDER — no new event
+  // kind and therefore no protocol bump, exactly as the guard counter argues.
+  if (sweepTurn === null) run.sink.push(attackedEvent(defender.id, blow));
+  else run.sink.sweep(sweepTurn, { t: 'attack', id: defender.id, ...blow });
+
+  const retaliationEffect: Effect = { kind: 'attack', ...blow };
+  noteBlows(retaliationEffect, run);
+  noteCasualty(retaliationEffect, run, sweepTurn, defender.id);
 }
 
 /** Every body this effect killed. Empty for anything that killed nothing. */

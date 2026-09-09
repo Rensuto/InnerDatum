@@ -408,8 +408,10 @@ export type Wielder = {
    * objection is exactly right about statuses and does not apply here: a brand IS
    * a number, and upstream rolls it — `melee_project={[DamageType.ACID] =
    * resolvers.mbonus_material(15, 5)}` on the "acidic " prefix
-   * (`egos/weapon.lua:222-238`), which is 5 at material level 1 rising to 15 at
-   * 5. `Ego.grants` is a floor plus a step times the tier, and `egos.ts` already
+   * (`egos/weapon.lua:222-238`) — a guaranteed 5 plus up to 15 more as level
+   * and material climb, the argument order being worked out on
+   * `Ego.grants.brand`. `Ego.grants` is a floor plus a step times the tier, and
+   * `egos.ts` already
    * states that `ItemTier` IS upstream's material level. The shapes are the same
    * shape.
    *
@@ -419,6 +421,45 @@ export type Wielder = {
    * `engine/scheduler.ts`.
    */
   readonly brand?: Partial<Record<DamageType, number>>;
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * `on_melee_hit` — WHAT IT COSTS TO PUT A HAND ON YOU. The brand, REVERSED.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Same table, same types, same flat numbers — and the source and the target
+   * swap places. `brand` is damage the wearer deals when they connect;
+   * `retaliation` is damage the wearer deals to WHOEVER CONNECTS WITH THEM.
+   *
+   * Upstream is `Combat.lua:851-891`, and with the one talent that modifies it
+   * absent the whole rule is four lines:
+   *
+   * ```lua
+   * if hitted then
+   *   for typ, dam in pairs(target.on_melee_hit) do
+   *     if dam > 0 then DT.projector(target, self.x, self.y, typ, dam) end
+   * ```
+   *
+   * `target` is the defender and `self.x, self.y` is the ATTACKER's tile. The
+   * defender is the source of the damage, so the defender's `inc_damage` and
+   * `resists_pen` apply to it and the attacker's resistances defend against it.
+   *
+   * ═══ IT IS COMMON GEAR UPSTREAM, NOT A BOSS TRICK ═══
+   * The "spiked " body-armour prefix is `rarity 6, level_range {5,50}` with
+   * `on_melee_hit={[DamageType.PHYSICAL] = resolvers.mbonus_material(10, 10)}`
+   * (`egos/armor.lua:147-157`), and the "flaming ", "icy " and "shocking "
+   * shield prefixes are rarity 8 with the same field
+   * (`egos/shield.lua:157-208`). Fifteen years of tuning put a retaliation
+   * affix in the hands of a level-5 character, which is what makes standing
+   * still in a doorway a build rather than a mistake.
+   *
+   * ═══ NO `not target.dead` GUARD, AND THAT IS DELIBERATE UPSTREAM ═══
+   * The brand at `Combat.lua:723` is guarded by it and the Acid Blood block two
+   * lines BELOW this one (`Combat.lua:893`) is guarded by it. This block is
+   * not. A defender killed by the blow still burns the hand that did it — see
+   * the application in `engine/scheduler.ts`, which ports the absence as
+   * carefully as it would port a presence.
+   */
+  readonly retaliation?: Partial<Record<DamageType, number>>;
   /**
    * ═══════════════════════════════════════════════════════════════════════════
    * `inc_damage` — HOW MUCH HARDER THIS ELEMENT LANDS. A percentage.
@@ -1530,6 +1571,23 @@ export const MAX_ITEM_RESIST = 15;
  */
 export const MAX_ITEM_DAMAGE = 20;
 
+/**
+ * The most one item may put on `brand` or `retaliation`, as FLAT damage.
+ *
+ * These two are the only wielder tables whose entries are damage rather than a
+ * percentage, so `MAX_ITEM_DAMAGE` is the wrong ceiling for them by units, not
+ * merely by size. The bound is upstream's own: the largest `mbonus_material`
+ * roll on an ordinary generated ego is the temporal shield's
+ * `on_melee_hit={... resolvers.mbonus_material(25, 10)}`
+ * (`egos/shield.lua:141-155`), which by that resolver's arithmetic
+ * (resolvers.lua:594-613) tops out at its floor plus its max. Everything above
+ * that upstream is an artifact, which this game does not have yet.
+ *
+ * Its real job is catching the fat finger. A `brand: { fire: 600 }` is a
+ * one-shot on every swing and nothing else in the pipeline would object.
+ */
+export const MAX_ITEM_FLAT_DAMAGE = 35;
+
 export const DEAD_MOD_KEYS: readonly string[] = Object.freeze([
   /**
    * ═══════════════════════════════════════════════════════════════════════════
@@ -1661,9 +1719,22 @@ export function validateItems(items: readonly Item[]): readonly Item[] {
      * a name. Penetration is additionally bounded at 100, where
      * damage_types.lua:345-352 bounds it.
      */
-    for (const [table, cap] of [
-      [item.wielder.damage, MAX_ITEM_DAMAGE] as const,
-      [item.wielder.penetration, 100] as const,
+    /**
+     * AND THE TWO FLAT ONES ON THE SAME TERMS, WHICH THEY WERE NOT GETTING.
+     *
+     * `brand` shipped without reaching this loop at all: a fractional entry
+     * would have broken the order-independence proof that the whole integer
+     * rule exists for, and a MISSPELLED damage type would have sat in the
+     * table forever contributing to nothing. `retaliation` arrived with the
+     * same shape and would have inherited the same hole. They are checked as
+     * `damage` and `penetration` are, against a ceiling in the right units —
+     * see `MAX_ITEM_FLAT_DAMAGE`.
+     */
+    for (const [table, cap, units] of [
+      [item.wielder.damage, MAX_ITEM_DAMAGE, 'whole percentages'] as const,
+      [item.wielder.penetration, 100, 'whole percentages'] as const,
+      [item.wielder.brand, MAX_ITEM_FLAT_DAMAGE, 'whole points of flat damage'] as const,
+      [item.wielder.retaliation, MAX_ITEM_FLAT_DAMAGE, 'whole points of flat damage'] as const,
     ]) {
       for (const [key, value] of Object.entries(table ?? {})) {
         if (!DAMAGE_TYPES.includes(key as DamageType)) {
@@ -1676,7 +1747,7 @@ export function validateItems(items: readonly Item[]): readonly Item[] {
         if (!Number.isFinite(value) || !Number.isInteger(value) || value < 0 || value > cap) {
           throw new Error(
             `items: ${item.id} grants ${key} = ${String(value)}; attacker-side damage values ` +
-              `must be whole percentages between 0 and ${String(cap)}`,
+              `must be ${units} between 0 and ${String(cap)}`,
           );
         }
       }
