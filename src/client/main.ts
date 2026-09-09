@@ -4657,6 +4657,10 @@ const paintHud: HudPainter = (ctx, width, height) => {
       // row prints in brackets. See `ProgressMsg.statBase`.
       statBase: progress?.statBase ?? null,
       unspentStats: progress?.unspentStats ?? 0,
+      // THE THIRD COUNTER BOX. Already on the wire as `ProgressMsg
+      // .unspentCategories`; the locked-tree sentence renders it into prose and
+      // the box wants the number.
+      categories: progress?.unspentCategories ?? 0,
       armedStat: talentsArmedStat,
     });
 

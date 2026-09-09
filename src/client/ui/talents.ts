@@ -471,6 +471,18 @@ const PANEL_MIN_H = HEADER_H + INSET * 2 + TALENT_ROW_H;
 /** Air between the panel and the edges of the band it is clamped into. */
 const PANEL_MARGIN = 6;
 
+/**
+ * A counter box's height and the air inside it. Upstream's Button is its text
+ * plus a 5px frame and 6px of padding (Button.lua:54, :68, :72-73); at this
+ * client's 10px monospace that comes to a 15-pixel box.
+ */
+const COUNTER_H = 15;
+const COUNTER_PAD = 5;
+/** How far a rule's end cap reaches either side of the line. */
+const COUNTER_CAP_PX = 3;
+/** `align_empty1 = Empty.new{width=0, height=10}` — LevelupDialog.lua:810. */
+const COUNTER_GAP_BELOW = 10;
+
 const FONT_BODY = '10px ui-monospace, Consolas, monospace';
 const FONT_LEVEL = 'bold 10px ui-monospace, Consolas, monospace';
 const FONT_META = 'bold 10px ui-monospace, Consolas, monospace';
@@ -1556,6 +1568,12 @@ export type TalentPanelGeometry = {
    */
   readonly stats: PanelRect | null;
   /**
+   * THE COUNTER STRIP — where the four boxed point counts go, and the rules
+   * between the columns start. One producer, because the painter draws into it
+   * and the panel's own `top` was moved down by exactly its height.
+   */
+  readonly counters: PanelRect;
+  /**
    * THE TWO TREE PANES AND THEIR CAPTIONS — class on the left, generic on the
    * right. Always two, in that order, even when one holds nothing.
    *
@@ -1719,7 +1737,24 @@ export function talentPanelGeometry(
   const close = closeRect(rect);
   const x = rect.x + INSET;
   const fullW = Math.max(0, rect.w - INSET * 2);
-  const top = rect.y + HEADER_H + INSET;
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE COUNTER STRIP IS RESERVED BEFORE ANYTHING IS PLACED.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `LevelupDialog.lua:810`'s `align_empty1 = Empty.new{width=0, height=10}` is
+   * the air under the four counters, and the counters themselves are a row of
+   * `Button`s above every column.
+   *
+   * MEASURED FIRST, NOT DRAWN OVER. The four boxes were nearly painted at
+   * `rect.y + HEADER_H` on top of whatever was already there — at the 640x320
+   * floor the stats column starts at y 78 and the pane captions at y 104, so
+   * the Stats box would have landed on the first attribute row and the class
+   * and generic boxes squarely on the captions. Taking the height out of `top`
+   * is what makes the row a LAYOUT rather than an overlay.
+   */
+  const countersTop = rect.y + HEADER_H + INSET;
+  const top = countersTop + COUNTER_H + COUNTER_GAP_BELOW;
   const bottom = rect.y + rect.h - INSET;
 
   /**
@@ -2136,6 +2171,7 @@ export function talentPanelGeometry(
     placed,
     detail,
     stats,
+    counters: { x, y: countersTop, w: fullW, h: COUNTER_H },
     panes,
   };
 }
@@ -2687,6 +2723,95 @@ export function talentTipAt(
  * says, and what a player can check. A column showing the raw class base would
  * disagree with the sheet one key away.
  */
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * A COUNTER IN A BOX — `LevelupDialog.lua:757, :766, :775, :784`.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Asked for as *"stat points are clearly laid out, same for category and
+ * generic points / category ... the formatting for ToME UI is great"*.
+ *
+ * Upstream's four are `Button.new` widgets — `"Stats: "..unused_stats`,
+ * `"Class points: "`, `"Generic points: "`, `"Category points: "` — rewritten
+ * wholesale after every spend (:1001-1008). A Button is its text inside a 5px
+ * frame (Button.lua:28-31, :54, :68) with 6px of padding (:72-73), which is
+ * where the box comes from: the number is not decorated, it is FRAMED, and the
+ * frame is what makes four separate quantities read as four separate
+ * quantities instead of one run of words.
+ *
+ * ═══ THE FRAME IS DRAWN, NOT BLITTED ═══
+ * Upstream's is a three-sliced PNG. `COPYING-MEDIA` forbids redistributing
+ * t-engine4 art, so this is a one-pixel rule in the panel's own palette — the
+ * same bargain `drawLogGrip` and `drawLogCog` already make, and for the same
+ * reason: a control that needs art to be legible cannot ship on a bare clone.
+ *
+ * Returns the box it drew, so a caller can lay the next one beside it.
+ */
+function drawCounterBox(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  text: string,
+  lit: boolean,
+): PanelRect {
+  ctx.font = FONT_LEVEL;
+  const w = Math.ceil(ctx.measureText(text).width) + COUNTER_PAD * 2;
+  const box: PanelRect = { x, y, w, h: COUNTER_H };
+
+  ctx.fillStyle = PALETTE.INK;
+  ctx.fillRect(box.x, box.y, box.w, box.h);
+  /**
+   * LIT WHEN THERE IS SOMETHING TO SPEND, and colour is never the only signal —
+   * this file's own "NEVER COLOUR ALONE" rule. The frame brightens WITH the
+   * text, so the box reads as active at a glance and the number still says how
+   * many for anyone who cannot see the difference.
+   */
+  ctx.strokeStyle = lit ? PALETTE.GOLD : PALETTE.SLATE;
+  ctx.lineWidth = 1;
+  ctx.strokeRect(box.x + 0.5, box.y + 0.5, box.w - 1, box.h - 1);
+
+  ctx.fillStyle = lit ? PALETTE.GOLD : PALETTE.GREY_HI;
+  ctx.textBaseline = 'middle';
+  ctx.fillText(text, box.x + COUNTER_PAD, box.y + COUNTER_H / 2);
+  ctx.textBaseline = 'alphabetic';
+  return box;
+}
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE RULES BETWEEN THE COLUMNS — `LevelupDialog.lua:807-808, :840`.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Asked for as *"the borders inbetween panels is nice"*.
+ *
+ * Three `Separator{dir="horizontal"}` upstream — `vsep1`, `vsep2`, `vsep3` —
+ * one per boundary between the four regions: the stat rail, the two tree
+ * columns and the description. Note that `hsep` is declared at :809 and NEVER
+ * USED, so there is deliberately no horizontal rule under the counters; the
+ * only air below them is `align_empty1`, an `Empty` of height 10 (:810).
+ *
+ * ═══ THE CAPS ARE ORNAMENT AND THEY ARE ART UPSTREAM ═══
+ * `Separator.lua:37-39` three-slices `ui/border_vert_top.png`, `_middle` and
+ * `_bottom` and draws them at :54-56. We may not copy those files, so the cap
+ * is drawn: a short bright tick across the rule at each end. It reads as a
+ * finished edge rather than a line that ran out, which is the whole job the
+ * ornament does.
+ */
+function drawColumnRule(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  top: number,
+  bottom: number,
+): void {
+  if (bottom - top <= COUNTER_CAP_PX * 2) return;
+  ctx.fillStyle = PALETTE.SLATE;
+  ctx.fillRect(Math.floor(x), top, 1, bottom - top);
+  ctx.fillStyle = PALETTE.GREY;
+  for (const capY of [top, bottom - 1]) {
+    ctx.fillRect(Math.floor(x) - COUNTER_CAP_PX, capY, COUNTER_CAP_PX * 2 + 1, 1);
+  }
+}
+
 function drawStats(
   ctx: CanvasRenderingContext2D,
   box: PanelRect,
@@ -3237,6 +3362,12 @@ export type TalentPanelDrawOptions = {
    */
   readonly level?: number | null;
   /**
+   * UNSPENT CATEGORY POINTS, for the third counter box. Passed rather than read
+   * off a row because no row carries it — the locked-tree sentence renders it
+   * into prose, and a box wants the number.
+   */
+  readonly categories?: number;
+  /**
    * THE TALENT THE DESCRIPTION COLUMN IS ABOUT, or null for the empty state.
    *
    * AN ID AND NOT A CELL, so this panel resolves it against the rows it is
@@ -3387,6 +3518,102 @@ export function drawTalentPanel(options: TalentPanelDrawOptions): void {
     ctx.font = FONT_LEVEL;
     ctx.fillStyle = pane.generic ? PALETTE.GREY_HI : PALETTE.GOLD;
     ctx.fillText(pane.text, pane.rect.x, pane.rect.y + pane.rect.h - 4);
+  }
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE FOUR COUNTERS AND THE RULES — LevelupDialog.lua:757-784, :807-840.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Asked for as *"stat points are clearly laid out, same for category and
+   * generic points / category ... the borders inbetween panels is nice ... the
+   * formatting for ToME UI is great"*.
+   *
+   * ═══ ONE PER COLUMN, WHICH IS NOT A UNIFORM STRIP ═══
+   * Upstream does NOT lay these out as an evenly spaced bar. Each button sits
+   * over the thing it counts: `b_stat` over the stat rail (:815), `b_class`
+   * over the class tree (:819), `b_generic` at the generic tree's right edge
+   * (:826-828), and `b_types` centred on the middle rule (:832). That is why
+   * the row reads at a glance — the number is above the pile it can be spent
+   * on, so there is nothing to match up.
+   *
+   * OURS ALREADY PLACED TWO OF THEM THAT WAY: the pane captions above are per
+   * column already. The boxes put the other two in the same discipline.
+   *
+   * ═══ NO HORIZONTAL RULE UNDER THEM, AND THAT IS UPSTREAM TOO ═══
+   * `hsep` is declared at :809 and never used. The only thing below the
+   * counters is ten pixels of air (`align_empty1`, :810), which
+   * `talentPanelGeometry` reserves as `COUNTER_GAP_BELOW`.
+   */
+  const strip = geometry.counters;
+  const spendableStats = Math.max(0, Math.floor(options.unspentStats ?? 0));
+  const spendableCats = Math.max(0, Math.floor(options.categories ?? 0));
+
+  if (geometry.stats !== null) {
+    drawCounterBox(
+      ctx,
+      geometry.stats.x,
+      strip.y,
+      `Stats: ${String(spendableStats)}`,
+      spendableStats > 0,
+    );
+  }
+  /**
+   * THE TWO SPENDABLE PURSES RIDE THE `Points` ROW, which is where the pane
+   * captions already read them from (`purse` in `talentPanelGeometry`). Taking
+   * them off the same row is what stops the box and the caption under it
+   * disagreeing about the same number.
+   */
+  const pointsRow = options.rows.find((row) => row.kind === TalentRowKind.Points);
+  const classPoints =
+    pointsRow !== undefined && pointsRow.kind === TalentRowKind.Points ? pointsRow.classPoints : 0;
+  const genericPoints =
+    pointsRow !== undefined && pointsRow.kind === TalentRowKind.Points
+      ? pointsRow.genericPoints
+      : 0;
+
+  const classPane = geometry.panes[0];
+  const genericPane = geometry.panes[1];
+  if (classPane !== undefined) {
+    const n = classPoints;
+    drawCounterBox(ctx, classPane.rect.x, strip.y, `Class points: ${String(n)}`, n > 0);
+  }
+  if (genericPane !== undefined) {
+    const n = genericPoints;
+    const text = `Generic points: ${String(n)}`;
+    ctx.font = FONT_LEVEL;
+    // RIGHT-ALIGNED to the generic column's right edge — `:826-828`'s
+    // `resizeToScreen` places it against that edge rather than at its start.
+    const w = Math.ceil(ctx.measureText(text).width) + COUNTER_PAD * 2;
+    const right = genericPane.rect.x + genericPane.rect.w;
+    drawCounterBox(ctx, Math.max(strip.x, right - w), strip.y, text, n > 0);
+  }
+  if (classPane !== undefined && genericPane !== undefined) {
+    // CENTRED ON THE MIDDLE RULE — `b_types` at `:832`. It belongs to neither
+    // column because a category point buys a whole TREE in either of them.
+    const text = `Category points: ${String(spendableCats)}`;
+    ctx.font = FONT_LEVEL;
+    const w = Math.ceil(ctx.measureText(text).width) + COUNTER_PAD * 2;
+    const mid = (classPane.rect.x + classPane.rect.w + genericPane.rect.x) / 2;
+    drawCounterBox(ctx, Math.round(mid - w / 2), strip.y, text, spendableCats > 0);
+  }
+
+  // ── the rules, one per boundary between the four regions ─────────────────
+  const ruleTop = strip.y + COUNTER_H + 2;
+  const ruleBottom = geometry.grid.viewport.y + geometry.grid.viewport.h;
+  if (geometry.stats !== null) {
+    drawColumnRule(ctx, geometry.stats.x + geometry.stats.w + COL_GAP / 2, ruleTop, ruleBottom);
+  }
+  if (classPane !== undefined && genericPane !== undefined) {
+    drawColumnRule(
+      ctx,
+      (classPane.rect.x + classPane.rect.w + genericPane.rect.x) / 2,
+      ruleTop,
+      ruleBottom,
+    );
+  }
+  if (geometry.detail !== null) {
+    drawColumnRule(ctx, geometry.detail.x - COL_GAP / 2, ruleTop, ruleBottom);
   }
 
   // AND EVERYTHING THAT IS NOT A STRIP, OUTSIDE THE CLIP.

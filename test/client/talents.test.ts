@@ -1,5 +1,7 @@
 /// <reference lib="dom" />
 
+import { readFileSync } from 'node:fs';
+
 import { describe, expect, it } from 'vitest';
 
 import { CATEGORY_POINT_LEVELS } from '../../src/shared/progression.ts';
@@ -134,6 +136,11 @@ const NO_SCROLL = 0;
 function placedAt(size: typeof FLOOR, rows?: readonly TalentRow[], scroll = NO_SCROLL) {
   const rect = rectAt(size);
   return talentPanelGeometry(rect, rows ?? talentPanelRows(view()), scroll).placed;
+}
+
+/** The WHOLE geometry, for the tests that ask about columns rather than rows. */
+function geoAt(size: typeof FLOOR, rows?: readonly TalentRow[], scroll = NO_SCROLL) {
+  return talentPanelGeometry(rectAt(size), rows ?? talentPanelRows(view()), scroll);
 }
 
 const categories = (rows: readonly TalentRow[]) =>
@@ -1974,5 +1981,87 @@ describe('a short strip is centred, not left with a hole', () => {
     expect(talentPanelHitAt(rect, trimmed, box.x + 2, box.y + 2, NO_SCROLL)?.kind).toBe(
       TalentHitKind.Row,
     );
+  });
+});
+
+describe('the four point counters, laid out as ToME lays them out', () => {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * Asked for as "stat points are clearly laid out, same for category and
+   * generic points / category ... the formatting for ToME UI is great".
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Upstream's four are `Button.new` widgets — LevelupDialog.lua:757 ("Stats: "),
+   * :766 ("Class points: "), :775 ("Generic points: "), :784 ("Category
+   * points: ") — and the placement is the part worth porting: each one sits over
+   * the thing it counts (`b_stat` :815, `b_class` :819, `b_generic` :826-828,
+   * `b_types` centred on the middle rule :832), never as an evenly spaced bar.
+   */
+  it('reserves the strip instead of painting over the content', () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * THE COLLISION THIS TEST EXISTS FOR, MEASURED AT THE FLOOR.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * Before the strip was taken out of `top`, the stats column began at the
+     * same y the counters would have been drawn at, and the pane captions
+     * twenty-six pixels below — so the Stats box would have landed on the first
+     * attribute row and the class and generic boxes squarely on the captions.
+     *
+     * Reserving the height is what makes the row a LAYOUT rather than an
+     * overlay, and this asserts the reserve rather than the drawing: the
+     * content must start BELOW the strip at every viewport.
+     */
+    for (const size of [FLOOR, REAL, { width: 1280, height: 720, top: 17, bottom: 629 }]) {
+      const geo = geoAt(size);
+      const strip = geo.counters;
+      expect(strip.h, `${String(size.width)}: the strip has no height`).toBeGreaterThan(0);
+      if (geo.stats !== null) {
+        expect(
+          geo.stats.y,
+          `${String(size.width)}: the Stats box lands on the first attribute row`,
+        ).toBeGreaterThanOrEqual(strip.y + strip.h);
+      }
+      for (const pane of geo.panes) {
+        expect(
+          pane.rect.y,
+          `${String(size.width)}: a counter lands on a pane caption`,
+        ).toBeGreaterThanOrEqual(strip.y + strip.h);
+      }
+    }
+  });
+
+  it('leaves upstream’s ten pixels of air below, and no rule', () => {
+    /**
+     * `align_empty1 = Empty.new{width=0, height=10}` (LevelupDialog.lua:810) is
+     * the only thing between the counters and the columns. `hsep` is declared
+     * at :809 and NEVER USED, so a horizontal rule under the row would be ours
+     * rather than a port — worth stating, because it is the obvious thing to
+     * add and it is not what the screenshot shows.
+     */
+    const geo = geoAt({ width: 1280, height: 720, top: 17, bottom: 629 });
+    const firstContent = Math.min(
+      geo.stats?.y ?? Number.POSITIVE_INFINITY,
+      ...geo.panes.map((pane) => pane.rect.y),
+    );
+    expect(firstContent - (geo.counters.y + geo.counters.h)).toBe(10);
+  });
+
+  it('draws a box per counter and a rule per boundary', () => {
+    const source = readFileSync('src/client/ui/talents.ts', 'utf8');
+    for (const label of ['Stats: ', 'Class points: ', 'Generic points: ', 'Category points: ']) {
+      expect(source, `the ${label.trim()} counter is gone`).toContain(label);
+    }
+    // ONE PER COLUMN, not an evenly spaced bar — the placement IS the port.
+    expect(source, 'the generic counter stopped hugging its column').toContain('right - w');
+    expect(source, 'the category counter is not on the middle rule').toContain('mid - w / 2');
+  });
+
+  it('takes the two spendable purses off the same row the captions use', () => {
+    // The box and the caption under it are two renderings of one number. Read
+    // from two places they will eventually disagree, and the screen where a
+    // player decides how to spend a point is the worst place for that.
+    const source = readFileSync('src/client/ui/talents.ts', 'utf8');
+    expect(source).toContain('options.rows.find((row) => row.kind === TalentRowKind.Points)');
   });
 });
