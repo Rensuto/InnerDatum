@@ -2523,3 +2523,59 @@ describe('the bag scrolls, and every item in it is reachable', () => {
     expect(seen.size).toBe(INVENTORY_CAP);
   });
 });
+
+describe('the panel stops growing once the list has room for anything it can hold', () => {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * Reported as "its quite large a has a lot of wasted space".
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * The width was `min(width * FILL_W, room)` and the docblock defended it: the
+   * bag is a list, so "any width is a whole number of what it now holds". True,
+   * and it stops being a reason once the list has more room than anything it
+   * can draw. Measured before the cap: 1024 wide at 1280x720 with 824 pixels of
+   * list, and 1536 at 1920 — for a name that cannot exceed fifty-six characters
+   * plus an eighteen-character right column.
+   */
+  const at = (width: number, height: number) =>
+    inventoryPanelRect({ width, height, top: 17, bottom: height - 91 });
+
+  it('caps at the content width on a wide window', () => {
+    const wide = at(1280, 720);
+    const huge = at(1920, 1080);
+    expect(wide).not.toBeNull();
+    expect(huge).not.toBeNull();
+    if (wide === null || huge === null) return;
+    // THE SAME WIDTH AT BOTH, which is the whole property: past the cap a wider
+    // window buys nothing, so it must not take anything either.
+    expect(huge.w, 'the panel is still growing with the viewport').toBe(wide.w);
+    expect(wide.w, 'the panel is wider than its own contents').toBeLessThan(800);
+  });
+
+  it('leaves a narrow window exactly as it was', () => {
+    // The floor binds underneath the cap, so nothing below the content width
+    // changes — this is a ceiling, not a resize.
+    const floor = at(640, 320);
+    const real = at(772, 428);
+    expect(floor?.w).toBe(512);
+    expect(real?.w).toBe(617);
+  });
+
+  it('is derived from the longest thing a row can draw, not typed', () => {
+    /**
+     * `PANEL_MAX_H`'s rule applied to the other axis: a wider doll or a longer
+     * ego must not leave the panel one column short of its own contents. The
+     * cap has to be a sum of the parts, so it moves when they do.
+     */
+    const source = readFileSync('src/client/ui/inventory.ts', 'utf8');
+    expect(source).toContain(
+      'const PANEL_FULL_W = INSET * 2 + DOLL_W + COLUMN_SEP_W + LIST_FULL_W;',
+    );
+    expect(source).toContain(
+      'const LIST_FULL_W = LIST_ICON_GUTTER + (LIST_NAME_CHARS + LIST_RIGHT_CHARS) * CHAR_W + 6;',
+    );
+    expect(source, 'the fill no longer takes the cap').toContain(
+      'width - PANEL_MARGIN * 2, PANEL_FULL_W)',
+    );
+  });
+});

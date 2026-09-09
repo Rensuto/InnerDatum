@@ -665,8 +665,46 @@ export function inventoryColumnsFor(panelW: number): number {
  * icon gutter. Narrower than that and the list is a column of ellipses.
  */
 const LIST_MIN_W = LIST_ICON_GUTTER + 20 * CHAR_W;
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * AND THE WIDEST THE LIST IS EVER WORTH — the width past which more is air.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Reported as *"lets also correct the size of the inventory panel. its quite
+ * large a has a lot of wasted space."*
+ *
+ * MEASURED RATHER THAN GUESSED, in the discipline `LIST_MIN_W` above already
+ * uses. A row is an icon gutter, a name, and a right column of either
+ * `tier · slot` or a price:
+ *
+ *   THE LONGEST NAME THE CONTENT CAN COMPOSE is a prefix plus a base plus a
+ *   suffix — `Counterweighted ` (16) + `Brass Constable Ring` (20) +
+ *   ` of the Unbound Page` (20) = 56 characters, the longest of each in
+ *   content/egos.ts and content/items.ts.
+ *
+ *   THE WIDEST RIGHT COLUMN is `uncommon · offhand` — the longest `tierWord`
+ *   at 8, the separator at 3, and the longest slot in `SLOT_ORDER` at 7 = 18.
+ *   A price is never close: four digits and a `g` is five.
+ *
+ * Past this the list is drawing the same text against more empty pixels. At
+ * 1280x720 the panel was 1024 wide and gave the list 824 — room for a hundred
+ * and thirty characters of a name that cannot exceed fifty-six.
+ */
+const LIST_NAME_CHARS = 56;
+const LIST_RIGHT_CHARS = 18;
+const LIST_FULL_W = LIST_ICON_GUTTER + (LIST_NAME_CHARS + LIST_RIGHT_CHARS) * CHAR_W + 6;
 const PANEL_W = inventoryPanelWidthForColumns(COLS);
 const PANEL_MIN_W = Math.max(PANEL_W, INSET * 2 + DOLL_W + COLUMN_SEP_W + LIST_MIN_W);
+
+/**
+ * THE WHOLE SHAPE: the doll, the separator and a list wide enough for anything
+ * it can hold. The panel's CEILING, the way `PANEL_MAX_H` is its height's.
+ *
+ * DERIVED, not typed, for `PANEL_MAX_H`'s stated reason — a wider doll or a
+ * longer ego must not leave the panel one column short of its own contents.
+ */
+const PANEL_FULL_W = INSET * 2 + DOLL_W + COLUMN_SEP_W + LIST_FULL_W;
 
 /**
  * A panel that cannot hold its header, its tabs and ONE row of cells is not worth
@@ -1679,7 +1717,23 @@ export function inventoryPanelRect(options: {
    * simply carry half a column of dead inset — which is the waste this is here
    * to remove, moved rather than removed.
    */
-  const want = Math.min(Math.floor(width * FILL_W), width - PANEL_MARGIN * 2);
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * NINE TENTHS OF NOTHING. The fill is capped at the width the content uses.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * This was `min(width * FILL_W, room)` alone, and the docblock below defended
+   * it on the ground that *"the bag is a list that takes whatever width is left
+   * beside the doll, so any width is a whole number of what it now holds"*.
+   * True, and it stops being a reason at the point the list has more room than
+   * anything it can draw: measured at 1280x720 the panel was 1024 wide and the
+   * list had 824 pixels for a name that cannot exceed fifty-six characters, and
+   * at 1920 it was 1536.
+   *
+   * `PANEL_FULL_W` is that ceiling. The floor still binds underneath it, so a
+   * narrow window is unchanged and only the wide ones stop growing.
+   */
+  const want = Math.min(Math.floor(width * FILL_W), width - PANEL_MARGIN * 2, PANEL_FULL_W);
   /**
    * CLAMPED TO THE FLOOR, NOT SNAPPED TO A COLUMN COUNT.
    *
