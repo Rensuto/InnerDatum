@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { ITEMS, itemById } from '../../src/server/content/items.ts';
+import { EGOS } from '../../src/server/content/egos.ts';
 import {
   EGO_CODE_LENGTH,
   EGO_DELIMITER,
@@ -315,5 +316,85 @@ describe('the import-time grammar check', () => {
       id: `item_${'x'.repeat(ITEM_ID_MAX_CHARS)}`,
     };
     expect(() => assertIdGrammarFits([huge])).toThrow(/over the .* wire cap/);
+  });
+});
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * EVERY CHANNEL AN EGO CAN GRANT MUST SURVIVE `resolveItem`. THE THIRD TIME.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `resolveItem`'s wielder merge is written FIELD BY FIELD — one loop over the
+ * base's table and one over each ego's, per channel — and a channel it has not
+ * been told about is silently dropped. The ego still rolls, the item still gets
+ * its name, and the grant is gone.
+ *
+ * IT HAS HAPPENED TWICE:
+ *
+ *   `immunities`   `Shockproof ` and ` of Whole Cloth` rolled 390 and 142 times
+ *                  in a 5,938-item sample and granted nothing. The fix carries
+ *                  a docblock in resolve.ts naming it.
+ *
+ *   `brand`        `Quicklimed ` and `Brine-Bitten ` shipped the day after that
+ *                  docblock was written, onto weapons, bucklers and gauntlets,
+ *                  and granted nothing: `item_watchmans_buckler~qk3` resolved
+ *                  to `{mods:{def:3,armour:1}}`. Six other sites were correct.
+ *
+ * A third one-line test naming a third channel would be the same mistake in
+ * test form. So this walks the WHOLE `grants` object of EVERY ego and demands
+ * that whatever it names arrives on a real item — a channel added tomorrow is
+ * covered by construction, and the failure it catches is exactly the silent one.
+ *
+ * ═══ THE KEYS ARE THE SAME ON BOTH SIDES, AND THAT IS LOAD-BEARING ═══
+ * `Ego.grants.brand` becomes `Wielder.brand`; `grants.mods` becomes
+ * `wielder.mods`. `egoWielder` writes them under the identical names, so the
+ * mapping is identity and needs no table here that could itself go stale.
+ */
+describe('no ego grant is dropped on the way to an item', () => {
+  it('lands every channel of every ego on a real base that can wear it', () => {
+    const missing: string[] = [];
+
+    for (const ego of EGOS) {
+      // The first base in `ITEMS` order this ego is allowed on. Order is fixed
+      // and the assertion is about the channel, not about which coat it is.
+      const base = ITEMS.find(
+        (item) =>
+          item.slot !== undefined && (ego.slots === undefined || ego.slots.includes(item.slot)),
+      );
+      if (base === undefined) continue;
+
+      // TOP POWER. `grantValue` is `floor + step * power * tierWeight`, and
+      // `assertGrant` already proves every combination is a positive integer —
+      // so the highest one cannot be the only one that rounds to nothing.
+      // THROUGH `formatItemId`, not string concatenation: `EGO_DELIMITER` is
+      // the GRADE's dot and the ego separator is a different character, and a
+      // test that spelled the grammar out by hand would go stale the day either
+      // moves. The first draft of this line used the wrong one of the two.
+      const resolved = resolveItem(
+        formatItemId(base.id, [{ code: ego.code, power: MAX_EGO_POWER }]),
+      );
+      expect(resolved, `${ego.code} on ${base.id} did not resolve at all`).toBeDefined();
+
+      for (const channel of Object.keys(ego.grants)) {
+        // INDEXED BY A RUNTIME STRING, so the index signature is the point of
+        // the cast — `Wielder` has named optional fields and `channel` is not
+        // one of them until the loop runs.
+        const table: unknown = (resolved?.wielder as Record<string, unknown>)[channel];
+        if (table === undefined) {
+          missing.push(`${ego.code} grants ${channel}, and the item has none`);
+          continue;
+        }
+        // AND NOT MERELY PRESENT. A base authoring the same channel would make
+        // the key appear whether or not the ego contributed, so every key the
+        // EGO names has to be in the resolved table too.
+        for (const key of Object.keys(ego.grants[channel as keyof typeof ego.grants] ?? {})) {
+          if ((table as Record<string, unknown>)[key] === undefined) {
+            missing.push(`${ego.code} grants ${channel}.${key}, and the item has no such row`);
+          }
+        }
+      }
+    }
+
+    expect(missing, missing.join('\n')).toEqual([]);
   });
 });

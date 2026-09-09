@@ -957,6 +957,41 @@ describe('what a body shrugs off is finally on a screen', () => {
     );
   });
 
+  it('prints the brand and the spikes, the last two channels with no readout', async () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * THE SAME OMISSION AS THE RESISTS ABOVE, TWO CHANNELS LATER.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * This block's own note says *"a channel with no readout is invisible and a
+     * readout with no channel is unactionable, which is why both halves shipped
+     * together"*. `melee_project` shipped the following day with no readout on
+     * any surface, and `on_melee_hit` was about to.
+     *
+     * Upstream prints both from one helper — `compare_table_fields(...,
+     * "melee_project", "%d", "Damage (Melee): ", ...)` at Object.lua:1342 and
+     * the `on_melee_hit` call with `"Damage when hit (Melee): "` at :1362.
+     *
+     * ═══ POINTS, WHICH IS WHY THEY COULD NOT JOIN `pushOffenceRows` ═══
+     * Every other typed row on this card ends in `%`. Upstream's format string
+     * for these two is `"%d"` where `inc_damage`'s is a percentage, and a `+11`
+     * printed as `+11%` would read as a multiplier on a number that has none.
+     */
+    const floor = await scene();
+    const me = floor.viewer;
+    me.combat = {
+      ...(me.combat ?? {}),
+      brand: { fire: 11 },
+      retaliation: { physical: 19 },
+    };
+
+    const rows = rowsOf(viewOf(await floor.client.inspect(floor.viewer.id)));
+    expect(rows).toContainEqual(expect.objectContaining({ label: 'Fire on hit', value: '+11' }));
+    expect(rows).toContainEqual(
+      expect.objectContaining({ label: 'Physical when hit', value: '+19' }),
+    );
+  });
+
   it('prints the figure the damage pipeline actually spends, cap and all', async () => {
     /**
      * `combatGetResist` applies the ceiling that stops the formula inverting

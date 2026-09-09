@@ -487,6 +487,21 @@ export function resolveItem(id: string): Item | undefined {
     penetration[key] = atMaterial(value, material);
   }
   /**
+   * AND THE TWO FLAT DAMAGE TABLES, on the same curve. No base in the catalogue
+   * authors either today — both arrive from egos — but a per-channel exception
+   * would be the rule with no mechanical statement behind it that the resists
+   * note above rejects, and a base weapon that came branded is an obvious thing
+   * to author next.
+   */
+  const brand: Record<string, number> = {};
+  for (const [key, value] of Object.entries(base.wielder.brand ?? {})) {
+    brand[key] = atMaterial(value, material);
+  }
+  const retaliation: Record<string, number> = {};
+  for (const [key, value] of Object.entries(base.wielder.retaliation ?? {})) {
+    retaliation[key] = atMaterial(value, material);
+  }
+  /**
    * AND THE STATUS DEFENCE, on the grade curve with everything else — "it is
    * better at everything", the rule stated above.
    *
@@ -519,6 +534,32 @@ export function resolveItem(id: string): Item | undefined {
       penetration[key] = (penetration[key] ?? 0) + value;
     }
     /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * AND THE SAME TWO LINES AGAIN, FOR THE SAME REASON, ONE CHANNEL LATER.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * The immunity note below records that `Shockproof ` and ` of Whole Cloth`
+     * rolled onto real loot and resolved to items with nothing on them, because
+     * this merge is field-by-field and did not know the field existed.
+     *
+     * IT HAPPENED AGAIN, IMMEDIATELY. `Quicklimed ` and `Brine-Bitten ` shipped
+     * the next day, rolled onto bucklers and gauntlets, and granted no brand at
+     * all: `item_watchmans_buckler~qk3` resolved to `{mods:{def:3,armour:1}}`.
+     * Every other site was correct — the ego roster, `egoWielder`, the fold in
+     * `composeWielders`, the loop in `attackTarget` — and a player would have
+     * found a Quicklimed buckler that burned nothing and had no way to tell.
+     *
+     * `test/server/resolve.test.ts` now walks EVERY channel of EVERY ego and
+     * refuses one that resolves to nothing, so the next field cannot do this a
+     * third time by being forgotten here.
+     */
+    for (const [key, value] of Object.entries(wielder.brand ?? {})) {
+      brand[key] = (brand[key] ?? 0) + value;
+    }
+    for (const [key, value] of Object.entries(wielder.retaliation ?? {})) {
+      retaliation[key] = (retaliation[key] ?? 0) + value;
+    }
+    /**
      * THE LINE WHOSE ABSENCE MADE THE WHOLE IMMUNITY CHANNEL INVISIBLE.
      *
      * `Shockproof ` and ` of Whole Cloth` rolled onto real loot from the day
@@ -539,6 +580,8 @@ export function resolveItem(id: string): Item | undefined {
     resists?: typeof resists;
     damage?: typeof damage;
     penetration?: typeof penetration;
+    brand?: typeof brand;
+    retaliation?: typeof retaliation;
     immunities?: typeof immunities;
   } = {};
   if (Object.keys(stats).length > 0) merged.stats = stats;
@@ -546,6 +589,8 @@ export function resolveItem(id: string): Item | undefined {
   if (Object.keys(resists).length > 0) merged.resists = resists;
   if (Object.keys(damage).length > 0) merged.damage = damage;
   if (Object.keys(penetration).length > 0) merged.penetration = penetration;
+  if (Object.keys(brand).length > 0) merged.brand = brand;
+  if (Object.keys(retaliation).length > 0) merged.retaliation = retaliation;
   if (Object.keys(immunities).length > 0) merged.immunities = immunities;
 
   // Prefixes carry their own trailing space and suffixes their own leading one

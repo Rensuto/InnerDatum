@@ -70,6 +70,7 @@ import {
 import { bound } from '../../shared/scale.ts';
 import type { Combatant, PrimaryStats } from '../engine/derived.ts';
 import type { CombatSheet } from '../engine/combat.ts';
+import type { TypeTable } from '../engine/damage.ts';
 import type { Actor, World } from '../world/world.ts';
 import { hasLineOfSight } from '../../shared/sight.ts';
 import { boughtSheet, effectDef, effectsOn } from '../engine/effects.ts';
@@ -216,6 +217,51 @@ function pushOffenceRows(rows: InspectRow[], c: CombatSheet, group?: InspectGrou
         ...(group === undefined ? {} : { group }),
       });
     }
+  }
+}
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE TWO FLAT ONES — damage you ADD on a hit, and damage you CHARGE for one.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `melee_project` and `on_melee_hit`. Upstream prints both, side by side, from
+ * the same function: `compare_table_fields(..., "melee_project", "%d",
+ * "Damage (Melee): ", ...)` and `compare_table_fields(..., "on_melee_hit",
+ * "%d", "Damage when hit (Melee): ", ...)` (Object.lua:1342 and :1362).
+ *
+ * OURS PRINTED NEITHER, on any surface. The brand shipped with two egos whose
+ * entire purpose is the number, and a Quicklimed truncheon compared identically
+ * to a plain one on the swap card. This is the same failure `pushOffenceRows`
+ * above was written to fix, arriving one channel later.
+ *
+ * ═══ POINTS, NOT PERCENTAGES, AND THAT IS WHY IT IS NOT IN THAT FUNCTION ═══
+ * Every other typed row on this card ends in `%`. These two are flat damage —
+ * upstream's own format string is `"%d"` where `inc_damage`'s is a percentage —
+ * so they carry no sign suffix and no getter.
+ *
+ * ═══ RAW TABLES, WHICH IS THE OPPOSITE OF `pushOffenceRows`' RULE, ON PURPOSE ═══
+ * That function goes through `combatGetDamageIncrease` because the `all` row
+ * composes at read time. Neither of these tables HAS an `all` row: the brand
+ * loop in `engine/combat.ts` and `noteRetaliation` in `engine/scheduler.ts`
+ * both walk `DAMAGE_TYPES` precisely so an `all` entry can never become a
+ * projection nothing resists. The pipeline reads `table[type]`, so this does.
+ */
+function pushFlatDamageRows(
+  rows: InspectRow[],
+  table: TypeTable | undefined,
+  suffix: string,
+  group?: InspectGroup,
+): void {
+  if (table === undefined) return;
+  for (const type of DAMAGE_TYPES) {
+    const value = Math.round(table[type] ?? 0);
+    if (value === 0) continue;
+    rows.push({
+      label: `${damageTypeName(type)} ${suffix}`,
+      value: `${value > 0 ? '+' : ''}${String(value)}`,
+      ...(group === undefined ? {} : { group }),
+    });
   }
 }
 
@@ -428,7 +474,14 @@ function whole(n: number): string {
  */
 function pushSelfSheet(
   rows: InspectRow[],
-  c: Combatant,
+  /**
+   * A `CombatSheet` RATHER THAN A `Combatant`, and the widening is the point:
+   * the flat-damage rows below read `brand` and `retaliation`, which live on
+   * the sheet and not on the narrower type. `combatantOf` has returned a
+   * `CombatSheet` all along; this parameter was simply typed to the smaller of
+   * the two, which is how the brand came to be unprintable here.
+   */
+  c: CombatSheet,
   hpRegen: number,
   /**
    * WHAT THIS BODY BOUGHT, before gear and before anything folded onto it — the
@@ -698,8 +751,13 @@ function pushSelfSheet(
   });
 
   pushOffenceRows(rows, c, InspectGroup.Attack);
+  // THE BRAND IS SOMETHING YOU DO TO OTHERS; THE SPIKES ARE SOMETHING YOUR KIT
+  // DOES. Same table shape, opposite halves of the sheet, and the grouping is
+  // the only thing on this card that tells them apart at a glance.
+  pushFlatDamageRows(rows, c.brand, 'on hit', InspectGroup.Attack);
   pushResistRows(rows, c, InspectGroup.Defence);
   pushImmunityRows(rows, c, InspectGroup.Defence);
+  pushFlatDamageRows(rows, c.retaliation, 'when hit', InspectGroup.Defence);
 }
 
 /**
@@ -891,6 +949,8 @@ export function inspectActor(
     // AND WHAT IT HITS HARDER WITH — the same argument the resist rows make one
     // line up: a monster's own `inc_damage` decides how much its claw is worth.
     pushOffenceRows(rows, combatantOf(target));
+    pushFlatDamageRows(rows, combatantOf(target).brand, 'on hit');
+    pushFlatDamageRows(rows, combatantOf(target).retaliation, 'when hit');
 
     pushEffectRows(rows, effects, target);
 

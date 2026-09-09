@@ -2391,6 +2391,45 @@ function compareRows(base: CombatSheet, worn: readonly Item[], candidate: Item):
       }
     }
   }
+  /**
+   * ═════════════════════════════════════════════════════════════════════════════
+   * AND THE TWO FLAT TABLES, WHICH ARE POINTS AND NOT PERCENTAGES.
+   * ═════════════════════════════════════════════════════════════════════════════
+   *
+   * `melee_project` and `on_melee_hit`. Upstream compares both on this exact
+   * screen and from the same helper — `compare_table_fields(combat2,
+   * compare_with, field, "melee_project", "%d", "Damage (Melee): ", ...)` at
+   * Object.lua:1342, and the `on_melee_hit` call with
+   * `"Damage when hit (Melee): "` at :1362. Note the `"%d"`: upstream's own
+   * format string says these are whole points where `inc_damage`'s is a
+   * percentage, which is why the loop above cannot hold them.
+   *
+   * ═══ THE BRAND WAS INVISIBLE FROM THE DAY IT SHIPPED ═══
+   * Two egos exist whose entire purpose is this number, and a Quicklimed
+   * truncheon compared identically to a plain one on the one screen whose job
+   * is answering "is this better than what I have on?". Exactly the failure the
+   * per-type loop above was written to fix, one channel later.
+   *
+   * ═══ THE LABELS ARE SHORTENED, AND THE TYPE LEADS ═══
+   * "Damage when hit (Melee)" would arrive from `fitText` as an ellipsis and
+   * cost the value half its width. Every other row in this strip is
+   * "<Type> <what>", so these are too.
+   */
+  for (const type of DAMAGE_TYPES) {
+    for (const [suffix, read] of [
+      ['on hit', (c: CombatSheet) => c.brand?.[type] ?? 0],
+      ['when hit', (c: CombatSheet) => c.retaliation?.[type] ?? 0],
+    ] as const) {
+      const delta = Math.round(read(withIt)) - Math.round(read(before));
+      const own = Math.round(read(alone)) - Math.round(read(bare));
+      if (delta !== 0) {
+        rows.push({
+          label: `${damageTypeName(type)} ${suffix}`,
+          value: both(signed(own), signed(delta)),
+        });
+      }
+    }
+  }
   for (const key of IMMUNITY_KEYS) {
     const delta =
       Math.round(withIt.immunities?.[key] ?? 0) - Math.round(before.immunities?.[key] ?? 0);

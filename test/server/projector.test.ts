@@ -1723,6 +1723,49 @@ describe('what an item is worth, wherever it appears', () => {
     ).toBe(true);
   });
 
+  it('prices the two FLAT tables, which are points and which read as nothing', () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * A QUICKLIMED BUCKLER COMPARED IDENTICALLY TO A PLAIN ONE.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * `melee_project` and `on_melee_hit` are the last two channels gear can
+     * move, and upstream compares BOTH on this exact screen from one helper —
+     * Object.lua:1342 and :1362, with `"%d"` where `inc_damage` uses a
+     * percentage. Ours printed neither, so the affix whose entire purpose is
+     * "+11 fire on every hit" was invisible on the one card that answers "is
+     * this better than what I have on?".
+     *
+     * ROLLED THROUGH THE REAL RESOLVER, which is not incidental here: the
+     * merge in `resolve.ts` dropped both channels outright, so a hand-built
+     * fixture would have proved the rows work while every item in the game
+     * carried nothing for them to print.
+     */
+    const world = room();
+    const body = watchman(world);
+    const branded = 'item_watchmans_buckler~qk3';
+    const spiked = 'item_watchmans_coat~sp3';
+    expect(resolveItem(branded)?.wielder?.brand, 'the buckler lost its brand').toBeDefined();
+    expect(resolveItem(spiked)?.wielder?.retaliation, 'the coat lost its spikes').toBeDefined();
+
+    const bag = projectInventory(Object.assign(body, { carried: [branded, spiked] })).carried;
+
+    const buckler = bag.find((row) => row.itemId === branded)?.compare;
+    expect(
+      buckler?.some((row) => row.label === 'Fire on hit'),
+      JSON.stringify(buckler),
+    ).toBe(true);
+    // POINTS, NOT A PERCENTAGE. Every other typed row on this strip ends in
+    // `%`; upstream's own format string for these two is `"%d"`.
+    expect(buckler?.find((row) => row.label === 'Fire on hit')?.value).not.toContain('%');
+
+    const coat = bag.find((row) => row.itemId === spiked)?.compare;
+    expect(
+      coat?.some((row) => row.label === 'Physical when hit'),
+      JSON.stringify(coat),
+    ).toBe(true);
+  });
+
   it('prices the two vitals, whose whole effect is a pool no getter reports', () => {
     /**
      * ═══════════════════════════════════════════════════════════════════════
