@@ -655,7 +655,7 @@ type ActorCommon = {
   inscriptions?: readonly string[];
   /**
    * ═══════════════════════════════════════════════════════════════════════════
-   * WHO THIS BODY LAST TRADED PLACES WITH, AND ON WHICH GAME TURN.
+   * WHO MOVED THIS BODY WITHOUT ASKING — so it cannot immediately shove back.
    * ═══════════════════════════════════════════════════════════════════════════
    *
    * THE ONE THING UPSTREAM NEVER NEEDS, because upstream never has two bodies
@@ -673,12 +673,34 @@ type ActorCommon = {
    * `gameTurn` advances whenever ANY body spends energy, and shared-realm
    * players are free-running — so two people walking together are almost never
    * in the same turn as each other and a per-turn guard never fired. Measured:
-   * still net zero. The mark is cleared by a NORMAL move instead, which is the
-   * event that actually means *"I got where I was going"*.
+   * still net zero.
+   *
+   * ═══════════════════════════════════════════════════════════════════════════
+   * IT WAS `lastSwap`, STAMPED ON BOTH BODIES, AND THAT DEADLOCKED A DOORWAY.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * The mark used to be symmetric — *"the rule is about the PAIR and either of
+   * them may be the next mover"* — and cleared only by a NORMAL move. Put those
+   * two together and a friend who is STANDING STILL keeps their half of the mark
+   * for as long as they stand there, so the body that pushed past them can never
+   * come back. Which is the doorway this whole feature exists for.
+   *
+   * WORSE THAN ONE LOST STEP: `actPlayer` returns `Park` on a refusal — energy
+   * unspent, *"the loop comes back to them before the world moves"* — so a
+   * client re-sending the same direction stops the floor's clock for the WHOLE
+   * party. It is what a 900-turn delve stall looked like from the inside, and it
+   * was misread three times as a body that could not step onto an empty tile.
+   *
+   * ═══ SO THE MARK IS ONE-SIDED AND NAMES A DIRECTION ═══
+   * Only the body that was MOVED WITHOUT ASKING is marked, and the gate reads
+   * the MOVER'S OWN mark rather than the occupant's. That refuses exactly the
+   * shove-back — *"I was just pushed and I am pushing straight back"* — and
+   * nothing else. A body that chose to swap has nothing to undo and stays free
+   * to walk back where it came from.
    *
    * See the swap branch in `scheduler.ts` for the rule this feeds.
    */
-  lastSwap?: { readonly withId: string };
+  shovedBy?: string;
 
   /**
    * HOW BIG THIS PLAYER WANTS THEIR TILES — the integer zoom step, or absent.
@@ -1712,6 +1734,29 @@ export function spendTurn(actor: EngineActor): number {
    * anything without the fields.
    */
   clearRound(actor);
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * AND THE SHOVE MARK, WHICH ONLY EVER MEANT "NOT AS YOUR VERY NEXT ACT".
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `shovedBy` exists to refuse the reflexive shove-back and nothing more. Once
+   * this body has spent a turn on ANYTHING — a step, a swing, a hold — whatever
+   * it does next is a decision rather than a reflex, and the mark has done its
+   * whole job.
+   *
+   * IT USED TO CLEAR ONLY ON A NORMAL MOVE, and a body whose only route was back
+   * through the friend who shoved it could never make one: the attempt is
+   * refused, a refused player intent is REFUNDED (`actPlayer` returns `Park`),
+   * so it never reached this function and the mark never expired. Permanent, and
+   * because `Park` means *"the loop comes back to them before the world moves"*,
+   * it froze the floor's clock for the whole party.
+   *
+   * HERE RATHER THAN AT THE CALL SITES for this function's own stated reason,
+   * one paragraph up: `autoHold`, the Bell's expiry pass and anything added
+   * later all route through here, and a reset written at three call sites is a
+   * reset the fourth forgets.
+   */
+  actor.shovedBy = undefined;
   return spendForAction(actor, actionCostMultiplier(actor));
 }
 

@@ -223,6 +223,50 @@ function run(site, size, seed) {
     console.log(`  [roster] ${site.name ?? site.id} size=${String(size)} monsters=${String(n)}`);
   }
   const refusals = new Map();
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * WHERE EACH BODY DECIDED TO GO, KEPT UNTIL IT GETS THERE.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * WITHOUT THIS THE DRIVER OSCILLATES BETWEEN TWO TILES FOREVER, and it looks
+   * exactly like a hard-stuck body. It was misdiagnosed three times in this
+   * project's notes — as a kiter, as unreachable foes, and finally as "a body
+   * that cannot step onto an adjacent empty tile" — because the `stuck`
+   * diagnostic sampled every 150 turns and a 2-cycle shows the same phase every
+   * even sample. Sampling every turn shows it plainly:
+   *
+   *     [t190] p0 at 8,19 -> e 9,19 | goal 18,25   (the quarry)
+   *     [t191] p0 at 9,19 -> w 8,19 | goal 15,18   (a firing spot)
+   *     [t192] p0 at 8,19 -> e 9,19 | goal 18,25
+   *
+   * ═══ THE CAUSE IS THAT THE DESTINATION IS A FUNCTION OF WHERE YOU STAND ═══
+   * `firingSpot` (fightlib.mjs:213) scans a radius-6 box CENTRED ON THE BODY, so
+   * the candidate set moves with the body: a spot on the box edge is visible
+   * from one tile and gone from its neighbour. When the route to that spot
+   * happens to start by stepping AWAY from it — around a wall, which is most of
+   * a carved cave — the body steps off the tile that could see it, the spot
+   * vanishes, the fallback goal is the quarry in the other direction, and the
+   * next step puts it back. Neither function is wrong on its own.
+   *
+   * ═══ COMMITMENT, WHICH IS ALSO WHAT UPSTREAM'S AI DOES ═══
+   * ToME keeps `ai_target.actor` and a move target across turns rather than
+   * re-deciding from scratch (`ai/simple.lua`). A goal is dropped only when it
+   * is REACHED, when the quarry that justified it is gone, or when the tile
+   * stops being somewhere you could stand. Re-deciding every turn from a
+   * position-dependent function cannot be made stable by improving the function.
+   *
+   * IT DOES NOT DELAY A SHOT. The "can I attack right now" branch runs before
+   * any of this and holds the turn; commitment only decides where to walk on a
+   * turn the body was going to walk anyway.
+   */
+  const heading = new Map();
+  /**
+   * THE LAST ORDER EACH BODY GAVE, AND FROM WHERE. Only read to notice that a
+   * body is re-sending a step it already had refused from the same tile — see
+   * the through-ally note below. A refused player intent costs no energy, so
+   * without this the driver can order one blocked direction forever.
+   */
+  const lastOrder = new Map();
   for (; turns < TURN_CAP; turns += 1) {
     const foes = livingHostiles();
     const up = bodies.filter((m) => m.body.alive && !isDowned(downed, m.body.id));
@@ -365,17 +409,44 @@ function run(site, size, seed) {
       // ═══ AND THE THIRD OPTION `first-fight.mjs` LEARNED IT NEEDED ═══
       // Close and back off are both moves along the line to the foe, so neither
       // answers a WALL. `firingSpot` names a tile with a real shot from it.
-      const spot = away
-        ? null
-        : firingSpot(attacks, b, living, realm.world.level, (x, y) =>
-            canWalk(realm.world.level, x, y),
-          );
+      /**
+       * THE HEADING THIS BODY IS ALREADY WALKING TO, if it is still worth
+       * walking to. See `heading` above for why this exists at all.
+       *
+       * `away` drops it deliberately: backing out of a dead zone is a REACTION
+       * to where the foe is now, and a body that kept walking to a firing spot
+       * while standing inside its own minimum range would be committed to the
+       * one thing it must not do.
+       */
+      const held = heading.get(b.id);
+      const keep =
+        held !== undefined &&
+        !away &&
+        held.quarry === near.f.id &&
+        !(b.x === held.x && b.y === held.y) &&
+        canWalk(realm.world.level, held.x, held.y) &&
+        realm.world.actorAt(held.x, held.y) === undefined;
+      const spot = keep
+        ? { x: held.x, y: held.y }
+        : away
+          ? null
+          : firingSpot(attacks, b, living, realm.world.level, (x, y) =>
+              canWalk(realm.world.level, x, y),
+            );
       const goal =
         spot !== null
           ? spot
           : away
             ? { x: b.x + Math.sign(b.x - near.f.x), y: b.y + Math.sign(b.y - near.f.y) }
             : { x: near.f.x, y: near.f.y };
+      /**
+       * ONLY A FIRING SPOT IS COMMITTED TO. Walking AT the quarry is already
+       * stable — the goal is the foe's own tile, which does not move because
+       * this body stepped — and backing off is a reaction that must be re-taken
+       * every turn. The unstable one is the only one worth remembering.
+       */
+      if (spot !== null && !keep) heading.set(b.id, { x: spot.x, y: spot.y, quarry: near.f.id });
+      else if (spot === null) heading.delete(b.id);
       // PATHFOUND, NOT STRAIGHT-LINE — see tools/walk.mjs.
       /**
        * ═══════════════════════════════════════════════════════════════════════
@@ -414,13 +485,50 @@ function run(site, size, seed) {
        * Routing round the party made it worse rather than better, because every
        * ally in a corridor is one more reason for the route to come back null.
        *
-       * So: round the party if that works, THROUGH it if it does not (the step
-       * is refused at resolution and costs a turn, which is honest — that is
-       * what a real player pressing into a friend gets), and hold only when
-       * there is no route on terrain at all.
+       * So: round the party if that works, THROUGH it if it does not, and hold
+       * only when there is no route on terrain at all.
+       *
+       * ═══════════════════════════════════════════════════════════════════════
+       * AND THE REASON GIVEN FOR WALKING THROUGH WAS FALSE.
+       * ═══════════════════════════════════════════════════════════════════════
+       *
+       * It read: *"the step is refused at resolution and costs a turn, which is
+       * honest — that is what a real player pressing into a friend gets"*. It
+       * costs NOTHING. `actPlayer` returns `Park` on a refusal — energy unspent,
+       * *"the loop comes back to them before the world moves"* — so a driver
+       * re-issuing the same blocked direction spins at full energy and the
+       * floor's clock never advances for anybody. Measured on Blackwood:
+       *
+       *     [t750] p0 at 9,15 -> w 8,15 | occupant p2 | energy 1000
+       *
+       * — 750 turns, three bodies, nothing moving.
+       *
+       * A real player pressing into a friend now SWAPS with them (the shove
+       * rule was one-sided in the same pass that found this), so the through-
+       * route is legal far more often than it was. What it must not become is a
+       * direction re-sent forever: if the same blocked step is ordered twice
+       * running from the same tile, hold instead and let the world move.
        */
+      const throughAlly = firstStep(clear, { x: b.x, y: b.y }, goal) === null;
       const dir =
         firstStep(clear, { x: b.x, y: b.y }, goal) ?? firstStep(terrain, { x: b.x, y: b.y }, goal);
+      const repeat = lastOrder.get(b.id);
+      if (
+        throughAlly &&
+        dir !== null &&
+        repeat !== undefined &&
+        repeat.dir === dir &&
+        repeat.x === b.x &&
+        repeat.y === b.y
+      ) {
+        // THE SAME BLOCKED ORDER, FROM THE SAME TILE, TWICE. Standing still is
+        // a turn the engine will actually take, which is the whole difference.
+        tally.held += 1;
+        lastOrder.delete(b.id);
+        realm.engine.hold(b.id);
+        continue;
+      }
+      lastOrder.set(b.id, { dir, x: b.x, y: b.y });
       if (dir === null) {
         tally.held += 1;
         realm.engine.hold(b.id);
@@ -447,14 +555,30 @@ function run(site, size, seed) {
        *                occupant. `walk true occupant none` is the finding: the
        *                order is legal and it does not happen.
        *
-       * WHAT IT LEAVES: a solo body, no effects, full energy, ordering a move
-       * onto an adjacent empty walkable tile, `submitMove` returning ok and
-       * `pump` returning an event — and the body does not move, for 750 turns.
-       * The remaining suspect is the BARRIER holding the intent rather than
-       * `resolveIntent` refusing it: the Move arm reads clean, and a monster on
-       * the same floor is frozen too.
+       *   `whoseTurn` — the barrier's blocking set. It named a body the driver
+       *                had not commanded yet this turn, which looked like a
+       *                deadlock and was a sampling artefact of reading it from
+       *                inside the loop.
+       *   `shovedBy` — the ally-swap mark. `p0 -> w | occupant p2 | shovedBy p2`
+       *                is the whole of one real bug, in one line.
+       *
+       * ═══ AND THE CONCLUSION IT USED TO CARRY WAS WRONG, THREE TIMES ═══
+       * This block said: *"a solo body, no effects, full energy, ordering a move
+       * onto an adjacent empty walkable tile … and the body does not move, for
+       * 750 turns"*, and named the BARRIER as the suspect. Before that the same
+       * stall was blamed on a kiter, and before that on unreachable foes.
+       *
+       * It was none of them. The sample interval was 150 turns and the body was
+       * in a TWO-CYCLE, so every sample caught the same phase. `DELVE_EVERY=1`
+       * shows it in three lines — see the `heading` note at the top of this
+       * function for the cause and the fix. A stall diagnostic that samples must
+       * be able to sample every turn, which is what `DELVE_EVERY` is for.
        */
-      if (process.env.DELVE_DIAG === 'stuck' && turns % 150 === 0 && b.id === bodies[0].body.id) {
+      if (
+        process.env.DELVE_DIAG === 'stuck' &&
+        turns % (Number(process.env.DELVE_EVERY) || 150) === 0 &&
+        b.id === bodies[0].body.id
+      ) {
         const DELTA = {
           n: [0, -1],
           ne: [1, -1],
@@ -473,6 +597,22 @@ function run(site, size, seed) {
           `  [stuck t${String(turns)}] ${b.id} at ${String(b.x)},${String(b.y)} -> ${String(dir)} ${String(tx)},${String(ty)}` +
             ` | walk ${String(canWalk(realm.world.level, tx, ty))} occupant ${who === undefined ? 'none' : String(who.id)}` +
             ` | party ${String(bodies.length)} energy ${String(b.energy)}` +
+            // THE BARRIER, WHICH IS THE STANDING SUSPECT. `whoseTurn` is who the
+            // quorum is waiting on; if it names a body the driver never commands
+            // — a downed one, a disconnected one — the level never ticks and
+            // every field above stays exactly as it was.
+            ` | accepted ${String(moved?.ok)}` +
+            ` | whoseTurn ${realm.engine.turnState().whoseTurn.join('/') || 'none'}` +
+            ` | standingBy ${realm.engine.turnState().standingBy.join('/') || 'none'}` +
+            ` | engagement ${String(realm.engine.turnState().engagement)}` +
+            ` | bodies ${bodies
+              .map(
+                (m) =>
+                  `${m.body.id}:${m.body.alive ? 'up' : 'dead'}${isDowned(downed, m.body.id) ? '/down' : ''}:e${String(m.body.energy)}:i${m.body.pendingIntent === null || m.body.pendingIntent === undefined ? '-' : m.body.pendingIntent.kind}`,
+              )
+              .join(' ')}` +
+            ` | shovedBy ${String(b.shovedBy)}` +
+            ` | goal ${String(goal.x)},${String(goal.y)} quarry ${String(near.f.id)}@${String(near.f.x)},${String(near.f.y)} d${String(near.d)}` +
             ` | effects ${
               effectsOn(effects, b.id)
                 .map((e) => `${e.effectId}:${String(e.dur)}`)
@@ -509,6 +649,19 @@ function run(site, size, seed) {
      * so it is read here rather than inferred from the wreckage.
      */
     const pumped = realm.engine.pump();
+    if (
+      process.env.DELVE_DIAG === 'stuck' &&
+      turns % (Number(process.env.DELVE_EVERY) || 150) === 0 &&
+      turns > 0
+    ) {
+      // WHAT THE PUMP ACTUALLY SAID. `actPlayer` pushes `{t:'refunded', reason}`
+      // on the refund path, which is the one thing that distinguishes "the
+      // resolver said no" from "the loop never reached this body".
+      const evs = [...(pumped?.playerEvents ?? []), ...(pumped?.sweep ?? [])];
+      console.log(
+        `  [ev t${String(turns)}] ${evs.map((e) => `${String(e.t ?? e.k)}${e.reason === undefined ? '' : ':' + String(e.reason)}${e.id === undefined ? '' : '@' + String(e.id)}`).join(' ') || 'none'}`,
+      );
+    }
     if (process.env.DELVE_DIAG === 'stuck' && turns % 300 === 0 && turns > 0) {
       console.log(
         `  [pump t${String(turns)}] returned ${pumped === undefined ? 'undefined' : pumped === null ? 'null' : `{events ${String(pumped.playerEvents?.length ?? 0)} sweep ${String(pumped.sweep?.length ?? 0)}}`}`,

@@ -2650,7 +2650,19 @@ function resolveIntent(actor: EngineActor, intent: Intent, run: Run): Resolution
        * STANDING STILL. They swap once and are through, and the second exchange
        * this refuses never happens because nobody is pushing back.
        */
-      const wouldUndo = occupant !== undefined && occupant.lastSwap?.withId === actor.id;
+      /**
+       * THE MOVER'S OWN MARK, NOT THE OCCUPANT'S — see `Actor.shovedBy`.
+       *
+       * This read the occupant's, which made the rule symmetric: A pushes past
+       * B, both are marked, and A can never come back past B until B takes a
+       * normal step of their own. A friend standing still in a doorway therefore
+       * became a one-way door, and the refusal is refunded rather than costing a
+       * turn, so a client re-sending the direction froze the whole floor.
+       *
+       * Asking the MOVER whether it was just shoved by this occupant refuses
+       * only the reflexive shove-back, which is the entire loop being closed.
+       */
+      const wouldUndo = occupant !== undefined && actor.shovedBy === occupant.id;
       if (
         occupant !== undefined &&
         !wouldUndo &&
@@ -2660,11 +2672,13 @@ function resolveIntent(actor: EngineActor, intent: Intent, run: Run): Resolution
       ) {
         const theirs: TileXY = { x: occupant.x, y: occupant.y };
         if (world.swapPlaces(actor.id, occupant.id)) {
-          // STAMPED ON BOTH, because the rule is about the PAIR and either of
-          // them may be the next mover. One-sided marking would let the shoved
-          // body immediately shove back, which is the loop this closes.
-          actor.lastSwap = { withId: occupant.id };
-          occupant.lastSwap = { withId: actor.id };
+          // ONLY THE BODY THAT WAS MOVED WITHOUT ASKING. The mover chose this
+          // step, so it has nothing to undo and must stay free to walk back —
+          // marking it too is what turned a friend standing still into a wall.
+          occupant.shovedBy = actor.id;
+          // AND THE MOVER'S OWN MARK IS SPENT. If A was shoved by C and then
+          // deliberately swaps with B, A is no longer mid-exchange with anyone.
+          actor.shovedBy = undefined;
           run.ctx.talents?.noteMoved(actor.id);
           return { ok: true, effect: { kind: 'swapped', from, to: theirs, otherId: occupant.id } };
         }
@@ -2674,11 +2688,35 @@ function resolveIntent(actor: EngineActor, intent: Intent, run: Run): Resolution
       // position, so terrain and occupancy are decided in exactly one place.
       const moved = world.tryMove(actor.id, dir);
       if (!moved.ok) return { ok: false, reason: moved.reason };
-      // A STEP ONTO FREE FLOOR ENDS THE EXCHANGE. See `Actor.lastSwap`: the mark
-      // exists only to stop the shoved body shoving straight back, and once
-      // either of them has gone somewhere under their own power there is nothing
-      // left to undo.
-      actor.lastSwap = undefined;
+      /**
+       * ═══════════════════════════════════════════════════════════════════════
+       * A STEP ONTO FREE FLOOR ENDS THE EXCHANGE — FOR **BOTH** BODIES.
+       * ═══════════════════════════════════════════════════════════════════════
+       *
+       * The comment here already said the rule — *"once EITHER of them has gone
+       * somewhere under their own power there is nothing left to undo"* — and
+       * only ever cleared one half of it. The other half is what left a shoved
+       * body permanently unable to come back past a shover who then stood still:
+       * the mark clears when the MARKED body moves, and a marked body whose only
+       * route is back through the shover never gets to move.
+       *
+       * MEASURED. `DELVE_DIAG=stuck` on Blackwood, 750 turns:
+       *
+       *     p0 at 9,15 -> w 8,15 | occupant p2 | energy 1000 | shovedBy p2
+       *
+       * — p0 refused every turn, refunded every turn (so never completing the
+       * turn that would have cleared its own mark), and because `Park` means
+       * *"the loop comes back to them before the world moves"*, the floor's
+       * clock stopped for the whole party.
+       *
+       * ONE SCAN OVER THE ACTOR TABLE, which is under thirty bodies and only on
+       * a step that actually landed. The alternative — an index of who is marked
+       * — would be a second copy of a fact that lives on the bodies.
+       */
+      actor.shovedBy = undefined;
+      for (const other of world.allActors()) {
+        if (other.shovedBy === actor.id) other.shovedBy = undefined;
+      }
       // `TalentSheet.movedThisTurn` — the flag Focus regen reads, set from the
       // one place in the process where an actor's tile actually changes. Cleared
       // by the talent `actBase` pass at the top of the next game turn.

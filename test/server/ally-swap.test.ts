@@ -146,6 +146,59 @@ describe('bumping into a body', () => {
     expect((endB - startB) * sign, 'the body that was shoved made no ground').toBeGreaterThan(0);
   });
 
+  it('lets a body past a friend who is STANDING STILL, twice running', () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * THE CASE THE GUARD WAS NEVER ASKED ABOUT — and the one a party lives in.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * The test above walks two bodies the SAME way, which is the collision the
+     * `wouldUndo` guard was written for. This is the other half: one body wants
+     * past a friend who is not going anywhere — reading a note, guarding a
+     * corridor, or simply idle at a keyboard.
+     *
+     * `lastSwap` is cleared only by a NORMAL move (its own docblock: *"the event
+     * that actually means I got where I was going"*), so a friend who never
+     * takes a normal step keeps their mark forever. The mover swaps once, and
+     * every later attempt to come back past them is refused for as long as they
+     * stand there.
+     *
+     * ═══ AND A REFUSED PLAYER INTENT IS REFUNDED, SO IT IS NOT ONE LOST STEP ═══
+     * `actPlayer` returns `Park` on a refusal — energy unspent, the actor still
+     * owes a decision, and *"the loop comes back to them before the world
+     * moves"*. A client that re-sends the same direction therefore stops the
+     * floor's clock for the WHOLE party, not just for the body that is blocked.
+     * That is what a 900-turn delve stall looks like from the inside.
+     */
+    const { world, engine, a, b } = twoPlayers();
+    const toward = b.x > a.x ? 'e' : b.x < a.x ? 'w' : b.y > a.y ? 's' : 'n';
+    const back = toward === 'e' ? 'w' : toward === 'w' ? 'e' : toward === 's' ? 'n' : 's';
+    // SNAPSHOTS, because `a` and `b` are the live bodies and a swap rewrites
+    // them in place — comparing against `a.x` after the pump compares a number
+    // with itself and passes whatever happened.
+    const start = { x: a.x, y: a.y };
+
+    // 1. THE FIRST PASS, which has always worked.
+    engine.submitMove('p1', toward);
+    engine.hold('p2');
+    engine.pump();
+    const afterFirst = { x: world.getActor('p1')?.x, y: world.getActor('p1')?.y };
+    expect(afterFirst, 'the first swap did not happen at all').not.toEqual(start);
+
+    // 2. AND BACK, with the friend still standing exactly where the swap put
+    //    them. Nothing about the second attempt undoes the first — the mover is
+    //    going the OTHER way — and the body it is asking to trade with has not
+    //    moved, which is precisely the doorway this feature exists for.
+    engine.submitMove('p1', back);
+    engine.hold('p2');
+    engine.pump();
+
+    expect(
+      { x: world.getActor('p1')?.x, y: world.getActor('p1')?.y },
+      'the mover could not get back past a friend standing still',
+    ).not.toEqual(afterFirst);
+  });
+
   it('will not shove a townsfolk out of the way', () => {
     /**
      * ═══════════════════════════════════════════════════════════════════════
