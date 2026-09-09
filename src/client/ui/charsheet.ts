@@ -1129,6 +1129,7 @@ const SLOT_LABEL: Readonly<Record<Slot, string>> = {
   offhand: 'Offhand',
   ring: 'Ring',
   trinket: 'Trinket',
+  mainhand: 'Weapon',
 };
 
 /**

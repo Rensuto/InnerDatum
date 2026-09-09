@@ -385,6 +385,15 @@ const DOLL_PLACES: Readonly<Record<Slot, DollPlace>> = {
   body: { col: 3, row: 1 },
   legs: { col: 3, row: 2 },
   feet: { col: 1, row: 2 },
+  /**
+   * THE SPARE CELL, WHICH WAS DELIBERATELY EMPTY AND IS NOW THE WEAPON HAND.
+   *
+   * The note above this record said "the bottom-middle cell (col 2, row 2) is
+   * deliberately EMPTY. Seven slots do not divide into a rectangle, and a spare
+   * box that is not a slot must not look like one". Eight do divide, and the
+   * hand goes at the body's side where a hand is.
+   */
+  mainhand: { col: 2, row: 2 },
 };
 
 /**
@@ -397,9 +406,11 @@ const DOLL_PLACES: Readonly<Record<Slot, DollPlace>> = {
  * the same either way, which is that the slots read as places ON A BODY rather
  * than as a list of boxes.
  *
- * The bottom-middle cell (col 2, row 2) is deliberately EMPTY. Seven slots do not
- * divide into a rectangle, and a spare box that is not a slot must not look like
- * one — nothing is drawn there at all.
+ * THE GRID IS FULL NOW. That cell held the note "deliberately EMPTY. Seven slots
+ * do not divide into a rectangle, and a spare box that is not a slot must not
+ * look like one" — true of seven, and the weapon hand is the eighth. Adding a
+ * ninth needs a fourth row: capacity is `COLS * DOLL_ROWS` minus the four the
+ * portrait takes, so 4x3 holds eight and 4x4 holds twelve.
  */
 const PORTRAIT_COL = 1;
 const PORTRAIT_COLS = 2;

@@ -2127,6 +2127,8 @@ export const Slot = {
   Offhand: 'offhand',
   Ring: 'ring',
   Trinket: 'trinket',
+  /** The weapon hand — `load.lua:120`. See the server's `Slot` for the port. */
+  Mainhand: 'mainhand',
 } as const;
 export type Slot = (typeof Slot)[keyof typeof Slot];
 
@@ -2154,6 +2156,10 @@ export const SLOT_ORDER = [
   'offhand',
   'ring',
   'trinket',
+  // APPENDED. This list is the corpse SPILL order, so inserting a member
+  // mid-list changes which item a pickup hands you first on a given seed —
+  // see `Slot.Mainhand` in the server's items.ts.
+  'mainhand',
 ] as const satisfies readonly Slot[];
 
 /**

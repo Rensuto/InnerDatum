@@ -333,3 +333,35 @@ it down.
 file rather than the top. `drawLogCog` in `src/client/ui/caselog.ts` is the
 fallback, and it is the same bargain `drawLogGrip` above it makes: a widget that
 needs art to be USABLE cannot ship behind a missing file.
+
+## The first three weapons — `item_service_baton`, `item_bailiffs_hook`, `item_writ_of_seizure`
+
+**The game had no weapon slot at all until now**, and the reason recorded in the
+code was art: *"no `icon_weapon_*` file exists, and an unresolved key renders as
+the LOUD violet missing-asset box on a bare clone."*
+
+**That reason had rotted.** `src/client/ui/inventory.ts:2754-2763` draws the
+item's INITIAL when a sprite is missing, and its own note calls a bare clone
+*"the ORDINARY state rather than an edge case"* — the same fallback the hotbar
+and the doll cell make. So these three ship now and read as `S`, `B` and `W` in
+a bag until the art lands. Nothing is violet and nothing is invisible.
+
+They are listed in `PENDING_ICON_IDS` (src/server/content/items.ts), which is
+the commission register: an id must be in that list or in `KNOWN_ICON_IDS`, so a
+typo is still a throw at boot rather than a letter nobody notices.
+
+**What they are.** Constabulary tools, not fantasy swords — the game's weapons
+should look like something a case officer would actually carry:
+
+| id | tier | what it is |
+|---|---|---|
+| `item_service_baton` | common | A turned hardwood baton, brass ferrule, leather wrist loop. Municipal issue, well used. |
+| `item_bailiffs_hook` | uncommon | A short hooked bar for forcing a door or a collar — utilitarian, blackened steel, a worn grip. |
+| `item_writ_of_seizure` | rare | A rolled warrant bound in wax and wire, carried like a weapon because here it is one. Paper and seals, faintly luminous. |
+
+**Cut them at 64x64**, matching the twenty-three `item_*` files already on disk.
+
+**Acceptance:** each id resolves in the manifest, and moving it from
+`PENDING_ICON_IDS` to `KNOWN_ICON_IDS` keeps `npm run check` green — there is a
+test asserting the two lists are disjoint, so the move is the signal that the art
+arrived.

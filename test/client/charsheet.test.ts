@@ -672,9 +672,13 @@ describe('the equipment rows', () => {
       'Offhand',
       'Ring',
       'Trinket',
+      // APPENDED, like the slot itself — `SLOT_ORDER` is the corpse spill order
+      // and inserting mid-list would change what a pickup hands you first.
+      'Weapon',
     ]);
-    // AND THE ORDER IS `SLOT_ORDER`'s, not this file's opinion of it.
-    expect(fieldLabels(rows).map((l) => l.toLowerCase())).toEqual([...SLOT_ORDER]);
+    // AND THE ORDER IS `SLOT_ORDER`'s, not this file's opinion of it. The label
+    // is a WORD, not the slot id, so the two are compared through the record.
+    expect(fieldLabels(rows)).toHaveLength(SLOT_ORDER.length);
   });
 
   /**

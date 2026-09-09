@@ -940,3 +940,75 @@ describe('the rider channel', () => {
     expect(sheet.stats?.str).toBe((WATCHMAN.combat.stats?.str ?? 0) + 3);
   });
 });
+
+describe('a weapon in the hand replaces the class table', () => {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * `Combat.lua:175-192` WALKS THE MAINHAND AND TAKES WHAT IT FINDS.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * The barehand block at :219-229 runs only when that produced nothing. This is
+   * that shape — and it is the one field on a worn item that REPLACES instead of
+   * contributing, because `composeWielders` adds and two weapons do not add
+   * their damage.
+   */
+  const CLASS_SHEET = {
+    stats: { str: 20, dex: 10, con: 10, mag: 10, wil: 10, cun: 10 },
+    weapon: { dam: 20, physCrit: 2, damMod: { str: 0.6 } },
+  } as unknown as Parameters<typeof composeSheet>[0];
+
+  const sword = (over: Record<string, unknown> = {}): Item =>
+    ({
+      id: 'item_test_blade',
+      name: 'Test Blade',
+      slot: Slot.Mainhand,
+      icon: 'item_service_baton',
+      tier: 'common',
+      wielder: {},
+      combat: { dam: 33, apr: 4, physCrit: 3.5, ...over },
+    }) as unknown as Item;
+
+  it('takes the weapon’s numbers over the class’s', () => {
+    const armed = composeSheet(CLASS_SHEET, [sword()]);
+    expect(armed.weapon?.dam, 'the class table won').toBe(33);
+    expect(armed.weapon?.apr).toBe(4);
+    expect(armed.weapon?.physCrit).toBe(3.5);
+  });
+
+  it('leaves an empty hand exactly as it was — the whole safety property', () => {
+    /**
+     * A player who never picks a weapon up must be byte-for-byte unchanged. Our
+     * classes have swung a real weapon since before the slot existed, so the
+     * class table is the unarmed fallback — a deliberate divergence from ToME's
+     * `{dam=1}` innate (`tome/class/Actor.lua:277-285`), because upstream's
+     * characters start holding something and ours start BEING something.
+     */
+    expect(composeSheet(CLASS_SHEET, [])).toEqual(CLASS_SHEET);
+  });
+
+  it('keeps the class’s damMod unless the weapon names its own', () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * THE ONE THING A WEAPON MUST NOT OVERWRITE.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * `damMod` is where class identity lives — the Alchemist converts Magic,
+     * the Redactor Willpower. A blade carrying ToME's default `{str: 0.6}`
+     * would make every class the same class the moment it was picked up.
+     */
+    const inherited = composeSheet(CLASS_SHEET, [sword()]);
+    expect(inherited.weapon?.damMod, 'the blade overwrote who you are').toEqual({ str: 0.6 });
+
+    // ...and a weapon that DOES name one is honoured, which is how a bow could
+    // ever convert Dexterity.
+    const bow = composeSheet(CLASS_SHEET, [sword({ damMod: { dex: 0.7 } })]);
+    expect(bow.weapon?.damMod).toEqual({ dex: 0.7 });
+  });
+
+  it('is chosen, not folded — two weapons do not add', () => {
+    // The property that kept it off `Wielder`. Only one can be worn in practice
+    // (one mainhand), but the composer must not be the thing relying on that.
+    const both = composeSheet(CLASS_SHEET, [sword({ dam: 33 }), sword({ dam: 46 })]);
+    expect(both.weapon?.dam, 'two weapons stacked their damage').toBe(33);
+  });
+});

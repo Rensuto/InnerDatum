@@ -6,6 +6,7 @@ import {
   ITEMS,
   ITEM_CATALOGUE,
   KNOWN_ICON_IDS,
+  PENDING_ICON_IDS,
   SLOT_ORDER,
   Slot,
   itemById,
@@ -120,7 +121,7 @@ function fullSlotSpread(): Item[] {
 }
 
 describe('the item catalogue', () => {
-  it('ships 22 worn items and one you drink', () => {
+  it('ships 25 worn items and one you drink', () => {
     // 23 `item_*` ids exist in the manifest. 22 are authored as equipment. The
     // 23rd `item_*` id is the ingot, and cutting it is a decision rather than an
     // oversight — see FORBIDDEN_IDS above; it draws the MONEY pile instead
@@ -128,26 +129,51 @@ describe('the item catalogue', () => {
     //
     // The 23rd ITEM is the draught, whose icon is the ability vial rather than
     // an `item_*` file at all.
-    expect(ITEMS).toHaveLength(23);
-    expect(ITEMS.filter((item) => item.slot !== undefined)).toHaveLength(22);
+    //
+    // ═══ AND THREE WEAPONS, THE FIRST ITEMS TO SHIP AHEAD OF THEIR ART ═══
+    // `PENDING_ICON_IDS` is why they can: the renderer draws a LETTER for a
+    // missing sprite and has for a long time (ui/inventory.ts:2754-2763), so the
+    // catalogue's old refusal was enforcing a hazard that no longer existed —
+    // and capping the content at whatever had been drawn.
+    expect(ITEMS).toHaveLength(26);
+    expect(ITEMS.filter((item) => item.slot !== undefined)).toHaveLength(25);
     expect(ITEMS.filter((item) => item.use !== undefined)).toHaveLength(1);
-    // 23 ICONS AND 23 ITEMS. The 23rd icon is the ability vial (see the list
-    // above) and the 23rd item is the draught that names it — the first thing in
-    // this game you buy in order to SPEND it.
+    // 23 DRAWN ICONS still, and 26 items: the three weapons name commissioned
+    // ids instead. The 23rd icon is the ability vial (see the list above) and
+    // the draught is what names it — the first thing in this game you buy in
+    // order to SPEND it.
     expect(MANIFEST_ITEM_ICONS).toHaveLength(23);
-    expect(ITEM_CATALOGUE.size).toBe(23);
+    expect(ITEM_CATALOGUE.size).toBe(26);
   });
 
   it('names only icons that exist in the committed manifest', () => {
     // THE TEST THIS FILE EXISTS FOR. One id that is not on this list is a violet
     // box on four people's screens for a whole session.
-    const known = new Set(MANIFEST_ITEM_ICONS);
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * TWO LISTS NOW: what is drawn, and what is commissioned.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * This said "one id that is not on this list is a violet box on four
+     * people's screens for a whole session". The renderer stopped doing that:
+     * `ui/inventory.ts:2754-2763` draws the item's initial when the sprite is
+     * missing, and calls a bare clone "the ORDINARY state rather than an edge
+     * case". So an unlisted id is a TYPO, not a violet box — and the check that
+     * matters is that every icon is on one of the two lists, with the shipped
+     * list still matching the manifest exactly.
+     */
+    const known = new Set([...MANIFEST_ITEM_ICONS, ...PENDING_ICON_IDS]);
     const strays = ITEMS.filter((item) => !known.has(item.icon)).map((item) => item.icon);
     expect(strays).toEqual([]);
 
-    // And the source's own copy of the list agrees with this one, in both
-    // directions — a subset check would let either side quietly grow.
+    // The SHIPPED list still agrees with the manifest in both directions — a
+    // subset check would let either side quietly grow.
     expect([...KNOWN_ICON_IDS].sort()).toEqual([...MANIFEST_ITEM_ICONS].sort());
+
+    // AND THE TWO LISTS ARE DISJOINT. An id in both is art that arrived without
+    // anybody moving it, which is how a commission stays open forever.
+    const shipped = new Set(MANIFEST_ITEM_ICONS);
+    expect(PENDING_ICON_IDS.filter((id) => shipped.has(id))).toEqual([]);
   });
 
   it('references neither the iron ingot nor any of the four aliased weapon ids', () => {
@@ -277,8 +303,16 @@ describe('the item catalogue', () => {
     // mechanics" from an item whose entire mechanic is in a different field. The
     // rule it enforces is unchanged: everything must do something, and the
     // `item.use` assertion after it is that same rule for the other kind.
+    //
+    // ═══ AND A WEAPON IS THE THIRD KIND, FOR THE SAME REASON ═══
+    // Its `wielder` is `{}` because it does not CONTRIBUTE anything — it
+    // REPLACES the combat table, through `item.combat`. `Wielder` is a fold and
+    // two rings both add their armour; two weapons do not add their damage, so
+    // a weapon could never have ridden that field. The rule is unchanged:
+    // everything must do something, and this is the third field it can do it in.
     const inert = ITEMS.filter((item) => {
       if (item.use !== undefined) return false;
+      if (item.combat !== undefined) return false;
       const stats = Object.keys(item.wielder.stats ?? {}).length;
       const mods = Object.keys(item.wielder.mods ?? {}).length;
       return stats + mods === 0;
@@ -289,9 +323,14 @@ describe('the item catalogue', () => {
       if (item.slot !== undefined) continue;
       expect(item.use?.amount ?? 0, `${item.id} does nothing when used`).toBeGreaterThan(0);
     }
+    // ...and a weapon's whole mechanic is its damage, so it must have one.
+    for (const item of ITEMS) {
+      if (item.combat === undefined) continue;
+      expect(item.combat.dam ?? 0, `${item.id} is a weapon that deals nothing`).toBeGreaterThan(0);
+    }
   });
 
-  it('lines its three tiers up with the three drop tables, 7 / 10 / 6', () => {
+  it('lines its three tiers up with the three drop tables, 8 / 11 / 7', () => {
     // NOT COSMETIC. The roster's drop tables are meant to select on `tier`
     // rather than re-listing 23 ids somewhere else that has to stay in sync:
     //   common   = every LEGS and FEET item, plus the leather chest
@@ -303,9 +342,9 @@ describe('the item catalogue', () => {
     // and a party that can buy the good one on every visit has no decision to
     // make about drinking it.
     const byTier = (tier: string): Item[] => ITEMS.filter((item) => item.tier === tier);
-    expect(byTier('common')).toHaveLength(7);
-    expect(byTier('uncommon')).toHaveLength(10);
-    expect(byTier('rare')).toHaveLength(6);
+    expect(byTier('common')).toHaveLength(8);
+    expect(byTier('uncommon')).toHaveLength(11);
+    expect(byTier('rare')).toHaveLength(7);
     expect(byTier('common').length + byTier('uncommon').length + byTier('rare').length).toBe(
       ITEMS.length,
     );
@@ -315,8 +354,11 @@ describe('the item catalogue', () => {
     // the tier ladder rather than a gap in the doll.
     const slotsOf = (tier: string): Set<string> =>
       new Set(byTier(tier).flatMap((i) => (i.slot === undefined ? [] : [i.slot])));
-    expect([...slotsOf('uncommon')].sort()).toEqual(['head', 'offhand', 'trinket']);
-    expect([...slotsOf('rare')].sort()).toEqual(['body', 'ring']);
+    // MAINHAND JOINS EVERY TIER, and that is the point of a weapon ladder: the
+    // one slot whose upgrade is felt on every swing needs something to find at
+    // each step, where a HEAD piece can sensibly exist at one tier only.
+    expect([...slotsOf('uncommon')].sort()).toEqual(['head', 'mainhand', 'offhand', 'trinket']);
+    expect([...slotsOf('rare')].sort()).toEqual(['body', 'mainhand', 'ring']);
   });
 
   it('resolves every authored id through the catalogue map', () => {
@@ -342,7 +384,7 @@ describe('the import-time arity check', () => {
   it('throws on an icon that is not in the manifest', () => {
     expect(() =>
       validateItems([...fullSlotSpread(), sampleItem({ id: 'x', icon: 'item_iron_sword' })]),
-    ).toThrow(/not one of the 23 ids in the committed asset manifest/);
+    ).toThrow(/in neither/);
   });
 
   it('throws on the iron ingot, which is on disk but deliberately unauthored', () => {

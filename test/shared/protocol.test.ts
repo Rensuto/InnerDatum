@@ -1271,13 +1271,16 @@ describe('the four loot verbs at the trust boundary', () => {
     expect(parseClientMsg({ v: V, t: 'drop', itemId: 'item_not_a_thing' }).ok).toBe(true);
   });
 
-  it('accepts ONLY the seven slot literals for `unequip`', () => {
+  it('accepts ONLY the shipped slot literals for `unequip`', () => {
     // A SLOT IS STRUCTURE, NOT CONTENT, which is why this one verb is a closed
     // `z.enum` while `equip` is a bounded string. Content reloads without a
-    // protocol bump and must not be baked into the wire; the seven slots cannot
+    // protocol bump and must not be baked into the wire; the slot set cannot
     // change without a bump anyway, so the enum costs no coupling and buys a
     // refusal one layer earlier.
-    expect(SLOT_ORDER).toHaveLength(7);
+    //
+    // EIGHT NOW. `mainhand` was added — see `Slot` in the server's items.ts —
+    // and it is the first of ToME's fifteen worn inventories this game lacked.
+    expect(SLOT_ORDER).toHaveLength(8);
     for (const slot of SLOT_ORDER) {
       expect(parseClientMsg({ v: V, t: 'unequip', slot }).ok, `${slot} must parse`).toBe(true);
     }
@@ -1286,8 +1289,8 @@ describe('the four loot verbs at the trust boundary', () => {
     expect([...SLOT_ORDER].sort()).toEqual(Object.values(Slot).sort());
 
     const bad: unknown[] = [
-      'mainhand', // there is no weapon slot; see `Slot`'s note on the missing art
       'finger', // ToME's own name for what we call `ring`
+      'neck', // one of the seven of ToME's fifteen still to come
       'BODY', // upstream's casing; ours is lowercased
       'inven',
       '',
@@ -1579,12 +1582,28 @@ describe('the floor is broadcast and the bag is not', () => {
     // per class — because the floor pile is unowned and a drop only one class can
     // wear is dead on arrival most of the time it appears.
     expect(Object.values(Slot).sort()).toEqual(
-      ['body', 'feet', 'head', 'legs', 'offhand', 'ring', 'trinket'].sort(),
+      ['body', 'feet', 'head', 'legs', 'mainhand', 'offhand', 'ring', 'trinket'].sort(),
     );
-    // THERE IS NO WEAPON SLOT, and that is a fact about the art rather than a
-    // design preference: no `icon_weapon_*` file exists, and an unresolved key
-    // renders as the LOUD violet missing-asset box on a bare clone.
-    expect(Object.values(Slot)).not.toContain('mainhand');
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * THERE IS A WEAPON SLOT NOW, AND THE REASON THERE WASN'T HAS GONE.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * This read: *"THERE IS NO WEAPON SLOT, and that is a fact about the art
+     * rather than a design preference: no `icon_weapon_*` file exists, and an
+     * unresolved key renders as the LOUD violet missing-asset box on a bare
+     * clone."*
+     *
+     * The first half was true and the second stopped being so: the inventory
+     * draws a LETTER for a missing sprite (ui/inventory.ts:2754-2763) and calls
+     * a bare clone "the ORDINARY state rather than an edge case". So the art was
+     * never the blocker it was recorded as, and `PENDING_ICON_IDS` is where a
+     * commissioned id lives until it is drawn.
+     *
+     * `mainhand` is `load.lua:120` verbatim. `finger` is still ours-as-`ring`,
+     * argued in items.ts, and stays a deviation.
+     */
+    expect(Object.values(Slot)).toContain('mainhand');
     expect(Object.values(Slot)).not.toContain('finger');
   });
 

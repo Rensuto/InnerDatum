@@ -279,10 +279,48 @@ function baseMod(base: CombatMods | undefined, key: keyof AdditiveMods): number 
 export type PassiveContribution = NonNullable<Item['wielder']>;
 
 export function composeSheet(base: CombatSheet, worn: readonly Item[]): CombatSheet {
-  return composeWielders(
+  const folded = composeWielders(
     base,
     worn.map((item) => item.wielder),
   );
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * AND THE WEAPON, WHICH IS CHOSEN RATHER THAN FOLDED.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `Combat.lua:175-192` walks the mainhand and TAKES what it finds; the
+   * barehand block at :219-229 runs only when that produced nothing. This is
+   * that shape: a weapon in the hand wins, and with an empty hand the base
+   * sheet's own table stands.
+   *
+   * ═══ CHOSEN, BECAUSE A FOLD WOULD BE WRONG ═══
+   * `composeWielders` adds: two rings both give their armour. Two weapons do
+   * not add their damage — you swing one of them. So the weapon could never
+   * have ridden `Wielder`, and this is the one field on a worn item that
+   * replaces rather than contributes.
+   *
+   * ═══ THE CLASS TABLE IS THE UNARMED FALLBACK, AND THAT IS A DIVERGENCE ═══
+   * ToME's innate is `{dam=1, atk=1, apr=0, physcrit=0, physspeed=1,
+   * dammod={str=1}}` (`tome/class/Actor.lua:277-285`) — a bare fist, because
+   * upstream's characters start holding something. OURS ARE THE FIST: every
+   * class authors a real weapon (a truncheon, a stylus) and has swung it since
+   * before this slot existed. Dropping to dam 1 the moment a player unequipped
+   * would not be porting upstream's balance, it would be taking away a weapon
+   * they were never given as an item.
+   *
+   * ═══ `damMod` SURVIVES THE SWAP, AND IT IS THE CLASS ═══
+   * The Alchemist converts Magic and the Redactor Willpower — that mapping is
+   * who they are. A blade that carried `{str: 0.6}` would make every class the
+   * same class the moment it was picked up, so a weapon replaces `damMod` only
+   * if it names one of its own.
+   */
+  const armed = worn.find((item) => item.combat !== undefined)?.combat;
+  if (armed === undefined) return folded;
+  return {
+    ...folded,
+    weapon: { ...armed, damMod: armed.damMod ?? folded.weapon?.damMod },
+  };
 }
 
 /**

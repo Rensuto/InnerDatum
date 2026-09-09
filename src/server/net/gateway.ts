@@ -10054,6 +10054,9 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     offhand: 'shield arm',
     ring: 'hands',
     trinket: 'pockets',
+    // WHERE IT COMES OFF, in the same idiom as the six above: this table is
+    // read into a sentence about a body, not a slot name.
+    mainhand: 'weapon hand',
   };
 
   const handleShopBuy = (session: Session, msg: ClientShopBuy): void => {

@@ -132,6 +132,7 @@ import { DAMAGE_TYPES } from '../../shared/damagetype.ts';
 import { IMMUNITY_KEYS, MAX_ITEM_IMMUNITY } from '../../shared/immunity.ts';
 import type { ImmunitySubtype } from '../../shared/immunity.ts';
 import type { DamageType } from '../../shared/damagetype.ts';
+import type { Weapon } from '../engine/derived.ts';
 import type { CombatMods, PrimaryStats } from '../engine/derived.ts';
 import type { OnHitStatus } from '../engine/actor.ts';
 
@@ -157,6 +158,30 @@ export const Slot = {
   Offhand: 'offhand',
   Ring: 'ring',
   Trinket: 'trinket',
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE WEAPON HAND — `load.lua:120`, and the first of ToME's fifteen we lacked.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Asked for as *"we do not have weapons for our characters, so its wasted
+   * empty slots ... we need to have a 1:1 match of Tales of maj eyals item
+   * slots"*.
+   *
+   * ═══ THE WEAPON ITSELF WAS ALREADY PORTED ═══
+   * `Combatant.weapon` (engine/derived.ts:260-277) is ToME's object `combat`
+   * table entire — dam, atk, apr, physCrit, physSpeed, damRange, damMod — and
+   * every class already authors one. What was missing was any way for an ITEM
+   * to supply it, which is this slot and `Item.combat` below.
+   *
+   * ═══ APPENDED, NEVER INSERTED, AND THAT IS NOT COSMETIC ═══
+   * `SLOT_ORDER` is the order a corpse SPILLS its gear
+   * (turn-engine.ts:775-778, citing `tome/class/Actor.lua:3038-3040`), so a
+   * member inserted mid-list changes which item a pickup hands you first on a
+   * given seed. Upstream lists MAINHAND first; the doll's arrangement is
+   * `DOLL_PLACES`'s business and not this list's, so appending costs no layout
+   * and no replay.
+   */
+  Mainhand: 'mainhand',
 } as const;
 export type Slot = (typeof Slot)[keyof typeof Slot];
 
@@ -173,7 +198,7 @@ export type Slot = (typeof Slot)[keyof typeof Slot];
  *
  * Same argument, same shape, as `STAT_KEYS` in engine/derived.ts:540.
  */
-export const SLOT_ORDER: readonly Slot[] = Object.freeze([
+export const SLOT_ORDER = Object.freeze([
   Slot.Head,
   Slot.Body,
   Slot.Legs,
@@ -181,7 +206,31 @@ export const SLOT_ORDER: readonly Slot[] = Object.freeze([
   Slot.Offhand,
   Slot.Ring,
   Slot.Trinket,
-]);
+  Slot.Mainhand,
+] as const) satisfies readonly Slot[];
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * COMPILE-TIME PROOF THAT THIS LIST NAMES EVERY SLOT — and it did not have one.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `shared/protocol.ts` has carried exactly this device for its own copy since
+ * the seventh slot (`_MissingFromSlotOrder`), and its note says why: it "is the
+ * only thing standing between a new slot and an `unequip` that silently cannot
+ * address it".
+ *
+ * THIS COPY HAD NO SUCH PROOF. It was annotated `readonly Slot[]`, which admits
+ * a SHORT list — so adding `Slot.Mainhand` to the union above and forgetting it
+ * here COMPILED, and every consumer that walks `SLOT_ORDER` simply skipped the
+ * new slot. Measured, not imagined: it is what happened on the commit that
+ * added this member, and the thing that noticed was `validateItems` below
+ * FAILING TO THROW for a slot with no items.
+ *
+ * The annotation is gone and `satisfies` does the checking, so the array keeps
+ * its literal type and a missing member is an error that names itself.
+ */
+type _SlotOrderExhaustive<T extends never> = T;
+type _MissingFromServerSlotOrder = _SlotOrderExhaustive<Exclude<Slot, (typeof SLOT_ORDER)[number]>>;
 
 // ---------------------------------------------------------------------------
 // What an item is allowed to contribute
@@ -464,6 +513,31 @@ export type Item = {
   readonly wielder: Wielder;
   /**
    * ═══════════════════════════════════════════════════════════════════════════
+   * WHAT SWINGING IT DOES — ToME's object `combat` table, and only a weapon
+   * carries one.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `Combatant.weapon` (engine/derived.ts:260-277) was a complete port of that
+   * table long before this field existed: dam, atk, apr, physCrit, physSpeed,
+   * damRange, damMod, every one of them read by `combatDamage`,
+   * `combatAttack`, `combatCrit` and `combatSpeed`. Every class authors one and
+   * nine monsters do. What did not exist was any way for an ITEM to supply it,
+   * which is the whole of this field.
+   *
+   * ═══ IT IS NOT PART OF `Wielder`, AND THAT IS THE DESIGN ═══
+   * `Wielder` is a CONTRIBUTION — `composeWielders` adds every worn item's
+   * numbers together, which is right for armour and stats and wrong for a
+   * weapon: two rings both add their armour, and two weapons do not add their
+   * damage. A weapon REPLACES. So it rides its own field and
+   * `composeSheet` picks one rather than folding many, exactly as
+   * `Combat.lua:175-192` walks the mainhand and takes what it finds.
+   *
+   * `Wielder.mods.dam` remains what it always was — a flat bonus a NON-weapon
+   * may grant, which upstream also has. The two do not compete.
+   */
+  readonly combat?: Weapon;
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
    * WHAT DRINKING IT DOES. Absent on everything that is not a consumable.
    * ═══════════════════════════════════════════════════════════════════════════
    *
@@ -616,6 +690,43 @@ export const KNOWN_ICON_IDS: readonly string[] = Object.freeze([
   'item_watchmans_cap',
   'item_watchmans_coat',
   'item_watchmans_trousers',
+]);
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * ICONS AN ITEM MAY NAME BEFORE THE ART EXISTS — the backlog, in code.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * ═══ THE RULE ABOVE WAS ABSOLUTE AND ITS REASON HAS ROTTED ═══
+ * `validateItems` refused any icon outside `KNOWN_ICON_IDS`, and the message it
+ * threw said the item "would render as the violet fallback box on every
+ * client". That was true when it was written. It is not true now:
+ * `ui/inventory.ts:2754-2763` draws A LETTER when a sprite is missing, and its
+ * own note says why — *"a column of identical grey squares is unreadable, and
+ * on a bare clone with no art on disk that is the ORDINARY state rather than an
+ * edge case"*. The hotbar and the doll cell make the same fallback.
+ *
+ * So the renderer has handled this deliberately for a long time, while the
+ * catalogue went on forbidding it — which meant NO NEW ITEM COULD BE AUTHORED
+ * AT ALL until somebody drew a picture first. Twenty-three icons, twenty-three
+ * items, nothing spare: the content was capped by the art.
+ *
+ * ═══ THE TYPO CHECK IS NOT RELAXED, AND IT WAS THE HALF WORTH KEEPING ═══
+ * An icon must still be in ONE of the two lists. A misspelled id is still a
+ * throw at module evaluation rather than a letter nobody notices, and the
+ * duplicate rule still holds across both lists together — two items sharing a
+ * picture is a player squinting at a tooltip to tell them apart, whether that
+ * picture exists yet or not.
+ *
+ * ═══ EVERY ID HERE IS A COMMISSION ═══
+ * It is logged in ASSETS-REQUIRED.md and `npm run art:needs` reports it as
+ * missing, which is the correct backlog signal. An id that stays here forever
+ * is a bug in the process, not in this list.
+ */
+export const PENDING_ICON_IDS: readonly string[] = Object.freeze([
+  'item_service_baton',
+  'item_bailiffs_hook',
+  'item_writ_of_seizure',
 ]);
 
 // ---------------------------------------------------------------------------
@@ -979,11 +1090,87 @@ const DRAUGHTS: readonly Item[] = Object.freeze([
   },
 ]);
 
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE WEAPONS. Three of them, one per tier, on upstream's own curve.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Asked for as *"we do not have weapons for our characters"* and *"1:1 match of
+ * Tales of maj eyals item slots ... since we have 15 years of fine tuning to
+ * pull from"*.
+ *
+ * ═══ THE CURVE IS `swords.lua:37-101`, READ RATHER THAN INVENTED ═══
+ * Upstream's longsword line, by `level_range`:
+ *
+ *     iron            1-10    dam rngavg(10,13)   apr 2   physcrit 2.5
+ *     steel          10-20    dam rngavg(12,18)   apr 3   physcrit 3
+ *     dwarven-steel  20-30    dam rngavg(20,26)   apr 4   physcrit 3.5
+ *     stralite       30-40    dam rngavg(30,37)   apr 5   physcrit 4.5
+ *     voratun        40-50    dam rngavg(40,45)   apr 6   physcrit 5
+ *
+ * The SHAPE is what ports: damage roughly +40% a band, armour penetration +1,
+ * critical +0.5. Our three tiers take the middle three bands, because our
+ * ceiling is level 50 and a common drop should not be a level-1 stick.
+ *
+ * ═══ THE NUMBERS ARE SHIFTED UP, AND THE REASON IS OURS NOT THEIRS ═══
+ * Upstream's unarmed is `{dam=1}` (`tome/class/Actor.lua:277-285`) so an iron
+ * sword at 11 is an enormous upgrade. OURS IS NOT UNARMED: every class authors
+ * a real weapon — a truncheon at 20, a stylus at 15 — and that table is the
+ * fallback when this slot is empty. A weapon that did not beat it would be an
+ * item no one would ever equip, which is worse than no item at all.
+ *
+ * So the bands are anchored so the COMMON tier is a modest gain on the
+ * strongest class table (20) rather than on nothing. The progression between
+ * tiers is upstream's; only the floor moved, and it moved because our floor is
+ * a weapon rather than a fist.
+ *
+ * ═══ `damMod` IS THE ONE THING THEY DO NOT CARRY ═══
+ * A class's `damMod` is its identity — the Alchemist converts Magic, the
+ * Redactor Willpower — and a sword that replaced it with `{str: 0.6}` would
+ * make every class the same class the moment it picked one up. These carry
+ * ToME's default only as the shape; `composeSheet` keeps the CLASS's `damMod`
+ * unless the weapon names its own, so a found blade sharpens who you are
+ * instead of overwriting it.
+ */
+const WEAPONS: readonly Item[] = [
+  {
+    id: 'item_service_baton',
+    name: 'Service Baton',
+    slot: Slot.Mainhand,
+    icon: 'item_service_baton',
+    tier: 'common',
+    wielder: {},
+    // `steel longsword` (swords.lua:51-59), lifted to clear the class tables.
+    combat: { dam: 24, apr: 3, physCrit: 3 },
+  },
+  {
+    id: 'item_bailiffs_hook',
+    name: "Bailiff's Hook",
+    slot: Slot.Mainhand,
+    icon: 'item_bailiffs_hook',
+    tier: 'uncommon',
+    wielder: {},
+    // `dwarven-steel` (swords.lua:65-73): +40% damage, +1 apr, +0.5 crit.
+    combat: { dam: 33, apr: 4, physCrit: 3.5 },
+  },
+  {
+    id: 'item_writ_of_seizure',
+    name: 'Writ of Seizure',
+    slot: Slot.Mainhand,
+    icon: 'item_writ_of_seizure',
+    tier: 'rare',
+    wielder: {},
+    // `stralite` (swords.lua:79-87), the same step again.
+    combat: { dam: 46, apr: 5, physCrit: 4.5 },
+  },
+];
+
 export const ITEMS: readonly Item[] = Object.freeze([
   ...WATCHMAN_KIT,
   ...INSPECTOR_KIT,
   ...ALCHEMIST_KIT,
   ...GENERIC_ITEMS,
+  ...WEAPONS,
   ...DRAUGHTS,
 ]);
 
@@ -1132,7 +1319,9 @@ export const DEAD_MOD_KEYS: readonly string[] = Object.freeze([
 export function validateItems(items: readonly Item[]): readonly Item[] {
   const seenIds = new Set<string>();
   const seenIcons = new Set<string>();
-  const knownIcons = new Set(KNOWN_ICON_IDS);
+  // EITHER LIST. See `PENDING_ICON_IDS`: the art may be a commission, but the
+  // id must still be one somebody wrote down.
+  const knownIcons = new Set([...KNOWN_ICON_IDS, ...PENDING_ICON_IDS]);
   const populated = new Set<Slot>();
 
   for (const item of items) {
@@ -1141,9 +1330,10 @@ export function validateItems(items: readonly Item[]): readonly Item[] {
 
     if (!knownIcons.has(item.icon)) {
       throw new Error(
-        `items: ${item.id} names icon '${item.icon}', which is not one of the ` +
-          `${KNOWN_ICON_IDS.length} ids in the committed asset manifest — it would render ` +
-          `as the violet fallback box on every client`,
+        `items: ${item.id} names icon '${item.icon}', which is in neither ` +
+          `KNOWN_ICON_IDS (${String(KNOWN_ICON_IDS.length)} shipped) nor ` +
+          `PENDING_ICON_IDS (${String(PENDING_ICON_IDS.length)} commissioned) — ` +
+          `an unlisted id is a typo, and a typo draws a letter nobody notices`,
       );
     }
     if (seenIcons.has(item.icon)) throw new Error(`items: duplicate icon '${item.icon}'`);

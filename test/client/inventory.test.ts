@@ -406,7 +406,7 @@ describe('hasSomethingToBuy', () => {
 
 describe('inventoryPanelRows', () => {
   it('walks the doll in SLOT_ORDER and shows every empty slot', () => {
-    // The doll is seven slots whether or not anything is in them —
+    // The doll is every slot whether or not anything is in them —
     // EquipDollFrame.lua:165-177 paints the frame and then EITHER the object OR
     // `bg_empty`. A doll that listed only what was worn would hide the fact that
     // `offhand` and `trinket` are places things can go.
@@ -416,7 +416,7 @@ describe('inventoryPanelRows', () => {
     const cells = dollOf(inventoryPanelRows(view())).cells;
     expect(cells).toHaveLength(SLOT_ORDER.length);
     // Both cell shapes carry a slot, filled or not — which is what makes the doll
-    // a fixed seven rather than a list of what happens to be worn.
+    // a fixed set rather than a list of what happens to be worn.
     expect(cells.map((cell) => cell.slot)).toEqual([...SLOT_ORDER]);
     expect(cells.map((cell) => cell.kind)).toEqual([
       'item',
@@ -425,6 +425,9 @@ describe('inventoryPanelRows', () => {
       'empty',
       'empty',
       'item',
+      'empty',
+      // `mainhand`, appended and empty — the fixture wears no weapon, which is
+      // the ordinary state until one drops.
       'empty',
     ]);
   });
@@ -965,9 +968,20 @@ describe('inventoryPanelHitAt', () => {
     // ON the panel, beside the tab strip but left of the first tab box — the tabs
     // start one INSET in and the panel body starts at the rect's own edge.
     expect(inventoryPanelHitAt(rect, rows, rect.x + 2, rect.y + 30)).toBeNull();
-    // The bottom-middle box of the doll: FOUR COLUMNS BY THREE ROWS holds twelve
-    // and seven slots plus a two-by-two portrait leave one over. It is not a slot
-    // and must not answer like one.
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * THE SPARE BOX IS GONE — it is the weapon hand now.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * This asserted that the bottom-middle cell answers NULL: four columns by
+     * three rows holds twelve, and seven slots plus a two-by-two portrait left
+     * one over, so there was a box that was not a slot and must not answer like
+     * one.
+     *
+     * Eight slots fill the grid exactly. The assertion is inverted rather than
+     * deleted, because the property that mattered is unchanged: every box on the
+     * doll answers for exactly what it is, and none of them lies.
+     */
     const doll = inventoryPanelGeometry(rect, rows).placed.find(
       (entry) => entry.row.kind === InventoryRowKind.Doll,
     );
@@ -983,7 +997,11 @@ describe('inventoryPanelHitAt', () => {
     // describe block exists to catch.
     const feet = doll.cells[doll.row.cells.findIndex((cell) => cell.slot === 'feet')];
     if (feet === undefined) throw new Error('unreachable: FEET is on the doll');
-    expect(inventoryPanelHitAt(rect, rows, portrait.x + portrait.w - 4, feet.y + 4)).toBeNull();
+    const hit = inventoryPanelHitAt(rect, rows, portrait.x + portrait.w - 4, feet.y + 4);
+    expect(hit, 'the weapon cell answers nothing').not.toBeNull();
+    expect(hit && 'slot' in hit ? hit.slot : null, 'the spare box is not the weapon hand').toBe(
+      'mainhand',
+    );
     // ...and off the panel entirely.
     expect(inventoryPanelHitAt(rect, rows, rect.x - 4, rect.y - 4)).toBeNull();
   });
