@@ -267,6 +267,7 @@ function run(site, size, seed) {
    * without this the driver can order one blocked direction forever.
    */
   const lastOrder = new Map();
+  const lastVerb = new Map();
   for (; turns < TURN_CAP; turns += 1) {
     const foes = livingHostiles();
     const up = bodies.filter((m) => m.body.alive && !isDowned(downed, m.body.id));
@@ -311,6 +312,7 @@ function run(site, size, seed) {
           const step = STEPS.find(
             ([dx, dy]) => b.x + dx === fallen.body.x && b.y + dy === fallen.body.y,
           );
+          lastVerb.set(b.id, `revive:${step === undefined ? 'underfoot' : step[2]}`);
           realm.engine.submitRevive(b.id, step === undefined ? 'n' : step[2]);
           tally.revived += 1;
           continue;
@@ -321,6 +323,7 @@ function run(site, size, seed) {
           { x: fallen.body.x, y: fallen.body.y },
         );
         if (toFallen !== null) {
+          lastVerb.set(b.id, 'move:toFallen');
           realm.engine.submitMove(b.id, toFallen);
           tally.moved += 1;
           continue;
@@ -335,6 +338,7 @@ function run(site, size, seed) {
        * one are both worth more than a swing you take at 30% health.
        */
       const helpCost = takeHelp(realm.engine, b.id, helps, b);
+      if (helpCost !== null) lastVerb.set(b.id, 'help');
       if (helpCost !== null) {
         tally.helped = (tally.helped ?? 0) + 1;
         // ONLY A PRESS THAT COST A TURN ENDS THE TURN. `no_energy = true` is
@@ -373,6 +377,7 @@ function run(site, size, seed) {
         realm.world.level,
       );
       if (fired) {
+        lastVerb.set(b.id, 'shot');
         tally.shot += 1;
         continue;
       }
@@ -543,6 +548,7 @@ function run(site, size, seed) {
         continue;
       }
       tally.moved += 1;
+      lastVerb.set(b.id, `move:${dir}`);
       const moved = realm.engine.submitMove(b.id, dir);
       /**
        * ═══════════════════════════════════════════════════════════════════════
@@ -667,7 +673,9 @@ function run(site, size, seed) {
       // resolver said no" from "the loop never reached this body".
       const evs = [...(pumped?.playerEvents ?? []), ...(pumped?.sweep ?? [])];
       for (const r of pumped?.refusals ?? []) {
-        console.log(`  [refused t${String(turns)}] ${String(r.id)}: ${String(r.reason)}`);
+        console.log(
+          `  [refused t${String(turns)}] ${String(r.id)}: ${String(r.reason)} verb=${String(lastVerb.get(r.id))}`,
+        );
       }
       console.log(
         `  [ev t${String(turns)}] ${evs.map((e) => `${String(e.t ?? e.k)}${e.reason === undefined ? '' : ':' + String(e.reason)}${e.id === undefined ? '' : '@' + String(e.id)}`).join(' ') || 'none'}`,

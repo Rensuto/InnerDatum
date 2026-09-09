@@ -389,12 +389,32 @@ export function takeShot(engine, actorId, attacks, self, foes, onRefusal, level)
  * every loadout, so a helper built from `cls.loadout` alone finds nothing at all.
  * That is exactly the bug this function exists to fix, so it is spelled out
  * rather than left to whoever reads it next.
+ *
+ * ═══════════════════════════════════════════════════════════════════════════
+ * `affinity === 'ally'` IS NOT THE SAME QUESTION AS "HELPS THE PRESSER".
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * This filtered on affinity alone, and `on_my_whistle` is `Affinity.Ally` —
+ * a party-support talent whose own header says *"`Affinity.Ally` includes
+ * yourself in this engine's targeting, so the refusal is explicit below"*, and
+ * whose `onUse` returns `TalentRefusal.Self` for the caster. `takeHelp` targets
+ * the PRESSER'S OWN TILE, so it pressed a talent that can never work there.
+ *
+ * IT IS ACCEPTED AT SUBMIT AND REFUSED AT RESOLUTION, and a refused player
+ * intent is REFUNDED — so the body spent no energy, was re-prompted, pressed it
+ * again, and the floor's clock stopped. It was the last 900-turn delve stall:
+ *
+ *     [refused t450] p0: no_target verb=help:talent:on_my_whistle
+ *
+ * `TargetShape.Self` is the distinction the function's NAME already made. The
+ * infusions and the rune are `Self`; the whistle is `Single`. Filtering on the
+ * shape asks "can this land on me", which is what a self-help list means.
  */
 export function selfHelp(cls, known, inscribed) {
   return (
     [...(cls.loadout ?? []), ...inscribed]
       .filter((t) => known === undefined || known.has(t.id))
-      .filter((t) => t.targeting?.affinity === 'ally')
+      .filter((t) => t.targeting?.affinity === 'ally' && t.targeting?.shape === 'self')
       // THE PRICE COMES WITH IT, because `no_energy` is the difference between a
       // button you press WHILE fighting and one you spend your turn on. See
       // `takeHelp`, which returns it so the caller can decide whether to swing.
