@@ -81,6 +81,7 @@
 import { inBounds } from '../../shared/coords.ts';
 import { tileAt } from '../../shared/level.ts';
 import { ActorRank, TileCode, isWalkable } from '../../shared/protocol.ts';
+import type { ZoneTileView } from '../../shared/protocol.ts';
 import { TILE_PX, UI_SCALE_MAX, UI_SCALE_MIN, ZOOM_MAX, ZOOM_MIN } from '../../shared/version.ts';
 import { isLowLife, lifeFraction } from '../../shared/vitals.ts';
 import type { TileXY } from '../../shared/coords.ts';
@@ -171,6 +172,46 @@ export const DAMAGE_INK: Readonly<Record<DamageType, string>> = {
   [DamageType.Lightning]: '#006cff',
   [DamageType.Darkness]: PALETTE.GREY_HI,
   [DamageType.Mind]: PALETTE.GOLD,
+};
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE SAME SIX AS A FLOOR WASH — `DAMAGE_INK` WITH TWO ENTRIES OVERRIDDEN.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * FOUR ARE COPIED RATHER THAN RE-CHOSEN, and that is the point: the Case Log
+ * prints "9 fire damage" in `DAMAGE_INK[Fire]`, and a floor wash in some other
+ * red would be two facts about one element that a player has to learn
+ * separately. Consistency across the two surfaces is worth more than a wash
+ * that looks better on its own.
+ *
+ * TWO CANNOT BE COPIED, and neither is a taste call:
+ *
+ *   PHYSICAL is `PARCHMENT` above, and that entry's own note says why — *"a
+ *     colour that means NO COLOUR must be the same ink every other line uses"*.
+ *     That works for a word on a page. A FILL cannot be untinted: parchment
+ *     over a floor tile is a pale rectangle that reads as light, not as hazard,
+ *     and physical is the commonest zone in the game (it is what the Glut
+ *     leaves). It takes a dun instead — debris, rather than the absence of a
+ *     colour.
+ *
+ *   MIND is `GOLD` above, and GOLD is spent elsewhere on this canvas for the
+ *     player's OWN route and cursor. A full-cell gold wash would say "your aim
+ *     is here" on a tile that is actually hurting you, which is the one misread
+ *     that gets somebody killed. It takes a muted violet, clear of `VIOLET_HI`
+ *     (the missing-asset box) and of `CRIMSON` (reserved for "hostiles are
+ *     engaged").
+ *
+ * Both replacements are CHOSEN, not ported — upstream tints its overlay per
+ * effect rather than per damage type, so there is no table to copy. They are
+ * literals rather than `PALETTE` entries for `DAMAGE_INK`'s stated reason: that
+ * set is sampled from the art and folding these in would license their use as
+ * chrome.
+ */
+export const ZONE_WASH_INK: Readonly<Record<DamageType, string>> = {
+  ...DAMAGE_INK,
+  [DamageType.Physical]: '#8a7a5c',
+  [DamageType.Mind]: '#7d5aa6',
 };
 
 /** Tile overlay markers. Every member has an explicit manifest id below. */
@@ -414,6 +455,15 @@ export type Scene = {
    * was drawn towards.
    */
   readonly loot?: readonly LootMarker[];
+  /**
+   * BURNING FLOOR, ALREADY FLATTENED AND ALREADY FOGGED. See `paintZones`.
+   *
+   * `ZoneTileView` off the wire unchanged — one entry per TILE, because the
+   * server collapsed overlapping patches before sending. Absent and empty mean
+   * the same thing, which is `projectiles`' contract and the reason a frame
+   * that empties still has to arrive.
+   */
+  readonly zones?: readonly ZoneTileView[];
   /** The floor's dressing. Absent where there is none — see `paintProps`. */
   readonly props?: readonly PropMarker[];
   /**
@@ -954,6 +1004,32 @@ const ACTOR_CULL_MARGIN_PX = TILE_PX * 3;
  * measures a throw.
  */
 const LOS_SHADE_ALPHA = 0.55;
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * HOW HEAVY A PATCH OF BURNING FLOOR SITS. DERIVED FROM THE SHADE, NOT PICKED.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Half `LOS_SHADE_ALPHA`, and the halving is the argument. A source-over fill at
+ * alpha `a` preserves exactly `(1 - a)` of the contrast beneath it, so the
+ * shade's own note — *"light enough that the floor grid underneath is still
+ * countable, because counting tiles is how a player measures a throw"* — is this
+ * file's measured statement that 45% of the grid has to survive a full-cell
+ * fill. Two zones stacked still leave 49%, which is the worst case and is still
+ * above that line.
+ *
+ * IT MUST BE THE QUIETER OF THE TWO. The shade means "you cannot reach this";
+ * a zone means "something is happening here". A hazard that shouted louder than
+ * the unavailability marker would make the two compete on the one screen where
+ * a player is deciding where to stand.
+ *
+ * ═══ NOT UPSTREAM'S NUMBER, AND THE DIFFERENCE IS THE SHADER ═══
+ * ToME's `MapEffect` overlay is a quad at roughly 100/255 — but it is drawn
+ * THROUGH a shader that carves it into wisps, so what its players actually see
+ * is far lighter than the figure suggests. A flat rectangle at that alpha is
+ * strictly heavier than upstream looks. If a shaped or animated wash ever
+ * ships here, this number should rise toward it.
+ */
+const ZONE_WASH_ALPHA = 0.3;
 /** Corner ticks on the cursor tile: arm length and thickness, in logical px. */
 const CURSOR_TICK_PX = 8;
 const CURSOR_TICK_THICK = 2;
@@ -974,6 +1050,22 @@ const CURSOR_TICK_THICK = 2;
 const PATH_DOT_PX = 6;
 const PATH_DOT_INSET = Math.round((TILE_PX - PATH_DOT_PX) / 2);
 const PATH_DOT_ALPHA = 0.7;
+
+/**
+ * The zone rim: thickness, and the four sides in a fixed order.
+ *
+ * ONE PIXEL, because the floor grid `paintTiles` draws is one pixel and a
+ * hazard's edge must sit in the same visual language as the tile edges it is
+ * measured against. The order is west, east, north, south and is fixed only so
+ * two readings of one frame draw identically.
+ */
+const ZONE_RIM_PX = 1;
+const ZONE_RIM_SIDES: readonly (readonly [number, number])[] = [
+  [-1, 0],
+  [1, 0],
+  [0, -1],
+  [0, 1],
+];
 
 /**
  * AN ORB IN FLIGHT: size and its centring inset.
@@ -2514,6 +2606,87 @@ export function createRenderer(options: RendererOptions): Renderer {
   }
 
   /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * BURNING FLOOR. A wash and a rim, and no art at all.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * DEFINED HERE, DRAWN LATER. The call sits in the ground band between
+   * `paintTargeting` and `paintPath`; only the DEFINITION is here, for
+   * `paintProps`' stated reason directly below — `assets.test.ts` and three
+   * other files guard consecutive source WINDOWS of this file between named
+   * functions, and a painter defined inside one is held to a rule it was never
+   * meant for. This gap, between the end of `paintTargeting` and the start of
+   * `paintProps`, is outside every one of them.
+   *
+   * ═══ `fillRect`, NEVER A SPRITE, AND THAT IS NOT A SHORTCUT ═══
+   * `paintLoot`, `paintProjectiles` and `paintProps` all argue this and it
+   * applies here hardest. `client/public/assets/` is gitignored wholesale, so a
+   * bare clone has no manifest — and `blitSprite` paints a loud violet box on a
+   * miss. A new overlay id would fire the broken-manifest alarm for every player
+   * on a feature that works. A wash draws correctly on a clone with zero PNGs.
+   *
+   * ═══ ABOVE THE LOS SHADE, BELOW THE ROUTE ═══
+   * The world's own hazard is never dimmed by a cell the client greyed: a fire
+   * you can half-see is worse than one you can see, because the whole value of
+   * the thing is deciding where not to stand. Below the route, the furniture and
+   * the loot, because each of those keeps its own ink — `LOOT_DOT_INK`'s tier
+   * ramp is a BRIGHTNESS encoding, and a hue laid over it breaks the axis the
+   * ramp exists on.
+   *
+   * ═══ A RIM AS WELL AS A WASH, BECAUSE ONE ALPHA CANNOT CARRY SIX HUES ═══
+   * `ZONE_WASH_INK` spans a very dark violet to a near-white grey. At a single
+   * alpha the bright ones read and the dark ones nearly vanish against the
+   * darker overworld fills — and hue-alone is exactly what this file refuses
+   * everywhere else. The rim is `paintBarrierEdge`'s rule applied here: value,
+   * not hue. It also gives the patch a countable EDGE, which is the same thing
+   * the floor grid is for.
+   *
+   * DRAWN ONLY ON THE OUTER EDGES — a side is rimmed when the neighbour across
+   * it is not part of the zone. Rimming every cell would draw a lattice and say
+   * "five tiles" where the fire is one shape.
+   *
+   * ═══ ONE `save`/`restore`, AND THE ALPHA IS SET ONCE ═══
+   * A leaked `globalAlpha` is this file's named failure mode, written down three
+   * times: every subsequent sprite in the frame goes translucent, and it *"looks
+   * like a broken PNG rather than like a missing restore"*. The empty-frame
+   * early return is `paintPath`'s: a frame with no fire pays no state change.
+   */
+  function paintZones(cells: readonly ZoneTileView[], camX: number, camY: number): void {
+    if (cells.length === 0) return;
+
+    // THE FOOTPRINT AS A SET, so a cell can ask whether its neighbour is also
+    // burning. Built per frame from a list the server already deduplicated by
+    // tile, so this is a membership test and never a merge.
+    const here = new Set(cells.map((cell) => `${String(cell.x)},${String(cell.y)}`));
+
+    backCtx.save();
+    backCtx.globalAlpha = ZONE_WASH_ALPHA;
+    for (const cell of cells) {
+      const cellX = cell.x * TILE_PX - camX;
+      const cellY = cell.y * TILE_PX - camY;
+      if (!visible(cellX, cellY)) continue;
+
+      backCtx.fillStyle = ZONE_WASH_INK[cell.type];
+      backCtx.fillRect(cellX, cellY, TILE_PX, TILE_PX);
+
+      backCtx.fillStyle = PALETTE.INK;
+      for (const [dx, dy] of ZONE_RIM_SIDES) {
+        if (here.has(`${String(cell.x + dx)},${String(cell.y + dy)}`)) continue;
+        // An INSET rim: drawn inside the cell it belongs to, so two adjacent
+        // patches of different elements each keep their own edge instead of
+        // sharing one line that belongs to neither.
+        backCtx.fillRect(
+          cellX + (dx > 0 ? TILE_PX - ZONE_RIM_PX : 0),
+          cellY + (dy > 0 ? TILE_PX - ZONE_RIM_PX : 0),
+          dx === 0 ? TILE_PX : ZONE_RIM_PX,
+          dy === 0 ? TILE_PX : ZONE_RIM_PX,
+        );
+      }
+    }
+    backCtx.restore();
+  }
+
+  /**
    * DEFINED ABOVE `paintPath`, DRAWN AFTER IT. The call sits in the ground
    * band just before `paintLoot`; only the DEFINITION is here, because
    * `assets.test.ts` guards three consecutive source windows —
@@ -2956,6 +3129,20 @@ export function createRenderer(options: RendererOptions): Renderer {
 
       // The targeting layer, between the terrain and the tokens. See `TargetCell`.
       if (scene.targeting !== undefined) paintTargeting(scene.targeting, camX, camY);
+
+      /**
+       * BURNING FLOOR, ABOVE THE LOS SHADE AND BELOW EVERYTHING ELSE HERE.
+       *
+       * Above the shade because the world's own hazard must not be dimmed by a
+       * cell the CLIENT greyed — the server's fog and this flag are computed on
+       * different sides and disagree at the edges, and of the two possible edge
+       * cases ("a hazard dimmed 55%" and "a hazard drawn on a greyed cell") only
+       * the second leaves the player able to see the thing that is hurting them.
+       *
+       * Below the route, the furniture and the loot, each of which keeps its own
+       * ink. The definition is up beside `paintTargeting`; see its note for why.
+       */
+      if (scene.zones !== undefined) paintZones(scene.zones, camX, camY);
 
       // The travel route, in the same band and for the same reason: ground
       // paint, above the floor and below the token rings. See `Scene.path`.
