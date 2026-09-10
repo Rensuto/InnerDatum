@@ -85,9 +85,12 @@ import { DAMAGE_TYPES } from '../../shared/damagetype.ts';
 import type { DamageType } from '../../shared/damagetype.ts';
 import { applyDamage } from './damage.ts';
 import { areEnemies } from './actor.ts';
+import { hasLineOfSight } from '../../shared/sight.ts';
+import { canWalk } from '../../shared/level.ts';
 import type { TileXY } from '../../shared/coords.ts';
 import type { DamageOutcome } from './damage.ts';
 import type { EngineActor } from './actor.ts';
+import type { LevelView as SightLevel } from '../../shared/protocol.ts';
 
 /**
  * One patch of ground doing something to whoever stands on it.
@@ -239,6 +242,64 @@ export function tickZones(world: ZoneWorld, rng: Parameters<typeof applyDamage>[
   }
 
   return { hits, expired };
+}
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * A ZONE STOPS AT THE WALL IT WAS BORN BESIDE — `engine/Map.lua:1103-1104`.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * ```lua
+ * elseif dir == 5 then
+ *   grids = core.fov.circle_grids(x, y, radius, true)
+ * ```
+ *
+ * THE `true` IS THE BLOCKING FLAG, and it is the entire content of this
+ * function. Upstream's ball is not a disc of coordinates, it is the part of a
+ * disc the centre can actually see — so a cloud released against a wall pools on
+ * one side of it instead of appearing in the corridor beyond.
+ *
+ * ═══ WHY IT IS HERE AND NOT IN `ballTiles` ═══
+ * `engine/talents.ts#ballTiles` takes no level and every talent AoE in the game
+ * goes through it. Teaching it about walls would change the footprint of every
+ * one of them, which reorders `actorsInShape` and therefore the per-target
+ * damage draws — `shared/rng.ts`'s rule again: a different order is a different
+ * replay, and every seed in the suite would move. The zone site filters what it
+ * was handed instead.
+ *
+ * ═══ IT COSTS NOTHING TODAY AND THAT IS NOT THE REASON TO SKIP IT ═══
+ * `tickZones` asks `world.actorAt` per tile and nothing living stands inside a
+ * wall, so the tiles this removes were burning nobody. They are still WRONG,
+ * and they are the list a renderer will draw: without this, the first thing a
+ * player ever sees of a ground zone is fire seeping through masonry.
+ *
+ * ═══ AND THE TILE ITSELF HAS TO BE GROUND, WHICH IS THE HALF UPSTREAM OMITS ═══
+ * `hasLineOfSight` walks the INTERIOR of a Bresenham line, so a wall directly
+ * beside the centre passes it — you can see a wall's face. Upstream's
+ * `circle_grids` behaves the same way and it costs upstream nothing: its
+ * overlay is a particle emitter and nothing stands in masonry either.
+ *
+ * It costs US something, because this list is the authoritative one — the tiles
+ * `tickZones` burns AND the tiles a renderer will wash. Fire drawn on a wall is
+ * fire in a wall as far as a player is concerned. So the tile must also be
+ * somewhere a body could stand, which is `canWalk`, and that clause is ours
+ * rather than a port.
+ *
+ * ═══ THE LIST CAN NEVER COME BACK EMPTY ═══
+ * A tile always has an unobstructed line to itself, and the centre is where a
+ * body was standing a moment ago, so it satisfies both clauses. That matters
+ * because `assertZoneSpec` THROWS on an empty list and `world.addZone` is called
+ * inside the pump, inside a websocket handler, mid-fight. No defensive branch —
+ * the property is the guarantee.
+ */
+export function visibleFrom(
+  level: SightLevel,
+  centre: TileXY,
+  tiles: readonly TileXY[],
+): readonly TileXY[] {
+  return tiles.filter(
+    (tile) => canWalk(level, tile.x, tile.y) && hasLineOfSight(level, centre, tile),
+  );
 }
 
 /**

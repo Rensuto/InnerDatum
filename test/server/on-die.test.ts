@@ -151,6 +151,86 @@ describe('a creature that bursts when it dies', () => {
     expect(table.world.zones(), 'a creature with no onDie row still burst').toEqual([]);
   });
 
+  it('STOPS AT A WALL rather than pooling in the corridor beyond it', () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * `engine/Map.lua:1103-1104` — `core.fov.circle_grids(x, y, radius, true)`.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * The `true` is a blocking flag, so upstream's ball is not a disc of
+     * coordinates: it is the part of a disc the centre can see. `ballTiles`
+     * knows nothing about terrain, so the filter is applied where the zone is
+     * built — see `visibleFrom` for why it cannot go in `ballTiles` itself.
+     *
+     * ═══ ASSERTED BY COORDINATE, NEVER BY COUNT ═══
+     * A `tiles.length` assertion passes under a filter that drops the WRONG
+     * tile, which is the whole shape of "membership is not a rank". The tile in
+     * front of the wall must be present and the one behind it must be absent,
+     * by name.
+     */
+    const table = stage('ondie-wall', { onDie: CLOUD });
+    // A wall due north of where the husk will die, and the tile beyond it.
+    const wall = { x: 6, y: 4 };
+    const beyond = { x: 6, y: 3 };
+    table.world.level.tiles[wall.y * table.world.level.w + wall.x] = TileCode.WALL;
+
+    expect(table.engine.submitMove('p1', 'e').ok).toBe(true);
+    table.engine.pump();
+
+    const tiles = table.world.zones()[0]?.tiles ?? [];
+    expect(tiles, 'the cloud was not laid at all').toContainEqual({ x: 6, y: 5 });
+    // THE TILE IN FRONT SURVIVES and the wall does not. Radius 1 does not reach
+    // `beyond`, so the wall itself is the assertion with teeth here — it is
+    // inside the ball, and `hasLineOfSight` alone would keep it, because that
+    // function walks the INTERIOR of the line and a neighbouring wall has no
+    // interior. `canWalk` is the clause that removes it.
+    expect(tiles, 'the tile in front of the wall was dropped too').toContainEqual({ x: 5, y: 5 });
+    expect(tiles, 'the cloud filled the wall it was born beside').not.toContainEqual(wall);
+    expect(tiles, 'the cloud reached past the wall').not.toContainEqual(beyond);
+  });
+
+  it('does not reach AROUND a wall — the blocking flag, at a radius that shows it', () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * THE RADIUS IS THE FIXTURE. AT ONE, THIS CLAUSE CANNOT BE OBSERVED.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * `visibleFrom` has two clauses and the test above only proves one of them.
+     * Every tile of a radius-1 ball is ADJACENT to the centre, so nothing is
+     * ever behind anything and `hasLineOfSight` is true for all five — deleting
+     * it left that test green. The Glut authors radius 1, so with today's
+     * content the line-of-sight half is unobservable in play.
+     *
+     * It is not unobservable in the helper, and the helper is general: the next
+     * creature or talent to lay a zone will not be radius 1. So this drives the
+     * real death path with a radius-2 row and a wall, where the tile diagonally
+     * behind the wall is inside the ball, is walkable, and must still be absent.
+     */
+    const table = stage('ondie-wall-reach', {
+      onDie: { ...CLOUD, radius: 2 },
+    });
+    // A wall due west of the death tile at (6,5), and the floor beyond it.
+    const wall = { x: 5, y: 5 };
+    const behind = { x: 4, y: 5 };
+    table.world.level.tiles[wall.y * table.world.level.w + wall.x] = TileCode.WALL;
+    // The detective cannot bump east through its own wall, so it kills from the north.
+    const ren = table.world.getActor('p1');
+    if (ren === undefined) throw new Error('fixture: no detective');
+    ren.x = 6;
+    ren.y = 4;
+
+    expect(table.engine.submitMove('p1', 's').ok).toBe(true);
+    table.engine.pump();
+
+    const tiles = table.world.zones()[0]?.tiles ?? [];
+    expect(tiles, 'the cloud was not laid at all').toContainEqual({ x: 6, y: 5 });
+    // Inside the ball, walkable, and on the far side of the wall.
+    expect(tiles, 'the cloud reached around the wall').not.toContainEqual(behind);
+    // ...while the same distance in the clear direction is kept, so this is the
+    // WALL doing the work and not the radius.
+    expect(tiles, 'the cloud lost a tile it had line of sight to').toContainEqual({ x: 8, y: 5 });
+  });
+
   it('burns whoever is standing in it on the following turns', () => {
     /**
      * THE JOIN, not the halves. `zones.test.ts` proves a zone burns; this

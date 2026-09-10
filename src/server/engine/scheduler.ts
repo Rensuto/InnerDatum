@@ -102,7 +102,7 @@ import {
 import { membersOf, partyIdOf } from './party.ts';
 import { combatAPR } from './derived.ts';
 import { applyDamage } from './damage.ts';
-import { tickZones } from './zones.ts';
+import { tickZones, visibleFrom } from './zones.ts';
 import { DAMAGE_TYPES } from '../../shared/damagetype.ts';
 import { DEFAULT_PROJECTILE_DAMAGE_TYPE, stepProjectile } from './projectile.ts';
 import type { Dir, TileXY } from '../../shared/coords.ts';
@@ -3818,19 +3818,28 @@ function noteMonsterDeath(
    * pump and in every pump after it"* — and `OnDeathZone` has no `chance` field
    * for exactly that reason.
    *
-   * ═══ THE TILES ARE WALLED-THROUGH, AND IT IS HARMLESS TODAY ONLY ═══
-   * `ballTiles` does not consult terrain, where upstream's
-   * `core.fov.circle_grids(x, y, radius, true)` (engine/Map.lua:1103-1104)
-   * passes the blocking flag. Nothing living stands in a wall and `actorAt`
-   * only answers with a living body, so today the extra tiles burn nobody. The
-   * day zones are DRAWN, a cloud will appear to seep through a wall — that is
-   * the moment this needs the flag, and this comment is where to start.
+   * ═══ AND IT STOPS AT THE WALLS — `engine/Map.lua:1103-1104`'S BLOCKING FLAG ═══
+   * `ballTiles` does not consult terrain; upstream's
+   * `core.fov.circle_grids(x, y, radius, true)` does, and the `true` is that
+   * flag. `visibleFrom` is it, applied here rather than inside `ballTiles`
+   * because every talent AoE goes through that function and changing its
+   * footprint would reorder `actorsInShape` and move every seed in the suite.
+   *
+   * This paragraph used to say the flag could wait — *"nothing living stands in
+   * a wall … the day zones are DRAWN, a cloud will appear to seep through"* —
+   * and it was right about the harm and wrong about the timing. The tile list
+   * is what a renderer draws, so the flag has to be true BEFORE anything draws
+   * it, not at the same time.
    */
   const leaves = victim.onDie;
   if (leaves !== undefined) {
     run.world.addZone({
       srcId: victim.id,
-      tiles: ballTiles({ x: victim.x, y: victim.y }, leaves.radius),
+      tiles: visibleFrom(
+        run.world.level,
+        { x: victim.x, y: victim.y },
+        ballTiles({ x: victim.x, y: victim.y }, leaves.radius),
+      ),
       type: leaves.type,
       damage: leaves.damage,
       turns: leaves.turns,
