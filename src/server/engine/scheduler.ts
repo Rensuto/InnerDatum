@@ -1440,7 +1440,7 @@ export type PumpResult = {
    * somebody's character.
    *
    * Each id appears exactly ONCE per body, for free: enrolment reads the
-   * outcome's `killed`, which damage.ts:594-597 sets only on the blow that
+   * outcome's `killed`, which `applyDamage` sets only on the blow that
    * crossed zero.
    */
   readonly reaped: readonly string[];
@@ -2830,10 +2830,12 @@ function talentRefusalToRefusal(reason: TalentRefusal): Refusal {
  * `engine/actor.ts`'s old `applyDamage` cleared `pendingIntent` on a killing
  * blow; `damage.ts`'s does not, because damage.ts knows nothing about intents. A
  * body that goes down holding one would resolve it the moment an ally picks them
- * up — a turn nobody took. engine/projectile.ts:619-623 carries the identical
+ * up — a turn nobody took. `stepProjectile`'s own kill arm (engine/projectile.ts)
+ * carries the identical
  * two lines for the identical reason.
  *
- * THE CORPSE-CAMP GUARD SURVIVED THE MOVE: damage.ts:589 still returns an empty
+ * THE CORPSE-CAMP GUARD SURVIVED THE MOVE: `applyDamage`'s `!target.alive` guard
+ * still returns an empty
  * outcome against a body that is already down, which is what the
  * `damage.ts `applyDamage`` row in engine/downed.ts's "what Downed changes"
  * table depends on.
@@ -3900,7 +3902,8 @@ function killedBy(effect: Effect): readonly string[] {
  * the floor mid-sweep stays inside the batch the client is already pacing.
  *
  * Reading `killed` off the effect rather than re-checking `alive` is deliberate:
- * `damage.ts:589` returns an empty outcome against something already down, so
+ * `applyDamage`'s `!target.alive` guard returns an empty outcome against
+ * something already down, so
  * `killed` is true exactly once per body — which is what makes both branches
  * below idempotent for free. A victim hit twice inside one sweep cannot be
  * re-enrolled, cannot re-fire the wipe check, and cannot appear on the reap list
@@ -4006,7 +4009,8 @@ function noteCasualty(effect: Effect, run: Run, sweepTurn: number | null, killer
  *
  * ═══ IDEMPOTENCE IS FREE, AND THEN BOLTED DOWN ANYWAY ═══
  * `killedBy` reads the `killed` flag off the effect rather than re-checking
- * `alive`, and `damage.ts:589` returns an EMPTY outcome against something already
+ * `alive`, and `applyDamage`'s `!target.alive` guard returns an EMPTY outcome
+ * against something already
  * down — so `killed` is true exactly once per body and this runs exactly once per
  * corpse. That is the same property that stops the reap list double-enrolling and
  * `noteKill` double-paying. Clearing the two fields below is belt to that brace:

@@ -66,7 +66,8 @@
  * the argument is `update_shape_only`, so the DAMAGE-AND-DECREMENT pass runs on
  * one tick in ten and the other nine only move particles. ToME's `game.turn`
  * counts ticks; ours counts game turns already, so this hangs off `onGameTurn`
- * (shared/energy.ts:704) and a duration is a count of GAME TURNS. A version
+ * (`tickLevel`'s `ctx.onGameTurn?.(clock)` in shared/energy.ts) and a duration is
+ * a count of GAME TURNS. A version
  * that ticked per pump would burn ten times as fast and read as durations not
  * working.
  *
