@@ -23,6 +23,7 @@ import { REST_MAX_TURNS, RestStop, restStopText } from '../../src/shared/rest.ts
 import { RESOLVE_PER_TURN } from '../../src/server/engine/talents.ts';
 import { createEffectState, setEffect } from '../../src/server/engine/effects.ts';
 import { BLEEDING } from '../../src/server/content/effects.ts';
+import { DamageType } from '../../src/server/engine/damage.ts';
 import { createRng } from '../../src/shared/rng.ts';
 import { TileCode } from '../../src/shared/protocol.ts';
 
@@ -584,6 +585,49 @@ describe('a rest stops when something lands a hit', () => {
     const result = engine.rest('p1');
 
     expect(result.stop, 'the wound was rested off for free').toBe(RestStop.Hurt);
+    expect(body.hp, 'and it stopped early rather than at full health').toBeLessThan(body.maxHp);
+  });
+
+  it('a GROUND ZONE burning the rester ends it too', () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * THE JOIN BETWEEN TWO SYSTEMS THAT WERE BUILT MONTHS APART.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * Upstream's `restStop("taken damage")` hangs off `onTakeHit`
+     * (Player.lua:722-724) and is therefore blind to WHAT hit you — a blow, a
+     * bleed, a patch of burning floor, all the same. Ours reaches the same place
+     * by a different road: the `Hurt` arm scans the turn's `damage` events, and
+     * `tickGroundZones` re-enters every burn as an ORDINARY attack event rather
+     * than inventing a new kind.
+     *
+     * So this works, and it works BY CONSEQUENCE rather than by design — which
+     * is exactly the kind of thing that is true until somebody makes zones their
+     * own event kind for a good reason and silently un-does it. Nothing else in
+     * the suite would notice: the rest tests do not know zones exist and the
+     * zone tests do not know resting does.
+     *
+     * The failure it guards against is not subtle in play. A detective rests in
+     * the cloud a Glut left, heals faster than it burns, and the screen says
+     * "Ready" while their hit points go down.
+     */
+    const { engine, world, body } = scene('rest-in-a-fire');
+    body.hp = 20;
+    // A long fire directly under the rester, so the stop must come from the
+    // BURN rather than from the patch expiring under them.
+    world.addZone({
+      srcId: 'nobody_who_is_here',
+      tiles: [{ x: body.x, y: body.y }],
+      type: DamageType.Fire,
+      damage: 3,
+      turns: 40,
+      selfFire: false,
+      friendlyFire: true,
+    });
+
+    const result = engine.rest('p1');
+
+    expect(result.stop, 'a rest continued inside a burning tile').toBe(RestStop.Hurt);
     expect(body.hp, 'and it stopped early rather than at full health').toBeLessThan(body.maxHp);
   });
 
