@@ -95,7 +95,10 @@ const FULL = {
   // AND THE TWO THE FIXED GUARD BELOW IMMEDIATELY EXPOSED. Both were declared,
   // parsed and serialised the whole time; nothing here had ever exercised them.
   spentStats: { str: 2, con: 1 },
-  lastLearnt: { class: ['talent:crude_blow'], generic: ['talent:second_wind'] },
+  // ALL THREE LISTS, including `stat`. The parser normalises an absent one to
+  // `[]`, so a fixture that named only two would round-trip inexactly — which is
+  // this guard doing its job on the day the third list was added.
+  lastLearnt: { class: ['talent:crude_blow'], generic: ['talent:second_wind'], stat: ['con'] },
   hotbar: ['talent:crude_blow', null, 'talent:lockdown'],
   unlockedTrees: ['generic/leverage'],
   deepenedTrees: ['watch/discipline'],

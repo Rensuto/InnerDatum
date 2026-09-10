@@ -3045,14 +3045,58 @@ const UnlearnSchema = z.strictObject({
  * starts it at 50 and grants no way to raise it, so a seventh row here would be
  * a promise the rest of the system does not keep.
  *
- * NOTHING IS REFUNDABLE, exactly as talents are not, and there is no
+ * ═══ IT IS REFUNDABLE NOW, AND THIS PARAGRAPH USED TO SAY IT WAS NOT ═══
+ * It read: *"NOTHING IS REFUNDABLE, exactly as talents are not, and there is no
  * `unspend_stat`. ToME lets you take a point back only before you confirm the
  * levelup dialog; this game has no screen to confirm, so a point is spent the
- * moment it is sent — which is why the client asks twice before sending one.
+ * moment it is sent."* The first clause stopped being true the day `respec.ts`
+ * shipped a take-back window for TALENT points, and the note stayed — leaving
+ * attributes as the one permanent decision in the game on the stated ground
+ * that everything else was permanent too.
+ *
+ * See `unspend_stat` below.
  */
 const SpendStatSchema = z.strictObject({
   v: envelopeVersion,
   t: z.literal('spend_stat'),
+  stat: z.enum(['str', 'dex', 'con', 'mag', 'wil', 'cun']),
+});
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * `unspend_stat` — "TAKE THAT ATTRIBUTE POINT BACK." LevelupDialog.lua:264-272.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * ```lua
+ * else
+ *   if self.actor_dup:getStat(sid, nil, nil, true) == self.actor:getStat(sid, nil, nil, true) then
+ *     self:subtleMessage("Impossible", "You cannot take out more points!", ...)
+ * ```
+ *
+ * ═══ UPSTREAM BOUNDS IT BY A SITTING; WE BOUND IT BY A COUNT ═══
+ * `actor_dup` is the snapshot `LevelupDialog` takes when it OPENS, so upstream's
+ * rule is "undo anything you did since you opened this screen". There is no
+ * screen here to open or confirm — the panel is not modal and the world keeps
+ * running behind it — so there is no sitting to bound. `RESPEC_WINDOW.stat` is
+ * the bound instead, and it is `STAT_POINTS_PER_LEVEL`: the points a level hands
+ * you, which is the scope a sitting almost always has, since upstream's dialog
+ * is opened BY levelling up.
+ *
+ * ═══ AND IT IS TOWN-GATED, WHICH UPSTREAM'S IS NOT ═══
+ * `isUnlearnable`'s `force_town_respec` is a TALENT rule upstream; `incStat` has
+ * no such clause. It does not need one — by the time you are in a fight your
+ * sitting is long over and the dialog's own bound has closed. Ours has not: a
+ * three-point window outlives the sitting, and without the gate a player could
+ * carry three points as a flexible reserve and re-cut them mid-fight for
+ * whatever is in front of them. The gate restores upstream's EFFECT where its
+ * mechanism does not translate, and it is the same predicate `unlearn` uses, so
+ * "somewhere quiet" means one thing.
+ *
+ * ONE POINT, ONE STAT, NO AMOUNT — `spend_stat`'s own rule, mirrored.
+ */
+const UnspendStatSchema = z.strictObject({
+  v: envelopeVersion,
+  t: z.literal('unspend_stat'),
   stat: z.enum(['str', 'dex', 'con', 'mag', 'wil', 'cun']),
 });
 
@@ -3985,6 +4029,7 @@ export const ClientMsg = z.discriminatedUnion('t', [
   SpendPointSchema,
   UnlearnSchema,
   SpendStatSchema,
+  UnspendStatSchema,
   PickupSchema,
   EquipSchema,
   UseSchema,
@@ -4022,6 +4067,7 @@ export type ClientChooseClass = z.infer<typeof ChooseClassSchema>;
 export type ClientSpendPoint = z.infer<typeof SpendPointSchema>;
 export type ClientUnlearn = z.infer<typeof UnlearnSchema>;
 export type ClientSpendStat = z.infer<typeof SpendStatSchema>;
+export type ClientUnspendStat = z.infer<typeof UnspendStatSchema>;
 export type ClientPickup = z.infer<typeof PickupSchema>;
 export type ClientEquip = z.infer<typeof EquipSchema>;
 export type ClientUse = z.infer<typeof UseSchema>;
@@ -5663,6 +5709,31 @@ export type ProgressMsg = {
    * spend", which draws no column rather than a column of zeroes.
    */
   unspentStats?: number;
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * WHICH ATTRIBUTES ARE STILL INSIDE THE TAKE-BACK WINDOW.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * The short codes of the stats named by `PlayerActor.lastLearnt.stat` — the
+   * last few `spend_stat` presses, capped at one level's grant
+   * (`RESPEC_WINDOW.stat`). The panel draws a `−` on exactly these rows.
+   *
+   * THE SET, NOT THE LEDGER. The order and the multiplicity are the SERVER's
+   * business: three points into Strength is three entries and three separate
+   * take-backs, and a client that knew that would be holding a second copy of
+   * the rule. What it needs is the one bit per row that decides whether to draw
+   * a button.
+   *
+   * SENT EVEN WHEN THE PLAYER IS SOMEWHERE THE REFUND WOULD BE REFUSED, and
+   * that is deliberate: `unlearnable` on `LoadoutTalent` does the same. The
+   * window is the rule a player cannot see and the town gate is the one they
+   * can, so a `−` that answers *"back in town"* teaches the second rule, where a
+   * missing `−` would teach nothing at all.
+   *
+   * OPTIONAL AND ADDITIVE, so no version bump: a client that cannot name it
+   * draws the column it always drew, with no `−` on any row.
+   */
+  unspendableStats?: readonly string[];
   /**
    * THE SIX, AS COMPOSED. Short codes because they are ToME's own
    * (`load.lua:182-189`) and a player who knows that game reads them without a

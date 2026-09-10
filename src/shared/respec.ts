@@ -2,7 +2,10 @@
 // Copyright (C) 2026 Dalton Barraclough
 // Ported from t-engine4 game/modules/tome/class/Actor.lua:4773-4783 (lastLearntTalentsMax, capLastLearntTalents)
 //              t-engine4 game/modules/tome/dialogs/LevelupDialog.lua:343-360 (isUnlearnable)
+//              t-engine4 game/modules/tome/dialogs/LevelupDialog.lua:249-274 (incStat, the stat take-back)
 // T-Engine4 (C) 2009-2018 Nicolas Casalini "DarkGod" — https://te4.org/license
+
+import { STAT_POINTS_PER_LEVEL } from './progression.ts';
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════
@@ -54,10 +57,46 @@
  * this project keeps a `docs/tome-port.md` at all — fifteen years of tuning is
  * the asset, and the places it looks untidy are usually where it was earned.
  */
-export const RESPEC_WINDOW = Object.freeze({ class: 4, generic: 3 });
+export const RESPEC_WINDOW = Object.freeze({
+  class: 4,
+  generic: 3,
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * AND ATTRIBUTES — ONE LEVEL'S GRANT, WHICH IS NOT A NUMBER WE CHOSE.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Upstream has no `last_learnt_stats` to copy. Its stat take-back is bounded
+   * by `actor_dup` — the snapshot `LevelupDialog` makes when it OPENS — and
+   * refuses with *"You cannot take out more points!"* the moment you are back
+   * to it (`LevelupDialog.lua:264-268`). The bound is a SITTING, not a count.
+   *
+   * This game has no dialog to open or confirm, so there is no sitting to
+   * bound. What there is instead is `STAT_POINTS_PER_LEVEL` — the three points
+   * a level hands you (`Actor.lua:3748`) — and a window of exactly that is "the
+   * points this level gave you", which is the scope a sitting almost always
+   * has: upstream's dialog is opened BY levelling up.
+   *
+   * So the number is upstream's grant rather than a figure picked to feel
+   * right, and it lands in the same place: you can undo what you just did, and
+   * you cannot unwind a character.
+   */
+  stat: STAT_POINTS_PER_LEVEL,
+});
 
-/** Which purse a spend came out of. The tree id's namespace decides it. */
-export type Purse = keyof typeof RESPEC_WINDOW;
+/**
+ * Which TALENT purse a spend came out of. The tree id's namespace decides it.
+ *
+ * DELIBERATELY NARROWER THAN `keyof typeof RESPEC_WINDOW`. `stat` is a third
+ * ledger on the same machinery and is NOT a talent purse: widening this type to
+ * include it would let `handleUnlearn`'s `spentFrom` be `'stat'`, and the
+ * compiler would have nothing to say about a talent refunding an attribute
+ * point. `Ledger` below is the wider one, for the three functions that genuinely
+ * do not care which list they are trimming.
+ */
+export type Purse = 'class' | 'generic';
+
+/** Any of the three ledgers. What `noteSpend` and its siblings operate on. */
+export type Ledger = keyof typeof RESPEC_WINDOW;
 
 /**
  * Push a spend onto the ledger, trimming the oldest past the cap.
@@ -73,9 +112,9 @@ export type Purse = keyof typeof RESPEC_WINDOW;
  * permanently unrefundable while the first stayed open, which is a rule nobody
  * could predict.
  */
-export function noteSpend(ledger: readonly string[], talentId: string, purse: Purse): string[] {
-  const next = [...ledger, talentId];
-  const max = RESPEC_WINDOW[purse];
+export function noteSpend(ledger: readonly string[], entryId: string, which: Ledger): string[] {
+  const next = [...ledger, entryId];
+  const max = RESPEC_WINDOW[which];
   // FROM THE FRONT — `table.remove(list, 1)`. Dropping from the back would
   // discard the spend that was just made, which is the one thing a player is
   // most likely to want back.
@@ -92,9 +131,9 @@ export function noteSpend(ledger: readonly string[], talentId: string, purse: Pu
  *
  * @returns the index into `ledger`, or -1 when this talent is not in the window.
  */
-export function unlearnableAt(ledger: readonly string[], talentId: string): number {
+export function unlearnableAt(ledger: readonly string[], entryId: string): number {
   for (let i = ledger.length - 1; i >= 0; i -= 1) {
-    if (ledger[i] === talentId) return i;
+    if (ledger[i] === entryId) return i;
   }
   return -1;
 }

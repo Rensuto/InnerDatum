@@ -147,7 +147,7 @@ import {
 import { LAYOUT_REVISION } from '../../shared/level.ts';
 import { UI_SCALE_MAX, UI_SCALE_MIN, ZOOM_MAX, ZOOM_MIN } from '../../shared/version.ts';
 import { noteSpend } from '../../shared/respec.ts';
-import type { Purse } from '../../shared/respec.ts';
+import type { Ledger } from '../../shared/respec.ts';
 import { readFile, readdir, rename } from 'node:fs/promises';
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { clearTimeout, setTimeout } from 'node:timers';
@@ -484,6 +484,13 @@ export type CharacterFile = {
   readonly lastLearnt?: {
     readonly class?: readonly string[];
     readonly generic?: readonly string[];
+    /**
+     * ATTRIBUTE POINTS, ADDED LATER AND OPTIONAL FOR THAT REASON. A save written
+     * before `unspend_stat` existed simply has no list, which reads as "no
+     * window open" — the honest answer for a character whose points were spent
+     * under a rule that had no take-back.
+     */
+    readonly stat?: readonly string[];
   };
 
   // ═════════════════════════════════════════════════════════════════════════
@@ -1048,6 +1055,13 @@ export type CharacterInit = {
   readonly lastLearnt?: {
     readonly class?: readonly string[];
     readonly generic?: readonly string[];
+    /**
+     * ATTRIBUTE POINTS, ADDED LATER AND OPTIONAL FOR THAT REASON. A save written
+     * before `unspend_stat` existed simply has no list, which reads as "no
+     * window open" — the honest answer for a character whose points were spent
+     * under a rule that had no take-back.
+     */
+    readonly stat?: readonly string[];
   };
   /**
    * ITEMS, PASSED STRAIGHT THROUGH — including the absence.
@@ -1410,19 +1424,27 @@ function parseSpentStats(value: unknown): Record<string, number> | undefined {
  * (`shared/respec.ts`) and a file written by a build with a wider window
  * narrows on load instead of being trusted.
  */
-function parseLastLearnt(value: unknown): { class: string[]; generic: string[] } | undefined {
+function parseLastLearnt(
+  value: unknown,
+): { class: string[]; generic: string[]; stat: string[] } | undefined {
   if (!isRecord(value)) return undefined;
-  const read = (raw: unknown, purse: Purse): string[] => {
+  const read = (raw: unknown, which: Ledger): string[] => {
     if (!Array.isArray(raw)) return [];
     let out: string[] = [];
     for (const entry of raw) {
       if (typeof entry !== 'string' || entry.length === 0) continue;
-      out = noteSpend(out, entry, purse);
+      out = noteSpend(out, entry, which);
     }
     return out;
   };
-  const out = { class: read(value['class'], 'class'), generic: read(value['generic'], 'generic') };
-  return out.class.length === 0 && out.generic.length === 0 ? undefined : out;
+  const out = {
+    class: read(value['class'], 'class'),
+    generic: read(value['generic'], 'generic'),
+    stat: read(value['stat'], 'stat'),
+  };
+  return out.class.length === 0 && out.generic.length === 0 && out.stat.length === 0
+    ? undefined
+    : out;
 }
 
 function parseTalentPoints(value: unknown, problems: string[]): Record<string, number> {
@@ -3457,6 +3479,13 @@ type Binding = {
   readonly lastLearnt?: {
     readonly class?: readonly string[];
     readonly generic?: readonly string[];
+    /**
+     * ATTRIBUTE POINTS, ADDED LATER AND OPTIONAL FOR THAT REASON. A save written
+     * before `unspend_stat` existed simply has no list, which reads as "no
+     * window open" — the honest answer for a character whose points were spent
+     * under a rule that had no take-back.
+     */
+    readonly stat?: readonly string[];
   };
   /**
    * ═══ THE PURSE JOINS THE REQUIRED FOUR, NOT THE OPTIONAL THREE ═══

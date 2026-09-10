@@ -398,6 +398,11 @@ describe('the menu is a PANEL, and its rect is where that is decided', () => {
       // takes none: the sheet grows, three frames go back, and the scheduler
       // never hears about it.
       'unlock_tree',
+      // THE ATTRIBUTE TAKE-BACK. It joins `unlearn` rather than being an
+      // exception to this list's rule: sent from a PANEL press and never from a
+      // key, it neither parks the sender nor issues a standing order — the sheet
+      // shrinks, three frames go back, and the scheduler never hears about it.
+      'unspend_stat',
       // ADDED WITH THE DRAUGHTS. It is a frame the barrier can be made to wait
       // for — drinking costs the turn, exactly as equipping does — which is the
       // property this whole list exists to make somebody decide about on purpose.

@@ -1843,11 +1843,17 @@ let talentFocusId: string | null = null;
 /**
  * WHICH ATTRIBUTE IS ONE PRESS FROM BEING BOUGHT, or null.
  *
- * THE SAME TWO-PRESS RULE THE GRID USES, and for a sharper reason: `spend_stat`
- * has no refund and there is no `unspend_stat`, so a single-click `+` is a
- * permanent decision one twitch away. `pressSpend` owns the arm-then-confirm
- * machine and is reused verbatim — it is keyed on a string id and does not care
- * whether that id names a talent or a stat.
+ * THE SAME TWO-PRESS RULE THE GRID USES. It was written when `spend_stat` had
+ * no refund at all — *"a single-click `+` is a permanent decision one twitch
+ * away"* — and `unspend_stat` has since made that false. It is KEPT anyway: the
+ * take-back window is three points deep and town-gated, so a `+` pressed in a
+ * delve is still not freely undoable, and the arming costs one press. The `−`
+ * beside it is deliberately NOT armed, which is the asymmetry rather than an
+ * inconsistency: an undo behind a confirm protects nothing.
+ *
+ * `pressSpend` owns the arm-then-confirm machine and is reused verbatim — it is
+ * keyed on a string id and does not care whether that id names a talent or a
+ * stat.
  *
  * CLEARED WHEN THE PANEL CLOSES, like `talentsArmedId`: an arming that outlived
  * the screen would confirm on the next press of a `+` the player had not looked
@@ -4703,6 +4709,9 @@ const paintHud: HudPainter = (ctx, width, height) => {
       // the box wants the number.
       categories: progress?.unspentCategories ?? 0,
       armedStat: talentsArmedStat,
+      // WHICH ROWS GET A `−`. The server's answer, never the client's — see
+      // `ProgressMsg.unspendableStats`.
+      unspendableStats: progress?.unspendableStats ?? [],
     });
 
     /**
@@ -10357,6 +10366,8 @@ async function boot(): Promise<void> {
               point.x,
               point.y,
               talentScroll,
+              null,
+              progress?.unspendableStats ?? [],
             );
       const overTalentClose = talentHit?.kind === TalentHitKind.Close;
       if (overTalentClose !== talentsCloseHovered) {
@@ -10369,7 +10380,8 @@ async function boot(): Promise<void> {
       const overTalentRow =
         talentHit !== null &&
         talentHit.kind !== TalentHitKind.Close &&
-        talentHit.kind !== TalentHitKind.Stat
+        talentHit.kind !== TalentHitKind.Stat &&
+        talentHit.kind !== TalentHitKind.UnspendStat
           ? talentHit.index
           : null;
       if (overTalentRow !== talentsHoveredRow) {
@@ -12151,6 +12163,8 @@ async function boot(): Promise<void> {
         point.x,
         point.y,
         talentScroll,
+        talentsArmedId,
+        progress?.unspendableStats ?? [],
       );
       if (hit !== null && hit.kind === TalentHitKind.Close) {
         event.preventDefault();
@@ -12176,6 +12190,23 @@ async function boot(): Promise<void> {
       if (hit !== null && hit.kind === TalentHitKind.Stat) {
         event.preventDefault();
         pressStatPlus(hit.stat);
+        return;
+      }
+      // AND ITS `−`. NOT ARMED, unlike the `+` beside it: a take-back IS the
+      // undo, and a mis-press is recovered by the `+` two pixels away. See
+      // `statMinusRect`.
+      if (hit !== null && hit.kind === TalentHitKind.UnspendStat) {
+        event.preventDefault();
+        if (
+          !socket.send({
+            v: PROTOCOL_VERSION,
+            t: 'unspend_stat',
+            stat: hit.stat,
+          })
+        ) {
+          showNotice('not connected — that did not go out');
+        }
+        requestDraw();
         return;
       }
       /**

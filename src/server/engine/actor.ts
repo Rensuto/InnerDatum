@@ -1032,7 +1032,20 @@ export type PlayerActor = ActorCommon & {
    * which is not what the player did and not what upstream does
    * (`unlearnTalent` is one rank).
    */
-  lastLearnt: { class: string[]; generic: string[] };
+  /**
+   * ═══ AND A THIRD LIST FOR ATTRIBUTE POINTS, ON THE SAME MACHINERY ═══
+   * `stat` holds the last few `spend_stat` presses — the six short codes, in
+   * order, capped at one level's grant. See `RESPEC_WINDOW.stat` for why the
+   * bound is that number and not one we picked: upstream bounds a stat
+   * take-back by the levelup DIALOG's own snapshot, and this game has no dialog
+   * to open or confirm.
+   *
+   * A SEPARATE LIST RATHER THAN A FOURTH PURSE ON THE TALENT ONES, because the
+   * caps differ and because an attribute point and a class point are not
+   * interchangeable currencies — the same reason `unspentGenerics` is its own
+   * field rather than a share of `unspentPoints`.
+   */
+  lastLearnt: { class: string[]; generic: string[]; stat: string[] };
   /**
    * ═══════════════════════════════════════════════════════════════════════════
    * GOLD. A WHOLE NUMBER, NEVER NEGATIVE, AND NOT A DERIVED VALUE.
@@ -1578,7 +1591,7 @@ export function createPlayerActor(id: string, init: PlayerInit): PlayerActor {
     // EMPTY, AND FRESH PER BODY. A shared literal here would give every
     // character in the process one ledger — `Object.freeze`'s absence is the
     // point, these two arrays are written to.
-    lastLearnt: { class: [], generic: [] },
+    lastLearnt: { class: [], generic: [], stat: [] },
     money: STARTING_MONEY,
     pendingLevels: 0,
     cooldowns: new Map<string, number>(),

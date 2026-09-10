@@ -25,6 +25,7 @@ import { createWorld } from '../../src/server/world/world.ts';
 import { AiProfile } from '../../src/server/engine/actor.ts';
 import { createDownedState, goDown } from '../../src/server/engine/downed.ts';
 import { TALENT_MAX_LEVEL, totalPointsAtLevel } from '../../src/shared/progression.ts';
+import { RESPEC_WINDOW } from '../../src/shared/respec.ts';
 import { DEFAULT_ORIGIN, INDEXED, classPointBonus } from '../../src/server/content/origins.ts';
 import { higherHeal } from '../../src/server/talents/higher_heal.ts';
 import { ActorKind, TileCode } from '../../src/shared/protocol.ts';
@@ -1529,5 +1530,170 @@ describe('the extra-point period a returning character comes back holding', () =
       'the default origin’s period leaked onto a body that does not get one',
     ).toBeUndefined();
     expect(body.origin, 'and it is the Indexed that came back, not the fallback').toBe(INDEXED.id);
+  });
+});
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * AND THE OTHER CURRENCY — A MIS-CLICKED ATTRIBUTE POINT. LevelupDialog.lua:264-272.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * ```lua
+ * else
+ *   if self.actor_dup:getStat(sid, nil, nil, true) == self.actor:getStat(sid, nil, nil, true) then
+ *     self:subtleMessage("Impossible", "You cannot take out more points!", ...)
+ * ```
+ *
+ * Upstream bounds this by `actor_dup` — the snapshot the levelup dialog takes
+ * when it OPENS — so its rule is "undo anything you did since you opened this
+ * screen". There is no screen here to open or confirm, so `RESPEC_WINDOW.stat`
+ * is the bound instead: `STAT_POINTS_PER_LEVEL`, the points one level hands you,
+ * which is the scope a sitting almost always has because upstream's dialog is
+ * opened BY levelling up.
+ *
+ * EVERY TEST HERE GOES OVER THE SOCKET, because the half that can be wrong is
+ * not the ledger — `respec.ts` is three pure functions with their own tests —
+ * it is whether the point comes back, whether the SHEET is refolded when it
+ * does, and whether the panel is told.
+ */
+describe('a mis-clicked attribute point can be taken back too', () => {
+  // NO LOCAL `server` AND NO LOCAL `afterEach`. Both live at module scope in
+  // this file; a shadowing pair here left `boot`'s harness assigned to the outer
+  // one and every helper reading `undefined`.
+  /**
+   * A LEVEL-20 BODY, AND THE LEVEL IS THE FIXTURE RATHER THAN DECORATION.
+   * `statCeilingForLevel` is `min(level * 1.4 + 20, ...)`, so a level-1 Watchman
+   * can put at most one or two points into an attribute before the per-level cap
+   * refuses the rest — which silently turned the first draft of these tests into
+   * assertions about the ceiling instead of about the ledger. Twenty puts the
+   * ceiling at 48 and leaves the window the only rule in play.
+   */
+  async function watchmanWithStats(seed: string, points = 6) {
+    server = await boot(seed);
+    playsThe(WATCHMAN, { level: 20 });
+    const ren = await connect(server.port);
+    const body = bodyOf(await ren.hello('ren-handle'));
+    body.unspentStatPoints = points;
+    await ren.settle();
+    return { ren, body };
+  }
+
+  it('gives back the point and the attribute it just bought', async () => {
+    const { ren, body } = await watchmanWithStats('unspend-basic');
+    const before = body.unspentStatPoints;
+
+    ren.send({ t: 'spend_stat', stat: 'str' });
+    await ren.settle();
+    expect(body.spentStats?.str ?? 0).toBe(1);
+    expect(body.unspentStatPoints).toBe(before - 1);
+
+    ren.send({ t: 'unspend_stat', stat: 'str' });
+    await ren.settle();
+
+    expect(body.spentStats?.str ?? 0, 'the point stayed on the sheet').toBe(0);
+    expect(body.unspentStatPoints, 'the point did not come back').toBe(before);
+  });
+
+  it('refuses an attribute that has fallen out of the window', async () => {
+    /**
+     * THE ASSERTION THE WHOLE FEATURE TURNS ON, and the reason it is a WINDOW
+     * rather than an undo: three later presses push the first off the front of
+     * the ledger and it becomes permanent. Without this a character is a draft.
+     */
+    const { ren, body } = await watchmanWithStats('unspend-window', 8);
+    ren.send({ t: 'spend_stat', stat: 'str' });
+    await ren.settle();
+    // Three more, filling the window — `RESPEC_WINDOW.stat` deep.
+    for (let i = 0; i < RESPEC_WINDOW.stat; i += 1) {
+      ren.send({ t: 'spend_stat', stat: 'dex' });
+      await ren.settle();
+    }
+    ren.clear();
+
+    ren.send({ t: 'unspend_stat', stat: 'str' });
+    await ren.settle();
+
+    expect(ren.last('error')?.['code']).toBe('refused');
+    expect(String(ren.last('error')?.['message'])).toMatch(/not one of your last few/i);
+    expect(body.spentStats?.str ?? 0, 'the point came off anyway').toBe(1);
+  });
+
+  it('returns ONE point per press, not every point in that attribute', async () => {
+    // A ledger of PRESSES, not of attributes — `unlearn`'s rule, one currency
+    // over. Three points into Strength is three entries and three take-backs.
+    const { ren, body } = await watchmanWithStats('unspend-one-at-a-time');
+    for (let i = 0; i < 3; i += 1) {
+      ren.send({ t: 'spend_stat', stat: 'con' });
+      await ren.settle();
+    }
+    const purse = body.unspentStatPoints;
+
+    ren.send({ t: 'unspend_stat', stat: 'con' });
+    await ren.settle();
+
+    expect(body.spentStats?.con ?? 0).toBe(2);
+    expect(body.unspentStatPoints).toBe(purse + 1);
+  });
+
+  it('RESIZES THE POOL, because Constitution is hit points', async () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * THE HALF A LEDGER TEST CANNOT SEE, AND THE ONE THAT BITES.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * CON is worth `LIFE_PER_CON` hit points a point and only `refoldBody`
+     * knows it. A take-back that adjusted `spentStats` and stopped there would
+     * leave a body walking around with a ceiling it no longer owns — and the
+     * spend's own docblock records that exact bug having shipped once, in the
+     * other direction, before the seam existed.
+     */
+    const { ren, body } = await watchmanWithStats('unspend-refold');
+    const bare = body.maxHp;
+
+    ren.send({ t: 'spend_stat', stat: 'con' });
+    await ren.settle();
+    const raised = body.maxHp;
+    expect(raised, 'a Constitution point did not move the ceiling').toBeGreaterThan(bare);
+
+    ren.send({ t: 'unspend_stat', stat: 'con' });
+    await ren.settle();
+
+    expect(body.maxHp, 'the ceiling kept hit points nobody owns').toBe(bare);
+  });
+
+  it('refuses an attribute the body has never bought', async () => {
+    const { ren } = await watchmanWithStats('unspend-untouched');
+    ren.clear();
+    ren.send({ t: 'unspend_stat', stat: 'wil' });
+    await ren.settle();
+    expect(ren.last('error')?.['code']).toBe('refused');
+  });
+
+  it('tells the panel which rows are open, and only those', async () => {
+    /**
+     * THE READOUT HALF. A verb with no affordance is a feature no player can
+     * reach — `unlearn`'s note makes the same argument about the loadout — so
+     * `progress` carries the server's own answer and the column draws a `−` on
+     * exactly those rows.
+     *
+     * THE SET, DEDUPED. Two Strength presses are two take-backs and one button.
+     */
+    const { ren } = await watchmanWithStats('unspend-readout');
+    ren.send({ t: 'spend_stat', stat: 'str' });
+    await ren.settle();
+    ren.send({ t: 'spend_stat', stat: 'str' });
+    await ren.settle();
+
+    const open = ren.last('progress')?.['unspendableStats'];
+    expect(open, 'the panel was told nothing').toEqual(['str']);
+
+    ren.send({ t: 'unspend_stat', stat: 'str' });
+    await ren.settle();
+    // One entry left, so the row stays open.
+    expect(ren.last('progress')?.['unspendableStats']).toEqual(['str']);
+
+    ren.send({ t: 'unspend_stat', stat: 'str' });
+    await ren.settle();
+    expect(ren.last('progress')?.['unspendableStats'], 'the last one left it open').toEqual([]);
   });
 });

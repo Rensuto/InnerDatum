@@ -1649,7 +1649,9 @@ const MINUS_PX = 10;
  * ONE FUNCTION, TWO READERS — the painter and the hit test — which is this
  * file's standing rule and matters more here than anywhere else in it: a `+`
  * whose hit box is one row above where it is drawn spends a point on the wrong
- * attribute, and there is no `unspend_stat`.
+ * attribute. There IS an `unspend_stat` now, and it does not soften this: the
+ * window is three points deep and town-gated, so a stray spend in a delve is
+ * still not undoable until you walk out.
  *
  * A HEADING LINE FIRST. `Stats: 3` is what upstream's dialog leads with and it
  * is the only place the count appears on this screen, so the rows start one line
@@ -1687,6 +1689,33 @@ export function statRowRects(box: PanelRect): readonly PanelRect[] {
  */
 export function talentMinusRect(icon: PanelRect): PanelRect {
   return { x: icon.x - 2, y: icon.y - 2, w: MINUS_PX, h: MINUS_PX };
+}
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE TAKE-BACK ON AN ATTRIBUTE ROW, LEFT OF THE `+` AND CLEAR OF IT.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `MINUS_PX` wide, one pixel smaller than the `+` and separated from it by
+ * `STAT_MINUS_GAP` — the same reasoning `talentMinusRect` carries: two controls
+ * that do OPPOSITE things must not be adjacent targets, and the common one must
+ * stay the easy press.
+ *
+ * ═══ IT IS NOT ARMED, AND THE `+` IS ═══
+ * `armedStat` exists because a spend used to be permanent. A take-back is the
+ * undo, and putting an undo behind a confirm is friction protecting nothing: a
+ * mis-pressed `−` is recovered by the `+` two pixels away, which hands the point
+ * straight back. The asymmetry is the point rather than an inconsistency.
+ */
+const STAT_MINUS_GAP = 3;
+
+export function statMinusRect(row: PanelRect): PanelRect {
+  return {
+    x: row.x + row.w - STAT_PLUS_PX - STAT_MINUS_GAP - MINUS_PX,
+    y: row.y + Math.floor((row.h - MINUS_PX) / 2),
+    w: MINUS_PX,
+    h: MINUS_PX,
+  };
 }
 
 export function statPlusRect(row: PanelRect): PanelRect {
@@ -2196,6 +2225,12 @@ export const TalentHitKind = {
    */
   Stat: 'stat',
   /**
+   * AN ATTRIBUTE'S `−` — take one point back. Only ever produced for a stat the
+   * SERVER named in `unspendableStats`, so the column cannot offer a refund the
+   * server will refuse. `Unlearn`'s rule, one currency over.
+   */
+  UnspendStat: 'unspend_stat',
+  /**
    * The header strip, minus the × carved out of its right end: the DRAG HANDLE.
    *
    * IT IS NOT A MEMBER OF `TalentHit`, DELIBERATELY, AND THE SPLIT WAS FORCED BY
@@ -2207,6 +2242,7 @@ export type TalentHitKind = (typeof TalentHitKind)[keyof typeof TalentHitKind];
 
 export type TalentHit =
   | { readonly kind: typeof TalentHitKind.Stat; readonly stat: StatKey }
+  | { readonly kind: typeof TalentHitKind.UnspendStat; readonly stat: StatKey }
   | { readonly kind: typeof TalentHitKind.Close }
   | {
       readonly kind: typeof TalentHitKind.Spend;
@@ -2413,6 +2449,13 @@ export function talentPanelHitAt(
    * report and must not be made to invent one.
    */
   armedId: string | null = null,
+  /**
+   * WHICH ATTRIBUTES THE SERVER SAYS ARE STILL TAKE-BACKABLE. Optional and
+   * defaulting to none, so the hover path and every existing caller keep the
+   * behaviour they had: no `−` is offered unless a server said so, which is the
+   * same contract `unlearnable` gives the grid.
+   */
+  unspendableStats: readonly string[] = [],
 ): TalentHit | null {
   const inside = (r: PanelRect): boolean =>
     px >= r.x && px < r.x + r.w && py >= r.y && py < r.y + r.h;
@@ -2439,6 +2482,12 @@ export function talentPanelHitAt(
       const row = rowRects[i];
       const entry = STAT_ROWS[i];
       if (row === undefined || entry === undefined) continue;
+      // THE `−` IS ASKED FIRST because it is the smaller of the two and they do
+      // not overlap: asking the larger one first would be harmless today and
+      // would silently swallow the small one the day the gap is tightened.
+      if (unspendableStats.includes(entry.key) && inside(statMinusRect(row))) {
+        return { kind: TalentHitKind.UnspendStat, stat: entry.key };
+      }
       if (inside(statPlusRect(row))) return { kind: TalentHitKind.Stat, stat: entry.key };
     }
   }
@@ -2555,7 +2604,13 @@ export function talentIdAt(
   // AN ATTRIBUTE `+` IS NOT A TALENT. It is on the same panel and answers the
   // same hit test, and it has no cell behind it — so it takes the same exit the
   // × does rather than being asked for an index it does not carry.
-  if (hit === null || hit.kind === TalentHitKind.Close || hit.kind === TalentHitKind.Stat) {
+  if (
+    hit === null ||
+    hit.kind === TalentHitKind.Close ||
+    hit.kind === TalentHitKind.Stat ||
+    // AND ITS `−`, for the same reason: an attribute is NAMED, not numbered.
+    hit.kind === TalentHitKind.UnspendStat
+  ) {
     return null;
   }
   return cellAt(rows, hit.index, px, py, rect, scroll)?.id ?? null;
@@ -2634,7 +2689,13 @@ export function talentTipAt(
   // NO CARD OVER AN ATTRIBUTE. There is no cell behind one, and the column
   // already draws its own name and value — a card repeating them would be the
   // same words twice with one copy following the pointer.
-  if (hit === null || hit.kind === TalentHitKind.Close || hit.kind === TalentHitKind.Stat) {
+  if (
+    hit === null ||
+    hit.kind === TalentHitKind.Close ||
+    hit.kind === TalentHitKind.Stat ||
+    // AND ITS `−`, for the same reason: an attribute is NAMED, not numbered.
+    hit.kind === TalentHitKind.UnspendStat
+  ) {
     return null;
   }
 
@@ -2821,6 +2882,8 @@ function drawStats(
   /** As bought. Null against a server that does not send it. See `statBase`. */
   bought: Readonly<Record<string, number>> | null,
   level: number,
+  /** `ProgressMsg.unspendableStats`. Empty means no `−` anywhere. */
+  unspendable: readonly string[],
 ): void {
   if (box.w <= 0 || box.h <= 0) return;
 
@@ -2898,6 +2961,36 @@ function drawStats(
     ctx.fillStyle = capped ? PALETTE.GREY : isArmed ? PALETTE.INK : PALETTE.BONE;
     ctx.textAlign = 'center';
     ctx.fillText(capped ? '–' : '+', plus.x + plus.w / 2, plus.y + plus.h / 2);
+    ctx.textAlign = 'left';
+  }
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * AND THE TAKE-BACK, ON ITS OWN PASS — LevelupDialog.lua:264-272.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * A SECOND LOOP RATHER THAN A BRANCH IN THE FIRST, because the first one is
+   * gated on `unspent <= 0`: with no points in hand it `continue`s before it
+   * draws anything, and that is exactly the state a player is in when they most
+   * want the `−` — they just spent their last point on the wrong row.
+   *
+   * The rule the first loop enforces is upstream's `+` rule; this one is
+   * upstream's `−` rule, and the two genuinely have different preconditions.
+   */
+  for (let i = 0; i < rects.length; i += 1) {
+    const row = rects[i];
+    const entry = STAT_ROWS[i];
+    if (row === undefined || entry === undefined) continue;
+    if (!unspendable.includes(entry.key)) continue;
+
+    const minus = statMinusRect(row);
+    // NO ARMED STATE — see `statMinusRect`. A take-back is the undo, and the
+    // fill is the plain one so the `+` beside it stays the louder control.
+    ctx.fillStyle = PALETTE.SLATE;
+    ctx.fillRect(minus.x, minus.y, minus.w, minus.h);
+    ctx.fillStyle = PALETTE.BONE;
+    ctx.textAlign = 'center';
+    ctx.fillText('−', minus.x + minus.w / 2, minus.y + minus.h / 2);
     ctx.textAlign = 'left';
   }
 }
@@ -3405,10 +3498,16 @@ export type TalentPanelDrawOptions = {
   readonly unspentStats?: number;
   /**
    * WHICH ATTRIBUTE IS ONE PRESS FROM BEING BOUGHT, or null. The same two-press
-   * rule the grid uses and for a sharper reason: there is no `unspend_stat`, so
-   * a single-click `+` is a permanent decision one twitch away.
+   * rule the grid uses. `unspend_stat` exists now and the arming stays — see
+   * `statMinusRect` for why the `−` is the one control here that is not armed.
    */
   readonly armedStat?: string | null;
+  /**
+   * WHICH ATTRIBUTES THE SERVER SAYS ARE STILL TAKE-BACKABLE — `ProgressMsg`'s
+   * `unspendableStats`. A `−` is drawn on exactly these rows and nowhere else,
+   * so the column cannot offer a refund the server will refuse.
+   */
+  readonly unspendableStats?: readonly string[];
 };
 
 /**
@@ -3644,6 +3743,7 @@ export function drawTalentPanel(options: TalentPanelDrawOptions): void {
       // refusal the server would have made anyway, rather than a spend it
       // would not.
       Math.max(1, Math.floor(options.level ?? 1)),
+      options.unspendableStats ?? [],
     );
   }
 

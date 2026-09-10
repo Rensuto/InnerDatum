@@ -329,6 +329,7 @@ import type {
   ClientSpendPoint,
   ClientUnlearn,
   ClientSpendStat,
+  ClientUnspendStat,
   ClientTalent,
   ClientUnequip,
   LoadoutTalent,
@@ -1690,6 +1691,8 @@ export type CharacterSnapshot = {
   readonly lastLearnt?: {
     readonly class?: readonly string[];
     readonly generic?: readonly string[];
+    /** Attribute points. Optional — a save written before the stat window. */
+    readonly stat?: readonly string[];
   };
   /**
    * ═══════════════════════════════════════════════════════════════════════════
@@ -1963,6 +1966,8 @@ export type CharacterRestore = {
   readonly lastLearnt?: {
     readonly class?: readonly string[];
     readonly generic?: readonly string[];
+    /** Attribute points. Optional — a save written before the stat window. */
+    readonly stat?: readonly string[];
   };
   /**
    * Gold, as the file holds it. NOT reconciled against anything, because there
@@ -4889,6 +4894,9 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       // THE OTHER HALF OF A LEVELUP. Read off the COMPOSED sheet, so the six are
       // what the player can see rather than what their class authored.
       unspentStats: viewer.unspentStatPoints,
+      // THE SET, DEDUPED — the ledger's order and multiplicity stay here. See
+      // `ProgressMsg.unspendableStats`: what the panel needs is one bit per row.
+      unspendableStats: [...new Set(viewer.lastLearnt.stat)],
       stats: statSix(viewer.combat ?? {}),
       // AND THE SAME SIX AS BOUGHT — see `ProgressMsg.statBase`. It is what the
       // level ceiling binds on, so a client that greyed a `+` off the COMPOSED
@@ -6845,6 +6853,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       actor.lastLearnt = {
         class: [...(window.class ?? [])],
         generic: [...(window.generic ?? [])],
+        stat: [...(window.stat ?? [])],
       };
     }
 
@@ -9093,6 +9102,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     to.lastLearnt = {
       class: [...from.lastLearnt.class],
       generic: [...from.lastLearnt.generic],
+      stat: [...from.lastLearnt.stat],
     };
     if (from.keybinds !== undefined) to.keybinds = from.keybinds;
     // THE BAG AND THE DOLL, THEN THE SHEET. `equipped` is owned by the equipment
@@ -12965,6 +12975,18 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     body.unspentStatPoints -= 1;
 
     /**
+     * ═══ AND IT GOES ON THE LEDGER, WHICH IS WHAT MAKES IT TAKE-BACKABLE ═══
+     * The same rolling window talent points have had since `respec.ts` shipped,
+     * with its own cap. Pushed AFTER the spend has actually landed, for
+     * `handleSpendPoint`'s reason: a ledger entry for a point that was refused
+     * would offer a `−` that refunds something nobody paid for.
+     */
+    body.lastLearnt = {
+      ...body.lastLearnt,
+      stat: noteSpend(body.lastLearnt.stat, which, 'stat'),
+    };
+
+    /**
      * THE SHEET IS REFOLDED NOW, so every derived number the player is about to
      * read is the one they just bought — INCLUDING THE HIT-POINT CEILING, which
      * is why this goes through the seam rather than calling `recomposeCombat`
@@ -12993,6 +13015,128 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     // will not even send the spend.
     sendLoadoutIfGatesMoved(session);
     sendInventoryIfChanged(session);
+  };
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * `unspend_stat` — "TAKE THAT ATTRIBUTE POINT BACK." LevelupDialog.lua:264-272.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * The other half of `spend_stat`, and `handleUnlearn`'s shape exactly, one
+   * currency over. `ClientUnspendStat` in shared/protocol.ts carries the port
+   * argument: upstream bounds a stat take-back by the levelup dialog's own
+   * snapshot, this game has no dialog, and `RESPEC_WINDOW.stat` is the bound
+   * instead — one level's grant, which is upstream's number rather than one
+   * picked to feel right.
+   *
+   * ═══ THREE RULES, IN THE ORDER `handleUnlearn` CHECKS ITS THREE ═══
+   *   1. IS IT IN THE WINDOW? A stat the ledger does not name cannot come back.
+   *      Checked FIRST because it is the rule a player cannot see — a body in a
+   *      delve holding a point spent four presses ago should be told the thing
+   *      that will still be true when they walk out.
+   *   2. IS THIS A QUIET PLACE? `isShared`, the same predicate `unlearn` uses.
+   *      Upstream has no town clause on `incStat` and does not need one; see the
+   *      protocol note for why ours does.
+   *   3. IS THERE A POINT THERE TO TAKE? `spentStats` at the floor cannot go
+   *      lower, and the ledger and the sheet disagreeing is a bug rather than a
+   *      player action — so it refuses rather than clamping silently.
+   *
+   * NON-PUMPING, with the rest of its group: a refund must not buy the sender a
+   * free monster turn.
+   */
+  const handleUnspendStat = (session: Session, msg: ClientUnspendStat): void => {
+    const { world } = realmFor(session);
+    const actorId = session.actorId;
+    if (actorId === null) {
+      sendError(session.socket, ErrorCode.NotAuthenticated, 'send hello before unspending');
+      return;
+    }
+    const body = world.getActor(actorId);
+    if (body === undefined) {
+      sendError(session.socket, ErrorCode.Internal, 'your body is not in the world');
+      return;
+    }
+    if (body.kind !== ActorKind.Player) {
+      sendError(session.socket, ErrorCode.Internal, 'that body holds no attribute points');
+      return;
+    }
+    /**
+     * A BODY ON THE FLOOR IS REFUSED, exactly as the spend refuses one. It is
+     * not a balance rule — a downed detective spending points is simply not a
+     * thing the panel is open for — and refusing both directions is what keeps
+     * "you are on the floor" one sentence rather than two behaviours.
+     */
+    if (!body.alive) {
+      sendError(
+        session.socket,
+        ErrorCode.NotYourTurn,
+        'refused: you are on the floor — get back on your feet first',
+      );
+      return;
+    }
+
+    const at = unlearnableAt(body.lastLearnt.stat, msg.stat);
+    if (at < 0) {
+      sendError(
+        session.socket,
+        ErrorCode.Refused,
+        `that ${msg.stat} point is not one of your last few — a point settles once you have moved on.`,
+      );
+      return;
+    }
+
+    // THE QUIET PLACE. `realmFor` answers a `PumpTarget` rather than a realm, so
+    // the kind is looked up separately; a build with no realm table is a single
+    // test world with no delve to be standing in and answers "quiet", which is
+    // `handleUnlearn`'s reasoning and the reason every fixture can reach this.
+    const kind = opts.realms?.get(realmFor(session).id)?.kind;
+    if (kind !== undefined && !isShared(kind)) {
+      sendError(
+        session.socket,
+        ErrorCode.Refused,
+        'not here — you could think this over somewhere quiet, back in town.',
+      );
+      return;
+    }
+
+    const which: keyof PrimaryStats = msg.stat;
+    const spent = body.spentStats?.[which] ?? 0;
+    if (spent <= 0) {
+      // THE LEDGER AND THE SHEET DISAGREE. Not reachable by any sequence of
+      // verbs; said out loud rather than clamped, because a silent clamp here
+      // would mint a point out of a bookkeeping error.
+      sendError(session.socket, ErrorCode.Internal, `no ${msg.stat} point on the sheet to take`);
+      return;
+    }
+
+    const shrunk = { ...(body.spentStats ?? {}) };
+    shrunk[which] = spent - 1;
+    body.spentStats = shrunk;
+    body.unspentStatPoints += 1;
+    body.lastLearnt = { ...body.lastLearnt, stat: dropSpend(body.lastLearnt.stat, at) };
+
+    /**
+     * REFOLDED THROUGH THE SEAM, for the spend's reason turned around: CON is
+     * worth four hit points a point, so a body that gives one back has to have
+     * its CEILING resized in the same breath. `refoldBody` is the one thing that
+     * knows how, and calling `recomposeCombat` here instead is the exact bug the
+     * spend's note records having shipped once already.
+     */
+    refoldBody(session, body);
+    realmFor(session).engine.notePresence?.(actorId);
+
+    sendProgress(session);
+    // AND THE HOTBAR, IF THAT POINT JUST CLOSED A GATE. The mirror of the
+    // spend's `sendLoadoutIfGatesMoved`: dropping Willpower 20 -> 19 re-locks a
+    // tier-2 tree, and a panel still drawing it unlocked would let the client
+    // send a spend the server is about to refuse.
+    sendLoadoutIfGatesMoved(session);
+    sendInventoryIfChanged(session);
+
+    app.log.info({ actorId, stat: msg.stat }, 'attribute point taken back');
+    // IMMEDIATE, for the talent refund's reason: the two halves of a refund must
+    // not have different durability, or a crash between them is a lost point.
+    saveNow('unspend_stat');
   };
 
   const handleSpendPoint = (session: Session, msg: ClientSpendPoint): void => {
@@ -15387,6 +15531,9 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       // belongs to is not a modal. See `handleSpendStat`.
       case 'spend_stat':
         handleSpendStat(session, msg);
+        return;
+      case 'unspend_stat':
+        handleUnspendStat(session, msg);
         return;
       // ALSO NON-PUMPING, and the FOURTH member of this group rather than an
       // exception to it — the group's own rule, stated once more because this is

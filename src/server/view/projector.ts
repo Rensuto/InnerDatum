@@ -1878,10 +1878,16 @@ function toItemView(item: Item, drinker?: Combatant): Omit<ItemView, 'compare'> 
  *
  * `LevelupDialog.lua:850-909` (`getStatDesc`) puts this under the pointer
  * BEFORE the press, and upstream can afford to hardcode its coefficients
- * because its dialog can be cancelled. Ours cannot: `unspend_stat` is a
- * documented deliberate omission (protocol.ts) and the take-back window covers
- * talent points only. A stat point here is permanent, and the column is six
- * three-letter codes and a `+`.
+ * because its dialog can be cancelled. This used to say ours could not —
+ * *"`unspend_stat` is a documented deliberate omission and the take-back window
+ * covers talent points only. A stat point here is permanent"* — which stopped
+ * being true when that window grew a third ledger. A point is takeable back for
+ * three presses now, in a quiet place.
+ *
+ * The list still matters, and arguably more: the window is SHALLOW and the
+ * ceiling is per level, so the press worth getting right is still the first
+ * one, and it is now the only one a player can be told about before they make
+ * it AND after.
  *
  * ═══ MEASURED BY MOVING THE STAT, NOT BY LISTING THE COEFFICIENTS ═══
  * The obvious port is upstream's list — "Accuracy +1", "Defence +0.35". It
