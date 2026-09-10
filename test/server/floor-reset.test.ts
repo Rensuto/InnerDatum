@@ -1,6 +1,7 @@
 import { parseItemId } from '../../src/server/content/resolve.ts';
 import { describe, expect, it, vi } from 'vitest';
 
+import { DamageType } from '../../src/server/engine/damage.ts';
 import { seedTestEncounter } from '../../src/server/content/encounter.ts';
 import { ITEMS } from '../../src/server/content/items.ts';
 import { AiProfile, IntentKind } from '../../src/server/engine/actor.ts';
@@ -617,6 +618,43 @@ describe('a floor reset clears the floor of items too', () => {
     stuck.engine.pump();
 
     expect(stuck.world.groundItems()).toEqual([]);
+  });
+
+  it('CLEARS EVERY GROUND ZONE — the fifth table, and it burns the wrong party', () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * THE HOLE THE ITEM NOTE PREDICTED, ONE TABLE LATER.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * `resetFloor`'s own comment says every one of its first four tables *"was
+     * added to this function only after a party found the hole in a voice
+     * channel"*, and that the item line was *"written down before it can be"*.
+     * Ground zones landed one commit later as a fifth table and did not reach
+     * it, so the streak was about to run to five.
+     *
+     * IT BITES HARDER THAN THE LOOT DOES, and in the opposite direction. Loot
+     * left behind is a consolation prize; fire left behind is damage from a
+     * fight that has been undone, landing on a party that has just been put
+     * back on its own spawn tiles with no way to put it out — a zone outlives
+     * its caster on purpose (`tickZones`), and after a reset there is no caster
+     * and no monster left to have lit it.
+     */
+    const stuck = scene('reset-clears-zones');
+    stuck.world.addZone({
+      srcId: 'p1',
+      tiles: [{ x: 22, y: 20 }],
+      type: DamageType.Fire,
+      damage: 5,
+      turns: 20,
+      selfFire: false,
+      friendlyFire: false,
+    });
+    expect(stuck.world.zones()).toHaveLength(1);
+
+    stuck.knockDown('p1');
+    stuck.engine.pump();
+
+    expect(stuck.world.zones(), 'the fight was undone and its fire was not').toEqual([]);
   });
 
   it('leaves NO ground item surviving into the re-seeded floor', () => {

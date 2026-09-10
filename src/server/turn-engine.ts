@@ -705,6 +705,24 @@ function resetFloor(
   // bodies that each take their own spawn-time roll (content/encounter.ts). The
   // floor is worth the same as it was, and it is worth it again only by fighting.
   for (const item of world.groundItems()) world.removeGroundItem(item.id);
+  /**
+   * ...AND THE FIFTH TABLE, WHICH THE NOTE ABOVE PREDICTED.
+   *
+   * That note says every one of the previous four *"was added to this function
+   * only after a party found the hole in a voice channel"*, and that the items
+   * line was *"written down before it can be"*. Ground zones (engine/zones.ts)
+   * landed one commit ago as a fifth table and did not reach this function, so
+   * the streak was about to run to five.
+   *
+   * THE HOLE IS THE SAME ONE, POINTING THE OTHER WAY. A reset means the fight
+   * did not happen: the orbs are recalled and the loot is wiped because a wipe
+   * must not pay. Fire is the inverse — a party that wiped in a burning room
+   * would be re-seeded INTO a fire lit by a fight that has been undone, standing
+   * on their own spawn tiles, taking damage from a source that no longer exists.
+   * A zone outlives its caster on purpose (`tickZones`), which is exactly what
+   * makes this one bite: nothing else would ever put it out.
+   */
+  for (const zone of world.zones()) world.removeZone(zone.id);
   reseedFloor(world);
 
   // 3 — out of combat.
