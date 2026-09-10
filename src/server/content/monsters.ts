@@ -227,7 +227,7 @@
  */
 
 import { AiProfile } from '../engine/actor.ts';
-import { DamageType } from '../engine/damage.ts';
+import { DAMAGE_TYPES, DamageType } from '../engine/damage.ts';
 import {
   LIFE_PER_CON,
   RANK_VALUE,
@@ -242,7 +242,7 @@ import { ITEMS, itemById } from './items.ts';
 import { resolveLevelup, resolveMBonus, resolveRngAvg } from './resolvers.ts';
 import type { TileXY } from '../../shared/coords.ts';
 import { BLEED_POWER, EffectId } from './effects.ts';
-import type { MonsterInit, OnHitStatus } from '../engine/actor.ts';
+import type { MonsterInit, OnDeathZone, OnHitStatus } from '../engine/actor.ts';
 import type { CombatSheet } from '../engine/combat.ts';
 import type { ItemTier } from './items.ts';
 
@@ -479,6 +479,28 @@ export type MonsterTemplate = {
    * seeded stream for any creature that declined it.
    */
   readonly onHit?: OnHitStatus;
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * WHAT THIS CREATURE LEAVES ON THE FLOOR WHEN IT DIES — see `OnDeathZone`.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Upstream's carrion worm mass (`general/npcs/vermin.lua:82-91`) is the shape:
+   * a body that is not much of a fight and whose DEATH is the threat. Its
+   * cloud is `getStr(90, true)` — Strength times nine tenths — over five turns
+   * in radius two, which against its own `rngavg(5,9)` life is a patch of
+   * ground worth several times the creature that left it.
+   *
+   * SPARSE FOR `onHit`'S REASON, and more so. A roster where everything bursts
+   * is a roster with no floor left to stand on, and the tactic a death cloud
+   * creates — kill it somewhere you do not need to be — only exists while most
+   * things do not have one.
+   *
+   * Absent costs nothing: `noteMonsterDeath` guards on it and takes no draw
+   * either way, so adding this field moved no seeded stream for any creature
+   * that declines it.
+   */
+  readonly onDie?: OnDeathZone;
 
   /**
    * ═══════════════════════════════════════════════════════════════════════════
@@ -2078,6 +2100,60 @@ export const INDEX_GLUT: MonsterTemplate = Object.freeze({
    * to use this, which is not a sentence that was true of the wraith.
    */
   talents: ['talent:grasping_hold'],
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * AND IT BURSTS. The first `on_die` in the game — see `OnDeathZone`.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Ported in SHAPE from the carrion worm mass (`general/npcs/vermin.lua:82-91`),
+   * whose whole design is a body that is not much of a fight and whose death is
+   * the threat. The Glut is this roster's nearest thing to it: slow, engorged,
+   * absorbs everything, and — by the complaint written into this template's own
+   * notes — *"a wall you can simply walk away from is not a wall."* Grasping
+   * Hold answered half of that. This answers the other half: killing it is no
+   * longer free of consequence for the tile you killed it on.
+   *
+   * ═══ THE NUMBERS ARE NOT UPSTREAM'S, AND THE REASON IS THE STAT SCALE ═══
+   * The worm's cloud is `getStr(90, true)`, i.e. Strength times nine tenths
+   * (`engine/interface/ActorStats.lua:134-139`, `val * scale / max`). Ported
+   * raw onto a Glut that grows Strength through `autoStats` that is twenty to
+   * thirty damage a turn, against a party whose whole round is about fifty —
+   * upstream can price it that way because its worm has `rngavg(5,9)` life and
+   * ours has fifty to seventy. Copying the constant would import a number whose
+   * denominator we do not share.
+   *
+   * SO IT IS ANCHORED TO THE ONE PER-TURN DAMAGE THIS GAME ALREADY PRICES.
+   * `BLEED_POWER` is the game's existing answer to "what is damage every turn
+   * worth", chosen against a swing of about four and a half, and a burst is
+   * that same per-turn figure spread over ground instead of into one body. What
+   * makes it worth more than a bleed is the AREA and the denial, not a bigger
+   * number — which is also why the radius is one rather than upstream's two: a
+   * radius-two ball is thirteen tiles, and thirteen tiles of a forty-square
+   * floor is not a hazard, it is a wall.
+   *
+   * RADIUS ONE IS THE FIVE-TILE PLUS, the same shape the Alchemic Vial throws,
+   * so a player already knows how to read it at a glance.
+   *
+   * ═══ PHYSICAL, AND DARKNESS WAS THE OBVIOUS WRONG ANSWER ═══
+   * Darkness is the Index's own element and would have been the flavour pick.
+   * It is also the element this creature HALF-RESISTS and the Cairn resists
+   * outright, so a darkness burst would have been a pure party-punisher with
+   * the counterplay quietly deleted. Physical is what nothing on the roster
+   * shrugs off, and it is the type `BLEED_POWER` is already priced in.
+   *
+   * ═══ `friendlyFire` IS UPSTREAM'S DEFAULT AND IT IS THE TACTIC ═══
+   * `Map.lua:1090-1091` defaults both flags to TRUE and the worm passes
+   * neither, so its gas takes worms too. Kept: letting the Glut die among its
+   * own is a real thing to arrange, and a burst that politely spared the roster
+   * would be a punishment with no upside.
+   */
+  onDie: {
+    radius: 1,
+    type: DamageType.Physical,
+    damage: BLEED_POWER,
+    turns: 4,
+    friendlyFire: true,
+  },
   // Grows into what it already leads with. See `autoStats`.
   autoStats: ['con', 'str'],
   id: 'index_glut',
@@ -2974,6 +3050,7 @@ export function monsterInit(template: MonsterTemplate, at: TileXY, level: number
     projSpeed: template.projSpeed,
     talentIn: template.talentIn,
     onHit: template.onHit,
+    onDie: template.onDie,
     combat,
   };
 }
@@ -3011,6 +3088,42 @@ export function validateTemplate(template: MonsterTemplate): readonly string[] {
   const combat = template.combat;
   const reach = combat.range ?? template.attackRange;
   const deadZone = combat.minRange ?? 0;
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE DEATH ROW IS CHECKED HERE RATHER THAN INHERITED, AND THE PRECEDENT IS
+   * THE REASON WHY.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `onHit` is not validated at all — no `effectId` on any template is checked
+   * against the catalogue — so copying that precedent would copy a hole.
+   *
+   * IT MATTERS MORE FOR THIS ROW THAN IT WOULD FOR THAT ONE. `world.addZone`
+   * calls `assertZoneSpec`, which THROWS; and the call site is inside
+   * `noteMonsterDeath`, inside the pump, inside a websocket handler, in the
+   * middle of a fight. A misspelled damage type or a `turns: 0` would take the
+   * process down the first time that creature died rather than failing at
+   * import, which is where every other content mistake in this file fails.
+   *
+   * The checks are `assertZoneSpec`'s own, asked one step earlier — except the
+   * tile list, which is computed from `radius` at death and cannot be wrong if
+   * the radius is not.
+   */
+  const dies = template.onDie;
+  if (dies !== undefined) {
+    if (!DAMAGE_TYPES.includes(dies.type)) {
+      problems.push(`${where} onDie.type '${dies.type}' is not one of the damage types`);
+    }
+    if (!Number.isFinite(dies.damage) || dies.damage <= 0) {
+      problems.push(`${where} onDie.damage must be positive`);
+    }
+    if (!Number.isInteger(dies.turns) || dies.turns <= 0) {
+      problems.push(`${where} onDie.turns must be a whole number of game turns`);
+    }
+    if (!Number.isFinite(dies.radius) || dies.radius < 0) {
+      problems.push(`${where} onDie.radius must not be negative`);
+    }
+  }
 
   if (template.maxHp <= 0) problems.push(`${where} maxHp must be positive`);
   if (template.globalSpeed <= 0) problems.push(`${where} globalSpeed must be positive`);

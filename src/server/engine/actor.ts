@@ -1174,6 +1174,8 @@ export type MonsterActor = ActorCommon & {
   talentIn?: number;
   /** What a landed blow from this creature also inflicts. See `OnHitStatus`. */
   readonly onHit?: OnHitStatus;
+  /** What this creature leaves on the floor when it dies. See `OnDeathZone`. */
+  readonly onDie?: OnDeathZone;
   /** Which side. `Redacted` for the whole bestiary; see `Faction`. */
   readonly faction: Faction;
   readonly ai: MonsterAi;
@@ -1218,6 +1220,70 @@ export type OnHitStatus = {
   readonly power?: number;
   /** Magnitude: Bleeding's damage per turn, Slowed's fraction. */
   readonly magnitude?: number;
+};
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * WHAT A CREATURE LEAVES ON THE FLOOR WHEN IT DIES — `on_die`.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Upstream dispatches this from `engine/interface/ActorLife.lua:91`
+ * (`self:check("on_die", src, death_note)`), reached from
+ * `tome/class/Actor.lua:2975`, and an ordinary NPC authors it as a closure:
+ *
+ * ```lua
+ * -- general/npcs/vermin.lua:82-91, the carrion worm mass
+ * on_die = function(self, src)
+ *   game.level.map:addEffect(self, self.x, self.y, 5,
+ *     engine.DamageType.BLIGHT, self:getStr(90, true), 2, 5, nil, ...)
+ *   game.logSeen(self, "%s exudes a corrupted gas as it dies.", ...)
+ * end,
+ * ```
+ *
+ * ═══ A ROW, NOT A CLOSURE, WHICH IS `OnHitStatus`'S ARGUMENT EXACTLY ═══
+ * That type's docblock says it: *"ToME's melee riders are rows on the NPC, not
+ * branches in the attack"*, and CLAUDE.md refuses a general op-interpreter for
+ * the same reason it refuses one for talents. A closure per creature would be a
+ * scripting language; a row is a fact the scheduler can read without knowing
+ * what content exists.
+ *
+ * SO THIS ROW SAYS ONE THING: leave a ground zone where the body fell. That is
+ * what the overwhelming majority of upstream's `on_die` bodies do, and the ones
+ * that do something else (a xorn buffing its siblings, an achievement) are not
+ * shapes this game has anything to hang on yet.
+ *
+ * ═══ NO `chance`, AND THAT IS A REPLAY RULE RATHER THAN A DESIGN ONE ═══
+ * `OnHitStatus` could afford `power` because a save roll already happens at the
+ * one site that applies it. A death cannot afford a roll at all: `spillLoot`'s
+ * docblock and `applyDamage`'s kill branch both forbid a draw at the moment a
+ * body dies, because one `rng.percent()` there moves every subsequent draw in
+ * the pump and in every pump after it. A chance-gated death cloud would need
+ * `world.lootRng` and a decision taken at SPAWN, which is where the drop roll
+ * already lives.
+ */
+export type OnDeathZone = {
+  /**
+   * How far from the body, in the `ballTiles` sense — Euclidean, so radius 1 is
+   * the five-tile plus and the diagonals at 1.41 are outside it.
+   *
+   * Upstream's worm mass passes 2 with `dir = 5` (a circle) at Map.lua:1103.
+   */
+  readonly radius: number;
+  /** One of the six. Refused at author time — see `validateTemplate`. */
+  readonly type: DamageTypeValue;
+  /** Per tile, per GAME turn. Flat, through the projector: no armour stage. */
+  readonly damage: number;
+  /** GAME turns the patch lasts. */
+  readonly turns: number;
+  /**
+   * Does it burn the creature's own kind? BOTH DEFAULT TRUE UPSTREAM and this
+   * row makes that explicit rather than implicit: `Map.lua:1090-1091` is
+   * `if selffire == nil then selffire = true end`, and the worm mass passes
+   * neither — so its gas takes everything standing in it, worms included. That
+   * is the counterplay, and a row that quietly spared the roster would delete
+   * it.
+   */
+  readonly friendlyFire: boolean;
 };
 
 /**
@@ -1505,6 +1571,8 @@ export type MonsterInit = {
   readonly talentIn?: number;
   /** A status this creature's landed blows inflict. See `OnHitStatus`. */
   readonly onHit?: OnHitStatus;
+  /** A patch of ground this creature's death leaves. See `OnDeathZone`. */
+  readonly onDie?: OnDeathZone;
   /**
    * Which side. DEFAULTS TO `Redacted`, so every existing roster entry is
    * byte-identical and no seeded stream moves.
@@ -1718,6 +1786,12 @@ export function createMonsterActor(id: string, init: MonsterInit): MonsterActor 
     // that inflicts nothing must reach `strike`'s guard and take the branch it
     // has always taken, with no draw and no seeded-stream shift.
     onHit: init.onHit,
+    // AND THE SAME LINE FOR THE DEATH ROW. This constructor is field-by-field
+    // on purpose and a spread is forbidden, so an omitted row is dropped in
+    // SILENCE — `MonsterTemplate.talents` shipped exactly that way once, with
+    // typecheck, lint and the whole suite green. `onDie` is named here for that
+    // reason and `test/server/monster-init-carried.test.ts` is the guard.
+    onDie: init.onDie,
     // DEFAULTED, not required: the three roster templates author nothing, so
     // they stay exactly the bodies they were.
     faction: init.faction ?? Faction.Redacted,

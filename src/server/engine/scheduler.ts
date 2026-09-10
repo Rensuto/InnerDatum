@@ -86,7 +86,7 @@ import {
   spendTurn,
 } from './actor.ts';
 import { AttackRefusal, attackTarget, canAttack } from './combat.ts';
-import { TalentRefusal } from './talents.ts';
+import { TalentRefusal, ballTiles } from './talents.ts';
 import { inQuorum, isBlocking } from './barrier.ts';
 import {
   DownedTick,
@@ -1549,12 +1549,13 @@ function resolveStatusHits(run: Run, sweepTurn: number | null): void {
     // and it keeps the note advisory rather than authoritative.
     if (victim.alive) continue;
 
-    run.reaped.push(victim.id);
-    if (hit.sourceId !== null) {
-      run.ctx.talents?.noteKill(hit.sourceId);
-      awardExperience(run, hit.sourceId, victim);
-    }
-    spillLoot(run, victim, sweepTurn);
+    // THE SAME BURIAL THE BLOW LANE PERFORMS, and it is the same CALL now
+    // rather than the same four lines. See `noteMonsterDeath`: this site keeps
+    // its own way of deciding who died — a tick produces no `Effect` and the
+    // note above says why manufacturing one would be a lie — and hands the body
+    // over. `hit.sourceId` is nullable here and unconditional there, which is
+    // why that function takes a nullable killer.
+    noteMonsterDeath(run, victim, hit.sourceId, sweepTurn);
   }
 }
 
@@ -3737,6 +3738,140 @@ function tickGroundZones(run: Run, sweepTurn: number | null): void {
   for (const id of tick.expired) world.removeZone(id);
 }
 
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * A MONSTER IS BURIED. THE FOUR THINGS THAT HAPPEN, IN ONE PLACE AT LAST.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * ═══ THERE WERE TWO BURIAL SITES AND ONLY ONE OF THEM WAS OBVIOUS ═══
+ * `noteCasualty` handles every BLOW-driven death across six lanes. It is not the
+ * only one: `resolveStatusHits` buries a monster killed by a bleed and does the
+ * same four things INLINE, deliberately, because `noteCasualty` derives its
+ * victims from an `Effect` and a damage-over-tick produces none — its own note
+ * says manufacturing a fake outcome *"would put a lie in the one structure the
+ * Record lane reads back"*.
+ *
+ * That reasoning is still right, and it is an argument about the ARGUMENT, not
+ * about the body. So the body moves here and both callers keep their own way of
+ * deciding who died. The duplication was survivable while it was four lines; it
+ * stopped being survivable the moment a fifth thing had to happen on death,
+ * because a fifth thing added to one site and not the other is invisible — a
+ * creature bled out rather than hit would simply not do it, and nothing in the
+ * suite would go red.
+ *
+ * ═══ THE KILLER MAY BE NOBODY, WHICH IS WHY THE ID IS NULLABLE ═══
+ * `noteCasualty` always has one. `resolveStatusHits` has `hit.sourceId`, which
+ * is `string | null` — a bleed whose author has already been buried. `noteKill`
+ * and `awardExperience` are the two that need a name and they are skipped when
+ * there is none, exactly as that site skipped them before. The reap, the spill
+ * and the death row do not care who did it.
+ *
+ * ═══ THE ORDER IS UPSTREAM'S AND IT IS NOT AN IMPLEMENTATION DETAIL ═══
+ * `Actor:die` (tome/class/Actor.lua:2975) reaches `engine/interface/ActorLife.lua:91`,
+ * whose `self:check("on_die", src, death_note)` fires BEFORE the experience
+ * award at Actor.lua:2983-2988 and before the drop spill at :3011-3060. So:
+ * enrol, then the death row, then the credit, then the pockets.
+ *
+ * Putting the row after `spillLoot` would also read a body whose `carried` and
+ * `equipped` that function has already emptied.
+ */
+function noteMonsterDeath(
+  run: Run,
+  victim: MonsterActor,
+  killerId: string | null,
+  sweepTurn: number | null,
+): void {
+  /**
+   * A MONSTER JOINS THE REAP LIST. IT IS NOT REMOVED HERE.
+   *
+   * `tome/class/Actor.lua:2975` -> `engine/interface/ActorLife.lua:86-94`
+   * removes the entity as the last act of dying. We enrol instead and let the
+   * caller bury the body, because the Record lane still has to NAME it: it
+   * re-resolves ids through `world.getActor` after the pump has returned, so a
+   * body deleted here narrates as "someone 0/0" and an orb in flight loses its
+   * shooter. See `PumpResult.reaped`.
+   */
+  run.reaped.push(victim.id);
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * AND WHAT THE BODY LEAVES ON THE FLOOR — `on_die`. See `OnDeathZone`.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * ```lua
+   * -- general/npcs/vermin.lua:82-91
+   * on_die = function(self, src)
+   *   game.level.map:addEffect(self, self.x, self.y, 5,
+   *     engine.DamageType.BLIGHT, self:getStr(90, true), 2, 5, nil, ...)
+   * ```
+   *
+   * ═══ THE BODY IS STILL ON ITS TILE, WHICH IS THE WHOLE REASON THIS SLOT ═══
+   * `spillLoot`'s note already states the property this depends on: the corpse
+   * is enrolled rather than removed, so `victim.x/y` is still the tile it died
+   * on until the caller buries it after the pump returns. A zone placed after
+   * the reap would have nowhere to go.
+   *
+   * ═══ IT TAKES NO DRAW, AND THAT IS LOAD-BEARING RATHER THAN INCIDENTAL ═══
+   * `world.addZone` advances a monotonic counter and nothing else.
+   * `spillLoot`'s docblock is an outright prohibition on drawing at the moment
+   * of death — one `rng.percent()` here *"moves every subsequent draw in that
+   * pump and in every pump after it"* — and `OnDeathZone` has no `chance` field
+   * for exactly that reason.
+   *
+   * ═══ THE TILES ARE WALLED-THROUGH, AND IT IS HARMLESS TODAY ONLY ═══
+   * `ballTiles` does not consult terrain, where upstream's
+   * `core.fov.circle_grids(x, y, radius, true)` (engine/Map.lua:1103-1104)
+   * passes the blocking flag. Nothing living stands in a wall and `actorAt`
+   * only answers with a living body, so today the extra tiles burn nobody. The
+   * day zones are DRAWN, a cloud will appear to seep through a wall — that is
+   * the moment this needs the flag, and this comment is where to start.
+   */
+  const leaves = victim.onDie;
+  if (leaves !== undefined) {
+    run.world.addZone({
+      srcId: victim.id,
+      tiles: ballTiles({ x: victim.x, y: victim.y }, leaves.radius),
+      type: leaves.type,
+      damage: leaves.damage,
+      turns: leaves.turns,
+      // A DEAD SOURCE CANNOT BE SPARED, so this is `false` rather than a
+      // decision: `tickZones` reads `selfFire` against a body that is about to
+      // leave the world, and the corpse is not standing anywhere by the time
+      // the first tick comes round.
+      selfFire: false,
+      friendlyFire: leaves.friendlyFire,
+    });
+  }
+
+  if (killerId !== null) {
+    /**
+     * ═════════════════════════════════════════════════════════════════════
+     * AND THE KILLER IS PAID. THE ONE PLACE IN THE GAME THAT DOES.
+     * ═════════════════════════════════════════════════════════════════════
+     *
+     * `TalentResolution.noteKill` has the full argument. In short: the only two
+     * callers of `TalentEngine.noteKill` were inside engine/talents.ts's own
+     * damage helpers, so the basic weapon swing — which is where most of an
+     * Alchemist's kills come from — paid nothing, her eight reagents drained
+     * monotonically, and her whole hotbar answered `no_resource` permanently.
+     *
+     * `killed` is true exactly once per body (`applyDamage` returns an empty
+     * outcome against something already down), so this cannot double-pay a
+     * party of four racing the same husk — the same property that makes the
+     * reap enrolment above idempotent.
+     */
+    run.ctx.talents?.noteKill(killerId);
+    // AND THE EXPERIENCE, ON THE SAME LINE OF REASONING AND FOR THE SAME REASON
+    // IT IS HERE RATHER THAN IN A TALENT. See `awardExperience`.
+    awardExperience(run, killerId, victim);
+  }
+
+  // ...AND THE BODY EMPTIES ITS POCKETS ONTO THE TILE IT FELL ON. See
+  // `spillLoot`: it takes NO DRAW, and it is here rather than at the kill site
+  // in damage.ts for exactly that reason.
+  spillLoot(run, victim, sweepTurn);
+}
+
 /** Every body this effect killed. Empty for anything that killed nothing. */
 function killedBy(effect: Effect): readonly string[] {
   if (effect.kind === 'attack') return effect.killed ? [effect.targetId] : [];
@@ -3787,35 +3922,17 @@ function noteCasualty(effect: Effect, run: Run, sweepTurn: number | null, killer
      * unrecoverable rather than merely wrong.
      */
     if (victim.kind === ActorKind.Monster) {
-      run.reaped.push(victim.id);
       /**
-       * ═════════════════════════════════════════════════════════════════════
-       * AND THE KILLER IS PAID. THE ONE PLACE IN THE GAME THAT DOES.
-       * ═════════════════════════════════════════════════════════════════════
+       * THE FOUR THINGS, AND THEY ARE NO LONGER WRITTEN OUT HERE. See
+       * `noteMonsterDeath`: `resolveStatusHits` buries a monster too and had
+       * its own copy of this block, which is fine for four lines and stops
+       * being fine the moment a fifth thing has to happen on death.
        *
-       * `TalentResolution.noteKill` has the full argument. In short: the only
-       * two callers of `TalentEngine.noteKill` were inside engine/talents.ts's
-       * own damage helpers, so the basic weapon swing — which is where most of
-       * an Alchemist's kills come from — paid nothing, her eight reagents
-       * drained monotonically, and her whole hotbar answered `no_resource`
-       * permanently with `noteStairs` unreachable in a floor that has no stairs.
-       *
-       * HERE, because `killed` is true exactly once per body (damage.ts:589
-       * returns an empty outcome against something already down), so this cannot
-       * double-pay a party of four racing the same husk — the same property that
-       * makes the reap enrolment above idempotent.
-       *
-       * MONSTERS ONLY, and that falls out of the branch rather than needing a
-       * guard: nothing pays for putting a PLAYER down, which is the arm below.
+       * MONSTERS ONLY, and that still falls out of the branch rather than
+       * needing a guard: nothing pays for putting a PLAYER down, which is the
+       * arm below.
        */
-      run.ctx.talents?.noteKill(killerId);
-      // AND THE EXPERIENCE, ON THE SAME LINE OF REASONING AND FOR THE SAME
-      // REASON IT IS HERE RATHER THAN IN A TALENT. See `awardExperience`.
-      awardExperience(run, killerId, victim);
-      // ...AND THE BODY EMPTIES ITS POCKETS ONTO THE TILE IT FELL ON. See
-      // `spillLoot`: it takes NO DRAW, and it is here rather than at the kill
-      // site in damage.ts for exactly that reason.
-      spillLoot(run, victim, sweepTurn);
+      noteMonsterDeath(run, victim, killerId, sweepTurn);
       continue;
     }
 
