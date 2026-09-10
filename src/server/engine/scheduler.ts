@@ -102,6 +102,7 @@ import {
 import { membersOf, partyIdOf } from './party.ts';
 import { combatAPR } from './derived.ts';
 import { applyDamage } from './damage.ts';
+import { tickZones } from './zones.ts';
 import { DAMAGE_TYPES } from '../../shared/damagetype.ts';
 import { DEFAULT_PROJECTILE_DAMAGE_TYPE, stepProjectile } from './projectile.ts';
 import type { Dir, TileXY } from '../../shared/coords.ts';
@@ -1818,6 +1819,10 @@ export function pump(world: World, ctx: PumpCtx): PumpResult {
       // The level-wide port of `checkStillInCombat` (Actor.lua:7648-7669).
       // Per-turn rather than per-pump, so decay counts turns and not commands.
       updateEngagement(world, actors, ctx, sink, true);
+      // AND WHAT THE FLOOR ITSELF IS DOING. See `tickGroundZones` -- this hook
+      // is upstream's once-per-game-turn modulo and the zone pass is what it
+      // was written for.
+      tickGroundZones(run, null);
     },
 
     maxTicks: ctx.maxTicks ?? DEFAULT_MAX_TICKS,
@@ -3663,6 +3668,73 @@ function noteRetaliation(
   const retaliationEffect: Effect = { kind: 'attack', ...blow };
   noteBlows(retaliationEffect, run);
   noteCasualty(retaliationEffect, run, sweepTurn, defender.id);
+}
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * WHAT THE FLOOR ITSELF DOES, ONCE A GAME TURN — Map.lua:1231-1254.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `engine/zones.ts` carries the rule; this is where it is spent, and the
+ * PLACEMENT is the half that file cannot state.
+ *
+ * ═══ ON `onGameTurn`, WHICH IS UPSTREAM'S OWN CADENCE ═══
+ * `Game.lua:1737` is `processEffects(self.turn % 10 ~= 0)` — the argument is
+ * `update_shape_only`, so the damage-and-decrement pass runs on one tick in ten
+ * and the other nine only move particles. ToME's `game.turn` counts TICKS and
+ * ours counts game turns, so this hook IS that modulo. Hung off the pump
+ * instead, a four-turn fire would be gone before anybody finished a sentence.
+ *
+ * ═══ AFTER `updateEngagement`, AND IT IS NOT ARBITRARY ═══
+ * A zone can kill, and a kill is what `updateEngagement` reads the board for.
+ * Burning first would let the engagement decay be computed against a body that
+ * is about to stop existing this same instant; burning after means the floor's
+ * damage lands on a board whose combat state has already been settled for the
+ * turn, exactly as a monster's swing does.
+ *
+ * ═══ THE BODIES ARE ENROLLED, NOT BURIED — `noteCasualty`'S RULE ═══
+ * A zone hit is re-entered as a one-blow `attack` effect attributed to the
+ * ZONE'S SOURCE, which is `noteGuardCounter`'s argument one more time:
+ * `noteCasualty` spends exactly one `killerId` on the kill credit and the
+ * experience, and a fire that killed something has a killer — the body that lit
+ * it. A zone whose source has left the world still burns (see `tickZones`), and
+ * `noteCasualty` handles an unknown killer id the way it always has.
+ */
+function tickGroundZones(run: Run, sweepTurn: number | null): void {
+  const { world } = run;
+  const tick = tickZones(world, world.rng);
+
+  for (const hit of tick.hits) {
+    const victim = world.getActor(hit.victimId);
+    // `hp` and `at` one line after the burn, for `strike`'s reason: a `Blow`
+    // snapshots the two things that stop being true immediately.
+    const blow: Blow = {
+      targetId: hit.victimId,
+      hit: true,
+      crit: false,
+      type: hit.outcome.type,
+      damage: hit.outcome.dealt,
+      killed: hit.outcome.killed,
+      hp: victim?.hp ?? 0,
+      maxHp: victim?.maxHp ?? 0,
+      at: { x: victim?.x ?? 0, y: victim?.y ?? 0 },
+    };
+
+    // THE ORDINARY `attacked` EVENT — no new event kind and therefore no
+    // protocol bump, which is the same argument the guard counter and the
+    // spikes both make. Standing in a fire is being hit by it.
+    if (sweepTurn === null) run.sink.push(attackedEvent(hit.srcId, blow));
+    else run.sink.sweep(sweepTurn, { t: 'attack', id: hit.srcId, ...blow });
+
+    const effect: Effect = { kind: 'attack', ...blow };
+    noteBlows(effect, run);
+    noteCasualty(effect, run, sweepTurn, hit.srcId);
+  }
+
+  // AND THE BURNT-OUT ONES GO, HERE RATHER THAN INSIDE THE WALK. `tickZones`
+  // returns the ids for `PumpResult.reaped`'s reason — a table that deleted its
+  // own rows mid-walk is the classic way to skip one.
+  for (const id of tick.expired) world.removeZone(id);
 }
 
 /** Every body this effect killed. Empty for anything that killed nothing. */

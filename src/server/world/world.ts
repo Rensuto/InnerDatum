@@ -52,8 +52,10 @@ import { createRng } from '../../shared/rng.ts';
 import { resolveItem } from '../content/resolve.ts';
 import { createMonsterActor, createPlayerActor } from '../engine/actor.ts';
 import { createProjectile } from '../engine/projectile.ts';
+import { assertZoneSpec } from '../engine/zones.ts';
 import { recomposeCombat } from '../engine/effects.ts';
 import type { Dir, TileXY } from '../../shared/coords.ts';
+import type { GroundZone, ZoneSpec } from '../engine/zones.ts';
 import type { TurnClock } from '../../shared/energy.ts';
 import type { AuthoredMap } from '../../shared/level.ts';
 import type { LevelView } from '../../shared/protocol.ts';
@@ -616,6 +618,27 @@ export type World = {
    * since pickup takes the FIRST item on the tile, that is a different item.
    */
   groundItems(): readonly GroundItem[];
+
+  // --- ground zones ---------------------------------------------------------
+  // A FOURTH TABLE, on the third one's terms. See `engine/zones.ts`: a zone is
+  // a fact about a SET of tiles rather than one, it has a countdown nothing
+  // else does, and it is walked once per game turn by the scheduler — none of
+  // which the item table can carry without becoming two tables wearing one name.
+
+  /**
+   * Put a patch of ground down. The id is the world's to give.
+   *
+   * NO TERRAIN CHECK, for `addGroundItem`'s reason and one more: upstream
+   * computes a zone's tiles with `core.fov.circle_grids` and hands them over
+   * (Map.lua:1103), so the SHAPE is the caller's answer and the walls were
+   * already consulted there. A second opinion here would silently disagree with
+   * the preview the player was shown.
+   */
+  addZone(spec: ZoneSpec): string;
+  /** Every zone on this map, in the order it was placed. See `zones.ts`. */
+  zones(): readonly GroundZone[];
+  /** It burnt out, or the floor reset. @returns false for an unknown id. */
+  removeZone(id: string): boolean;
   /**
    * One tile's items, in that same stable order. Empty is the common case.
    *
@@ -706,6 +729,7 @@ export function createWorld(
    * `actorAt` makes for its linear scan a few lines down.
    */
   const ground = new Map<string, GroundItem>();
+  const groundZones = new Map<string, GroundZone>();
   // THE FOURTH TABLE. See `Prop` for why furniture is not an actor.
   const props = new Map<string, Prop>();
   /**
@@ -717,6 +741,7 @@ export function createWorld(
   let projectileSeq = 0;
   /** Same rule, its own counter, so a projectile id and an item id never collide. */
   let groundSeq = 0;
+  let zoneSeq = 0;
   let propSeq = 0;
 
   const turn: TurnState = {
@@ -1184,6 +1209,26 @@ export function createWorld(
     return id;
   };
 
+  const addZone = (spec: ZoneSpec): string => {
+    zoneSeq += 1;
+    const id = `zone_${String(zoneSeq)}`;
+    /**
+     * NOT FROZEN, and it is the only member of these four tables that is not.
+     * `turnsLeft` is a countdown the scheduler decrements in place once a game
+     * turn (`tickZones`), which is the whole shape of the thing. The TILES are
+     * frozen — they are fixed at creation upstream too (Map.lua:1093-1108) and
+     * a caller that kept its array and edited it later would be moving fire
+     * that the client has already drawn.
+     */
+    groundZones.set(id, {
+      ...assertZoneSpec(spec),
+      id,
+      tiles: Object.freeze([...spec.tiles]),
+      turnsLeft: spec.turns,
+    });
+    return id;
+  };
+
   const addGroundItem = (cell: TileXY, itemId: string): string => {
     groundSeq += 1;
     const id = `ground_${groundSeq}`;
@@ -1240,6 +1285,13 @@ export function createWorld(
     addGroundItem,
     removeGroundItem: (id: string): boolean => ground.delete(id),
     groundItems: (): readonly GroundItem[] => [...ground.values()],
+    addZone,
+    // INSERTION ORDER, and it is load-bearing rather than incidental: the
+    // scheduler walks this list once a game turn and every burn it applies can
+    // take a draw. Two zones laid on the same turn must tick in the order they
+    // were laid, on every machine and in every replay.
+    zones: (): readonly GroundZone[] => [...groundZones.values()],
+    removeZone: (id: string): boolean => groundZones.delete(id),
     addProp,
     props: (): readonly Prop[] => [...props.values()],
     itemsAt,
