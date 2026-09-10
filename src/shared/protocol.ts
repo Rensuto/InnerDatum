@@ -1667,20 +1667,105 @@ export type ProjectileView = {
  *
  * An empty array means the sky is clear. Never a patch — see `ProjectileView`.
  *
- * ═══ IT IS A BROADCAST TODAY AND MUST MOVE TO `ViewerMsg` WITH PER-PLAYER FOV ═══
- * A projectile's tile is a POSITION, and a position is exactly the class of fact
- * the FOV projector exists to gate: an orb crossing an unexplored room tells you
- * something is shooting in it and roughly where from. Fog of war is still level-
- * wide (there is one `LevelView` and one actor list for everybody), so shipping
- * this to the room leaks nothing that `ActorView` does not already leak. THE DAY
- * PER-PLAYER FOV LANDS, THIS FRAME MOVES INTO `ViewerMsg` IN THE SAME COMMIT —
- * `BroadcastMsg` is `Exclude`-derived, so that move is one line here and a
- * compile error everywhere it was being broadcast.
+ * ═══ IT IS A BROADCAST, AND IT IS GATED — THE OLD NOTE HERE SAID NEITHER ═══
+ * This paragraph used to read *"Fog of war is still level-wide … shipping this
+ * to the room leaks nothing that `ActorView` does not already leak. THE DAY
+ * PER-PLAYER FOV LANDS, THIS FRAME MOVES INTO `ViewerMsg` IN THE SAME COMMIT"*.
+ * Per-player FOV landed. `projectProjectiles` takes eyes and drops any orb no
+ * eye can see, and the frame did NOT move — correctly.
+ *
+ * It stays a broadcast because eyes are realm-wide and unioned (`eyesIn`), so
+ * every viewer computes the same visible set and every copy is byte-identical.
+ * The trigger the old note named was the wrong one: what would force
+ * `ViewerMsg` is eyes becoming PARTY-scoped, not FOV existing. `ZonesMsg` below
+ * carries the same reasoning, said once and correctly.
  */
 export type ProjectilesMsg = {
   v: typeof PROTOCOL_VERSION;
   t: 'projectiles';
   projectiles: readonly ProjectileView[];
+};
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * ONE TILE OF BURNING FLOOR. `map:addEffect`'s overlay, reduced to what draws.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * ═══ A TILE, NOT A ZONE, AND THE JOIN IS DONE SERVER-SIDE ═══
+ * The server holds `GroundZone` objects with an id, a tile list, a countdown, a
+ * source and two friendly-fire flags. None of that is drawable. What a painter
+ * needs is "this cell, this colour", so the projector flattens every zone into
+ * tiles and hands over the flat list — one entry per tile, even where two zones
+ * overlap.
+ *
+ * That collapse is deliberate and it is where the OVERLAP RULE lives: two
+ * patches on one cell are one wash, and the one that shows is the one that
+ * hurts most. A client given both would have to decide, and deciding is exactly
+ * what a renderer must not do — `LootMarker` is grouped server-side for the same
+ * reason.
+ *
+ * ═══ WHAT IS DELIBERATELY ABSENT ═══
+ * No `id`, no `srcId`, no `damage`, no `turnsLeft`, no flags.
+ *
+ *   `damage` and the flags — `ProjectileView`'s rule verbatim: *"a client that
+ *     knew it could decide whether to bother dodging"*. Whether a fire is worth
+ *     crossing is a judgement the player makes from the fiction, not a number
+ *     the server hands them.
+ *   `srcId` — it names a body that is very often DEAD. `tickGroundZones`
+ *     attributes each burn to it in the ordinary attack event and redacts there;
+ *     a second copy on a persistent frame would leak a corpse's identity for as
+ *     long as its fire burned.
+ *   `turnsLeft` — nothing draws a countdown, and including it would change the
+ *     broadcast memo's key EVERY GAME TURN for every burning zone. That is a
+ *     frame per turn per fire for a fact nobody reads. It belongs in the commit
+ *     that draws a fade, not before.
+ *
+ * `type` is the ONE thing that travels beyond position, because the wash is
+ * tinted by element and the client is banned from computing damage anything.
+ */
+export type ZoneTileView = {
+  x: number;
+  y: number;
+  /** Which element. The renderer's tint key, and nothing else reads it. */
+  type: DamageType;
+};
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * EVERY BURNING TILE THE PARTY CAN SEE. Complete and absolute, like the sky.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * An empty array means the floor is clear, and it is SENT rather than withheld —
+ * a zone burning out is exactly the transition a gated frame would swallow,
+ * leaving fire on the screen that is not on the map.
+ *
+ * ═══ SEEN NOW, NEVER REMEMBERED — AND UPSTREAM SETTLES IT ═══
+ * There are two precedents here and they disagree. Ground items are drawn on any
+ * tile you have WALKED PAST, because `engine/Object.lua:28-29` gives an object
+ * `display_on_remember = true`. A map effect does not: `calcEffectVisibility`
+ * builds `e.seen_grids` out of `self.seens` and `displayEffects` walks only that
+ * (`engine/Map.lua:1154-1167` and :1170-1226) — `self.remembers` is never
+ * consulted. So a zone follows the ORB's rule, not the coat's: it is drawn where
+ * you can see right now, and a fire you walked past is not on your screen.
+ *
+ * That is also the right rule for what it is. Remembered fire is a promise the
+ * server is not keeping: the patch may have burnt out three turns ago, and a
+ * player routing around a fire that is no longer there is worse served than one
+ * who has to look.
+ *
+ * ═══ A BROADCAST, AND THE REASON IS `eyesIn` RATHER THAN GOOD MANNERS ═══
+ * It is absent from `ViewerMsg`, and that omission IS the declaration —
+ * `BroadcastMsg` is `Exclude`-derived. The frame is per-tile FOV-gated, and it
+ * can still be broadcast because eyes are realm-wide and unioned, so every
+ * viewer in the realm computes the identical set and every copy is byte-
+ * identical. THAT IS A PROPERTY OF `eyesIn`, NOT OF THIS FRAME: the day eyes
+ * become party-scoped, this moves into `ViewerMsg` in the same commit, and
+ * `Exclude` makes that one line here and a compile error at every send site.
+ */
+export type ZonesMsg = {
+  v: typeof PROTOCOL_VERSION;
+  t: 'zones';
+  /** Flat, in the order the projector walked. Empty means the floor is clear. */
+  tiles: readonly ZoneTileView[];
 };
 
 /**

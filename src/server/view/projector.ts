@@ -141,6 +141,8 @@ import type {
   PartyStateMsg,
   ProjectileView,
   ProjectilesMsg,
+  ZoneTileView,
+  ZonesMsg,
   ResourceMsg,
   ResourceView,
   TurnActor,
@@ -1665,6 +1667,81 @@ export function projectProjectiles(world: World, eyes?: readonly SightEye[]): Pr
   }
 
   return { v: PROTOCOL_VERSION, t: 'projectiles', projectiles };
+}
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * EVERY BURNING TILE THE PARTY CAN SEE — `engine/Map.lua:1154-1226`.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * ```lua
+ * -- calcEffectVisibility, engine/Map.lua:1154-1167
+ * e.seen_grids = {}
+ * for lx, ys in pairs(e.grids) do for ly, _ in pairs(ys) do
+ *   if self.seens(lx, ly) then e.seen = true; e.seen_grids[lx][ly] = true end
+ * ```
+ *
+ * ═══ PER TILE, SEEN NOW, AND NEVER REMEMBERED ═══
+ * `displayEffects` (:1170-1226) iterates `seen_grids` and never touches
+ * `self.remembers`. So a zone gates like an ORB and not like a coat: the loot
+ * frame uses `knownTile` (seen OR remembered) because `engine/Object.lua:28-29`
+ * gives an object `display_on_remember = true`, and a map effect has no such
+ * flag. Half a zone showing is upstream's own behaviour — you see the part of
+ * the fire that is in your light.
+ *
+ * ═══ `sightRadiusOf`, NOT THE DEFAULT — THE CONVENIENT CALL IS THE WRONG ONE ═══
+ * `knownTilesFor` would have been one line and would have adopted BOTH mistakes
+ * at once: the remembered rule above, and `canSee`'s default radius, which
+ * silently discards a body's own sight modifiers. `projectProjectiles` takes the
+ * per-eye radius and so does this.
+ *
+ * ═══ THE ZONE'S OWN WALLS ARE ALREADY GONE, AND THIS IS A DIFFERENT QUESTION ═══
+ * `visibleFrom` (engine/zones.ts) filtered the tile list when the zone was
+ * created, from the ZONE'S CENTRE — that is upstream's `circle_grids` blocking
+ * flag and it decides the fire's SHAPE. This decides who can SEE that shape, per
+ * viewer, and the two are unrelated: a zone in the next room has a perfectly
+ * good shape that nobody can see.
+ *
+ * ═══ ONE ENTRY PER TILE. THE HOTTEST ZONE WINS ═══
+ * Two patches on one cell are one wash. The client cannot decide which — a
+ * renderer that picked would be holding a rule — so the choice is made here and
+ * it is the one that hurts most, with the newer zone breaking a tie because it
+ * is the one the player just watched land. `LootMarker` groups server-side for
+ * exactly this reason.
+ *
+ * `eyes` OPTIONAL, like every projector here: absent means an ungated frame for
+ * a fixture or the GM console. The gateway always passes them, and
+ * `test/server/frame-fog.test.ts` is what holds it to that.
+ */
+export function projectZones(world: World, eyes?: readonly SightEye[]): ZonesMsg {
+  /** Tile key -> the entry that wins it, plus what it beat. */
+  const claimed = new Map<string, { view: ZoneTileView; damage: number }>();
+
+  for (const zone of world.zones()) {
+    for (const tile of zone.tiles) {
+      if (
+        eyes !== undefined &&
+        !eyes.some((eye) => canSee(world.level, eye, tile, sightRadiusOf(eye)))
+      ) {
+        continue;
+      }
+      const key = `${String(tile.x)},${String(tile.y)}`;
+      const held = claimed.get(key);
+      /**
+       * ONLY A STRICTLY HOTTER INCUMBENT HOLDS THE TILE, so an equal newcomer
+       * TAKES it — and `world.zones()` is insertion-ordered, so the newcomer is
+       * the newer zone. A tie therefore shows the patch that just landed, which
+       * is the one the player watched arrive and the one they are reasoning
+       * about. `>=` here would have shown the older one, and the difference is
+       * invisible until two zones of DIFFERENT elements carry equal damage —
+       * i.e. exactly when the tint is the only thing distinguishing them.
+       */
+      if (held !== undefined && held.damage > zone.damage) continue;
+      claimed.set(key, { view: { x: tile.x, y: tile.y, type: zone.type }, damage: zone.damage });
+    }
+  }
+
+  return { v: PROTOCOL_VERSION, t: 'zones', tiles: [...claimed.values()].map((e) => e.view) };
 }
 
 // ---------------------------------------------------------------------------

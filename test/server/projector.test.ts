@@ -21,6 +21,7 @@ import {
   projectParty,
   projectPartyState,
   projectProjectiles,
+  projectZones,
   projectShop,
   projectTurn,
   toActorView,
@@ -2268,5 +2269,128 @@ describe('the floor says what a thing would do, not just what it is called', () 
     const row = projectGroundItems(world, undefined, body).items[0];
     expect(row).toBeDefined();
     expect(Object.keys(row ?? {})).not.toContain('wielder');
+  });
+});
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * projectZones — the floor, gated per tile, collapsed per tile.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `engine/Map.lua:1154-1167` builds `e.seen_grids` from `self.seens` and
+ * `displayEffects` (:1170-1226) walks only that — never `self.remembers`. So a
+ * zone is drawn where you can see RIGHT NOW, which is the orb's rule and not the
+ * ground item's, and half a zone showing is upstream's own behaviour.
+ */
+describe('projectZones', () => {
+  const burn = (
+    world: World,
+    tiles: readonly { x: number; y: number }[],
+    over: { type?: DamageType; damage?: number } = {},
+  ): string =>
+    world.addZone({
+      srcId: 'nobody',
+      tiles,
+      type: over.type ?? DamageType.Fire,
+      damage: over.damage ?? 5,
+      turns: 5,
+      selfFire: false,
+      friendlyFire: true,
+    });
+
+  it('says the floor is clear rather than saying nothing at all', () => {
+    // AN EMPTY ARRAY IS A STATEMENT — the same one `projectProjectiles` makes
+    // above, and here it is what takes a burnt-out fire off the screen.
+    const world = room();
+    const msg = projectZones(world);
+    expect(msg.t).toBe('zones');
+    expect(msg.tiles).toEqual([]);
+  });
+
+  it('flattens a zone into its tiles, ungated when nobody is looking', () => {
+    const world = room();
+    burn(world, [
+      { x: 4, y: 4 },
+      { x: 5, y: 4 },
+    ]);
+    const tiles = projectZones(world).tiles;
+    expect(tiles).toHaveLength(2);
+    expect(tiles).toContainEqual({ x: 4, y: 4, type: DamageType.Fire });
+  });
+
+  it('DROPS a tile no eye can see, and keeps the rest of the same zone', () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * HALF A ZONE IS A CORRECT ANSWER, AND THAT IS THE PORT.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * Upstream gates PER GRID inside one effect (`e.seen_grids`), not per
+     * effect, so a fire straddling your light shows the half that is lit. A
+     * per-ZONE gate — "can I see any of it? then draw all of it" — would be the
+     * obvious simplification and would hand the player a map of a room they
+     * have not entered.
+     */
+    const world = room();
+    const eye = world.addPlayer('actor_a', 'Dalt');
+    eye.x = 2;
+    eye.y = 2;
+    // One tile beside the eye, one far outside `DEFAULT_SIGHT_RADIUS`.
+    burn(world, [
+      { x: 3, y: 2 },
+      { x: 28, y: 28 },
+    ]);
+
+    const tiles = projectZones(world, [eye]).tiles;
+    expect(tiles, 'the lit half was dropped too').toContainEqual({
+      x: 3,
+      y: 2,
+      type: DamageType.Fire,
+    });
+    expect(tiles.map((t) => `${String(t.x)},${String(t.y)}`)).not.toContain('28,28');
+  });
+
+  it('honours THIS eye`s sight radius rather than the default', () => {
+    /**
+     * `knownTilesFor` would have been one line and calls `canSee` with the
+     * DEFAULT radius, silently discarding a body's own sight modifiers. A
+     * keen-sighted detective would have been told less than they can see.
+     */
+    const world = room();
+    const eye = world.addPlayer('actor_a', 'Dalt');
+    eye.x = 2;
+    eye.y = 2;
+    // Beyond the default ten, inside a boosted radius.
+    burn(world, [{ x: 16, y: 2 }]);
+
+    expect(projectZones(world, [eye]).tiles, 'the default radius already reached').toEqual([]);
+
+    eye.combat = { ...(eye.combat ?? {}), mods: { ...(eye.combat?.mods ?? {}), sight: 8 } };
+    expect(
+      projectZones(world, [eye]).tiles,
+      'keen sight did not reach a tile the default could not',
+    ).toContainEqual({ x: 16, y: 2, type: DamageType.Fire });
+  });
+
+  it('collapses two zones on one tile to ONE entry, and the hotter one wins', () => {
+    // A renderer handed both would have to decide which to draw, and deciding is
+    // what a renderer must not do. `LootMarker` groups server-side for the same
+    // reason.
+    const world = room();
+    burn(world, [{ x: 4, y: 4 }], { type: DamageType.Fire, damage: 3 });
+    burn(world, [{ x: 4, y: 4 }], { type: DamageType.Cold, damage: 9 });
+
+    const tiles = projectZones(world).tiles;
+    expect(tiles, 'the tile was sent twice').toHaveLength(1);
+    expect(tiles[0]?.type, 'the weaker patch won the tile').toBe(DamageType.Cold);
+  });
+
+  it('gives a TIE to the newer patch — the one that just landed', () => {
+    // Invisible until two DIFFERENT elements carry equal damage, which is
+    // exactly when the tint is the only thing telling them apart.
+    const world = room();
+    burn(world, [{ x: 4, y: 4 }], { type: DamageType.Fire, damage: 5 });
+    burn(world, [{ x: 4, y: 4 }], { type: DamageType.Darkness, damage: 5 });
+
+    expect(projectZones(world).tiles[0]?.type).toBe(DamageType.Darkness);
   });
 });

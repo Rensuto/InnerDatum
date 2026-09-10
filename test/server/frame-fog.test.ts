@@ -355,6 +355,13 @@ describe('every player-facing frame is built with eyes', () => {
     for (const [fn, needs] of [
       ['projectEffects', 'visibleActorIds'],
       ['projectProjectiles', 'eyesIn'],
+      // AND THE FLOOR. `projectZones` takes an OPTIONAL `eyes`, so a gateway
+      // call that forgets it type-checks, lints, and ships every burning tile
+      // on the level to everybody — including the ones in unexplored rooms,
+      // which is a map of where the fighting is. The optionality is right (a
+      // fixture and the GM console both want the ungated frame); this is what
+      // holds the gateway to the other reading.
+      ['projectZones', 'eyesIn'],
     ] as const) {
       for (const match of text.matchAll(new RegExp(`${fn}\\(`, 'g'))) {
         const call = text.slice(match.index, match.index + 220);
