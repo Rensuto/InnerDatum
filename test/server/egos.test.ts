@@ -1,4 +1,6 @@
 import { rollLoot } from '../../src/server/content/loot.ts';
+import { DELVES } from '../../src/server/content/delve.ts';
+import { computeRarities } from '../../src/server/content/rarity.ts';
 import { parseItemId } from '../../src/server/content/resolve.ts';
 import { createRng } from '../../src/shared/rng.ts';
 import { describe, expect, it } from 'vitest';
@@ -383,5 +385,58 @@ describe('the roster turns over as a character descends', () => {
     const deep = sample(40, 1200);
     const shallowStillThere = ['rf', 'ol', 'lg', 'lw'].some((code) => (deep.get(code) ?? 0) > 0);
     expect(shallowStillThere).toBe(true);
+  });
+});
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * NO EGO IS DEAD CONTENT AT THE DEPTH THE GAME ACTUALLY REACHES.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `computeRarities` does not merely de-weight an out-of-depth candidate — it
+ * DROPS it, when `floor(RARITY_SCALE / (OOD_FACTOR * gap) / rarity)` reaches
+ * zero (rarity.ts, Zone.lua:218-221). Two authored numbers decide that, and
+ * neither of them looks dangerous on its own: a deep `levelRange` and a high
+ * `rarity` are both ordinary things to write, and together past a threshold
+ * they are an ego nobody will ever see.
+ *
+ * NOTHING ELSE WOULD SAY SO. The ego validates, resolves, folds, prints and
+ * round-trips; `resolve.test.ts` builds one by id and never asks the generator
+ * for it. The only symptom is an affix that does not exist in play.
+ *
+ * ═══ IT HAS ALREADY BEEN ASSERTED WRONGLY IN PROSE ═══
+ * ` of the Sunless Year` shipped with a docblock saying it "will not roll" at
+ * our current depth and that two older deep egos "already do not". Measured,
+ * all three stay in the list — at about one roll in five thousand, which is the
+ * out-of-depth curve working rather than content that is switched off. The
+ * comment is corrected; this is the part that cannot go stale.
+ */
+describe('every ego can still be rolled at the depth the game reaches', () => {
+  it('keeps all of them in the list at the deepest authored delve', () => {
+    // THE DEEPEST LEVEL ANY DELVE AUTHORS, read rather than written down: a
+    // literal here would keep passing on the day the map goes deeper or
+    // shallower, which is precisely when this guard needs to move.
+    const deepest = Math.max(...[...DELVES.values()].map((d) => d.levelRange[1]));
+    expect(deepest, 'no delve authors a level at all').toBeGreaterThan(0);
+
+    const list = computeRarities(EGOS, deepest);
+    const reachable = new Set(list.entries.map((entry) => entry.e.code));
+    const missing = EGOS.filter((ego) => !reachable.has(ego.code)).map((ego) => ego.code);
+
+    expect(
+      missing,
+      `these egos floor to a genprob of 0 at level ${String(deepest)} and can never roll`,
+    ).toEqual([]);
+  });
+
+  it('is a real guard: an ego deep and rare enough DOES fall out', () => {
+    /**
+     * THE MUTATION, WRITTEN DOWN. Without this the test above could be passing
+     * because the drop is unreachable rather than because the roster avoids it,
+     * which is the difference between a guard and a decoration.
+     */
+    const impossible = { ...(EGOS[0] as (typeof EGOS)[number]), rarity: 400, levelRange: [50, 50] };
+    const list = computeRarities([impossible] as unknown as typeof EGOS, 1);
+    expect(list.entries, 'the drop is unreachable, so the guard above proves nothing').toEqual([]);
   });
 });

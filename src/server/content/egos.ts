@@ -947,12 +947,30 @@ const SUFFIXES: readonly Ego[] = [
    * a zero step: its rule is that every resolved value is a positive integer,
    * not that everything must scale.
    *
-   * ═══ LEVEL THIRTY IS UPSTREAM'S AND IS HEADROOM TODAY ═══
-   * The deepest delve authors level fifteen, so this will not roll until the
-   * map goes further — exactly as `Case-Hardened ` at 28 and ` of the Far Map`
-   * at 30 already do not. Gating it where our content currently ends would put
-   * the strongest defensive affix in the game in a level-15 pocket, on a curve
-   * nobody upstream drew.
+   * ═══ LEVEL THIRTY IS UPSTREAM'S, AND IT IS A WEIGHT RATHER THAN A GATE ═══
+   * The deepest delve authors level fifteen. An earlier draft of this paragraph
+   * said that meant the ego "will not roll until the map goes further, exactly
+   * as `Case-Hardened ` at 28 and ` of the Far Map` at 30 already do not", and
+   * that is FALSE in the mechanism and only roughly true in the effect —
+   * measured rather than assumed, which is how it was caught.
+   *
+   * `computeRarities` does not exclude an under-depth candidate; it divides its
+   * weight by the gap (Zone.lua:218) and drops it only when the result FLOORS
+   * to zero. At rarity 30 and fifteen levels of gap it floors to a positive
+   * number, so it stays in the list at about one roll in five thousand — and
+   * reaches its designed share, a bit over one in a hundred, at level 30. All
+   * three of the deep egos behave that way; `egos.test.ts` pins that none of
+   * them falls out of the list entirely.
+   *
+   * That distinction is the whole reason to state it: "does not roll" reads as
+   * dead content somebody should delete or re-gate, and what is actually
+   * happening is upstream's out-of-depth curve doing exactly its job — a
+   * vanishing chance of something you are not ready for, which is the oldest
+   * good feeling in the genre.
+   *
+   * Gating it where our content currently ends would put the strongest
+   * defensive affix in the game in a level-15 pocket, on a curve nobody
+   * upstream drew.
    */
   {
     code: 'sn',
