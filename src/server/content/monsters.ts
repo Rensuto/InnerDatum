@@ -407,6 +407,40 @@ export type MonsterTemplate = {
   readonly huntsIsolated: boolean;
   /** ELITE: consecutive blocked turns before routing around its own kin. 0 = never. */
   readonly shoulderAfter: number;
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * CAN IT WORK A DOOR — `open_door`, and it was MISSING FROM EVERY TEMPLATE.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `engine/doors.ts` shipped the whole mechanism: `canOpenDoors` gates the
+   * resolution, `aiCtxFor` hands a door-opener a route predicate that crosses a
+   * shut door, `actMonster` charges the turn the way `NPC.lua:87-92` does, and
+   * `test/server/doors.test.ts` drives every branch of it. All of it with
+   * SYNTHETIC monsters, because `MonsterInit.opensDoors` had no way in from a
+   * template and not one creature in the bestiary set it.
+   *
+   * So the flag was false for every body in the game and the feature was dead in
+   * production — the exact shape of a guard whose proposer is never reached.
+   * It stayed invisible while doors lived only in hand-drawn vaults. The BSP
+   * generator ended that: a works floor hangs about eight of them, and a flood
+   * from the spawn measured **434 standable tiles per floor** — roughly forty
+   * per cent of the building — that a body which cannot work a door will never
+   * reach. Every monster on such a floor was sealed into the room it spawned in,
+   * and a player who stepped through a doorway was permanently unfollowable.
+   *
+   * ═══ WHO GETS IT IS A LOOKUP, NOT A DESIGN DECISION ═══
+   * Every template in this file already cites the upstream family it was built
+   * from, and upstream puts `open_door` on the family BASE entity — so the
+   * answer for each of ours is written down in the file it was ported from.
+   * Upstream sets it on 28 of 69 npc families; ours comes out at four of nine,
+   * which is the same proportion arrived at independently.
+   *
+   * ABSENT IS FALSE, and that is upstream's default too: a body with no hands,
+   * no mind, or nothing to grip with simply does not get the field. Two of ours
+   * are cited to `crystal.lua`, where the one entity that mentions it at all
+   * writes `open_door = false` outright (`crystal.lua:71`).
+   */
+  readonly opensDoors?: boolean;
 
   /**
    * ═══════════════════════════════════════════════════════════════════════════
@@ -1581,6 +1615,11 @@ export const INDEX_HUSK_ELITE: MonsterTemplate = Object.freeze({
   // ai/simple.lua:225 — "Wait at least 5 turns of not moving before switching to
   // blocked_astar". Upstream's own number, upstream's own reason.
   shoulderAfter: 5,
+  // HANDS, AND UPSTREAM SAYS SO ON THE FAMILY BASE. `ghoul.lua:40`
+  // `open_door = true`, set on BASE_NPC_GHOUL so every ghoul in the game has it.
+  // Ours is a husk the Index kept editing until it read the room before moving;
+  // a thing that deliberate does not stop at a handle.
+  opensDoors: true,
   // No `projSpeed` (melee) and no `talentIn`. The ghoulking DOES tighten the
   // cadence — `ai_state = { talent_in=2 }` at ghoul.lua:94 against the ghoul's
   // 4 at :61 — but that is a cadence for GRANTED TALENTS, of which this creature
@@ -2200,6 +2239,10 @@ export const INDEX_GLUT: MonsterTemplate = Object.freeze({
   attackRange: 1,
   huntsIsolated: false,
   shoulderAfter: 0,
+  // `troll.lua:47` `open_door = true`, on BASE_NPC_TROLL. A troll is not
+  // subtle and does not need to be — the door opens because something big
+  // leaned on it. Ours closes distance "the way a filing cabinet would".
+  opensDoors: true,
 
   drops: { chance: 100, pick: idsOfTier('common') },
 
@@ -2397,6 +2440,12 @@ export const INDEX_INSPECTOR: MonsterTemplate = Object.freeze({
    */
   huntsIsolated: true,
   shoulderAfter: 0,
+  // `humanoid_random_boss.lua:35` `open_door = true`. The cited body family
+  // here is `feline.lua` — it is where the speed and the pounce came from —
+  // but the creature is a PERSON: "Somebody who worked this ground before it
+  // was taken, still working it. The badge is legible." Upstream's rule is
+  // about the mind and the hands, not the stat block they were built on.
+  opensDoors: true,
 
   // THE DARK TERRITORY PAYS BETTER, which is the other half of `redactedSpec`'s
   // +1 litter: danger with no upside is a place you visit once.
@@ -2547,6 +2596,9 @@ export const INDEX_INQUISITOR: MonsterTemplate = Object.freeze({
   // decision into one answer.
   huntsIsolated: false,
   shoulderAfter: 0,
+  // `elven-caster.lua:42` `open_door = true`, on BASE_NPC_ELVEN_CASTER. The
+  // one of ours whose whole description is a mind deciding things.
+  opensDoors: true,
 
   projSpeed: 2,
   talentIn: 2,
@@ -3037,6 +3089,10 @@ export function monsterInit(template: MonsterTemplate, at: TileXY, level: number
     minRange: template.minRange,
     huntsIsolated: template.huntsIsolated,
     shoulderAfter: template.shoulderAfter,
+    // WHETHER IT CAN WORK A DOOR. The field existed on `MonsterInit` and on the
+    // actor from the day doors shipped; this line is the half that was missing,
+    // and without it every template's answer was `undefined`.
+    opensDoors: template.opensDoors,
     // THE ORB'S FROZEN DAMAGE, authored per template. Absent on both melee
     // creatures, and absent is not "3-6" here — it is "this creature never
     // reaches `fire`". See the note above.

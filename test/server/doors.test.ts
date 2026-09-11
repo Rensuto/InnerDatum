@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { EffectId, createMvpEffectState } from '../../src/server/content/effects.ts';
+import { MONSTER_TEMPLATES, monsterInit } from '../../src/server/content/monsters.ts';
 import { AiProfile } from '../../src/server/engine/actor.ts';
 import { setEffect } from '../../src/server/engine/effects.ts';
 import { canOpenDoors, isClosedDoor } from '../../src/server/engine/doors.ts';
@@ -527,5 +528,88 @@ describe('restoreTerrain — a wipe must not pay', () => {
     expect(world.terrainChanges()).toEqual([
       { x: 3, y: LANE_Y, code: TileCode.DOOR_OPEN, was: TileCode.DOOR },
     ]);
+  });
+});
+
+describe('the bestiary actually has hands — `open_door` on the templates', () => {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * EVERY TEST ABOVE THIS ONE USED A SYNTHETIC MONSTER, AND THAT WAS THE BUG.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `canOpenDoors`, `aiCtxFor`'s route predicate, the resolution branch and the
+   * `NPC.lua:87-92` charge were all driven green by bodies this file built by
+   * hand with `opensDoors: true`. `MonsterTemplate` had no such field, so not
+   * one creature in the shipped bestiary could set it, and every one of those
+   * branches was unreachable in production. The note two describes up even says
+   * upstream "is set on ~fifty NPC templates individually" — the analysis was
+   * done and the templates were never written.
+   *
+   * IT STAYED INVISIBLE WHILE DOORS LIVED ONLY IN VAULTS. The BSP generator
+   * ended that: a works floor hangs about eight, and a flood from the spawn
+   * measured ~434 standable tiles per floor — about forty per cent of the
+   * building — unreachable to a body that cannot work one. Every monster was
+   * sealed into its own room and a player who stepped through a doorway could
+   * not be followed.
+   *
+   * SO THE ROSTER IS ASSERTED, NOT THE MECHANISM. Each case cites the upstream
+   * family the template was already ported from, because upstream writes
+   * `open_door` on the family BASE entity and the answer is therefore a lookup.
+   */
+  const OPENERS = new Map<string, string>([
+    // `ghoul.lua:40` `open_door = true` on BASE_NPC_GHOUL.
+    ['index_husk_elite', 'ghoul.lua'],
+    // `troll.lua:47` `open_door = true` on BASE_NPC_TROLL.
+    ['index_glut', 'troll.lua'],
+    // `humanoid_random_boss.lua:35`. Built on `feline.lua`'s stat block; the
+    // creature is a person, and upstream's rule is about the mind and the hands.
+    ['index_inspector', 'humanoid_random_boss.lua'],
+    // `elven-caster.lua:42` `open_door = true` on BASE_NPC_ELVEN_CASTER.
+    ['index_inquisitor', 'elven-caster.lua'],
+  ]);
+
+  it('is not empty of door-openers, which is the whole failure this missed', () => {
+    /**
+     * THE GUARD FOR THE CLASS OF BUG, not for the four ids below. A roster that
+     * drifts back to all-false passes every other assertion in this file — the
+     * mechanism keeps working perfectly on bodies nothing spawns.
+     */
+    const opens = MONSTER_TEMPLATES.filter((t) => t.opensDoors === true);
+    expect(opens.length, 'not one creature in the game can work a door').toBeGreaterThan(0);
+  });
+
+  it('gives it to the four upstream does, and to nobody else', () => {
+    for (const template of MONSTER_TEMPLATES) {
+      const cited = OPENERS.get(template.id);
+      expect(
+        template.opensDoors === true,
+        cited === undefined
+          ? `${template.id} opens doors and no upstream family was cited for it`
+          : `${template.id} should open doors — ${cited}`,
+      ).toBe(cited !== undefined);
+    }
+    // AND THE SHARE MATCHES UPSTREAM'S, arrived at independently: 28 of 69 npc
+    // families there, four of nine here. A roster that gave it to everybody
+    // would pass the assertion above and delete the distinction.
+    expect(MONSTER_TEMPLATES.filter((t) => t.opensDoors === true)).toHaveLength(OPENERS.size);
+  });
+
+  it('reaches the body — template to `monsterInit` to `canOpenDoors`', () => {
+    /**
+     * THE JOIN, AND IT IS THE LINE THAT WAS MISSING. `MonsterInit.opensDoors`
+     * and `EngineActor.opensDoors` both existed from the day doors shipped;
+     * `monsterInit` simply never copied the field across, so a template could
+     * have carried `opensDoors: true` and the body would still have answered no.
+     * Asserting the template alone would not have caught that.
+     */
+    const world = createWorld('roster-hands');
+    for (const template of MONSTER_TEMPLATES) {
+      const body = world.addMonster(`m_${template.id}`, monsterInit(template, { x: 1, y: 1 }));
+      expect(
+        canOpenDoors(body),
+        `${template.id}: the template says ${String(template.opensDoors === true)} and the body disagrees`,
+      ).toBe(template.opensDoors === true);
+      world.removeActor(body.id);
+    }
   });
 });
