@@ -1268,11 +1268,16 @@ export function populateDelve(
       // placer re-rolls rather than stacking. `addTrap` replaces, so skipping is
       // what keeps the count honest.
       if (world.trapAt(at.x, at.y) !== undefined) continue;
-      world.addTrap({
-        ...rollTrap(delveLevel(spec, party), trapRng, `delve.traps.${String(i)}`),
-        x: at.x,
-        y: at.y,
-      });
+      /**
+       * NOTHING ELIGIBLE IS A REAL ANSWER, not a failure. `computeRarities`
+       * drops a candidate whose weight floors to zero, so a floor deep enough
+       * past every trap's band simply has none — which is `generateOne`'s own
+       * behaviour when `makeEntity` returns nil. `continue`, so the rest of the
+       * count is still tried rather than the whole pass being abandoned.
+       */
+      const kit = rollTrap(delveLevel(spec, party), trapRng, `delve.traps.${String(i)}`);
+      if (kit === undefined) continue;
+      world.addTrap({ ...kit, x: at.x, y: at.y });
     }
   }
 

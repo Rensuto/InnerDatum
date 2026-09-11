@@ -50,6 +50,8 @@
 
 import { DamageType } from '../../shared/damagetype.ts';
 import { clscale } from '../engine/traps.ts';
+import { computeRarities, pickEntity } from './rarity.ts';
+import { resolveMBonus } from './resolvers.ts';
 import type { TrapKit } from '../engine/traps.ts';
 import type { Rng } from '../../shared/rng.ts';
 
@@ -92,7 +94,8 @@ type TrapTemplate = {
         readonly damage: readonly [base: number, baseLevel: number, spread: number];
       }
     | { readonly kind: 'alarm'; readonly radius: number }
-    | { readonly kind: 'lethargy' };
+    | { readonly kind: 'lethargy' }
+    | { readonly kind: 'teleport' };
   readonly rarity: number;
   readonly levelRange: readonly [number, number];
 };
@@ -108,6 +111,20 @@ const DETECT = { base: 6, baseLevel: 10, spread: 4, power: 0.5 } as const;
 
 /** `power` on every bolt trap's damage resolver. */
 const DAMAGE_POWER = 0.75;
+
+/**
+ * `who:teleportRandom(x, y, 100)` — teleport.lua:39.
+ *
+ * A hundred tiles from a 34x30 floor is "anywhere walkable", which is the
+ * point: upstream does not aim this, it removes you. Carried across as the
+ * number rather than as something unbounded because `teleportRandom` walks a
+ * box of this size, and an unbounded one would walk the world.
+ */
+const TELEPORT_RANGE = 100;
+
+/** `resolvers.mbonus(5, 40)` — teleport.lua:31. See `resolveMBonus`. */
+const TELEPORT_DETECT_MAX = 5;
+const TELEPORT_DETECT_ADD = 40;
 
 /**
  * `for i = x - 20, x + 20 do for j = y - 20, y + 20` — alarm.lua:39.
@@ -207,6 +224,52 @@ const TEMPLATES: readonly TrapTemplate[] = [
    *
    * SPENT WHEN IT FIRES (`return true, true`), like the alarm and unlike a bolt.
    */
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE TELEPORT TRAP — `traps/teleport.lua:26-46`. It moves YOU.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * ```lua
+   * name = "teleport trap", rarity = 5, level_range = {5, nil},
+   * detect_power = resolvers.mbonus(5, 40), disarm_power = resolvers.mbonus(10, 50),
+   * message = "@Target@ shimmers briefly.", unided_name = "shimmering floor switch",
+   * triggered = function(self, x, y, who) ... who:teleportRandom(x, y, 100) ... return true end
+   * ```
+   *
+   * THE ONLY TRAP HERE THAT IS RARER THAN THE REST — `rarity = 5` against
+   * everything else's 3 — and the entry that makes the rarity field do anything
+   * at all. In a party game it is the worst thing on this list: it does no
+   * damage and separates one detective from the other three, which is the
+   * situation most of this game's tuning exists to avoid.
+   *
+   * ═══ AND IT STAYS ARMED ═══
+   * `return true` with no second value, so `del` is nil — a bolt's behaviour and
+   * not the alarm's. You are thrown across the floor and the switch is still
+   * there when you walk back to it.
+   *
+   * ═══ A DIFFERENT RESOLVER, AND IT IS NOT A TYPO ═══
+   * `resolvers.mbonus(5, 40)` where every other trap uses `clscale`. At our tier
+   * `resolveMBonus` is the flat `add` term, so detect power is 40 against the
+   * bolts' 6 — this is the one nobody spots. Upstream's own description says so
+   * out loud: *"How does anyone get close enough to disarm this trap...?"*
+   *
+   * ═══ NOT PORTED: THE RESIST BRANCH ═══
+   * Upstream gates the whole thing on `who:canBe("teleport")` and, when that
+   * fails, logs *"%s resists being teleported!"* and returns NOTHING — so the
+   * trap teaches nobody and is not spent. Our `canBe` is about status effects
+   * and this game has no `teleport_immune` attribute for anything to grant, so
+   * the branch would be unreachable and its `known = false` case with it. It
+   * arrives with the first thing that can resist a teleport.
+   */
+  {
+    kind: 'trap_teleport',
+    spent: false,
+    name: 'teleport trap',
+    message: '@Target@ shimmers briefly.',
+    effect: { kind: 'teleport' },
+    rarity: 5,
+    levelRange: [5, 15],
+  },
   {
     kind: 'trap_lethargy',
     spent: true,
@@ -251,74 +314,102 @@ export const TRAP_MESSAGES: readonly string[] = TEMPLATES.map((template) => temp
  * family must be APPENDED to `TEMPLATES` rather than inserted, exactly as
  * `computeRarities` requires of the monster list.
  */
-export function rollTrap(level: number, rng: Rng, label: string): TrapKit {
+export function rollTrap(level: number, rng: Rng, label: string): TrapKit | undefined {
   /**
    * ═══════════════════════════════════════════════════════════════════════════
-   * ONLY WHAT BELONGS ON THIS FLOOR — upstream's `level_range`, finally read.
+   * THE SAME WEIGHTING EVERY OTHER ROSTER IN THIS GAME USES — `content/rarity.ts`.
    * ═══════════════════════════════════════════════════════════════════════════
    *
-   * `makeEntity` filters the zone's entity list by `level_range` before it rolls
-   * (`engine/Zone.lua`), which is what stops a level-30 curse rune appearing on
-   * the first floor. The first pass of this file carried the field and ignored
-   * it, which was invisible while every template shared one range and would have
-   * been silently wrong the moment one did not.
+   * `generator/trap/Random.lua:44` calls `self.zone:makeEntity(self.level,
+   * "trap", ...)`, which is the SAME entity picker the actor and object
+   * generators use — so a trap's `rarity` and `level_range` mean exactly what a
+   * monster's do, and `computeRarities` already ports both
+   * (`engine/Zone.lua:218-245`).
    *
-   * FALLS BACK TO THE WHOLE ROSTER rather than throwing, because an empty pick
-   * list on some future floor should mean "no traps here", not a crash on a
-   * floor somebody is standing on. It cannot fire today — every template covers
-   * level 1 — and it is the honest answer if one ever stops.
+   * ═══ THE FIRST VERSION OF THIS FUNCTION REIMPLEMENTED HALF OF IT, WORSE ═══
+   * It hand-filtered `levelRange` to a hard include/exclude. Upstream does not
+   * exclude: it DIVIDES the weight by the distance out of depth — three times
+   * harder below the band than above it — so a slightly-too-deep trap gets
+   * rarer rather than vanishing, and only drops out when `floor(max / rarity)`
+   * reaches zero. Two answers to one question, and the reimplementation was the
+   * wrong one.
+   *
+   * It also ignored `rarity` entirely, which was invisible while every template
+   * was a 3 and became wrong the moment the teleport trap arrived at 5.
+   *
+   * ═══ ONE DRAW, AND `undefined` IS A REAL ANSWER ═══
+   * `pickEntity` takes exactly one labelled draw. It answers `undefined` when
+   * nothing is eligible at this depth, which the caller must treat as "no trap
+   * here" rather than as a failure — `generateOne` upstream does the same, and
+   * it is why this returns an optional rather than throwing.
    */
-  const eligible = TEMPLATES.filter(
-    (template) => level >= template.levelRange[0] && level <= template.levelRange[1],
-  );
-  const pool = eligible.length > 0 ? eligible : TEMPLATES;
-
-  const picked = pool[rng.int(`${label}.kind`, 0, pool.length - 1)];
-  // `pool` is non-empty by construction and the draw is bounded by its length,
-  // so this cannot fire — `!` is banned and a silent undefined would be worse.
-  if (picked === undefined) throw new Error('trap roster is empty');
+  const eligible = computeRarities(TEMPLATES, level);
+  const picked = pickEntity(rng, `${label}.kind`, eligible);
+  if (picked === undefined) return undefined;
 
   return {
     kind: picked.kind,
     spent: picked.spent,
     message: picked.message,
-    effect:
-      picked.effect.kind === 'lethargy'
-        ? {
-            kind: 'lethargy',
-            count: LETHARGY_TALENTS,
-            minTurns: LETHARGY_MIN_TURNS,
-            maxTurns: LETHARGY_MAX_TURNS,
-          }
-        : picked.effect.kind === 'alarm'
-          ? { kind: 'alarm', radius: picked.effect.radius }
-          : {
-              kind: 'bolt',
-              damageType: picked.effect.damageType,
-              // The explicit ZERO floor, which is truthy in Lua and is the reason
-              // a level-1 fire trap does single digits rather than ninety.
-              damage: clscale(
-                picked.effect.damage[0],
-                picked.effect.damage[1],
-                picked.effect.damage[2],
-                DAMAGE_POWER,
-                0,
-                level,
-                rng,
-                `${label}.dam`,
-              ),
-            },
-    detectPower: clscale(
-      DETECT.base,
-      DETECT.baseLevel,
-      DETECT.spread,
-      DETECT.power,
-      // NO FLOOR ARGUMENT, so it falls through to the base. Not a copy-paste
-      // slip from the line above: upstream's two resolvers genuinely differ.
-      undefined,
-      level,
-      rng,
-      `${label}.detect`,
-    ),
+    effect: rollEffect(picked, level, rng, label),
+    /**
+     * THE TELEPORT TRAP USES A DIFFERENT RESOLVER, and it is not a typo in the
+     * Lua: `resolvers.mbonus(5, 40)` where every other trap is `clscale`. At our
+     * tier `resolveMBonus` is the flat `add`, so 40 — against the bolts' 6.
+     */
+    detectPower:
+      picked.effect.kind === 'teleport'
+        ? resolveMBonus(TELEPORT_DETECT_MAX, TELEPORT_DETECT_ADD)
+        : clscale(
+            DETECT.base,
+            DETECT.baseLevel,
+            DETECT.spread,
+            DETECT.power,
+            // NO FLOOR ARGUMENT, so it falls through to the base. Not a
+            // copy-paste slip: upstream's two resolvers genuinely differ.
+            undefined,
+            level,
+            rng,
+            `${label}.detect`,
+          ),
   };
+}
+
+/** One template's effect, with whatever its shape needs rolled for this floor. */
+function rollEffect(
+  picked: TrapTemplate,
+  level: number,
+  rng: Rng,
+  label: string,
+): TrapKit['effect'] {
+  switch (picked.effect.kind) {
+    case 'lethargy':
+      return {
+        kind: 'lethargy',
+        count: LETHARGY_TALENTS,
+        minTurns: LETHARGY_MIN_TURNS,
+        maxTurns: LETHARGY_MAX_TURNS,
+      };
+    case 'teleport':
+      return { kind: 'teleport', range: TELEPORT_RANGE };
+    case 'alarm':
+      return { kind: 'alarm', radius: picked.effect.radius };
+    case 'bolt':
+      return {
+        kind: 'bolt',
+        damageType: picked.effect.damageType,
+        // The explicit ZERO floor, which is truthy in Lua and is the reason a
+        // level-1 fire trap does single digits rather than ninety.
+        damage: clscale(
+          picked.effect.damage[0],
+          picked.effect.damage[1],
+          picked.effect.damage[2],
+          DAMAGE_POWER,
+          0,
+          level,
+          rng,
+          `${label}.dam`,
+        ),
+      };
+  }
 }

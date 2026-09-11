@@ -104,6 +104,7 @@ import {
 import { membersOf, partyIdOf } from './party.ts';
 import { combatAPR } from './derived.ts';
 import { applyDamage } from './damage.ts';
+import { teleportRandom } from './talents.ts';
 import { canOpenDoors, isClosedDoor } from './doors.ts';
 import { trapSentence, trapTakes } from './traps.ts';
 import { soundAlarm } from '../ai/alarm.ts';
@@ -3924,6 +3925,39 @@ function noteTrap(effect: Effect, run: Run, sweepTurn: number | null, moverId: s
         ),
       );
     }
+  } else if (trap.effect.kind === 'teleport') {
+    /**
+     * ═════════════════════════════════════════════════════════════════════════
+     * THE TELEPORT TRAP. It does not hurt you; it takes you away from everybody.
+     * ═════════════════════════════════════════════════════════════════════════
+     *
+     * ```lua
+     * game:onTickEnd(function()
+     *   game.logSeen(who, "%s is teleported away!", who.name:capitalize())
+     *   who:teleportRandom(x, y, 100)
+     * end)
+     * ```
+     *
+     * `traps/teleport.lua:37-41`. `onTickEnd` is upstream deferring the move out
+     * of the middle of a `checkAllEntities` walk over the map it is about to
+     * edit — an iteration-safety measure, not a timing rule. Ours is already
+     * outside that walk: `noteTrap` runs from the two act lanes, after
+     * `tryMove` has finished, so the move happens here and the event ordering is
+     * the same one the player sees.
+     *
+     * ═══ UPSTREAM CENTRES ON THE PLATE; OURS CENTRES ON THE BODY ═══
+     * `teleportRandom(x, y, 100)` takes the trap's tile. Our `teleportRandom`
+     * takes an actor and reads `actor.x`/`actor.y`, with no centre parameter to
+     * pass one through. THE TWO COINCIDE, because a trap fires on the tile its
+     * victim just arrived at — `noteTrap` returns early otherwise — so there is
+     * no reachable case where they differ.
+     *
+     * Stated rather than assumed, because it is the sort of difference that
+     * stays invisible until something springs a trap it is not standing on. On
+     * that day this is the line to change, and the range is large enough that
+     * a centre a tile or two out would not be observable anyway.
+     */
+    teleportRandom(world, victim, trap.effect.range, world.rng);
   } else {
     /**
      * ═════════════════════════════════════════════════════════════════════════

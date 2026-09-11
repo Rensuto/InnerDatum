@@ -129,6 +129,11 @@ export type TrapEffect =
    * — the same talent cannot be picked twice — and `break` on an empty list is
    * why a body with one talent loses one rather than erroring.
    */
+  /**
+   * `TRAP_TELEPORT` — `traps/teleport.lua:26-46`. Throws the victim anywhere on
+   * the floor, and stays armed to do it again.
+   */
+  | { readonly kind: 'teleport'; readonly range: number }
   | {
       readonly kind: 'lethargy';
       readonly count: number;

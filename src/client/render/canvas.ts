@@ -1088,6 +1088,19 @@ const TRAP_INK: Readonly<Record<string, string>> = {
    * to upstream's blue on the day these get sprites.
    */
   trap_lethargy: '#5a3fd0',
+  /**
+   * THE SECOND DELIBERATE DIVERGENCE, AND THE SAME CAUSE AS THE FIRST.
+   *
+   * `teleport.lua:34` gives the teleport trap `colors.UMBER` — the identical
+   * value the intruder alarm carries at `alarm.lua:33`. Upstream can afford two
+   * traps in one colour because each draws its own image; we draw one caret, so
+   * two UMBER marks would be one mark meaning two completely different things
+   * (the room comes for you, versus you leave the room).
+   *
+   * Pale cyan for a *"shimmering floor switch"* — upstream's own unidentified
+   * name for it, and the only word in this roster that describes a colour.
+   */
+  trap_teleport: '#7fd4e0',
 };
 /** What an unrecognised kind draws as — a mark you cannot identify is still a mark. */
 const TRAP_INK_UNKNOWN = '#dc0000';

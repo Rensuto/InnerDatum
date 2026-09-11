@@ -550,6 +550,94 @@ describe('the lethargy rune', () => {
   });
 });
 
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE TELEPORT TRAP — `traps/teleport.lua:26-46`. The worst one in a party.
+ * ═══════════════════════════════════════════════════════════════════════════
+ */
+describe('the teleport trap', () => {
+  function shimmerScene(seed: string) {
+    const world = createWorld(seed);
+    // AN OPEN FLOOR, because `teleportRandom` needs somewhere to put the body
+    // and a corridor would let it land back where it started.
+    world.level.tiles.fill(TileCode.FLOOR);
+
+    const ren = world.addPlayer('p1', 'Ren');
+    ren.x = 2;
+    ren.y = LANE_Y;
+    ren.hpRegen = 0;
+
+    world.addTrap({
+      x: 3,
+      y: LANE_Y,
+      kind: 'trap_teleport',
+      message: '@Target@ shimmers briefly.',
+      effect: { kind: 'teleport', range: 100 },
+      // NOT SPENT — `return true` with no second value, so `del` is nil.
+      spent: false,
+      detectPower: 40,
+    });
+
+    const engine = createTurnEngine({ world, now: () => 0 });
+    engine.join('p1');
+    return { world, engine, ren };
+  }
+
+  it('throws the victim somewhere else on the floor', () => {
+    const table = shimmerScene('shimmer-move');
+
+    expect(table.engine.submitMove('p1', 'e').ok).toBe(true);
+    table.engine.pump();
+
+    // NOT ON THE PLATE, and not where they started either. The assertion is a
+    // DIFFERENCE rather than a destination, because the destination is a draw.
+    const landed = { x: table.ren.x, y: table.ren.y };
+    expect(landed, 'the body never left the tile it triggered').not.toEqual({ x: 3, y: LANE_Y });
+    expect(landed).not.toEqual({ x: 2, y: LANE_Y });
+  });
+
+  it('does no damage — it separates you, it does not hurt you', () => {
+    const table = shimmerScene('shimmer-harmless');
+    const before = table.ren.hp;
+
+    expect(table.engine.submitMove('p1', 'e').ok).toBe(true);
+    table.engine.pump();
+
+    expect(table.ren.hp, 'the teleport trap hurt somebody').toBe(before);
+  });
+
+  it('STAYS ARMED, unlike the alarm and the rune', () => {
+    /**
+     * `return true` with no second value: `known` is true and `del` is NIL. Two
+     * of the three no-damage traps are spent when they fire and this one is not,
+     * which is why `spent` is per-template rather than "everything that is not a
+     * bolt".
+     */
+    const table = shimmerScene('shimmer-armed');
+    expect(table.engine.submitMove('p1', 'e').ok).toBe(true);
+    table.engine.pump();
+
+    expect(table.world.trapAt(3, LANE_Y), 'the switch was consumed by firing').toBeDefined();
+  });
+
+  it('is much harder to spot than a bolt — mbonus, not clscale', () => {
+    /**
+     * `resolvers.mbonus(5, 40)` against the bolts' `clscale(6,10,4,0.5)`. At our
+     * tier `resolveMBonus` is the flat `add`, so 40 — and the bolts floor at 6.
+     * Nothing reads `detectPower` yet (there is no `see_traps` source in this
+     * game), which is exactly why it is worth pinning now: the number is
+     * authored data and this is what stops it drifting before its reader lands.
+     */
+    for (let i = 0; i < 200; i += 1) {
+      const kit = rollTrap(10, createRng(`detect-${String(i)}`), 'delve.traps.0');
+      if (kit?.kind !== 'trap_teleport') continue;
+      expect(kit.detectPower, 'the teleport trap stopped using mbonus').toBe(40);
+      return;
+    }
+    throw new Error('200 rolls produced no teleport trap — the roster changed shape');
+  });
+});
+
 describe('a monster walks onto one too', () => {
   it('springs the same plate, and the party is told nothing about it', () => {
     /**
@@ -653,6 +741,7 @@ describe('the authored roster', () => {
       'trap_cold',
       'trap_lightning',
       'trap_alarm',
+      'trap_teleport',
       'trap_lethargy',
     ]);
   });
@@ -667,6 +756,9 @@ describe('the authored roster', () => {
      */
     for (let i = 0; i < 40; i += 1) {
       const kit = rollTrap(1, createRng(`roll-${String(i)}`), 'delve.traps.0');
+      // `undefined` is a real answer — nothing eligible at this depth. At level
+      // one the bolts always are, so this is a guard and not a skip.
+      if (kit === undefined) continue;
       expect(TRAP_KINDS).toContain(kit.kind);
       if (kit.effect.kind !== 'bolt') continue;
       expect(kit.effect.damage, 'a level-1 trap would nearly kill a fresh Alchemist').toBeLessThan(
@@ -676,34 +768,81 @@ describe('the authored roster', () => {
     }
   });
 
-  it('will not roll a trap the floor is too deep for — `level_range`', () => {
+  it('makes an out-of-depth trap RARER, not impossible — Zone.lua:218-221', () => {
     /**
      * ═══════════════════════════════════════════════════════════════════════
-     * THE FIELD THAT WAS CARRIED AND IGNORED UNTIL A SECOND RANGE EXISTED.
+     * A HARD FILTER WAS THE WRONG PORT, AND THIS TEST ASSERTED IT.
      * ═══════════════════════════════════════════════════════════════════════
      *
-     * `makeEntity` filters a zone's entity list by `level_range` before rolling,
-     * which is what stops a level-30 curse rune landing on the first floor. The
-     * first pass of this roster carried the field and read none of it — harmless
-     * while all three bolts shared `{1, 30}`, and silently wrong the moment one
-     * template did not.
+     * The first version of this said an out-of-band trap can NEVER be rolled,
+     * because the first version of `rollTrap` hand-filtered `levelRange` to an
+     * include/exclude. Upstream does not exclude: `Zone.lua:218-221` DIVIDES the
+     * weight by the distance out of depth — three times harder below the band
+     * than above it — so a slightly-too-deep trap gets rarer and only drops out
+     * when `floor(max / rarity)` reaches zero.
      *
-     * The alarm is `{1, 15}` because that is every floor this game has. At 20 it
-     * must drop out, and no delve reaches 20 today — which is exactly why this
-     * is asserted here rather than left for a floor that does not exist yet to
-     * discover.
+     * `computeRarities` has ported that since long before traps existed, and the
+     * roller now uses it rather than a second answer to the same question.
+     *
+     * ASSERTED AS A RATIO, because "rarer" is the whole rule and a count on its
+     * own would pass for a hard filter too.
      */
-    for (let i = 0; i < 40; i += 1) {
-      const kit = rollTrap(20, createRng(`deep-${String(i)}`), 'delve.traps.0');
-      expect(kit.kind, 'an alarm was rolled below its own level range').not.toBe('trap_alarm');
+    const share = (level: number, kind: string): number => {
+      let seen = 0;
+      for (let i = 0; i < 400; i += 1) {
+        const kit = rollTrap(
+          level,
+          createRng(`share-${String(level)}-${String(i)}`),
+          'delve.traps.0',
+        );
+        if (kit?.kind === kind) seen += 1;
+      }
+      return seen / 400;
+    };
+
+    // The lethargy rune is `{5, 15}`. Inside its band it is ordinary; two floors
+    // BELOW it the weight is divided by 3 x the gap and it becomes scarce.
+    const inBand = share(6, 'trap_lethargy');
+    const tooShallow = share(3, 'trap_lethargy');
+
+    expect(inBand, 'the rune never appeared even inside its own band').toBeGreaterThan(0.05);
+    expect(tooShallow, 'out of depth was not rarer at all').toBeLessThan(inBand);
+  });
+
+  it('picks a rarer trap less often — `rarity`, finally read', () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * A RATIO AGAINST THE ARITHMETIC, NOT TWO COUNTS AGAINST EACH OTHER.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * `genprob = floor(RARITY_SCALE / rarity)`, so at level 10 — where all six
+     * templates are inside their bands and nothing is out of depth — a rarity-5
+     * candidate is weighted 2000 against a rarity-3 candidate's 3333. The
+     * teleport trap should therefore appear about three fifths as often as the
+     * lethargy rune, and the field is the ONLY difference between those two:
+     * both are `{5, 15}`, both are spent-or-not on their own terms, and neither
+     * is out of depth here.
+     *
+     * ═══ THE FIRST VERSION OF THIS ASSERTED `teleports < runes` AND PASSED THE
+     * MUTATION THAT DELETES THE RULE ═══
+     * With both at rarity 3 the two counts are equal in expectation, so which
+     * one lands higher is a coin flip and one seed called it correctly. A bound
+     * derived from the arithmetic is what makes this a test: 0.6 expected,
+     * 1.0 if rarity is ignored, and 0.8 sits between them with room for the
+     * sampling noise at this count.
+     */
+    let teleports = 0;
+    let runes = 0;
+    for (let i = 0; i < 1200; i += 1) {
+      const kind = rollTrap(10, createRng(`rare-${String(i)}`), 'delve.traps.0')?.kind;
+      if (kind === 'trap_teleport') teleports += 1;
+      if (kind === 'trap_lethargy') runes += 1;
     }
-    // AND IT IS REACHABLE AT A DEPTH IT DOES COVER, or the test above passes on
-    // a roster that simply never produces one.
-    const shallow = new Set<string>();
-    for (let i = 0; i < 60; i += 1) {
-      shallow.add(rollTrap(3, createRng(`shallow-${String(i)}`), 'delve.traps.0').kind);
-    }
-    expect(shallow, 'the alarm is unreachable at every depth').toContain('trap_alarm');
+    expect(teleports, 'the rarity-5 trap never appeared at all').toBeGreaterThan(0);
+    expect(runes, 'the rarity-3 trap never appeared at all').toBeGreaterThan(0);
+    expect(teleports / runes, 'rarity is being ignored — the two are equally common').toBeLessThan(
+      0.8,
+    );
   });
 
   it('bites harder on a deep floor than a shallow one', () => {
@@ -721,7 +860,8 @@ describe('the authored roster', () => {
     for (let i = 0; i < 30; i += 1) {
       const shallow = rollTrap(5, createRng(`depth-${String(i)}`), 'delve.traps.0');
       const deep = rollTrap(13, createRng(`depth-${String(i)}`), 'delve.traps.0');
-      expect(deep.kind).toBe(shallow.kind);
+      if (shallow === undefined || deep === undefined) continue;
+      if (shallow.kind !== deep.kind) continue;
       if (shallow.effect.kind !== 'bolt' || deep.effect.kind !== 'bolt') continue;
       expect(deep.effect.damage).toBeGreaterThan(shallow.effect.damage);
       return;
