@@ -81,14 +81,29 @@ describe('a palette repaints a floor without moving one wall', () => {
     }
   });
 
-  it('writes only the two codes it was given', () => {
-    // The post-pass sees FLOOR and WALL and nothing else, because `blank()`
-    // fills with WALL and `put` only ever writes those two. A third code
-    // appearing in a finished grid would be a bug in the carvers, and this is
-    // where it surfaces rather than as a tile nobody can name on a live map.
+  it('writes only the codes it was given, plus any door a vault brought', () => {
+    /**
+     * The post-pass sees FLOOR and WALL from the carvers and nothing else,
+     * because `blank()` fills with WALL and `put` only ever writes those two. A
+     * fourth code appearing here would be a bug, and this is where it surfaces
+     * rather than as a tile nobody can name on a live map.
+     *
+     * ═══ A DOOR IS THE THIRD, AND IT IS ALLOWED THROUGH ON PURPOSE ═══
+     * The vault stamp runs BEFORE the repaint and three rooms carry a `+`. This
+     * test read `[floor, wall]` exactly, and it is what caught the repaint
+     * painting every one of those doors into `roof` — sealing the room the door
+     * was the only way into. So the set is widened by exactly one code and no
+     * more: a door survives a repaint because it is neither the ground nor the
+     * building.
+     */
     const palette = { floor: TileCode.SOOT, wall: TileCode.CRAG };
     const map = makeSiteMap('two-codes', SiteShape.Cave, palette);
-    expect(new Set(map.view.tiles)).toEqual(new Set<number>([palette.floor, palette.wall]));
+    const written = new Set(map.view.tiles);
+    written.delete(TileCode.DOOR);
+    expect(written).toEqual(new Set<number>([palette.floor, palette.wall]));
+    // AND THE PALETTE NEVER BECAME THE DOOR'S BUSINESS: an OPEN door cannot
+    // appear on a freshly generated floor, because nothing has walked into one.
+    expect(map.view.tiles).not.toContain(TileCode.DOOR_OPEN);
   });
 
   it('is unchanged, exactly, when no palette is named', () => {
@@ -97,7 +112,12 @@ describe('a palette repaints a floor without moving one wall', () => {
       const before = makeSiteMap('default', shape);
       const after = makeSiteMap('default', shape, DEFAULT_SITE_PALETTE);
       expect(after.view.tiles).toEqual(before.view.tiles);
-      expect(new Set(before.view.tiles)).toEqual(new Set<number>([TileCode.FLOOR, TileCode.WALL]));
+      // Plus a door, where the shape rolled one of the three rooms that has
+      // one — see the sibling test above for why that is widened rather than
+      // asserted away.
+      const written = new Set(before.view.tiles);
+      written.delete(TileCode.DOOR);
+      expect(written).toEqual(new Set<number>([TileCode.FLOOR, TileCode.WALL]));
     }
   });
 

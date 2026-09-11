@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
 import { blocksSightAt, canWalk } from '../../src/shared/level.ts';
+import { SiteShape, makeSiteMap } from '../../src/shared/sitemap.ts';
+import { ALL_VAULTS } from '../../src/shared/vaults.ts';
 import {
   TileCode,
   blocksSight,
@@ -140,5 +142,77 @@ describe('through tileAt, which is the path the renderer and the FOV trace take'
     const level = levelWith(TileCode.DOOR_OPEN);
     expect(canWalk(level, 1, 1), 'an open doorway was solid through tileAt').toBe(true);
     expect(blocksSightAt(level, 1, 1), 'an open doorway blinded an eye through tileAt').toBe(false);
+  });
+});
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * DOORS ON A FLOOR SOMEBODY WILL ACTUALLY WALK INTO.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `+` is upstream's own glyph for a door (`basic.lua:221` gives the DOOR entity
+ * `display = '+'`), and three of the seven rooms in `vaults.ts` carry one —
+ * each of them a room whose prose already called something a door before there
+ * was a code for it.
+ *
+ * THIS BLOCK IS THE POSITIVE CONTROL FOR `sitemap.test.ts`. The two "only the
+ * codes it was given" tests over there now DELETE `DOOR` from the set before
+ * comparing, which is exactly the shape that passes when no door is ever
+ * placed. Something has to assert that one lands.
+ */
+describe('doors reach a generated floor', () => {
+  const doorsIn = (tiles: readonly number[]): number =>
+    tiles.filter((code) => code === TileCode.DOOR).length;
+
+  it('is drawn in three of the seven rooms, and in none of the others by accident', () => {
+    const withDoor = ALL_VAULTS.filter((vault) => vault.tiles.includes(TileCode.DOOR));
+    expect(withDoor.map((vault) => vault.id).sort()).toEqual([
+      'vault:clerks_box',
+      'vault:filing_chamber',
+      'vault:sealed_shaft',
+    ]);
+  });
+
+  it('lands on a built floor, shut', () => {
+    const map = makeSiteMap('door-seed-0', SiteShape.Works);
+    expect(doorsIn(map.view.tiles), 'no door reached a floor that rolled a room with one').toBe(1);
+    // SHUT, because nothing has walked into it. An open door on a freshly
+    // generated floor would mean the generator was writing the wrong half.
+    expect(map.view.tiles).not.toContain(TileCode.DOOR_OPEN);
+  });
+
+  it('SURVIVES A PALETTE REPAINT, which it did not before this was written', () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * THE REPAINT RAN AFTER THE VAULT STAMP AND ATE EVERY DOOR.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * `makeSiteMap`'s post-pass maps FLOOR to the palette's floor and treats
+     * EVERYTHING ELSE as solid. A door is not FLOOR, so it took the solid
+     * branch and came out as `roof` — a wall, in the one tile that was the only
+     * way into the room. Nothing about that is visible on the default palette,
+     * which skips the pass entirely, so it would have shipped for every painted
+     * site and nowhere else.
+     */
+    const plain = makeSiteMap('door-seed-0', SiteShape.Works);
+    const painted = makeSiteMap('door-seed-0', SiteShape.Works, {
+      floor: TileCode.SOOT,
+      wall: TileCode.CRAG,
+    });
+    expect(doorsIn(painted.view.tiles), 'the repaint painted the door into the wall').toBe(
+      doorsIn(plain.view.tiles),
+    );
+    // AND IT IS STILL A DOOR, not merely still one tile of something.
+    expect(painted.view.tiles).toContain(TileCode.DOOR);
+  });
+
+  it('never puts one in a town', () => {
+    // `VAULTS_BY_SHAPE.town` is empty by design — *"a vault there would be a
+    // building among buildings"* — so a door appearing in one means a room
+    // leaked into a shape that is supposed to have none.
+    for (let i = 0; i < 30; i += 1) {
+      const map = makeSiteMap(`town-${String(i)}`, SiteShape.Town);
+      expect(doorsIn(map.view.tiles), 'a vault door appeared in a town').toBe(0);
+    }
   });
 });

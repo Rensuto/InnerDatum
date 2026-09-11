@@ -32,10 +32,18 @@ import { TileCode } from './protocol.ts';
 import { VaultTurn, defineVault } from './vault.ts';
 import type { Vault } from './vault.ts';
 
-/** `#` wall, `.` floor, and a SPACE is "leave whatever is already here". */
+/**
+ * `#` wall, `.` floor, `+` a shut door, and a SPACE is "leave whatever is
+ * already here".
+ *
+ * `+` IS UPSTREAM'S OWN GLYPH FOR IT — `basic.lua:221` gives the DOOR entity
+ * `display = '+'` — so a room drawn here reads the same way a ToME vault file
+ * does, which is the whole reason this format was ported rather than invented.
+ */
 const LEGEND: Readonly<Record<string, number>> = {
   '#': TileCode.WALL,
   '.': TileCode.FLOOR,
+  '+': TileCode.DOOR,
 };
 
 /**
@@ -43,12 +51,21 @@ const LEGEND: Readonly<Record<string, number>> = {
  *
  * The one closed shape in the list, and the reason the format needed a
  * clearance at all: it reads as a room only if there is open ground around it.
- * The gap in the south wall is the door — a sealed box would be a room nobody
- * can enter, which `vaultFits` cannot prevent because it tests the OUTSIDE.
+ *
+ * ═══ THE DOOR IS NOW A DOOR, AND THIS NOTE USED TO APOLOGISE FOR IT ═══
+ * The south wall's gap was called "the door" from the day this room was drawn,
+ * with a sentence explaining that a sealed box would be a room nobody can
+ * enter. That was true while the only two codes were floor and wall. `+` is
+ * that sentence going away: the chamber is shut, and a detective opens it.
+ *
+ * IT IS STILL THE ONLY WAY IN, which is what makes it worth doing here first.
+ * Whatever `content/delve.ts` puts in this room is behind one tile that has to
+ * be opened on purpose, and a room you must decide to enter is the entire
+ * reason a vault is a vault.
  */
 const FILING_CHAMBER = defineVault(
   'vault:filing_chamber',
-  ['#######', '#.....#', '#.###.#', '#.#...#', '#.#.###', '#.....#', '###.###'],
+  ['#######', '#.....#', '#.###.#', '#.#...#', '#.#.###', '#.....#', '###+###'],
   LEGEND,
   { border: 1 },
 );
@@ -74,10 +91,15 @@ const HALF_PARTITION = defineVault(
  * A dead end with a room at the end of it. The corridor is one tile wide on
  * purpose: it is the only shape here that makes a player commit to walking in,
  * and a fight in a one-tile corridor is a different fight.
+ *
+ * THE DOOR IS AT THE NECK, not the mouth, and the mouth is open ground this
+ * room does not own — ` ` means "leave whatever is here", so there is nothing
+ * there to put a door in. At the neck it earns its name twice over: you commit
+ * to the corridor first and find the shaft still shut at the end of it.
  */
 const SEALED_SHAFT = defineVault(
   'vault:sealed_shaft',
-  ['#####', '#...#', '#...#', '##.##', ' #.# ', ' #.# ', ' # # '],
+  ['#####', '#...#', '#...#', '##+##', ' #.# ', ' #.# ', ' # # '],
   LEGEND,
   { border: 1 },
 );
@@ -141,11 +163,13 @@ const SHELVING_RUN = defineVault(
  *
  * The smallest room in the list and the only one that is not a room at all: it
  * is a doorway with no building, which in a works reads as a partition somebody
- * put up and somebody else walked through. It exists because a floor with only
+ * put up and somebody else walked through — and now a door somebody shut behind
+ * them. Its interior is ` `, so the ground inside is whatever the floor already
+ * was; the walls and the door are the entire room. It exists because a floor with only
  * BIG set pieces has all its character in three places, and a small one can land
  * where none of the others fit.
  */
-const CLERKS_BOX = defineVault('vault:clerks_box', ['##.##', '#   #', '#####'], LEGEND, {
+const CLERKS_BOX = defineVault('vault:clerks_box', ['##+##', '#   #', '#####'], LEGEND, {
   border: 1,
 });
 

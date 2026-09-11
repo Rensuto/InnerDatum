@@ -494,10 +494,19 @@ export function makeSiteMap(
   connect(g, spawn);
 
   /**
-   * THE REPAINT, LAST, over the finished grid. Two codes in, two codes out —
-   * `blank()` fills with WALL and `put` only ever writes FLOOR or WALL, so this
-   * loop sees nothing else and a third code appearing here would be a bug in
-   * the carvers rather than something for this line to guess about.
+   * THE REPAINT, LAST, over the finished grid. The CARVERS put in two codes and
+   * two come out — `blank()` fills with WALL and `put` only ever writes FLOOR or
+   * WALL — so a third code from that direction would still be a bug rather than
+   * something for this line to guess about.
+   *
+   * ═══ BUT THE VAULT STAMP RUNS BEFORE THIS, AND IT WRITES A THIRD ═══
+   * Three rooms in `vaults.ts` carry a `+`, and a DOOR is not FLOOR, so without
+   * the guard below it fell into the solid branch and was painted into `roof` —
+   * every door on every palette-using floor silently becoming a wall, sealing
+   * the room it was the only way into. Caught by two "only two codes" tests one
+   * commit after the door codes existed, and the right fix is not to loosen
+   * those tests: it is for a door to survive a repaint, because a door is
+   * neither the ground nor the building. It is the way through the building.
    *
    * Skipped entirely for the default palette: identity work on 900 cells per
    * realm is cheap, but a no-op that is visibly a no-op is easier to reason
@@ -510,6 +519,10 @@ export function makeSiteMap(
         g[i] = palette.floor;
         continue;
       }
+      // A DOOR IS ITS OWN MATERIAL. It is drawn from ToME's amber rather than
+      // from the site's palette, and it has to stay legible as a door whatever
+      // the floor around it is made of.
+      if (g[i] === TileCode.DOOR || g[i] === TileCode.DOOR_OPEN) continue;
       /**
        * THE EDGE IS THE BOUNDARY; EVERYTHING ELSE SOLID IS A BUILDING.
        *
