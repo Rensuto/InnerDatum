@@ -358,6 +358,7 @@ import { REVEAL_RADIUS as SHARED_REVEAL_RADIUS } from '../shared/fog.ts';
 import { TileLoot, verbsFor } from './ui/verbs.ts';
 import {
   ActorKind,
+  ActorRank,
   DownedStatus,
   ErasedReason,
   ErrorCode,
@@ -4614,6 +4615,29 @@ const paintHud: HudPainter = (ctx, width, height) => {
        * are standing on.
        */
       traps: traps.map((trap) => ({ x: trap.x, y: trap.y })),
+      /**
+       * AND WHAT IS STANDING ON IT — `tome/class/Actor.lua:872-880`.
+       *
+       * MONSTERS ONLY: `partyMarks` above already answers "where is my
+       * teammate" and carries the NAME, so upstream's friendly-green branch has
+       * nothing left to draw and a second list would answer one question twice.
+       *
+       * A CORPSE IS NOT ON THE MAP. Bodies stay on the board after death
+       * (`ActorView.alive`), and a map that kept drawing them would fill a
+       * cleared room with threats — the same reason `ringIdFor` gives a corpse
+       * the neutral ring.
+       *
+       * NOT FOV-FILTERED HERE: `projectActors` means this client never holds a
+       * body it cannot see.
+       */
+      actors: [...actors.values()]
+        .filter((actor) => actor.kind === 'monster' && actor.alive)
+        .map((actor) => ({
+          x: actor.x,
+          y: actor.y,
+          boss: actor.rank === ActorRank.Boss,
+          neutral: actor.faction === 'townsfolk',
+        })),
       loot: ground.map((item) => ({ x: item.cell[0], y: item.cell[1] })),
     });
 

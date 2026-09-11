@@ -129,6 +129,39 @@ export type MapPaint = {
    */
   readonly traps?: readonly TileXY[];
   readonly loot?: readonly TileXY[];
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * AND WHAT IS STANDING ON IT — `tome/class/Actor.lua:872-880`.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * ```lua
+   * function _M:setupMinimapInfo(mo, map)
+   *   if map.actor_player and not map.actor_player:canSee(self) then return end
+   *   if self.rank > 3 then mo:minimap(0xC0, 0x00, 0xAF) return end
+   *   local r = map.actor_player and map.actor_player:reactionToward(self) or -100
+   *   if r < 0 then mo:minimap(240, 0, 0)
+   *   elseif r > 0 then mo:minimap(0, 240, 0)
+   *   else mo:minimap(0, 0, 240) end
+   * end
+   * ```
+   *
+   * Ours drew ALLIES on the map (`partyMarks`, with their names) and nothing
+   * else — so mid-fight the minimap showed your friends and not the thing
+   * hunting them, which is backwards from what a map is opened for.
+   *
+   * ═══ MONSTERS ONLY, BECAUSE ALLIES ALREADY HAVE A RICHER TREATMENT ═══
+   * Upstream's layer draws every actor; ours would then answer "where is my
+   * teammate" twice, in two colours, from two lists. `partyMarks` wins that
+   * question — it carries the NAME — so this carries the rest, and upstream's
+   * friendly-green branch has nothing to draw.
+   *
+   * ═══ ALREADY FOV-GATED, AND NOT AGAIN HERE ═══
+   * `map.actor_player:canSee(self)` is upstream's first line; ours is
+   * `projectActors(world, eyes)`, which means the client never HOLDS a body it
+   * cannot see. Re-testing on this side would be a second answer to a question
+   * the server settled, and the one that drifts.
+   */
+  readonly actors?: readonly ActorMark[];
   /** Where the viewer is, in tiles. Omitted when they are not on this map. */
   readonly self?: { x: number; y: number };
   /** Draw a frame and a fill behind it. False for the full-screen view. */
@@ -343,10 +376,36 @@ export function mapTileAt(
   return { x, y };
 }
 
+/** One body on the map, reduced to what decides its colour. */
+export type ActorMark = {
+  readonly x: number;
+  readonly y: number;
+  /** `self.rank > 3` upstream — the boss branch, which outranks the reaction. */
+  readonly boss: boolean;
+  /** `reactionToward == 0`. A townsfolk is hostile to nobody, not friendly. */
+  readonly neutral: boolean;
+};
+
 /** `Trap:setupMinimapInfo` — `mo:minimap(240, 240, 0)`, engine/Trap.lua:60. */
 const TRAP_INK = '#f0f000';
 /** `Object:setupMinimapInfo` — `mo:minimap(0, 0, 240)`, engine/Object.lua:72. */
 const LOOT_INK = '#0000f0';
+/**
+ * `Actor:setupMinimapInfo` — tome/class/Actor.lua:874-878.
+ *
+ * A BOSS OUTRANKS ITS REACTION, which is upstream's own order: the rank branch
+ * `return`s before the reaction is ever computed. On a one-pixel cell that is
+ * the right priority — "there is something here that will kill you" is a louder
+ * fact than whose side it is on.
+ *
+ * Neutral shares the object blue upstream (both `0, 0, 240`) and is left
+ * sharing it here: a shopkeeper and a dropped coat are both things you may walk
+ * up to, and inventing a sixth colour to separate two harmless marks would
+ * spend contrast the dangerous ones need.
+ */
+const BOSS_INK = '#c000af';
+const HOSTILE_INK = '#f00000';
+const NEUTRAL_INK = '#0000f0';
 
 export function paintMap(paint: MapPaint): number {
   const {
@@ -363,6 +422,7 @@ export function paintMap(paint: MapPaint): number {
     party,
     traps,
     loot,
+    actors,
   } = paint;
 
   const { win, cell, ox, oy } = mapPlacement(level, rect, self, windowRadius);
@@ -423,6 +483,21 @@ export function paintMap(paint: MapPaint): number {
   // each, the one you must not step on is the one that has to survive.
   floorMark(loot, LOOT_INK);
   floorMark(traps, TRAP_INK);
+
+  /**
+   * AND THE BODIES, OVER BOTH — `Map.lua:490-521`'s layer order puts the actor
+   * (10) above the trap (4) and the object (7). A thing that is walking towards
+   * you outranks a thing that is lying still, which is the same argument the
+   * site loop below makes for a roamer keeping the alarm colour.
+   */
+  if (actors !== undefined) {
+    for (const mark of actors) {
+      if (mark.x < win.x0 || mark.x > win.x1 || mark.y < win.y0 || mark.y > win.y1) continue;
+      if (seen !== undefined && !seen.has(`${mark.x},${mark.y}`)) continue;
+      ctx.fillStyle = mark.boss ? BOSS_INK : mark.neutral ? NEUTRAL_INK : HOSTILE_INK;
+      ctx.fillRect(ox + mark.x * cell, oy + mark.y * cell, cell, cell);
+    }
+  }
 
   /**
    * PLACES ON TOP, and bigger than a cell on purpose. A settlement is what a

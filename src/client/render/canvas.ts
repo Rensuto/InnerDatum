@@ -2057,7 +2057,16 @@ function underTokenIdFor(
   return ringIdFor(actor, selfId);
 }
 
-function ringIdFor(actor: ActorView, selfId: string | null): string {
+/**
+ * EXPORTED FOR THE TEST, and it is worth the export.
+ *
+ * Five branches deciding one player-facing signal — ally, hostile, elite,
+ * neutral, self — and the only other instrument available is a source grep,
+ * which cannot tell a branch that is wrong from a branch that is absent. The
+ * townsfolk arm shipped missing under a docblock that named the bug; a grep
+ * for `faction` would have passed the moment the word appeared anywhere.
+ */
+export function ringIdFor(actor: ActorView, selfId: string | null): string {
   // A CORPSE IS NOT A THREAT, and it must not keep wearing a threat's ring. The
   // body stays on the map after death (see `alive` in protocol.ts), so without
   // this the board after a sweep shows a hostile ring around something that can
@@ -2070,6 +2079,31 @@ function ringIdFor(actor: ActorView, selfId: string | null): string {
     case 'player':
       return 'ui_token_ring_ally';
     case 'monster':
+      /**
+       * ═══════════════════════════════════════════════════════════════════════
+       * SHE IS NOT SOMETHING TO KILL — `ActorView.faction`, finally read here.
+       * ═══════════════════════════════════════════════════════════════════════
+       *
+       * That field's own docblock opens *"WHICH SIDE — and without it a
+       * shopkeeper is drawn as something to kill"* and names three consequences
+       * of reading `kind` alone: a hostile ring under her, `Attack` on
+       * right-click, and a travel path ending in a swing. The verb menu was
+       * fixed (`ui/verbs.ts`), the server refuses the swing (`greetOnBump`, and
+       * `areEnemies` is false the moment either side is Townsfolk) — and THE
+       * RING, the one the docblock names first, kept reading `kind`.
+       *
+       * A townsfolk is a `Monster` on the server for a deliberate reason: she is
+       * a body on a tile, drawn by the same painter and seen by the same FOV,
+       * and only who may hit her differs. Which is exactly why this branch has
+       * to ask.
+       *
+       * NEUTRAL AND NOT ALLY. `areEnemies` makes her hostile to nobody rather
+       * than friendly to you — ToME's `reactionToward == 0`, which its own
+       * minimap paints neutral blue rather than friendly green. The neutral ring
+       * is shared with a corpse and that is honest: both mean "not a threat",
+       * which is the entire question a ring answers.
+       */
+      if (actor.faction === 'townsfolk') return 'ui_token_ring_neutral';
       // THE ELITE RING. `rank` is on the wire for exactly this and nothing else
       // (protocol.ts, `ActorView.rank`): the client cannot infer "elite" from hp
       // — a wounded elite has less life than a fresh husk — and it cannot infer

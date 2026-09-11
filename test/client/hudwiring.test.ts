@@ -967,6 +967,29 @@ describe('the zone label is actually drawn', () => {
     expect(call, 'the minimap is never handed the floor loot').toContain('loot:');
   });
 
+  it('hands the minimap the bodies too, and only the ones worth drawing', () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * IT DREW YOUR FRIENDS AND NOT THE THING HUNTING THEM.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * `partyMarks` put allies on the map from the day the map existed; the
+     * actor layer upstream draws EVERY visible body (`Map.lua:514`). So
+     * mid-fight ours answered "where is my teammate" and not "where is it",
+     * which is backwards from what a map is opened for.
+     *
+     * MONSTERS ONLY — allies already have a richer treatment that carries the
+     * NAME, and a second list would answer one question twice in two colours.
+     * AND LIVING ONLY: bodies stay on the board after death, so a map that kept
+     * drawing them would fill a cleared room with threats.
+     */
+    const paint = at('paintMap({');
+    const call = CODE.slice(paint, paint + 1800);
+    expect(call, 'the minimap is never handed the bodies on the floor').toContain('actors:');
+    expect(call, 'corpses are drawn as live threats').toContain('actor.alive');
+    expect(call, 'allies would be drawn twice, from two lists').toContain("=== 'monster'");
+  });
+
   it('lets the SERVER decide which traps this viewer knows about', () => {
     /**
      * The trap list is per-viewer — `projectTraps` takes a required actor id and

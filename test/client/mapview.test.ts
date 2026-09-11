@@ -470,6 +470,27 @@ describe('what is on the floor, on the map', () => {
     expect(traps, 'a pile now hides the trap under it').toBeGreaterThan(loot);
   });
 
+  it('carries upstream’s actor colours, with the boss branch first', () => {
+    /**
+     * `tome/class/Actor.lua:874-878`. The rank branch `return`s BEFORE the
+     * reaction is computed, so a boss is magenta whatever its side — and on a
+     * one-pixel cell that is the right priority: "something here will kill you"
+     * is a louder fact than whose side it is on.
+     */
+    expect(SOURCE).toContain("const BOSS_INK = '#c000af'");
+    expect(SOURCE).toContain("const HOSTILE_INK = '#f00000'");
+    const pick = SOURCE.indexOf('mark.boss ? BOSS_INK');
+    expect(pick, 'the boss no longer outranks its reaction').toBeGreaterThan(-1);
+  });
+
+  it('draws bodies OVER the floor, which is upstream’s layer order', () => {
+    // terrain (1), trap (4), object (7), actor (10) — `Map.lua:490-521`. A thing
+    // walking towards you outranks a thing lying still.
+    const floor = SOURCE.indexOf('floorMark(traps, TRAP_INK)');
+    const bodies = SOURCE.indexOf('for (const mark of actors)');
+    expect(bodies, 'the actor layer is gone').toBeGreaterThan(floor);
+  });
+
   it('still honours the fog for both lists', () => {
     /**
      * Both lists are already per-viewer, but a remembered tile can leave `seen`
