@@ -334,6 +334,21 @@ export type StatusFlags = {
    * does not see further because it was good at seeing.
    */
   readonly blind?: boolean;
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * `EFF_PINNED` — `never_move`, and it is a flag for `blind`'s reason.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `physical.lua:992-994` is `addTemporaryValue("never_move", 1)`, read at
+   * `Actor.lua:1338` as `elseif not force and self:attr("never_move")`. One
+   * attribute, one reader, all-or-nothing.
+   *
+   * IT DOES NOT LIVE HERE BECAUSE IT CHANGES A NUMBER — nothing on this sheet
+   * moves. It lives here because `StatusFlags` is how an EFFECT reaches the
+   * engine without `engine/` learning what an effect is, which is the argument
+   * `freeResources` makes three fields down.
+   */
+  readonly pinned?: boolean;
   /** Halves accuracy, defence, all three powers and all three saves. */
   readonly dazed?: boolean;
   /** Divides the same set by 1.2 (Combat.lua:1359, 1724, 1766, 2079). */

@@ -467,3 +467,30 @@ legible and says nothing. That is worse here than for most statuses, because
 this is one a player has to recognise instantly to know why the screen changed.
 
 **Acceptance:** the id resolves in the manifest and `npm run check` stays green.
+
+---
+
+## `icon_status_pinned` — the status that takes your feet and not your turn
+
+**What it is:** Pinned, ported from `physical.lua:982-998` (`EFF_PINNED`,
+*"The target is pinned to the ground, unable to move."*). Applied by the Writ of
+Seizure — a tenth of connecting blows, three turns, from `egos/ammo.lua:509-518`.
+
+**What it does, which is the thing to draw against:** you can still fight, cast
+and be healed. You cannot LEAVE. Against something in melee that costs you
+nothing; against something shooting from range it is most of the answer to it.
+It is a positional status and the icon should read as *held in place* rather
+than as damage or as incapacity.
+
+**What it should look like:** the Inner Datum idiom is administrative rather
+than physical — a seal pressed through a page and into the desk, a document
+spiked on a bill-file, a stamp that has gone through the paper. Avoid chains and
+manacles; nothing in this world restrains you with metal, it restrains you with
+paperwork. Keep it legible at 24 pixels beside `Bd` and `St`.
+
+**Cut it at 64x64**, matching the twenty `icon_status_*` files already on disk.
+
+**Until it exists** the player sees the two-letter fallback `Pi` — `Pn` is
+Off-balance's.
+
+**Acceptance:** the id resolves in the manifest and `npm run check` stays green.

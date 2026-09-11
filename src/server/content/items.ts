@@ -1294,6 +1294,22 @@ const DRAUGHTS: readonly Item[] = Object.freeze([
  * unless the weapon names its own, so a found blade sharpens who you are
  * instead of overwriting it.
  */
+/**
+ * `egos/ammo.lua:510` `rng.percent(10)` and `:516` `setEffect(EFF_PINNED, 3, ...)`.
+ *
+ * KEPT TOGETHER because they are one decision: a tenth of blows, held for three
+ * turns. Moving either alone re-prices the Writ.
+ */
+const WRIT_PIN_CHANCE = 10;
+const WRIT_PIN_TURNS = 3;
+
+/**
+ * The save it rolls against. Between the brass ring's 8 and the elite claw's 12,
+ * for the reason the ring's own header gives: a worn rider stays under the
+ * creature whose identity the same rider is.
+ */
+const WRIT_PIN_POWER = 10;
+
 const WEAPONS: readonly Item[] = [
   {
     id: 'item_service_baton',
@@ -1321,7 +1337,63 @@ const WEAPONS: readonly Item[] = [
     slot: Slot.Mainhand,
     icon: 'item_writ_of_seizure',
     tier: 'rare',
-    wielder: {},
+    /**
+     * ═════════════════════════════════════════════════════════════════════════
+     * IT HOLDS WHAT IT HITS — `egos/ammo.lua:509-518`, the ` of gravity` roll.
+     * ═════════════════════════════════════════════════════════════════════════
+     *
+     * ```lua
+     * special_on_hit = {desc="10% chance to crush the target", fct=function(combat, who, target)
+     *   if not rng.percent(10) then return end
+     *   ...
+     *   elseif target:canBe("pin") then
+     *     target:setEffect(target.EFF_PINNED, 3, {src=who, apply_power=who:combatAttack(combat)})
+     * ```
+     *
+     * TEN PERCENT AND THREE TURNS, both upstream's. The roll is what makes a
+     * positional status bearable as a permanent property of a weapon rather than
+     * a talent with a cooldown: a tenth of connecting blows, then the save.
+     *
+     * ═══ ON THE RARE BLADE, BECAUSE UPSTREAM'S IS A *GREATER* EGO ═══
+     * ` of gravity` is `greater_ego = 1`, `rarity = 30`, `level_range = {30, 50}`.
+     * Putting the mechanic on the uncommon hook instead would hand it to a
+     * character who has not earned it and make the tier ladder mean less — the
+     * tiers ARE the drop tables. This is the deepest mainhand in the game and
+     * that is where a rider like this belongs.
+     *
+     * ═══ THE SECOND WORN RIDER, AND IT IS CALIBRATED AGAINST THE FIRST ═══
+     * The brass ring opens a cut at apply power 8; the Overwritten Husk's claw,
+     * which is a MONSTER's whole identity, sits at 12. The ring's note states
+     * the rule — *"a ring that bled like the elite would make the elite
+     * unremarkable"* — so a worn rider stays under the creature it learned from.
+     * Ten is between them: deeper than the common ring, still short of the claw.
+     *
+     * ═══ AND `power` IS A CONSTANT WHERE UPSTREAM'S IS A STAT ═══
+     * ` of gravity` passes `apply_power = who:combatAttack(combat)` — the
+     * wielder's own accuracy, which grows with them. `Wielder` is a STATIC block
+     * folded onto a sheet and the attacker is not in scope when it is authored,
+     * so a frozen number is the honest reduction and the 10% roll is what
+     * actually prices the affix. A rider that wants the wielder's stats needs a
+     * different channel than a frozen block; when one exists this is the line
+     * that reads it.
+     *
+     * IT MUST HAVE ONE AT ALL: `OnHitStatus.power` absent means NO save, and
+     * `items.test.ts` refuses that for anything a player can wear.
+     *
+     * ═══ THE ID IS A LITERAL, AND THAT IS A CYCLE AND NOT A PREFERENCE ═══
+     * Exactly as the brass ring above: `content/effects.ts` reaches this file
+     * through `engine/talents.ts` -> `engine/equipment.ts` -> `SLOT_ORDER`, so
+     * importing the VALUE leaves `EffectId` undefined at module evaluation and
+     * the server does not boot. `items.test.ts` checks the string is a real id.
+     */
+    wielder: {
+      onHit: {
+        effectId: 'effect:pinned',
+        turns: WRIT_PIN_TURNS,
+        power: WRIT_PIN_POWER,
+        chance: WRIT_PIN_CHANCE,
+      },
+    },
     // `stralite` (swords.lua:79-87), the same step again.
     combat: { dam: 46, apr: 5, physCrit: 4.5 },
   },

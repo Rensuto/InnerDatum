@@ -219,6 +219,16 @@ export const Refusal = {
   Occupied: 'occupied',
   NoTarget: 'no_target',
   NotHostile: 'not_hostile',
+  /**
+   * HELD WHERE YOU STAND — `EFF_PINNED`, `Actor.lua:1338`.
+   *
+   * NEVER `Terrain` OR `Occupied`. Both of those describe the TILE and send a
+   * player looking for another one; this is about the body, and every other
+   * direction is refused too. A refusal reaches the client as a bare string
+   * (see `TooClose` below), so a new one costs no protocol change and saying
+   * the true thing is free.
+   */
+  Pinned: 'pinned',
   OutOfRange: 'out_of_range',
   /**
    * INSIDE THE DEAD ZONE — nearer than the attacker's `combat.minRange`.
@@ -2791,6 +2801,29 @@ function resolveIntent(actor: EngineActor, intent: Intent, run: Run): Resolution
        * Asking the MOVER whether it was just shoved by this occupant refuses
        * only the reflexive shove-back, which is the entire loop being closed.
        */
+      /**
+       * ═══════════════════════════════════════════════════════════════════════
+       * PINNED — AND IT IS BELOW THE BUMP ON PURPOSE, WHICH IS UPSTREAM'S ORDER.
+       * ═══════════════════════════════════════════════════════════════════════
+       *
+       * `Actor.lua:1337` labels its own branch *"Never move but tries to attack ?
+       * ok"* and then hands the step to the collision code with `act = true`,
+       * which is how a pinned body still hits what it walked into. The attack
+       * branch above has already returned for exactly that case, so putting the
+       * gate here reproduces it without a special case.
+       *
+       * ═══ IT REFUSES THE SWAP TOO, AND THAT IS NOT AN OVERSIGHT ═══
+       * Trading places with a friend is a move by any reading — both bodies
+       * change tile — and `never_move` is a statement about this body, not about
+       * what is standing in the way. A pinned player who could still swap would
+       * have a way out of a pin that depended on a teammate being conveniently
+       * adjacent, which is the sort of rule nobody can find and everybody
+       * eventually exploits.
+       */
+      if (actor.combat?.flags?.pinned === true) {
+        return { ok: false, reason: Refusal.Pinned };
+      }
+
       const wouldUndo = occupant !== undefined && actor.shovedBy === occupant.id;
       if (
         occupant !== undefined &&

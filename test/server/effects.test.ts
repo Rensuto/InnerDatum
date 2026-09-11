@@ -1202,6 +1202,13 @@ describe('the status roster (game-design.md § 12)', () => {
        */
       EffectId.Blinded,
       /**
+       * THE TENTH DETRIMENTAL, AND THE FIRST THAT TAKES A POSITION RATHER THAN A
+       * TURN. `physical.lua:982-998` is `addTemporaryValue("never_move", 1)`;
+       * the reader at `Actor.lua:1338` still lets the body ATTACK, which is what
+       * separates it from Stunned and is why it can ride a weapon.
+       */
+      EffectId.Pinned,
+      /**
        * THE FIRST EFFECT THAT PUTS HIT POINTS BACK. Appended, which the note at
        * the top of this list calls the free operation — an older badge atlas
        * keeps every index it already holds.
@@ -1247,6 +1254,7 @@ describe('the status roster (game-design.md § 12)', () => {
       'icon_status_brainlocked',
       'icon_status_confused',
       'icon_status_blinded',
+      'icon_status_pinned',
       'icon_status_regeneration',
       'icon_status_pain_suppression',
       'icon_status_empowered_healing',
@@ -1345,6 +1353,9 @@ describe('the status roster (game-design.md § 12)', () => {
       // physical.lua:643 — `type = "physical"`. It is a flash in the eyes, not a
       // thought put somewhere else, and the save it rolls against says so.
       [EffectId.Blinded]: SaveChannel.Physical,
+      // physical.lua:986 — `type = "physical"`. Being held down is a fact about
+      // your body, and the save that answers it is the one for bodies.
+      [EffectId.Pinned]: SaveChannel.Physical,
       /**
        * physical.lua's EFF_REGENERATION. THE CHANNEL IS A LABEL HERE, exactly as
        * it is for Evasive four entries up: nothing resists a heal, because

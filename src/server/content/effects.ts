@@ -131,6 +131,11 @@ export const EffectId = {
    */
   Blinded: 'effect:blinded',
   /**
+   * PINNED — `physical.lua:982-998`. `addTemporaryValue("never_move", 1)`, and
+   * `Actor.lua:1338` is the only thing that reads it.
+   */
+  Pinned: 'effect:pinned',
+  /**
    * ═══════════════════════════════════════════════════════════════════════════
    * THE FIRST BENEFICIAL EFFECT IN THE GAME, AND THE POINT IS THE CATEGORY.
    * ═══════════════════════════════════════════════════════════════════════════
@@ -1295,6 +1300,64 @@ export const BLINDED: EffectDef = Object.freeze({
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════
+ * PINNED — `physical.lua:982-998`, AND THE READER'S COMMENT IS THE MECHANIC.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * ```lua
+ * activate = function(self, eff) eff.tmpid = self:addTemporaryValue("never_move", 1) end,
+ * ```
+ *
+ * `Actor.lua:1337-1342` is the only reader, and its own comment is the whole
+ * design:
+ *
+ * ```lua
+ * -- Never move but tries to attack ? ok
+ * elseif not force and self:attr("never_move") then
+ *   -- A bit weird, but this simple asks the collision code to detect an attack
+ *   if not game.level.map:checkAllEntities(x, y, "block_move", self, true) then
+ *     game.logPlayer(self, "You are unable to move!")
+ * ```
+ *
+ * A PINNED BODY STILL SWINGS. The step into a hostile is passed to the
+ * collision code with `act = true`, which IS the attack; only a step onto free
+ * floor is refused. Ours needs no special case for that, because the bump is
+ * already resolved and returned before anything asks about movement — the gate
+ * sits after it, which is upstream's order rather than a convenience.
+ *
+ * ═══ SO IT TAKES YOUR FEET AND NOT YOUR TURN ═══
+ * That is what separates this from Stunned, and it is the reason it can be a
+ * common rider where a stun cannot: a pinned player still acts, still attacks,
+ * still casts. What they lose is the ability to LEAVE, which against a ranged
+ * creature is most of the answer to it, and against a melee one is nothing at
+ * all. It is a positional status, and the counterplay is positional.
+ *
+ * ═══ NOT PORTED: THE KNOCKBACK ARM ═══
+ * `Actor.lua:6916` reads `knockback = function(self) return self:attr("never_move") and 100 ...`
+ * — being pinned is total immunity to being knocked back. Nothing in this game
+ * knocks anybody back yet, so there is no site to put it at; when one lands it
+ * reads this flag and needs no edit here.
+ */
+export const PINNED: EffectDef = Object.freeze({
+  id: EffectId.Pinned,
+  // `Pn` IS OFF-BALANCE'S. `Pi` is free and the roster test proves it.
+  badge: 'Pi',
+  displayName: 'Pinned',
+  description: 'Held where you stand. You can still fight; you cannot leave.',
+  // physical.lua:986 — `type = "physical"`.
+  type: SaveChannel.Physical,
+  status: EffectStatus.Detrimental,
+  // physical.lua declares no `on_merge` for PINNED, so upstream replaces (:128).
+  stackMode: StackMode.Refresh,
+  // :987 — `subtype = { pin=true }`.
+  subtypes: ['pin'],
+  decrease: 1,
+  icon: 'icon_status_pinned',
+  // :993 — `addTemporaryValue("never_move", 1)`. See `StatusFlags.pinned`.
+  modifiers: { pinned: true },
+});
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
  * REGENERATION — hit points put back, a turn at a time.
  * ═══════════════════════════════════════════════════════════════════════════
  *
@@ -1982,6 +2045,7 @@ export const MVP_EFFECTS: readonly EffectDef[] = Object.freeze([
   BRAINLOCKED,
   CONFUSED,
   BLINDED,
+  PINNED,
   REGENERATION,
   PAIN_SUPPRESSION,
   EMPOWERED_HEALING,

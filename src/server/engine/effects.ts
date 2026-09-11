@@ -249,6 +249,8 @@ export type EffectModifiers = {
   readonly stunned?: boolean;
   /** `EFF_BLINDED` — see `StatusFlags.blind`. OR'd, like its neighbours. */
   readonly blind?: boolean;
+  /** `EFF_PINNED` — see `StatusFlags.pinned`. OR'd, like its neighbours. */
+  readonly pinned?: boolean;
   /**
    * Sets `StatusFlags.dazed` — halves accuracy, defence, all three powers and
    * all three saves INSIDE the getters, before the rescale (derived.ts).
@@ -2096,6 +2098,7 @@ export function recomputeAttributes(state: EffectState, actor: EffectActor): voi
     breached: (base?.breached ?? false) || mods.breached === true,
     stunned: (base?.stunned ?? false) || mods.stunned === true,
     blind: (base?.blind ?? false) || mods.blind === true,
+    pinned: (base?.pinned ?? false) || mods.pinned === true,
     // OR'D, like the four above it: one effect saying "free" is enough, and two
     // saying it is not twice as free.
     freeResources: (base?.freeResources ?? false) || mods.freeResources === true,
