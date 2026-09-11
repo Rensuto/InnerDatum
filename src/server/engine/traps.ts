@@ -112,7 +112,29 @@ export type TrapEffect =
    * `TRAP_ALARM`'s intruder alarm — `traps/alarm.lua:38-52`. Every non-player
    * body in a box around the plate takes the victim as its target.
    */
-  | { readonly kind: 'alarm'; readonly radius: number };
+  | { readonly kind: 'alarm'; readonly radius: number }
+  /**
+   * The lethargy rune — `traps/annoy.lua:29-47`. Takes `count` of the victim's
+   * READY activated talents at random and puts each on cooldown.
+   *
+   * ```lua
+   * for i = 1, 3 do
+   *   local tid = rng.tableRemove(tids)
+   *   if not tid then break end
+   *   who.talents_cd[tid] = rng.range(4, 7)
+   * end
+   * ```
+   *
+   * `rng.tableRemove` REMOVES the element it returns, so the three are distinct
+   * — the same talent cannot be picked twice — and `break` on an empty list is
+   * why a body with one talent loses one rather than erroring.
+   */
+  | {
+      readonly kind: 'lethargy';
+      readonly count: number;
+      readonly minTurns: number;
+      readonly maxTurns: number;
+    };
 
 /** One trap, on one tile. `Map.TRAP` holds at most one entity per cell. */
 export type Trap = {
@@ -179,6 +201,37 @@ export type TrapSpec = Omit<Trap, 'id' | 'knownBy'>;
  * the placer knows which tiles are legal and nothing about damage.
  */
 export type TrapKit = Omit<TrapSpec, 'x' | 'y'>;
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE SENTENCE, WITH THE VICTIM IN IT — `engine/Trap.lua:133-138`.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * ```lua
+ * local tname = who.name
+ * local str = self.message
+ * str = str:gsub("@target@", tname)
+ * str = str:gsub("@Target@", tname:capitalize())
+ * ```
+ *
+ * TWO PLACEHOLDERS, NOT ONE, and the second is the one that bites. The bolt
+ * traps all write `@target@` mid-sentence ("A bolt of fire blasts onto
+ * @target@!") and the alarm writes `@Target@` at the start of one ("@Target@
+ * triggers an alarm!"), because that is where the name falls in each. A port
+ * that substituted only the lowercase form would be correct on every trap it
+ * had at the time and would print a literal `@Target@` at the player the day
+ * the first sentence-initial message landed.
+ *
+ * IT DID. The intruder alarm shipped with exactly that, and it was found by
+ * reading the NEXT trap's message rather than by anything failing — the
+ * fixtures for the alarm had been written with the lowercase spelling, so the
+ * one test that could have caught it was testing the test.
+ */
+export function trapSentence(message: string, victimName: string): string {
+  const capitalised =
+    victimName.length === 0 ? victimName : victimName[0]?.toUpperCase() + victimName.slice(1);
+  return message.replaceAll('@target@', victimName).replaceAll('@Target@', capitalised);
+}
 
 /**
  * CAN THIS TRAP GO OFF ON THIS BODY — `tome/class/Trap.lua:246-280`, reduced.

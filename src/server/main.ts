@@ -473,6 +473,20 @@ export function talentRuntimeFor(
         },
       };
     },
+    /**
+     * WHICH TALENTS THIS BODY COULD ACTIVATE — see `TalentResolution.activatedOf`.
+     *
+     * FROM THE SHEET'S OWN LOADOUT, which is this game's `who.talents`: the four
+     * class talents a character carries. Passives are a separate list
+     * (`passivesOf`) and are correctly absent — upstream's filter is
+     * `t.mode == "activated"` and a lethargy rune that shut down a passive would
+     * be turning off something the player cannot turn back on.
+     *
+     * NO COOLDOWN FILTER HERE. That half is the engine's and `noteTrap` does it
+     * with `cooldownOf`; asking the registry would be a second answer to a
+     * question `actor.cooldowns` already owns.
+     */
+    activatedOf: (actorId: string): readonly string[] => talents.sheetOf(actorId)?.loadout ?? [],
     actBase: (actorId: string): void => {
       // THE REFILL TAKES THE PENALTY. `budgetPenalty` reads the status table
       // and answers what SLOWED is taking off this round — the caller applies it

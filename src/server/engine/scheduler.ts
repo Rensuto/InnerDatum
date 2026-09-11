@@ -81,8 +81,10 @@ import {
   IntentKind,
   actBase,
   areEnemies,
+  cooldownOf,
   isHostile,
   isMonster,
+  setCooldown,
   spendTurn,
 } from './actor.ts';
 import { AttackRefusal, attackTarget, canAttack } from './combat.ts';
@@ -103,7 +105,7 @@ import { membersOf, partyIdOf } from './party.ts';
 import { combatAPR } from './derived.ts';
 import { applyDamage } from './damage.ts';
 import { canOpenDoors, isClosedDoor } from './doors.ts';
-import { trapTakes } from './traps.ts';
+import { trapSentence, trapTakes } from './traps.ts';
 import { soundAlarm } from '../ai/alarm.ts';
 import { tickZones, visibleFrom } from './zones.ts';
 import { DAMAGE_TYPES } from '../../shared/damagetype.ts';
@@ -842,6 +844,32 @@ export type TalentResolution = {
    * compiling and reads as a bestiary that knows nothing.
    */
   castable?(self: MonsterActor, target: EngineActor): readonly MonsterCast[];
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * WHICH TALENTS THIS BODY COULD ACTIVATE — `who.talents`, filtered by mode.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * ```lua
+   * for tid, lev in pairs(who.talents) do
+   *   local t = who:getTalentFromId(tid)
+   *   if not who.talents_cd[tid] and t.mode == "activated" then tids[#tids+1] = tid end
+   * end
+   * ```
+   *
+   * `traps/annoy.lua:36-40`. Upstream asks TWO questions there and only one of
+   * them needs the registry: "is this talent activated rather than passive" is a
+   * fact about the talent, and "is it on cooldown" is a fact about the body that
+   * `cooldownOf` already answers from `actor.cooldowns`. So this returns the
+   * whole activated set and the caller filters — which keeps the seam a question
+   * about CONTENT and leaves the engine's own state in the engine.
+   *
+   * Ids are namespaced `talent:<id>`, the same keys `actor.cooldowns` uses.
+   *
+   * OPTIONAL, for `castable`'s reason: every fixture that builds a
+   * `TalentResolution` by hand keeps compiling, and an absent answer reads as a
+   * body with no talents — which is every monster in the game.
+   */
+  activatedOf?(actorId: string): readonly string[];
   /**
    * ONCE PER GAME TURN PER ACTOR, on the BASE clock — the AP/MP refill and the
    * class resource's regeneration.
@@ -3799,7 +3827,7 @@ function noteTrap(effect: Effect, run: Run, sweepTurn: number | null, moverId: s
    * than a different rule.
    */
   if (victim.kind === ActorKind.Player) {
-    run.records.push(trap.message.replaceAll('@target@', victim.name));
+    run.records.push(trapSentence(trap.message, victim.name));
   }
 
   /**
@@ -3844,6 +3872,58 @@ function noteTrap(effect: Effect, run: Run, sweepTurn: number | null, moverId: s
     const sprung: Effect = { kind: 'attack', ...blow };
     noteBlows(sprung, run);
     noteCasualty(sprung, run, sweepTurn, trap.id);
+  } else if (trap.effect.kind === 'lethargy') {
+    /**
+     * ═════════════════════════════════════════════════════════════════════════
+     * THE LETHARGY RUNE. It takes the buttons, not the hit points.
+     * ═════════════════════════════════════════════════════════════════════════
+     *
+     * ```lua
+     * for tid, lev in pairs(who.talents) do
+     *   if not who.talents_cd[tid] and t.mode == "activated" then tids[#tids+1] = tid end
+     * end
+     * for i = 1, 3 do
+     *   local tid = rng.tableRemove(tids)
+     *   if not tid then break end
+     *   who.talents_cd[tid] = rng.range(4, 7)
+     * end
+     * ```
+     *
+     * `traps/annoy.lua:36-45`. TWO FILTERS AND THEY LIVE IN DIFFERENT PLACES:
+     * "is it activated" is a fact about the talent and comes from the content
+     * seam; "is it ready" is a fact about this body and comes from
+     * `actor.cooldowns`, which this engine already owns.
+     *
+     * ═══ `rng.tableRemove` REMOVES WHAT IT RETURNS ═══
+     * So the picks are DISTINCT — a body with three ready talents loses all
+     * three and never loses one of them twice — and the loop `break`s on an
+     * empty list, which is why a body with one talent loses one rather than
+     * erroring. Splicing out of a local copy is that, exactly.
+     *
+     * ═══ THE DRAWS ARE ORDERED AND EVERY ONE IS LABELLED ═══
+     * A pick and then a duration, per talent, in that order. The number of
+     * draws depends on how many ready talents the victim had, which is a fact
+     * about the victim and not about the seed — and that is fine here because
+     * nothing downstream of a trap re-rolls the floor.
+     */
+    const ready = (run.ctx.talents?.activatedOf?.(moverId) ?? []).filter(
+      (talentId) => cooldownOf(victim, talentId) === 0,
+    );
+    for (let i = 0; i < trap.effect.count; i += 1) {
+      if (ready.length === 0) break;
+      const at = world.rng.int(`trap.lethargy.${trap.id}.pick${String(i)}`, 0, ready.length - 1);
+      const [talentId] = ready.splice(at, 1);
+      if (talentId === undefined) break;
+      setCooldown(
+        victim,
+        talentId,
+        world.rng.int(
+          `trap.lethargy.${trap.id}.turns${String(i)}`,
+          trap.effect.minTurns,
+          trap.effect.maxTurns,
+        ),
+      );
+    }
   } else {
     /**
      * ═════════════════════════════════════════════════════════════════════════

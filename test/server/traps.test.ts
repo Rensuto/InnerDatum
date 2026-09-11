@@ -1,9 +1,16 @@
 import { describe, expect, it } from 'vitest';
 
+import {
+  WATCHMAN,
+  createContentTalentEngine,
+  createTalentBook,
+  sheetForClass,
+} from '../../src/server/content/classes.ts';
 import { DELVES, populateDelve, specFor } from '../../src/server/content/delve.ts';
-import { TRAP_KINDS, rollTrap } from '../../src/server/content/traps.ts';
+import { TRAP_KINDS, TRAP_MESSAGES, rollTrap } from '../../src/server/content/traps.ts';
 import { AiProfile } from '../../src/server/engine/actor.ts';
-import { TRIGGER_FAIL_PERCENT, clscale } from '../../src/server/engine/traps.ts';
+import { TRIGGER_FAIL_PERCENT, clscale, trapSentence } from '../../src/server/engine/traps.ts';
+import { talentRuntimeFor } from '../../src/server/main.ts';
 import { createTurnEngine } from '../../src/server/turn-engine.ts';
 import { createWorld } from '../../src/server/world/world.ts';
 import { DamageType } from '../../src/shared/damagetype.ts';
@@ -178,6 +185,34 @@ describe('and it says what it was', () => {
     );
   });
 
+  it('substitutes BOTH placeholders, and the capital one capitalises', () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * THE BUG THAT SHIPPED, AND WHY NO TEST CAUGHT IT.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * `engine/Trap.lua:136-137` gsubs `@target@` AND `@Target@`, the second
+     * capitalised, because the bolts put the name mid-sentence and the alarm
+     * puts it first. The port did only the lowercase form, so the intruder
+     * alarm printed a literal `@Target@` at the player.
+     *
+     * IT WAS INVISIBLE BECAUSE THE FIXTURE DISAGREED WITH THE ROSTER. The
+     * alarm scene above had been written with `@target@`, so the assertion was
+     * measuring a message this game never sends. Fixtures that paraphrase the
+     * content they stand for can only ever test themselves — so this drives
+     * `trapSentence` directly against the exact strings the roster authors.
+     */
+    expect(trapSentence('A bolt of fire blasts onto @target@!', 'Ren')).toBe(
+      'A bolt of fire blasts onto Ren!',
+    );
+    expect(trapSentence('@Target@ triggers an alarm!', 'ren')).toBe('Ren triggers an alarm!');
+    // AND NEITHER SPELLING SURVIVES INTO THE OUTPUT, whichever the author used.
+    for (const message of TRAP_MESSAGES) {
+      const said = trapSentence(message, 'Ren');
+      expect(said, `${message} left a placeholder in the Case Log`).not.toContain('@');
+    }
+  });
+
   it('says nothing at all when a monster springs one', () => {
     /**
      * Upstream uses `logSeen`, which suppresses a sentence about a body you
@@ -237,7 +272,7 @@ describe('the alarm', () => {
       x: 3,
       y: LANE_Y,
       kind: 'trap_alarm',
-      message: '@target@ triggers an alarm!',
+      message: '@Target@ triggers an alarm!',
       effect: { kind: 'alarm', radius },
       spent: true,
       detectPower: 6,
@@ -350,6 +385,171 @@ describe('the alarm', () => {
   });
 });
 
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE LETHARGY RUNE — `traps/annoy.lua:29-47`. It takes the buttons.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * DRIVEN WITH A REAL TALENT RUNTIME, because the whole rule is a JOIN: the
+ * content seam answers which talents are activated, the engine answers which
+ * are ready, and the trap writes to `actor.cooldowns`. A fixture that stubbed
+ * any one of those would be testing its own stub.
+ */
+describe('the lethargy rune', () => {
+  function runeScene(seed: string) {
+    const world = createWorld(seed);
+    world.level.tiles.fill(TileCode.FLOOR);
+    const talents = createContentTalentEngine();
+    const book = createTalentBook(talents, world);
+    const engine = createTurnEngine({
+      world,
+      talents: book,
+      talentRuntime: talentRuntimeFor(talents, world),
+      now: () => 0,
+    });
+
+    const ren = world.addPlayer('p1', 'Ren', { maxHp: 500 });
+    ren.x = 2;
+    ren.y = LANE_Y;
+    ren.hpRegen = 0;
+    talents.attach('p1', sheetForClass(WATCHMAN));
+    engine.join('p1');
+
+    world.addTrap({
+      x: 3,
+      y: LANE_Y,
+      kind: 'trap_lethargy',
+      message: '@Target@ seems less active.',
+      effect: { kind: 'lethargy', count: 3, minTurns: 4, maxTurns: 7 },
+      spent: true,
+      detectPower: 20,
+    });
+
+    return { world, engine, ren, book };
+  }
+
+  it("puts three of the victim's ready talents on cooldown", () => {
+    const table = runeScene('rune-cd');
+    expect(table.ren.cooldowns.size, 'the fixture started with something on cooldown').toBe(0);
+
+    expect(table.engine.submitMove('p1', 'e').ok).toBe(true);
+    table.engine.pump();
+
+    expect(table.ren.cooldowns.size, 'the rune shut nothing down').toBe(3);
+    for (const [talentId, turns] of table.ren.cooldowns) {
+      // `rng.range(4, 7)`, both ends inclusive.
+      expect(turns, `${talentId} got a duration outside 4..7`).toBeGreaterThanOrEqual(4);
+      expect(turns).toBeLessThanOrEqual(7);
+    }
+  });
+
+  it('picks DISTINCT talents — `rng.tableRemove` removes what it returns', () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * A POOL OF EXACTLY THREE, BECAUSE TWELVE HID THE BUG.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * `rng.tableRemove` removes the element it returns, so three picks from a
+     * pool of three take ALL THREE. An implementation that indexed without
+     * removing would repeat, and the first draft of this test could not tell:
+     * the Watchman has twelve talents, three draws from twelve rarely collide,
+     * and one seed happened not to. MEASURED — that mutation was run and came
+     * back green.
+     *
+     * Narrowing the pool to the count makes a repeat CERTAIN to show, and the
+     * seeds are walked so it cannot hide behind one lucky draw.
+     */
+    for (let i = 0; i < 8; i += 1) {
+      const table = runeScene(`rune-distinct-${String(i)}`);
+      const loadout = table.book.loadoutOf(table.ren).map((entry) => entry.id);
+      const ready = loadout.slice(0, 3);
+      for (const id of loadout.slice(3)) table.ren.cooldowns.set(id, 50);
+
+      expect(table.engine.submitMove('p1', 'e').ok).toBe(true);
+      table.engine.pump();
+
+      for (const id of ready) {
+        const turns = table.ren.cooldowns.get(id) ?? 0;
+        /**
+         * `> 0`, NOT `>= 4`. `tickCooldowns` runs once a game turn and a pump
+         * can cross more than one, so a talent the rune set to 4 reads back as
+         * 3 — which is the clock, not the rune. The rule here is "all three
+         * were taken"; the DURATION is pinned in the test above, where the
+         * band is read off the map before it can be ticked twice.
+         */
+        expect(
+          turns,
+          `${id} was left ready — three picks from three take all three`,
+        ).toBeGreaterThan(0);
+        expect(turns, `${id} got longer than rng.range(4, 7) could give`).toBeLessThanOrEqual(7);
+      }
+    }
+  });
+
+  it('does no damage and makes no noise', () => {
+    const table = runeScene('rune-harmless');
+    const before = table.ren.hp;
+
+    expect(table.engine.submitMove('p1', 'e').ok).toBe(true);
+    table.engine.pump();
+
+    expect(table.ren.hp, 'the lethargy rune hurt somebody').toBe(before);
+  });
+
+  it('takes what is left when a body has fewer ready talents than it wants', () => {
+    /**
+     * `if not tid then break end` — upstream stops at an empty list rather than
+     * erroring, and this is the case that reaches it.
+     *
+     * ═══ THE IDS COME FROM THE SHEET, NOT FROM A GUESS ═══
+     * An earlier draft named two talents by hand. A name that is not in the
+     * loadout is not filtered out by `cooldownOf`, so the rune would have taken
+     * three REAL talents and the test would have passed for the wrong reason.
+     *
+     * ═══ AND 50, NOT 9, BECAUSE THE CLOCK TICKS ═══
+     * `tickCooldowns` runs once a game turn and a pump can cross more than one,
+     * so a pre-set 9 came back as 7 — which is inside the rune's own 4..7 band
+     * and therefore indistinguishable from the rune having overwritten it. A
+     * value the rune could never produce is what makes the assertion mean
+     * something.
+     */
+    const table = runeScene('rune-short');
+    const loadout = table.book.loadoutOf(table.ren).map((entry) => entry.id);
+    // READ, NOT ASSUMED. An earlier draft asserted four and the Watchman
+    // carries twelve; the rule under test is "fewer READY than it wants", and
+    // how many the class has is not part of it.
+    expect(
+      loadout.length,
+      'a class with fewer than three talents cannot test this',
+    ).toBeGreaterThan(3);
+
+    // EVERYTHING BUT TWO, so the rune wants three and can only reach two.
+    const blocked = loadout.slice(0, loadout.length - 2);
+    for (const id of blocked) table.ren.cooldowns.set(id, 50);
+
+    expect(table.engine.submitMove('p1', 'e').ok).toBe(true);
+    table.engine.pump();
+
+    // The two that were already down are untouched by the rune — still far
+    // above anything `rng.range(4, 7)` could have written.
+    for (const id of blocked) {
+      expect(table.ren.cooldowns.get(id) ?? 0, `${id} was shut down twice`).toBeGreaterThan(40);
+    }
+    // It wanted three and only two were ready, so it took both and stopped —
+    // every talent the body has is now on cooldown, and not one more.
+    expect(table.ren.cooldowns.size, 'the rune reached past the ready list').toBe(loadout.length);
+  });
+
+  it('is SPENT, and says its sentence with a capital', () => {
+    const table = runeScene('rune-spent');
+    expect(table.engine.submitMove('p1', 'e').ok).toBe(true);
+    const result = table.engine.pump();
+
+    expect(table.world.trapAt(3, LANE_Y), 'the rune stayed armed').toBeUndefined();
+    expect(result.records ?? []).toContain('Ren seems less active.');
+  });
+});
+
 describe('a monster walks onto one too', () => {
   it('springs the same plate, and the party is told nothing about it', () => {
     /**
@@ -445,10 +645,16 @@ describe('clscale, and the zero that is not nothing', () => {
 });
 
 describe('the authored roster', () => {
-  it('names the three bolts we can say, plus the alarm', () => {
+  it('names the three bolts we can say, plus the two that do no damage', () => {
     // Acid and poison are upstream's other two bolt traps and are deliberately
     // absent: this game has six damage types and neither is among them.
-    expect(TRAP_KINDS).toEqual(['trap_fire', 'trap_cold', 'trap_lightning', 'trap_alarm']);
+    expect(TRAP_KINDS).toEqual([
+      'trap_fire',
+      'trap_cold',
+      'trap_lightning',
+      'trap_alarm',
+      'trap_lethargy',
+    ]);
   });
 
   it('rolls a trap a level-1 party can survive', () => {
@@ -505,8 +711,15 @@ describe('the authored roster', () => {
     // thing that moved is the floor's level. Walked until a BOLT comes up,
     // because an alarm's radius is deliberately depth-independent — a noise
     // does not get louder further down.
+    /**
+     * BOTH DEPTHS INSIDE THE SAME ELIGIBLE POOL. At level 1 the lethargy rune is
+     * below its own `{5, 15}` range and drops out, so the pool is four rather
+     * than five and the SAME SEED picks a different kind — which is the level
+     * filter working, and would make this test measure it instead. Five and
+     * thirteen both see the whole roster.
+     */
     for (let i = 0; i < 30; i += 1) {
-      const shallow = rollTrap(1, createRng(`depth-${String(i)}`), 'delve.traps.0');
+      const shallow = rollTrap(5, createRng(`depth-${String(i)}`), 'delve.traps.0');
       const deep = rollTrap(13, createRng(`depth-${String(i)}`), 'delve.traps.0');
       expect(deep.kind).toBe(shallow.kind);
       if (shallow.effect.kind !== 'bolt' || deep.effect.kind !== 'bolt') continue;

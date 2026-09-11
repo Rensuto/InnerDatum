@@ -1067,6 +1067,27 @@ const TRAP_INK: Readonly<Record<string, string>> = {
   trap_cold: '#9696dc',
   trap_lightning: '#0000dc',
   trap_alarm: '#8e4500',
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE ONE COLOUR HERE THAT IS NOT UPSTREAM'S, AND THE REASON IS NO ART.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `annoy.lua:32` gives the lethargy rune `colors.BLUE` — (0x00,0x00,0xe3) —
+   * which is within seven points of the lightning trap's own (0x00,0x00,0xdc).
+   * Upstream can afford that because a trap draws its `image`, and
+   * `trap_lethargy_rune_01.png` looks nothing like `blast_lightning01.png`. The
+   * colour is a tint on a picture that has already said which trap it is.
+   *
+   * WE HAVE NO PICTURE. Every trap here is the same caret and the colour is the
+   * whole identity, so carrying both blues across would ship two marks a player
+   * cannot tell apart that do entirely different things — one costs hit points,
+   * the other takes three of your four buttons away for a fight. Copying the
+   * number faithfully would have been unfaithful to what the number is FOR.
+   *
+   * Indigo keeps the rune reading as arcane and as not-lightning. It goes back
+   * to upstream's blue on the day these get sprites.
+   */
+  trap_lethargy: '#5a3fd0',
 };
 /** What an unrecognised kind draws as — a mark you cannot identify is still a mark. */
 const TRAP_INK_UNKNOWN = '#dc0000';

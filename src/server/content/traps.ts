@@ -91,7 +91,8 @@ type TrapTemplate = {
         /** `resolvers.clscale(base, baseLevel, spread, 0.75, 0)` for `dam`. */
         readonly damage: readonly [base: number, baseLevel: number, spread: number];
       }
-    | { readonly kind: 'alarm'; readonly radius: number };
+    | { readonly kind: 'alarm'; readonly radius: number }
+    | { readonly kind: 'lethargy' };
   readonly rarity: number;
   readonly levelRange: readonly [number, number];
 };
@@ -179,10 +180,66 @@ const TEMPLATES: readonly TrapTemplate[] = [
     rarity: 3,
     levelRange: [1, 15],
   },
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE LETHARGY RUNE — `traps/annoy.lua:29-47`. It takes your kit, not your hp.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * ```lua
+   * name = "lethargy trap", rarity = 3, level_range = {5, nil},
+   * color=colors.BLUE, message = "@Target@ seems less active.",
+   * unided_name = "pattern of glyphs",
+   * desc = function(self) return "Disrupts activated talents." end,
+   * ```
+   *
+   * The third shape a trap can take and the one that is hardest to see coming:
+   * no damage, no noise, and three of your four buttons go grey for the length
+   * of a fight. On a class whose whole answer to a room is one talent, that is a
+   * bigger number than any bolt on this list.
+   *
+   * ═══ `{5, nil}` — NO UPPER BOUND, WHICH IS NOT THE SAME AS `{5, 30}` ═══
+   * Upstream's nil max means "every floor from five down", and it is written
+   * here as the deepest floor this game has rather than as a number copied off
+   * a game with fifty. The FLOOR of five is the part that is tuning: it is the
+   * one trap in this roster that is deliberately absent from the shallow game,
+   * because a level-3 character has fewer talents and losing three of them is
+   * most of what they can do.
+   *
+   * SPENT WHEN IT FIRES (`return true, true`), like the alarm and unlike a bolt.
+   */
+  {
+    kind: 'trap_lethargy',
+    spent: true,
+    name: 'lethargy trap',
+    message: '@Target@ seems less active.',
+    effect: { kind: 'lethargy' },
+    rarity: 3,
+    levelRange: [5, 15],
+  },
 ];
+
+/**
+ * `for i = 1, 3` and `rng.range(4, 7)` — annoy.lua:41-45.
+ *
+ * THREE, AND FOUR TO SEVEN TURNS. Authored here rather than on the effect,
+ * because they are the same on the one rune that has them and a second rune
+ * that wanted different numbers would be a second entry in this file.
+ */
+const LETHARGY_TALENTS = 3;
+const LETHARGY_MIN_TURNS = 4;
+const LETHARGY_MAX_TURNS = 7;
 
 /** Every authored trap kind, for the tests that must cover all of them. */
 export const TRAP_KINDS: readonly string[] = TEMPLATES.map((template) => template.kind);
+
+/**
+ * Every authored message, for the one test that must see the REAL strings.
+ *
+ * A fixture that paraphrases the content it stands for can only test itself:
+ * the alarm's `@Target@` bug survived because the test scene had been written
+ * with `@target@`, which is a message this game never sends.
+ */
+export const TRAP_MESSAGES: readonly string[] = TEMPLATES.map((template) => template.message);
 
 /**
  * Roll one trap for a floor of this level.
@@ -226,24 +283,31 @@ export function rollTrap(level: number, rng: Rng, label: string): TrapKit {
     spent: picked.spent,
     message: picked.message,
     effect:
-      picked.effect.kind === 'alarm'
-        ? { kind: 'alarm', radius: picked.effect.radius }
-        : {
-            kind: 'bolt',
-            damageType: picked.effect.damageType,
-            // The explicit ZERO floor, which is truthy in Lua and is the reason
-            // a level-1 fire trap does single digits rather than ninety.
-            damage: clscale(
-              picked.effect.damage[0],
-              picked.effect.damage[1],
-              picked.effect.damage[2],
-              DAMAGE_POWER,
-              0,
-              level,
-              rng,
-              `${label}.dam`,
-            ),
-          },
+      picked.effect.kind === 'lethargy'
+        ? {
+            kind: 'lethargy',
+            count: LETHARGY_TALENTS,
+            minTurns: LETHARGY_MIN_TURNS,
+            maxTurns: LETHARGY_MAX_TURNS,
+          }
+        : picked.effect.kind === 'alarm'
+          ? { kind: 'alarm', radius: picked.effect.radius }
+          : {
+              kind: 'bolt',
+              damageType: picked.effect.damageType,
+              // The explicit ZERO floor, which is truthy in Lua and is the reason
+              // a level-1 fire trap does single digits rather than ninety.
+              damage: clscale(
+                picked.effect.damage[0],
+                picked.effect.damage[1],
+                picked.effect.damage[2],
+                DAMAGE_POWER,
+                0,
+                level,
+                rng,
+                `${label}.dam`,
+              ),
+            },
     detectPower: clscale(
       DETECT.base,
       DETECT.baseLevel,
