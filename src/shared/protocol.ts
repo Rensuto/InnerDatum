@@ -1872,10 +1872,17 @@ export type TerrainMsg = {
 export type TrapView = {
   x: number;
   y: number;
-  /** Which authored kind, so the renderer can pick a mark. */
+  /**
+   * Which authored kind. The renderer TINTS the mark from it — upstream gives
+   * every trap subtype its own `color_r/g/b` (`traps/elemental.lua:68`, `:80`,
+   * `:93`) and the colour is how a player tells a fire plate from an ice one
+   * without walking back onto it.
+   *
+   * No `name` beside it, deliberately: nothing on the client renders one yet,
+   * and a field the wire carries for a tooltip that does not exist is a field
+   * that will be wrong by the time it does.
+   */
   kind: string;
-  /** What to call it in a tooltip. The server has already decided. */
-  name: string;
 };
 
 /**

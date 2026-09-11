@@ -55,7 +55,6 @@ function scene(
     x: options.at ?? 3,
     y: LANE_Y,
     kind: 'trap_fire',
-    name: 'fire trap',
     message: 'A bolt of fire blasts onto @target@!',
     damage: options.damage ?? 7,
     damageType: DamageType.Fire,
@@ -146,6 +145,66 @@ describe('walking onto a trap', () => {
     expect(table.engine.submitMove('p1', 'e').ok).toBe(true);
     table.engine.pump();
     expect(table.actor('p1').hp, 'a trap fired once and then went quiet').toBeLessThan(afterFirst);
+  });
+});
+
+describe('and it says what it was', () => {
+  it("prints upstream's own sentence, with the victim named", () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * THE HALF THAT WAS SILENTLY MISSING UNTIL THE BUMP ARGUMENT CAUGHT IT.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * `engine/Trap.lua:126-135` substitutes `@target@` and logs the result. The
+     * damage cannot carry this: it rides `ambient`, which strips the verb, the
+     * name and the struck-tile marker because nobody swung, so what reaches the
+     * client is a bare number.
+     *
+     * The version entry for this release argued that a v22 client would take
+     * "damage with no verb and no name attached to explain it" — and that was
+     * true of THIS build too, because `message` was authored and read by
+     * nothing. The Record lane is where it belongs and `PumpResult.records` is
+     * how it gets there.
+     */
+    const table = scene('trap-says');
+    expect(table.engine.submitMove('p1', 'e').ok).toBe(true);
+    const result = table.engine.pump();
+
+    expect(result.records ?? [], 'the trap went off and said nothing').toContain(
+      'A bolt of fire blasts onto Ren!',
+    );
+  });
+
+  it('says nothing at all when a monster springs one', () => {
+    /**
+     * Upstream uses `logSeen`, which suppresses a sentence about a body you
+     * cannot see. Our Record lane is a realm-wide broadcast with no per-viewer
+     * form, so a husk's mishap would both name a body the party may not see AND
+     * hand them the trap's location for free — the exact leak `TrapsMsg` is a
+     * `ViewerMsg` to prevent.
+     */
+    const table = scene('trap-silent', { at: 4 });
+    const husk = table.world.addMonster('m_husk', {
+      name: 'Index Husk',
+      sprite: HUSK_SPRITE,
+      x: 5,
+      y: LANE_Y,
+      profile: AiProfile.MeleeChaser,
+      maxHp: 300,
+    });
+    husk.hpRegen = 0;
+
+    const said: string[] = [];
+    for (let i = 0; i < 4; i += 1) {
+      table.world.turn.engagement = 20;
+      expect(table.engine.submitMove('p1', i % 2 === 0 ? 'w' : 'e').ok).toBe(true);
+      said.push(...(table.engine.pump().records ?? []));
+    }
+
+    // The husk really did cross it — otherwise this is green by nothing
+    // happening, which is the shape this file has already been bitten by.
+    expect(table.world.trapAt(4, LANE_Y)?.knownBy.has('m_husk')).toBe(true);
+    expect(said, 'a monster springing a trap narrated itself to the room').toEqual([]);
   });
 });
 
@@ -304,7 +363,6 @@ describe('trigger_fail — the one escape that applies to everybody', () => {
       x: 3,
       y: LANE_Y,
       kind: 'trap_fire',
-      name: 'fire trap',
       message: 'x',
       damage: 1,
       damageType: DamageType.Fire,

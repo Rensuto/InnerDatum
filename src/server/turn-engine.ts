@@ -3271,6 +3271,8 @@ export function createTurnEngine(opts: TurnEngineOptions): ReapingTurnEngine {
         sweep: toWireEvents(world, sweepEvents, 'sweep'),
         refusals,
         ...(saves.length === 0 ? {} : { saves }),
+        // The engine's own sentences, forwarded. See `PumpResult.records`.
+        ...(result.records.length === 0 ? {} : { records: result.records }),
         // ═══ AND WHO WAS MOVED WITHOUT ASKING TO BE ═══
         // Straight through, for the same reason `refusals` is assembled just
         // above: the wire cannot carry it. Two `moved` events say where both

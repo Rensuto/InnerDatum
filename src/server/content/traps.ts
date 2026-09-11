@@ -65,6 +65,12 @@ import type { Rng } from '../../shared/rng.ts';
  */
 type TrapTemplate = {
   readonly kind: string;
+  /**
+   * Upstream's `name`. AUTHORED AND NOT ON THE WIRE: the Case Log prints
+   * `message`, which already names the element in a sentence, and nothing in
+   * this build renders a trap tooltip yet. It stays here because it is what
+   * upstream calls the thing and re-deriving it later is the expensive half.
+   */
   readonly name: string;
   /** Upstream's `message`, with `@target@` left in for the caller. */
   readonly message: string;
@@ -139,7 +145,6 @@ export function rollTrap(level: number, rng: Rng, label: string): TrapKit {
   const [base, baseLevel, spread] = picked.damage;
   return {
     kind: picked.kind,
-    name: picked.name,
     message: picked.message,
     damageType: picked.damageType,
     // The explicit ZERO floor, which is truthy in Lua and is the reason a

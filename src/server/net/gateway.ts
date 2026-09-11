@@ -1052,6 +1052,26 @@ export type PumpResult = {
    */
   readonly saves?: readonly string[];
   /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * AND EVERYTHING ELSE THE RECORD LANE MUST PRINT THAT NO FRAME CAN CARRY.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `saves` above is deliberately narrow — *"The Record lane's, and nothing
+   * else's"* — and widening it would have made a field whose name stopped
+   * describing it. This is the general form, and it exists because a second
+   * source turned up with the identical problem rather than because one was
+   * anticipated.
+   *
+   * THAT SOURCE IS TRAPS. A trap's damage rides the ordinary `attacked` event
+   * flagged `ambient`, which strips the verb, the name and the struck-tile
+   * marker because nobody swung. What survives is a bare number, so upstream's
+   * own sentence — *"A bolt of fire blasts onto @target@!"*
+   * (`engine/Trap.lua:126-135`) — has nowhere on the wire to ride. It arrives
+   * here as text and goes out as an ordinary Record `log` line, exactly as the
+   * saves do.
+   */
+  readonly records?: readonly string[];
+  /**
    * Bodies moved by somebody else's action this pump — see `PumpResult.displaced`
    * in engine/scheduler.ts, which owns the whole argument.
    *
@@ -5954,6 +5974,11 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
      * Physical save they have all been buying does anything.
      */
     for (const line of result.saves ?? []) {
+      broadcastRecordLine(realm, line);
+    }
+    // AND THE REST OF THE RECORD LANE'S TEXT. Same channel, same reason — see
+    // `PumpResult.records`.
+    for (const line of result.records ?? []) {
       broadcastRecordLine(realm, line);
     }
 

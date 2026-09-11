@@ -1041,6 +1041,29 @@ const LOS_SHADE_ALPHA = 0.55;
  */
 /** How far the caret is held off the cell edge, as a fraction of a tile. */
 const TRAP_MARK_INSET = 0.22;
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * ONE COLOUR PER TRAP KIND — `traps/elemental.lua:68`, `:80` and `:93`.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Upstream gives every trap subtype its own `color_r/g/b`, and the reason is
+ * the same one that makes the caret worth drawing at all: a player who has
+ * found a plate needs to know WHICH plate before deciding whether to risk
+ * crossing it. Fire is (220,0,0), ice (150,150,220), lightning (0,0,220) —
+ * carried across unchanged, because they are legible against this floor and
+ * re-choosing them would throw away the one thing the table already knows.
+ *
+ * TOTAL OVER `TRAP_KINDS`, because `paintTraps` indexes it with whatever the
+ * wire sent: a miss is `undefined` into `fillStyle`, which the canvas ignores
+ * silently, and the mark would draw in whatever colour was set last.
+ */
+const TRAP_INK: Readonly<Record<string, string>> = {
+  trap_fire: '#dc0000',
+  trap_cold: '#9696dc',
+  trap_lightning: '#0000dc',
+};
+/** What an unrecognised kind draws as — a mark you cannot identify is still a mark. */
+const TRAP_INK_UNKNOWN = '#dc0000';
 /** The caret's stroke, as a fraction of a tile. Floored at 2px by the painter. */
 const TRAP_MARK_THICK = 0.09;
 
@@ -2759,8 +2782,8 @@ export function createRenderer(options: RendererOptions): Renderer {
     if (marks.length === 0) return;
 
     backCtx.save();
-    backCtx.fillStyle = PALETTE.CRIMSON;
     for (const mark of marks) {
+      backCtx.fillStyle = TRAP_INK[mark.kind] ?? TRAP_INK_UNKNOWN;
       const cellX = mark.x * TILE_PX - camX;
       const cellY = mark.y * TILE_PX - camY;
       // AND IT CULLS, like every other ground painter here: without this the

@@ -1408,6 +1408,12 @@ type Run = {
    * BODIES MOVED BY SOMEBODY ELSE IN THIS CALL. See `PumpResult.displaced`.
    */
   readonly displaced: string[];
+  /**
+   * SENTENCES THE RECORD LANE MUST PRINT THAT NO FRAME CAN CARRY.
+   * See `PumpResult.records`. A sibling of `displaced` and for its reason: the
+   * one place that holds both the run and the thing that happened.
+   */
+  readonly records: string[];
 };
 
 export type PumpResult = {
@@ -1485,6 +1491,8 @@ export type PumpResult = {
    * not.
    */
   readonly displaced: readonly string[];
+  /** See `PumpResult.records`. */
+  readonly records: readonly string[];
   readonly ticks: number;
   readonly gameTurns: number;
   /** Completed game turns since the world began. */
@@ -1587,6 +1595,7 @@ export function pump(world: World, ctx: PumpCtx): PumpResult {
   const sink = createEventSink(events);
   const reaped: string[] = [];
   const displaced: string[] = [];
+  const records: string[] = [];
 
   /**
    * ONE SNAPSHOT of the actor array for the whole call — ToME's `tickLevel` is
@@ -1646,6 +1655,7 @@ export function pump(world: World, ctx: PumpCtx): PumpResult {
     scopes,
     reaped,
     displaced,
+    records,
   };
 
   // Anything the caller applied BETWEEN pumps — a GM command, a status handed
@@ -1854,6 +1864,7 @@ export function pump(world: World, ctx: PumpCtx): PumpResult {
     events,
     reaped,
     displaced,
+    records,
     ticks: result.ticks,
     gameTurns: result.gameTurns,
     gameTurn: world.turn.clock.gameTurn,
@@ -3758,6 +3769,36 @@ function noteTrap(effect: Effect, run: Run, sweepTurn: number | null, moverId: s
    * killed by it still learns; the knowledge outlives the turn either way.
    */
   trap.knownBy.add(moverId);
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * AND IT SAYS WHAT IT WAS — `engine/Trap.lua:126-135`'s `message`.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * ```lua
+   * local str = self.message
+   * str = str:gsub("@target@", tname)
+   * game.logSeen(who, "%s", str)
+   * ```
+   *
+   * THE DAMAGE ALONE CANNOT SAY THIS. The burn rides `ambient`, which is the
+   * flag that strips the verb, the name and the struck-tile marker — correct,
+   * because nobody swung — and what is left is a bare number. The number names
+   * the element and nothing names the TRAP, so without this line a player takes
+   * seven fire damage from the floor and is told only that they took it.
+   *
+   * ═══ PLAYERS ONLY, BECAUSE THE RECORD LANE HAS NO FOG ═══
+   * Upstream uses `logSeen`, which suppresses the sentence when the victim
+   * cannot be seen. Ours is a realm-wide broadcast with no per-viewer form, so
+   * narrating a husk's mishap would name a body the party may not be able to
+   * see, and would also hand them a trap's location for free — the exact leak
+   * `TrapsMsg` is a `ViewerMsg` to prevent. A monster springing a trap is
+   * therefore silent, which is a strict subset of upstream's behaviour rather
+   * than a different rule.
+   */
+  if (victim.kind === ActorKind.Player) {
+    run.records.push(trap.message.replaceAll('@target@', victim.name));
+  }
 
   const blow: Blow = {
     targetId: moverId,

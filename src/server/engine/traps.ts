@@ -92,8 +92,6 @@ export type Trap = {
   readonly y: number;
   /** Which of the authored kinds this is. The client's key for what to draw. */
   readonly kind: string;
-  /** The name the Case Log prints once somebody knows what they stepped on. */
-  readonly name: string;
   /** Upstream's `message`, with `@target@` already substituted by the caller. */
   readonly message: string;
   readonly damage: number;

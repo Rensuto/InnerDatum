@@ -1780,7 +1780,7 @@ export function projectTraps(world: World, actorId: string): TrapsMsg {
     traps: world
       .traps()
       .filter((trap) => trap.knownBy.has(actorId))
-      .map((trap) => ({ x: trap.x, y: trap.y, kind: trap.kind, name: trap.name })),
+      .map((trap) => ({ x: trap.x, y: trap.y, kind: trap.kind })),
   };
 }
 
