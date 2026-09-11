@@ -7,10 +7,11 @@ import { TRIGGER_FAIL_PERCENT, clscale } from '../../src/server/engine/traps.ts'
 import { createTurnEngine } from '../../src/server/turn-engine.ts';
 import { createWorld } from '../../src/server/world/world.ts';
 import { DamageType } from '../../src/shared/damagetype.ts';
-import { TileCode } from '../../src/shared/protocol.ts';
+import { ActorKind, TileCode } from '../../src/shared/protocol.ts';
 import { createRng } from '../../src/shared/rng.ts';
 import type { DelveSpec } from '../../src/server/content/delve.ts';
 import type { AuthoredMap } from '../../src/shared/level.ts';
+import type { MonsterActor } from '../../src/server/engine/actor.ts';
 import type { Actor, World } from '../../src/server/world/world.ts';
 
 /**
@@ -56,8 +57,10 @@ function scene(
     y: LANE_Y,
     kind: 'trap_fire',
     message: 'A bolt of fire blasts onto @target@!',
-    damage: options.damage ?? 7,
-    damageType: DamageType.Fire,
+    effect: { kind: 'bolt', damage: options.damage ?? 7, damageType: DamageType.Fire },
+    // A BOLT IS NOT SPENT BY GOING OFF — `triggered` returns `true` alone, so
+    // `del` is nil. Several tests below turn on exactly this.
+    spent: false,
     detectPower: 6,
   });
 
@@ -208,6 +211,145 @@ describe('and it says what it was', () => {
   });
 });
 
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE INTRUDER ALARM — `traps/alarm.lua:28-53`. No damage, and worse than any.
+ * ═══════════════════════════════════════════════════════════════════════════
+ */
+describe('the alarm', () => {
+  /** Ren, a plate she is about to stand on, and husks scattered out of sight. */
+  function alarmScene(seed: string, radius = 20) {
+    const world = createWorld(seed);
+    world.level.tiles.fill(TileCode.FLOOR);
+    // A WALL BETWEEN HER AND THEM, so nothing can possibly have seen her. An
+    // alarm that only roused what could already see the victim would be
+    // indistinguishable from the ordinary aggro this game already had.
+    for (let y = 0; y < world.level.h; y += 1) {
+      world.level.tiles[y * world.level.w + 8] = TileCode.WALL;
+    }
+
+    const ren = world.addPlayer('p1', 'Ren');
+    ren.x = 2;
+    ren.y = LANE_Y;
+    ren.hpRegen = 0;
+
+    world.addTrap({
+      x: 3,
+      y: LANE_Y,
+      kind: 'trap_alarm',
+      message: '@target@ triggers an alarm!',
+      effect: { kind: 'alarm', radius },
+      spent: true,
+      detectPower: 6,
+    });
+
+    const far: string[] = [];
+    for (let i = 0; i < 3; i += 1) {
+      const id = `m_far_${String(i)}`;
+      const husk = world.addMonster(id, {
+        name: 'Index Husk',
+        sprite: HUSK_SPRITE,
+        x: 12 + i,
+        y: 12 + i,
+        profile: AiProfile.MeleeChaser,
+        maxHp: 200,
+      });
+      husk.hpRegen = 0;
+      far.push(id);
+    }
+
+    const engine = createTurnEngine({ world, now: () => 0 });
+    engine.join('p1');
+
+    /** The husk, narrowed. `ai` lives on `MonsterActor` and not on the union. */
+    const hunter = (id: string): MonsterActor => {
+      const found = world.getActor(id);
+      if (found === undefined || found.kind !== ActorKind.Monster) {
+        throw new Error(`test fixture: ${id} is not a monster`);
+      }
+      return found;
+    };
+
+    return { world, engine, far, hunter };
+  }
+
+  it('turns the whole floor onto you, through a wall and out of sight', () => {
+    /**
+     * The point of the trap and the reason it is worth porting before any other
+     * family: `soundAlarm` tests neither line of sight nor the watcher's own
+     * `aggroRange`, because upstream's loop tests neither. A noise is not a
+     * thing you see.
+     */
+    const table = alarmScene('alarm-all');
+    for (const id of table.far) {
+      expect(table.hunter(id).ai.targetId, 'a husk started out hunting').toBe(null);
+    }
+
+    expect(table.engine.submitMove('p1', 'e').ok).toBe(true);
+    table.engine.pump();
+
+    for (const id of table.far) {
+      expect(table.hunter(id).ai.targetId, `${id} never heard the alarm`).toBe('p1');
+    }
+  });
+
+  it('does no damage whatsoever', () => {
+    // `triggered` on TRAP_ALARM projects nothing at all. A player who loses hit
+    // points to it would be reading a bolt wearing an alarm's name.
+    const table = alarmScene('alarm-harmless');
+    const before = table.world.getActor('p1')?.hp;
+
+    expect(table.engine.submitMove('p1', 'e').ok).toBe(true);
+    table.engine.pump();
+
+    expect(table.world.getActor('p1')?.hp, 'the alarm hurt somebody').toBe(before);
+  });
+
+  it('is SPENT when it fires — `return true, true`', () => {
+    /**
+     * The half the first implementation of this file could not express, because
+     * it hardcoded "never removed" from the only family it had. A plate that
+     * re-summoned the room every time somebody walked back across it would be a
+     * tile nobody could ever cross twice.
+     */
+    const table = alarmScene('alarm-spent');
+    expect(table.engine.submitMove('p1', 'e').ok).toBe(true);
+    table.engine.pump();
+
+    expect(table.world.trapAt(3, LANE_Y), 'the alarm stayed armed after firing').toBeUndefined();
+  });
+
+  it('leaves a body outside the radius alone', () => {
+    // The box is real and is not "everything on the floor" by accident.
+    const table = alarmScene('alarm-radius', 2);
+
+    expect(table.engine.submitMove('p1', 'e').ok).toBe(true);
+    table.engine.pump();
+
+    for (const id of table.far) {
+      expect(table.hunter(id).ai.targetId, `${id} heard a noise it could not`).toBe(null);
+    }
+  });
+
+  it('takes a body that is already hunting somebody else', () => {
+    /**
+     * `pointAt` — the primitive `raiseAlarm` uses — deliberately refuses to
+     * steal an existing target. `soundAlarm` must NOT, and the difference is the
+     * whole mechanic: an alarm that left every engaged body alone would do
+     * nothing in the one situation a party cares about, which is the fight they
+     * are already in getting bigger.
+     */
+    const table = alarmScene('alarm-steal');
+    const first = table.hunter(table.far[0] ?? '');
+    first.ai.targetId = 'somebody_else';
+
+    expect(table.engine.submitMove('p1', 'e').ok).toBe(true);
+    table.engine.pump();
+
+    expect(first.ai.targetId, 'an engaged husk ignored the alarm').toBe('p1');
+  });
+});
+
 describe('a monster walks onto one too', () => {
   it('springs the same plate, and the party is told nothing about it', () => {
     /**
@@ -303,10 +445,10 @@ describe('clscale, and the zero that is not nothing', () => {
 });
 
 describe('the authored roster', () => {
-  it('names three kinds, and every one of them is a damage type we have', () => {
+  it('names the three bolts we can say, plus the alarm', () => {
     // Acid and poison are upstream's other two bolt traps and are deliberately
     // absent: this game has six damage types and neither is among them.
-    expect(TRAP_KINDS).toEqual(['trap_fire', 'trap_cold', 'trap_lightning']);
+    expect(TRAP_KINDS).toEqual(['trap_fire', 'trap_cold', 'trap_lightning', 'trap_alarm']);
   });
 
   it('rolls a trap a level-1 party can survive', () => {
@@ -319,19 +461,59 @@ describe('the authored roster', () => {
      */
     for (let i = 0; i < 40; i += 1) {
       const kit = rollTrap(1, createRng(`roll-${String(i)}`), 'delve.traps.0');
-      expect(kit.damage, 'a level-1 trap would nearly kill a fresh Alchemist').toBeLessThan(20);
-      expect(kit.damage).toBeGreaterThan(0);
       expect(TRAP_KINDS).toContain(kit.kind);
+      if (kit.effect.kind !== 'bolt') continue;
+      expect(kit.effect.damage, 'a level-1 trap would nearly kill a fresh Alchemist').toBeLessThan(
+        20,
+      );
+      expect(kit.effect.damage).toBeGreaterThan(0);
     }
   });
 
+  it('will not roll a trap the floor is too deep for — `level_range`', () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * THE FIELD THAT WAS CARRIED AND IGNORED UNTIL A SECOND RANGE EXISTED.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * `makeEntity` filters a zone's entity list by `level_range` before rolling,
+     * which is what stops a level-30 curse rune landing on the first floor. The
+     * first pass of this roster carried the field and read none of it — harmless
+     * while all three bolts shared `{1, 30}`, and silently wrong the moment one
+     * template did not.
+     *
+     * The alarm is `{1, 15}` because that is every floor this game has. At 20 it
+     * must drop out, and no delve reaches 20 today — which is exactly why this
+     * is asserted here rather than left for a floor that does not exist yet to
+     * discover.
+     */
+    for (let i = 0; i < 40; i += 1) {
+      const kit = rollTrap(20, createRng(`deep-${String(i)}`), 'delve.traps.0');
+      expect(kit.kind, 'an alarm was rolled below its own level range').not.toBe('trap_alarm');
+    }
+    // AND IT IS REACHABLE AT A DEPTH IT DOES COVER, or the test above passes on
+    // a roster that simply never produces one.
+    const shallow = new Set<string>();
+    for (let i = 0; i < 60; i += 1) {
+      shallow.add(rollTrap(3, createRng(`shallow-${String(i)}`), 'delve.traps.0').kind);
+    }
+    expect(shallow, 'the alarm is unreachable at every depth').toContain('trap_alarm');
+  });
+
   it('bites harder on a deep floor than a shallow one', () => {
-    const shallow = rollTrap(1, createRng('depth'), 'delve.traps.0');
-    const deep = rollTrap(13, createRng('depth'), 'delve.traps.0');
     // THE SAME SEED, so the kind and the jitter are identical and the only
-    // thing that moved is the floor's level.
-    expect(deep.kind).toBe(shallow.kind);
-    expect(deep.damage).toBeGreaterThan(shallow.damage);
+    // thing that moved is the floor's level. Walked until a BOLT comes up,
+    // because an alarm's radius is deliberately depth-independent — a noise
+    // does not get louder further down.
+    for (let i = 0; i < 30; i += 1) {
+      const shallow = rollTrap(1, createRng(`depth-${String(i)}`), 'delve.traps.0');
+      const deep = rollTrap(13, createRng(`depth-${String(i)}`), 'delve.traps.0');
+      expect(deep.kind).toBe(shallow.kind);
+      if (shallow.effect.kind !== 'bolt' || deep.effect.kind !== 'bolt') continue;
+      expect(deep.effect.damage).toBeGreaterThan(shallow.effect.damage);
+      return;
+    }
+    throw new Error('thirty rolls produced no bolt trap — the roster changed shape');
   });
 });
 
@@ -364,8 +546,8 @@ describe('trigger_fail — the one escape that applies to everybody', () => {
       y: LANE_Y,
       kind: 'trap_fire',
       message: 'x',
-      damage: 1,
-      damageType: DamageType.Fire,
+      effect: { kind: 'bolt', damage: 1, damageType: DamageType.Fire },
+      spent: false,
       detectPower: 6,
     });
 
@@ -491,7 +673,8 @@ describe('traps on a generated delve', () => {
     for (const siteId of DELVES.keys()) {
       const world = populate(siteId, `sweep-${siteId}`);
       for (const trap of world.traps()) {
-        expect(trap.damage, `${siteId} rolled a trap that does nothing`).toBeGreaterThan(0);
+        if (trap.effect.kind !== 'bolt') continue;
+        expect(trap.effect.damage, `${siteId} rolled a bolt that does nothing`).toBeGreaterThan(0);
       }
     }
   });

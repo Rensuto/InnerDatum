@@ -3,6 +3,7 @@
 // Ported from t-engine4 game/modules/tome/class/NPC.lua:342-367 (onTakeHit — "Share reaction with allies")
 //                                                      :372-391 (die — "Call for help if we become hostile")
 //              t-engine4 game/modules/tome/class/interface/ActorAI.lua:130-135 (target_last_seen)
+//              t-engine4 game/modules/tome/data/general/traps/alarm.lua:38-52 (the intruder alarm)
 // T-Engine4 (C) 2009-2018 Nicolas Casalini "DarkGod" — https://te4.org/license
 
 /**
@@ -76,6 +77,7 @@ import { PURSUIT_TURNS } from './npc.ts';
 import { chebyshev } from '../../shared/coords.ts';
 import { isHostile, isMonster } from '../engine/actor.ts';
 import { hasLineOfSight } from '../../shared/sight.ts';
+import type { TileXY } from '../../shared/coords.ts';
 import type { EngineActor, MonsterActor } from '../engine/actor.ts';
 import type { World } from '../world/world.ts';
 
@@ -151,6 +153,67 @@ export function raiseAlarm(
   }
 
   return roused;
+}
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * A NOISE, AND EVERYTHING THAT CAN HEAR IT COMES — `traps/alarm.lua:38-52`.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * ```lua
+ * for i = x - 20, x + 20 do for j = y - 20, y + 20 do if game.level.map:isBound(i, j) then
+ *   local actor = game.level.map(i, j, game.level.map.ACTOR)
+ *   if actor and not actor.player then
+ *     ...
+ *     elseif who:reactionToward(actor) < 0 then actor:setTarget(who) end
+ * ```
+ *
+ * A SQUARE BOX, not a circle — `x-20..x+20` on both axes is Chebyshev distance,
+ * which is the same metric `combatDistance` uses here.
+ *
+ * ═══ NO LINE OF SIGHT, AND NO `aggroRange`. BOTH ARE THE POINT ═══
+ * `raiseAlarm` above is careful about both: it asks whether the watcher could
+ * SEE the victim and bounds the answer by that watcher's own notice radius,
+ * because "I saw you hurt my friend" is a thing you see. This is a NOISE. A
+ * husk around the corner with its back turned hears an alarm exactly as well as
+ * one watching the door, and upstream's loop tests neither. On a 34x30 delve a
+ * radius of 20 is the whole floor, which is what "alerting others" should mean
+ * on a floor this size.
+ *
+ * ═══ IT TAKES A TARGET THAT IS ALREADY HUNTING SOMEBODY ELSE ═══
+ * `pointAt` deliberately refuses to steal an existing target — a body already
+ * committed to a hunt keeps it. Upstream's `setTarget` here has no such guard,
+ * and the difference is the whole mechanic: an alarm that left every already-
+ * engaged body alone would do nothing at all in the one situation a party
+ * cares about, which is the fight they are already in getting bigger.
+ *
+ * @returns the ids that turned, for the caller's log and for the tests.
+ */
+export function soundAlarm(
+  world: World,
+  who: EngineActor,
+  at: TileXY,
+  radius: number,
+): readonly string[] {
+  const turned: string[] = [];
+  for (const other of world.allActors()) {
+    if (!other.alive || other.id === who.id) continue;
+    // `not actor.player` — an alarm rouses the floor, not the party.
+    if (!isMonster(other)) continue;
+    // `who:reactionToward(actor) < 0`. The friendly arm above it hands a
+    // FRIEND the victim's own target, and nothing on this floor is friendly to
+    // a detective, so that arm has nothing to act on and is not ported.
+    if (!isHostile(other, who)) continue;
+    // `chebyshev`, because `x-20..x+20` on both axes IS Chebyshev distance and
+    // this codebase has exactly one distance vocabulary.
+    if (chebyshev(other, at) > radius) continue;
+
+    other.ai.targetId = who.id;
+    other.ai.lastSeen = { x: who.x, y: who.y };
+    other.ai.unseenTurns = 0;
+    turned.push(other.id);
+  }
+  return turned;
 }
 
 /**

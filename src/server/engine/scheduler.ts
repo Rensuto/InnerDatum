@@ -104,6 +104,7 @@ import { combatAPR } from './derived.ts';
 import { applyDamage } from './damage.ts';
 import { canOpenDoors, isClosedDoor } from './doors.ts';
 import { trapTakes } from './traps.ts';
+import { soundAlarm } from '../ai/alarm.ts';
 import { tickZones, visibleFrom } from './zones.ts';
 import { DAMAGE_TYPES } from '../../shared/damagetype.ts';
 import { DEFAULT_PROJECTILE_DAMAGE_TYPE, stepProjectile } from './projectile.ts';
@@ -3755,18 +3756,19 @@ function noteTrap(effect: Effect, run: Run, sweepTurn: number | null, moverId: s
    */
   if (!trapTakes(trap, world.rng, moverId)) return;
 
-  const outcome = applyDamage(victim, trap.damage, trap.damageType, trap, world.rng, {});
-
   /**
    * YOU LEARN IT BY SETTING IT OFF — `engine/Trap.lua:143-146`'s `if known then
    * self:setKnown(who, true, x, y) end`, where an elemental trap's `triggered`
    * returns `true` and therefore always teaches.
    *
    * THIS IS THE COUNTERPLAY, not a nicety. The trap is NOT removed (upstream's
-   * `del` is nil here), so it fires again on the next body that stands on it —
-   * and with no detection talent in this game, stepping on it is the only way
-   * anybody ever finds out it is there. Set AFTER the damage so a body that was
-   * killed by it still learns; the knowledge outlives the turn either way.
+   * `del` is nil on a bolt), so it fires again on the next body that stands on
+   * it — and with no detection talent in this game, stepping on it is the only
+   * way anybody ever finds out it is there.
+   *
+   * SET BEFORE THE EFFECT, so a body the trap KILLS still learnt it. That costs
+   * nothing for a corpse and matters for the alarm, whose effect reads the
+   * victim's position after the fact.
    */
   trap.knownBy.add(moverId);
 
@@ -3800,33 +3802,80 @@ function noteTrap(effect: Effect, run: Run, sweepTurn: number | null, moverId: s
     run.records.push(trap.message.replaceAll('@target@', victim.name));
   }
 
-  const blow: Blow = {
-    targetId: moverId,
-    hit: true,
-    crit: false,
-    type: outcome.type,
-    damage: outcome.dealt,
-    killed: outcome.killed,
-    hp: victim.hp,
-    maxHp: victim.maxHp,
-    at: { x: victim.x, y: victim.y },
-  };
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * WHAT IT ACTUALLY DOES. Exhaustive, so the next family is a compile error.
+   * ═══════════════════════════════════════════════════════════════════════════
+   */
+  if (trap.effect.kind === 'bolt') {
+    const outcome = applyDamage(
+      victim,
+      trap.effect.damage,
+      trap.effect.damageType,
+      trap,
+      world.rng,
+      {},
+    );
+
+    const blow: Blow = {
+      targetId: moverId,
+      hit: true,
+      crit: false,
+      type: outcome.type,
+      damage: outcome.dealt,
+      killed: outcome.killed,
+      hp: victim.hp,
+      maxHp: victim.maxHp,
+      at: { x: victim.x, y: victim.y },
+    };
+
+    /**
+     * `ambient`, FOR THE ZONE BURN'S REASON AND MORE SHARPLY. That flag exists
+     * because an `attacked` event implies a verb and a swinger, and a burning
+     * floor has neither — it printed `someone hits Ren.` once a turn. A trap
+     * has no swinger at all, ever: there is no body to name even in principle,
+     * so the frame that names one would be wrong on every floor rather than
+     * only when the source happened to be dead.
+     */
+    if (sweepTurn === null) {
+      run.sink.push({ t: 'attacked', id: trap.id, ...blow, ambient: true });
+    } else run.sink.sweep(sweepTurn, { t: 'attack', id: trap.id, ...blow, ambient: true });
+
+    const sprung: Effect = { kind: 'attack', ...blow };
+    noteBlows(sprung, run);
+    noteCasualty(sprung, run, sweepTurn, trap.id);
+  } else {
+    /**
+     * ═════════════════════════════════════════════════════════════════════════
+     * THE ALARM. No damage, no event, and the loudest thing on the floor.
+     * ═════════════════════════════════════════════════════════════════════════
+     *
+     * NOTHING IS EMITTED HERE and that is not an omission. The board already
+     * carries the consequence: every roused body starts walking toward the
+     * victim on its own turn, which the sweep reports as ordinary movement
+     * because that is what it is. An event saying "an alarm went off" would be
+     * a second channel for a fact the screen is about to show anyway, and the
+     * Record line above has already said it in words.
+     */
+    soundAlarm(world, victim, { x: trap.x, y: trap.y }, trap.effect.radius);
+  }
 
   /**
-   * `ambient`, FOR THE ZONE BURN'S REASON AND MORE SHARPLY. That flag exists
-   * because an `attacked` event implies a verb and a swinger, and a burning
-   * floor has neither — it printed `someone hits Ren.` once a turn. A trap has
-   * no swinger at all, ever: there is no body to name even in principle, so the
-   * frame that names one would be wrong on every floor rather than only when
-   * the source happened to be dead.
+   * ═══════════════════════════════════════════════════════════════════════════
+   * AND IT IS GONE, IF IT WAS THE KIND THAT GOES — upstream's `del`.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * ```lua
+   * if del then game.level.map:remove(x, y, Map.TRAP) end
+   * ```
+   *
+   * `engine/Trap.lua:148-150`. LAST, after the effect and after the knowledge,
+   * because both read the trap — and the knowledge is what makes removing it
+   * safe to do while a client still holds it: the next `traps` frame is built
+   * from `world.traps()` and simply stops listing it, which the client applies
+   * wholesale.
    */
-  if (sweepTurn === null) {
-    run.sink.push({ t: 'attacked', id: trap.id, ...blow, ambient: true });
-  } else run.sink.sweep(sweepTurn, { t: 'attack', id: trap.id, ...blow, ambient: true });
-
-  const sprung: Effect = { kind: 'attack', ...blow };
-  noteBlows(sprung, run);
-  noteCasualty(sprung, run, sweepTurn, trap.id);
+  if (trap.spent) world.removeTrap(trap.x, trap.y);
 }
 
 function noteRetaliation(

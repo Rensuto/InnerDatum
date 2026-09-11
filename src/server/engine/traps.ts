@@ -85,6 +85,35 @@ import type { Rng } from '../../shared/rng.ts';
  */
 export const TRIGGER_FAIL_PERCENT = 5;
 
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * WHAT A TRAP DOES, AND IT IS NOT ALWAYS DAMAGE.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Upstream's `triggered` is a closure per trap entity, and across the nine
+ * files in `data/general/traps/` it is far more often something OTHER than a
+ * bolt: an alarm makes noise, a lethargy rune puts your talents on cooldown, a
+ * teleport rune moves you. A port that modelled a trap as "damage on a tile"
+ * would have ported the least interesting third of the system and closed the
+ * door on the rest.
+ *
+ * A DISCRIMINATED UNION rather than an optional-damage field, so a trap that
+ * does no damage is a different SHAPE and not a bolt with a zero in it — and so
+ * `noteTrap`'s dispatch is exhaustive and the next family is a compile error
+ * until it is handled.
+ */
+export type TrapEffect =
+  /**
+   * `TRAP_ELEMENTAL` — `self:project({type="hit",x=x,y=y}, ...)`, a single tile.
+   * The bolt hits whoever stood on the plate and nobody else.
+   */
+  | { readonly kind: 'bolt'; readonly damage: number; readonly damageType: DamageType }
+  /**
+   * `TRAP_ALARM`'s intruder alarm — `traps/alarm.lua:38-52`. Every non-player
+   * body in a box around the plate takes the victim as its target.
+   */
+  | { readonly kind: 'alarm'; readonly radius: number };
+
 /** One trap, on one tile. `Map.TRAP` holds at most one entity per cell. */
 export type Trap = {
   readonly id: string;
@@ -94,8 +123,31 @@ export type Trap = {
   readonly kind: string;
   /** Upstream's `message`, with `@target@` already substituted by the caller. */
   readonly message: string;
-  readonly damage: number;
-  readonly damageType: DamageType;
+  /** What happens when somebody stands on it. */
+  readonly effect: TrapEffect;
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * IS IT CONSUMED BY GOING OFF — upstream's `del`, and it is PER TRAP.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * ```lua
+   * if self.triggered then known, del = self:triggered(x, y, who) end
+   * ...
+   * if del then game.level.map:remove(x, y, Map.TRAP) end
+   * ```
+   *
+   * `engine/Trap.lua:141-150`. The second return value of `triggered`, and the
+   * families genuinely differ: an elemental bolt returns `true` alone, so `del`
+   * is nil and the plate stays armed forever. An alarm returns `true, true` and
+   * is gone the moment it has done its job — which is the only sensible reading
+   * of a noise, and is also what stops one plate from summoning the room every
+   * time somebody walks back over it.
+   *
+   * The first port of this file hardcoded "never removed", which was right about
+   * the only family it had and would have been silently wrong about every family
+   * after it.
+   */
+  readonly spent: boolean;
   /**
    * `detect_power` — the number a detector's `see_traps` is checked against.
    * Carried now and read by nothing, because it is AUTHORED data rather than a

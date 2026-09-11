@@ -1053,6 +1053,11 @@ const TRAP_MARK_INSET = 0.22;
  * carried across unchanged, because they are legible against this floor and
  * re-choosing them would throw away the one thing the table already knows.
  *
+ * The alarm is `colors.UMBER` (`traps/alarm.lua:33`), which upstream defines as
+ * (0x8e,0x45,0x00) — the one brown entry, and the one trap here that does no damage
+ * at all. A player who sees that caret is looking at a tile that costs them the
+ * room rather than hit points, and it should not read as another element.
+ *
  * TOTAL OVER `TRAP_KINDS`, because `paintTraps` indexes it with whatever the
  * wire sent: a miss is `undefined` into `fillStyle`, which the canvas ignores
  * silently, and the mark would draw in whatever colour was set last.
@@ -1061,6 +1066,7 @@ const TRAP_INK: Readonly<Record<string, string>> = {
   trap_fire: '#dc0000',
   trap_cold: '#9696dc',
   trap_lightning: '#0000dc',
+  trap_alarm: '#8e4500',
 };
 /** What an unrecognised kind draws as — a mark you cannot identify is still a mark. */
 const TRAP_INK_UNKNOWN = '#dc0000';

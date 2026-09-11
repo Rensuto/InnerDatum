@@ -66,6 +66,11 @@ import type { Rng } from '../../shared/rng.ts';
 type TrapTemplate = {
   readonly kind: string;
   /**
+   * Upstream's second `triggered` return — see `Trap.spent`. An elemental bolt
+   * returns `true` alone and stays armed; an alarm returns `true, true`.
+   */
+  readonly spent: boolean;
+  /**
    * Upstream's `name`. AUTHORED AND NOT ON THE WIRE: the Case Log prints
    * `message`, which already names the element in a sentence, and nothing in
    * this build renders a trap tooltip yet. It stays here because it is what
@@ -74,9 +79,19 @@ type TrapTemplate = {
   readonly name: string;
   /** Upstream's `message`, with `@target@` left in for the caller. */
   readonly message: string;
-  readonly damageType: DamageType;
-  /** `resolvers.clscale(base, baseLevel, spread, 0.75, 0)` for `dam`. */
-  readonly damage: readonly [base: number, baseLevel: number, spread: number];
+  /**
+   * What it does, and how to roll it. `bolt` carries its `clscale` arguments
+   * because the number depends on the floor; `alarm` carries a fixed radius
+   * because a noise does not get louder with depth.
+   */
+  readonly effect:
+    | {
+        readonly kind: 'bolt';
+        readonly damageType: DamageType;
+        /** `resolvers.clscale(base, baseLevel, spread, 0.75, 0)` for `dam`. */
+        readonly damage: readonly [base: number, baseLevel: number, spread: number];
+      }
+    | { readonly kind: 'alarm'; readonly radius: number };
   readonly rarity: number;
   readonly levelRange: readonly [number, number];
 };
@@ -93,33 +108,76 @@ const DETECT = { base: 6, baseLevel: 10, spread: 4, power: 0.5 } as const;
 /** `power` on every bolt trap's damage resolver. */
 const DAMAGE_POWER = 0.75;
 
+/**
+ * `for i = x - 20, x + 20 do for j = y - 20, y + 20` — alarm.lua:39.
+ *
+ * A Chebyshev radius, carried across unchanged. On a 34x30 delve that is the
+ * whole floor, which is what "alerting others" is supposed to mean: the room
+ * comes for you, not the corner of it you happened to be standing in.
+ */
+const ALARM_RADIUS = 20;
+
 const TEMPLATES: readonly TrapTemplate[] = [
   {
     kind: 'trap_fire',
+    spent: false,
     name: 'fire trap',
     message: 'A bolt of fire blasts onto @target@!',
-    damageType: DamageType.Fire,
-    damage: [90, 30, 25],
+    effect: { kind: 'bolt', damageType: DamageType.Fire, damage: [90, 30, 25] },
     rarity: 3,
     levelRange: [1, 30],
   },
   {
     kind: 'trap_cold',
+    spent: false,
     name: 'ice trap',
     message: 'A bolt of ice blasts onto @target@!',
-    damageType: DamageType.Cold,
-    damage: [70, 30, 15],
+    effect: { kind: 'bolt', damageType: DamageType.Cold, damage: [70, 30, 15] },
     rarity: 3,
     levelRange: [1, 30],
   },
   {
     kind: 'trap_lightning',
+    spent: false,
     name: 'lightning trap',
     message: 'A bolt of lightning blasts onto @target@!',
-    damageType: DamageType.Lightning,
-    damage: [70, 30, 15],
+    effect: { kind: 'bolt', damageType: DamageType.Lightning, damage: [70, 30, 15] },
     rarity: 3,
     levelRange: [1, 30],
+  },
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE INTRUDER ALARM — `traps/alarm.lua:28-53`. No damage at all.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * ```lua
+   * name = "intruder alarm", rarity = 3, level_range = {1, 50},
+   * unided_name = "pressure plate", message = "@Target@ triggers an alarm!",
+   * desc = function(self) return ("Makes noise, alerting others.") end,
+   * pressure_trap = true,
+   * ```
+   *
+   * The most interesting trap in the shallow game and the one that makes the
+   * layer worth having: it does nothing to you and changes everything about the
+   * room. Every hostile body on the floor takes you as its target at once, with
+   * no line of sight and no notice radius — see `soundAlarm`.
+   *
+   * `level_range = {1, 50}` upstream, and the 50 is a cap for a game with fifty
+   * floors. Ours has fifteen, so the range is written as the floors that exist:
+   * it is available everywhere, which is upstream's answer too.
+   *
+   * SPENT WHEN IT FIRES (`return true, true`), unlike every bolt above it. A
+   * noise happens once; a plate that re-summoned the room every time somebody
+   * walked back across it would be a tile nobody could ever cross twice.
+   */
+  {
+    kind: 'trap_alarm',
+    spent: true,
+    name: 'intruder alarm',
+    message: '@Target@ triggers an alarm!',
+    effect: { kind: 'alarm', radius: ALARM_RADIUS },
+    rarity: 3,
+    levelRange: [1, 15],
   },
 ];
 
@@ -137,19 +195,55 @@ export const TRAP_KINDS: readonly string[] = TEMPLATES.map((template) => templat
  * `computeRarities` requires of the monster list.
  */
 export function rollTrap(level: number, rng: Rng, label: string): TrapKit {
-  const picked = TEMPLATES[rng.int(`${label}.kind`, 0, TEMPLATES.length - 1)];
-  // TEMPLATES is a non-empty literal and the draw is bounded by its length, so
-  // this cannot fire — `!` is banned and a silent undefined would be worse.
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * ONLY WHAT BELONGS ON THIS FLOOR — upstream's `level_range`, finally read.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `makeEntity` filters the zone's entity list by `level_range` before it rolls
+   * (`engine/Zone.lua`), which is what stops a level-30 curse rune appearing on
+   * the first floor. The first pass of this file carried the field and ignored
+   * it, which was invisible while every template shared one range and would have
+   * been silently wrong the moment one did not.
+   *
+   * FALLS BACK TO THE WHOLE ROSTER rather than throwing, because an empty pick
+   * list on some future floor should mean "no traps here", not a crash on a
+   * floor somebody is standing on. It cannot fire today — every template covers
+   * level 1 — and it is the honest answer if one ever stops.
+   */
+  const eligible = TEMPLATES.filter(
+    (template) => level >= template.levelRange[0] && level <= template.levelRange[1],
+  );
+  const pool = eligible.length > 0 ? eligible : TEMPLATES;
+
+  const picked = pool[rng.int(`${label}.kind`, 0, pool.length - 1)];
+  // `pool` is non-empty by construction and the draw is bounded by its length,
+  // so this cannot fire — `!` is banned and a silent undefined would be worse.
   if (picked === undefined) throw new Error('trap roster is empty');
 
-  const [base, baseLevel, spread] = picked.damage;
   return {
     kind: picked.kind,
+    spent: picked.spent,
     message: picked.message,
-    damageType: picked.damageType,
-    // The explicit ZERO floor, which is truthy in Lua and is the reason a
-    // level-1 fire trap does single digits rather than ninety.
-    damage: clscale(base, baseLevel, spread, DAMAGE_POWER, 0, level, rng, `${label}.dam`),
+    effect:
+      picked.effect.kind === 'alarm'
+        ? { kind: 'alarm', radius: picked.effect.radius }
+        : {
+            kind: 'bolt',
+            damageType: picked.effect.damageType,
+            // The explicit ZERO floor, which is truthy in Lua and is the reason
+            // a level-1 fire trap does single digits rather than ninety.
+            damage: clscale(
+              picked.effect.damage[0],
+              picked.effect.damage[1],
+              picked.effect.damage[2],
+              DAMAGE_POWER,
+              0,
+              level,
+              rng,
+              `${label}.dam`,
+            ),
+          },
     detectPower: clscale(
       DETECT.base,
       DETECT.baseLevel,
