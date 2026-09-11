@@ -840,6 +840,7 @@ function toWireEvents(
             // THE SNAPSHOT, forwarded. Without this line the field exists and
             // every caller declines to use it — which is how it was lost.
             maxHp: ev.maxHp,
+            ambient: ev.ambient,
           }),
         );
         break;
@@ -1206,6 +1207,40 @@ function hitToWire(
     healed?: number;
     crit?: boolean;
     type?: DamageType;
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * NOBODY SWUNG. The floor did it — see `tickGroundZones`.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * A ground zone re-enters its burn as an `attacked` event on purpose: that
+     * reuse is what let the whole system ship without a new `TurnEvent` variant,
+     * a new sweep step or a protocol bump, and it is right about everything
+     * EXCEPT the two things a swing implies.
+     *
+     * It implies a VERB — the Case Log's `attack` arm says "X hits Y." — and it
+     * implies a SWINGER. Both are wrong for fire, and the second is worse than
+     * wrong: the body that lit the patch is usually dead and often already
+     * reaped, so `nameOf` answers `someone` and the log reads
+     *
+     *     someone hits Ren.        3 physical damage. Ren 51/60.
+     *
+     * once a game turn, for as long as the fire burns, with no way to tell it
+     * came from the tile. That shipped.
+     *
+     * SO IT TAKES THE HEAL'S EXIT, and for the heal's stated reason: suppressing
+     * the `attack` frame "removes the verb, the marker and the miss/hit read in
+     * one line — nothing downstream needed a new case". `render/sweep.ts` hangs
+     * the struck-tile marker off that frame too, and a fire does not strike a
+     * tile, it IS one.
+     *
+     * AND THE SOURCE GOES WITH IT. The `damage` arm adds "from #Source#" only
+     * when no headline named one (`Game.lua:1677`), so suppressing the headline
+     * alone would REPLACE "someone hits Ren" with "3 damage from someone" —
+     * the same lie, relocated. The honest line is the damage alone, on a tile
+     * the player can now SEE is burning, which is exactly what upstream's
+     * `#Target# receives %s` says when no swing is involved.
+     */
+    ambient?: boolean;
   } = {},
 ): TurnEvent[] {
   const healed = extra.healed ?? 0;
@@ -1242,6 +1277,29 @@ function hitToWire(
         hp,
         maxHp: healedVictim?.maxHp ?? 0,
         sourceId: attackerId,
+      },
+    ];
+  }
+
+  /**
+   * THE FLOOR'S OWN DAMAGE TAKES THE HEAL'S EXIT — see `extra.ambient`. One
+   * `damage` frame, no verb, no swinger, no struck-tile marker.
+   *
+   * BEFORE the `hit` check below rather than after: a zone burn is always a
+   * hit, so the ordering is invisible today — and it is written this way so the
+   * day something ambient can miss, it produces nothing rather than a phantom
+   * swing from nobody.
+   */
+  if (extra.ambient === true) {
+    const burnt = world.getActor(targetId);
+    return [
+      {
+        k: 'damage',
+        id: targetId,
+        amount,
+        hp,
+        maxHp: extra.maxHp ?? burnt?.maxHp ?? 0,
+        ...(extra.type === undefined ? {} : { type: extra.type }),
       },
     ];
   }
@@ -1370,7 +1428,7 @@ function sweepStepsToWire(world: World, steps: readonly SweepStep[]): TurnEvent[
             step.killed,
             step.hp,
             step.at,
-            { crit: step.crit, type: step.type, maxHp: step.maxHp },
+            { crit: step.crit, type: step.type, maxHp: step.maxHp, ambient: step.ambient },
           ),
         );
         break;

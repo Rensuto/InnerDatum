@@ -270,6 +270,8 @@ export type SweepStep =
       readonly def?: number;
       readonly chance?: number;
       readonly damage: number;
+      /** Nobody swung — see `GameEvent.attacked.ambient`. */
+      readonly ambient?: boolean;
       readonly killed: boolean;
       /**
        * THE TARGET'S HP AND TILE THE INSTANT THIS BLOW LANDED. See
@@ -465,6 +467,20 @@ export type GameEvent =
        * healing blow emits no `attack` frame at all, so nothing draws a swing.
        */
       readonly healed?: number;
+      /**
+       * NOBODY SWUNG — the floor did it. See `tickGroundZones` and
+       * `hitToWire`'s `ambient`.
+       *
+       * A ground zone reuses this event rather than minting a variant of its
+       * own, which is what let the whole system ship without a protocol bump.
+       * This flag is the one thing that reuse gets wrong: an `attacked` event
+       * implies a verb and a swinger, and a patch of fire has neither. Set, the
+       * wire carries the damage alone.
+       *
+       * ENGINE-INTERNAL, like every field beside it. `GameEvent` is deliberately
+       * NOT `ServerMsg` — see the note on the type — so this costs no version.
+       */
+      readonly ambient?: boolean;
       readonly killed: boolean;
       /**
        * ═══ THE TARGET'S HP THE INSTANT THIS BLOW LANDED ═══
@@ -3723,11 +3739,30 @@ function tickGroundZones(run: Run, sweepTurn: number | null): void {
       at: { x: victim?.x ?? 0, y: victim?.y ?? 0 },
     };
 
-    // THE ORDINARY `attacked` EVENT — no new event kind and therefore no
-    // protocol bump, which is the same argument the guard counter and the
-    // spikes both make. Standing in a fire is being hit by it.
-    if (sweepTurn === null) run.sink.push(attackedEvent(hit.srcId, blow));
-    else run.sink.sweep(sweepTurn, { t: 'attack', id: hit.srcId, ...blow });
+    /**
+     * THE ORDINARY `attacked` EVENT — no new event kind and therefore no
+     * protocol bump, which is the same argument the guard counter and the
+     * spikes both make.
+     *
+     * ═══ BUT FLAGGED `ambient`, BECAUSE NOBODY SWUNG ═══
+     * The reuse is right about the plumbing and wrong about the sentence. An
+     * `attacked` event implies a verb and a swinger, and the body that lit this
+     * patch is usually dead and often already reaped — so the Case Log said
+     *
+     *     someone hits Ren.        3 physical damage. Ren 51/60.
+     *
+     * once a game turn, for as long as the fire burned. `hitToWire` takes the
+     * heal's exit on this flag and emits the damage alone: no verb, no name, no
+     * struck-tile marker. The player can see the tile is burning now, which is
+     * the half of the answer the wash provides.
+     */
+    // BUILT RATHER THAN SPREAD. `attackedEvent` returns the whole `GameEvent`
+    // union, so `{ ...attackedEvent(...), ambient: true }` widens to "every
+    // variant, plus ambient" and stops being assignable. The `attacked` shape is
+    // named here instead.
+    if (sweepTurn === null) {
+      run.sink.push({ t: 'attacked', id: hit.srcId, ...blow, ambient: true });
+    } else run.sink.sweep(sweepTurn, { t: 'attack', id: hit.srcId, ...blow, ambient: true });
 
     const effect: Effect = { kind: 'attack', ...blow };
     noteBlows(effect, run);

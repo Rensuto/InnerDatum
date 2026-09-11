@@ -231,6 +231,68 @@ describe('a creature that bursts when it dies', () => {
     expect(tiles, 'the cloud lost a tile it had line of sight to').toContainEqual({ x: 8, y: 5 });
   });
 
+  it('narrates as DAMAGE, never as a dead thing swinging at you', () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * THIS SHIPPED, AND IT READ AS A GHOST.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * A zone reuses the `attacked` event so the whole system needed no new
+     * `TurnEvent` variant and no protocol bump. That reuse is right about the
+     * plumbing and wrong about the sentence: an `attacked` event implies a VERB
+     * and a SWINGER, and the body that lit the patch is usually dead — often
+     * already reaped, so `nameOf` answers `someone`. The Case Log said
+     *
+     *     someone hits Ren.        3 physical damage. Ren 51/60.
+     *
+     * once a game turn, for as long as the fire burned, with nothing tying it to
+     * the tile. It also stamped `render/sweep.ts`'s struck-tile marker, because
+     * that hangs off the `attack` frame.
+     *
+     * `hitToWire` takes the HEAL's exit on the `ambient` flag — the heal's own
+     * note says suppressing the frame "removes the verb, the marker and the
+     * miss/hit read in one line" — and the damage goes out alone, on a tile the
+     * player can now see is burning.
+     */
+    const table = stage('ondie-narration', { onDie: CLOUD });
+
+    expect(table.engine.submitMove('p1', 'e').ok).toBe(true);
+    const killing = table.engine.pump();
+    // THE CORPSE IS BURIED, which is the state that produced `someone`: the
+    // caller drains `reaped` after every pump and the gateway does exactly this.
+    for (const id of killing.reaped) table.engine.reap(id);
+    expect(table.world.getActor('m1'), 'the corpse is still on the board').toBeUndefined();
+
+    const ren = table.world.getActor('p1');
+    if (ren === undefined) throw new Error('fixture: no detective');
+    ren.x = 6;
+    ren.y = 5;
+    expect(table.engine.submitMove('p1', 'w').ok).toBe(true);
+    const burning = table.engine.pump();
+    ren.x = 6;
+    ren.y = 5;
+
+    const events = [...burning.playerEvents, ...burning.sweep];
+    const burns = events.filter((e) => e.k === 'damage' && e.id === 'p1');
+    expect(burns.length, 'the fire did not burn, so this proves nothing').toBeGreaterThan(0);
+
+    // NO SWING. Not by the dead Glut, not by anybody.
+    expect(
+      events.filter((e) => e.k === 'attack' && e.targetId === 'p1'),
+      'the floor swung at somebody',
+    ).toEqual([]);
+    // AND NO PHANTOM AUTHOR. The `damage` arm adds "from #Source#" only when no
+    // headline named one, so a surviving `sourceId` would have moved the lie
+    // rather than removed it.
+    for (const burn of burns) {
+      // NARROWED RATHER THAN INDEXED. `sourceId` lives on the `damage` variant
+      // alone, and a bracket read off the union is an `any` the compiler will
+      // not give — which is the guard working: the field only exists where the
+      // filter above has already put us.
+      expect(burn.k === 'damage' ? burn.sourceId : 'not-a-burn').toBeUndefined();
+    }
+  });
+
   it('burns whoever is standing in it on the following turns', () => {
     /**
      * THE JOIN, not the halves. `zones.test.ts` proves a zone burns; this
