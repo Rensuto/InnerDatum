@@ -942,6 +942,48 @@ describe('the zone label is actually drawn', () => {
     expect(CODE.slice(paint, label + 400)).toContain('realmName');
   });
 
+  it('hands the minimap what is ON the floor, not just the floor', () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * `Map.lua:490-521` DRAWS FIVE LAYERS AND OURS DREW ONE.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * `setupMinimapInfo` is defined on Grid, Trap, Object AND Actor upstream,
+     * and `updateMap` calls each in turn — so a ToME minimap answers *"where
+     * was that thing"* as well as "where am I". Ours painted terrain and site
+     * dots and stopped.
+     *
+     * ASSERTED AT THE CALL SITE rather than by drawing, because `paintMap`
+     * paints with `fillRect` and `test/client/canvasstub.ts` records only
+     * `drawImage` — every fill in this codebase is invisible to a stub-driven
+     * test, which is why `zonewash.test.ts` reads source text too. What CAN be
+     * checked is that the painter is handed the lists at all: a `MapPaint` field
+     * nothing passes is the exact shape of a feature that ships dead, which the
+     * docblock above this one records happening for real.
+     */
+    const paint = at('paintMap({');
+    const call = CODE.slice(paint, paint + 1200);
+    expect(call, 'the minimap is never handed the traps this viewer has found').toContain('traps:');
+    expect(call, 'the minimap is never handed the floor loot').toContain('loot:');
+  });
+
+  it('lets the SERVER decide which traps this viewer knows about', () => {
+    /**
+     * The trap list is per-viewer — `projectTraps` takes a required actor id and
+     * there is no realm-wide form — so the client must pass it through rather
+     * than filter it. A `knownBy` test on this side would be a second answer to
+     * a question the server has already settled, and the kind that drifts.
+     *
+     * Upstream gates the same layer in the same place:
+     * `if not self.actor_player or t:knownBy(self.actor_player)`.
+     */
+    const paint = at('paintMap({');
+    const call = CODE.slice(paint, paint + 1200);
+    expect(call, 'the client is filtering a list the server already narrowed').not.toContain(
+      'knownBy',
+    );
+  });
+
   it('says nothing at all before a realm frame has arrived', () => {
     /**
      * `realmName` is null until the first `realm` frame, and `welcome` carries

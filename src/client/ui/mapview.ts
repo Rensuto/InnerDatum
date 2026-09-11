@@ -105,6 +105,30 @@ export type MapPaint = {
   readonly level: LevelView;
   readonly rect: MapRect;
   readonly sites: readonly SiteView[];
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * WHAT IS ON THE FLOOR — `Map.lua:490-521`, which draws five layers and not
+   * one.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Upstream's minimap is not a picture of the terrain: `setupMinimapInfo` is
+   * defined on Grid, Trap, Object AND Actor, and `updateMap` calls it for each
+   * in turn. Ours drew the ground and the places and stopped, which made the map
+   * answer "where am I" and "where can I go" and not the third question a player
+   * opens it for — *"where was that thing"*.
+   *
+   * BOTH LISTS ARE ALREADY PER-VIEWER and neither is filtered here. Traps arrive
+   * from `TrapsMsg`, which the server built against one actor's `knownBy`; loot
+   * arrives from `GroundMsg`, which is gated on tiles that character has walked
+   * past. Upstream gates the trap layer the same way and in the same place —
+   * `if not self.actor_player or t:knownBy(self.actor_player)` — so a trap
+   * nobody has met is absent rather than hidden.
+   *
+   * Absent means "nothing to draw", which is the overworld's answer: there are
+   * no traps out there and the floor list is a delve's.
+   */
+  readonly traps?: readonly TileXY[];
+  readonly loot?: readonly TileXY[];
   /** Where the viewer is, in tiles. Omitted when they are not on this map. */
   readonly self?: { x: number; y: number };
   /** Draw a frame and a fill behind it. False for the full-screen view. */
@@ -319,9 +343,27 @@ export function mapTileAt(
   return { x, y };
 }
 
+/** `Trap:setupMinimapInfo` — `mo:minimap(240, 240, 0)`, engine/Trap.lua:60. */
+const TRAP_INK = '#f0f000';
+/** `Object:setupMinimapInfo` — `mo:minimap(0, 0, 240)`, engine/Object.lua:72. */
+const LOOT_INK = '#0000f0';
+
 export function paintMap(paint: MapPaint): number {
-  const { ctx, level, rect, sites, self, framed, seen, windowRadius, labelled, regions, party } =
-    paint;
+  const {
+    ctx,
+    level,
+    rect,
+    sites,
+    self,
+    framed,
+    seen,
+    windowRadius,
+    labelled,
+    regions,
+    party,
+    traps,
+    loot,
+  } = paint;
 
   const { win, cell, ox, oy } = mapPlacement(level, rect, self, windowRadius);
 
@@ -341,6 +383,46 @@ export function paintMap(paint: MapPaint): number {
       ctx.fillRect(ox + x * cell, oy + y * cell, cell, cell);
     }
   }
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * AND WHAT IS LYING ON IT — `Map.lua:493-506`, in upstream's own two colours.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `Trap:setupMinimapInfo` is `mo:minimap(240, 240, 0)` and
+   * `Object:setupMinimapInfo` is `mo:minimap(0, 0, 240)` — yellow and blue,
+   * carried across exactly, because on a one-pixel cell the colour is the whole
+   * message and these two are already as far apart as two colours get.
+   *
+   * ═══ UNDER THE PLACES, OVER THE GROUND ═══
+   * Upstream's layer order is terrain (1), trap (4), object (7), actor (10), and
+   * this sits between the ground fill above and the site dots below. A site is a
+   * destination and a piece of loot is a detour; the map should not let the
+   * detour cover the destination.
+   *
+   * ═══ ONE CELL, NOT `dot` ═══
+   * The sites below deliberately draw BIGGER than a cell so a settlement is not
+   * lost among the roads. These do not: a trap is a fact about ONE tile and you
+   * have to step around that tile exactly. A marker wider than the thing it
+   * marks would be a map that lies about which square is dangerous.
+   */
+  const floorMark = (tiles: readonly TileXY[] | undefined, ink: string): void => {
+    if (tiles === undefined) return;
+    ctx.fillStyle = ink;
+    for (const tile of tiles) {
+      if (tile.x < win.x0 || tile.x > win.x1 || tile.y < win.y0 || tile.y > win.y1) continue;
+      // THE FOG STILL APPLIES. Both lists are already per-viewer, but a remembered
+      // tile can leave the `seen` set when a realm changes under a stale frame,
+      // and a mark floating on unseen ground reads as a bug rather than as loot.
+      if (seen !== undefined && !seen.has(`${tile.x},${tile.y}`)) continue;
+      ctx.fillRect(ox + tile.x * cell, oy + tile.y * cell, cell, cell);
+    }
+  };
+  // LOOT FIRST, SO A TRAP ON A PILE WINS. Upstream draws the object layer OVER
+  // the trap, which is right when both have their own sprite; with one flat cell
+  // each, the one you must not step on is the one that has to survive.
+  floorMark(loot, LOOT_INK);
+  floorMark(traps, TRAP_INK);
 
   /**
    * PLACES ON TOP, and bigger than a cell on purpose. A settlement is what a

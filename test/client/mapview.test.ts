@@ -3,6 +3,7 @@
  * leak through it.
  */
 
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -413,5 +414,79 @@ describe('the name of the place you are standing in', () => {
         minimapReserveH(width),
       );
     }
+  });
+});
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE FLOOR LAYER, AS SOURCE TEXT — `Map.lua:493-506`.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `paintMap` paints with `fillRect`, and `test/client/canvasstub.ts` records
+ * only `drawImage` — so every fill in this file is invisible to a stub-driven
+ * test. `zonewash.test.ts` hit the same wall and says so at length. What CAN be
+ * checked is the SHAPE of the painter, and the three rules below are the ones
+ * that are wrong in ways nobody would notice from a screenshot.
+ */
+describe('what is on the floor, on the map', () => {
+  const SOURCE = readFileSync(new URL('../../src/client/ui/mapview.ts', import.meta.url), 'utf8');
+
+  it('carries upstream’s own two minimap colours', () => {
+    // `mo:minimap(240, 240, 0)` on Trap and `mo:minimap(0, 0, 240)` on Object.
+    // At one pixel a cell the colour IS the message, and these two are already
+    // as far apart as two colours get — re-choosing them would throw that away.
+    expect(SOURCE).toContain("const TRAP_INK = '#f0f000'");
+    expect(SOURCE).toContain("const LOOT_INK = '#0000f0'");
+  });
+
+  it('draws the floor UNDER the places and OVER the ground', () => {
+    /**
+     * Upstream's layer order is terrain (1), trap (4), object (7), actor (10).
+     * A site is a destination and a piece of loot is a detour; a map that let
+     * the detour cover the destination would be answering the wrong question.
+     *
+     * Asserted by position, because the two loops are twenty lines apart and
+     * nothing else in the file would fail if they swapped.
+     */
+    const terrain = SOURCE.indexOf('miniFill(code as TileCode)');
+    const floor = SOURCE.indexOf('floorMark(loot, LOOT_INK)');
+    const sites = SOURCE.indexOf('for (const site of sites)');
+    expect(terrain).toBeGreaterThan(-1);
+    expect(floor, 'the floor layer is gone').toBeGreaterThan(terrain);
+    expect(floor, 'loot and traps are drawn over the site dots').toBeLessThan(sites);
+  });
+
+  it('draws a trap OVER a pile, which is where it departs from upstream', () => {
+    /**
+     * Upstream draws the object layer over the trap (7 over 4) — right when each
+     * has its own sprite. With one flat cell each, the one you MUST NOT STEP ON
+     * is the one that has to survive the overlap.
+     *
+     * The order of these two calls is the whole rule, and it is the sort of
+     * thing a tidying pass would reverse without noticing.
+     */
+    const loot = SOURCE.indexOf('floorMark(loot, LOOT_INK)');
+    const traps = SOURCE.indexOf('floorMark(traps, TRAP_INK)');
+    expect(traps, 'a pile now hides the trap under it').toBeGreaterThan(loot);
+  });
+
+  it('still honours the fog for both lists', () => {
+    /**
+     * Both lists are already per-viewer, but a remembered tile can leave `seen`
+     * when a realm changes under a stale frame, and a mark floating on unseen
+     * ground reads as a bug rather than as loot.
+     *
+     * ═══ ASSERTED ON THE EXPRESSION, NOT ON THE WORD ═══
+     * The first version looked for `seen` in this slice and PASSED with the
+     * check deleted, because the docblock inside `floorMark` argues about the
+     * fog in prose. `zonewash.test.ts` records the identical trap — a source
+     * window that swallows the comment is a window that tests the comment.
+     * `seen.has(` appears only in code.
+     */
+    const body = SOURCE.slice(
+      SOURCE.indexOf('const floorMark ='),
+      SOURCE.indexOf('floorMark(loot, LOOT_INK)'),
+    );
+    expect(body, 'the floor layer ignores the fog').toContain('seen.has(');
   });
 });

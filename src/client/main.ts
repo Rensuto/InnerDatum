@@ -4601,6 +4601,20 @@ const paintHud: HudPainter = (ctx, width, height) => {
       framed: true,
       seen,
       windowRadius: MINIMAP_RADIUS,
+      /**
+       * WHAT IS ON THE FLOOR — `Map.lua:493-506`. Upstream's minimap draws the
+       * trap and object layers as well as the ground, and both of ours are
+       * already per-viewer: `traps` is what the SERVER decided this body has
+       * found out, and `ground` is gated on tiles this character has walked
+       * past. Neither is filtered here, because filtering a list the server
+       * already narrowed is how a second, disagreeing answer gets written.
+       *
+       * THE WORLD MAP BELOW GETS NEITHER, and that is not an omission: it
+       * paints `overworldLevel`, and these two are facts about the floor you
+       * are standing on.
+       */
+      traps: traps.map((trap) => ({ x: trap.x, y: trap.y })),
+      loot: ground.map((item) => ({ x: item.cell[0], y: item.cell[1] })),
     });
 
     /**
