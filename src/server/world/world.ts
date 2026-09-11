@@ -57,6 +57,7 @@ import { assertZoneSpec } from '../engine/zones.ts';
 import { recomposeCombat } from '../engine/effects.ts';
 import type { Dir, TileXY } from '../../shared/coords.ts';
 import type { TerrainChange } from '../engine/doors.ts';
+import type { Trap, TrapSpec } from '../engine/traps.ts';
 import type { GroundZone, ZoneSpec } from '../engine/zones.ts';
 import type { TurnClock } from '../../shared/energy.ts';
 import type { AuthoredMap } from '../../shared/level.ts';
@@ -664,6 +665,18 @@ export type World = {
    */
   openDoor(x: number, y: number): boolean;
   /**
+   * Put a trap on a tile. Replaces any trap already there — `Map.TRAP` holds
+   * one entity per cell and the generator's own placer rejects an occupied
+   * tile before it gets here (`generator/trap/Random.lua:47`).
+   */
+  addTrap(spec: TrapSpec): string;
+  /** The trap on this tile, hidden or not. Undefined is the common case. */
+  trapAt(x: number, y: number): Trap | undefined;
+  /** Every trap on this map. The wire walks this and filters by who knows. */
+  traps(): readonly Trap[];
+  /** Disarmed, sprung-and-spent, or the floor reset. */
+  removeTrap(x: number, y: number): boolean;
+  /**
    * Every tile whose terrain has been changed since this floor was built, in
    * the order it changed. The wire's source of truth for `TerrainMsg`.
    *
@@ -780,6 +793,12 @@ export function createWorld(
    */
   const terrainDelta = new Map<string, TerrainChange>();
   /**
+   * THE FIFTH MAP LAYER — `Map.TRAP`, which holds at most ONE entity per cell.
+   * Keyed by tile for exactly that reason, so a second trap on a tile replaces
+   * rather than stacks, and `trapAt` is a lookup instead of a scan.
+   */
+  const traps = new Map<string, Trap>();
+  /**
    * Monotonic, never reused, and the ONLY legal id source in this directory:
    * `Date.now` and `Math.random` are ESLint errors here (the determinism block
    * in eslint.config.js), which is exactly the point — an id derived from a
@@ -789,6 +808,7 @@ export function createWorld(
   /** Same rule, its own counter, so a projectile id and an item id never collide. */
   let groundSeq = 0;
   let zoneSeq = 0;
+  let trapSeq = 0;
   let propSeq = 0;
 
   const turn: TurnState = {
@@ -1313,6 +1333,20 @@ export function createWorld(
     }
   };
 
+  const trapKey = (x: number, y: number): string => `${String(x)},${String(y)}`;
+
+  const addTrap = (spec: TrapSpec): string => {
+    trapSeq += 1;
+    const id = `trap_${String(trapSeq)}`;
+    /**
+     * NOT FROZEN, and for `addZone`'s reason one function down: `knownBy` is
+     * the one thing about a trap that changes, and it changes every time
+     * somebody finds out. Everything else is fixed at generation.
+     */
+    traps.set(trapKey(spec.x, spec.y), { ...spec, id, knownBy: new Set<string>() });
+    return id;
+  };
+
   const addZone = (spec: ZoneSpec): string => {
     zoneSeq += 1;
     const id = `zone_${String(zoneSeq)}`;
@@ -1397,6 +1431,10 @@ export function createWorld(
     zones: (): readonly GroundZone[] => [...groundZones.values()],
     removeZone: (id: string): boolean => groundZones.delete(id),
     openDoor,
+    addTrap,
+    trapAt: (x: number, y: number): Trap | undefined => traps.get(trapKey(x, y)),
+    traps: (): readonly Trap[] => [...traps.values()],
+    removeTrap: (x: number, y: number): boolean => traps.delete(trapKey(x, y)),
     terrainChanges: (): readonly TerrainChange[] => [...terrainDelta.values()],
     restoreTerrain,
     addProp,

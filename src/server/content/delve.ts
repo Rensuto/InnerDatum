@@ -72,6 +72,7 @@ import { LORE, noteIdFor } from './lore.ts';
 import { PROP_IDS } from '../../shared/props.ts';
 import { rollDrop } from './encounter.ts';
 import { rollLoot } from './loot.ts';
+import { rollTrap } from './traps.ts';
 import type { MonsterTemplate } from './monsters.ts';
 import { LONE_BEGINNER } from '../world/strength.ts';
 import { ZoneLevelScheme, zoneBaseLevel } from '../../shared/zone.ts';
@@ -121,6 +122,16 @@ export type DelveSpec = {
    * room reward the corner you did not have to walk into.
    */
   readonly litter: readonly [number, number];
+  /**
+   * How many traps are under this floor — upstream's `nb_trap`, a per-zone band.
+   *
+   * ABSENT MEANS NONE, which is both the common case and the gentlest room's
+   * deliberate answer: `data/zones/trollmire/zone.lua:83` gives ToME's opening
+   * zone `nb_trap = {0, 0}`. Optional rather than `[0, 0]` so that a delve
+   * without traps takes no draw at all and its floor is byte-identical to the
+   * one it generated before traps existed.
+   */
+  readonly traps?: readonly [number, number];
   /**
    * ═══════════════════════════════════════════════════════════════════════════
    * AND ONE THING THAT IS PUT THERE RATHER THAN ROLLED.
@@ -375,28 +386,37 @@ export const DELVES: ReadonlyMap<string, DelveSpec> = new Map<string, DelveSpec>
   //     19 steps.
   [
     'site:underworks',
-    { monsters: [4, 6], roster: RANK_AND_FILE, litter: [2, 3], levelRange: [3, 3] },
+    { monsters: [4, 6], roster: RANK_AND_FILE, litter: [2, 3], levelRange: [3, 3], traps: [1, 2] },
   ],
   // ─── worked places: more of them, and more to carry home ────────────────
   //     41 steps.
   [
     'site:watchers_altar',
-    { monsters: [5, 7], roster: RANK_AND_FILE, litter: [2, 4], levelRange: [7, 7] },
+    { monsters: [5, 7], roster: RANK_AND_FILE, litter: [2, 4], levelRange: [7, 7], traps: [1, 2] },
   ],
   //     61 steps.
   [
     'site:hollow_mine',
-    { monsters: [6, 8], roster: RANK_AND_FILE, litter: [2, 4], levelRange: [9, 9] },
+    { monsters: [6, 8], roster: RANK_AND_FILE, litter: [2, 4], levelRange: [9, 9], traps: [2, 3] },
   ],
   // ─── quiet and wrong: fewer bodies, harder ones ─────────────────────────
   //     90 steps. The roster changes here, which is the real threshold on the
   //     map: from this marker outward, things bite.
-  ['site:outer_index', { monsters: [3, 4], roster: DEEP, litter: [3, 4], levelRange: [10, 10] }],
+  [
+    'site:outer_index',
+    { monsters: [3, 4], roster: DEEP, litter: [3, 4], levelRange: [10, 10], traps: [2, 3] },
+  ],
   //     77 steps.
-  ['site:glass_archive', { monsters: [3, 5], roster: DEEP, litter: [2, 3], levelRange: [11, 11] }],
+  [
+    'site:glass_archive',
+    { monsters: [3, 5], roster: DEEP, litter: [2, 3], levelRange: [11, 11], traps: [2, 3] },
+  ],
   // ─── the far end ────────────────────────────────────────────────────────
   //     109 steps.
-  ['site:gearford_ward', { monsters: [6, 8], roster: DEEP, litter: [3, 5], levelRange: [13, 13] }],
+  [
+    'site:gearford_ward',
+    { monsters: [6, 8], roster: DEEP, litter: [3, 5], levelRange: [13, 13], traps: [2, 3] },
+  ],
   // ─── and the three nobody is told about ─────────────────────────────────
   //     All three sit in the MIDDLE band by distance (47-62 steps), which is
   //     deliberate: a secret that is also the hardest room in the game is a
@@ -1182,6 +1202,77 @@ export function populateDelve(
       // A FLOOR ID, not a catalogue id. A note is not an `Item` — see
       // content/lore.ts, and `money.ts` for the shape it is copied from.
       world.addGroundItem(at, noteIdFor(note.id));
+    }
+  }
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * AND SOMETHING UNDER THE FLOOR — `generator/trap/Random.lua:36-60`.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * ```lua
+   * for i = 1, rng.range(self.nb_trap[1], self.nb_trap[2]) do self:generateOne() end
+   * ```
+   *
+   * `nb_trap` is a PER-ZONE BAND, exactly as `nb_npc` is, which is the same
+   * argument this file's header already makes for `monsters` and `litter`: the
+   * roster says what a place is, the engine does not.
+   *
+   * ═══ ABSENT MEANS NONE, AND THE GENTLEST ROOM HAS NONE ON PURPOSE ═══
+   * The Trollmire — the first zone a ToME character ever walks into — is
+   * `nb_trap = {0, 0}` (`data/zones/trollmire/zone.lua:83`). The Drowned Chapel
+   * is ours, the room the first case names out loud to a character four minutes
+   * old, and it has no `traps` band for the same reason.
+   *
+   * ═══ BUILT PLACES, NOT WILD ONES ═══
+   * Upstream puts traps in the thieves' tunnels {3,3}, Tannen's tower {6,6} and
+   * the conclave vault {4,4}, and none in a bog. Somebody has to have PUT a trap
+   * there. So the works, the mine, the altar, the index, the archive and the
+   * ward have them; the drowned places, the barrow and the wood do not.
+   *
+   * ═══ A FORKED STREAM, WHICH IS WHY THIS COSTS NO EXISTING FLOOR ANYTHING ═══
+   * The dressing pass twenty lines up states the rule in full: `fork` does not
+   * advance the parent, so this consumes zero draws from the delve stream and
+   * every floor any player has ever walked stays byte-identical — including
+   * every delve that has no `traps` band and therefore no traps. Calling
+   * `world.rng.int` here would have re-rolled the monsters, the litter and the
+   * lore note of every delve in the game.
+   */
+  if (spec.traps !== undefined) {
+    const trapRng = world.rng.fork('delve.traps');
+    const count = trapRng.int('delve.traps.count', spec.traps[0], spec.traps[1]);
+    /**
+     * NOT IN THE DRAWN ROOM. Upstream rejects any cell whose `room_map` entry is
+     * `special` (`generator/trap/Random.lua:47`), which is exactly its vaults — a hand-drawn
+     * room is somebody's composition and a generator scattering hazards through
+     * it is the generator arguing with the author. `inRoom` is that set here.
+     *
+     * `candidates` has already dropped everything within `DOOR_CLEARANCE` of the
+     * arrival tile, which does the other half of the job this file's header
+     * insists on: *"being hit before the map has finished drawing is not tension,
+     * it is a bug report."* A trap on the threshold is the purest form of that.
+     */
+    const inRoomKeys = new Set(inRoom.map((cell) => `${String(cell.x)},${String(cell.y)}`));
+    const open = candidates.filter(
+      (cell) => !inRoomKeys.has(`${String(cell.x)},${String(cell.y)}`),
+    );
+    const offset = open.length === 0 ? 0 : trapRng.int('delve.traps.offset', 0, open.length - 1);
+    const stride = Math.max(1, Math.floor(open.length / Math.max(1, count)));
+    for (let i = 0; i < count; i += 1) {
+      // SPREAD, for the roster loop's reason: three traps drawn independently
+      // clump, and a clump is one tile you cannot cross rather than three
+      // hazards on a floor.
+      const at = open[(offset + i * stride) % Math.max(1, open.length)];
+      if (at === undefined) continue;
+      // ONE PER TILE — `Map.TRAP` holds one entity per cell and upstream's
+      // placer re-rolls rather than stacking. `addTrap` replaces, so skipping is
+      // what keeps the count honest.
+      if (world.trapAt(at.x, at.y) !== undefined) continue;
+      world.addTrap({
+        ...rollTrap(delveLevel(spec, party), trapRng, `delve.traps.${String(i)}`),
+        x: at.x,
+        y: at.y,
+      });
     }
   }
 

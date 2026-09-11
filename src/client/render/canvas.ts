@@ -82,6 +82,7 @@ import { inBounds } from '../../shared/coords.ts';
 import { tileAt } from '../../shared/level.ts';
 import { ActorRank, TileCode, isWalkable } from '../../shared/protocol.ts';
 import type { ZoneTileView } from '../../shared/protocol.ts';
+import type { TrapView } from '../../shared/protocol.ts';
 import { TILE_PX, UI_SCALE_MAX, UI_SCALE_MIN, ZOOM_MAX, ZOOM_MIN } from '../../shared/version.ts';
 import { isLowLife, lifeFraction } from '../../shared/vitals.ts';
 import type { TileXY } from '../../shared/coords.ts';
@@ -464,6 +465,15 @@ export type Scene = {
    * that empties still has to arrive.
    */
   readonly zones?: readonly ZoneTileView[];
+  /**
+   * THE TRAPS THIS VIEWER HAS FOUND OUT ABOUT. See `paintTraps`.
+   *
+   * `TrapView` off the wire unchanged, and already filtered by the SERVER to
+   * this player's own knowledge — `projectTraps` takes an actor id and there is
+   * no realm-wide form of it. The renderer must never be handed a list it then
+   * has to filter, because the filter is the mechanic.
+   */
+  readonly traps?: readonly TrapView[];
   /** The floor's dressing. Absent where there is none — see `paintProps`. */
   readonly props?: readonly PropMarker[];
   /**
@@ -1029,6 +1039,11 @@ const LOS_SHADE_ALPHA = 0.55;
  * strictly heavier than upstream looks. If a shaped or animated wash ever
  * ships here, this number should rise toward it.
  */
+/** How far the caret is held off the cell edge, as a fraction of a tile. */
+const TRAP_MARK_INSET = 0.22;
+/** The caret's stroke, as a fraction of a tile. Floored at 2px by the painter. */
+const TRAP_MARK_THICK = 0.09;
+
 const ZONE_WASH_ALPHA = 0.3;
 /** Corner ticks on the cursor tile: arm length and thickness, in logical px. */
 const CURSOR_TICK_PX = 8;
@@ -2717,6 +2732,60 @@ export function createRenderer(options: RendererOptions): Renderer {
   }
 
   /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * A TRAP YOU HAVE ALREADY FOUND — a mark on the floor, and nothing subtle.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `display = '^'` on every trap entity upstream (`traps/elemental.lua:24`),
+   * drawn in the trap's own colour over the floor. This is that caret, as four
+   * strokes rather than a glyph: two legs and a peak, inset from the cell edge.
+   *
+   * ═══ IT IS LOUD ON PURPOSE, WHICH IS THE OPPOSITE OF THE ZONE WASH ═══
+   * `paintZones` is quieter than the out-of-sight shade because a burning tile
+   * is a thing that is HAPPENING and the player can see it happening. A trap
+   * mark is the only record that exists of something that is not happening and
+   * will happen again: with no detection talent in this game, this mark is
+   * there because somebody already paid hit points to learn it. Drawing that
+   * faintly would waste the price they paid.
+   *
+   * ═══ NO ART, AND NOT AS A PLACEHOLDER ═══
+   * `blitSprite` paints a loud violet box on a missing id and the whole
+   * `client/public/assets/` tree is gitignored, so a bare clone has no
+   * manifest. Every ground painter in this file refuses sprites for that
+   * reason — see `paintLoot`, `paintProjectiles` and `paintZones` — and a mark
+   * made of `fillRect` draws correctly on a clone with zero PNGs.
+   */
+  function paintTraps(marks: readonly TrapView[], camX: number, camY: number): void {
+    if (marks.length === 0) return;
+
+    backCtx.save();
+    backCtx.fillStyle = PALETTE.CRIMSON;
+    for (const mark of marks) {
+      const cellX = mark.x * TILE_PX - camX;
+      const cellY = mark.y * TILE_PX - camY;
+      // AND IT CULLS, like every other ground painter here: without this the
+      // whole floor is drawn every frame.
+      if (!visible(cellX, cellY)) continue;
+
+      // The caret, as two arms meeting at a peak. Stepped rather than stroked
+      // so it stays crisp at every integer zoom the viewport uses.
+      const inset = Math.round(TILE_PX * TRAP_MARK_INSET);
+      const arm = TILE_PX - inset * 2;
+      const thick = Math.max(2, Math.round(TILE_PX * TRAP_MARK_THICK));
+      for (let i = 0; i < arm / 2; i += thick) {
+        backCtx.fillRect(cellX + inset + i, cellY + TILE_PX - inset - i - thick, thick, thick);
+        backCtx.fillRect(
+          cellX + TILE_PX - inset - i - thick,
+          cellY + TILE_PX - inset - i - thick,
+          thick,
+          thick,
+        );
+      }
+    }
+    backCtx.restore();
+  }
+
+  /**
    * DEFINED ABOVE `paintPath`, DRAWN AFTER IT. The call sits in the ground
    * band just before `paintLoot`; only the DEFINITION is here, because
    * `assets.test.ts` guards three consecutive source windows —
@@ -3173,6 +3242,9 @@ export function createRenderer(options: RendererOptions): Renderer {
        * ink. The definition is up beside `paintTargeting`; see its note for why.
        */
       if (scene.zones !== undefined) paintZones(scene.zones, camX, camY);
+      // AFTER THE WASH, because a trap under a patch of fire is still the thing
+      // you must not stand on when the fire goes out.
+      if (scene.traps !== undefined) paintTraps(scene.traps, camX, camY);
 
       // The travel route, in the same band and for the same reason: ground
       // paint, above the floor and below the token rings. See `Scene.path`.

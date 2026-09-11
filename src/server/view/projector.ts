@@ -144,6 +144,7 @@ import type {
   ZoneTileView,
   ZonesMsg,
   TerrainMsg,
+  TrapsMsg,
   ResourceMsg,
   ResourceView,
   TurnActor,
@@ -1756,6 +1757,33 @@ export function projectZones(world: World, eyes?: readonly SightEye[]): ZonesMsg
  * they care about. The signature is the place that says so, and a future pass
  * that adds an `eyes` argument here is a pass that has to answer this comment.
  */
+/**
+ * The traps THIS BODY has found out about, and nobody else's.
+ *
+ * ═══ THE ACTOR ID IS REQUIRED, AND THAT IS THE GUARD ═══
+ * There is no sensible realm-wide answer to build, so there is deliberately no
+ * way to ask for one. A signature that made the id optional would make
+ * `projectTraps(world)` compile, and that call would hand the room every trap
+ * on the floor the instant one player stepped on the first — which is not a
+ * leak of a position, it is the deletion of the mechanic. See `TrapsMsg`.
+ *
+ * NOT FOG-GATED ON TOP OF THAT, deliberately. A trap you have already sprung
+ * does not stop being somewhere you must not stand when you walk out of sight
+ * of it, and upstream agrees: `engine/Trap.lua:29-30` sets
+ * `display_on_remember = true`, which is the same flag `Object.lua` uses for
+ * the ground loot this frame is modelled on.
+ */
+export function projectTraps(world: World, actorId: string): TrapsMsg {
+  return {
+    v: PROTOCOL_VERSION,
+    t: 'traps',
+    traps: world
+      .traps()
+      .filter((trap) => trap.knownBy.has(actorId))
+      .map((trap) => ({ x: trap.x, y: trap.y, kind: trap.kind, name: trap.name })),
+  };
+}
+
 export function projectTerrain(world: World): TerrainMsg {
   return {
     v: PROTOCOL_VERSION,

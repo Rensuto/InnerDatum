@@ -1868,6 +1868,50 @@ export type TerrainMsg = {
   tiles: readonly TerrainPatchView[];
 };
 
+/** One trap this viewer has found out about. */
+export type TrapView = {
+  x: number;
+  y: number;
+  /** Which authored kind, so the renderer can pick a mark. */
+  kind: string;
+  /** What to call it in a tooltip. The server has already decided. */
+  name: string;
+};
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE TRAPS THIS VIEWER KNOWS ABOUT — and nobody else's knowledge.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * A `ViewerMsg`, and it is the strongest case in the protocol for being one.
+ * Every other per-viewer frame is gated on WHERE a body can see; this one is
+ * gated on what a body has FOUND OUT, which is a fact about a person rather
+ * than about a position. Upstream keys it the same way — `known_by` on the trap
+ * is a table of actors (`engine/Trap.lua:49`, `:85-92`), not a flag — so two
+ * detectives standing on the same tile genuinely know different things.
+ *
+ * ═══ AND IT IS A LEAK IF IT IS EVER BROADCAST ═══
+ * The whole mechanic is that a trap is invisible until you meet it: with no
+ * `see_traps` source in this game (see `engine/traps.ts`), stepping on one is
+ * the ONLY way anybody learns it is there. A realm-wide copy of this frame
+ * would hand every player the map of every trap the moment one of them found
+ * the first, which does not merely spoil it — it deletes the system. Omission
+ * from `ViewerMsg` is what would do that, and `BroadcastMsg` being
+ * `Exclude`-derived is what makes the omission a compile error at the send
+ * site rather than a quiet one.
+ *
+ * COMPLETE AND ABSOLUTE, like every other snapshot frame here: the whole list
+ * every time, replaced wholesale, so a client that missed one is corrected by
+ * the next. Empty is a real answer and is not sent — absence is the client's
+ * default, and a trap is never UNlearned.
+ */
+export type TrapsMsg = {
+  v: typeof PROTOCOL_VERSION;
+  t: 'traps';
+  /** Every trap this viewer has met. Never anybody else's. */
+  traps: readonly TrapView[];
+};
+
 /**
  * The two stages a body can be in below zero (game-design.md § 9).
  *
@@ -6715,6 +6759,7 @@ export type ServerMsg =
   | ProjectilesMsg
   | ZonesMsg
   | TerrainMsg
+  | TrapsMsg
   | PartyMsg
   | PartyStateMsg
   | PingedMsg
@@ -6944,6 +6989,14 @@ export type ViewerMsg =
   // that character has personally walked past, and no two characters have
   // walked the same map. There is no realm-wide answer to build.
   | GroundMsg
+  // ═══ AND TRAPS, WHICH ARE THE SAME ARGUMENT AT ITS SHARPEST ═══
+  // Ground loot is per viewer because of what a viewer REMEMBERS. A trap is per
+  // viewer because of what they have FOUND OUT, and unlike a remembered pile
+  // the knowledge is the entire mechanic: with no `see_traps` source in this
+  // game, stepping on one is the only way anybody learns it is there.
+  // Broadcasting this frame would hand the room every trap the moment one
+  // player found the first. See `TrapsMsg`.
+  | TrapsMsg
   | LoreMsg
   | CooldownsMsg
   | ResourceMsg

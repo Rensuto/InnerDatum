@@ -478,6 +478,59 @@
  * ═══════════════════════════════════════════════════════════════════════════
 
 
+ * 22 -> 23 (TRAPS). `TrapsMsg` is a new outbound frame — every trap THIS
+ * VIEWER has found out about — and it is 6 -> 7's argument in its most literal
+ * form yet.
+ *
+ * That entry bumped because a v6 client could not name `projectiles`, so it
+ * drew no orb, *"and the damage still lands ... the counterplay does not merely
+ * go unrendered — it DOES NOT EXIST on that client."* A trap is that with the
+ * fuse removed entirely.
+ *
+ * ═══ BECAUSE THE FRAME IS THE ONLY RECORD THERE IS ═══
+ * A trap is invisible until you stand on it, and this game has no `see_traps`
+ * source, so stepping on one is the ONLY way anybody ever learns it is there
+ * (`server/engine/traps.ts`). The trap is not consumed by going off — upstream's
+ * elemental `triggered` returns no `del` — so it fires again on the next body
+ * that crosses it. `TrapsMsg` is therefore not a decoration on a hazard the
+ * player can already see; it IS the memory of the hazard, and a client that
+ * drops it has a floor that hurts the same tile forever with nothing on screen
+ * to distinguish that tile from any other.
+ *
+ * ═══ AND THE DAMAGE ARRIVES WITH NOTHING ATTACHED TO IT ═══
+ * The burn rides the ordinary `attacked` event flagged `ambient`, exactly as a
+ * ground zone's does and for the same reason: nobody swung. That flag is v21
+ * and a v22 client renders it correctly — as a bare number with no verb, no
+ * name and no struck-tile marker. For a zone that is fine, because the wash
+ * says where the fire is. Here there is no wash: the number is all there is.
+ *
+ * CONSIDERED AND NOT ADDED, each of which would have forced this bump alone:
+ *
+ *   NO NEW `TurnEvent` VARIANT, and no new `ErrorCode`. A trap is not refusable
+ *   — a player never asks for one — and the damage reuses the events every
+ *   shipped client already paces.
+ *
+ *   NO FIELD NARROWED. `TrapView` is new in its entirety and no existing frame
+ *   gained, lost or tightened a member.
+ *
+ * `TrapsMsg` IS A `ViewerMsg`, which is the one membership decision in this
+ * entry that is a rule rather than a shape. Every other per-viewer frame is
+ * gated on what a body can SEE; this one is gated on what it has FOUND OUT,
+ * which upstream keys the same way (`known_by` is a table of actors,
+ * `engine/Trap.lua:49`). A broadcast form would hand the whole room every trap
+ * the moment one player sprang the first — not a leak of a position, the
+ * deletion of the system.
+ *
+ * `SCHEMA_VERSION` STAYS 1, considered separately rather than carried along. A
+ * trap is generated from the realm seed like every monster on the floor, and
+ * `known_by` is process state that has never been written to disk — so a
+ * character file written before this change and one written after are
+ * byte-identical. What a returning player loses is the knowledge of which tile
+ * bit them, which is the same thing they lose about which husk they killed.
+ *
+ * ═══════════════════════════════════════════════════════════════════════════
+
+
  * 21 -> 22 (DOORS). Two terrain codes: `DOOR` (32) and `DOOR_OPEN` (33).
  *
  * 11 -> 12 IS THE PRECEDENT AND IT DECIDES THIS ONE (:712-721). Six new codes
@@ -789,7 +842,7 @@
  * path rather than read from disk. When that changes it will be an OPTIONAL
  * field and docs/data-schemas.md:48-49 applies unchanged.
  */
-export const PROTOCOL_VERSION = 22;
+export const PROTOCOL_VERSION = 23;
 
 /**
  * Bumped whenever a persisted save file's shape changes. Every bump needs a

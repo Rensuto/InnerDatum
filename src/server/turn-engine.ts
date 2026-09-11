@@ -744,6 +744,24 @@ function resetFloor(
    * re-seed below.
    */
   world.restoreTerrain();
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * AND NOT THE TRAPS, WHICH IS A DECISION AND NOT THE SEVENTH LINE MISSING.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * THE TRAPS THEMSELVES STAY because they are the floor. `restoreTerrain` above
+   * puts the map back as the generator made it, and a trap was made by the same
+   * pass (`populateDelve`) — removing them would make a wipe PAY, in the one
+   * currency this function is most careful about.
+   *
+   * THE KNOWLEDGE STAYS TOO, and that is the half worth writing down. Every
+   * table this function clears is FLOOR state: the orbs in the air, the loot on
+   * the ground, the fire burning on it. `Trap.knownBy` is not — it is a fact
+   * about a PERSON, recording that this detective has stood on that plate and
+   * felt it go off. A reset restores the room; it does not edit anybody's
+   * memory of what happened to them in it, and re-hiding a trap somebody paid
+   * for in hit points would be exactly that.
+   */
   reseedFloor(world);
 
   // 3 — out of combat.

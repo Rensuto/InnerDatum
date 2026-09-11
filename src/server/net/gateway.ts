@@ -244,6 +244,7 @@ import {
   projectProjectiles,
   projectZones,
   projectTerrain,
+  projectTraps,
   projectResource,
   projectTurn,
   projectWorld,
@@ -560,6 +561,14 @@ type Session = {
    * compare one player's frame against another's and suppress a send.
    */
   lastGroundKey?: string;
+  /**
+   * Same shape, same reason, one step further: a trap frame is per viewer
+   * because of what this body has FOUND OUT, not merely what it has walked
+   * past. A realm-wide memo here would compare one player's knowledge against
+   * another's and suppress the send that tells the second player about a plate
+   * only the first has stepped on. See `TrapsMsg`.
+   */
+  lastTrapsKey?: string;
   /**
    * The overworld cell this body stepped off when it crossed into a site, and
    * where `leaveRealm` puts it back.
@@ -2673,6 +2682,8 @@ const NO_GROUND_KEY = '[]';
 const NO_ZONES_KEY = '[]';
 /** The same seed for terrain: a floor with no door open yet. See `NO_ZONES_KEY`. */
 const NO_TERRAIN_KEY = '[]';
+/** And for traps, which a viewer starts out knowing none of. */
+const NO_TRAPS_KEY = '[]';
 
 /**
  * AN EMPTY BAG AND AN EMPTY PAPER DOLL, as the per-session memo key spells them.
@@ -3350,6 +3361,48 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    * change like any other, so the pile shrinking broadcasts an absence rather
    * than a "removed" patch.
    */
+  /**
+   * WHAT EACH VIEWER HAS FOUND OUT ABOUT THE FLOOR, when it changed.
+   *
+   * A per-session loop like `broadcastGroundIfChanged` below rather than a
+   * broadcast, and here that is not an optimisation — it is the mechanic. See
+   * `TrapsMsg`: one shared copy would hand the room every trap the moment one
+   * player sprang the first.
+   *
+   * ═══ IT ONLY EVER GROWS, WHICH MAKES THE MEMO CHEAP AND EXACT ═══
+   * Nothing un-learns a trap and nothing removes one (an elemental trap's
+   * `triggered` returns no `del`, `engine/Trap.lua:145`), so a viewer's list is
+   * monotonic within a floor. The memo therefore fires exactly once per trap
+   * per viewer — on the turn they stepped on it — and says nothing on every
+   * other pump.
+   */
+  const broadcastTrapsIfChanged = (realm: PumpTarget): void => {
+    for (const session of sessions.values()) {
+      if (!session.helloDone || realmFor(session).id !== realm.id) continue;
+      if (session.actorId === null) continue;
+      const msg = projectTraps(realm.world, session.actorId);
+      const key = JSON.stringify(msg.traps);
+      if (key === (session.lastTrapsKey ?? NO_TRAPS_KEY)) continue;
+      session.lastTrapsKey = key;
+      send(session.socket, msg);
+    }
+  };
+
+  /**
+   * THE TRAPS A RETURNING BODY ALREADY KNEW — a resume, a resync, a crossing.
+   *
+   * Silent when this viewer knows none, which is the overwhelmingly common case
+   * and is `sendGroundIfAny`'s rule: absence is the client's default, so an
+   * empty frame tells its recipient what it already believes.
+   */
+  const sendTrapsIfAny = (realm: PumpTarget, session: Session): void => {
+    if (session.actorId === null) return;
+    const msg = projectTraps(realm.world, session.actorId);
+    if (msg.traps.length === 0) return;
+    session.lastTrapsKey = JSON.stringify(msg.traps);
+    send(session.socket, msg);
+  };
+
   const broadcastGroundIfChanged = (realm: PumpTarget): void => {
     // One frame per viewer, each against that viewer's own memory of the floor.
     for (const session of sessions.values()) {
@@ -6166,6 +6219,10 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     // symptom would be a corpse's drop nobody can see. See
     // `broadcastGroundIfChanged`.
     broadcastGroundIfChanged(realm);
+    // AND WHAT EACH OF THEM HAS FOUND OUT ABOUT IT. Beside the floor rather
+    // than beside the terrain, because both are per viewer and for related
+    // reasons — see `broadcastTrapsIfChanged`.
+    broadcastTrapsIfChanged(realm);
     // AND THE BURNING FLOOR. Beside the other two and for the same reason, with
     // one of its own: this is the band where a patch that EXPIRED reports the
     // empty frame that takes it off the screen. See `broadcastZonesIfChanged`.
@@ -8853,6 +8910,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     // that frame is the level and the actors, and a ground item is neither.
     // Silent on an empty floor; see `sendGroundIfAny`.
     sendGroundIfAny(realmFor(session), session);
+    sendTrapsIfAny(realmFor(session), session);
     // AND THE SHELVES, if this room has any. Silent everywhere else, which is
     // how a client knows not to offer the tab: no `shop` frame, no shop.
     sendShopIfAny(session);
@@ -9725,6 +9783,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
      * not touch the memo — so a later broadcast is not suppressed by this.
      */
     sendGroundIfAny(realmFor(session), session);
+    sendTrapsIfAny(realmFor(session), session);
     /**
      * AND THE FIRE ON IT — THE SITE THIS CLASS OF BUG HAS ALREADY USED ONCE.
      *
@@ -10054,6 +10113,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
      * not touch the memo — so a later broadcast is not suppressed by this.
      */
     sendGroundIfAny(realmFor(session), session);
+    sendTrapsIfAny(realmFor(session), session);
     // AND THE FIRE ON IT. The other half of the crossing — see the note on the
     // matching call in the outbound direction.
     sendZonesIfAny(realmFor(session), session.socket);

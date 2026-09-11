@@ -400,6 +400,7 @@ import type {
   UnlockableTree,
   ProjectileView,
   ZoneTileView,
+  TrapView,
   ResourceView,
   ServerMsg,
   ItemView,
@@ -2268,6 +2269,15 @@ let projectiles: readonly ProjectileView[] = [];
  * answer and is what takes a burnt-out fire off the screen.
  */
 let zones: readonly ZoneTileView[] = [];
+/**
+ * THE TRAPS THIS PLAYER HAS FOUND OUT ABOUT, and nobody else's.
+ *
+ * Already filtered by the server — `projectTraps` takes an actor id and there
+ * is no realm-wide form of it — so this list is never sifted here. Cleared on a
+ * realm change beside `zones`, because a trap is a fact about a FLOOR and the
+ * floor under you has just been replaced.
+ */
+let traps: readonly TrapView[] = [];
 
 /**
  * WHAT IS LYING ON THE FLOOR (v10) — every item on every tile, from the `ground`
@@ -5507,6 +5517,7 @@ function scene(): Scene {
     // itself needs nothing reset here.
     projectiles,
     zones,
+    traps,
     hud: paintHud,
   };
 }
@@ -12689,6 +12700,7 @@ function forgetTheWorld(): void {
   // `forgetTheWorld` has two callers — `welcome` and `roster` — and a zone
   // carried across either is fire painted on a map that no longer exists.
   zones = [];
+  traps = [];
   // ═══ AND THE FLOOR AND THE BAG WITH IT, ON THE SKY'S OWN ARGUMENT ═══
   //
   // A welcome replaces the board wholesale, so every pile in this list is a
@@ -12844,6 +12856,7 @@ function applyServerMessage(msg: ServerMsg): void {
       pings = [];
       projectiles = clearProjectiles();
       zones = [];
+      traps = [];
       ground = [];
       effects = new Map();
       reviveArmed = false;
@@ -12891,6 +12904,7 @@ function applyServerMessage(msg: ServerMsg): void {
       // in a comment on both sides of the wire.
       projectiles = clearProjectiles();
       zones = [];
+      traps = [];
       break;
     case 'moved': {
       const actor = actors.get(msg.id);
@@ -13490,6 +13504,24 @@ function applyServerMessage(msg: ServerMsg): void {
        * its argument.
        */
       zones = msg.tiles;
+      break;
+    }
+    case 'traps': {
+      /**
+       * ═══ WHAT YOU HAVE LEARNED IS UNDER THE FLOOR. v23 ═══
+       *
+       * COMPLETE AND ABSOLUTE, the same rule as the sky and the fire above, and
+       * safe to replace wholesale for a reason neither of those has: this list
+       * only ever GROWS within a floor. Nothing un-learns a trap and nothing
+       * removes one — an elemental trap is not consumed by going off — so the
+       * frame arrives exactly once per trap, on the turn you stepped on it.
+       *
+       * IT IS ALREADY YOURS ALONE. The server built this against one actor id,
+       * so there is nothing to filter here and nothing this client could
+       * usefully do if there were. See `TrapsMsg` for why a broadcast form of
+       * this frame would delete the mechanic rather than merely leak a tile.
+       */
+      traps = msg.traps;
       break;
     }
     case 'terrain': {

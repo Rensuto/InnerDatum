@@ -103,6 +103,7 @@ import { membersOf, partyIdOf } from './party.ts';
 import { combatAPR } from './derived.ts';
 import { applyDamage } from './damage.ts';
 import { canOpenDoors, isClosedDoor } from './doors.ts';
+import { trapTakes } from './traps.ts';
 import { tickZones, visibleFrom } from './zones.ts';
 import { DAMAGE_TYPES } from '../../shared/damagetype.ts';
 import { DEFAULT_PROJECTILE_DAMAGE_TYPE, stepProjectile } from './projectile.ts';
@@ -2055,6 +2056,10 @@ function actPlayer(actor: PlayerActor, run: Run): ActResult {
     // AND WHAT THE BODY THEY HIT MADE THEM PAY FOR IT. After the counter, so a
     // Watchman's punish narrates before the spikes on the thing he punished.
     noteRetaliation(outcome.effect, run, null, actor.id);
+    // AND WHATEVER WAS UNDER THE TILE THEY LANDED ON. Last of the five, because
+    // a trap is the only one that fires on a MOVE rather than on a blow — see
+    // `noteTrap`.
+    noteTrap(outcome.effect, run, null, actor.id);
     /**
      * ═════════════════════════════════════════════════════════════════════════
      * THE ROUND MAY STAY OPEN — `DECISIONS.md` D1, four milestones late.
@@ -2208,6 +2213,9 @@ function actMonster(actor: MonsterActor, run: Run): ActResult {
     // rather than only this one, for `noteGuardCounter`'s reason: the rule is a
     // property of "a blow landed", not of whose turn it was.
     noteRetaliation(outcome.effect, run, gameTurn, actor.id);
+    // AND THE PLATE IT WALKED ONTO. Both lanes, for the reason the two above
+    // are: a husk chasing you across its own floor springs the same trap.
+    noteTrap(outcome.effect, run, gameTurn, actor.id);
   }
 
   // ToME-native cost: ENERGY_TO_ACT * speedFactor (Actor.lua:1353-1360, 5863).
@@ -3690,6 +3698,96 @@ function noteGuardCounter(
  * function all three go through. Closing it means giving `TalentHit` the same
  * re-entry these two have, not moving this code.
  */
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * A BODY LANDED ON A TILE, AND SOMETHING WAS WAITING UNDER IT.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * ```lua
+ * --- When moving on a trap, trigger it
+ * function _M:on_move(x, y, who, forced)
+ *   if not forced then self:trigger(x, y, who) end
+ * end
+ * ```
+ *
+ * `engine/Trap.lua:152-155`, raised by `engine.Actor.move`'s
+ * `map:checkAllEntities(x, y, "on_move", self, force)` — so it fires for ANY
+ * body that walks, on the tile it ARRIVED at, and never for a forced move.
+ *
+ * ═══ A SIBLING OF `noteGuardCounter` AND `noteRetaliation`, FOR THEIR REASON ═══
+ * Called from BOTH lanes with a `sweepTurn`, because "you stepped on something"
+ * is a property of a step and not of whose turn it was. A husk chasing you
+ * across its own floor sets off the same plate you did.
+ *
+ * ═══ THE SWAP IS DELIBERATELY NOT A STEP, AND UPSTREAM AGREES ═══
+ * `effect.kind !== 'move'` returns early, so trading places with a friend does
+ * not spring anything. Upstream's `on_move` is gated on `not forced`, and a
+ * shove is the definition of a forced move (`Combat.lua:32-74` force-moves both
+ * bodies). Getting this wrong would make "my friend is in the doorway" — the
+ * most repeatable friction in the game, which the swap exists to fix — into a
+ * way to set off a trap you never chose to walk onto.
+ */
+function noteTrap(effect: Effect, run: Run, sweepTurn: number | null, moverId: string): void {
+  if (effect.kind !== 'move') return;
+  const { world } = run;
+  const trap = world.trapAt(effect.to.x, effect.to.y);
+  if (trap === undefined) return;
+
+  const victim = world.getActor(moverId);
+  if (victim === undefined || !victim.alive) return;
+
+  /**
+   * THE DRAW IS TAKEN BEFORE THE KNOWLEDGE IS SET, and the order matters to the
+   * seeded stream rather than to the rule: `trapTakes` draws exactly once per
+   * body-on-trap whatever the outcome, so a replay does not depend on who had
+   * already met this plate.
+   */
+  if (!trapTakes(trap, world.rng, moverId)) return;
+
+  const outcome = applyDamage(victim, trap.damage, trap.damageType, trap, world.rng, {});
+
+  /**
+   * YOU LEARN IT BY SETTING IT OFF — `engine/Trap.lua:143-146`'s `if known then
+   * self:setKnown(who, true, x, y) end`, where an elemental trap's `triggered`
+   * returns `true` and therefore always teaches.
+   *
+   * THIS IS THE COUNTERPLAY, not a nicety. The trap is NOT removed (upstream's
+   * `del` is nil here), so it fires again on the next body that stands on it —
+   * and with no detection talent in this game, stepping on it is the only way
+   * anybody ever finds out it is there. Set AFTER the damage so a body that was
+   * killed by it still learns; the knowledge outlives the turn either way.
+   */
+  trap.knownBy.add(moverId);
+
+  const blow: Blow = {
+    targetId: moverId,
+    hit: true,
+    crit: false,
+    type: outcome.type,
+    damage: outcome.dealt,
+    killed: outcome.killed,
+    hp: victim.hp,
+    maxHp: victim.maxHp,
+    at: { x: victim.x, y: victim.y },
+  };
+
+  /**
+   * `ambient`, FOR THE ZONE BURN'S REASON AND MORE SHARPLY. That flag exists
+   * because an `attacked` event implies a verb and a swinger, and a burning
+   * floor has neither — it printed `someone hits Ren.` once a turn. A trap has
+   * no swinger at all, ever: there is no body to name even in principle, so the
+   * frame that names one would be wrong on every floor rather than only when
+   * the source happened to be dead.
+   */
+  if (sweepTurn === null) {
+    run.sink.push({ t: 'attacked', id: trap.id, ...blow, ambient: true });
+  } else run.sink.sweep(sweepTurn, { t: 'attack', id: trap.id, ...blow, ambient: true });
+
+  const sprung: Effect = { kind: 'attack', ...blow };
+  noteBlows(sprung, run);
+  noteCasualty(sprung, run, sweepTurn, trap.id);
+}
+
 function noteRetaliation(
   effect: Effect,
   run: Run,
