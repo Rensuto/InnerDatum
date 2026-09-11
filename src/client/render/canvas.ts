@@ -80,6 +80,13 @@
 
 import { inBounds } from '../../shared/coords.ts';
 import { tileAt } from '../../shared/level.ts';
+import {
+  DEFAULT_SIGHT_RADIUS,
+  MAP_OBSCURE_BRIGHTNESS,
+  canSee,
+  fovBrightness,
+  sightDistance,
+} from '../../shared/sight.ts';
 import { ActorRank, TileCode, isWalkable } from '../../shared/protocol.ts';
 import type { ZoneTileView } from '../../shared/protocol.ts';
 import type { TrapView } from '../../shared/protocol.ts';
@@ -1014,6 +1021,40 @@ const ACTOR_CULL_MARGIN_PX = TILE_PX * 3;
  * measures a throw.
  */
 const LOS_SHADE_ALPHA = 0.55;
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE FLOOR IS LIT BY THE VIEWER NOW — `Map:apply` and `color_obscure`.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * A wash is the only brightness control a canvas has: source-over INK at alpha
+ * `a` leaves exactly `(1 - a)` of what is underneath, so `alpha = 1 -
+ * brightness` reproduces a multiply. That is the same arithmetic the note above
+ * `ZONE_WASH_INK` spends, applied to the whole floor rather than to one patch.
+ *
+ * ═══ THE MAP WAS DRAWN FLAT, ENTIRELY, FROM THE MOMENT YOU ARRIVED ═══
+ * `projectActors` has filtered bodies per viewer since M6, but `projectLevel`
+ * sends every tile and this renderer drew all of them at full brightness — so
+ * the shape of a floor was free the instant you stepped onto it, and nothing on
+ * screen distinguished the corridor you were standing in from the room behind
+ * two walls. Upstream never draws a tile without a brightness: `playerFOV` ends
+ * with `map:apply(x, y, fovdist[sqdist])` for everything in sight, and anything
+ * else falls to `color_obscure`.
+ *
+ * ═══ THIS IS THE `seens` HALF ONLY, AND SAYING SO IS THE POINT ═══
+ * Upstream has THREE states — seen now, remembered, never seen — and the third
+ * draws nothing at all. Ours has two, because "remembered" here is still
+ * EVERYTHING: the client holds the whole map, so the honest rendering of what it
+ * knows is "in sight, or obscured".
+ *
+ * The missing third state is not a rendering job. `fog.ts`'s bitset is a pure
+ * DISC with no line of sight — its own note calls it *"a map, not a torch"* —
+ * which is right for the minimap it feeds and useless here: it would uncover
+ * whole rooms through their walls. A never-seen state needs a second,
+ * LOS-gated, per-character memory on the server, which is `docs/tome-port.md`'s
+ * *"per-player FOV for correct fog-of-war netcode"* and a separate piece of
+ * work. Until it exists this change makes no claim it cannot keep.
+ */
+const OBSCURE_WASH_ALPHA = 1 - MAP_OBSCURE_BRIGHTNESS;
 /**
  * ═══════════════════════════════════════════════════════════════════════════
  * HOW HEAVY A PATCH OF BURNING FLOOR SITS. DERIVED FROM THE SHADE, NOT PICKED.
@@ -2667,6 +2708,87 @@ export function createRenderer(options: RendererOptions): Renderer {
     backCtx.drawImage(sprite.image, dx, dy, sprite.w, sprite.h);
   }
 
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE LIGHT PASS. One wash per tile, after the floor and before anything else.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * ═══ A SECOND LOOP RATHER THAN A BRANCH IN THE FIRST ═══
+   * `globalAlpha` is the one piece of context state this file's own note calls
+   * out as dangerous to leak, and the terrain pass needs it at 1 throughout.
+   * Hoisting one `save`/`restore` around a dedicated loop sets it once for the
+   * whole floor instead of twice per tile, and keeps the painting pass free of
+   * a question that is not about painting.
+   *
+   * ═══ IT RUNS UNDER THE MARKERS, NOT OVER THEM ═══
+   * Sites, the targeting ring, the route, tokens and the HUD all paint after
+   * this and are undimmed. That is deliberate and it is not laziness about
+   * upstream: a marker is the INTERFACE telling you something, and a token is
+   * already filtered per viewer by `projectActors` — a body you can see is a
+   * body the server decided you can see, and dimming it would argue with that
+   * decision using a second copy of the rule.
+   *
+   * Ground objects are the one honest gap: `knownTile` shows loot on remembered
+   * floor, so a pip can sit bright on obscured ground. Upstream dims those with
+   * the cell. Left for when the never-seen state lands and the question has to
+   * be answered properly for all three.
+   */
+  function paintLight(
+    level: LevelView,
+    realmKind: string | null,
+    eye: TileXY | null,
+    camX: number,
+    camY: number,
+  ): void {
+    // NOBODY TO SEE FROM — before `welcome`, or a viewer with no body on this
+    // floor. Dimming from the camera instead would light whatever the camera
+    // happened to be centred on, which is not a claim anything can make.
+    if (eye === null) return;
+    /**
+     * ═══ THE OVERWORLD IS NOT DIMMED, AND UPSTREAM AGREES IT IS A DIFFERENT
+     *     QUESTION ═══
+     * `playerFOV`'s very first branch is `if game.zone.wilderness then` — a
+     * separate FOV at `wilderness_see_radius` with its own `wild_fovdist` curve
+     * (`max((5 - d) / 1.4, 0.6)`, which is far steeper). We model neither the
+     * radius nor the curve, and inventing a see-radius for our region map is a
+     * design decision rather than a port. So the overworld keeps drawing flat
+     * and this says nothing about it.
+     */
+    if (realmKind === 'overworld') return;
+
+    const minTx = Math.max(0, Math.floor(camX / TILE_PX));
+    const minTy = Math.max(0, Math.floor(camY / TILE_PX));
+    const maxTx = Math.min(level.w - 1, Math.floor((camX + logicalW - 1) / TILE_PX));
+    const maxTy = Math.min(level.h - 1, Math.floor((camY + logicalH - 1) / TILE_PX));
+
+    backCtx.save();
+    backCtx.fillStyle = PALETTE.INK;
+    for (let ty = minTy; ty <= maxTy; ty += 1) {
+      for (let tx = minTx; tx <= maxTx; tx += 1) {
+        const at = { x: tx, y: ty };
+        /**
+         * `DEFAULT_SIGHT_RADIUS`, AND IT IS THE ONE DIVERGENCE IN THIS PASS.
+         * `sightRadiusOf` adds `mods.sight`, which a talent grants (Overseer of
+         * Nations) and a rare ego carries (`egos.ts`' Keen-Sighted, +1 at level
+         * 14). Neither number is on the wire — `egos.ts` says why sight is not
+         * a stat there: *"it is how much of the board the SERVER sends you"*.
+         *
+         * The visible cost is one ring of tiles: a body with the bonus sees a
+         * token at eleven standing on ground drawn as obscured. The fix is a
+         * viewer-stat field and this is the only line that would read it.
+         */
+        const lit = canSee(level, eye, at, DEFAULT_SIGHT_RADIUS);
+        const alpha = lit ? 1 - fovBrightness(sightDistance(eye, at)) : OBSCURE_WASH_ALPHA;
+        // `fovBrightness` IS 1 WITHIN THREE TILES, so the tiles a player is
+        // actually standing among cost nothing at all.
+        if (alpha <= 0) continue;
+        backCtx.globalAlpha = alpha;
+        backCtx.fillRect(tx * TILE_PX - camX, ty * TILE_PX - camY, TILE_PX, TILE_PX);
+      }
+    }
+    backCtx.restore();
+  }
+
   function paintTiles(
     level: LevelView,
     realmKind: string | null,
@@ -3327,6 +3449,15 @@ export function createRenderer(options: RendererOptions): Renderer {
       const camY = cameraAxis(level.h * TILE_PX, logicalH, focusY);
 
       paintTiles(level, scene.realmKind, camX, camY);
+      // THE LIGHT, IMMEDIATELY AFTER THE FLOOR IT DIMS and before every marker.
+      // See `paintLight` for why the markers are above it rather than under.
+      paintLight(
+        level,
+        scene.realmKind,
+        self === undefined ? null : { x: Math.trunc(self.x), y: Math.trunc(self.y) },
+        camX,
+        camY,
+      );
 
       // THE LANDMARKS, directly on the terrain and under everything else. A
       // marker is part of the map rather than a thing standing on it, so a

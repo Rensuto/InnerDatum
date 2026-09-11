@@ -88,6 +88,65 @@ import type { TileXY } from './coords.ts';
 export const DEFAULT_SIGHT_RADIUS = 10;
 
 /**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * HOW BRIGHT A TILE DRAWS — `Player.lua:510-517`, three lines above `playerFOV`.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * ```lua
+ * local fovdist = {}
+ * for i = 0, 30 * 30 do
+ *   fovdist[i] = math.max((20 - math.sqrt(i)) / 17, 0.6)
+ * end
+ * ```
+ *
+ * The table is indexed by SQUARED distance and immediately takes its square
+ * root, so the rule is `max((20 - d) / 17, 0.6)` on the true Euclidean
+ * distance — Euclidean for the reason this whole file is: `core.fov.distance`
+ * is, and a torch is a circle.
+ *
+ * `playerFOV` spends it at `game.level.map:apply(x, y, fovdist[sqdist])`, which
+ * is the SIGHT pass: everything you can see right now is dimmed by how far away
+ * it is. Full brightness holds out to three tiles, then falls linearly to the
+ * 0.6 floor, which it reaches at ten — exactly `DEFAULT_SIGHT_RADIUS`. That
+ * coincidence is not one: the curve was fitted to the sight radius, so the
+ * dimmest thing you can see is always 0.6 and never darker.
+ *
+ * ═══ CLAMPED ABOVE AT 1, WHICH UPSTREAM DOES NOT NEED TO DO ═══
+ * At distance 0 the formula gives 20/17 = 1.176. Upstream hands that to a C
+ * renderer as a colour multiplier; ours is a canvas and the only way to change a
+ * tile's brightness is to lay a darkening wash over it, which can take light
+ * away and cannot add it. A value above 1 means "no wash", so the clamp is what
+ * the two renderers have in common rather than a simplification.
+ */
+export function fovBrightness(distance: number): number {
+  return Math.min(1, Math.max((20 - distance) / 17, FOV_BRIGHTNESS_FLOOR));
+}
+
+/** `math.max(..., 0.6)` — the dimmest a tile you can SEE ever draws. */
+export const FOV_BRIGHTNESS_FLOOR = 0.6;
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * AND HOW BRIGHT ONE YOU CANNOT SEE DRAWS — `engine/Map.lua:69`.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * ```lua
+ * color_obscure = { 0.6, 0.6, 0.6, 0.5 }
+ * ```
+ *
+ * Upstream's own comment calls it *"the 'obscure' factor of unseen map"* — a
+ * tile you have walked past and are no longer looking at. It is TWO
+ * multiplications, not one: the colour is scaled to 0.6 AND the whole thing is
+ * drawn at alpha 0.5 over the black beneath, so what reaches the screen is
+ * `0.6 * 0.5` of the tile.
+ *
+ * Reading it as 0.6 — the number that appears four times in the line — gives a
+ * remembered tile exactly the brightness of the dimmest tile you can SEE, and
+ * the distinction the whole mechanic exists to draw disappears.
+ */
+export const MAP_OBSCURE_BRIGHTNESS = 0.6 * 0.5;
+
+/**
  * Line of sight between two tiles, walls blocking.
  *
  * Bresenham's symmetry is what makes this usable as a visibility test: the walk
