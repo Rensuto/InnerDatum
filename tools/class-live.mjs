@@ -68,7 +68,7 @@ import { dirname, resolve } from 'node:path';
 import { WebSocket } from 'ws';
 
 import { COMMAND_GAP_MS, PROTOCOL_VERSION } from '../src/shared/version.ts';
-import { canWalk } from '../src/shared/level.ts';
+import { canRoute } from '../src/shared/level.ts';
 import { firstStep } from './walk.mjs';
 import { helloAndChoose } from './handshake.mjs';
 
@@ -409,7 +409,7 @@ for (let i = 0; i < 400 && !inFight; i += 1) {
     const dir =
       realm === undefined
         ? 'n'
-        : (firstStep((x, y) => canWalk(realm.level, x, y), pos, { x: near.x, y: near.y }) ?? 'n');
+        : (firstStep((x, y) => canRoute(realm.level, x, y), pos, { x: near.x, y: near.y }) ?? 'n');
     send({ t: 'move', dir });
   }
   await sleep(TURN_WAIT_MS);
@@ -552,7 +552,7 @@ for (let step = 0; step < 20; step += 1) {
   if (at === undefined || realm === undefined) break;
   const goal = victimNow();
   if (reach(at, goal) <= STRIKE_RANGE) break;
-  const dir = firstStep((x, y) => canWalk(realm.level, x, y), { x: at.x, y: at.y }, goal);
+  const dir = firstStep((x, y) => canRoute(realm.level, x, y), { x: at.x, y: at.y }, goal);
   if (dir === undefined) break;
   send({ t: 'move', dir });
   await sleep(TURN_WAIT_MS * 3);

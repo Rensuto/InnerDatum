@@ -31,7 +31,7 @@ import { fileURLToPath } from 'node:url';
 
 import { WebSocket } from 'ws';
 
-import { isWalkable } from '../src/shared/protocol.ts';
+import { canRoute } from '../src/shared/level.ts';
 // THE SERVER'S OWN NUMBER, NEVER A LITERAL. These tools hardcoded `v: 18`
 // and could not connect at all from the day PROTOCOL_VERSION became 19 — the
 // handshake was refused with `version_mismatch` and the fixed sleep after it
@@ -113,9 +113,31 @@ async function join(label) {
   };
 }
 
+/**
+ * MAY A ROUTE CROSS THIS TILE — `canRoute`, which is not `canWalk`.
+ *
+ * ═══ IT WAS A SECOND OPINION, AND `tools/walk.mjs` SAYS WHY THAT IS THE BUG ═══
+ * This was a hand-rolled `!isWalkable(lvl.tiles[...])`, which is exactly the
+ * copy that file's header forbids: *"A second opinion about walkability is
+ * precisely the thing that must not exist, so callers pass the real predicate
+ * in."* It answered the wrong question too. A shut door is not somewhere a body
+ * may STAND, so `isWalkable` refuses it — and the walk opens it and steps
+ * through, which is what `canRoute` is for (`shared/level.ts`).
+ *
+ * The gap only became measurable when the BSP generator started hanging doors:
+ * a flood from the spawn of a works floor found ~434 standable tiles — about
+ * forty per cent of the building — that a `canWalk` router will never reach, and
+ * `delve-run.mjs` duly reported all four works delves as 0/8 with eight stalls
+ * apiece, at full health, for 900 turns. A driver that cannot reach the fight
+ * reports the ROOM as unclearable, which is the one failure `walk.mjs` exists to
+ * stop telling.
+ *
+ * The bounds check stays here: `canRoute` fails closed off-grid on its own, but
+ * this returns "blocked" rather than "walkable" and the two invert.
+ */
 const blocked = (lvl, x, y) => {
   if (x < 0 || y < 0 || x >= lvl.w || y >= lvl.h) return true;
-  return !isWalkable(lvl.tiles[y * lvl.w + x]);
+  return !canRoute(lvl, x, y);
 };
 
 const STEPS = [

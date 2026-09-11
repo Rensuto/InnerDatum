@@ -16,7 +16,7 @@ import { spawn } from 'node:child_process';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { WebSocket } from 'ws';
 import { COMMAND_GAP_MS, PROTOCOL_VERSION } from '../src/shared/version.ts';
-import { canWalk } from '../src/shared/level.ts';
+import { canRoute } from '../src/shared/level.ts';
 import { firstStep } from './walk.mjs';
 
 const PORT = process.argv[2] ?? '32300';
@@ -94,7 +94,7 @@ for (let i = 0; i < 400; i += 1) {
     const n = rs
       .map((s) => ({ s, d: Math.max(Math.abs(s.x - pos.x), Math.abs(s.y - pos.y)) }))
       .sort((a, b) => a.d - b.d)[0].s;
-    dir = firstStep((x, y) => canWalk(r.level, x, y), pos, { x: n.x, y: n.y }) ?? 'n';
+    dir = firstStep((x, y) => canRoute(r.level, x, y), pos, { x: n.x, y: n.y }) ?? 'n';
   }
   send({ t: 'move', dir });
   await sleep(COMMAND_GAP_MS);
@@ -114,7 +114,7 @@ const me = arena.actors.find((a) => a.id === selfId);
 pos = { x: me.x, y: me.y };
 for (let i = 0; i < 80; i += 1) {
   if (Math.max(Math.abs(pos.x - foe.x), Math.abs(pos.y - foe.y)) <= 1) break;
-  const d = firstStep((x, y) => canWalk(arena.level, x, y), pos, { x: foe.x, y: foe.y }) ?? 'e';
+  const d = firstStep((x, y) => canRoute(arena.level, x, y), pos, { x: foe.x, y: foe.y }) ?? 'e';
   send({ t: 'move', dir: d });
   await sleep(COMMAND_GAP_MS);
   const mv = frames.filter((f) => f.t === 'moved' && f.id === selfId).at(-1);

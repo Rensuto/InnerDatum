@@ -35,7 +35,7 @@ import { fileURLToPath } from 'node:url';
 
 import { WebSocket } from 'ws';
 
-import { isWalkable } from '../src/shared/protocol.ts';
+import { canRoute } from '../src/shared/level.ts';
 import { helloAndChoose } from './handshake.mjs';
 // THE SERVER'S OWN NUMBER, NEVER A LITERAL. These tools hardcoded `v: 18`
 // and could not connect at all from the day PROTOCOL_VERSION became 19 — the
@@ -138,10 +138,23 @@ function bodies() {
   return new Set([...at.values()].map((p) => `${p.x},${p.y}`));
 }
 
+/**
+ * MAY A ROUTE CROSS THIS TILE — `canRoute`, plus this driver's occupancy arm.
+ *
+ * ═══ IT WAS A SECOND OPINION, AND `tools/walk.mjs` SAYS WHY THAT IS THE BUG ═══
+ * The terrain half was a hand-rolled `!isWalkable(lvl.tiles[...])`, which is the
+ * copy that file's header forbids — and it answered the wrong question besides.
+ * A shut door is not somewhere a body may STAND, so `isWalkable` refuses it; the
+ * walk opens it and steps through, which is what `canRoute` is for.
+ *
+ * THE OCCUPANCY ARM IS THIS DRIVER'S OWN and stays: a town is full of bodies and
+ * routing through one is how this probe used to report a townsfolk round as
+ * frozen. It is not a terrain question and `shared/level.ts` has no opinion.
+ */
 const blocked = (lvl, x, y, occupied) => {
   if (x < 0 || y < 0 || x >= lvl.w || y >= lvl.h) return true;
   if (occupied !== undefined && occupied.has(`${x},${y}`)) return true;
-  return !isWalkable(lvl.tiles[y * lvl.w + x]);
+  return !canRoute(lvl, x, y);
 };
 function firstStep(lvl, from, to) {
   const occupied = bodies();

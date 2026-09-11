@@ -45,7 +45,7 @@ import { WebSocket } from 'ws';
 
 import { COMMAND_GAP_MS, PROTOCOL_VERSION } from '../src/shared/version.ts';
 import { EFFECT_IDS } from '../src/server/content/effects.ts';
-import { canWalk } from '../src/shared/level.ts';
+import { canRoute } from '../src/shared/level.ts';
 import { firstStep } from './walk.mjs';
 
 const PORT = process.argv[2] ?? '31977';
@@ -370,7 +370,7 @@ for (let i = 0; i < 400 && !inFight; i += 1) {
     const dir =
       realm === undefined
         ? 'n'
-        : (firstStep((x, y) => canWalk(realm.level, x, y), pos, { x: near.x, y: near.y }) ?? 'n');
+        : (firstStep((x, y) => canRoute(realm.level, x, y), pos, { x: near.x, y: near.y }) ?? 'n');
     send({ t: 'move', dir });
     await sleep(TURN_WAIT_MS);
   }
@@ -504,7 +504,7 @@ for (let i = 0; i < 60 && adjacent === null; i += 1) {
   const realm = lastRealm();
   const dir =
     firstStep(
-      (x, y) => canWalk(realm.level, x, y),
+      (x, y) => canRoute(realm.level, x, y),
       { x: me.x, y: me.y },
       { x: foes[0].x, y: foes[0].y },
     ) ?? 'e';
@@ -549,7 +549,7 @@ if (adjacent !== null && lockdown !== undefined) {
     const realm = lastRealm();
     const dir =
       firstStep(
-        (x, y) => canWalk(realm.level, x, y),
+        (x, y) => canRoute(realm.level, x, y),
         { x: me.x, y: me.y },
         { x: foes[0].x, y: foes[0].y },
       ) ?? 'e';
@@ -792,7 +792,7 @@ if (adjacent === null) {
        * is what keeps this from drifting away from the shape the wire accepts.
        */
       const dir = firstStep(
-        (x, y) => canWalk(realmNow.level, x, y),
+        (x, y) => canRoute(realmNow.level, x, y),
         { x: me.x, y: me.y },
         { x: victim.x, y: victim.y },
       );

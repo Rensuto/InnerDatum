@@ -12,7 +12,7 @@
  */
 import { createRealms, SITES } from '../src/server/world/realms.ts';
 import { DOWNED_TURNS } from '../src/server/engine/downed.ts';
-import { canWalk } from '../src/shared/level.ts';
+import { canRoute } from '../src/shared/level.ts';
 
 const realms = createRealms({ seed: 'rescue-reach', engineFor: () => ({}) });
 
@@ -31,7 +31,7 @@ function distances(level, from) {
           const x = cell.x + dx;
           const y = cell.y + dy;
           if (x < 0 || y < 0 || x >= level.w || y >= level.h) continue;
-          if (!canWalk(level, x, y)) continue;
+          if (!canRoute(level, x, y)) continue;
           if (seen.has(key(x, y))) continue;
           seen.set(key(x, y), d + 1);
           next.push({ x, y });

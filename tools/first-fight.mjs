@@ -68,7 +68,7 @@ import {
   sheetForClass,
 } from '../src/server/content/classes.ts';
 import { talentRuntimeFor } from '../src/server/main.ts';
-import { canWalk, Ground } from '../src/shared/level.ts';
+import { canRoute, canWalk, Ground } from '../src/shared/level.ts';
 import { firstStep } from './walk.mjs';
 import { classStrikes, firingSpot, takeShot } from './fightlib.mjs';
 
@@ -273,7 +273,7 @@ function fight(cls, seed) {
       // PATHFOUND, NOT STRAIGHT-LINE. See tools/walk.mjs: a straight-line walker
       // pins itself on the first wall and reports the room as unclearable.
       const dir =
-        firstStep((x, y) => canWalk(arena.world.level, x, y), { x: p.x, y: p.y }, goal) ?? 'e';
+        firstStep((x, y) => canRoute(arena.world.level, x, y), { x: p.x, y: p.y }, goal) ?? 'e';
       arena.engine.submitMove('p1', dir);
     }
     arena.engine.pump();

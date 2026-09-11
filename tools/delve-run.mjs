@@ -45,7 +45,7 @@ import {
 } from '../src/server/content/classes.ts';
 import { talentRuntimeFor } from '../src/server/main.ts';
 import { ActorKind, ErasedReason } from '../src/shared/protocol.ts';
-import { canWalk } from '../src/shared/level.ts';
+import { canRoute, canWalk } from '../src/shared/level.ts';
 import { growTo, dressFor, spendPointsTo } from './grown.mjs';
 import { areEnemies } from '../src/server/engine/actor.ts';
 import { moneyAmountOf } from '../src/server/content/money.ts';
@@ -318,7 +318,7 @@ function run(site, size, seed) {
           continue;
         }
         const toFallen = firstStep(
-          (x, y) => canWalk(realm.world.level, x, y),
+          (x, y) => canRoute(realm.world.level, x, y),
           { x: b.x, y: b.y },
           { x: fallen.body.x, y: fallen.body.y },
         );
@@ -472,7 +472,7 @@ function run(site, size, seed) {
        * not block" — so this routes round the living and still walks over the
        * dead, and `firstStep` exempts the TARGET tile so a bump is still a bump.
        */
-      const terrain = (x, y) => canWalk(realm.world.level, x, y);
+      const terrain = (x, y) => canRoute(realm.world.level, x, y);
       const clear = (x, y) => terrain(x, y) && realm.world.actorAt(x, y) === undefined;
       /**
        * ═══════════════════════════════════════════════════════════════════════
@@ -813,7 +813,7 @@ function run(site, size, seed) {
         me === undefined
           ? null
           : firstStep(
-              (x, y) => canWalk(realm.world.level, x, y),
+              (x, y) => canRoute(realm.world.level, x, y),
               { x: me.x, y: me.y },
               { x: f.x, y: f.y },
             );
