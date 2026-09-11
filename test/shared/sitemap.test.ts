@@ -315,7 +315,21 @@ describe('a stamped room never seals the floor it was stamped into', () => {
             if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
             const n2 = ny * w + nx;
             if (seen.has(n2)) continue;
-            if (!isWalkable(tiles[n2] ?? TileCode.WALL)) continue;
+            /**
+             * A DOOR IS A WAY THROUGH, even though `isWalkable` says no.
+             *
+             * That predicate answers "may a body stand here", and a shut door
+             * stops one where it stands. REACHABILITY is a different question:
+             * the player opens it and walks on, so a room whose only mouth is a
+             * door is reached rather than stranded.
+             *
+             * This guard reported three stranded tiles the day the works
+             * generator started hanging doors, and it was right that something
+             * was wrong — `connect` was asking with the same wrong predicate and
+             * carving a second way into every room with a door on it.
+             */
+            const code = tiles[n2] ?? TileCode.WALL;
+            if (!isWalkable(code) && code !== TileCode.DOOR) continue;
             seen.add(n2);
             stack.push(n2);
           }
@@ -531,5 +545,225 @@ describe('a stamped room never seals the floor it was stamped into', () => {
       turns.size,
       `every room was laid the same way: ${[...turns].join(', ')}`,
     ).toBeGreaterThan(1);
+  });
+});
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * A WORKS IS A BUILDING NOW — `engine/BSP.lua`, and what it changed.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * It used to be a LATTICE: a floor with square blocks stamped on a fixed pitch
+ * and one gallery through the middle. Every cell the same size, every junction
+ * the same junction, and nowhere a player could be said to be IN. BSP cuts it
+ * into rooms of genuinely different sizes, and the walls between them are what
+ * is left rather than something drawn.
+ */
+describe('a works is rooms and corridors', () => {
+  const SEEDS = Array.from({ length: 30 }, (_, i) => `works-${String(i)}`);
+
+  it('leaves between half and two thirds of the floor walkable', () => {
+    /**
+     * MEASURED, and the band is what the shape is FOR rather than a tolerance.
+     * Too little and a building is a maze of slots — the first draft of this
+     * generator used a minimum room of four, which the one-tile shared wall ate
+     * down to rooms two tiles wide and 36% walkable. Too much and it is the open
+     * box the delve started as.
+     */
+    for (const seed of SEEDS) {
+      const map = makeSiteMap(seed, SiteShape.Works);
+      const walkable = map.view.tiles.filter((code) => isWalkable(code)).length;
+      const share = walkable / map.view.tiles.length;
+      expect(share, `${seed}: a works came out as a maze of slots`).toBeGreaterThan(0.45);
+      expect(share, `${seed}: a works came out as an open box`).toBeLessThan(0.7);
+    }
+  });
+
+  it('hangs a door on some mouths and not on all of them', () => {
+    /**
+     * A door costs a turn to open and blocks sight until it is, so one on every
+     * mouth would be a dozen pauses crossing a single delve — the opposite of
+     * what the tile is for. `DOOR_CHANCE` is the share, and the assertion is a
+     * BAND over seeds rather than a count on one, because the number of mouths
+     * is a property of the cut.
+     */
+    let withDoors = 0;
+    let most = 0;
+    let total = 0;
+    for (const seed of SEEDS) {
+      const map = makeSiteMap(seed, SiteShape.Works);
+      const doors = map.view.tiles.filter((code) => code === TileCode.DOOR).length;
+      if (doors > 0) withDoors += 1;
+      most = Math.max(most, doors);
+      total += doors;
+    }
+    expect(withDoors, 'a works floor came out with no door at all').toBe(SEEDS.length);
+    /**
+     * THE MEAN IS THE TUNING AND THE MAX IS THE GUARD. Measured over eighty
+     * seeds at `DOOR_CHANCE`, the floor carries about seven — half the rooms on
+     * a building of ten. At upstream's literal 50% it was sixteen, which is a
+     * pause every few steps; the note on the constant explains why the
+     * percentage had to move to keep the density.
+     */
+    expect(total / SEEDS.length, 'a works is a sequence of pauses again').toBeLessThan(11);
+    expect(most, 'some works sealed nearly every room it cut').toBeLessThan(18);
+  });
+
+  it('hangs at least some doors that are the ONLY way into a room', () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * A DOOR NOBODY HAS TO OPEN IS A DOOR THAT IS NOT IN THE GAME.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * `connect` repairs stranded floor by carving a corridor to it, and it
+     * decides what is stranded by flooding. If that flood treats a door as a
+     * WALL, every room whose only mouth is a door looks cut off — so `connect`
+     * digs a second way in and the door becomes decoration on a room you can
+     * walk around. `crossable` is what stops that.
+     *
+     * NOTHING ELSE NOTICES. Reachability still holds (there are MORE routes,
+     * not fewer), the doors are still on the map, and the density is unchanged.
+     * The only observable difference is whether a door is load-bearing, so that
+     * is what this asks: flood the finished map treating doors as solid, and
+     * some floor must come out unreachable.
+     *
+     * ═══ SOME SEEDS, NOT EVERY SEED ═══
+     * A floor whose rooms all happen to have two mouths is a legitimate
+     * building, so requiring it of each one would be a fixture asserting a
+     * coincidence. Requiring it of the SET is the honest version of "doors do
+     * something here".
+     */
+    let seedsWithALoadBearingDoor = 0;
+    for (const seed of SEEDS) {
+      const map = makeSiteMap(seed, SiteShape.Works);
+      const { w, h, tiles } = map.view;
+      const spawn = map.spawns[0];
+      if (spawn === undefined) continue;
+
+      const seen = new Set<number>();
+      const stack = [spawn.y * w + spawn.x];
+      seen.add(stack[0] ?? 0);
+      while (stack.length > 0) {
+        const idx = stack.pop();
+        if (idx === undefined) break;
+        const x = idx % w;
+        const y = Math.floor(idx / w);
+        for (const [dx, dy] of [
+          [1, 0],
+          [-1, 0],
+          [0, 1],
+          [0, -1],
+        ] as const) {
+          const nx = x + dx;
+          const ny = y + dy;
+          if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
+          // DOORS AS SOLID, deliberately — the whole question is what a shut
+          // door is keeping from you.
+          if (!isWalkable(tiles[ny * w + nx] ?? TileCode.WALL)) continue;
+          const n = ny * w + nx;
+          if (seen.has(n)) continue;
+          seen.add(n);
+          stack.push(n);
+        }
+      }
+
+      const behind = tiles.filter((code, i) => isWalkable(code) && !seen.has(i)).length;
+      if (behind > 0) seedsWithALoadBearingDoor += 1;
+    }
+
+    expect(
+      seedsWithALoadBearingDoor,
+      'every door on every floor can be walked around — connect is digging past them',
+    ).toBeGreaterThan(SEEDS.length / 4);
+  });
+
+  it('never hangs a door on a corridor pinch', () => {
+    /**
+     * A one-tile corridor has walls on one axis for its whole length, so the
+     * doorway test alone would hang doors along a passage — a delay with no
+     * room behind it. `opensWide` requires the gap to lead into a span at least
+     * three wide on one side, which is a room and not another corridor.
+     *
+     * ═══ THE STAMPED VAULT IS EXCLUDED, AND IT IS NOT AN ESCAPE HATCH ═══
+     * `shared/vaults.ts` writes its OWN doors from a hand-drawn legend, and
+     * `SEALED_SHAFT` deliberately puts one at the neck of a one-tile corridor —
+     * *"the only shape here that makes a player commit to walking in"*. So the
+     * no-pinch property is true of THIS PASS and false of the finished map, and
+     * a test that asserted it map-wide was reporting an author's decision as a
+     * generator bug. It did: a door at 17,13 on the eleventh seed, stamped by a
+     * vault.
+     */
+    for (const seed of SEEDS) {
+      const map = makeSiteMap(seed, SiteShape.Works);
+      const { w, h, tiles } = map.view;
+      const vault = map.vaults?.[0];
+      const inVault = (x: number, y: number): boolean =>
+        vault !== undefined &&
+        x >= vault.at.x &&
+        y >= vault.at.y &&
+        x < vault.at.x + vault.w &&
+        y < vault.at.y + vault.h;
+      const code = (x: number, y: number): number =>
+        x < 0 || y < 0 || x >= w || y >= h ? TileCode.WALL : (tiles[y * w + x] ?? TileCode.WALL);
+      /**
+       * A DOOR COUNTS AS FLOOR HERE, and the reason is a real trap.
+       *
+       * The generator surveys the map while the mouth is still FLOOR and turns
+       * it into a DOOR afterwards. This test reads the finished map, where one
+       * of the tiles the survey looked at is the door itself — so asking for
+       * `FLOOR` on both sides fails on the very tile being judged. It reported
+       * a pinch at 9,5 that is a perfectly good room mouth.
+       */
+      const open = (x: number, y: number): boolean =>
+        code(x, y) === TileCode.FLOOR || code(x, y) === TileCode.DOOR;
+      const roomy = (x: number, y: number, alongX: boolean): boolean =>
+        open(x, y) &&
+        (alongX ? open(x, y - 1) && open(x, y + 1) : open(x - 1, y) && open(x + 1, y));
+
+      for (let y = 0; y < h; y += 1) {
+        for (let x = 0; x < w; x += 1) {
+          if (code(x, y) !== TileCode.DOOR) continue;
+          if (inVault(x, y)) continue;
+          const wallNS = code(x, y - 1) === TileCode.WALL && code(x, y + 1) === TileCode.WALL;
+          const leadsSomewhere = wallNS
+            ? roomy(x - 1, y, false) || roomy(x + 1, y, false)
+            : roomy(x, y - 1, true) || roomy(x, y + 1, true);
+          expect(
+            leadsSomewhere,
+            `${seed}: a door at ${String(x)},${String(y)} is a pinch in a corridor`,
+          ).toBe(true);
+        }
+      }
+    }
+  });
+
+  it('never leaves a door with floor on all four sides', () => {
+    /**
+     * A DOORWAY IS A HOLE IN A WALL, and the survey that finds one requires
+     * solid tiles on exactly one axis. A door standing in open ground is a
+     * turn's delay in the middle of a room with nothing on either side of it —
+     * which is what a naive "put a door where the corridor started" would do.
+     *
+     * Asserted over the FINISHED map, after `connect` has carved whatever it
+     * needed, because that pass runs last and could in principle open the ground
+     * beside a door that was legal when it was hung.
+     */
+    for (const seed of SEEDS) {
+      const map = makeSiteMap(seed, SiteShape.Works);
+      const { w, h, tiles } = map.view;
+      const code = (x: number, y: number): number =>
+        x < 0 || y < 0 || x >= w || y >= h ? TileCode.WALL : (tiles[y * w + x] ?? TileCode.WALL);
+      for (let y = 0; y < h; y += 1) {
+        for (let x = 0; x < w; x += 1) {
+          if (code(x, y) !== TileCode.DOOR) continue;
+          const solidNS = code(x, y - 1) === TileCode.WALL && code(x, y + 1) === TileCode.WALL;
+          const solidEW = code(x - 1, y) === TileCode.WALL && code(x + 1, y) === TileCode.WALL;
+          expect(
+            solidNS || solidEW,
+            `${seed}: a door at ${String(x)},${String(y)} is standing in open ground`,
+          ).toBe(true);
+        }
+      }
+    }
   });
 });

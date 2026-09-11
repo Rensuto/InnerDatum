@@ -174,8 +174,19 @@ describe('doors reach a generated floor', () => {
   });
 
   it('lands on a built floor, shut', () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * TWO SOURCES NOW, WHICH IS WHY THIS IS A FLOOR AND NOT A COUNT.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * This asserted exactly ONE — the door on whatever vault the floor rolled —
+     * and that was the whole supply when it was written. The works generator
+     * hangs its own on the mouths BSP cuts, so a built floor now carries a
+     * handful and the exact number is a property of the seed rather than of the
+     * rule.
+     */
     const map = makeSiteMap('door-seed-0', SiteShape.Works);
-    expect(doorsIn(map.view.tiles), 'no door reached a floor that rolled a room with one').toBe(1);
+    expect(doorsIn(map.view.tiles), 'no door reached a built floor at all').toBeGreaterThan(0);
     // SHUT, because nothing has walked into it. An open door on a freshly
     // generated floor would mean the generator was writing the wrong half.
     expect(map.view.tiles).not.toContain(TileCode.DOOR_OPEN);
