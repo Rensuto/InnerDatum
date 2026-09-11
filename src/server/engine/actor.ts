@@ -1233,6 +1233,30 @@ export type OnHitStatus = {
   readonly power?: number;
   /** Magnitude: Bleeding's damage per turn, Slowed's fraction. */
   readonly magnitude?: number;
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * A PERCENT ROLL BEFORE THE SAVE. ABSENT MEANS EVERY LANDED HIT.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Upstream's riders very often carry one and it is a SECOND gate, not an
+   * alternative to the save. `cursed/darkness.lua:399-401` is the shape:
+   *
+   * ```lua
+   * if rng.percent(25) then
+   *   if not target.dead and target:canBe("blind") then
+   *     target:setEffect(target.EFF_BLINDED, 3, {apply_power=self:combatMindpower(), ...})
+   * ```
+   *
+   * — a quarter of connecting blows even try, and of those, the ones the target
+   * cannot shrug off land. Collapsing the two into the save alone is the obvious
+   * simplification and it is wrong by a factor of four on exactly the statuses
+   * that are most punishing to eat, which is why upstream put the roll there.
+   *
+   * ABSENT RATHER THAN 100 so every rider authored before this reads identically
+   * and costs no draw. A creature that declares nothing here takes the branch it
+   * always took, including the stream it always consumed.
+   */
+  readonly chance?: number;
 };
 
 /**

@@ -121,6 +121,8 @@ describe('the ego roster', () => {
       // The third immunity affix, and the only one whose subtype pays twice —
       // `canBe` refuses it more often AND `mental.lua:78` lands it weaker.
       'pr',
+      // ` of Clear Sight` — the answer to BLINDED, and the ninth immunity key.
+      'cg',
       // The attacker-side pair — the first gear that can move `inc_damage` or
       // `resists_pen`. See the block above them on why the Redactor needed one.
       'ub',

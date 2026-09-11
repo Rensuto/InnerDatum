@@ -247,6 +247,8 @@ export type EffectModifiers = {
    * applied as a flat ×0.4 to outgoing damage (damage_types.lua:150-153).
    */
   readonly stunned?: boolean;
+  /** `EFF_BLINDED` — see `StatusFlags.blind`. OR'd, like its neighbours. */
+  readonly blind?: boolean;
   /**
    * Sets `StatusFlags.dazed` — halves accuracy, defence, all three powers and
    * all three saves INSIDE the getters, before the rescale (derived.ts).
@@ -2093,6 +2095,7 @@ export function recomputeAttributes(state: EffectState, actor: EffectActor): voi
     scoured: (base?.scoured ?? false) || mods.scoured === true,
     breached: (base?.breached ?? false) || mods.breached === true,
     stunned: (base?.stunned ?? false) || mods.stunned === true,
+    blind: (base?.blind ?? false) || mods.blind === true,
     // OR'D, like the four above it: one effect saying "free" is enough, and two
     // saying it is not twice as free.
     freeResources: (base?.freeResources ?? false) || mods.freeResources === true,

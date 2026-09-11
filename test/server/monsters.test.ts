@@ -10,6 +10,7 @@ import {
   INDEX_CAIRN,
   INDEX_HUSK,
   INDEX_EIDOLON,
+  INDEX_INQUISITOR,
   INDEX_HUSK_ELITE,
   INDEX_WRAITH,
   MONSTER_TEMPLATES,
@@ -1023,10 +1024,33 @@ describe('the elite’s claw — the roster’s one melee rider', () => {
      * stays "do not let it reach you". Not on the Inquisitor, which is already
      * the roster's pure-debuff creature.
      */
+    /**
+     * FIVE NOW, AND THE FIFTH IS ON THE INQUISITOR AFTER ALL.
+     *
+     * The line above refused it CONFUSION and the reason was specific:
+     * confusion's counterplay is contact, so it belongs on something that has to
+     * reach you. Blindness is not that status. `cursed/darkness.lua:399-401`
+     * puts it on a ranged darkness caster, which is what this creature is, and
+     * the counterplay is different in kind:
+     *
+     *   `combat.ts` already ports `canSee(target) or ... or rng.chance(3)`
+     *     (Combat.lua:505) — a blinded body can still swing at what is next to
+     *     it, so closing the distance remains an answer.
+     *   `projectActors` composes the PARTY's eyes, so a blinded player in a
+     *     group still sees what their friends see. Solo is where this bites,
+     *     which is the correct place for an elite to bite.
+     *   ` of Clear Sight` (egos.ts) is the gear answer, and the key it grants
+     *     landed in the same commit for the reason `immunity.ts` gives.
+     *
+     * And it is gated twice rather than once: `rng.percent(25)` before the save,
+     * which is upstream's and is the whole reason `OnHitStatus.chance` exists.
+     */
+
     const withRiders = MONSTER_TEMPLATES.filter((t) => t.onHit !== undefined).map((t) => t.id);
     expect(withRiders.toSorted()).toEqual([
       'index_eidolon',
       'index_husk_elite',
+      'index_inquisitor',
       'index_watcher',
       'index_wraith',
     ]);
@@ -1040,6 +1064,16 @@ describe('the elite’s claw — the roster’s one melee rider', () => {
     expect(INDEX_HUSK_ELITE.onHit?.effectId).toBe(EffectId.Bleeding);
     expect(INDEX_WRAITH.onHit?.effectId).toBe(EffectId.Slowed);
     expect(INDEX_EIDOLON.onHit?.effectId).toBe(EffectId.Confused);
+    expect(INDEX_INQUISITOR.onHit?.effectId).toBe(EffectId.Blinded);
+
+    // AND IT IS THE ONLY ONE THAT ROLLS BEFORE THE SAVE. Every rider above
+    // lands on every connecting blow and is refused only by `canBe` and the
+    // save; this one is `rng.percent(25)` first — `darkness.lua:399`.
+    expect(INDEX_INQUISITOR.onHit?.chance).toBe(25);
+    for (const t of MONSTER_TEMPLATES) {
+      if (t.id === 'index_inquisitor') continue;
+      expect(t.onHit?.chance, `${t.id} grew a chance nobody argued for`).toBeUndefined();
+    }
   });
 
   it('the eidolon’s touch applies at its MINDPOWER, not its physical power', () => {

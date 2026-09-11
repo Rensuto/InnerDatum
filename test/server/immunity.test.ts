@@ -427,7 +427,7 @@ describe('a player can actually FIND one', () => {
      * real loot through the real roller and the real resolver, so a channel that
      * reaches no player fails here rather than in play.
      */
-    expect([...seen.keys()].sort()).toEqual(['confusion', 'cut', 'stun']);
+    expect([...seen.keys()].sort()).toEqual(['blind', 'confusion', 'cut', 'stun']);
     for (const [key, value] of seen) {
       expect(value, `${key} resolved above the cap`).toBeLessThanOrEqual(MAX_ITEM_IMMUNITY);
     }

@@ -3046,6 +3046,23 @@ function strike(attacker: EngineActor, target: EngineActor, run: Run): Effect {
   ];
   for (const rider of riders) {
     if (!(outcome.ok && outcome.hit && !outcome.killed)) break;
+    /**
+     * ═══ `rng.percent(25)` — THE ROLL BEFORE THE SAVE, AND ONLY WHEN ASKED ═══
+     * `OnHitStatus.chance` carries the argument. What matters here is the
+     * STREAM: the draw is taken only for a rider that declares one, so every
+     * creature authored before this field consumes exactly the sequence it
+     * always did — and it is taken inside the loop, after the swing's own
+     * draws, which is the discipline the note above already sets.
+     *
+     * The label carries the effect id so two riders on one blow are separable
+     * in a log, which is the whole reason labelled draws exist.
+     */
+    if (
+      rider.chance !== undefined &&
+      run.world.rng.int(`rider.${rider.effectId}`, 1, 100) > rider.chance
+    ) {
+      continue;
+    }
     run.ctx.applyStatus?.(target, rider.effectId, rider.turns, {
       ...(rider.power === undefined ? {} : { applyPower: rider.power }),
       ...(rider.magnitude === undefined ? {} : { power: rider.magnitude }),

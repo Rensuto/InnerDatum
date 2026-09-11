@@ -856,6 +856,39 @@ const SUFFIXES: readonly Ego[] = [
     grants: { immunities: { confusion: { floor: 5, step: 2 } } },
     cost: 60,
   },
+  {
+    code: 'cg',
+    name: ' of Clear Sight',
+    tag: EgoSlotTag.Suffix,
+    /**
+     * ═════════════════════════════════════════════════════════════════════════
+     * THE ANSWER TO BEING BLINDED, AND IT BUYS ONE THING RATHER THAN TWO.
+     * ═════════════════════════════════════════════════════════════════════════
+     *
+     * `BLINDED` (content/effects.ts, `physical.lua:640-663`) takes your sight
+     * radius to its floor, which is `projector.ts` no longer sending you bodies
+     * and the playfield going dark past your own feet. There is no partial
+     * version of that to soften: upstream's entire effect is
+     * `addTemporaryValue("blind", 1)`, a flag with no power.
+     *
+     * So unlike ` of Plain Reading` directly above — which also subtracts from
+     * the landed instance — every point here is one thing only: a chance `canBe`
+     * refuses it outright. That is the ORDINARY shape of an immunity and
+     * confusion is the exception, which is worth saying here because the two
+     * sit next to each other on the same `{floor: 5, step: 2}` grid and would
+     * otherwise look like they were priced the same way.
+     *
+     * RARITY 11, BETWEEN THE TWO IT SITS WITH. Blindness is more punishing than
+     * a cut and less than confusion, which takes your turn AND your position.
+     *
+     * LEVEL 10: the only thing in the game that blinds is the High Inquisitor,
+     * and nothing meets one on the first road out of town.
+     */
+    rarity: 11,
+    levelRange: [10, 50],
+    grants: { immunities: { blind: { floor: 5, step: 2 } } },
+    cost: 60,
+  },
   /**
    * ═════════════════════════════════════════════════════════════════════════
    * THE ANSWER TO A BESTIARY THAT RESISTS YOU. `resists_pen` reaches content.

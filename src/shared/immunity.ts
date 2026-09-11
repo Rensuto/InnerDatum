@@ -71,9 +71,26 @@ export const IMMUNITY_KEYS = Object.freeze([
    * the base chance is a coin flip.
    */
   'confusion',
+  /**
+   * THE NINTH, AND IT ARRIVES UNDER THE SAME RULE THE EIGHTH SET.
+   *
+   * `BLINDED` (content/effects.ts, `physical.lua:640-663`) carries
+   * `subtype = { blind=true }`, and `blind_immune` is one of the nineteen
+   * upstream spells out. The ego (` of Clear Sight`) lands in the same commit,
+   * because a key with nothing granting it is the channel-with-nothing-pointed-
+   * at-it this list exists to refuse.
+   *
+   * ═══ IT FEEDS `canBe` AND NOTHING ELSE, UNLIKE ITS NEIGHBOUR ═══
+   * `confusion` is the one subtype that also scales the landed instance
+   * (`mental.lua:78`). Blindness has no power to scale — upstream's whole effect
+   * is `addTemporaryValue("blind", 1)` — so partial immunity here buys exactly
+   * one thing: the chance it does not land. That is the ordinary case and the
+   * note above is the exception.
+   */
+  'blind',
 ] as const);
 
-/** One of the eight. `Wielder.immunities` is keyed by this. */
+/** One of the nine. `Wielder.immunities` is keyed by this. */
 export type ImmunitySubtype = (typeof IMMUNITY_KEYS)[number];
 
 /**

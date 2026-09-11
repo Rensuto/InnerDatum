@@ -115,6 +115,23 @@ export const EffectId = {
   Confused: 'effect:confused',
   /**
    * ═══════════════════════════════════════════════════════════════════════════
+   * BLINDED — `physical.lua:640-663`, and the whole mechanic is one attribute.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * ```lua
+   * subtype = { blind=true },
+   * activate = function(self, eff) eff.tmpid = self:addTemporaryValue("blind", 1) end,
+   * ```
+   *
+   * Everything that makes it frightening lives at the READER, not here:
+   * `Actor.lua:6771-6773` is a flat `if self:attr("blind") then return false, 0`
+   * inside `canSeeNoCache`, above the invisibility and concealment arms. One
+   * clause, and it answers for targeting, for the AI, and for what the screen
+   * is allowed to draw.
+   */
+  Blinded: 'effect:blinded',
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
    * THE FIRST BENEFICIAL EFFECT IN THE GAME, AND THE POINT IS THE CATEGORY.
    * ═══════════════════════════════════════════════════════════════════════════
    *
@@ -1211,6 +1228,73 @@ export const CONFUSED: EffectDef = Object.freeze({
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════
+ * BLINDED — `physical.lua:640-663`. THE STATUS IS ONE ATTRIBUTE AND NO LOGIC.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * ```lua
+ * activate = function(self, eff) eff.tmpid = self:addTemporaryValue("blind", 1) end,
+ * ```
+ *
+ * That is the entire effect upstream. Everything frightening about it lives at
+ * the READER: `Actor.lua:6771-6773` is a flat
+ * `if self:attr("blind") then return false, 0` inside `canSeeNoCache`, sitting
+ * ABOVE the concealment and invisibility arms so it beats both.
+ *
+ * ═══════════════════════════════════════════════════════════════════════════
+ * OURS IS `mods.sight`, AND THE FLOOR IT LANDS ON WAS WRITTEN FOR THIS
+ * ═══════════════════════════════════════════════════════════════════════════
+ * We have no `attr` table and no `canSee` that takes an actor — ours is
+ * `canSee(level, from, to, radius)` in `shared/sight.ts`, terrain-only and
+ * shared by the projector, the AI and the renderer. The radius is where a body
+ * gets a say, and `derived.ts#sightRadiusOf` is `DEFAULT_SIGHT_RADIUS +
+ * mods.sight` — the channel a talent (Overseer of Nations) and an ego
+ * (Keen-Sighted) already move.
+ *
+ * So blindness subtracts the whole default and every existing reader answers
+ * correctly with no new plumbing: `projector.ts` stops sending you bodies,
+ * `turn-engine.ts` stops a blinded monster finding a target, and the character
+ * sheet's Vision range row tells you what happened.
+ *
+ * ═══ AND IT GROPES RATHER THAN ERASING, WHICH IS ALSO ALREADY DECIDED ═══
+ * `sightRadiusOf` clamps with `Math.max(1, ...)`, and its docblock says why in
+ * advance of this effect existing: *"a rule that hid you from yourself would be
+ * very confusing. A blinding effect that drove this negative should leave you
+ * groping at your own feet, not erase the floor."* Upstream returns false for
+ * everything including your own tile, and gets away with it because
+ * `game.player` is drawn unconditionally. Ours has no such exemption, so the
+ * floor is the deviation and it is one tile wide — literally, since at radius 1
+ * the Euclidean test admits the four orthogonal neighbours and refuses the
+ * diagonals at 1.414.
+ *
+ * ═══ NO `blind_sight` ═══
+ * `playerFOV` has an arm for it and nothing in this game grants it. When
+ * something does, it is a positive `mods.sight` on that source and this needs no
+ * edit.
+ */
+export const BLINDED: EffectDef = Object.freeze({
+  id: EffectId.Blinded,
+  // `Bl` IS BLEEDING'S. The roster test proves no two statuses share a pair and
+  // it would have caught this; the pair is picked to survive that test, not by it.
+  badge: 'Bd',
+  displayName: 'Blinded',
+  description: 'Unable to see anything. You know the tile you are standing on and no more.',
+  // physical.lua:643 — `type = "physical"`.
+  type: SaveChannel.Physical,
+  status: EffectStatus.Detrimental,
+  // physical.lua declares no `on_merge` for BLINDED, so upstream replaces (:128).
+  stackMode: StackMode.Refresh,
+  // :644 — `subtype = { blind=true }`.
+  subtypes: ['blind'],
+  decrease: 1,
+  icon: 'icon_status_blinded',
+  // :650 — `addTemporaryValue("blind", 1)`. A FLAG and not a number: see
+  // `StatusFlags.blind` for the `mods.sight` penalty this replaced and the gear
+  // that walked straight through it.
+  modifiers: { blind: true },
+});
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
  * REGENERATION — hit points put back, a turn at a time.
  * ═══════════════════════════════════════════════════════════════════════════
  *
@@ -1897,6 +1981,7 @@ export const MVP_EFFECTS: readonly EffectDef[] = Object.freeze([
   SPELLSHOCKED,
   BRAINLOCKED,
   CONFUSED,
+  BLINDED,
   REGENERATION,
   PAIN_SUPPRESSION,
   EMPOWERED_HEALING,

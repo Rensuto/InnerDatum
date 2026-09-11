@@ -255,8 +255,12 @@ describe('delve litter is rolled for the party that is there', () => {
  * the call site says which world it is being handed.
  */
 describe('a body in a delve carries what the party is worth', () => {
-  function carriedIn(party: PartyStrength, spec: DelveSpec): readonly string[] {
-    const world = createWorld('delve-carried');
+  function carriedIn(
+    party: PartyStrength,
+    spec: DelveSpec,
+    seed = 'delve-carried',
+  ): readonly string[] {
+    const world = createWorld(seed);
     world.level.tiles.fill(TileCode.FLOOR);
     const map: AuthoredMap = {
       view: world.level,
@@ -279,12 +283,34 @@ describe('a body in a delve carries what the party is worth', () => {
   });
 
   it('rolls different CONTENTS for a level-5 party', () => {
-    // ═══ THE ASSERTION THAT WAS FAILING ═══
-    // Byte-identical at both levels, because the world `embellish` read had no
-    // players in it yet.
-    const low = carriedIn({ level: 1, size: 1 }, BARROW);
-    const high = carriedIn({ level: 5, size: 1 }, BARROW);
-    expect(high).not.toEqual(low);
+    /**
+     * ═══ THE ASSERTION THAT WAS FAILING ═══
+     * Byte-identical at both levels, because the world `embellish` read had no
+     * players in it yet.
+     *
+     * ═══════════════════════════════════════════════════════════════════════
+     * AND IT WAS ONE SEED, WHICH IS NOT WHAT THE RULE SAYS.
+     * ═══════════════════════════════════════════════════════════════════════
+     * This drove a single world (`delve-carried`) and asserted the two lists
+     * differ. Level DOES reach the roll, so they usually do — but "usually" is
+     * the whole point: a band-1 and a band-5 draw can legitimately land on the
+     * same items, and when an unrelated commit added an ego to the roster the
+     * stream shifted and this one seed became a collision. Nothing about the
+     * rule had changed.
+     *
+     * A test that a seed can falsify is a test about the seed. So it samples,
+     * and asserts what the rule actually claims: that party level is an INPUT —
+     * some delve, somewhere, comes out different. One collision is data; twelve
+     * would mean the level never reached `embellish` at all, which is exactly
+     * the bug this file's header is about.
+     */
+    const seeds = Array.from({ length: 12 }, (_, i) => `delve-carried-${String(i)}`);
+    const differed = seeds.filter(
+      (seed) =>
+        JSON.stringify(carriedIn({ level: 1, size: 1 }, BARROW, seed)) !==
+        JSON.stringify(carriedIn({ level: 5, size: 1 }, BARROW, seed)),
+    );
+    expect(differed.length, 'party level never reached the item roll').toBeGreaterThan(0);
   });
 });
 

@@ -941,6 +941,16 @@ const ORB_SLOW_TURNS = 3;
 const ORB_APPLY_POWER = 10;
 
 /**
+ * `cursed/darkness.lua:399-401` — `rng.percent(25)` and `setEffect(..., 3, ...)`.
+ *
+ * BOTH NUMBERS ARE ONE DECISION and they are kept beside each other for that
+ * reason: a quarter of connecting orbs try, and the ones that get past the save
+ * hold for three turns. Moving either alone re-prices the status.
+ */
+const BLIND_CHANCE = 25;
+const BLIND_TURNS = 3;
+
+/**
  * ═══════════════════════════════════════════════════════════════════════════
  * THE ORB DRAGS — the roster's ranged rider, and the wraith's whole argument.
  * ═══════════════════════════════════════════════════════════════════════════
@@ -2599,6 +2609,41 @@ export const INDEX_INQUISITOR: MonsterTemplate = Object.freeze({
   // `elven-caster.lua:42` `open_door = true`, on BASE_NPC_ELVEN_CASTER. The
   // one of ours whose whole description is a mind deciding things.
   opensDoors: true,
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * ITS ORB TAKES YOUR SIGHT — `cursed/darkness.lua:399-401`, VERBATIM.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * ```lua
+   * if rng.percent(25) then
+   *   if not target.dead and target:canBe("blind") then
+   *     target:setEffect(target.EFF_BLINDED, 3, {apply_power=self:combatMindpower(), min_dur=1})
+   * ```
+   *
+   * A QUARTER, AND THREE TURNS. Both numbers are upstream's and neither is
+   * negotiable: the roll is what keeps the most punishing status in the game
+   * from arriving on every connecting orb, and `OnHitStatus.chance` exists
+   * because collapsing it into the save alone is wrong by a factor of four.
+   *
+   * ═══ WHY THIS CREATURE AND NOT THE WRAITH ═══
+   * The Wraith throws the same orb and its rider slot is already Slowed. The
+   * blinder upstream is a CASTER working darkness, and of the two darkness
+   * bodies in the roster this is the one built on `elven-caster.lua` — a mind
+   * deciding what you are allowed to see, which is also what the creature's own
+   * description is about. It is the deepest thing in the bestiary that is not a
+   * boss, so it is also where a status this heavy belongs.
+   *
+   * `power` IS THE SAME `ORB_APPLY_POWER` its neighbours use, because upstream
+   * passes `apply_power = combatMindpower()` — the caster's own stat, not a
+   * number chosen for the status.
+   */
+  onHit: {
+    effectId: EffectId.Blinded,
+    turns: BLIND_TURNS,
+    power: ORB_APPLY_POWER,
+    chance: BLIND_CHANCE,
+  },
 
   projSpeed: 2,
   talentIn: 2,

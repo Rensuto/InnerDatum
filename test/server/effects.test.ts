@@ -1195,6 +1195,13 @@ describe('the status roster (game-design.md § 12)', () => {
        */
       EffectId.Confused,
       /**
+       * THE NINTH DETRIMENTAL, AND THE FIRST THAT TOUCHES WHAT THE SCREEN MAY
+       * DRAW. `physical.lua:640-663` is `addTemporaryValue("blind", 1)` and
+       * nothing else; ours is a `mods.sight` penalty that every existing reader
+       * of `sightRadiusOf` already answers to — see the def's header.
+       */
+      EffectId.Blinded,
+      /**
        * THE FIRST EFFECT THAT PUTS HIT POINTS BACK. Appended, which the note at
        * the top of this list calls the free operation — an older badge atlas
        * keeps every index it already holds.
@@ -1239,6 +1246,7 @@ describe('the status roster (game-design.md § 12)', () => {
       'icon_status_spellshocked',
       'icon_status_brainlocked',
       'icon_status_confused',
+      'icon_status_blinded',
       'icon_status_regeneration',
       'icon_status_pain_suppression',
       'icon_status_empowered_healing',
@@ -1334,6 +1342,9 @@ describe('the status roster (game-design.md § 12)', () => {
       // mental.lua:71 — `type = "mental"`. The channel the WILL save answers,
       // which is what makes a Redactor harder to scramble than a Watchman.
       [EffectId.Confused]: SaveChannel.Mental,
+      // physical.lua:643 — `type = "physical"`. It is a flash in the eyes, not a
+      // thought put somewhere else, and the save it rolls against says so.
+      [EffectId.Blinded]: SaveChannel.Physical,
       /**
        * physical.lua's EFF_REGENERATION. THE CHANNEL IS A LABEL HERE, exactly as
        * it is for Evasive four entries up: nothing resists a heal, because

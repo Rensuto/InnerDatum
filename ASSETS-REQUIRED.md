@@ -438,3 +438,32 @@ letter in the cell until the art lands.
 **Acceptance:** as for the weapons — each id resolves in the manifest, and
 moving it from `PENDING_ICON_IDS` to `KNOWN_ICON_IDS` keeps `npm run check`
 green.
+
+---
+
+## `icon_status_blinded` — the status that takes the screen away
+
+**What it is:** Blinded, ported from `physical.lua:640-663`
+(`EFF_BLINDED`, *"The target is blinded, unable to see anything."*). Applied by
+the High Inquisitor's orb — a quarter of connecting hits, three turns, from
+`cursed/darkness.lua:399-401`.
+
+**What it does to the player, which is the thing to draw against:** sight radius
+drops to its floor of one tile. The playfield goes dark past your own feet, the
+server stops sending you bodies you cannot see, and the character sheet's Vision
+range row reads 1. In a party your friends still see for you; solo it is the
+heaviest status in the game.
+
+**What it should look like:** not an eye with a line through it — every game
+draws that. This one is an archive idiom: a page of citations gone to solid
+black, or a reader's lamp snuffed with the smoke still rising. It wants to read
+as *information withheld* rather than as injury, because that is what the Index
+does. Keep it legible at 24 pixels on a badge strip beside `Cn` and `St`.
+
+**Cut it at 64x64**, matching the nineteen `icon_status_*` files already on disk.
+
+**Until it exists** the player sees the two-letter fallback `Bd`, which is
+legible and says nothing. That is worse here than for most statuses, because
+this is one a player has to recognise instantly to know why the screen changed.
+
+**Acceptance:** the id resolves in the manifest and `npm run check` stays green.

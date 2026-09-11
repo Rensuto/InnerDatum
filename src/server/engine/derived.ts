@@ -317,6 +317,23 @@ export type Weapon = {
  * impossible to notice, and because a flag defaulting to false costs nothing.
  */
 export type StatusFlags = {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * `EFF_BLINDED` — A FLAG, BECAUSE UPSTREAM'S IS ONE AND A NUMBER IS NOT ENOUGH.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `physical.lua:650` is `addTemporaryValue("blind", 1)` and `Actor.lua:6772`
+   * reads it as `if self:attr("blind")` — all-or-nothing, exactly like `dazed`
+   * beneath it.
+   *
+   * THE FIRST ATTEMPT WAS A `mods.sight` PENALTY OF -10 and it was wrong in a
+   * way only a test with gear on found: `sightRadiusOf` is
+   * `DEFAULT_SIGHT_RADIUS + mods.sight`, so subtracting the default cancels the
+   * BASE and leaves every bonus standing. A body wearing Keen-Sighted saw one
+   * tile past its own blindness, and one wearing more saw five. A blind body
+   * does not see further because it was good at seeing.
+   */
+  readonly blind?: boolean;
   /** Halves accuracy, defence, all three powers and all three saves. */
   readonly dazed?: boolean;
   /** Divides the same set by 1.2 (Combat.lua:1359, 1724, 1766, 2079). */
@@ -1057,6 +1074,14 @@ export function ignoreDirectCrits(c: Combatant): number {
  * engine's default never fires and the module's is the game's. It shipped as 20
  * for three commits.
  */
-export function sightRadiusOf(body: { readonly combat?: { readonly mods?: CombatMods } }): number {
+export function sightRadiusOf(body: {
+  readonly combat?: { readonly mods?: CombatMods; readonly flags?: StatusFlags };
+}): number {
+  // ═══ BLIND SHORT-CIRCUITS TO THE FLOOR, IT DOES NOT SUBTRACT ═══
+  // `Actor.lua:6772` is a flat `if self:attr("blind") then return false, 0`,
+  // above the concealment and invisibility arms. The floor rather than 0 is the
+  // deviation this function's own note argued for in advance, and it is one tile
+  // wide: at radius 1 the Euclidean test admits the four orthogonal neighbours.
+  if (body.combat?.flags?.blind === true) return 1;
   return Math.max(1, DEFAULT_SIGHT_RADIUS + (body.combat?.mods?.sight ?? 0));
 }
