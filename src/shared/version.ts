@@ -478,6 +478,50 @@
  * ═══════════════════════════════════════════════════════════════════════════
 
 
+ * 21 -> 22 (DOORS). Two terrain codes: `DOOR` (32) and `DOOR_OPEN` (33).
+ *
+ * 11 -> 12 IS THE PRECEDENT AND IT DECIDES THIS ONE (:712-721). Six new codes
+ * bumped there because `tileAt` fails an unknown code closed to `WALL`, so the
+ * new country *"would render as solid rock, entirely unwalkable, with the
+ * player's own token apparently embedded in it"* — and that entry's conclusion
+ * is the rule: fail-closed is RIGHT and still catastrophic to look at, which is
+ * *"exactly the case the version gate converts into an honest 'your client is
+ * out of date'."*
+ *
+ * ═══ AND ONE HALF OF THIS PAIR IS WORSE THAN THAT ═══
+ * A v21 client draws `DOOR` as `WALL`, which is very nearly true and would be
+ * survivable on its own — a closed door IS solid and IS opaque, so the only lie
+ * is the colour.
+ *
+ * `DOOR_OPEN` is the problem. It is walkable, transparent floor that a v21
+ * client renders as solid rock — so the party opens a door, walks through it,
+ * and one player watches everyone stream into a wall and stand inside it. Worse
+ * than the wilderness case, because the wilderness was SCENERY and this is a
+ * ROUTE: `blocksSightAt` would also tell that client no eye can cross the
+ * opening, so it fogs the room beyond a door that is standing open. The one
+ * client that most needs to see what the party just revealed is the one that
+ * cannot.
+ *
+ * CONSIDERED AND NOT ADDED, each of which would have forced this bump on its
+ * own had the codes not already done it:
+ *
+ *   NO NEW `ErrorCode` MEMBER. Walking into a door you cannot open is refused
+ *   with the terrain refusal every shipped client already renders, and walking
+ *   into one you CAN open is not a refusal at all.
+ *
+ *   NO FIELD NARROWED, and no existing code changed meaning. `WALKABLE` and
+ *   `BLOCKS_SIGHT` each gain exactly one member and lose none, so every tile
+ *   that was walkable still is and every wall still blocks.
+ *
+ * `SCHEMA_VERSION` STAYS 1, considered separately rather than carried along. A
+ * door is terrain, terrain is generated from the realm seed, and no save file
+ * has ever held a tile — `docs/data-schemas.md` persists characters, not maps.
+ * A floor rebuilt from the same seed comes back with its doors shut, which is
+ * the same thing that happens to every monster on it.
+ *
+ * ═══════════════════════════════════════════════════════════════════════════
+
+
  * 20 -> 21 (THE FLOOR CAN HURT YOU NOW). `ZonesMsg` is a new outbound frame —
  * every burning tile the party can see, absolute and replaced wholesale — and it
  * forces this bump for the SAME REASON 6 -> 7 was forced by `projectiles`, one
@@ -745,7 +789,7 @@
  * path rather than read from disk. When that changes it will be an OPTIONAL
  * field and docs/data-schemas.md:48-49 applies unchanged.
  */
-export const PROTOCOL_VERSION = 21;
+export const PROTOCOL_VERSION = 22;
 
 /**
  * Bumped whenever a persisted save file's shape changes. Every bump needs a

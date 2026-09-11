@@ -40,7 +40,7 @@ describe('shared constants', () => {
     expect(Math.log2(TILE_PX) % 1).toBe(0);
   });
 
-  it('pins PROTOCOL_VERSION at 21 — the floor can hurt you now', () => {
+  it('pins PROTOCOL_VERSION at 22 — a door is terrain that changes', () => {
     // AN EXPLICIT PIN, so the bump cannot be silently reverted by a merge.
     // Everything above only asserts the constants are positive integers, which
     // a revert would pass. THE JUSTIFICATION MOVES WITH THE NUMBER — a pin whose
@@ -125,10 +125,23 @@ describe('shared constants', () => {
     // left the patch, or something in another room. It does not merely fail to
     // draw the hazard; it confidently narrates a dead thing punching somebody,
     // once a turn, for as long as the fire lasts.
-    expect(PROTOCOL_VERSION).toBe(21);
+    //
+    // v22 ADDS TWO TERRAIN CODES, `DOOR` and `DOOR_OPEN`, and it is 11 -> 12's
+    // argument with the halves reversed. There, six new codes made new COUNTRY
+    // render as solid rock — bad, and only scenery. Here `tileAt` collapses
+    // `DOOR_OPEN` to `WALL` on a v21 client, so the tile that is walkable,
+    // transparent floor — the tile whose entire purpose is to be a ROUTE —
+    // draws as rock and reports itself opaque. That client watches the party
+    // walk single file into a wall and stand inside it, and fogs the room
+    // beyond a door that is standing open, so the one player who most needs to
+    // see what was just revealed is the only one who cannot. `DOOR` itself is
+    // nearly harmless by comparison: a shut door really is solid and really is
+    // opaque, so a v21 client drawing it as wall is wrong only about the
+    // colour.
+    expect(PROTOCOL_VERSION).toBe(22);
   });
 
-  it('keeps the 20 -> 21 changelog entry beside the constant, and non-empty', () => {
+  it('keeps the 21 -> 22 changelog entry beside the constant, and non-empty', () => {
     // THE PROSE IS THE DELIVERABLE HERE, NOT DECORATION. Every bump in this file
     // is argued above the constant, and the argument is the only thing that
     // tells the next person whether their change forces a bump or is an addition
@@ -156,7 +169,7 @@ describe('shared constants', () => {
     // touched — a guard that proves the discipline held LAST TIME is not a
     // guard. It moves with the constant now, and the assertions below name this
     // entry's own frame.
-    const afterHeading = source.split('20 -> 21 (THE FLOOR CAN HURT YOU NOW)')[1] ?? '';
+    const afterHeading = source.split('21 -> 22 (DOORS)')[1] ?? '';
     // The entry ends where the constant it explains begins.
     const entry = afterHeading.split('export const PROTOCOL_VERSION')[0] ?? '';
 
@@ -165,7 +178,7 @@ describe('shared constants', () => {
     // It must name the frame that FORCES the bump, not merely list what was
     // added — an entry that only enumerates additions is an entry arguing for
     // NOT bumping.
-    expect(entry).toContain('ZonesMsg');
+    expect(entry).toContain('DOOR_OPEN');
     // And it must say what it deliberately did NOT do to the save file, because
     // the reflex when a protocol moves is to move both numbers.
     expect(entry).toContain('SCHEMA_VERSION');

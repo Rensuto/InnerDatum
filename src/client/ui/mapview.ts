@@ -44,6 +44,31 @@ export const MINIMAP_MAX_H = 130;
 function miniFill(code: TileCode): string {
   if (code === TileCode.WATER || code === TileCode.DEEPWATER) return '#141d33';
   if (code === TileCode.ERASED) return '#0c0a14';
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * BEFORE `isWalkable`, BECAUSE AN OPEN DOOR WOULD OTHERWISE DRAW AS ROAD.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * This is not a colour preference, it is a correctness fix, and the bug it
+   * prevents is the exact one the `isSafeGround` note below warns about.
+   * `DOOR_OPEN` is walkable and is not a `HAUNT`, so `isSafeGround` answers TRUE
+   * for it — and the branch below would paint every opened doorway in `#8a8070`,
+   * the SAFE NETWORK colour, whose whole meaning is *"nothing may lie in wait
+   * here"*. A delve is the one place in the game where that promise is false,
+   * and a doorway is the one tile in a delve where something most often is.
+   *
+   * ═══ AND THIS MAP DOES DRAW DELVES ═══
+   * `MapPaint.seen` is documented as *"Absent means 'all of it', which is what
+   * an inner-world wants"*, so an interior is drawn in full and every door on it
+   * reaches this function. It would not have been caught by looking at the
+   * overworld, which has no doors on it at all.
+   *
+   * The two values are the map-palette relatives of the playfield's amber
+   * (`tileFill`, ported from `basic.lua:220`): findable at one pixel, and the
+   * closed one louder, because a shut door is a thing you are looking FOR.
+   */
+  if (code === TileCode.DOOR) return '#8a6134';
+  if (code === TileCode.DOOR_OPEN) return '#4a3d2e';
   if (isWalkable(code)) {
     /**
      * ═════════════════════════════════════════════════════════════════════════

@@ -362,6 +362,42 @@ export const TileCode = {
    * change every FOV in the north.
    */
   FROZEN_WATER: 31,
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * A DOOR — THE FIRST TILE THAT IS NOT A PERMANENT FACT ABOUT THE MAP.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Ported from `data/general/grids/basic.lua:217-229` (DOOR) and `:230-238`
+   * (DOOR_OPEN). Every other code in this enum is decided when the floor is
+   * generated and is true until the floor is thrown away. These two are a PAIR
+   * and a body converts one into the other by walking into it, which is why
+   * `World.level` has been mutable in type since M4 with a comment saying it
+   * was for exactly this.
+   *
+   * ═══ THE CLOSED ONE IS A WALL THAT IS NOT DECLARED A WALL ═══
+   * Upstream's DOOR entity carries `block_sight = true` and NO `block_move`.
+   * It stops a body entirely through `Grid:block_move`'s door arms
+   * (`tome/class/Grid.lua:59-92`), which is a distinction with a consequence:
+   * "solid" is not a property of the tile, it is the answer to a question about
+   * WHO IS ASKING. That is the half this enum cannot express and the move
+   * pipeline has to — see `opensDoors` on the actor.
+   *
+   * Here, the closed door is simply solid and opaque, which is what it is to
+   * anything that merely reads terrain: the renderer, the FOV trace, and every
+   * body that cannot open one.
+   */
+  DOOR: 32,
+  /**
+   * Upstream's DOOR_OPEN declares neither `block_sight` nor `block_move`, so an
+   * open door is FLOOR in every respect that a predicate can see. It stays a
+   * separate code for the two things that are still true of it: it is drawn as
+   * a door, and `door_closed = "DOOR"` means something could shut it again.
+   *
+   * Both halves are `always_remember = true` upstream, which our client already
+   * gives every tile — `projectLevel` sends the whole map and the client owns
+   * its explored mask.
+   */
+  DOOR_OPEN: 33,
 } as const;
 export type TileCode = (typeof TileCode)[keyof typeof TileCode];
 
@@ -388,6 +424,14 @@ const WALKABLE: ReadonlySet<number> = new Set<number>([
   // `snowfield` drew as PLAINS and `charred` as HEATH.
   TileCode.SNOWFIELD,
   TileCode.CHARRED,
+  /**
+   * AN OPEN DOOR IS FLOOR. `DOOR` is deliberately absent rather than listed and
+   * negated: a closed door is not walkable terrain, and the actors that can get
+   * through one do it by CHANGING the tile, never by being exempt from this
+   * question. Keeping the exemption out of here is what stops "can I stand
+   * there" from acquiring a second answer that depends on who is asking.
+   */
+  TileCode.DOOR_OPEN,
 ]);
 
 /**
@@ -423,6 +467,14 @@ const BLOCKS_SIGHT: ReadonlySet<number> = new Set<number>([
   TileCode.TOWN_WALL,
   // A cold forest is still a forest.
   TileCode.COLD_FOREST,
+  /**
+   * `block_sight = true` on the DOOR entity, and it is the whole tactical point
+   * of the tile: a corridor with a shut door in it is a corridor you cannot see
+   * down. `DOOR_OPEN` is absent for the matching reason — opening one is a way
+   * of LOOKING, not only a way of walking, and the two halves of that are this
+   * line and the one in `WALKABLE`.
+   */
+  TileCode.DOOR,
 ]);
 
 /**

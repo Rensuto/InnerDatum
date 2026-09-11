@@ -1915,6 +1915,36 @@ function tileFill(code: TileCode): string {
       return '#22303a';
     case TileCode.CHARRED:
       return '#3a3230';
+
+    /**
+     * ─── the only made thing in the terrain palette ───
+     *
+     * ═══ THE HUE IS PORTED; ONLY THE VALUE IS OURS ═══
+     * `basic.lua:220` draws both halves in `color_r=238, color_g=154,
+     * color_b=77` — amber, and the ONLY warm glyph in a dungeon that is
+     * otherwise grey. Fifteen years of players have found doors by looking for
+     * that colour, so the hue is kept (~30 degrees on both) and only the value
+     * is moved, because #ee9a4d at full strength would be the brightest thing
+     * this renderer has ever drawn — brighter than SNOWFIELD, brighter than the
+     * player's own token.
+     *
+     * ═══ AND THIS PAIR DEPARTS FROM THE FILE'S VALUE RULE, DELIBERATELY ═══
+     * Every other code above obeys "walkable is light, blocking is dark",
+     * because on a map of ground and rock, brightness IS the answer to "can I
+     * go there". A door is the one tile where that heuristic must lose: it is
+     * neither ground nor rock, and a player who reads it as either has read it
+     * wrong. So HUE says "this is a door" and value is spent inside the pair —
+     * closed is the loud one because it is the one you need to notice, and open
+     * recedes toward the floor it has become.
+     *
+     * The warm/cool split is what keeps the open one legible at all: #42372f
+     * sits at nearly the same luminance as PANEL (#312938) and is instantly
+     * separable from it because PANEL is violet and this is not.
+     */
+    case TileCode.DOOR:
+      return '#7a5730';
+    case TileCode.DOOR_OPEN:
+      return '#42372f';
   }
 }
 
