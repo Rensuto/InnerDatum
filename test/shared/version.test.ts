@@ -40,7 +40,7 @@ describe('shared constants', () => {
     expect(Math.log2(TILE_PX) % 1).toBe(0);
   });
 
-  it('pins PROTOCOL_VERSION at 20 — gear says what it does', () => {
+  it('pins PROTOCOL_VERSION at 21 — the floor can hurt you now', () => {
     // AN EXPLICIT PIN, so the bump cannot be silently reverted by a merge.
     // Everything above only asserts the constants are positive integers, which
     // a revert would pass. THE JUSTIFICATION MOVES WITH THE NUMBER — a pin whose
@@ -100,10 +100,35 @@ describe('shared constants', () => {
     // Every earlier bump argued about a client drawing a LIE. This one is about
     // a client drawing NOTHING, which is the same failure the gate exists to
     // convert into an honest "your client is out of date".
-    expect(PROTOCOL_VERSION).toBe(20);
+    // ═══════════════════════════════════════════════════════════════════════
+    // v20 AND v21, APPENDED — AND THE v20 GAP IS WHY THEY ARE BOTH HERE.
+    // ═══════════════════════════════════════════════════════════════════════
+    //
+    // The chain above runs v11, v16, v18, v19 and then stops. The number moved
+    // to 20 without its paragraph, so this comment argued v19 under a pin that
+    // said 20 — exactly the failure its own opening line warns about: *"a pin
+    // whose comment still argues the previous version is worse than no pin,
+    // because it reads as deliberate and is not."*
+    //
+    // v20 REMOVED three `desc` fields rather than adding anything, and a
+    // removal is the one shape that is never safely ignorable: a v19 client
+    // renders `undefined` where it expects a sentence. That is the argument
+    // that was missing, and it is restated here rather than left inferable
+    // from the version.ts entry, because this is the pin somebody reads first.
+    //
+    // v21 ADDS `zones`, and it is 6 -> 7's argument with a longer fuse. A v20
+    // client cannot name the frame, so it draws no fire — and the fire burns it
+    // every game turn for four turns while it stands there. Worse than the orb
+    // that forced 6 -> 7: the burns ride the ORDINARY `attacked` event (no new
+    // `TurnEvent` variant was needed), so a v20 client renders each one
+    // faithfully as a melee hit from a named body — usually the corpse that
+    // left the patch, or something in another room. It does not merely fail to
+    // draw the hazard; it confidently narrates a dead thing punching somebody,
+    // once a turn, for as long as the fire lasts.
+    expect(PROTOCOL_VERSION).toBe(21);
   });
 
-  it('keeps the 18 -> 19 changelog entry beside the constant, and non-empty', () => {
+  it('keeps the 20 -> 21 changelog entry beside the constant, and non-empty', () => {
     // THE PROSE IS THE DELIVERABLE HERE, NOT DECORATION. Every bump in this file
     // is argued above the constant, and the argument is the only thing that
     // tells the next person whether their change forces a bump or is an addition
@@ -126,7 +151,12 @@ describe('shared constants', () => {
     // "considered and not bumped" note below argues against its own case by
     // pointing at "(18 -> 19)" — so splitting on the digits alone lands inside
     // whichever paragraph mentions them first and reads the wrong entry.
-    const afterHeading = source.split('18 -> 19 (WHO ARE YOU TONIGHT)')[1] ?? '';
+    // PINNED TO THE NEWEST ENTRY, NOT A HISTORICAL ONE. This read `18 -> 19`
+    // and went on passing through two later bumps, measuring prose nobody had
+    // touched — a guard that proves the discipline held LAST TIME is not a
+    // guard. It moves with the constant now, and the assertions below name this
+    // entry's own frame.
+    const afterHeading = source.split('20 -> 21 (THE FLOOR CAN HURT YOU NOW)')[1] ?? '';
     // The entry ends where the constant it explains begins.
     const entry = afterHeading.split('export const PROTOCOL_VERSION')[0] ?? '';
 
@@ -135,7 +165,7 @@ describe('shared constants', () => {
     // It must name the frame that FORCES the bump, not merely list what was
     // added — an entry that only enumerates additions is an entry arguing for
     // NOT bumping.
-    expect(entry).toContain('shop_buy');
+    expect(entry).toContain('ZonesMsg');
     // And it must say what it deliberately did NOT do to the save file, because
     // the reflex when a protocol moves is to move both numbers.
     expect(entry).toContain('SCHEMA_VERSION');

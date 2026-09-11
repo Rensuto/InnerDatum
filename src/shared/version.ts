@@ -478,6 +478,62 @@
  * ═══════════════════════════════════════════════════════════════════════════
 
 
+ * 20 -> 21 (THE FLOOR CAN HURT YOU NOW). `ZonesMsg` is a new outbound frame —
+ * every burning tile the party can see, absolute and replaced wholesale — and it
+ * forces this bump for the SAME REASON 6 -> 7 was forced by `projectiles`, one
+ * step worse.
+ *
+ * That entry is the precedent and it is worth quoting: a v6 client could not
+ * name the frame, so it drew no orb, *"and the damage still lands … a monster
+ * that appears to do nothing for two turns and then deals damage out of thin
+ * air. The counterplay does not merely go unrendered — it DOES NOT EXIST on that
+ * client."*
+ *
+ * A ground zone is that shape and it lasts longer. An orb resolves in two turns;
+ * a patch of fire burns for four and does not move, so a v20 client stands a
+ * detective on a tile that is hurting them every single game turn with nothing
+ * whatever on screen to suggest stepping off it. Walking away is the entire
+ * counterplay and it is invisible.
+ *
+ * ═══ AND THE DAMAGE IS NARRATED AS SOMETHING IT IS NOT ═══
+ * This is the half that makes it worse than a silent orb. `tickGroundZones`
+ * deliberately re-enters each burn as the ORDINARY `attacked` event attributed
+ * to the zone's source, so that no new `TurnEvent` variant was needed. A v20
+ * client renders that faithfully — as a melee hit, from a named body, once a
+ * turn. The body is usually DEAD (the Glut that left the patch) or in another
+ * room. So the old client does not merely fail to draw the fire: it confidently
+ * reports a corpse punching somebody, every turn, forever. A frame it cannot
+ * name would have been survivable; a frame it cannot name plus events it renders
+ * wrongly is not.
+ *
+ * CONSIDERED AND NOT ADDED, each of which would have forced this bump on its
+ * own and none of which is here:
+ *
+ *   NO NEW `TurnEvent` VARIANT. :36-44's rule. The burns ride the existing
+ *   `attacked`/`attack` steps, which is exactly why the misattribution above is
+ *   possible — the bump is paid for the frame, and the event reuse is what keeps
+ *   the client's Record lane and its sweep pacing untouched.
+ *
+ *   NO NEW `ErrorCode` MEMBER. Nothing about a zone is refusable: a player never
+ *   asks for one, and the only inbound verb in the neighbourhood is movement,
+ *   which already refuses with the codes every shipped client renders.
+ *
+ *   NO FIELD NARROWED. `ZoneTileView` is `{x, y, type}` and is new in its
+ *   entirety; no existing frame gained, lost or tightened a member. The
+ *   `ProjectilesMsg` docblock was corrected in the same commit, and prose is not
+ *   a wire change.
+ *
+ * `SCHEMA_VERSION` STAYS 1, considered separately rather than carried along.
+ * Zones are PROCESS state and nothing persists them: `resetFloor` wipes every
+ * one on a party wipe (src/server/turn-engine.ts, pinned by
+ * test/server/floor-reset.test.ts) and no save path has ever seen a
+ * `GroundZone`. A character file written before this change and one written
+ * after are byte-identical, so bumping the file version would quarantine every
+ * existing character for a field that is not in the file.
+ *
+ * ═══════════════════════════════════════════════════════════════════════════
+
+
  * 19 -> 20 (GEAR SAYS WHAT IT DOES, NOT WHAT IT IS). `ItemView.desc`,
  * `GroundItemView.desc` and `ShopItemView.desc` are GONE, along with the
  * authored sentence behind them: a piece of gear now communicates its stats and
@@ -689,7 +745,7 @@
  * path rather than read from disk. When that changes it will be an OPTIONAL
  * field and docs/data-schemas.md:48-49 applies unchanged.
  */
-export const PROTOCOL_VERSION = 20;
+export const PROTOCOL_VERSION = 21;
 
 /**
  * Bumped whenever a persisted save file's shape changes. Every bump needs a

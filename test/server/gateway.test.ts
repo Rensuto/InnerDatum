@@ -738,6 +738,152 @@ async function bootLive(seed: string): Promise<Harness> {
   };
 }
 
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE `zones` FRAME — AND THE ONE THING IT MUST DO THAT THE SKY DOES NOT.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * A patch of fire ARRIVES on a tile and then BURNS OUT on it, and both halves
+ * have to reach the client. The arrival is the easy one. The burn-out is the
+ * frame a `length > 0` gate would swallow, leaving the wash on every screen in
+ * the realm until something else happened to change the list — which, out of
+ * combat, can be minutes.
+ *
+ * `NO_ZONES_KEY` is `'[]'` for exactly that: the memo is SEEDED with the empty
+ * floor rather than GATED on a non-empty one, so "it went out" is a change like
+ * any other.
+ */
+describe('the zones frame', () => {
+  /** One patch of burning floor, on tiles the party can see. */
+  function burn(tiles: readonly TileXY[], damage = 5): string {
+    return server.world.addZone({
+      srcId: 'mon_a',
+      tiles,
+      type: DamageType.Fire,
+      damage,
+      turns: 40,
+      selfFire: false,
+      friendlyFire: true,
+    });
+  }
+
+  /** The tile list off one `zones` frame, as plain rows a test can read. */
+  function tilesOf(frame: Frame | undefined): unknown[] {
+    const list = frame?.['tiles'];
+    if (!Array.isArray(list)) throw new Error('that frame carried no tiles array');
+    return list;
+  }
+
+  it('is never sent while the floor is clear', async () => {
+    // The same no-regression guard the sky carries: absence is the client's
+    // default, so an empty frame on every pump would say what its recipient
+    // already believes, forever, on a roster where one creature bursts.
+    const client = await connect(server.port);
+    await client.hello();
+    client.clear();
+
+    await client.pump();
+    await client.pump();
+
+    expect(client.all('zones')).toEqual([]);
+  });
+
+  it('announces a patch of fire once, and says nothing on a quiet pump', async () => {
+    const client = await connect(server.port);
+    await client.hello();
+    client.clear();
+
+    burn([{ x: 2, y: LANE_Y }]);
+    await client.pump();
+
+    const sent = client.all('zones');
+    expect(sent).toHaveLength(1);
+    expect(tilesOf(sent[0])).toEqual([{ x: 2, y: LANE_Y, type: DamageType.Fire }]);
+
+    // THE MEMO. Nothing changed, so nothing is said — the frame is absolute and
+    // a client that has it does not need it again.
+    client.clear();
+    await client.pump();
+    expect(client.all('zones')).toEqual([]);
+  });
+
+  it('SENDS THE EMPTY FRAME when the last patch burns out', async () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * THE ASSERTION THE SEED EXISTS FOR, AND THE ONE A GATE WOULD BREAK.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * `if (msg.tiles.length === 0) return;` in the broadcast arm is the obvious
+     * optimisation and it is the bug: the client replaces wholesale, so the only
+     * way it ever learns a fire went out is a frame that says so. Gated, the
+     * wash stays on the screen of everyone in the realm for as long as the
+     * server has nothing else to say about the floor.
+     */
+    const client = await connect(server.port);
+    await client.hello();
+    client.clear();
+
+    const id = burn([{ x: 2, y: LANE_Y }]);
+    await client.pump();
+    expect(client.all('zones'), 'the fire never arrived, so this proves nothing').toHaveLength(1);
+
+    client.clear();
+    server.world.removeZone(id);
+    await client.pump();
+
+    const sent = client.all('zones');
+    expect(sent, 'the floor went out and nobody was told').toHaveLength(1);
+    expect(tilesOf(sent[0]), 'the frame that clears the screen was not empty').toEqual([]);
+  });
+
+  it('seeds a socket that joins a realm already on fire, MEMO AND ALL', async () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * THE MEMO HAS TO BE PRIMED FIRST OR THIS TEST PROVES NOTHING.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * The first draft lit a fire on a FRESH server and connected one socket. It
+     * passed — and it passed with the hello seed DELETED, because on a fresh
+     * realm the memo is empty, so the pump that follows hello broadcasts to the
+     * room anyway and the joining socket is told by accident.
+     *
+     * The bug this is guarding against only exists once the memo already holds
+     * the current key. So: a first client establishes the fire and the memo with
+     * it, and only THEN does a second one join. Now the pump has nothing new to
+     * say, and the unicast seed is the only thing that can tell the newcomer —
+     * which is precisely the shape that gave every delve an invisible floor when
+     * `sendGroundIfAny` had one call site.
+     */
+    const first = await connect(server.port);
+    await first.hello();
+    burn([{ x: 2, y: LANE_Y }]);
+    await first.pump();
+    // THE PREMISE, ASSERTED: the memo now holds this floor, so a later pump is
+    // silent about it. Without this line a broken `burn` would make the whole
+    // test vacuous.
+    first.clear();
+    await first.pump();
+    expect(first.all('zones'), 'the memo was never primed').toEqual([]);
+
+    const client = await connect(server.port);
+    await client.hello();
+
+    const sent = client.all('zones');
+    /**
+     * AT LEAST ONE, NOT EXACTLY ONE — and the difference is deliberate rather
+     * than slack. A joining socket gets the UNICAST seed, and the unicast form
+     * pointedly does NOT touch the per-realm memo (see `sendZonesIfAny`), so the
+     * pump that follows still broadcasts to the room. That second frame is the
+     * price of not starving every other viewer to save this one a duplicate, and
+     * the sky pays it identically. The frame is absolute, so a repeat is free.
+     */
+    expect(sent.length, 'a socket joined a burning realm and was told nothing').toBeGreaterThan(0);
+    for (const frame of sent) {
+      expect(tilesOf(frame)).toEqual([{ x: 2, y: LANE_Y, type: DamageType.Fire }]);
+    }
+  });
+});
+
 describe('the hotbar, on a server with the talent book wired in', () => {
   it('arrives in the welcome frame set instead of being skipped', async () => {
     server = await bootLive('gateway-hotbar');

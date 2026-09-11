@@ -6613,6 +6613,7 @@ export type ServerMsg =
   | LogMsg
   | EffectsMsg
   | ProjectilesMsg
+  | ZonesMsg
   | PartyMsg
   | PartyStateMsg
   | PingedMsg

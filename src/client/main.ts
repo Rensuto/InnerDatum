@@ -399,6 +399,7 @@ import type {
   ProgressMsg,
   UnlockableTree,
   ProjectileView,
+  ZoneTileView,
   ResourceView,
   ServerMsg,
   ItemView,
@@ -2258,6 +2259,15 @@ let pings: readonly Ping[] = [];
  * seven, and this feature is the reason it is worth counting.
  */
 let projectiles: readonly ProjectileView[] = [];
+/**
+ * EVERY BURNING TILE THE PARTY CAN SEE. Absolute, replaced wholesale, no timer.
+ *
+ * `ZoneTileView` off the wire unchanged — the server already flattened
+ * overlapping patches into one entry per tile and already fogged them, so there
+ * is nothing to join and nothing to decide here. An empty array is a common
+ * answer and is what takes a burnt-out fire off the screen.
+ */
+let zones: readonly ZoneTileView[] = [];
 
 /**
  * WHAT IS LYING ON THE FLOOR (v10) — every item on every tile, from the `ground`
@@ -5496,6 +5506,7 @@ function scene(): Scene {
     // an absent one mean the same thing to render/canvas.ts, so the sky clearing
     // itself needs nothing reset here.
     projectiles,
+    zones,
     hud: paintHud,
   };
 }
@@ -12674,6 +12685,10 @@ function forgetTheWorld(): void {
   // a fresh `projectiles` frame on the welcome path when something really is
   // in the air, so nothing true is lost by dropping this.
   projectiles = clearProjectiles();
+  // AND THE FLOOR. Cleared HERE rather than in a `case` arm because
+  // `forgetTheWorld` has two callers — `welcome` and `roster` — and a zone
+  // carried across either is fire painted on a map that no longer exists.
+  zones = [];
   // ═══ AND THE FLOOR AND THE BAG WITH IT, ON THE SKY'S OWN ARGUMENT ═══
   //
   // A welcome replaces the board wholesale, so every pile in this list is a
@@ -12828,6 +12843,7 @@ function applyServerMessage(msg: ServerMsg): void {
       forgetInspections();
       pings = [];
       projectiles = clearProjectiles();
+      zones = [];
       ground = [];
       effects = new Map();
       reviveArmed = false;
@@ -12874,6 +12890,7 @@ function applyServerMessage(msg: ServerMsg): void {
       // the server's own memo would suppress the correction, so the rule lives
       // in a comment on both sides of the wire.
       projectiles = clearProjectiles();
+      zones = [];
       break;
     case 'moved': {
       const actor = actors.get(msg.id);
@@ -13449,6 +13466,30 @@ function applyServerMessage(msg: ServerMsg): void {
           onRefusal(`${incoming} orbs are aimed at this tile${clause} — move`);
         }
       }
+      break;
+    }
+    case 'zones': {
+      /**
+       * ═══ WHAT IS BURNING. COMPLETE, AND REPLACED RATHER THAN MERGED ═══
+       *
+       * The same rule as the sky directly above, and it fails the same way if
+       * broken: a patch stream leaves PHANTOM FIRE on the map forever after one
+       * dropped frame, and phantom fire teaches the counterplay backwards — the
+       * player learns to walk around a tile that is safe, and having learnt the
+       * picture lies, walks through the one that is not.
+       *
+       * AN EMPTY ARRAY IS A REAL AND COMMON ANSWER: the floor is clear. It is
+       * also the ONLY spelling of "that patch burnt out" — there is no expiry
+       * event, and the burns themselves arrive as the ordinary `attack` steps
+       * the sweep already carries, attributed to whatever lit it.
+       *
+       * NO STATE MODULE. `applyProjectilesFrame` exists because an orb needs
+       * `turnsToImpact` read back and a landed flag reasoned about; a zone tile
+       * is `{x, y, type}` and the server has already done the joining, the
+       * fogging and the overlap. A module here would be a function that returns
+       * its argument.
+       */
+      zones = msg.tiles;
       break;
     }
     case 'ground':

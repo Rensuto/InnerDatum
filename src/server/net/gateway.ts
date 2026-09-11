@@ -242,6 +242,7 @@ import {
   projectPartyState,
   projectShop,
   projectProjectiles,
+  projectZones,
   projectResource,
   projectTurn,
   projectWorld,
@@ -2663,6 +2664,14 @@ const NO_PROJECTILES_KEY = '[]';
 const NO_GROUND_KEY = '[]';
 
 /**
+ * THE EMPTY FLOOR, as the memo's seed. Same argument as the two above it, and
+ * the sharpest case of the three: a zone arrives on a tile and then BURNS OUT
+ * on it, so the empty frame is not an edge case — it is half the life of every
+ * patch of fire in the game.
+ */
+const NO_ZONES_KEY = '[]';
+
+/**
  * AN EMPTY BAG AND AN EMPTY PAPER DOLL, as the per-session memo key spells them.
  *
  * Same seeding argument as `NO_PROJECTILES_KEY`, one level down: the key is
@@ -2944,6 +2953,8 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    * every read spells that out rather than defaulting the Map.
    */
   const lastProjectilesKeys = new Map<string, string>();
+  /** The burning floor, per realm. Seeded empty — see `NO_ZONES_KEY`. */
+  const lastZonesKeys = new Map<string, string>();
 
   /**
    * The last `ground` frame broadcast per realm, as a key — SEEDED WITH THE
@@ -3187,6 +3198,71 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       return;
     }
     lastProjectilesKeys.set(realm.id, JSON.stringify(msg.projectiles));
+    broadcast(msg, undefined, audienceFor(realm.id));
+  };
+
+  /**
+   * EVERY BURNING TILE, when the set changed. The FIFTH memo of this shape.
+   *
+   * ═══ SEEDED WITH THE EMPTY FLOOR, NEVER GATED ON A NON-EMPTY ONE ═══
+   * `NO_ZONES_KEY` is `'[]'` for `NO_PROJECTILES_KEY`'s stated reason, and a
+   * zone makes the case sharper than an orb does: fire ARRIVES on a tile and
+   * then BURNS OUT on it, and the burn-out is the transition a `length > 0`
+   * gate would swallow. The last frame before a patch expires has to be the
+   * empty one, or the wash stays on every screen in the realm until something
+   * else happens to change the list — which, out of combat, can be minutes.
+   *
+   * ═══ IT IS A BROADCAST BECAUSE THE EYES ARE THE REALM'S ═══
+   * `projectZones` gates per tile against `eyesIn`, which is the realm's eyes
+   * unioned — so every viewer computes the same visible set and every copy of
+   * this frame is byte-identical. That is a property of `eyesIn` and NOT of the
+   * frame: the day eyes become party-scoped, `ZonesMsg` moves into `ViewerMsg`
+   * and this function becomes a per-session loop like `broadcastGroundIfChanged`
+   * below it. Its docblock says the same thing from the other side.
+   */
+  const broadcastZonesIfChanged = (realm: PumpTarget): void => {
+    const msg = projectZones(realm.world, eyesIn(realm.world));
+    const key = JSON.stringify(msg.tiles);
+    if (key === (lastZonesKeys.get(realm.id) ?? NO_ZONES_KEY)) return;
+    lastZonesKeys.set(realm.id, key);
+    broadcast(msg, undefined, audienceFor(realm.id));
+  };
+
+  /**
+   * THE FLOOR, TO SOMEBODY WHO HAS SEEN NOTHING — `welcome`, a resume, the full
+   * board resync, and BOTH SIDES OF A REALM CROSSING.
+   *
+   * ═══ THE CROSSING IS THE ONE THAT HAS ALREADY GONE WRONG ONCE ═══
+   * `sendGroundIfAny` shipped with a single call site and every delve a player
+   * walked into had an invisible floor — the client clears its list on `realm`,
+   * and the per-realm memo then SUPPRESSES the correction because the server's
+   * last broadcast said the same thing. The memo is what turns one missing call
+   * into a permanent hole rather than a one-frame flicker.
+   *
+   * A zone is worse in that hole than an item is. An unseen item is a pickup
+   * you did not know about; unseen fire is damage every turn on a tile you have
+   * no reason to leave, narrated as an attack by a body that is dead or in
+   * another room.
+   *
+   * ═══ SILENT WHEN THE FLOOR IS CLEAR ═══
+   * Absence is the client's default, so an empty frame here would tell its
+   * recipient what they already believe, on every join and every survival
+   * event. That is the opposite decision from `broadcastZonesIfChanged` above,
+   * and the two are not in tension: the broadcast exists to report a CHANGE (and
+   * emptying is a change), this exists to seed a client that knows nothing.
+   *
+   * @param socket the one recipient, or absent to tell the room. The broadcast
+   *   form also updates the memo, so a `broadcastZonesIfChanged` later in the
+   *   same pump correctly sends nothing.
+   */
+  const sendZonesIfAny = (realm: PumpTarget, socket?: GatewaySocket): void => {
+    const msg = projectZones(realm.world, eyesIn(realm.world));
+    if (msg.tiles.length === 0) return;
+    if (socket !== undefined) {
+      send(socket, msg);
+      return;
+    }
+    lastZonesKeys.set(realm.id, JSON.stringify(msg.tiles));
     broadcast(msg, undefined, audienceFor(realm.id));
   };
 
@@ -5993,6 +6069,9 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       // nothing is flying, and it updates the memo so the snapshot band below
       // does not say the same thing twice in one pump.
       sendProjectilesIfAny(realm);
+      // AND THE FLOOR IT IS BURNING ON, for the same reason and in the same
+      // breath — a `state` frame carries `ActorView` and a zone is not an actor.
+      sendZonesIfAny(realm);
     }
 
     syncBell(realm, result.turn);
@@ -6023,6 +6102,10 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     // symptom would be a corpse's drop nobody can see. See
     // `broadcastGroundIfChanged`.
     broadcastGroundIfChanged(realm);
+    // AND THE BURNING FLOOR. Beside the other two and for the same reason, with
+    // one of its own: this is the band where a patch that EXPIRED reports the
+    // empty frame that takes it off the screen. See `broadcastZonesIfChanged`.
+    broadcastZonesIfChanged(realm);
 
     // Unicast, and each socket learns only about its own. This is deliberately
     // unconditional rather than gated on "did a talent happen": `actBase` ticks
@@ -8692,6 +8775,9 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     // either: that frame is the level and the actors, and an orb is neither.
     // Silent when nothing is in the air — see `sendProjectilesIfAny`.
     sendProjectilesIfAny(realmFor(session), session.socket);
+    // AND WHAT IS BURNING. Unicast for the same reason the sky is: this socket
+    // has seen nothing, and the room already knows.
+    sendZonesIfAny(realmFor(session), session.socket);
 
     // THE FLOOR, unicast, and for a longer-lived version of the reason directly
     // above: an orb is a three-turn object and a coat on the floor lasts the
@@ -8761,6 +8847,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       // that is harmless: the frame is ABSOLUTE, and the rejoining socket
       // already got its own unicast copy a few lines up.
       sendProjectilesIfAny(realmFor(session));
+      sendZonesIfAny(realmFor(session));
     }
 
     app.log.info(
@@ -9217,6 +9304,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     lastPartyKeys.delete(realmId);
     lastEffectsKeys.delete(realmId);
     lastProjectilesKeys.delete(realmId);
+    lastZonesKeys.delete(realmId);
     lastShopKeys.delete(realmId);
     clearedRealms.delete(realmId);
     residentCounts.delete(realmId);
@@ -9569,6 +9657,16 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
      * not touch the memo — so a later broadcast is not suppressed by this.
      */
     sendGroundIfAny(realmFor(session), session);
+    /**
+     * AND THE FIRE ON IT — THE SITE THIS CLASS OF BUG HAS ALREADY USED ONCE.
+     *
+     * `sendGroundIfAny` shipped with one call site and every delve a player
+     * walked into had an invisible floor: the client clears on `realm`, and the
+     * per-realm memo then suppresses the correction because the server's last
+     * broadcast said the same thing. Unseen loot is a pickup you missed; unseen
+     * fire is damage every turn on a tile you have no reason to leave.
+     */
+    sendZonesIfAny(realmFor(session), session.socket);
     announceArrival(session, to, to.name);
     broadcast(
       {
@@ -9887,6 +9985,9 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
      * not touch the memo — so a later broadcast is not suppressed by this.
      */
     sendGroundIfAny(realmFor(session), session);
+    // AND THE FIRE ON IT. The other half of the crossing — see the note on the
+    // matching call in the outbound direction.
+    sendZonesIfAny(realmFor(session), session.socket);
     // AND THE ROOM SAYS WHAT IT IS. The one movement worth narrating — see
     // `announceArrival`, and `recordFor`'s `move` case for why a step is not.
     announceArrival(session, to, to.name);
@@ -12715,6 +12816,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     // creation. This is not rediscovered reasoning — it is copied from the
     // rename path, and every `state` broadcast in this file carries the sky.
     sendProjectilesIfAny(realm);
+    sendZonesIfAny(realm);
 
     // ═══ AND THE TURN STRIP, FOR THE SAME REASON THE BOARD WENT ═══
     // `TurnActor` carries its OWN hp, maxHp and portrait — protocol.ts justifies
@@ -14832,8 +14934,10 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     // itself did not change. Three sites broadcast `state`: the full resync in
     // `pumpAndBroadcast`, the rename in `hello`, and this one. All three carry
     // the sky. If a fourth is ever added it must too — an orb the party cannot
-    // see has no counterplay, which is the whole point of the feature.
+    // see has no counterplay, which is the whole point of the feature. The same
+    // sentence now covers the floor: see `sendZonesIfAny`.
     sendProjectilesIfAny(realm);
+    sendZonesIfAny(realm);
     // A CRITICAL EVENT, like a death and a disconnect: the state worth keeping
     // is the one that just changed, and it changed because somebody was stuck.
     saveNow('respawn');
