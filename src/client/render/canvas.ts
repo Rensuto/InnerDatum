@@ -1101,6 +1101,17 @@ const TRAP_INK: Readonly<Record<string, string>> = {
    * name for it, and the only word in this roster that describes a colour.
    */
   trap_teleport: '#7fd4e0',
+  /**
+   * THE THIRD UMBER UPSTREAM, AND THE THIRD DIVERGENCE FOR THE SAME REASON.
+   *
+   * `natural_forest.lua:36` gives the sliding rock `colors.UMBER` as well — the
+   * alarm and the teleport switch already have it. Three traps in one colour is
+   * fine with three different sprites and is nothing at all with one caret.
+   *
+   * Stone grey, because it IS a rock: the one mark here that should read as
+   * part of the floor rather than as something somebody installed in it.
+   */
+  trap_rock: '#9a9088',
 };
 /** What an unrecognised kind draws as — a mark you cannot identify is still a mark. */
 const TRAP_INK_UNKNOWN = '#dc0000';

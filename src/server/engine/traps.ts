@@ -134,6 +134,42 @@ export type TrapEffect =
    * the floor, and stays armed to do it again.
    */
   | { readonly kind: 'teleport'; readonly range: number }
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * A TRAP THAT PUTS A STATUS ON YOU — `who:setEffect(...)`, the commonest
+   * `triggered` body upstream has.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * ```lua
+   * if who:canBe("stun") then
+   *   who:setEffect(who.EFF_STUNNED, 4, {apply_power=self.disarm_power + 5})
+   * else
+   *   game.logSeen(who, "%s resists!", who.name:capitalize())
+   * end
+   * return true
+   * ```
+   *
+   * `traps/natural_forest.lua:41-48`. GENERIC rather than one variant per
+   * status, because that `setEffect` line is the whole body of most of the
+   * `annoy`, `natural` and `water` families — a bespoke effect kind each would
+   * be a dozen arms of one switch that all did the same thing.
+   *
+   * `effectId` IS A CONTENT STRING and stays one. The engine hands it to
+   * `ctx.applyStatus` without knowing what it names, exactly as it does for a
+   * monster's `onHit` rider, because `engine/` must not import `content/`.
+   *
+   * THE RESIST BRANCH NEEDS NO PORT HERE. Upstream's `canBe` check and the
+   * `apply_power` save are two halves of one question, and our `setEffect`
+   * already asks both — an immunity refuses outright and a save is rolled
+   * against `applyPower`, with the Record line written either way. Upstream's
+   * explicit else is its own way of saying what `setEffect` says for us.
+   */
+  | {
+      readonly kind: 'status';
+      readonly effectId: string;
+      readonly turns: number;
+      readonly applyPower: number;
+    }
   | {
       readonly kind: 'lethargy';
       readonly count: number;
@@ -183,6 +219,17 @@ export type Trap = {
    * every number from the Lua when detection lands.
    */
   readonly detectPower: number;
+  /**
+   * `disarm_power` — what a disarm attempt is checked against, and what a
+   * status trap applies its rider at.
+   *
+   * IT HAS A READER NOW, which `detectPower` still does not. The sliding rock's
+   * `apply_power = self.disarm_power + 5` spends it as the save DC, so this is
+   * authored data that reaches play through a door nobody expected — and it is
+   * why both numbers are carried rather than only the one a future disarm verb
+   * would want.
+   */
+  readonly disarmPower: number;
   /**
    * WHO HAS FOUND OUT — upstream's `known_by`, which is a table keyed by ACTOR
    * and not a single flag. Two players on one floor know different things about

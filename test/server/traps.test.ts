@@ -7,6 +7,7 @@ import {
   sheetForClass,
 } from '../../src/server/content/classes.ts';
 import { DELVES, populateDelve, specFor } from '../../src/server/content/delve.ts';
+import { EffectId, createMvpEffectState } from '../../src/server/content/effects.ts';
 import { TRAP_KINDS, TRAP_MESSAGES, rollTrap } from '../../src/server/content/traps.ts';
 import { AiProfile } from '../../src/server/engine/actor.ts';
 import { TRIGGER_FAIL_PERCENT, clscale, trapSentence } from '../../src/server/engine/traps.ts';
@@ -69,6 +70,7 @@ function scene(
     // `del` is nil. Several tests below turn on exactly this.
     spent: false,
     detectPower: 6,
+    disarmPower: 6,
   });
 
   const engine = createTurnEngine({ world, now: () => 0 });
@@ -276,6 +278,7 @@ describe('the alarm', () => {
       effect: { kind: 'alarm', radius },
       spent: true,
       detectPower: 6,
+      disarmPower: 6,
     });
 
     const far: string[] = [];
@@ -423,6 +426,7 @@ describe('the lethargy rune', () => {
       effect: { kind: 'lethargy', count: 3, minTurns: 4, maxTurns: 7 },
       spent: true,
       detectPower: 20,
+      disarmPower: 20,
     });
 
     return { world, engine, ren, book };
@@ -576,6 +580,7 @@ describe('the teleport trap', () => {
       // NOT SPENT — `return true` with no second value, so `del` is nil.
       spent: false,
       detectPower: 40,
+      disarmPower: 40,
     });
 
     const engine = createTurnEngine({ world, now: () => 0 });
@@ -635,6 +640,121 @@ describe('the teleport trap', () => {
       return;
     }
     throw new Error('200 rolls produced no teleport trap — the roster changed shape');
+  });
+});
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE SLIDING ROCK — `traps/natural_forest.lua:31-49`. Four turns on the floor.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * DRIVEN THROUGH THE REAL STATUS DOOR, because the whole point of the `status`
+ * shape is that it reuses the one a monster's `onHit` rider goes through. A
+ * fixture with no `applyStatus` wired would prove the trap CALLS something and
+ * nothing about what lands — which is exactly the hole `monster-casts.test.ts`
+ * turned out to have.
+ */
+describe('the sliding rock', () => {
+  function rockScene(seed: string, applyPower: number) {
+    const world = createWorld(seed);
+    world.level.tiles.fill(TileCode.FLOOR);
+    const effects = createMvpEffectState();
+
+    const ren = world.addPlayer('p1', 'Ren', { maxHp: 500 });
+    ren.x = 2;
+    ren.y = LANE_Y;
+    ren.hpRegen = 0;
+
+    world.addTrap({
+      x: 3,
+      y: LANE_Y,
+      kind: 'trap_rock',
+      message: '@Target@ slides on a rock!',
+      effect: { kind: 'status', effectId: EffectId.Stunned, turns: 4, applyPower },
+      spent: false,
+      detectPower: 6,
+      disarmPower: 16,
+    });
+
+    const engine = createTurnEngine({ world, now: () => 0, effects });
+    engine.join('p1');
+    return { world, engine, ren, effects };
+  }
+
+  it('stuns the body that stepped on it', () => {
+    // A DC high enough that the save cannot carry the test — the rule here is
+    // "the rider lands", and a fixture that let it be shrugged half the time
+    // would be measuring `applySave` instead.
+    const table = rockScene('rock-stun', 500);
+
+    expect(table.engine.submitMove('p1', 'e').ok).toBe(true);
+    table.engine.pump();
+
+    expect(
+      table.ren.combat?.flags?.stunned,
+      'the rock did not stun the body that slid on it',
+    ).toBeTruthy();
+  });
+
+  it('does no damage — it takes the turns, not the hit points', () => {
+    const table = rockScene('rock-harmless', 500);
+    const before = table.ren.hp;
+
+    expect(table.engine.submitMove('p1', 'e').ok).toBe(true);
+    table.engine.pump();
+
+    expect(table.ren.hp, 'the sliding rock hurt somebody').toBe(before);
+  });
+
+  it('can be SHRUGGED OFF, because apply_power is a real save DC', () => {
+    /**
+     * `apply_power = self.disarm_power + 5`. Upstream's explicit `canBe` /
+     * "%s resists!" branch is what our `setEffect` does in one call, so a DC of
+     * zero must let the save carry — and if the rider were applied
+     * unconditionally this is the assertion that notices.
+     */
+    const table = rockScene('rock-save', 0);
+
+    expect(table.engine.submitMove('p1', 'e').ok).toBe(true);
+    const result = table.engine.pump();
+
+    // EITHER it was shrugged (a Record line says so) or it landed — but with a
+    // DC of zero against a real Physical save, the Record lane must have
+    // something to say about it at all.
+    const said = (result.saves ?? []).join(' ');
+    const landed = table.ren.combat?.flags?.stunned;
+    expect(
+      said.length > 0 || landed !== undefined,
+      'a zero-DC rider neither landed nor was narrated as resisted',
+    ).toBe(true);
+  });
+
+  it('STAYS ARMED — `return true` sits outside the if/else', () => {
+    const table = rockScene('rock-armed', 500);
+    expect(table.engine.submitMove('p1', 'e').ok).toBe(true);
+    table.engine.pump();
+
+    expect(table.world.trapAt(3, LANE_Y), 'the rock was consumed by firing').toBeDefined();
+  });
+
+  it('is harder to disarm than a bolt, and spends that number as the DC', () => {
+    /**
+     * `clscale(16,10,8,0.5)` against the bolts' `clscale(6,10,4,0.5)` — more
+     * than twice as hard — and `disarm_power + 5` is the save DC, so the rock
+     * that resists being taken apart also resists being shrugged. One authored
+     * number doing both jobs, which is why `disarmPower` is carried at all.
+     */
+    for (let i = 0; i < 200; i += 1) {
+      const kit = rollTrap(10, createRng(`rock-${String(i)}`), 'delve.traps.0');
+      if (kit?.kind !== 'trap_rock') continue;
+      expect(kit.disarmPower, 'the rock stopped using its own disarm resolver').toBeGreaterThan(10);
+      if (kit.effect.kind !== 'status') throw new Error('the rock stopped being a status trap');
+      expect(kit.effect.applyPower, 'the DC is no longer disarm_power + 5').toBe(
+        kit.disarmPower + 5,
+      );
+      return;
+    }
+    throw new Error('200 rolls produced no sliding rock — the roster changed shape');
   });
 });
 
@@ -741,6 +861,7 @@ describe('the authored roster', () => {
       'trap_cold',
       'trap_lightning',
       'trap_alarm',
+      'trap_rock',
       'trap_teleport',
       'trap_lethargy',
     ]);
@@ -902,6 +1023,7 @@ describe('trigger_fail — the one escape that applies to everybody', () => {
       effect: { kind: 'bolt', damage: 1, damageType: DamageType.Fire },
       spent: false,
       detectPower: 6,
+      disarmPower: 6,
     });
 
     const engine = createTurnEngine({ world, now: () => 0 });

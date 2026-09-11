@@ -3925,6 +3925,30 @@ function noteTrap(effect: Effect, run: Run, sweepTurn: number | null, moverId: s
         ),
       );
     }
+  } else if (trap.effect.kind === 'status') {
+    /**
+     * ═════════════════════════════════════════════════════════════════════════
+     * A RIDER ON THE FLOOR — `who:setEffect(...)`, the commonest trap body.
+     * ═════════════════════════════════════════════════════════════════════════
+     *
+     * THE SAME DOOR A MONSTER'S `onHit` USES, and deliberately so: `applyStatus`
+     * shares `drainStatusLog`'s buffer, so the save line and the badge arrive
+     * attached to this pump rather than floating loose at the end of the turn.
+     *
+     * ═══ NO `srcId`, WHICH IS UPSTREAM AND ALSO CORRECT HERE ═══
+     * `{apply_power = self.disarm_power + 5}` is the whole params table — there
+     * is no source actor on it. A trap is not a body: passing `trap.id` would
+     * hand the status system an id that `getActor` cannot resolve, to attribute
+     * a rider to something that was never standing anywhere.
+     *
+     * The resist branch upstream spells out (`canBe`, then "%s resists!") is
+     * what `setEffect` does for us in one call: an immunity refuses outright,
+     * and otherwise the Physical save is rolled against `applyPower` with the
+     * Record line written either way.
+     */
+    run.ctx.applyStatus?.(victim, trap.effect.effectId, trap.effect.turns, {
+      applyPower: trap.effect.applyPower,
+    });
   } else if (trap.effect.kind === 'teleport') {
     /**
      * ═════════════════════════════════════════════════════════════════════════

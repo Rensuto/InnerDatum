@@ -48,6 +48,7 @@
  * rather than a guess at what the burn would have been worth.
  */
 
+import { EffectId } from './effects.ts';
 import { DamageType } from '../../shared/damagetype.ts';
 import { clscale } from '../engine/traps.ts';
 import { computeRarities, pickEntity } from './rarity.ts';
@@ -95,7 +96,8 @@ type TrapTemplate = {
       }
     | { readonly kind: 'alarm'; readonly radius: number }
     | { readonly kind: 'lethargy' }
-    | { readonly kind: 'teleport' };
+    | { readonly kind: 'teleport' }
+    | { readonly kind: 'status'; readonly effectId: string; readonly turns: number };
   readonly rarity: number;
   readonly levelRange: readonly [number, number];
 };
@@ -109,6 +111,22 @@ type TrapTemplate = {
  */
 const DETECT = { base: 6, baseLevel: 10, spread: 4, power: 0.5 } as const;
 
+/**
+ * `disarm_power` per family, and the families genuinely differ.
+ *
+ * The bolts are `clscale(6,10,4,0.5)` — the same expression as their detect. The
+ * sliding rock is `clscale(16,10,8,0.5)`, more than twice as hard, and that
+ * number is not decoration: `apply_power = self.disarm_power + 5` spends it as
+ * the save DC, so the rock that is hard to take apart is also hard to shrug off.
+ * The teleport trap is `mbonus(10, 50)` — a flat 50 at our tier, which is why
+ * nothing will ever take THAT apart.
+ */
+const DISARM_BOLT = { base: 6, baseLevel: 10, spread: 4, power: 0.5 } as const;
+const DISARM_ROCK = { base: 16, baseLevel: 10, spread: 8, power: 0.5 } as const;
+/** `resolvers.mbonus(10, 50)` — teleport.lua:31. */
+const TELEPORT_DISARM_MAX = 10;
+const TELEPORT_DISARM_ADD = 50;
+
 /** `power` on every bolt trap's damage resolver. */
 const DAMAGE_POWER = 0.75;
 
@@ -121,6 +139,11 @@ const DAMAGE_POWER = 0.75;
  * box of this size, and an unbounded one would walk the world.
  */
 const TELEPORT_RANGE = 100;
+
+/** `who:setEffect(who.EFF_STUNNED, 4, ...)` — natural_forest.lua:43. */
+const ROCK_STUN_TURNS = 4;
+/** `apply_power = self.disarm_power + 5` — natural_forest.lua:43. */
+const STATUS_APPLY_BONUS = 5;
 
 /** `resolvers.mbonus(5, 40)` — teleport.lua:31. See `resolveMBonus`. */
 const TELEPORT_DETECT_MAX = 5;
@@ -261,6 +284,50 @@ const TEMPLATES: readonly TrapTemplate[] = [
    * the branch would be unreachable and its `known = false` case with it. It
    * arrives with the first thing that can resist a teleport.
    */
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE SLIDING ROCK — `traps/natural_forest.lua:31-49`. Four turns on the floor.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * ```lua
+   * name = "sliding rock", rarity = 3, level_range = {1, 50},
+   * detect_power = resolvers.clscale(6,10,4,0.5),
+   * disarm_power = resolvers.clscale(16,10,8,0.5),
+   * message = "@Target@ slides on a rock!", unided_name = "slippery rock",
+   * desc = "Stuns for 4 turns.",
+   * triggered = function(self, x, y, who)
+   *   if who:canBe("stun") then
+   *     who:setEffect(who.EFF_STUNNED, 4, {apply_power=self.disarm_power + 5})
+   *   ...
+   *   return true
+   * end
+   * ```
+   *
+   * ═══ FOUR TURNS IS LONGER THAN AN ENGAGEMENT, AND THAT IS THE POINT ═══
+   * `ENGAGEMENT_TURNS` is three here, so a landed rock costs a whole fight.
+   * That is upstream's number and it is survivable for a reason this game
+   * already relies on: a trap is POSITIONAL. It fires once when you cross it, it
+   * does not repeat on a cadence, and once you have met it you know the tile.
+   * The rule the Bear Down commit got wrong — duration against cadence — has no
+   * cadence to measure against here; the counterplay is the map, not the clock.
+   *
+   * IT IS ALSO SAVEABLE. `apply_power = disarm_power + 5` is a real DC and our
+   * `setEffect` rolls the Physical save against it, so a sturdy detective shrugs
+   * it and the Record lane says so.
+   *
+   * ═══ AND IT STAYS ARMED ═══
+   * `return true` sits OUTSIDE the if/else, so it always teaches and `del` is
+   * nil either way — the rock is still slippery after you have slipped on it.
+   */
+  {
+    kind: 'trap_rock',
+    spent: false,
+    name: 'sliding rock',
+    message: '@Target@ slides on a rock!',
+    effect: { kind: 'status', effectId: EffectId.Stunned, turns: ROCK_STUN_TURNS },
+    rarity: 3,
+    levelRange: [1, 15],
+  },
   {
     kind: 'trap_teleport',
     spent: false,
@@ -347,11 +414,19 @@ export function rollTrap(level: number, rng: Rng, label: string): TrapKit | unde
   const picked = pickEntity(rng, `${label}.kind`, eligible);
   if (picked === undefined) return undefined;
 
+  /**
+   * ROLLED ONCE, BEFORE THE EFFECT, because a status trap's save DC is derived
+   * from it — `apply_power = self.disarm_power + 5`. One draw, one value, two
+   * readers; see `rollDisarm`.
+   */
+  const disarmPower = rollDisarm(picked, level, rng, label);
+
   return {
     kind: picked.kind,
     spent: picked.spent,
     message: picked.message,
-    effect: rollEffect(picked, level, rng, label),
+    effect: rollEffect(picked, level, rng, label, disarmPower),
+    disarmPower,
     /**
      * THE TELEPORT TRAP USES A DIFFERENT RESOLVER, and it is not a typo in the
      * Lua: `resolvers.mbonus(5, 40)` where every other trap is `clscale`. At our
@@ -375,12 +450,45 @@ export function rollTrap(level: number, rng: Rng, label: string): TrapKit | unde
   };
 }
 
+/**
+ * `disarm_power` for this template on this floor.
+ *
+ * ═══ CALLED ONCE AND THREADED, BECAUSE A LABEL IS NOT A MEMO ═══
+ * The first version called this twice — once for the kit's `disarmPower` and
+ * once for the status DC — under a comment claiming the two agreed "because both
+ * calls pass the same label". THEY DO NOT. `rng.int` advances the stream on
+ * every call and a label is a debugging name, not a cache key, so the two reads
+ * came back one apart and a trap's save DC disagreed with its own difficulty.
+ *
+ * Caught by the one assertion that compared them to EACH OTHER
+ * (`applyPower === disarmPower + 5`) rather than checking each against a range.
+ * Upstream has ONE resolver evaluated once into a field that two lines then
+ * read, and that is what this is now.
+ */
+function rollDisarm(picked: TrapTemplate, level: number, rng: Rng, label: string): number {
+  if (picked.effect.kind === 'teleport') {
+    return resolveMBonus(TELEPORT_DISARM_MAX, TELEPORT_DISARM_ADD);
+  }
+  const spec = picked.effect.kind === 'status' ? DISARM_ROCK : DISARM_BOLT;
+  return clscale(
+    spec.base,
+    spec.baseLevel,
+    spec.spread,
+    spec.power,
+    undefined,
+    level,
+    rng,
+    `${label}.disarm`,
+  );
+}
+
 /** One template's effect, with whatever its shape needs rolled for this floor. */
 function rollEffect(
   picked: TrapTemplate,
   level: number,
   rng: Rng,
   label: string,
+  disarmPower: number,
 ): TrapKit['effect'] {
   switch (picked.effect.kind) {
     case 'lethargy':
@@ -394,6 +502,15 @@ function rollEffect(
       return { kind: 'teleport', range: TELEPORT_RANGE };
     case 'alarm':
       return { kind: 'alarm', radius: picked.effect.radius };
+    case 'status':
+      return {
+        kind: 'status',
+        effectId: picked.effect.effectId,
+        turns: picked.effect.turns,
+        // `apply_power = self.disarm_power + 5`. The DC is the trap's OWN
+        // difficulty plus a flat five, so one authored number does both jobs.
+        applyPower: disarmPower + STATUS_APPLY_BONUS,
+      };
     case 'bolt':
       return {
         kind: 'bolt',
