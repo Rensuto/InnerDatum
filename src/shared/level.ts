@@ -314,6 +314,57 @@ export function blocksSightAt(level: LevelView, x: number, y: number): boolean {
  * tile is a rule the server's movement code owns, and baking it in here would
  * put half of that decision in the client bundle.
  */
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * MAY A ROUTE PASS THROUGH HERE — upstream's `couldpass`, which is not
+ * `block_move`.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * ```lua
+ * -- Grid:block_move(x, y, e, act, couldpass)
+ * elseif self.door_opened and not couldpass then return true
+ * elseif self.door_opened and couldpass and not e.open_door then return true
+ * ```
+ *
+ * `tome/class/Grid.lua:89-92`. Upstream asks its terrain TWO different
+ * questions and the door is the tile where they differ: `canWalk` answers "may
+ * a body stand here", which a shut door refuses, and this answers "may a plan
+ * go through here", which it allows — you open it and walk on.
+ *
+ * ═══ WHO ASKS THE SECOND QUESTION UPSTREAM ═══
+ * A* and only A*. `engine/Astar.lua:150` reads
+ *
+ * ```lua
+ * self.map:checkEntity(tx, ty, Map.TERRAIN, "block_move", self.actor, nil, true)
+ * ```
+ *
+ * — `act=nil, couldpass=true`, which is the route probe saying "I am only
+ * THINKING about this tile". `Actor:canMove` (`engine/Actor.lua:302-309`)
+ * passes neither, so a real move gets the strict answer. The pair is upstream's
+ * whole door-routing design and the two callers are the two questions.
+ *
+ * ═══ IT WAS SKIPPED ONCE, AND THE REASON WENT STALE ═══
+ * `server/engine/doors.ts` used to record the tri-state as NOT PORTED, and it
+ * was right at the time: doors existed only in hand-drawn vaults, so *"a monster
+ * will not currently plan a route THROUGH a shut door"* was true and small.
+ *
+ * IT STOPPED BEING SMALL. The works generator cuts rooms and hangs a door on
+ * about ten of the ways through, so a route that treats every one as a wall is
+ * a route around most of a building — and auto-explore, which floods on the
+ * same predicate, called a floor finished with half its rooms unentered.
+ *
+ * ═══ AND ENDING ON ONE IS FINE, WHICH SURPRISED THIS PORT ═══
+ * "You cannot stand on a shut door" is true of the tile and false of the WALK:
+ * `scheduler.ts` swings the door the moment a body walks into it, for no energy,
+ * and the step is taken on the next ask — so a route that ends on a door ends
+ * with the walker standing in an open doorway. `travelTargetAllowed` therefore
+ * asks this function too, and auto-explore aims straight at doorways because
+ * they are the exact tiles where seen ground meets unseen.
+ */
+export function canRoute(level: LevelView, x: number, y: number): boolean {
+  return canWalk(level, x, y) || tileAt(level, x, y) === TileCode.DOOR;
+}
+
 export function canWalk(level: LevelView, x: number, y: number): boolean {
   return isWalkable(tileAt(level, x, y));
 }

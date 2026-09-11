@@ -85,7 +85,18 @@ export type ExploreView = {
   readonly from: TileXY;
   readonly w: number;
   readonly h: number;
-  /** Can a body stand here? The caller's own walkability, never a second copy. */
+  /**
+   * May a route go through here? The caller's own predicate, never a second copy
+   * — `main.ts` hands in `travelTargetAllowed`, which is what travel itself
+   * routes on, so the flood can never plan a leg travel would then refuse.
+   *
+   * ═══ "GO THROUGH", NOT "STAND ON", AND A DOOR IS THE DIFFERENCE ═══
+   * This used to read "can a body stand here", which is the same thing
+   * everywhere except a shut door — and a works floor has about ten of those.
+   * On the old reading each one was a wall, so the flood stopped at every
+   * doorway and the rooms behind them were unreachable ground that auto-explore
+   * reported as a finished floor.
+   */
   readonly passable: (x: number, y: number) => boolean;
   /** Has the viewer seen this cell? `explored` is keyed `"x,y"` per realm. */
   readonly seen: ReadonlySet<string>;
@@ -153,10 +164,19 @@ export function exploreTarget(view: ExploreView): ExploreAnswer {
   const itemAt = new Set(view.items.map((tile) => key(tile.x, tile.y)));
 
   /**
-   * A CELL IS A FRONTIER IF IT IS SOMEWHERE YOU CAN STAND THAT TOUCHES SOMEWHERE
-   * YOU HAVE NOT SEEN. Aiming at the unseen cell itself would be aiming at
-   * something that might be solid rock — the map does not say, which is the
-   * point of it being unseen.
+   * A CELL IS A FRONTIER IF IT IS SOMEWHERE YOU CAN GET TO THAT TOUCHES
+   * SOMEWHERE YOU HAVE NOT SEEN. Aiming at the unseen cell itself would be
+   * aiming at something that might be solid rock — the map does not say, which
+   * is the point of it being unseen.
+   *
+   * ═══ A SHUT DOOR IS THE BEST FRONTIER THERE IS, NOT AN AWKWARD ONE ═══
+   * It is exactly the tile where seen ground meets unseen, so the ring reaches
+   * it before anything behind it and it wins on distance. Walking into it swings
+   * it open for free and the second ask steps through, which leaves the player
+   * standing IN the doorway with the room lit — the one position from which the
+   * next leg is obvious. The alternative, aiming at a tile inside a room this
+   * player has never seen, would be the flood using map knowledge they do not
+   * have.
    */
   const isFrontier = (x: number, y: number): boolean => {
     for (let dy = -1; dy <= 1; dy += 1) {

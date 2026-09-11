@@ -87,7 +87,7 @@
  */
 
 import { DIR_ORDER, sameTile, step } from '../../shared/coords.ts';
-import { canWalk } from '../../shared/level.ts';
+import { canRoute, canWalk } from '../../shared/level.ts';
 import { canSee } from '../../shared/sight.ts';
 import { findPath } from '../../shared/path.ts';
 import { ActorKind, TurnActorState } from '../../shared/protocol.ts';
@@ -495,6 +495,25 @@ export function createTravel(): Travel {
   /** The tile that move should land on. Null whenever `awaitingStep` is false. */
   let expected: TileXY | null = null;
   /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * `expected` WAS A CLOSED DOOR WHEN THE STEP WENT OUT.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * A move into a shut door is the one command in the game that is ACCEPTED,
+   * changes the world, and moves nobody: `scheduler.ts`'s Move case swings the
+   * door, returns a refusal carrying `opened`, and deliberately suppresses the
+   * `refunded` push so the player is not toasted for a success. `Actor.lua:1346`
+   * charges a move only when the body changed tile, so it cost nothing and
+   * `ActResult.Park` asks the same actor again.
+   *
+   * FOR THIS MACHINE THAT IS A STEP THAT PRODUCES NO `moved` FRAME, and every
+   * other outcome produces one. `observeSelfMoved` is the only thing that clears
+   * `awaitingStep`, so without this flag the first door on the route would leave
+   * the walk waiting for a frame that is never coming — a permanent stall with
+   * the route still painted across the map and nothing on screen saying why.
+   */
+  let expectingDoor = false;
+  /**
    * The hostile situation as of the last `observeTurn`, for the visibility
    * proxy. Null until the first observation, which therefore cannot alert —
    * correctly: a husk that was already standing there when the player clicked is
@@ -520,6 +539,7 @@ export function createTravel(): Travel {
     index = 0;
     awaitingStep = false;
     expected = null;
+    expectingDoor = false;
     sense = null;
   }
 
@@ -565,7 +585,13 @@ export function createTravel(): Travel {
     // makes the client route politely around the very body a bump is meant to
     // reach and disagrees with the server's own A* (ai/npc.ts uses terrain only
     // for exactly this reason).
-    const route = findPath(from, to, (x, y) => canWalk(level, x, y), {
+    // ═══ `canRoute`, NOT `canWalk` — A SHUT DOOR IS CROSSABLE, NOT STANDABLE ═══
+    // Upstream's `couldpass` (`tome/class/Grid.lua:89-92`), and the reason this
+    // file's router asks it DIRECTLY rather than through `travelTargetAllowed`:
+    // that predicate answers "may travel END here" and is documented as the one
+    // site for it. This is a different question — "may the plan go through here"
+    // — and `shared/level.ts` holds the one definition of it.
+    const route = findPath(from, to, (x, y) => canRoute(level, x, y), {
       maxNodes: travelMaxNodes(level),
       allowBlockedTarget: stopShort,
     });
@@ -589,15 +615,72 @@ export function createTravel(): Travel {
 
   function nextStep(world: TravelWorld): { readonly dir: Dir } | null {
     if (!active()) return null;
-    // Gate (i): one step in flight at a time. See the header — without this the
-    // second move lands in `pendingIntent` and pre-commits the next turn.
-    if (awaitingStep) return null;
 
     const self = world.self;
     const level = world.level;
     // No board yet. Not a cancel: main.ts cancels on `welcome`/`state` because
     // the board was REPLACED, which is a different fact from not having one.
+    //
+    // HOISTED ABOVE GATE (i) so the door release below can read the map. The
+    // gate's own answer is unchanged either way — both paths return null.
     if (self === null || level === null) return null;
+
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * THE DOOR WE WALKED INTO IS OPEN NOW. TAKE THE STEP AGAIN.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * ═══ A POLL, WHERE EVERYTHING ELSE HERE IS AN OBSERVATION ═══
+     * `observeSelfMoved` and `observeTurn` exist because a move and a turn are
+     * EVENTS. A door opening reaches this client as a `terrain` frame, and
+     * main.ts applies that frame by writing straight into `level.tiles` — the
+     * `case 'terrain'` comment argues at length that terrain must BE the map
+     * rather than a layer beside it, so that `canWalk`, the pathfinder and the
+     * minimap cannot disagree about a door.
+     *
+     * Which means the fact is already in the world this function is handed, and
+     * an `observeTerrain` would be a third tick point telling the machine
+     * something it can see. main.ts calls `tickTravel` after every applied
+     * frame, so the tick that follows the `terrain` frame lands here anyway.
+     *
+     * ═══ `index` DOES NOT ADVANCE ═══
+     * The door tile is still the next tile of the route and we are still one
+     * tile short of it. Upstream's player is simply asked again for zero energy
+     * (`interface/PlayerExplore.lua:2563` — *"takes a movement action but no
+     * energy to do"*); this is that second ask. Advancing would skip the tile
+     * and send the next step diagonally past a doorway.
+     */
+    if (
+      awaitingStep &&
+      expectingDoor &&
+      expected !== null &&
+      canWalk(level, expected.x, expected.y)
+    ) {
+      awaitingStep = false;
+      expected = null;
+      expectingDoor = false;
+      /**
+       * ═══ AND GATE (iii) IS UNLATCHED, OR THIS RELEASES INTO A CLOSED GATE ═══
+       * The stamp records a step that was TAKEN; a door-open is not one. No
+       * energy left the actor (`Actor.lua:1346`), nobody moved, and the game
+       * turn therefore does not advance — so a stamp left in place would block
+       * the re-ask until something ELSE moved the turn on, which out of combat
+       * is nothing at all. The walk would stop dead on the tile it just opened.
+       *
+       * SAFE BECAUSE A DOOR STEP CANNOT FOLLOW A REAL ONE INSIDE ONE TURN: gate
+       * (iii) itself refuses a second step while the stamp matches, so whatever
+       * this clears was stamped by the door step and nothing else. The stale-map
+       * case — the client believing a tile is shut when the server has it open,
+       * so the move actually LANDS — never reaches here at all: that path clears
+       * `expectingDoor` in `observeSelfMoved` and leaves the stamp alone, which
+       * is the half that keeps a double-move out of one turn.
+       */
+      lastStepTurn = null;
+    }
+
+    // Gate (i): one step in flight at a time. See the header — without this the
+    // second move lands in `pendingIntent` and pre-commits the next turn.
+    if (awaitingStep) return null;
 
     // Gate (ii).
     if (!turnPermits(world.turn)) return null;
@@ -631,7 +714,7 @@ export function createTravel(): Travel {
     // wait: a door that closed or a body that parked on the route means the
     // plan the player agreed to no longer exists, and re-routing them somewhere
     // they did not ask for is the one thing a travel system must never do.
-    if (!canWalk(level, next.x, next.y)) {
+    if (!canRoute(level, next.x, next.y)) {
       halt(TravelHalt.Blocked);
       return null;
     }
@@ -654,6 +737,13 @@ export function createTravel(): Travel {
 
     awaitingStep = true;
     expected = next;
+    // `canRoute` let this tile through and `canWalk` is the half of it that a
+    // shut door fails, so this IS "the next tile is a closed door" — asked of
+    // the predicates rather than of `TileCode`, so the two can never drift.
+    expectingDoor = !canWalk(level, next.x, next.y);
+    // STAMPED FOR A DOOR STEP TOO. The client's map can be stale — a tile this
+    // machine believes is shut may already be open on the server, in which case
+    // the move lands like any other and the turn must be latched behind it.
     lastStepTurn = gameTurn;
     return { dir };
   }
@@ -673,6 +763,19 @@ export function createTravel(): Travel {
 
     awaitingStep = false;
     expected = null;
+    /**
+     * ═══ AND `lastStepTurn` IS NOT TOUCHED, WHICH IS THE WHOLE STALE-MAP CASE ═══
+     * A `moved` frame means the body changed tile, so a step was genuinely taken
+     * in this game turn — even if this machine had the tile down as a shut door
+     * and was expecting the `terrain` frame instead. Gate (iii) must hold behind
+     * it, and that is the ONLY reason `nextStep` stamps a door step at all.
+     *
+     * `expectingDoor` IS DELIBERATELY LEFT ALONE. Clearing it here would read
+     * like a guard and be none: the release above also requires `awaitingStep`
+     * and a non-null `expected`, both of which this function has just cleared, so
+     * a stale flag can never fire it — and `nextStep` recomputes the flag
+     * unconditionally before the next step goes out.
+     */
     index += 1;
     // ARRIVAL — a normal end rather than an interrupt. The caller learns of it
     // by `active()` going false, and the preview empties with it.

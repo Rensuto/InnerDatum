@@ -64,16 +64,28 @@
  * be charged a movement point and would hold the round open in combat and spend
  * a whole turn out of it — free when it should cost, costly when it should not.
  *
- * ═══ WHAT IS NOT PORTED, AND IS NOT AN OVERSIGHT ═══
+ * ═══ `couldpass` IS PORTED, AND IT IS NOT IN THIS FILE ═══
  *
- *   NO `couldpass` TRI-STATE. Upstream's second and third arms exist to serve
- *   the per-path-string FOV caches registered at `Map.lua:301-302`, which let a
- *   route probe treat a closed door as passable for an actor that can open one.
- *   We have no such cache and one predicate (`canWalk`) answers for every
- *   pathfinder on both sides of the wire, so a closed door is a wall to all of
- *   them. The consequence is real and small: a monster will not currently plan
- *   a route THROUGH a shut door, only open one it is already walking into. A
- *   shut door also blocks sight, so it rarely has a reason to want to.
+ * This note used to say the tri-state was skipped, on the argument that one
+ * predicate (`canWalk`) answered for every pathfinder on both sides of the wire
+ * and a closed door was therefore a wall to all of them. The consequence was
+ * called *"real and small"* — a monster would open a door it blundered into but
+ * never plan a route through one — and it was small exactly as long as doors
+ * existed only in hand-drawn vaults.
+ *
+ * THE BSP GENERATOR ENDED THAT. A works floor hangs a door on about ten of the
+ * ways through a building, and the same reading turned auto-explore into a
+ * feature that reported *"there is nowhere left to explore"* with half the rooms
+ * unentered.
+ *
+ * So the second and third arms are now `canRoute` in `shared/level.ts`: "may a
+ * plan go through here", as against `canWalk`'s "may a body stand here". It is
+ * one function, asked by `aiCtxFor` on the server and by the travel router and
+ * `travelTargetAllowed` on the client — which is the property the old note was
+ * protecting, kept, with the right answer in it. Upstream's FIRST arm (`act`)
+ * stays structural rather than a flag; see `canOpenDoors` below.
+ *
+ * ═══ WHAT IS NOT PORTED, AND IS NOT AN OVERSIGHT ═══
  *
  *   NO `door_player_check` / `door_player_stop`. Those are the vault
  *   confirmation dialogs (`Grid.lua:66-80`), and a modal yes/no popup in a

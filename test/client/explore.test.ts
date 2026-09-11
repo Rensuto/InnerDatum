@@ -7,7 +7,10 @@
 import { describe, expect, it } from 'vitest';
 
 import { ExploreStop, exploreStopText, exploreTarget } from '../../src/client/input/explore.ts';
+import { travelTargetAllowed } from '../../src/client/input/mouseintent.ts';
+import { TileCode } from '../../src/shared/protocol.ts';
 import type { ExploreView } from '../../src/client/input/explore.ts';
+import type { LevelView } from '../../src/shared/protocol.ts';
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════
@@ -208,5 +211,83 @@ describe('when it refuses', () => {
     expect(answer.go).toBe(true);
     if (!answer.go) return;
     expect(answer.item).toBe(true);
+  });
+});
+
+describe('the flood and the walk agree about a door', () => {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE JOIN, WITH THE REAL PREDICATE RATHER THAN THE PICTURE'S.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Every other test on this page hands in a `passable` built from the ASCII
+   * map, which is right: they are about the FLOOD, and a fixture predicate keeps
+   * them about the flood. This one is about what main.ts actually hands in —
+   * `travelTargetAllowed`, the same function the click layer and the verb menu
+   * ask — because that is where the door lives, and a flood tested only against
+   * its own fixture would have stayed green through the entire bug.
+   *
+   * AND THE BUG WAS NOT SMALL. The BSP generator hangs a door on about ten of
+   * the ways through a works floor. On the old reading each one was a wall to
+   * this flood, so auto-explore reported *"there is nowhere left to explore"* on
+   * a building with half its rooms unentered — the worst shape of wrong answer,
+   * because it is indistinguishable from a floor that really is finished.
+   */
+  const W = 7;
+  const level: LevelView = {
+    w: W,
+    h: 3,
+    tiles: [
+      TileCode.WALL,
+      TileCode.WALL,
+      TileCode.WALL,
+      TileCode.WALL,
+      TileCode.WALL,
+      TileCode.WALL,
+      TileCode.WALL,
+      TileCode.WALL,
+      TileCode.FLOOR,
+      TileCode.FLOOR,
+      TileCode.FLOOR,
+      TileCode.DOOR,
+      TileCode.FLOOR,
+      TileCode.FLOOR,
+      TileCode.WALL,
+      TileCode.WALL,
+      TileCode.WALL,
+      TileCode.WALL,
+      TileCode.WALL,
+      TileCode.WALL,
+      TileCode.WALL,
+    ],
+  };
+  // Everything up to and including the door has been seen; the corridor beyond
+  // it has not. So the door is the one tile where seen ground meets unseen.
+  const seen = new Set<string>();
+  for (let y = 0; y < 3; y += 1) {
+    for (let x = 0; x <= 4; x += 1) seen.add(`${String(x)},${String(y)}`);
+  }
+  seen.add('5,0');
+  seen.add('6,0');
+  seen.add('5,2');
+  seen.add('6,2');
+
+  const view: ExploreView = {
+    from: { x: 1, y: 1 },
+    w: W,
+    h: 3,
+    passable: (x, y) => travelTargetAllowed(level, { x, y }),
+    seen,
+    items: [],
+    threat: null,
+  };
+
+  it('aims AT the shut door, which is the nearest frontier there is', () => {
+    const answer = exploreTarget(view);
+    expect(answer.go, 'auto-explore called the floor finished at a doorway').toBe(true);
+    if (!answer.go) return;
+    // Walking into it swings it open for free and the second ask steps through,
+    // which leaves the player standing IN the doorway with the room lit.
+    expect(answer.to).toEqual({ x: 4, y: 1 });
   });
 });

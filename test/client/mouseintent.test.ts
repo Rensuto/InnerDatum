@@ -177,3 +177,43 @@ describe('travelTargetAllowed', () => {
     expect(travelTargetAllowed(OPEN, { x: 99, y: 99 })).toBe(false);
   });
 });
+
+describe('a door is a travel destination', () => {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE PREDICATE ANSWERS FOR FOUR FEATURES AT ONCE, WHICH IS WHY IT IS ONE.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * A left-click, a minimap click, the verb menu's Travel row and auto-explore's
+   * flood all ask `travelTargetAllowed` and nothing else. On the old `canWalk`
+   * reading every shut door was a wall to all four — and the walk itself
+   * disagreed: `scheduler.ts` swings a door the moment a body walks into it, for
+   * no energy, so a route that ends on one ends with the player standing in an
+   * OPEN doorway.
+   *
+   * The cost of getting this wrong is not cosmetic. Auto-explore floods on this
+   * function, a works floor hangs a door on about ten of the ways through a
+   * building, and a flood that stops at every doorway calls the floor finished
+   * with half its rooms unentered.
+   */
+  const DOOR_MAP: LevelView = {
+    w: OPEN.w,
+    h: OPEN.h,
+    tiles: OPEN.tiles.map((code, i) => (i === 3 * OPEN.w + 5 ? TileCode.DOOR : code)),
+  };
+
+  it('lets travel end on a shut door, which the walk opens on its way in', () => {
+    expect(travelTargetAllowed(DOOR_MAP, { x: 5, y: 3 })).toBe(true);
+  });
+
+  it('and the click layer offers a walk rather than calling it a wall', () => {
+    const intent = mouseIntentAt({ self: SELF, tile: { x: 5, y: 3 }, actors: [], level: DOOR_MAP });
+    // ADJACENT, so this is the step case rather than the travel case — either
+    // way it is a MOVE, and the claim is that it is not `None('that is a wall')`.
+    expect(intent.kind).not.toBe(MouseIntentKind.None);
+  });
+
+  it('still refuses an actual wall, so this did not simply open everything', () => {
+    expect(travelTargetAllowed(DOOR_MAP, { x: 0, y: 0 })).toBe(false);
+  });
+});

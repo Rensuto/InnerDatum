@@ -65,7 +65,20 @@ function mapOf(rows: readonly string[]): LevelView {
   for (const row of rows) {
     if (row.length !== w) throw new Error(`ragged test map: "${row}" is not ${w} wide`);
     for (let x = 0; x < w; x += 1) {
-      tiles.push(row.charAt(x) === '#' ? TileCode.WALL : TileCode.FLOOR);
+      // `+` IS A SHUT DOOR, matching `shared/vaults.ts`' LEGEND so one glyph
+      // means one thing across every ASCII map in the repo. `'` is an open one —
+      // needed because the door tests turn the first into the second by hand,
+      // exactly as main.ts's `case 'terrain'` writes into `level.tiles`.
+      const ch = row.charAt(x);
+      tiles.push(
+        ch === '#'
+          ? TileCode.WALL
+          : ch === '+'
+            ? TileCode.DOOR
+            : ch === "'"
+              ? TileCode.DOOR_OPEN
+              : TileCode.FLOOR,
+      );
     }
   }
   return { w, h, tiles };
@@ -105,6 +118,24 @@ const SEALED = mapOf([
  * does"). A client that forbade it would refuse a route the server walks.
  */
 const CORNER = mapOf(['#####', '#.#.#', '##..#', '#...#', '#####']);
+
+/**
+ * A room reachable ONLY through the shut door at (5,3).
+ *
+ * The wall is unbroken apart from that one tile and every corner is sealed, so a
+ * router that treats a door as solid answers NoRoute rather than merely taking a
+ * longer way round — which is what makes the door the whole difference.
+ */
+const DOORED = mapOf([
+  '##########',
+  '#....#...#',
+  '#....#...#',
+  '#....+...#',
+  '#....#...#',
+  '#....#...#',
+  '#....#...#',
+  '##########',
+]);
 
 function husk(id: string, x: number, y: number, alive = true): ActorView {
   return {
@@ -818,5 +849,197 @@ describe('nearestSeenHostile', () => {
       body.includes('nearestSeenHostile('),
       'nearestVisibleHostile stopped delegating — the sight test is bypassed',
     ).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Doors
+// ---------------------------------------------------------------------------
+
+describe('a shut door on the route', () => {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * WALKING INTO A DOOR IS THE ONE ACCEPTED COMMAND THAT MOVES NOBODY.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `scheduler.ts`'s Move case swings the door and returns a refusal carrying
+   * `opened`, deliberately suppressing the `refunded` push so the player is not
+   * toasted for a success. `Actor.lua:1346` charges a move only when the body
+   * changed tile, so it costs nothing and the actor is asked again.
+   *
+   * FOR THIS MACHINE THAT IS A STEP WITH NO `moved` FRAME BEHIND IT, and every
+   * other outcome has one. What the server sends instead is a `terrain` frame,
+   * which main.ts applies by writing into `level.tiles` — so the tests below
+   * open a door the way the client does, by editing the map.
+   */
+  const openDoorIn = (level: LevelView, at: TileXY): void => {
+    level.tiles[at.y * level.w + at.x] = TileCode.DOOR_OPEN;
+  };
+
+  /** A fresh copy, because these tests mutate the map the way a frame does. */
+  const doored = (): LevelView => ({ w: DOORED.w, h: DOORED.h, tiles: [...DOORED.tiles] });
+
+  it('routes THROUGH it — the room behind is not unreachable', () => {
+    /**
+     * THE FIXTURE IS SEALED APART FROM THE DOOR, so a router that treats one as
+     * solid does not merely take a longer way round: it answers NoRoute. That
+     * was the state of auto-explore on a works floor — the BSP generator hangs a
+     * door on about ten of the ways through a building, and every one of them
+     * was a wall to this predicate.
+     */
+    const travel = createTravel();
+    const start = travel.begin({
+      from: { x: 3, y: 3 },
+      to: { x: 7, y: 3 },
+      level: DOORED,
+      stopShort: false,
+    });
+
+    expect(start).toBe(TravelStart.Started);
+    expect(travel.preview()).toContainEqual({ x: 5, y: 3 });
+  });
+
+  it('steps into it rather than halting Blocked', () => {
+    // `canRoute` and not `canWalk`: the stale-route check in `nextStep` is the
+    // second place a door reads as a wall, and a route that planned through one
+    // would halt on the tile before it every single time.
+    const travel = createTravel();
+    const level = doored();
+    const self = { x: 4, y: 3 };
+    travel.begin({ from: self, to: { x: 7, y: 3 }, level, stopShort: false });
+
+    const walk = travel.nextStep(
+      world({ self, level, turn: turnFrame(false, TurnActorState.Committed) }),
+    );
+    expect(walk?.dir).toBe('e');
+    expect(travel.takeHalt()).toBeNull();
+    expect(travel.active()).toBe(true);
+  });
+
+  it('re-issues the SAME step once the door is open, without advancing the route', () => {
+    /**
+     * ═══ THE STALL THIS EXISTS TO PREVENT ═══
+     * `observeSelfMoved` is the only thing that clears `awaitingStep`, and a
+     * door-open produces no `moved` frame. Without the release the walk waits
+     * forever for a frame that is never coming — route still painted across the
+     * map, token never moving, nothing on screen saying why.
+     *
+     * AND THE ROUTE MUST NOT ADVANCE. The door tile is still the next tile and
+     * the body is still one short of it; advancing would send the following step
+     * diagonally past the doorway into the wall beside it.
+     */
+    const travel = createTravel();
+    const level = doored();
+    const self = { x: 4, y: 3 };
+    const turn = turnFrame(false, TurnActorState.Committed);
+    travel.begin({ from: self, to: { x: 7, y: 3 }, level, stopShort: false });
+
+    expect(travel.nextStep(world({ self, level, turn }))?.dir).toBe('e');
+    // The step is in flight and nothing has changed yet: no second step.
+    expect(travel.nextStep(world({ self, level, turn }))).toBeNull();
+
+    openDoorIn(level, { x: 5, y: 3 });
+
+    const again = travel.nextStep(world({ self, level, turn }));
+    expect(again?.dir, 'the walk stalled on the door it had just opened').toBe('e');
+    // STILL THE SAME TILE. The preview is the proof: `index` did not move.
+    expect(travel.preview()[0]).toEqual({ x: 5, y: 3 });
+  });
+
+  it('takes that second step in the SAME game turn, because opening cost none', () => {
+    /**
+     * GATE (iii) IS THE ONE THAT WOULD SWALLOW THIS. It stamps `lastStepTurn`
+     * from the server's counter and refuses a second step until the turn moves
+     * on — and a door-open moves no turn on, because it spends no energy. Out of
+     * combat nothing else would move it either, so the walk would stop dead.
+     *
+     * SAME `gameTurn` ON BOTH SIDES, which is the whole claim.
+     */
+    const travel = createTravel();
+    const level = doored();
+    const self = { x: 4, y: 3 };
+    const turn = turnFrame(true, TurnActorState.Waiting, 41);
+    travel.begin({ from: self, to: { x: 7, y: 3 }, level, stopShort: false });
+
+    expect(travel.nextStep(world({ self, level, turn }))?.dir).toBe('e');
+    openDoorIn(level, { x: 5, y: 3 });
+    expect(travel.nextStep(world({ self, level, turn }))?.dir).toBe('e');
+  });
+
+  it('but a door step that actually LANDED still latches the turn', () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * THE STALE MAP, AND THE ONLY REASON A DOOR STEP IS STAMPED AT ALL.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * A tile this machine believes is shut may already be open on the server —
+     * the `terrain` frame is simply late. Then the move LANDS, a `moved` frame
+     * arrives, and the walk took a real step in this game turn. If a door step
+     * went out UNSTAMPED on the argument that opening a door costs nothing, a
+     * second move would follow it inside one turn, sit in `pendingIntent` and
+     * pre-commit the next one: exactly the failure gate (iii) was added for.
+     *
+     * SO THE STAMP GOES ON EVERY STEP AND ONLY THE RELEASE TAKES IT OFF — which
+     * is why the release is triggered by the TERRAIN and never by the move. This
+     * drives the move.
+     */
+    const travel = createTravel();
+    const level = doored();
+    const turn = turnFrame(true, TurnActorState.Waiting, 41);
+    travel.begin({ from: { x: 4, y: 3 }, to: { x: 7, y: 3 }, level, stopShort: false });
+
+    expect(travel.nextStep(world({ self: { x: 4, y: 3 }, level, turn }))?.dir).toBe('e');
+    // The server had it open all along and moved us onto it.
+    expect(travel.observeSelfMoved({ x: 5, y: 3 })).toBe(TravelObservation.Continue);
+    openDoorIn(level, { x: 5, y: 3 });
+
+    expect(
+      travel.nextStep(world({ self: { x: 5, y: 3 }, level, turn })),
+      'a second move went out inside one game turn',
+    ).toBeNull();
+  });
+
+  it('does not release a step that was never aimed at a door', () => {
+    // The release is gated on the tile having been SHUT when the step went out,
+    // and not merely on it being walkable now — otherwise every ordinary step in
+    // flight would clear its own gate the instant it was issued, which is gate
+    // (i) deleted.
+    const travel = createTravel();
+    const turn = turnFrame(true, TurnActorState.Waiting);
+    travel.begin({ from: { x: 2, y: 2 }, to: { x: 6, y: 2 }, level: OPEN, stopShort: false });
+
+    expect(travel.nextStep(world({ turn }))?.dir).toBe('e');
+    expect(travel.nextStep(world({ turn }))).toBeNull();
+  });
+
+  it('walks the whole way through and arrives', () => {
+    // THE JOIN, driven end to end: plan, open, re-ask, step, continue. Each half
+    // above is correct on its own and the walk is what has to work.
+    const travel = createTravel();
+    const level = doored();
+    let self: TileXY = { x: 4, y: 3 };
+    let gameTurn = 10;
+
+    travel.begin({ from: self, to: { x: 7, y: 3 }, level, stopShort: false });
+    for (let guard = 0; guard < 30 && travel.active(); guard += 1) {
+      const walk = travel.nextStep(
+        world({ self, level, turn: turnFrame(true, TurnActorState.Waiting, gameTurn) }),
+      );
+      if (walk === null) break;
+      const to = step(self, walk.dir);
+      // THE SERVER'S OWN BRANCH: a step into a shut door swings it and moves
+      // nobody, and the game turn does not advance because nothing was spent.
+      if (level.tiles[to.y * level.w + to.x] === TileCode.DOOR) {
+        openDoorIn(level, to);
+        continue;
+      }
+      self = to;
+      gameTurn += 1;
+      travel.observeSelfMoved(self);
+    }
+
+    expect(travel.active(), 'the walk never reached the far room').toBe(false);
+    expect(self).toEqual({ x: 7, y: 3 });
+    expect(travel.takeHalt()).toBeNull();
   });
 });

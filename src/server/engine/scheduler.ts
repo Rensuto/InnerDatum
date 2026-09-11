@@ -58,7 +58,7 @@
 
 import { chebyshev, dirFromVector, step } from '../../shared/coords.ts';
 import { ActResult, tickLevel } from '../../shared/energy.ts';
-import { canWalk } from '../../shared/level.ts';
+import { canRoute, canWalk } from '../../shared/level.ts';
 // THE ONLY NEW IMPORT PROGRESSION NEEDS, AND IT IS FROM src/shared/ (CLAUDE.md
 // § 5: engine/** may not reach net/, persist/, ops/ or http/). progression.ts is
 // pure arithmetic over three numbers — no state, no dice, no clock — so it is
@@ -105,7 +105,7 @@ import { membersOf, partyIdOf } from './party.ts';
 import { combatAPR } from './derived.ts';
 import { applyDamage } from './damage.ts';
 import { teleportRandom } from './talents.ts';
-import { canOpenDoors, isClosedDoor } from './doors.ts';
+import { canOpenDoors } from './doors.ts';
 import { trapSentence, trapTakes } from './traps.ts';
 import { soundAlarm } from '../ai/alarm.ts';
 import { tickZones, visibleFrom } from './zones.ts';
@@ -5268,7 +5268,12 @@ function aiCtxFor(actor: MonsterActor, shared: AiCtx, world: World): AiCtx {
   if (!canOpenDoors(actor)) return shared;
   return {
     ...shared,
-    isPassable: (x, y) => canWalk(world.level, x, y) || isClosedDoor(world.level, x, y),
+    // `canRoute` IS THIS EXPRESSION, and it used to be spelled out here. It is
+    // upstream's `couldpass` and the CLIENT's router asks the identical question
+    // of the identical function — two spellings of one rule across the wire is
+    // how a monster and a player end up disagreeing about which doors are ways
+    // through. `shared/level.ts` holds the argument.
+    isPassable: (x, y) => canRoute(world.level, x, y),
   };
 }
 

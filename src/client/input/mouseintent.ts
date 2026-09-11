@@ -37,7 +37,7 @@
  */
 
 import { DIR_ORDER, chebyshev, inBounds, sameTile, step } from '../../shared/coords.ts';
-import { canWalk } from '../../shared/level.ts';
+import { canRoute } from '../../shared/level.ts';
 import { isHostileBody, liveActorAt } from './travel.ts';
 import type { Dir, TileXY } from '../../shared/coords.ts';
 import type { ActorView, LevelView } from '../../shared/protocol.ts';
@@ -88,7 +88,28 @@ export type MouseSnapshot = {
 };
 
 /**
- * MAY TRAVEL END HERE? Today: exactly `canWalk`.
+ * MAY TRAVEL END HERE? Today: exactly `canRoute`.
+ *
+ * ═══════════════════════════════════════════════════════════════════════════
+ * IT WAS `canWalk`, AND A DOOR IS WHY IT IS NOT ANY MORE
+ * ═══════════════════════════════════════════════════════════════════════════
+ * A shut door fails `canWalk` — you cannot stand in one — and on that reading
+ * every door on the map was a wall to this predicate: the verb menu greyed its
+ * Travel row over one, a minimap click on one answered *"you cannot walk
+ * there"*, and auto-explore, which floods on this same function, treated the ten
+ * doorways of a works floor as ten walls and called the building finished with
+ * half its rooms unentered.
+ *
+ * None of that was true of the walk. `scheduler.ts`'s Move case swings a door
+ * the moment a body walks into it, for no energy, and the step is then taken on
+ * the next ask — so a route that ends on a door ends with the player standing in
+ * an OPEN doorway. "May travel end here" is therefore yes, and was only ever
+ * answered no because the tile's code at the moment of asking said so.
+ *
+ * `canRoute` is upstream's `couldpass` (`tome/class/Grid.lua:89-92`) and it is
+ * the whole change: one predicate, one edit, and the four call sites that share
+ * it — click, minimap click, verb menu, auto-explore — all corrected together,
+ * which is precisely the property this function exists to have.
  *
  * ===========================================================================
  * THIS IS THE SINGLE PLACE AN M6 "HAS THIS TILE BEEN SEEN" CLAUSE LANDS
@@ -105,7 +126,7 @@ export type MouseSnapshot = {
  * travel into unexplored dark on the day this one stops.
  */
 export function travelTargetAllowed(level: LevelView, tile: TileXY): boolean {
-  return canWalk(level, tile.x, tile.y);
+  return canRoute(level, tile.x, tile.y);
 }
 
 function none(reason: string): MouseIntent {
