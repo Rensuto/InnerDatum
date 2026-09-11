@@ -1820,6 +1820,54 @@ export type ZonesMsg = {
   tiles: readonly ZoneTileView[];
 };
 
+/** One tile of terrain that is no longer what the generator made it. */
+export type TerrainPatchView = {
+  x: number;
+  y: number;
+  /** The tile's code NOW. The client assigns it straight into `level.tiles`. */
+  code: number;
+};
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE MAP CHANGED — the first frame in this protocol that has ever said so.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * For twenty-one versions terrain arrived once, in `welcome` (and again in
+ * `realm`, which REPLACES it), and was true until the connection or the realm
+ * ended. `world.ts` has carried *"Mutable in type because M4 digs doors into
+ * it"* the whole time, and until doors nothing wrote to it. This is that write,
+ * reaching the people who have to look at it.
+ *
+ * ═══ A DELTA, AND ABSOLUTE WITHIN ITSELF ═══
+ * Not a whole `LevelView`: the client already has the map, and a floor's worth
+ * of tiles re-sent to report one of them is 1,020 numbers for a door. Not an
+ * incremental patch either — it is the COMPLETE list of changed tiles every
+ * time, so a client that applies it wholesale over the map it was given cannot
+ * drift, and a client that missed a frame is corrected by the next one. Empty
+ * means "the floor is as it was generated", which is what `realm` resets to and
+ * what a wiped floor returns to.
+ *
+ * ═══ WHY IT IS NOT FOG-GATED, WHICH IS THE OPPOSITE OF `zones` ═══
+ * `projectLevel` already sends the WHOLE map unfogged, and CLAUDE.md § 4 says
+ * why that is correct rather than an oversight: `Grid.lua` remembers terrain and
+ * the client owns its explored mask. A door is terrain. Gating this frame would
+ * put the one tile that CHANGES behind fog while the twelve hundred that cannot
+ * change are in the clear — so a player who had walked a corridor would see
+ * their map silently disagree with the server about the one cell that matters.
+ * `always_remember = true` on both door entities (`basic.lua:224`, `:235`) is
+ * upstream making the same call.
+ *
+ * A BROADCAST, and here that is not a property of `eyesIn` the way `ZonesMsg`'s
+ * is — it is unconditional. There is nothing per-viewer in it to begin with.
+ */
+export type TerrainMsg = {
+  v: typeof PROTOCOL_VERSION;
+  t: 'terrain';
+  /** Every changed tile on this floor. Empty means none, and is sent. */
+  tiles: readonly TerrainPatchView[];
+};
+
 /**
  * The two stages a body can be in below zero (game-design.md § 9).
  *
@@ -6666,6 +6714,7 @@ export type ServerMsg =
   | EffectsMsg
   | ProjectilesMsg
   | ZonesMsg
+  | TerrainMsg
   | PartyMsg
   | PartyStateMsg
   | PingedMsg

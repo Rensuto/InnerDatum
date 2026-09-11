@@ -723,6 +723,27 @@ function resetFloor(
    * makes this one bite: nothing else would ever put it out.
    */
   for (const zone of world.zones()) world.removeZone(zone.id);
+  /**
+   * ...AND THE SIXTH, WHICH IS NOT A TABLE AT ALL — IT IS THE MAP.
+   *
+   * The note above says every table before this one *"was added to this
+   * function only after a party found the hole in a voice channel"*, and the
+   * zones line broke the streak by arriving with its own commit. This does the
+   * same, one commit later, for the first thing in the game that can change the
+   * FLOOR rather than what is standing on it.
+   *
+   * AN OPEN DOOR IS A THING A WIPE WOULD KEEP, which is the one rule this
+   * function has: the loot is wiped and the orbs are recalled because *"a wipe
+   * must not pay"*. A door costs a turn to open, it is the access to whatever
+   * room it seals, and `reseedFloor` on the next line is about to put a fresh
+   * roster in that room. Leaving it open hands the party the half of the fight
+   * they had already won and re-stocks the half they lost.
+   *
+   * `restoreTerrain` skips any tile with a body on it, so nobody is sealed
+   * inside a door — see its note for why that guard cannot be delegated to the
+   * re-seed below.
+   */
+  world.restoreTerrain();
   reseedFloor(world);
 
   // 3 — out of combat.

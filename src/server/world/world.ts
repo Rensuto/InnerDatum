@@ -44,17 +44,19 @@
  * close.
  */
 
-import { step } from '../../shared/coords.ts';
+import { step, tileIndex } from '../../shared/coords.ts';
 import { createTurnClock } from '../../shared/energy.ts';
 import { canWalk, makeTestMap } from '../../shared/level.ts';
-import { ActorKind } from '../../shared/protocol.ts';
+import { ActorKind, TileCode } from '../../shared/protocol.ts';
 import { createRng } from '../../shared/rng.ts';
 import { resolveItem } from '../content/resolve.ts';
 import { createMonsterActor, createPlayerActor } from '../engine/actor.ts';
 import { createProjectile } from '../engine/projectile.ts';
+import { isClosedDoor } from '../engine/doors.ts';
 import { assertZoneSpec } from '../engine/zones.ts';
 import { recomposeCombat } from '../engine/effects.ts';
 import type { Dir, TileXY } from '../../shared/coords.ts';
+import type { TerrainChange } from '../engine/doors.ts';
 import type { GroundZone, ZoneSpec } from '../engine/zones.ts';
 import type { TurnClock } from '../../shared/energy.ts';
 import type { AuthoredMap } from '../../shared/level.ts';
@@ -640,6 +642,44 @@ export type World = {
   /** It burnt out, or the floor reset. @returns false for an unknown id. */
   removeZone(id: string): boolean;
   /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * SWING A DOOR OPEN — `Grid.lua:63-64`, the one line that makes doors a
+   * mechanic rather than a colour:
+   *
+   * ```lua
+   * game.level.map(x, y, engine.Map.TERRAIN, door_g)
+   * ```
+   *
+   * THE ONLY WRITER OF `level.tiles` AFTER GENERATION, and that is the point of
+   * routing it through here rather than letting the scheduler assign into the
+   * array. Terrain has been immutable-in-practice for the whole life of this
+   * project — `projectLevel` sends the map once, at `welcome`, and no frame has
+   * ever said it changed. A second writer would be a second thing the client is
+   * never told about.
+   *
+   * @returns false when the tile is not a closed door — off the grid, already
+   * open, or never a door at all. The caller is the move pipeline and it has
+   * already decided; this answer is what makes that decision testable in
+   * isolation.
+   */
+  openDoor(x: number, y: number): boolean;
+  /**
+   * Every tile whose terrain has been changed since this floor was built, in
+   * the order it changed. The wire's source of truth for `TerrainMsg`.
+   *
+   * A DELTA RATHER THAN THE MAP, because the client already has the map and a
+   * floor's worth of tiles on every door-open would be the same 1,020 numbers
+   * re-sent to say one of them moved. Absolute within itself, exactly as
+   * `zones()` is: it is the WHOLE list every time, so a client that applies it
+   * wholesale cannot drift.
+   */
+  terrainChanges(): readonly TerrainChange[];
+  /**
+   * Put every changed tile back as the generator made it, EXCEPT any with a
+   * body standing on it. The floor reset, so the doors are shut again.
+   */
+  restoreTerrain(): void;
+  /**
    * One tile's items, in that same stable order. Empty is the common case.
    *
    * PICKUP TAKES INDEX 0. That is the whole reason the order is specified: "the
@@ -732,6 +772,13 @@ export function createWorld(
   const groundZones = new Map<string, GroundZone>();
   // THE FOURTH TABLE. See `Prop` for why furniture is not an actor.
   const props = new Map<string, Prop>();
+  /**
+   * TERRAIN THAT IS NO LONGER WHAT THE GENERATOR MADE IT, keyed by tile so a
+   * door opened twice is one entry. A Map rather than an array for exactly that
+   * reason: the wire frame is ABSOLUTE, and a list that could hold the same
+   * tile twice would grow without bound on a floor somebody walks back through.
+   */
+  const terrainDelta = new Map<string, TerrainChange>();
   /**
    * Monotonic, never reused, and the ONLY legal id source in this directory:
    * `Date.now` and `Math.random` are ESLint errors here (the determinism block
@@ -1209,6 +1256,63 @@ export function createWorld(
     return id;
   };
 
+  /**
+   * `Grid.lua:63` — `game.level.map(x, y, engine.Map.TERRAIN, door_g)`.
+   *
+   * GUARDED RATHER THAN TRUSTING, and the guard is what makes this safe to be
+   * the only terrain writer: it opens a CLOSED DOOR or it does nothing. A caller
+   * that has mis-decided cannot punch a hole in a wall through here.
+   */
+  const openDoor = (x: number, y: number): boolean => {
+    if (!isClosedDoor(level, x, y)) return false;
+    level.tiles[tileIndex(x, y, level.w)] = TileCode.DOOR_OPEN;
+    terrainDelta.set(`${String(x)},${String(y)}`, {
+      x,
+      y,
+      code: TileCode.DOOR_OPEN,
+      was: TileCode.DOOR,
+    });
+    return true;
+  };
+
+  /**
+   * PUT THE FLOOR BACK THE WAY THE GENERATOR MADE IT — `resetFloor`'s fifth
+   * table, one table later.
+   *
+   * ═══ EXCEPT UNDER A BODY, AND THAT EXCEPTION IS THE WHOLE GUARD ═══
+   * Closing a door is the only terrain change in the game that can happen to a
+   * tile somebody is STANDING on, and a door shut on a body puts that body
+   * inside solid, sight-blocking terrain: it cannot walk out (`canWalk` is
+   * false in every direction it came from), nothing can see in, and no verb in
+   * the game digs. `resetFloor` re-seeds the party, but it does that AFTER this
+   * runs and a monster is never re-seeded at all — so the ordering cannot be
+   * relied on and this check is what makes the operation safe on its own terms.
+   *
+   * ═══ A RESTORED TILE STAYS IN THE LIST, AND THAT IS NOT BOOKKEEPING ═══
+   * The obvious implementation deletes the entry, and it is WRONG in a way no
+   * server-side test would show. `TerrainMsg` is absolute but the client applies
+   * it by ASSIGNMENT over the map it holds, so a tile that simply stops being
+   * mentioned stays however the client last wrote it — the door would shut on
+   * the server and stand open on every screen, forever, which is the exact
+   * desync this frame exists to prevent.
+   *
+   * So the delta is "every tile that has ever been written on this floor, with
+   * its CURRENT code", and a restore FLIPS an entry rather than removing it. The
+   * list is bounded by the number of doors, applying it is idempotent, and it is
+   * true whichever way the last change went.
+   *
+   * A tile that is SKIPPED for having a body on it keeps its open code, so the
+   * wire stays honest there too: that door really is still open.
+   */
+  const restoreTerrain = (): void => {
+    for (const [key, change] of terrainDelta) {
+      if (change.code === change.was) continue;
+      if (actorAt(change.x, change.y) !== undefined) continue;
+      level.tiles[tileIndex(change.x, change.y, level.w)] = change.was;
+      terrainDelta.set(key, { ...change, code: change.was });
+    }
+  };
+
   const addZone = (spec: ZoneSpec): string => {
     zoneSeq += 1;
     const id = `zone_${String(zoneSeq)}`;
@@ -1292,6 +1396,9 @@ export function createWorld(
     // were laid, on every machine and in every replay.
     zones: (): readonly GroundZone[] => [...groundZones.values()],
     removeZone: (id: string): boolean => groundZones.delete(id),
+    openDoor,
+    terrainChanges: (): readonly TerrainChange[] => [...terrainDelta.values()],
+    restoreTerrain,
     addProp,
     props: (): readonly Prop[] => [...props.values()],
     itemsAt,

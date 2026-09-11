@@ -143,6 +143,7 @@ import type {
   ProjectilesMsg,
   ZoneTileView,
   ZonesMsg,
+  TerrainMsg,
   ResourceMsg,
   ResourceView,
   TurnActor,
@@ -1742,6 +1743,29 @@ export function projectZones(world: World, eyes?: readonly SightEye[]): ZonesMsg
   }
 
   return { v: PROTOCOL_VERSION, t: 'zones', tiles: [...claimed.values()].map((e) => e.view) };
+}
+
+/**
+ * Every tile of this floor that is no longer what the generator made it.
+ *
+ * NO `eyes` PARAMETER, AND THE ABSENCE IS THE DECLARATION — see `TerrainMsg`.
+ * Terrain is the one thing this server has always sent unfogged, because the
+ * client owns its explored mask and `Grid.lua` remembers terrain; gating the
+ * only tile that CAN change while the twelve hundred that cannot are in the
+ * clear would make a player's map disagree with the server about the one cell
+ * they care about. The signature is the place that says so, and a future pass
+ * that adds an `eyes` argument here is a pass that has to answer this comment.
+ */
+export function projectTerrain(world: World): TerrainMsg {
+  return {
+    v: PROTOCOL_VERSION,
+    t: 'terrain',
+    tiles: world.terrainChanges().map((change) => ({
+      x: change.x,
+      y: change.y,
+      code: change.code,
+    })),
+  };
 }
 
 // ---------------------------------------------------------------------------

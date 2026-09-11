@@ -13492,6 +13492,49 @@ function applyServerMessage(msg: ServerMsg): void {
       zones = msg.tiles;
       break;
     }
+    case 'terrain': {
+      /**
+       * ═══ THE MAP CHANGED UNDER US — v22, and the first frame ever to say so ═══
+       *
+       * APPLIED BY ASSIGNMENT, NOT HELD AS A LAYER. Every other absolute frame
+       * on this page replaces a variable the renderer reads beside the map;
+       * this one edits the map itself, because terrain is what `canWalk`,
+       * `blocksSightAt`, the travel pathfinder and the minimap all read, and an
+       * overlay would mean teaching four separate readers about a second source
+       * of truth for the same question. A door that opened has to be a FLOOR to
+       * all of them or it is a door in the picture only.
+       *
+       * ═══ IDEMPOTENT, WHICH IS WHAT MAKES THE ABSOLUTE LIST SAFE TO REPLAY ═══
+       * The frame is the COMPLETE list of changed tiles every time, so applying
+       * it twice writes the same codes twice and a client that missed one is
+       * corrected by the next. That is the property that lets the server send
+       * this on a join, on a resync and on a change without the three needing to
+       * agree about what this client already has.
+       *
+       * ═══ AND IT IS HOW A DOOR SHUTS AGAIN, WHICH THIS NEARLY GOT WRONG ═══
+       * Applying an absolute list by assignment can only ever ADD changes: a
+       * tile that stopped being mentioned would keep whatever this loop last
+       * wrote into it. So a floor reset that closed a door and merely dropped it
+       * from the list would leave that door open on every screen forever, with
+       * the server sure it was shut.
+       *
+       * The server therefore KEEPS a restored tile in the list carrying its
+       * restored code (`World.restoreTerrain`), and this loop writes it back.
+       * The invariant that makes that work is the one stated above: the list is
+       * every tile ever written on this floor WITH ITS CURRENT CODE, not every
+       * tile that currently differs.
+       *
+       * A realm crossing needs none of it — `level` is replaced wholesale from
+       * `msg.level` above, and `sendTerrainIfAny` re-seeds the new floor.
+       */
+      if (level !== null) {
+        for (const patch of msg.tiles) {
+          if (patch.x < 0 || patch.y < 0 || patch.x >= level.w || patch.y >= level.h) continue;
+          level.tiles[patch.y * level.w + patch.x] = patch.code;
+        }
+      }
+      break;
+    }
     case 'ground':
       // ═══ v10 — WHAT IS ON THE FLOOR. COMPLETE, AND REPLACED RATHER THAN
       //     MERGED ═══

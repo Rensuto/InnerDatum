@@ -102,6 +102,7 @@ import {
 import { membersOf, partyIdOf } from './party.ts';
 import { combatAPR } from './derived.ts';
 import { applyDamage } from './damage.ts';
+import { canOpenDoors, isClosedDoor } from './doors.ts';
 import { tickZones, visibleFrom } from './zones.ts';
 import { DAMAGE_TYPES } from '../../shared/damagetype.ts';
 import { DEFAULT_PROJECTILE_DAMAGE_TYPE, stepProjectile } from './projectile.ts';
@@ -109,6 +110,7 @@ import type { Dir, TileXY } from '../../shared/coords.ts';
 import type { EnergyActor } from '../../shared/energy.ts';
 import type { TalentShape } from '../../shared/protocol.ts';
 import type { AiCtx } from '../ai/npc.ts';
+import { MoveBlock } from '../world/world.ts';
 import type { World } from '../world/world.ts';
 import type { EngineActor, Intent, MonsterActor, PlayerActor, StatusPass } from './actor.ts';
 import type { StatusApply, StatusHit } from './effects.ts';
@@ -2000,9 +2002,34 @@ function actPlayer(actor: PlayerActor, run: Run): ActResult {
     const outcome = resolveIntent(actor, intent, run);
 
     if (!outcome.ok) {
-      // THE REFUND RULE: zero energy, cleared, re-prompt. `Park` is how the
-      // loop is told this actor still owes a decision.
-      sink.push({ t: 'refunded', id: actor.id, reason: outcome.reason });
+      /**
+       * ═══════════════════════════════════════════════════════════════════════
+       * A DOOR OPENING IS NOT AN ERROR, AND THIS IS THE ONLY LINE THAT KNOWS IT.
+       * ═══════════════════════════════════════════════════════════════════════
+       *
+       * Every other refusal reaches its owner as `sendError(..., "refused at
+       * resolution: <reason>")`, which is right: they asked for something and
+       * did not get it. A door-open is the opposite — they asked for something,
+       * got a BETTER outcome than a refusal, and the door is visibly open on
+       * their screen. Toasting "refused at resolution: terrain" over the top of
+       * that would teach a player that opening doors is a malfunction.
+       *
+       * THE PARK STAYS, and it is the whole port. `Actor.lua:1346` charges a
+       * move's energy only when the body actually changed tile, so upstream's
+       * door-open costs nothing and the player is simply asked again —
+       * `interface/PlayerExplore.lua:2563`: *"takes a movement action but no
+       * energy to do"*. `Park` IS being asked again, for zero energy.
+       *
+       * A MONSTER TAKES THE OTHER PATH AND IS CHARGED, which is `actMonster`'s
+       * existing behaviour and is also upstream: `NPC.lua:87-92` charges any
+       * NPC whose turn spent no energy, via `waitTurn`. Neither lane needed a
+       * special case for doors; this one needed a special case for TOASTING.
+       */
+      if (outcome.opened === undefined) {
+        // THE REFUND RULE: zero energy, cleared, re-prompt. `Park` is how the
+        // loop is told this actor still owes a decision.
+        sink.push({ t: 'refunded', id: actor.id, reason: outcome.reason });
+      }
       return ActResult.Park;
     }
 
@@ -2136,7 +2163,7 @@ function actMonster(actor: MonsterActor, run: Run): ActResult {
   if (world.turn.engagement <= 0) return ActResult.Done;
 
   const gameTurn = world.turn.clock.gameTurn;
-  const outcome = resolveIntent(actor, decideNpcAction(actor, aiCtx), run);
+  const outcome = resolveIntent(actor, decideNpcAction(actor, aiCtxFor(actor, aiCtx, world)), run);
 
   if (!outcome.ok) {
     sink.sweep(gameTurn, { t: 'blocked', id: actor.id, reason: outcome.reason });
@@ -2289,7 +2316,28 @@ type Effect =
     };
 
 type Resolution =
-  { readonly ok: true; readonly effect: Effect } | { readonly ok: false; readonly reason: Refusal };
+  | { readonly ok: true; readonly effect: Effect }
+  | {
+      readonly ok: false;
+      readonly reason: Refusal;
+      /**
+       * ═══════════════════════════════════════════════════════════════════════
+       * THE REFUSAL THAT CHANGED THE WORLD ON ITS WAY OUT — `engine/doors.ts`.
+       * ═══════════════════════════════════════════════════════════════════════
+       *
+       * Present when this step opened a door. The step still did not happen —
+       * `Grid.lua:64`'s `return true` means BLOCKED — so `Refusal.Terrain` is
+       * the honest answer to *"why am I still here"*: terrain stopped you, and
+       * it is a different piece of terrain now.
+       *
+       * IT IS NOT ON THE WIRE AND MUST NOT GO THERE. The client learns about
+       * the door from `TerrainMsg`, which is absolute and self-correcting; a
+       * second channel saying the same thing is a second channel that can
+       * disagree. This field exists for ONE reader — `actPlayer`, which uses it
+       * to keep a successful door-open from surfacing as an error toast.
+       */
+      readonly opened?: TileXY;
+    };
 
 /**
  * Apply an intent to the world, or refuse it.
@@ -2719,7 +2767,34 @@ function resolveIntent(actor: EngineActor, intent: Intent, run: Run): Resolution
       // `tryMove` remains the ONLY thing in the process allowed to change a
       // position, so terrain and occupancy are decided in exactly one place.
       const moved = world.tryMove(actor.id, dir);
-      if (!moved.ok) return { ok: false, reason: moved.reason };
+      if (!moved.ok) {
+        /**
+         * ═══════════════════════════════════════════════════════════════════
+         * WALKING INTO A DOOR OPENS IT, AND THE WALK STILL DOES NOT HAPPEN.
+         * ═══════════════════════════════════════════════════════════════════
+         *
+         * `Grid.lua:60-64` — the door is swung and `block_move` returns TRUE,
+         * which means blocked. So this is the one refusal in the engine that
+         * is not a failure, and it is deliberately expressed as one anyway:
+         * `engine/doors.ts` has the argument, but the short version is that
+         * the two lanes already do the right thing with a refusal and would
+         * both do the wrong thing with a success.
+         *
+         * AFTER `tryMove`, NOT INSTEAD OF IT. `tryMove` is documented as *"the
+         * ONLY thing in the process allowed to change a position"*, and its
+         * ordering — terrain, then occupancy — is what decides which refusal
+         * this is. Asking about doors first would open one through a body
+         * standing in the doorway, which is exactly the tile somebody is most
+         * likely to be standing in.
+         */
+        if (moved.reason === MoveBlock.Terrain && canOpenDoors(actor)) {
+          const at = step(actor, dir);
+          if (world.openDoor(at.x, at.y)) {
+            return { ok: false, reason: Refusal.Terrain, opened: at };
+          }
+        }
+        return { ok: false, reason: moved.reason };
+      }
       /**
        * ═══════════════════════════════════════════════════════════════════════
        * A STEP ONTO FREE FLOOR ENDS THE EXCHANGE — FOR **BOTH** BODIES.
@@ -4828,6 +4903,48 @@ function anyContact(world: World, actors: readonly EngineActor[]): boolean {
 // ---------------------------------------------------------------------------
 // The AI's view of the world
 // ---------------------------------------------------------------------------
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THIS CREATURE'S OWN IDEA OF PASSABLE — `Actor.lua:1489-1497`, the path string.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * ```lua
+ * function _M:getPathString()
+ *   local ps = self.open_door and "return {open_door=true,can_pass={" or "return {can_pass={"
+ * ```
+ *
+ * Upstream does not ask "is this tile passable"; it asks "is this tile passable
+ * TO THIS BODY", and bakes the answer into a per-actor path string that the FOV
+ * route caches are keyed by (`Map.lua:301-302`, :487). Walk `Grid:block_move`
+ * with a route probe's arguments (`act=false, couldpass=true`) and the arms fall
+ * out: an actor WITH `open_door` matches none of them and a closed door is
+ * passable to it; an actor without matches the third and it is a wall.
+ *
+ * ═══ WITHOUT THIS, THE MONSTER HALF OF DOORS IS UNREACHABLE CODE ═══
+ * `intentForStep` returns `undefined` for an impassable tile, so a shared
+ * terrain-only predicate means the AI never PROPOSES a step into a shut door —
+ * and `resolveIntent`'s door branch, and `MonsterActor.opensDoors`, and every
+ * `open_door = true` on a template, can never fire. MEASURED, and the way it was
+ * found is worth recording: deleting the `canOpenDoors` gate from the resolution
+ * broke NO test, because nothing had ever walked a monster into a door.
+ *
+ * ═══ THE COMMON CASE ALLOCATES NOTHING ═══
+ * Almost every creature in the bestiary answers false, and those get the SHARED
+ * context back unchanged rather than a per-turn copy of it.
+ *
+ * The A* route predicate inherits this through `ApproachOpts.route`, which
+ * defaults to `ctx.isPassable` — so a door-opener will also plan a route through
+ * a shut door rather than only blunder into one. That is upstream's behaviour
+ * and it is the whole reason the path string exists.
+ */
+function aiCtxFor(actor: MonsterActor, shared: AiCtx, world: World): AiCtx {
+  if (!canOpenDoors(actor)) return shared;
+  return {
+    ...shared,
+    isPassable: (x, y) => canWalk(world.level, x, y) || isClosedDoor(world.level, x, y),
+  };
+}
 
 function makeAiCtx(
   world: World,

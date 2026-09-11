@@ -243,6 +243,7 @@ import {
   projectShop,
   projectProjectiles,
   projectZones,
+  projectTerrain,
   projectResource,
   projectTurn,
   projectWorld,
@@ -2670,6 +2671,8 @@ const NO_GROUND_KEY = '[]';
  * patch of fire in the game.
  */
 const NO_ZONES_KEY = '[]';
+/** The same seed for terrain: a floor with no door open yet. See `NO_ZONES_KEY`. */
+const NO_TERRAIN_KEY = '[]';
 
 /**
  * AN EMPTY BAG AND AN EMPTY PAPER DOLL, as the per-session memo key spells them.
@@ -2955,6 +2958,8 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
   const lastProjectilesKeys = new Map<string, string>();
   /** The burning floor, per realm. Seeded empty — see `NO_ZONES_KEY`. */
   const lastZonesKeys = new Map<string, string>();
+  /** Terrain that has changed, per realm. Seeded empty — see `NO_TERRAIN_KEY`. */
+  const lastTerrainKeys = new Map<string, string>();
 
   /**
    * The last `ground` frame broadcast per realm, as a key — SEEDED WITH THE
@@ -3263,6 +3268,62 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       return;
     }
     lastZonesKeys.set(realm.id, JSON.stringify(msg.tiles));
+    broadcast(msg, undefined, audienceFor(realm.id));
+  };
+
+  /**
+   * THE MAP ITSELF, when a tile of it stopped being what the generator made it.
+   * The SIXTH memo of this shape, and the first about TERRAIN.
+   *
+   * ═══ WHY A MEMO AND NOT A PUSH FROM `openDoor` ═══
+   * The obvious shape is to send a frame from the one place that swings a door.
+   * It is wrong for the reason every memo on this page is a memo: `openDoor` is
+   * called from inside `resolveIntent`, which is inside the pump, which is
+   * inside the synchronous turn resolution that CLAUDE.md § 2 says is the mutex.
+   * A send from there would put a socket write in the middle of the one call
+   * graph that is allowed no I/O, and it would fire once per door rather than
+   * once per pump — so a monster and a player opening two doors in the same
+   * sweep would write two frames where one says everything.
+   *
+   * ═══ NO EMPTY-GATE, AND HERE THAT COSTS NOTHING ═══
+   * Unlike `sendZonesIfAny`, the empty case cannot loop: terrain changes are
+   * MONOTONIC within a floor — a door opens once and there is no close verb —
+   * so this list only ever grows until `resetFloor` empties it. The empty frame
+   * is therefore sent exactly twice in a floor's life: never, or once when the
+   * floor resets. `NO_TERRAIN_KEY` still seeds the memo so that reset is a
+   * CHANGE and reaches the room, which is the `NO_ZONES_KEY` argument applied
+   * to the one transition that can happen here.
+   */
+  const broadcastTerrainIfChanged = (realm: PumpTarget): void => {
+    const msg = projectTerrain(realm.world);
+    const key = JSON.stringify(msg.tiles);
+    if (key === (lastTerrainKeys.get(realm.id) ?? NO_TERRAIN_KEY)) return;
+    lastTerrainKeys.set(realm.id, key);
+    broadcast(msg, undefined, audienceFor(realm.id));
+  };
+
+  /**
+   * THE OPENED DOORS, TO SOMEBODY WHO HAS JUST BEEN HANDED THE MAP.
+   *
+   * `welcome` and `realm` both carry a `LevelView`, and that view is the floor
+   * AS GENERATED — `projectLevel` reads `world.level`, which openDoor mutates,
+   * so in fact it is current. THAT IS EXACTLY WHY THIS EXISTS ANYWAY: the memo.
+   * A client joining a realm where a door is already open gets the right map in
+   * `welcome`, and the per-realm memo then suppresses the next broadcast for
+   * everyone — `sendGroundIfAny`'s invisible-floor bug, one layer down. Seeding
+   * the JOINER's memo state by sending it the list keeps the two in step.
+   *
+   * SILENT WHEN NOTHING HAS CHANGED, for `sendZonesIfAny`'s reason: an empty
+   * frame tells its recipient what it already believes.
+   */
+  const sendTerrainIfAny = (realm: PumpTarget, socket?: GatewaySocket): void => {
+    const msg = projectTerrain(realm.world);
+    if (msg.tiles.length === 0) return;
+    if (socket !== undefined) {
+      send(socket, msg);
+      return;
+    }
+    lastTerrainKeys.set(realm.id, JSON.stringify(msg.tiles));
     broadcast(msg, undefined, audienceFor(realm.id));
   };
 
@@ -6072,6 +6133,9 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       // AND THE FLOOR IT IS BURNING ON, for the same reason and in the same
       // breath — a `state` frame carries `ActorView` and a zone is not an actor.
       sendZonesIfAny(realm);
+      // AND THE MAP UNDER BOTH, if a door on it has been opened since this
+      // client was last told the floor. See `sendTerrainIfAny`.
+      sendTerrainIfAny(realm);
     }
 
     syncBell(realm, result.turn);
@@ -6106,6 +6170,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     // one of its own: this is the band where a patch that EXPIRED reports the
     // empty frame that takes it off the screen. See `broadcastZonesIfChanged`.
     broadcastZonesIfChanged(realm);
+    broadcastTerrainIfChanged(realm);
 
     // Unicast, and each socket learns only about its own. This is deliberately
     // unconditional rather than gated on "did a talent happen": `actBase` ticks
@@ -8778,6 +8843,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     // AND WHAT IS BURNING. Unicast for the same reason the sky is: this socket
     // has seen nothing, and the room already knows.
     sendZonesIfAny(realmFor(session), session.socket);
+    sendTerrainIfAny(realmFor(session), session.socket);
 
     // THE FLOOR, unicast, and for a longer-lived version of the reason directly
     // above: an orb is a three-turn object and a coat on the floor lasts the
@@ -8848,6 +8914,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       // already got its own unicast copy a few lines up.
       sendProjectilesIfAny(realmFor(session));
       sendZonesIfAny(realmFor(session));
+      sendTerrainIfAny(realmFor(session));
     }
 
     app.log.info(
@@ -9305,6 +9372,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     lastEffectsKeys.delete(realmId);
     lastProjectilesKeys.delete(realmId);
     lastZonesKeys.delete(realmId);
+    lastTerrainKeys.delete(realmId);
     lastShopKeys.delete(realmId);
     clearedRealms.delete(realmId);
     residentCounts.delete(realmId);
@@ -9667,6 +9735,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
      * fire is damage every turn on a tile you have no reason to leave.
      */
     sendZonesIfAny(realmFor(session), session.socket);
+    sendTerrainIfAny(realmFor(session), session.socket);
     announceArrival(session, to, to.name);
     broadcast(
       {
@@ -9988,6 +10057,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     // AND THE FIRE ON IT. The other half of the crossing — see the note on the
     // matching call in the outbound direction.
     sendZonesIfAny(realmFor(session), session.socket);
+    sendTerrainIfAny(realmFor(session), session.socket);
     // AND THE ROOM SAYS WHAT IT IS. The one movement worth narrating — see
     // `announceArrival`, and `recordFor`'s `move` case for why a step is not.
     announceArrival(session, to, to.name);
@@ -12817,6 +12887,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     // rename path, and every `state` broadcast in this file carries the sky.
     sendProjectilesIfAny(realm);
     sendZonesIfAny(realm);
+    sendTerrainIfAny(realm);
 
     // ═══ AND THE TURN STRIP, FOR THE SAME REASON THE BOARD WENT ═══
     // `TurnActor` carries its OWN hp, maxHp and portrait — protocol.ts justifies
@@ -14938,6 +15009,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     // sentence now covers the floor: see `sendZonesIfAny`.
     sendProjectilesIfAny(realm);
     sendZonesIfAny(realm);
+    sendTerrainIfAny(realm);
     // A CRITICAL EVENT, like a death and a disconnect: the state worth keeping
     // is the one that just changed, and it changed because somebody was stuck.
     saveNow('respawn');

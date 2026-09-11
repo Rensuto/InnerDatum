@@ -1176,6 +1176,19 @@ export type MonsterActor = ActorCommon & {
   readonly onHit?: OnHitStatus;
   /** What this creature leaves on the floor when it dies. See `OnDeathZone`. */
   readonly onDie?: OnDeathZone;
+  /**
+   * `open_door` — may this creature work a door handle? See `engine/doors.ts`.
+   *
+   * ABSENT READS AS FALSE, and that is upstream's default for a MONSTER rather
+   * than a convenience: `Player.lua:62` gives the player `open_door = true` at
+   * birth and nothing gives it to an NPC, so each of ToME's door-opening
+   * creatures says so on its own template (`data/general/npcs/ghoul.lua:40` and
+   * its neighbours). A few say the opposite out loud —
+   * `data/general/npcs/crystal.lua:71` is `open_door = false` — which is the
+   * tell that the absent case is a design position and not an omission: a thing
+   * with no hands stays where it is put.
+   */
+  readonly opensDoors?: boolean;
   /** Which side. `Redacted` for the whole bestiary; see `Faction`. */
   readonly faction: Faction;
   readonly ai: MonsterAi;
@@ -1573,6 +1586,8 @@ export type MonsterInit = {
   readonly onHit?: OnHitStatus;
   /** A patch of ground this creature's death leaves. See `OnDeathZone`. */
   readonly onDie?: OnDeathZone;
+  /** May it open a door? Absent is false. See `MonsterActor.opensDoors`. */
+  readonly opensDoors?: boolean;
   /**
    * Which side. DEFAULTS TO `Redacted`, so every existing roster entry is
    * byte-identical and no seeded stream moves.
@@ -1792,6 +1807,8 @@ export function createMonsterActor(id: string, init: MonsterInit): MonsterActor 
     // typecheck, lint and the whole suite green. `onDie` is named here for that
     // reason and `test/server/monster-init-carried.test.ts` is the guard.
     onDie: init.onDie,
+    // AND THE SAME LINE AGAIN, for the reason the row above states.
+    opensDoors: init.opensDoors,
     // DEFAULTED, not required: the three roster templates author nothing, so
     // they stay exactly the bodies they were.
     faction: init.faction ?? Faction.Redacted,
