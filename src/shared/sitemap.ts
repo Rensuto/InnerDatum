@@ -39,6 +39,7 @@ import { tileIndex } from './coords.ts';
 import { createRng } from './rng.ts';
 import { TileCode } from './protocol.ts';
 import { partition } from './bsp.ts';
+import type { BspNode } from './bsp.ts';
 import { placeVault, stampVault } from './vault.ts';
 import { VAULTS_BY_SHAPE } from './vaults.ts';
 import type { TileXY } from './coords.ts';
@@ -102,32 +103,35 @@ export const DOOR_CLEARANCE = 8;
 const WORKS_MIN_ROOM = 7;
 
 /**
- * The percentage of a works floor's doorways that get an actual door.
- *
  * ═══════════════════════════════════════════════════════════════════════════
- * UPSTREAM'S NUMBER IS 50 AND OURS IS NOT, BECAUSE THE DENOMINATOR DIFFERS.
+ * FIFTY — UPSTREAM'S OWN NUMBER, ONCE THE CANDIDATES WERE UPSTREAM'S TOO.
  * ═══════════════════════════════════════════════════════════════════════════
  *
  * `Roomer.lua:33` defaults `door_chance` to 50 and `RoomsLoader.lua:921-928`
- * spends it exactly this way — a percentage roll per candidate. Carrying the 50
- * across would have been the wrong kind of faithful, because the CANDIDATE SET
- * is not the same set.
+ * spends it exactly this way — a percentage roll per candidate.
  *
- * Upstream registers a candidate only where a TUNNEL crossed a room wall
- * (`RoomsLoader.lua:912`, the `t[3]` flag set while tunnelling), so a floor
- * offers a handful. Ours surveys the finished map, and our corridors run centre
- * to centre across the whole building rather than room to room — so one
- * corridor crosses several rooms' walls on its way and a floor offers about
- * THIRTY-THREE. Measured over eighty seeds: 50% of those is a mean of sixteen
- * doors a delve, a pause every few steps.
+ * ═══ THIS SHIPPED AS 18, AND THE CONSTANT WAS NEVER THE PROBLEM ═══
+ * The first version surveyed the FINISHED MAP for anything shaped like a
+ * doorway and found about thirty per floor — every gap two rooms happened to
+ * share, and every wall a corridor merely clipped on its way past. 50% of that
+ * was sixteen doors a delve, so the percentage was dropped to 18 to land on a
+ * sane density, under a long note explaining why ours had to differ.
  *
- * EIGHTEEN IS THE SHARE THAT REPRODUCES UPSTREAM'S DENSITY rather than its
- * percentage — about six doors on a 34x30 floor of ten rooms, so half the rooms
- * have one and crossing the building is not a sequence of pauses. The number
- * that is being ported here is the FEELING of a door being worth noticing, and
- * the percentage is the thing that had to move to keep it.
+ * THAT NOTE WAS WRONG ABOUT WHICH END WAS OFF. Upstream does not survey: it
+ * records the tiles its TUNNEL broke through (`RoomsLoader.lua:912`'s `t[3]`)
+ * and rolls over those alone. An L-shaped passage between two rooms breaks
+ * through two walls — one leaving, one arriving — so a floor of ten rooms
+ * offers about twenty candidates, which is what ours offers now. Measured over
+ * eighty seeds: a mean of 10.6 doors, between 5 and 18.
+ *
+ * ═══ AND A DOOR IS CHEAP HERE, WHICH IS THE OTHER HALF ═══
+ * Sixteen was reasoned about as "a pause every few steps", and a pause is what
+ * a door costs in ToME. It is not what one costs here: `Actor.lua:1346` charges
+ * a move's energy only when the body actually changed tile, so opening a door
+ * costs a player NOTHING — a re-prompt, not a turn. What is being tuned is how
+ * often the floor asks you to notice something.
  */
-const DOOR_CHANCE = 18;
+const DOOR_CHANCE = 50;
 
 const W = 34;
 const H = 30;
@@ -155,6 +159,27 @@ function room(g: Grid, x0: number, y0: number, x1: number, y1: number, code: num
   }
 }
 
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * A CORRIDOR THAT REMEMBERS WHERE IT BROKE THROUGH — `RoomsLoader.lua:910-916`.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * ```lua
+ * for _, t in ipairs(tun) do
+ *   if t[3] and self.data.door then self.possible_doors[#self.possible_doors+1] = t end
+ * ```
+ *
+ * Upstream's tunneller collects the tiles it walked and flags the ones that
+ * crossed into a room; `placeDoors` then rolls only over THOSE. That is the
+ * whole reason its `door_chance` can be 50 and still leave a floor with a
+ * handful of doors.
+ *
+ * A tile this converted from WALL to FLOOR is exactly that flag: it is where
+ * the passage broke through something solid. Surveying the finished map instead
+ * — which is what the first version did — offers about thirty candidates on a
+ * 34x30 floor, because it also finds every gap two rooms happen to share and
+ * every wall a corridor merely clipped on its way past.
+ */
 /** A straight corridor. The only thing every shape below has in common. */
 function corridor(g: Grid, a: TileXY, b: TileXY): void {
   let { x, y } = a;
@@ -286,7 +311,7 @@ function ruin(g: Grid, rng: Rng): TileXY {
  * building. `connect` still runs afterwards, so reachability is true by
  * construction whatever the corridors did.
  */
-function works(g: Grid, rng: Rng): TileXY {
+function works(g: Grid, rng: Rng, crossings: TileXY[]): TileXY {
   const tree = partition(
     W - MARGIN * 2,
     H - MARGIN * 2,
@@ -305,35 +330,56 @@ function works(g: Grid, rng: Rng): TileXY {
   });
 
   const centres: TileXY[] = [];
-  for (const leaf of tree.leaves) {
-    const at = inner(leaf);
-    // A LEAF CAN BE TOO THIN TO HOLD ANYTHING once the inset is taken — the
-    // minimum is a bound on the CUT, not on what survives the wall. Skipping is
-    // honest: it leaves solid rock where a room would have been one tile wide,
-    // which reads as structure rather than as a corridor with a door on it.
-    if (at.x1 < at.x0 || at.y1 < at.y0) continue;
-    room(g, at.x0, at.y0, at.x1, at.y1, TileCode.FLOOR);
-    centres.push({
-      x: Math.floor((at.x0 + at.x1) / 2),
-      y: Math.floor((at.y0 + at.y1) / 2),
-    });
-  }
 
   /**
-   * CONNECTED IN LEAF ORDER, WHICH IS THE TREE'S OWN ORDER.
+   * ═══════════════════════════════════════════════════════════════════════════
+   * CARVE AND CONNECT IN ONE WALK, SIBLING TO SIBLING.
+   * ═══════════════════════════════════════════════════════════════════════════
    *
-   * `partition` finishes a subtree before it starts its sibling, so consecutive
-   * leaves are usually neighbours and a corridor between them is short. Sorting
-   * by distance would make prettier corridors and would also make the layout
-   * depend on a comparison rather than on the seed — the same argument
-   * `delve.ts` makes for computing the boss tile instead of rolling it.
+   * Each node answers with one point inside itself; an internal node joins the
+   * two points its children answered with, and passes one up. So every corridor
+   * links two halves of the SAME subtree and is as short as that subtree is
+   * wide — which is the standard way a BSP floor is wired and, more to the
+   * point here, the thing that keeps a corridor from crossing the building.
+   *
+   * ═══ THE FIRST VERSION JOINED CONSECUTIVE LEAVES IN A FLAT LIST ═══
+   * `partition` finishes a subtree before starting its sibling, so consecutive
+   * leaves are USUALLY neighbours — but the pair that straddles a subtree
+   * boundary is not, and that corridor runs the width of the map through
+   * whatever is in the way. Measured, it is why a works offered about
+   * thirty door candidates when they were surveyed off the finished map. The
+   * candidates are the tunnel's own crossings now (`RoomsLoader.lua:912`), so
+   * that is no longer what decides the density — but a corridor that runs the
+   * width of the building is still a corridor through three rooms nobody asked
+   * it to enter.
    */
-  for (let i = 1; i < centres.length; i += 1) {
-    const from = centres[i - 1];
-    const to = centres[i];
-    if (from === undefined || to === undefined) continue;
-    corridor(g, from, to);
-  }
+  const wire = (node: BspNode): TileXY | null => {
+    if (node.children === null) {
+      const at = inner(node);
+      // A LEAF CAN BE TOO THIN TO HOLD ANYTHING once the inset is taken — the
+      // minimum bounds the CUT, not what survives the shared wall. Answering
+      // null is honest: it leaves solid rock where a room would have been one
+      // tile wide, and the parent joins whatever its other half offered.
+      if (at.x1 < at.x0 || at.y1 < at.y0) return null;
+      room(g, at.x0, at.y0, at.x1, at.y1, TileCode.FLOOR);
+      const centre = {
+        x: Math.floor((at.x0 + at.x1) / 2),
+        y: Math.floor((at.y0 + at.y1) / 2),
+      };
+      centres.push(centre);
+      return centre;
+    }
+
+    // DEPTH FIRST, LEFT THEN RIGHT — the order `partition` itself recurses in,
+    // so the rooms are carved in the order the tree was cut and the seed means
+    // the same thing on both sides.
+    const a = wire(node.children[0]);
+    const b = wire(node.children[1]);
+    if (a !== null && b !== null) tunnel(g, a, b, crossings);
+    return a ?? b;
+  };
+
+  wire(tree.root);
 
   return centres[0] ?? { x: Math.floor(W / 2), y: Math.floor(H / 2) };
 }
@@ -373,55 +419,74 @@ function works(g: Grid, rng: Rng): TileXY {
  * to. `DOOR_CHANCE` is the share, drawn per mouth so the same floor always
  * hangs the same doors.
  */
-function hangDoors(g: Grid, rng: Rng, spawn: TileXY): void {
-  /**
-   * Does this neighbour lead into a ROOM rather than into another corridor?
-   *
-   * BOTH sides, not either. A tile with floor on one side is in something two
-   * wide, which is a corridor junction; a tile with floor on both is in a span
-   * of at least three, which is a room.
-   *
-   * ═══ `vertical` IS THE AXIS OF DEPTH, NOT THE AXIS OF THE DOORWAY ═══
-   * It was called `alongX` and that name was simply wrong: for a doorway with
-   * walls east and west, the room lies NORTH or SOUTH and the question is how
-   * far it runs THAT way — so the call passes `true` and the body measures the
-   * vertical span. The parameter names the span being measured, which is always
-   * perpendicular to the wall the door sits in.
-   */
-  const opensWide = (x: number, y: number, vertical: boolean): boolean => {
-    if (at(g, x, y) !== TileCode.FLOOR) return false;
-    return vertical
-      ? at(g, x, y - 1) === TileCode.FLOOR && at(g, x, y + 1) === TileCode.FLOOR
-      : at(g, x - 1, y) === TileCode.FLOOR && at(g, x + 1, y) === TileCode.FLOOR;
-  };
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * MAY A DOOR STAND HERE — `RoomsLoader.lua:781-806` (`canDoor`).
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * ```lua
+ * open_spaces[dir] = not self.map:checkEntity(coord[1], coord[2], Map.TERRAIN, "block_move")
+ * for i, dir in pairs(util.primaryDirs()) do
+ *   local opposed_dir = util.opposedDir(dir, x, y)
+ *   if open_spaces[dir] and open_spaces[opposed_dir] then
+ *     ... local blocked = true
+ *     for _, check_dir in pairs(sides) do blocked = blocked and not open_spaces[check_dir] end
+ *     if blocked then return true end
+ * ```
+ *
+ * A through-line OPEN on one axis, and BLOCKED on the other. Two conditions,
+ * and the first version of this file only had the second — "solid on both sides
+ * of exactly one axis", which is the same rule with the open half assumed.
+ *
+ * ═══ THE HALF THAT WAS ASSUMED IS THE HALF THAT STOPS `++` ═══
+ * A door BLOCKS MOVE. Upstream's `open_spaces` is built from `block_move`, so a
+ * door already standing next to a candidate makes that axis not-open and
+ * `canDoor` answers false — which is why upstream never puts two doors side by
+ * side. Testing only for walls misses it, because a door is not a wall: the
+ * generator shipped floors with `++` in them, two turns of opening for one way
+ * through.
+ *
+ * Passable here means FLOOR and nothing else, which is what `block_move`
+ * reduces to on a map whose only codes are floor, wall and door.
+ */
+function canDoor(g: Grid, x: number, y: number): boolean {
+  const open = (cx: number, cy: number): boolean => at(g, cx, cy) === TileCode.FLOOR;
+  const openNS = open(x, y - 1) && open(x, y + 1);
+  const openEW = open(x - 1, y) && open(x + 1, y);
+  const blockedNS = !open(x, y - 1) && !open(x, y + 1);
+  const blockedEW = !open(x - 1, y) && !open(x + 1, y);
+  return (openNS && blockedEW) || (openEW && blockedNS);
+}
 
+function hangDoors(g: Grid, rng: Rng, spawn: TileXY, crossings: readonly TileXY[]): void {
   let seen = 0;
-  for (let y = MARGIN; y < H - MARGIN; y += 1) {
-    for (let x = MARGIN; x < W - MARGIN; x += 1) {
-      if (at(g, x, y) !== TileCode.FLOOR) continue;
-      // NEVER THE ARRIVAL TILE. Being asked to open a door before the map has
-      // finished drawing is `delve.ts`'s named bug report, one tile further in.
-      if (x === spawn.x && y === spawn.y) continue;
+  for (const { x, y } of crossings) {
+    // NEVER THE ARRIVAL TILE. Being asked to open a door before the map has
+    // finished drawing is `delve.ts`'s named bug report, one tile further in.
+    if (x === spawn.x && y === spawn.y) continue;
 
-      // SOLID ON BOTH SIDES OF EXACTLY ONE AXIS. Walls north and south is a
-      // horizontal doorway; east and west is a vertical one. Requiring one and
-      // not the other is what excludes a corner.
-      const wallNS = at(g, x, y - 1) === TileCode.WALL && at(g, x, y + 1) === TileCode.WALL;
-      const wallEW = at(g, x - 1, y) === TileCode.WALL && at(g, x + 1, y) === TileCode.WALL;
-      if (wallNS === wallEW) continue;
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * RE-CHECKED AGAINST THE FINISHED MAP, BECAUSE THE CROSSING IS A MEMORY.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * The list was recorded while the works was being cut. Two things write
+     * floor afterwards — `connect` repairing a stranded pocket and the vault
+     * stamp — and either can open the ground beside a tile that was a doorway
+     * at the time, leaving a door with floor on all four sides. That is a
+     * turn's delay in the middle of a room, and it shipped once: a door at 5,20
+     * put there by the vault.
+     *
+     * So the crossing decides WHICH tiles are considered and the finished map
+     * decides whether each is still a doorway. Neither alone is enough.
+     */
+    if (at(g, x, y) !== TileCode.FLOOR) continue;
 
-      // AND IT LEADS SOMEWHERE. A pinch in a long corridor has walls on one
-      // axis too, and a door halfway down a passage is a delay with no room
-      // behind it.
-      const wide = wallNS
-        ? opensWide(x - 1, y, false) || opensWide(x + 1, y, false)
-        : opensWide(x, y - 1, true) || opensWide(x, y + 1, true);
-      if (!wide) continue;
+    if (!canDoor(g, x, y)) continue;
 
-      seen += 1;
-      if (rng.int(`site.works.door.${String(seen)}`, 1, 100) > DOOR_CHANCE) continue;
-      put(g, x, y, TileCode.DOOR);
-    }
+    seen += 1;
+    if (rng.int(`site.works.door.${String(seen)}`, 1, 100) > DOOR_CHANCE) continue;
+    put(g, x, y, TileCode.DOOR);
   }
 }
 
@@ -455,6 +520,31 @@ function crossable(code: number): boolean {
  * on a 34x30 grid and it makes "the far side is reachable" true by construction
  * rather than by inspection.
  */
+/**
+ * `corridor`, plus the list of tiles it had to break through to get there.
+ *
+ * SEPARATE FROM `corridor` rather than an optional argument on it, because the
+ * other three shapes have no use for the list and an optional out-parameter on
+ * the one primitive every shape shares is how a helper starts growing a second
+ * job. See the note above `corridor`.
+ */
+function tunnel(g: Grid, a: TileXY, b: TileXY, crossings: TileXY[]): void {
+  let { x, y } = a;
+  const step = (): void => {
+    if (at(g, x, y) === TileCode.WALL) crossings.push({ x, y });
+    put(g, x, y, TileCode.FLOOR);
+  };
+  while (x !== b.x) {
+    step();
+    x += x < b.x ? 1 : -1;
+  }
+  while (y !== b.y) {
+    step();
+    y += y < b.y ? 1 : -1;
+  }
+  step();
+}
+
 function connect(g: Grid, from: TileXY): void {
   for (let pass = 0; pass < 12; pass += 1) {
     const seen = new Set<number>();
@@ -590,6 +680,13 @@ export function makeSiteMap(
   const rng = createRng(seed);
   const g = blank();
 
+  /**
+   * WHERE A TUNNEL BROKE THROUGH A WALL — upstream's `possible_doors`, and the
+   * only tiles `hangDoors` will consider. Empty for every shape but the works,
+   * which is the only one that tunnels between rooms it cut.
+   */
+  const crossings: TileXY[] = [];
+
   const spawn =
     shape === SiteShape.Town
       ? town(g, rng)
@@ -597,7 +694,7 @@ export function makeSiteMap(
         ? cave(g, rng)
         : shape === SiteShape.Ruin
           ? ruin(g, rng)
-          : works(g, rng);
+          : works(g, rng, crossings);
 
   /**
    * ═══════════════════════════════════════════════════════════════════════════
@@ -714,7 +811,7 @@ export function makeSiteMap(
    * against `TileCode.FLOOR` and `TileCode.WALL`, and after a repaint a works
    * floor is SOOT on CRAG and every one of those tests answers false.
    */
-  if (shape === SiteShape.Works) hangDoors(g, rng, spawn);
+  if (shape === SiteShape.Works) hangDoors(g, rng, spawn, crossings);
 
   /**
    * THE REPAINT, LAST, over the finished grid. The CARVERS put in two codes and

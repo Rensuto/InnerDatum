@@ -605,8 +605,18 @@ describe('a works is rooms and corridors', () => {
      * pause every few steps; the note on the constant explains why the
      * percentage had to move to keep the density.
      */
-    expect(total / SEEDS.length, 'a works is a sequence of pauses again').toBeLessThan(11);
-    expect(most, 'some works sealed nearly every room it cut').toBeLessThan(18);
+    /**
+     * THE MEAN IS THE TUNING AND THE MAX IS THE GUARD. Measured over eighty
+     * seeds at upstream's own `door_chance` of 50, rolled over the tiles a
+     * tunnel broke through: a mean of 10.6, between 5 and 18.
+     *
+     * The band is generous on purpose. It is here to catch the shape of the
+     * mistake this file has already made once — surveying the whole map for
+     * anything doorway-shaped, which offered thirty candidates and put sixteen
+     * doors on a floor — not to pin a number that moves when a room size does.
+     */
+    expect(total / SEEDS.length, 'a works is a sequence of pauses again').toBeLessThan(15);
+    expect(most, 'some works sealed nearly every room it cut').toBeLessThan(25);
   });
 
   it('hangs at least some doors that are the ONLY way into a room', () => {
@@ -732,6 +742,39 @@ describe('a works is rooms and corridors', () => {
             leadsSomewhere,
             `${seed}: a door at ${String(x)},${String(y)} is a pinch in a corridor`,
           ).toBe(true);
+        }
+      }
+    }
+  });
+
+  it('never puts two doors side by side', () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * `canDoor` HAS TWO HALVES AND THE FIRST VERSION ONLY HAD ONE.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * `RoomsLoader.lua:781-806` needs a through-line OPEN on one axis and
+     * BLOCKED on the other. Testing only for walls is the blocked half alone —
+     * and a door is not a wall, so a candidate next to a door still passed and
+     * the generator shipped floors with `++` in them: two turns of opening for
+     * one way through.
+     *
+     * Upstream cannot produce that, because its `open_spaces` is built from
+     * `block_move` and a door blocks move. Asserted directly, because it is the
+     * only observable difference between the two halves.
+     */
+    for (const seed of SEEDS) {
+      const map = makeSiteMap(seed, SiteShape.Works);
+      const { w, h, tiles } = map.view;
+      const door = (x: number, y: number): boolean =>
+        x >= 0 && y >= 0 && x < w && y < h && tiles[y * w + x] === TileCode.DOOR;
+      for (let y = 0; y < h; y += 1) {
+        for (let x = 0; x < w; x += 1) {
+          if (!door(x, y)) continue;
+          expect(
+            door(x + 1, y) || door(x, y + 1),
+            `${seed}: two doors side by side at ${String(x)},${String(y)}`,
+          ).toBe(false);
         }
       }
     }
