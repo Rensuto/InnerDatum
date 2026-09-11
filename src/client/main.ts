@@ -355,6 +355,7 @@ import {
 } from './ui/mapview.ts';
 import { drawTurnCards, owedCount, selfCard } from './ui/turncards.ts';
 import { REVEAL_RADIUS as SHARED_REVEAL_RADIUS } from '../shared/fog.ts';
+import { tilesInSight } from '../shared/sight.ts';
 import { TileLoot, verbsFor } from './ui/verbs.ts';
 import {
   ActorKind,
@@ -1296,6 +1297,74 @@ function fogBitSet(b64: string, bit: number): boolean {
 }
 
 const B64_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * WHAT THIS VIEWER HAS ACTUALLY *SEEN* — the second memory, and it is not the
+ * first one.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `explored` above is a DISC at `REVEAL_RADIUS` with no line of sight, and
+ * `fog.ts` defends that in one line: *"Generous: this is a map, not a torch."*
+ * Correct for the thing it draws — a map you filled in as you walked — and
+ * useless for the playfield, where it would uncover whole rooms through their
+ * walls the moment you stood near the outside of one.
+ *
+ * So this is the torch. `canSee` at `DEFAULT_SIGHT_RADIUS`: the same rule
+ * `projectActors` filters bodies with, so a tile is remembered exactly when a
+ * body standing on it would have been visible.
+ *
+ * ═══ SESSION-ONLY, AND THAT MATCHES WHAT LOCAL FOG ALREADY DOES ═══
+ * Nothing here is sent or saved. It looks like a gap and is not: `gateway.ts`'s
+ * `revealFor` returns false for every realm that is not an Overworld, and
+ * `exploredElsewhere` persists SHARED OVERWORLDS ONLY — so a delve's and a
+ * town's explored map are already forgotten on reload. The playfield light pass
+ * is skipped entirely on the overworld (`paintLight` says why), so the only
+ * maps this memory covers are exactly the ones whose fog was never persisted.
+ *
+ * Making it durable is the same piece of work as making it AUTHORITATIVE, which
+ * is `docs/tome-port.md`'s *"per-player FOV for correct fog-of-war netcode"*:
+ * the server would hold the bitset, the leak would close, and the save would
+ * carry it. Until then this is a drawing convenience on top of what the server
+ * already sent, exactly as `explored` says it is.
+ */
+const witnessed = new Map<string, Set<string>>();
+
+/**
+ * The memo key — realm, tile, and the terrain generation.
+ *
+ * THE TERRAIN TERM IS NOT DECORATION. Standing still and opening a door reveals
+ * a room, and a memo on position alone would refuse to look: the player would
+ * watch a lit doorway with a black room behind it until they stepped. Doors
+ * shipped three commits ago and this is the second reader that has to know a
+ * map can change under it.
+ */
+let witnessedAt: string | null = null;
+let terrainEpoch = 0;
+
+function witnessAround(realmId: string, lvl: LevelView, at: TileXY): ReadonlySet<string> {
+  let mine = witnessed.get(realmId);
+  if (mine === undefined) {
+    mine = new Set<string>();
+    witnessed.set(realmId, mine);
+  }
+  const key = `${realmId}:${String(at.x)},${String(at.y)}:${String(terrainEpoch)}`;
+  if (key === witnessedAt) return mine;
+  witnessedAt = key;
+  // THE SWEEP IS `shared/sight.ts`'S, not a copy of it. A viewer that decided
+  // what it had seen by a different test than `projectActors` filters bodies by
+  // would draw a monster the server sent standing on ground it had hidden.
+  for (const tile of tilesInSight(lvl, at)) mine.add(`${String(tile.x)},${String(tile.y)}`);
+  return mine;
+}
+
+/** The set the renderer draws from, or null when there is nobody to see with. */
+function witnessedNow(): ReadonlySet<string> | null {
+  if (level === null || currentRealmId === null || selfId === null) return null;
+  const me = actors.get(selfId);
+  if (me === undefined) return null;
+  return witnessAround(currentRealmId, level, { x: Math.trunc(me.x), y: Math.trunc(me.y) });
+}
 
 /** Mark everything within reach of the viewer as seen, and answer the set. */
 function revealAround(
@@ -5526,6 +5595,10 @@ function scene(): Scene {
     // `string | null` the painter takes. The table and its reader landed without
     // this line, so every scene painted as though the realm were unknown.
     realmKind,
+    // WHAT THIS VIEWER HAS SEEN OF THIS FLOOR. Null before there is a body to
+    // see with, which `paintLight` reads as "say nothing" rather than "nothing
+    // has been seen" — the two would differ by a black screen.
+    witnessed: witnessedNow(),
     sites,
     targeting: targeting?.cells(),
     cursor: targeting?.cursor() ?? null,
@@ -13603,6 +13676,10 @@ function applyServerMessage(msg: ServerMsg): void {
           level.tiles[patch.y * level.w + patch.x] = patch.code;
         }
       }
+      // AND THE SIGHT MEMO IS STALE NOW. A door that opened from a body that
+      // did not move reveals a room, and `witnessAround`'s memo is keyed on
+      // position — without this the room stays black until the player steps.
+      terrainEpoch += 1;
       break;
     }
     case 'ground':

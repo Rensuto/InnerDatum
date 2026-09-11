@@ -124,6 +124,32 @@ export type MouseSnapshot = {
  * handler, not the path preview, not the verb menu: they call this. A second
  * site that tests `canWalk` for the same purpose is a site that will still allow
  * travel into unexplored dark on the day this one stops.
+ *
+ * ═══════════════════════════════════════════════════════════════════════════
+ * AND "IN ONE PLACE" TURNS OUT TO BE FALSE. THE CLAUSE IS TWO CLAUSES.
+ * ═══════════════════════════════════════════════════════════════════════════
+ * The paragraph above was written when there was one memory. There are two now
+ * and they answer different questions, because the surfaces do:
+ *
+ *   `explored`  — a DISC at `REVEAL_RADIUS`, no line of sight, per realm. What
+ *                 the MINIMAP and the region map draw. `fog.ts` defends the
+ *                 shape in one line: *"Generous: this is a map, not a torch."*
+ *   `witnessed` — `canSee` at `DEFAULT_SIGHT_RADIUS`, per realm. What the
+ *                 PLAYFIELD draws, because a disc on the playfield would show
+ *                 the floor plan of a building you had walked past the outside
+ *                 of.
+ *
+ * Four of this predicate's five callers are tactical (the click, the verb menu,
+ * `VerbTarget.walkable`, auto-explore's flood) and two are on the MINIMAP — a
+ * hover card and a click. Gating all five on `witnessed` would refuse a minimap
+ * click to a place the minimap is drawing; gating them on `explored` would
+ * permit a playfield click into ground the playfield has blacked out. Neither
+ * is one clause.
+ *
+ * So the seen-gate is NOT ADDED YET, and this note is the finding rather than an
+ * apology: whoever adds it has to split this function or hand it the memory,
+ * and either way the "one place, one cost" promise above is the thing that has
+ * to be re-argued rather than relied on.
  */
 export function travelTargetAllowed(level: LevelView, tile: TileXY): boolean {
   return canRoute(level, tile.x, tile.y);

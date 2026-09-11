@@ -371,6 +371,22 @@ export type Scene = {
    */
   readonly realmKind: string | null;
   /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * WHICH TILES OF THIS FLOOR THE VIEWER HAS EVER SEEN — upstream's `remembers`.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Keyed `"x,y"`, LOS-gated at sight radius, built by `main.ts#witnessAround`.
+   * It is deliberately NOT the `explored` set the minimap draws: that one is a
+   * disc with no line of sight, which `fog.ts` defends as *"a map, not a
+   * torch"* — right for a map and useless here, where it would uncover rooms
+   * through their walls.
+   *
+   * NULL IS "SAY NOTHING", NOT "NOTHING HAS BEEN SEEN". Before a body exists to
+   * see with, the two differ by a black screen — so null falls back to the
+   * two-state rendering this pass shipped with and the third state waits.
+   */
+  readonly witnessed?: ReadonlySet<string> | null;
+  /**
    * Places on THIS map you can walk into, drawn as markers over the terrain.
    *
    * THE OVERWORLD'S WHOLE JOB IS TELLING YOU WHERE THINGS ARE. The first
@@ -2737,6 +2753,7 @@ export function createRenderer(options: RendererOptions): Renderer {
     level: LevelView,
     realmKind: string | null,
     eye: TileXY | null,
+    witnessed: ReadonlySet<string> | null | undefined,
     camX: number,
     camY: number,
   ): void {
@@ -2778,7 +2795,31 @@ export function createRenderer(options: RendererOptions): Renderer {
          * viewer-stat field and this is the only line that would read it.
          */
         const lit = canSee(level, eye, at, DEFAULT_SIGHT_RADIUS);
-        const alpha = lit ? 1 - fovBrightness(sightDistance(eye, at)) : OBSCURE_WASH_ALPHA;
+        /**
+         * ═══════════════════════════════════════════════════════════════════
+         * THE THIRD STATE. NEVER SEEN DRAWS NOTHING AT ALL.
+         * ═══════════════════════════════════════════════════════════════════
+         *
+         * `Map:apply` and `Map:applyLite` both write `seens` and `remembers`,
+         * and a grid in neither is simply absent from upstream's screen. Ours
+         * paints it over at alpha 1 rather than skipping it in `paintTiles`,
+         * which costs one `fillRect` on a viewport of a hundred-odd tiles and
+         * keeps the two passes from having to agree about anything.
+         *
+         * ═══ THE TILE IS STILL ON THE WIRE, AND THIS DOES NOT FIX THAT ═══
+         * `projectLevel` sends the whole map; this hides it. A client that
+         * wanted the floor plan still has it, exactly as it did before. Closing
+         * that is the netcode half — see `Scene.witnessed`.
+         */
+        const unseen =
+          witnessed !== null &&
+          witnessed !== undefined &&
+          !witnessed.has(`${String(tx)},${String(ty)}`);
+        const alpha = unseen
+          ? 1
+          : lit
+            ? 1 - fovBrightness(sightDistance(eye, at))
+            : OBSCURE_WASH_ALPHA;
         // `fovBrightness` IS 1 WITHIN THREE TILES, so the tiles a player is
         // actually standing among cost nothing at all.
         if (alpha <= 0) continue;
@@ -3455,6 +3496,7 @@ export function createRenderer(options: RendererOptions): Renderer {
         level,
         scene.realmKind,
         self === undefined ? null : { x: Math.trunc(self.x), y: Math.trunc(self.y) },
+        scene.witnessed,
         camX,
         camY,
       );

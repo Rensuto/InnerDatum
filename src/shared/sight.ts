@@ -210,6 +210,46 @@ export function canSee(
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════
+ * EVERY TILE A BODY CAN SEE FROM WHERE IT STANDS — one `computeFOV` sweep.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Upstream's `self:computeFOV(self.sight or 10, "block_sight", ...)` calls back
+ * once per visible grid and the callback writes `seens`. This returns the grids
+ * instead, because the caller decides what to do with them and we have no
+ * engine-owned map to write into.
+ *
+ * ═══ A SQUARE LOOP AND A CIRCULAR TEST, WHICH IS `canSee`'S OWN SHAPE ═══
+ * The loop walks a square and `canSee` rejects the corners on arithmetic before
+ * it ever draws a line, so the cost is a bresenham per tile actually inside the
+ * circle. There is no cheaper shape that keeps ONE visibility rule in the
+ * codebase, and a second rule is what this function exists to avoid: a viewer
+ * that remembered tiles by a different test than `projectActors` filters bodies
+ * by would draw a monster the server sent standing on ground it had hidden.
+ *
+ * PURE, AND THE REASON IS A TEST. Kept here rather than in the client closure
+ * that calls it because `main.ts` is unreachable from `test/` — a rule living
+ * there can only ever be guarded by reading its source text.
+ */
+export function tilesInSight(
+  level: LevelView,
+  at: TileXY,
+  radius: number = DEFAULT_SIGHT_RADIUS,
+): readonly TileXY[] {
+  const out: TileXY[] = [];
+  for (let dy = -radius; dy <= radius; dy += 1) {
+    for (let dx = -radius; dx <= radius; dx += 1) {
+      const x = at.x + dx;
+      const y = at.y + dy;
+      if (x < 0 || y < 0 || x >= level.w || y >= level.h) continue;
+      if (!canSee(level, at, { x, y }, radius)) continue;
+      out.push({ x, y });
+    }
+  }
+  return out;
+}
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
  * MAY THIS CHARACTER BE SHOWN WHAT IS LYING ON THIS TILE? SEEN, OR REMEMBERED.
  * ═══════════════════════════════════════════════════════════════════════════
  *
