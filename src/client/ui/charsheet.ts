@@ -157,6 +157,8 @@ import type {
 import type { Keymap } from '../input/keymap.ts';
 import type { SpriteSource } from '../render/assets.ts';
 import type { PanelRect } from './panel.ts';
+import { BlitAnchor, blitReduced } from './panel.ts';
+import { STAT_ROWS } from './talents.ts';
 
 // ---------------------------------------------------------------------------
 // Geometry constants. See the header before changing any of them.
@@ -452,8 +454,54 @@ function rowWantW(row: SheetRow): number {
       return (row.label.length + row.value.length) * CHAR_W + FIELD_GUTTER;
     case SheetRowKind.Talent:
       return COL_MIN_W - COL_GAP;
+    case SheetRowKind.Stats: {
+      // TWO CELLS AND THE GAP, each as wide as its longest word beside the icon —
+      // `Constitution` — so the panel is sized to show every name in full. Two
+      // even for a line holding one, so a lone cell sits where its column is.
+      const chars = row.cells.reduce(
+        (most, cell) => Math.max(most, cell.name.length, cell.value.length),
+        0,
+      );
+      return 2 * (SHEET_STAT_ICON + SHEET_STAT_TEXT_GAP + chars * CHAR_W) + SHEET_STAT_GAP;
+    }
   }
 }
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE SIX ATTRIBUTES AT THIRTY-TWO PIXELS, TWO TO A LINE.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `CharacterSheet.lua:815-820` prints the six as plain text lines. This sheet
+ * draws them with the icons the talent page uses, so the two screens name an
+ * attribute the same way — asked for with "keep the character sheet tidy".
+ *
+ * ═══ 32, NOT 16 ═══
+ * The sheet's talent rows use 16-pixel icons, and at `hudScale` 1 — a 1080p
+ * desktop and the Discord frame — sixteen logical pixels are sixteen screen
+ * pixels, where the fist and the bound heart blur into each other. Thirty-two is
+ * the other exact reduction of the 64-pixel art.
+ *
+ * ═══ TWO TO A LINE, WHICH IS WHAT KEEPS IT TIDY ═══
+ * Six icon lines would be 204 pixels where the six text rows were 72, pushing
+ * everything under them down the column. Three lines of two are 102: the block
+ * costs thirty pixels, and reads in the sheet's order across then down —
+ * `STR DEX / CON MAG / WIL CUN`.
+ *
+ * ═══ THREE ROWS, NOT ONE ═══
+ * Each line is its own row, so `place` can break a column between two lines
+ * the way it breaks between any two fields. One 102-pixel row could not be
+ * split at all, and on a short window where six twelve-pixel rows would have
+ * poured across two columns the whole sheet would have fallen back to its
+ * identity block instead.
+ */
+const SHEET_STAT_ICON = 32;
+/** One line of the block: the icon and a pixel of air above and below it. */
+const SHEET_STAT_LINE_H = SHEET_STAT_ICON + 2;
+/** Between the two cells on a line. */
+const SHEET_STAT_GAP = 8;
+/** Between an icon and its words. */
+const SHEET_STAT_TEXT_GAP = 4;
 
 /** The close control, top-right of the header strip. Square, so it is a target. */
 const CLOSE_PX = 13;
@@ -550,6 +598,11 @@ export const SheetRowKind = {
   Talent: 'talent',
   /** A sentence about the sheet itself — "gathering…", or what was dropped. */
   Note: 'note',
+  /**
+   * ONE LINE OF THE SIX ATTRIBUTES — two cells, each an icon, the name and the
+   * value. Three of these in a row are the block. See `SHEET_STAT_ICON`.
+   */
+  Stats: 'stats',
 } as const;
 export type SheetRowKind = (typeof SheetRowKind)[keyof typeof SheetRowKind];
 
@@ -689,7 +742,20 @@ export type SheetRow =
       /** Carried so the painter can mark ready with a WORD and a colour, not one. */
       readonly ready: boolean;
     }
-  | { readonly kind: typeof SheetRowKind.Note; readonly text: string };
+  | { readonly kind: typeof SheetRowKind.Note; readonly text: string }
+  | { readonly kind: typeof SheetRowKind.Stats; readonly cells: readonly SheetStatCell[] };
+
+/** One attribute in the `Stats` block. */
+export type SheetStatCell = {
+  /** The server's own name for it — `InspectRow.label`. */
+  readonly name: string;
+  /** The server's own value, `25 (20)` when gear is doing some of the work. */
+  readonly value: string;
+  /** An asset KEY, from `STAT_ROWS` by the row's `stat` — never from the name. */
+  readonly icon: string;
+  /** What a bare clone draws in the frame: `STR`. */
+  readonly code: string;
+};
 
 /**
  * Everything the sheet is built from. Four frames, none of which is enough alone.
@@ -1060,8 +1126,33 @@ export function charSheetRows(
       if (tab !== SheetTab.General) {
         rows.push({ kind: SheetRowKind.Section, label: TAB_SECTION[tab] });
       }
+      /**
+       * ═══ THE SIX GATHER INTO LINES OF TWO, WHERE THE FIRST OF THEM WAS ═══
+       * Chosen by the row's `stat` KEY — never its label, which is the
+       * server's prose. A row without one stays a plain field, so an older
+       * server's six draw exactly as they did.
+       *
+       * Gathered first and laid out after, so the lines stay together where
+       * the first attribute was even if the server interleaved another row.
+       */
+      const cells: SheetStatCell[] = [];
+      let blockAt = -1;
       for (const row of mine) {
-        rows.push({ kind: SheetRowKind.Field, label: row.label, value: row.value });
+        const entry =
+          row.stat === undefined ? undefined : STAT_ROWS.find((s) => s.key === row.stat);
+        if (entry === undefined) {
+          rows.push({ kind: SheetRowKind.Field, label: row.label, value: row.value });
+          continue;
+        }
+        if (blockAt < 0) blockAt = rows.length;
+        cells.push({ name: row.label, value: row.value, icon: entry.icon, code: entry.label });
+      }
+      if (blockAt >= 0) {
+        const lines: SheetRow[] = [];
+        for (let i = 0; i < cells.length; i += 2) {
+          lines.push({ kind: SheetRowKind.Stats, cells: cells.slice(i, i + 2) });
+        }
+        rows.splice(blockAt, 0, ...lines);
       }
     }
   }
@@ -1573,6 +1664,8 @@ function rowHeight(row: SheetRow): number {
     case SheetRowKind.Field:
     case SheetRowKind.Note:
       return ROW_H;
+    case SheetRowKind.Stats:
+      return SHEET_STAT_LINE_H;
   }
 }
 
@@ -1607,6 +1700,16 @@ type SheetGeometry = {
   readonly colW: number;
 };
 
+/** The six as the plain `Label  value` rows they are without their icons. */
+function withPlainStats(rows: readonly SheetRow[]): readonly SheetRow[] {
+  if (!rows.some((row) => row.kind === SheetRowKind.Stats)) return rows;
+  return rows.flatMap((row): readonly SheetRow[] =>
+    row.kind === SheetRowKind.Stats
+      ? row.cells.map((cell) => ({ kind: SheetRowKind.Field, label: cell.name, value: cell.value }))
+      : [row],
+  );
+}
+
 /** Drop a whole section and everything under it, up to the next section. */
 function withoutSection(rows: readonly SheetRow[], section: SheetSection): readonly SheetRow[] {
   const out: SheetRow[] = [];
@@ -1626,6 +1729,12 @@ function place(
   bottom: number,
   colW: number,
   columns: number,
+  /**
+   * WHETHER THE SIX'S ICON LINES MUST SHARE A COLUMN. A preference, tried first
+   * and then given up — see `sheetGeometry`. Three lines broken over a column
+   * boundary read as two blocks, the second without the first's context.
+   */
+  keepStatsTogether: boolean,
 ): readonly PlacedRow[] | null {
   const placed: PlacedRow[] = [];
   let column = 0;
@@ -1643,7 +1752,21 @@ function place(
     // section carries the first row after it, and breaks the column early when
     // the two do not fit together.
     const next = rows[i + 1];
-    const need = row.kind === SheetRowKind.Section && next !== undefined ? h + rowHeight(next) : h;
+    let need = row.kind === SheetRowKind.Section && next !== undefined ? h + rowHeight(next) : h;
+    // ═══ AND THE SIX ARE ONE BLOCK, WHEN ASKED ═══
+    // The first icon line carries the height of every line after it, so the
+    // column breaks before the block rather than through it.
+    if (
+      keepStatsTogether &&
+      row.kind === SheetRowKind.Stats &&
+      rows[i - 1]?.kind !== SheetRowKind.Stats
+    ) {
+      need = 0;
+      for (let j = i; rows[j]?.kind === SheetRowKind.Stats; j += 1) {
+        const line = rows[j];
+        if (line !== undefined) need += rowHeight(line);
+      }
+    }
 
     // The orphan rule is a PREFERENCE and the overflow rule is a fact, so they
     // are tested separately: breaking early is only allowed when there is
@@ -1701,9 +1824,26 @@ function sheetGeometry(rect: PanelRect, rows: readonly SheetRow[]): SheetGeometr
   );
   const colW = columns === 1 ? innerW : Math.floor((innerW - COL_GAP * (columns - 1)) / columns);
 
-  let candidate = rows;
+  /**
+   * ═══ THE ICONS GIVE WAY BEFORE ANY SECTION DOES ═══
+   * The six as icon lines are thirty pixels taller than the six as fields. At
+   * the 640x320 floor that was the difference between a sheet that poured into
+   * two columns and one that fell back to its identity block with Life,
+   * Reagents and every attribute gone. A picture is not worth a section, so a
+   * sheet that cannot place the lines tries the plain rows first, and only
+   * then starts dropping pages.
+   *
+   * THREE TRIES, TIDIEST FIRST: the six as one block in one column; the lines
+   * allowed to break over a column; the six as plain rows.
+   */
+  const together = place(rows, x, top, bottom, colW, columns, true);
+  if (together !== null) return { close, placed: together, columns, colW };
+  const split = place(rows, x, top, bottom, colW, columns, false);
+  if (split !== null) return { close, placed: split, columns, colW };
+
+  let candidate = withPlainStats(rows);
   for (let attempt = 0; attempt <= DROP_ORDER.length; attempt += 1) {
-    const placed = place(candidate, x, top, bottom, colW, columns);
+    const placed = place(candidate, x, top, bottom, colW, columns, false);
     if (placed !== null) return { close, placed, columns, colW };
     const dropping = DROP_ORDER[attempt];
     if (dropping === undefined) break;
@@ -1858,6 +1998,47 @@ function drawRow(ctx: CanvasRenderingContext2D, sprites: SpriteSource, placed: P
         rect.y + ROW_H / 2,
       );
       ctx.textAlign = 'left';
+      return;
+    }
+
+    case SheetRowKind.Stats: {
+      const cellW = Math.floor((rect.w - SHEET_STAT_GAP) / 2);
+      for (let i = 0; i < row.cells.length; i += 1) {
+        const cell = row.cells[i];
+        if (cell === undefined) continue;
+        const x = rect.x + i * (cellW + SHEET_STAT_GAP);
+        const y = rect.y + 1;
+        const box: PanelRect = { x, y, w: SHEET_STAT_ICON, h: SHEET_STAT_ICON };
+
+        ctx.fillStyle = PALETTE.VOID;
+        ctx.fillRect(box.x, box.y, box.w, box.h);
+        // AN EXACT HALVING OR NOTHING — see `blitReduced`. Without art the
+        // frame holds the code, because a first letter cannot tell
+        // Constitution from Cunning.
+        if (!blitReduced(ctx, sprites, cell.icon, box, BlitAnchor.Centre, 2)) {
+          ctx.font = FONT_ICON_FALLBACK;
+          ctx.textAlign = 'center';
+          ctx.fillStyle = PALETTE.SILVER;
+          ctx.fillText(cell.code, box.x + box.w / 2, box.y + box.h / 2);
+          ctx.textAlign = 'left';
+        }
+        ctx.fillStyle = PALETTE.SLATE;
+        ctx.fillRect(box.x, box.y, box.w, 1);
+        ctx.fillRect(box.x, box.y + box.h - 1, box.w, 1);
+        ctx.fillRect(box.x, box.y, 1, box.h);
+        ctx.fillRect(box.x + box.w - 1, box.y, 1, box.h);
+
+        // THE FIELD ROW'S TWO INKS, stacked instead of spread: the name in the
+        // label ink, the value lit under it.
+        const textX = x + SHEET_STAT_ICON + SHEET_STAT_TEXT_GAP;
+        const textW = Math.max(0, cellW - SHEET_STAT_ICON - SHEET_STAT_TEXT_GAP);
+        ctx.font = FONT_LABEL;
+        ctx.fillStyle = PALETTE.BONE;
+        ctx.fillText(fitText(ctx, cell.name, textW), textX, y + 10);
+        ctx.font = FONT_VALUE;
+        ctx.fillStyle = PALETTE.PARCHMENT;
+        ctx.fillText(fitText(ctx, cell.value, textW), textX, y + 23);
+      }
       return;
     }
 

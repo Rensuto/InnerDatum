@@ -434,7 +434,7 @@ function originNameOf(actor: Actor): string | undefined {
  * table, for the reason derived.ts's own `STAT_KEYS` gives: key order on an
  * authored object is whatever somebody typed.
  */
-const SHEET_STATS: readonly (readonly [string, keyof PrimaryStats])[] = [
+const SHEET_STATS: readonly (readonly [string, Exclude<keyof PrimaryStats, 'lck'>])[] = [
   ['Strength', 'str'],
   ['Dexterity', 'dex'],
   ['Constitution', 'con'],
@@ -567,6 +567,9 @@ function pushSelfSheet(
       label,
       value: Math.round(base) === Math.round(now) ? whole(now) : `${whole(now)} (${whole(base)})`,
       group: InspectGroup.General,
+      // THE KEY, so the sheet picks the icon by what the row IS rather than by
+      // what it happens to be called. See `InspectRow.stat`.
+      stat: key,
     });
   }
 

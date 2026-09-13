@@ -292,17 +292,27 @@ letter — 42 on one Alchemist screenshot. The prefixes are added, and
 `test/client/talent-icon-loading.test.ts` now joins what a talent names to what
 the client loads, which is the seam this lived in.
 
-### Still to place: the six attribute icons
+### Placed: the six attribute icons (2026-09-12)
 
-They are registered and loaded but **not yet drawn anywhere**, so
-`npm run art:needs` lists all six under `unused`. That is deliberate, not an
-oversight. At `hudScale` 1 — a 1080p desktop and the Discord activity iframe —
-a 16px icon is 16 screen pixels, and at that size strength and constitution read
-as a brown and a red blob and dexterity as a grey smudge (see
-`qa/attribute_icons_16px_read_proof.png`). The stat rail is 78px wide and full,
-so the icon cannot sit beside the `STR` code without widening a panel that was
-already reported as too large. Where they go is a design call awaiting an answer;
-a 32px character-sheet treatment reads well at every scale.
+All six are drawn now, so `npm run art:needs` no longer lists them as `unused`:
+
+| Where | Size | Notes |
+| --- | --- | --- |
+| Talent page, attribute column | 32px | ToME's `LevelupDialog` layout — framed icon, `current (base)` under it. One column on a tall panel, two when folded. |
+| Talent page, smallest panel | 16px | Only where two columns of 32 cannot fit: the 640x320 floor in combat. |
+| Talent page, description column | 32px | Beside the stat's name when it is hovered. |
+| Character sheet, General tab | 32px | Two to a line beside name and value; plain text rows on a sheet too short for them. |
+
+Every draw goes through `blitReduced`, so only the exact 64→32 and 64→16
+reductions can reach the screen.
+
+**The one known weakness, and it is optional:** at 16px strength and
+constitution still read as a brown and a red blob and dexterity as a grey smudge
+(`qa/attribute_icons_16px_read_proof.png`). The 16px layout is reached only on
+the smallest window in combat, and the value is printed under every icon, so
+nothing is unreadable. If the set is ever revisited, hand-pixelled 16x16
+versions of those three would fix it. No source names such files yet, so nothing
+is missing.
 
 
 ## `icon_ui_cog` — the case log's settings button, and it is a nicety

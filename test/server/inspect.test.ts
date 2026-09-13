@@ -684,6 +684,23 @@ describe('inspecting yourself', () => {
     // THE ORDER, ASSERTED AS A SEQUENCE. See the block above.
     expect(rowsOf(view).map((row) => row['label'])).toEqual(SELF_SHEET_LABELS);
 
+    // ═══ AND THE SIX CARRY THEIR KEY, AND NOTHING ELSE DOES ═══
+    // The character sheet picks each attribute's icon by `stat`, never by the
+    // label — so the key is the contract, and a derived row that grew one would
+    // be drawn as a seventh attribute.
+    expect(
+      rowsOf(view).flatMap((row) =>
+        row['stat'] === undefined ? [] : [[row['label'], row['stat']]],
+      ),
+    ).toEqual([
+      ['Strength', 'str'],
+      ['Dexterity', 'dex'],
+      ['Constitution', 'con'],
+      ['Magic', 'mag'],
+      ['Willpower', 'wil'],
+      ['Cunning', 'cun'],
+    ]);
+
     const value = (label: string): string =>
       String(rowsOf(view).find((row) => row['label'] === label)?.['value']);
 

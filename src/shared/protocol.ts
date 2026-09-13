@@ -828,6 +828,21 @@ export type InspectRow = {
    * `InspectGroup`. Absent on a hostile tooltip, which is not tabbed.
    */
   readonly group?: InspectGroup;
+  /**
+   * WHICH OF THE SIX ATTRIBUTES THIS ROW IS, on the self-sheet's six only.
+   *
+   * The character sheet draws the six as icons, and an icon is chosen by KEY.
+   * Before this the client could only have matched the label — `'Strength'` —
+   * which charsheet.ts says in writing it must not do: the label is the
+   * server's prose, free to change, and a renamed stat would silently lose its
+   * icon. Absent on every other row, and absent from an older server, whose
+   * six then draw as the plain rows they always were.
+   *
+   * OPTIONAL AND OUTBOUND, so no `PROTOCOL_VERSION` bump: nothing validates a
+   * server frame against a schema, and a client that ignores the field draws
+   * what it drew before.
+   */
+  readonly stat?: 'str' | 'dex' | 'con' | 'mag' | 'wil' | 'cun';
 };
 
 export type InspectView = {

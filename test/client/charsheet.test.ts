@@ -102,12 +102,12 @@ import type {
  * `:1304-1321` (armour, defence, the three saves).
  */
 const SELF_ROWS = [
-  { label: 'Strength', value: '14', group: InspectGroup.General },
-  { label: 'Dexterity', value: '11', group: InspectGroup.General },
-  { label: 'Constitution', value: '13', group: InspectGroup.General },
-  { label: 'Magic', value: '10', group: InspectGroup.General },
-  { label: 'Willpower', value: '12', group: InspectGroup.General },
-  { label: 'Cunning', value: '10', group: InspectGroup.General },
+  { label: 'Strength', value: '14', group: InspectGroup.General, stat: 'str' },
+  { label: 'Dexterity', value: '11', group: InspectGroup.General, stat: 'dex' },
+  { label: 'Constitution', value: '13', group: InspectGroup.General, stat: 'con' },
+  { label: 'Magic', value: '10', group: InspectGroup.General, stat: 'mag' },
+  { label: 'Willpower', value: '12', group: InspectGroup.General, stat: 'wil' },
+  { label: 'Cunning', value: '10', group: InspectGroup.General, stat: 'cun' },
   { label: 'Accuracy', value: '19', group: InspectGroup.Attack },
   { label: 'Damage', value: '12–13', group: InspectGroup.Attack },
   { label: 'APR', value: '2', group: InspectGroup.Attack },
@@ -145,7 +145,15 @@ function selfView(over: Partial<InspectView> = {}): InspectView {
     hp: 41.000000000000014,
     maxHp: 58,
     effects: [],
-    rows: SELF_ROWS.map((row) => ({ label: row.label, value: row.value, group: row.group })),
+    // THE KEY TRAVELS TOO. The six carry `stat` on the wire (`InspectRow.stat`),
+    // and a fixture that dropped it would test the older server's plain rows
+    // while claiming to test this one's block.
+    rows: SELF_ROWS.map((row) => ({
+      label: row.label,
+      value: row.value,
+      group: row.group,
+      ...('stat' in row ? { stat: row.stat } : {}),
+    })),
     ...over,
   };
 }
@@ -256,9 +264,20 @@ function sections(rows: readonly SheetRow[]): readonly string[] {
   return rows.flatMap((row) => (row.kind === SheetRowKind.Section ? [row.label] : []));
 }
 
-/** Field labels, in the order they appear. */
+/**
+ * Field labels, in the order they appear — and the six attributes' names, which
+ * the server sends as fields and the sheet gathers into one `Stats` block. Read
+ * out of the block in its own order, so a block that reordered them still fails
+ * the order test below.
+ */
 function fieldLabels(rows: readonly SheetRow[]): readonly string[] {
-  return rows.flatMap((row) => (row.kind === SheetRowKind.Field ? [row.label] : []));
+  return rows.flatMap((row) =>
+    row.kind === SheetRowKind.Field
+      ? [row.label]
+      : row.kind === SheetRowKind.Stats
+        ? row.cells.map((cell) => cell.name)
+        : [],
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -1630,5 +1649,272 @@ describe('the character sheet card', () => {
     // and on this panel it answers about none at all.
     expect(described).toBe(answered);
     expect(answered).toBe(0);
+  });
+});
+
+describe('the six attributes', () => {
+  /**
+   * The General tab draws the six as one block of 32-pixel icons, two to a line
+   * — the talent page's icons, so both screens name an attribute the same way.
+   */
+  const general = (over: Partial<CharSheetView> = {}): readonly SheetRow[] =>
+    charSheetRows(sheet(over), SheetTab.General);
+
+  it('gathers the six into three lines of two, in the server’s order, where the first of them was', () => {
+    /**
+     * WITH A GENERAL ROW AFTER THE SIX, as the server sends: `Healing mod.`,
+     * the regen pair and `Vision range` follow them. `SELF_ROWS` has none, and
+     * against it a block appended after EVERY row lands in the same place as
+     * one placed where Strength was — true of the fixture, not the rule.
+     */
+    const trailing = { label: 'Healing mod.', value: '102%', group: InspectGroup.General };
+    const keyed = SELF_ROWS.map((row) => ({
+      label: row.label,
+      value: row.value,
+      group: row.group,
+      ...('stat' in row ? { stat: row.stat } : {}),
+    }));
+    const rows = general({
+      view: selfView({ rows: [...keyed.slice(0, 6), trailing, ...keyed.slice(6)] }),
+    });
+    const lines = rows.flatMap((row) => (row.kind === SheetRowKind.Stats ? [row] : []));
+    // THREE ROWS, so `place` can break a column between them like any others.
+    expect(lines.map((line) => line.cells.map((cell) => cell.name))).toEqual([
+      ['Strength', 'Dexterity'],
+      ['Constitution', 'Magic'],
+      ['Willpower', 'Cunning'],
+    ]);
+    expect(lines.flatMap((line) => line.cells.map((cell) => cell.value))).toEqual([
+      '14',
+      '11',
+      '13',
+      '10',
+      '12',
+      '10',
+    ]);
+    // CONTIGUOUS — nothing the server sent between the six splits the block.
+    const first = rows.indexOf(lines[0] as SheetRow);
+    expect(lines.map((line) => rows.indexOf(line))).toEqual([first, first + 1, first + 2]);
+    // AND NONE OF THEM IS ALSO A PLAIN ROW — one attribute, drawn once.
+    const plain = rows.flatMap((row) => (row.kind === SheetRowKind.Field ? [row.label] : []));
+    expect(plain).not.toContain('Strength');
+    // WHERE THE FIRST WAS: the block, then the row the server sent after the six.
+    const after = rows[first + 3];
+    expect(after?.kind === SheetRowKind.Field ? after.label : null).toBe('Healing mod.');
+  });
+
+  it('stays tidy — the block costs the sheet at most one more line than six plain rows', () => {
+    // Six icon lines would push everything under them 132 pixels down the
+    // column. Two to a line, the whole panel grows by thirty.
+    const keyless = selfView({
+      rows: SELF_ROWS.map((row) => ({ label: row.label, value: row.value, group: row.group })),
+    });
+    const size = { width: 1280, height: 720, top: 20, bottom: 680 };
+    const plain = charSheetRect({ ...size, pages: pages({ view: keyless }) });
+    const iconed = charSheetRect({ ...size, pages: pages() });
+    if (plain === null || iconed === null) throw new Error('no rect');
+    expect(iconed.h - plain.h).toBeGreaterThan(0);
+    expect(iconed.h - plain.h).toBeLessThanOrEqual(36);
+  });
+
+  it('never costs the sheet a row the plain six would have shown', () => {
+    /**
+     * ═══ THE ICONS ARE THIRTY PIXELS TALLER, AND AT THE FLOOR THAT MATTERED ═══
+     * At 640x320 — in the band `panelBand` actually hands the sheet — six plain
+     * rows poured into two columns, and the icon lines did not fit, so the whole
+     * sheet fell back to its identity block: Life, Reagents and all six gone.
+     * Every word the plain sheet draws must still be drawn, at every size.
+     */
+    const words = (over: Partial<CharSheetView>, width: number, height: number, top: number) => {
+      const texts: string[] = [];
+      const ctx = new Proxy(
+        {},
+        {
+          get: (_target, prop: string) => {
+            if (prop === 'measureText') return (text: string) => ({ width: text.length * 6 });
+            if (prop === 'fillText')
+              return (text: string) => {
+                texts.push(text);
+              };
+            if (prop === 'canvas') return undefined;
+            return () => {};
+          },
+          set: () => true,
+        },
+      ) as unknown as CanvasRenderingContext2D;
+      const rect = charSheetRect({ width, height, top, bottom: height - 91, pages: pages(over) });
+      if (rect === null) return texts;
+      drawCharSheet({
+        tab: SheetTab.General,
+        ctx,
+        sprites: { sprite: () => undefined },
+        rect,
+        rows: charSheetRows(sheet(over), SheetTab.General),
+        hoveredClose: false,
+      });
+      return texts;
+    };
+    const keyless = {
+      view: selfView({
+        rows: SELF_ROWS.map((row) => ({ label: row.label, value: row.value, group: row.group })),
+      }),
+    };
+    for (const [width, height, top] of [
+      [640, 320, 17],
+      [640, 320, 63],
+      [772, 367, 17],
+      [772, 367, 63],
+      [1280, 720, 17],
+    ] as const) {
+      const plain = words(keyless, width, height, top);
+      const pictured = new Set(words({}, width, height, top));
+      const lost = plain.filter((text) => !pictured.has(text));
+      expect(lost, `${String(width)}x${String(height)} from ${String(top)}`).toEqual([]);
+    }
+  });
+
+  it('keeps the six together in one column wherever a column can hold them', () => {
+    // Two lines at the foot of one column and the third at the head of the next
+    // read as two blocks. Measured by where the icons are drawn: one column of
+    // lines is two distinct icon x positions, a block split over two is four.
+    //
+    // WITH THE GENERAL PAGE THE SERVER ACTUALLY SENDS — the six, then the four
+    // derived rows under them. `SELF_ROWS` stops at the six, and its page is
+    // short enough that the block fits whole whether or not it is kept together.
+    const keyed = SELF_ROWS.map((row) => ({
+      label: row.label,
+      value: row.value,
+      group: row.group,
+      ...('stat' in row ? { stat: row.stat } : {}),
+    }));
+    const derived = [
+      { label: 'Healing mod.', value: '102%', group: InspectGroup.General },
+      { label: 'Life regen', value: '0.5', group: InspectGroup.General },
+      { label: '(with heal mod)', value: '0.51', group: InspectGroup.General },
+      { label: 'Vision range', value: '10', group: InspectGroup.General },
+    ];
+    const over = {
+      view: selfView({ rows: [...keyed.slice(0, 6), ...derived, ...keyed.slice(6)] }),
+    };
+    const iconXs = (width: number, height: number, top: number): number => {
+      const xs = new Set<number>();
+      const ctx = new Proxy(
+        {},
+        {
+          get: (_target, prop: string) => {
+            if (prop === 'measureText') return (text: string) => ({ width: text.length * 6 });
+            if (prop === 'drawImage')
+              return (...args: unknown[]) => {
+                xs.add(Number(args[1]));
+              };
+            if (prop === 'canvas') return undefined;
+            return () => {};
+          },
+          set: () => true,
+        },
+      ) as unknown as CanvasRenderingContext2D;
+      const rect = charSheetRect({ width, height, top, bottom: height - 91, pages: pages(over) });
+      if (rect === null) throw new Error('no rect');
+      drawCharSheet({
+        tab: SheetTab.General,
+        ctx,
+        sprites: {
+          sprite: (id: string) =>
+            id.startsWith('icon_stat_') ? { id, image: {}, w: 64, h: 64 } : undefined,
+        } as never,
+        rect,
+        rows: general(over),
+        hoveredClose: false,
+      });
+      return xs.size;
+    };
+    // Heights where the fixture's page does NOT fit whole in column one, so the
+    // block has to choose — measured by sweeping, where a split drew four.
+    expect(iconXs(772, 350, 17)).toBe(2);
+    expect(iconXs(772, 380, 63)).toBe(2);
+    expect(iconXs(1280, 720, 17)).toBe(2);
+  });
+
+  it('picks each icon by the row’s key, never by its label', () => {
+    // The label is the server's prose. A renamed attribute must keep its icon,
+    // and a label that merely LOOKS like a stat must not borrow one.
+    const rows = general({
+      view: selfView({
+        rows: [
+          { label: 'Brawn', value: '14', group: InspectGroup.General, stat: 'str' },
+          { label: 'Strength', value: '9', group: InspectGroup.General },
+        ],
+      }),
+    });
+    const block = rows.find((row) => row.kind === SheetRowKind.Stats);
+    if (block?.kind !== SheetRowKind.Stats) throw new Error('no block');
+    expect(block.cells).toEqual([
+      { name: 'Brawn', value: '14', icon: 'icon_stat_strength', code: 'STR' },
+    ]);
+    expect(rows).toContainEqual({ kind: SheetRowKind.Field, label: 'Strength', value: '9' });
+  });
+
+  it('leaves an older server’s six as the plain rows they always were', () => {
+    const rows = general({
+      view: selfView({
+        rows: SELF_ROWS.map((row) => ({ label: row.label, value: row.value, group: row.group })),
+      }),
+    });
+    expect(rows.some((row) => row.kind === SheetRowKind.Stats)).toBe(false);
+    const six: readonly string[] = SELF_ROWS.slice(0, 6).map((row) => row.label);
+    expect(fieldLabels(rows).filter((label) => six.includes(label))).toEqual(six);
+  });
+
+  it('draws the art at exactly thirty-two pixels, and the code when there is none', () => {
+    const draw = (sprite: (id: string) => unknown): { images: number[]; texts: string[] } => {
+      const images: number[] = [];
+      const texts: string[] = [];
+      const ctx = new Proxy(
+        {},
+        {
+          get: (_target, prop: string) => {
+            if (prop === 'measureText') return (text: string) => ({ width: text.length * 6 });
+            if (prop === 'fillText')
+              return (text: string) => {
+                texts.push(text);
+              };
+            if (prop === 'drawImage')
+              return (...args: unknown[]) => {
+                images.push(Number(args[3]), Number(args[4]));
+              };
+            if (prop === 'canvas') return undefined;
+            return () => {};
+          },
+          set: () => true,
+        },
+      ) as unknown as CanvasRenderingContext2D;
+      const rect = charSheetRect({
+        width: 1280,
+        height: 720,
+        top: 20,
+        bottom: 680,
+        pages: pages(),
+      });
+      if (rect === null) throw new Error('no rect');
+      drawCharSheet({
+        tab: SheetTab.General,
+        ctx,
+        sprites: { sprite } as never,
+        rect,
+        rows: general(),
+        hoveredClose: false,
+      });
+      return { images, texts };
+    };
+
+    const art = draw((id) =>
+      id.startsWith('icon_stat_') ? { id, image: {}, w: 64, h: 64 } : undefined,
+    );
+    expect(art.images).toEqual(Array.from({ length: 12 }, () => 32));
+
+    const bare = draw(() => undefined);
+    expect(bare.images).toEqual([]);
+    for (const code of ['STR', 'DEX', 'CON', 'MAG', 'WIL', 'CUN'])
+      expect(bare.texts).toContain(code);
   });
 });
