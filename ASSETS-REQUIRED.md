@@ -258,60 +258,56 @@ and `img(40, 40)` for the plates — so the placeholder pass changes there first
 
 ---
 
-## `icon_monster_bear_down` — one talent icon, the only thing outstanding
+## Delivered — the art-completion pass (2026-09-12)
 
-`npm run art:needs` reports exactly one missing id and this is it. The talent
-shipped in the same commit; the icon did not, so the report is the record.
+**Twenty-six pieces landed in one pass**, closing every missing-file commission
+this file carried. They were produced in `../art-completion-production/` (full
+prompt set in its `PROMPTS.md`, QA contact sheets and a machine report in
+`qa/`) and staged under `client/public/assets/`. Every final is straight RGBA8,
+fully opaque, at most 15 colours, with the exact `#0A0813` outer border.
 
-**What it is:** the Index Husk Elite's stun, ported from `npcs.lua:191-217`
-(the ghoul's `T_STUN`). A bruiser bearing its weight down on something.
+The per-item briefs that used to sit here — what each weapon, status and tool
+should look like — described art that now exists, so they are gone from the
+worklist. Their text is preserved in that `PROMPTS.md` and in git history.
 
-**Cut it at 64x64**, matching its six siblings — `icon_monster_breaching_blow`,
-`_clear_the_altar`, `_efface`, `_grasping_hold`, `_rush`, `_uncorroborated`,
-all 64x64 and all derived.
+| family | ids | runtime destination |
+|---|---|---|
+| talents (64x64) | `icon_active_phase_door_rune`, `icon_active_shielding_rune`, `icon_monster_bear_down` | `items/active/`, `items/monster/` |
+| statuses (24x24) | `icon_status_blinded`, `icon_status_damage_shield`, `icon_status_infusion_saturation`, `icon_status_out_of_phase`, `icon_status_pinned`, `icon_status_rune_saturation` | `ui/icons/status/production/` |
+| equipment (64x64) | `item_service_baton`, `item_bailiffs_hook`, `item_writ_of_seizure`, `item_witness_locket`, `item_archivists_mantle`, `item_evidence_belt`, `item_handlers_gloves`, `item_bailiffs_maul`, `item_paired_shivs`, `item_coroners_apron`, `item_tourniquet_band` | `items/equipment/` |
+| attributes (64x64) | `icon_stat_strength`, `icon_stat_dexterity`, `icon_stat_magic`, `icon_stat_willpower`, `icon_stat_cunning`, `icon_stat_constitution` | `ui/icons/stats/` |
 
-**It is the lowest-priority icon in the game, and that is worth writing down so
-nobody hurries it.** A monster talent has `classId: null` and appears in no
-loadout and no tree, so this icon reaches no player screen today — the talent
-panel and the hotbar draw what a PLAYER can learn. It exists because every
-talent module declares an `iconId` and the manifest convention is that a
-declared id has a file.
+**The eleven equipment ids moved from `PENDING_ICON_IDS` to `KNOWN_ICON_IDS`**
+(`src/server/content/items.ts`), which is the signal the commission register was
+built around: the two lists are disjoint, and a move is how a commission closes.
+`PENDING_ICON_IDS` is now empty — the mechanism, not a dead list.
 
-**Acceptance test:** `npm run art:needs` reports `missing art: 0`.
+### A second gap the same pass exposed: 72 finished icons that never loaded
 
----
+Not a missing-file problem, and `npm run art:needs` could not see it. All 64
+`icon_passive_*` and all 8 `icon_sustain_*` PNGs were already in the manifest and
+on disk, but `NEEDED_ASSET_PREFIXES` (`src/client/main.ts`) admitted only
+`icon_active_`. Every passive and sustain in the Talent panel drew its first
+letter — 42 on one Alchemist screenshot. The prefixes are added, and
+`test/client/talent-icon-loading.test.ts` now joins what a talent names to what
+the client loads, which is the seam this lived in.
 
-## `icon_status_infusion_saturation` — the second outstanding icon
+### Still to place: the six attribute icons
 
-`npm run art:needs` now reports two missing ids. This is the new one, and
-unlike `icon_monster_bear_down` above it DOES reach a player screen.
+They are registered and loaded but **not yet drawn anywhere**, so
+`npm run art:needs` lists all six under `unused`. That is deliberate, not an
+oversight. At `hudScale` 1 — a 1080p desktop and the Discord activity iframe —
+a 16px icon is 16 screen pixels, and at that size strength and constitution read
+as a brown and a red blob and dexterity as a grey smudge (see
+`qa/attribute_icons_16px_read_proof.png`). The stat rail is 78px wide and full,
+so the icon cannot sit beside the `STR` code without widening a panel that was
+already reported as too large. Where they go is a design call awaiting an answer;
+a 32px character-sheet treatment reads well at every scale.
 
-**What it is:** Infusion Saturation, ported from `other.lua:97-111`
-(`EFF_INFUSION_COOLDOWN`, "the more you use infusions, the longer they will take
-to recharge"). A detrimental status that stacks: each infusion you drink adds
-one to it, and every infusion's next cooldown is that much longer.
-
-**What it should look like:** upstream's own is `effects/infusion_cooldown.png`,
-which we may not copy — `COPYING-MEDIA` forbids redistributing t-engine4 art and
-`reference/` is read-only. Draw it fresh. Something at the wrong end of a
-draught: a tipped vial, a dry syringe, a stain spreading. It reads on a body
-that has been leaning on its buttons.
-
-**Cut it at 64x64**, matching the eighteen `icon_status_*` files already on
-disk.
-
-**It is drawn where the other statuses are** — the badge strip on the party
-pane and the hostile card — so until the file exists the player sees the
-two-letter fallback `Sa`, which is legible and says nothing. That is worse here
-than for a monster talent icon, because this status is one a player is meant to
-PLAN AROUND: the whole mechanic is that you can see the tax rising and choose
-whether to pay it again.
-
-**Acceptance test:** `npm run art:needs` reports `missing art: 0`.
 
 ## `icon_ui_cog` — the case log's settings button, and it is a nicety
 
-**Not outstanding in the sense the two above are.** The button is DRAWN — a hub,
+**Still open, but not outstanding in the sense a missing file is.** The button is DRAWN — a hub,
 a bore and six teeth, at thirteen pixels — so it is visible, pressable and
 correct on a bare clone with no art at all. `npm run art:needs` does not demand
 it, because no source line names it.
@@ -329,168 +325,7 @@ survives being tinted gold when the menu under it is open.
 **Cut it at 64x64**, matching every other `icon_ui_*` on disk; the header scales
 it down.
 
-**Until it exists nothing is lost**, which is why this is at the bottom of the
-file rather than the top. `drawLogCog` in `src/client/ui/caselog.ts` is the
+**Until it exists nothing is lost**, which is why it is the last open item in
+this file rather than the first. `drawLogCog` in `src/client/ui/caselog.ts` is the
 fallback, and it is the same bargain `drawLogGrip` above it makes: a widget that
 needs art to be USABLE cannot ship behind a missing file.
-
-## The first three weapons — `item_service_baton`, `item_bailiffs_hook`, `item_writ_of_seizure`
-
-**The game had no weapon slot at all until now**, and the reason recorded in the
-code was art: *"no `icon_weapon_*` file exists, and an unresolved key renders as
-the LOUD violet missing-asset box on a bare clone."*
-
-**That reason had rotted.** `src/client/ui/inventory.ts:2754-2763` draws the
-item's INITIAL when a sprite is missing, and its own note calls a bare clone
-*"the ORDINARY state rather than an edge case"* — the same fallback the hotbar
-and the doll cell make. So these three ship now and read as `S`, `B` and `W` in
-a bag until the art lands. Nothing is violet and nothing is invisible.
-
-They are listed in `PENDING_ICON_IDS` (src/server/content/items.ts), which is
-the commission register: an id must be in that list or in `KNOWN_ICON_IDS`, so a
-typo is still a throw at boot rather than a letter nobody notices.
-
-**What they are.** Constabulary tools, not fantasy swords — the game's weapons
-should look like something a case officer would actually carry:
-
-| id | tier | what it is |
-|---|---|---|
-| `item_service_baton` | common | A turned hardwood baton, brass ferrule, leather wrist loop. Municipal issue, well used. |
-| `item_bailiffs_hook` | uncommon | A short hooked bar for forcing a door or a collar — utilitarian, blackened steel, a worn grip. |
-| `item_writ_of_seizure` | rare | A rolled warrant bound in wax and wire, carried like a weapon because here it is one. Paper and seals, faintly luminous. |
-
-**Cut them at 64x64**, matching the twenty-three `item_*` files already on disk.
-
-**Acceptance:** each id resolves in the manifest, and moving it from
-`PENDING_ICON_IDS` to `KNOWN_ICON_IDS` keeps `npm run check` green — there is a
-test asserting the two lists are disjoint, so the move is the signal that the art
-arrived.
-
-## The second slot batch — neck, cloak, belt, hands
-
-Four more of ToME's fifteen worn inventories (`load.lua:124, :127, :129, :130`),
-each with one item so the slot has something to find. Same arrangement as the
-weapons above: the ids are in `PENDING_ICON_IDS` and read as a letter until the
-art lands.
-
-| id | slot | tier | what it is |
-|---|---|---|---|
-| `item_witness_locket` | neck | common | A hinged tin locket on a cord, a stranger's photograph inside. Worn by someone who took a statement they could not forget. |
-| `item_archivists_mantle` | cloak | uncommon | A heavy dust-cape, ink-stained at the cuffs, shoulders worn pale from a strap. |
-| `item_evidence_belt` | belt | common | A wide leather belt hung with numbered brass tags and empty loops. |
-| `item_handlers_gloves` | hands | uncommon | Close-fitting gloves, palms reinforced, one fingertip cut away for a pen. |
-
-**Cut them at 64x64**, matching every other `item_*` file.
-
-**Why four at once:** the paper doll's capacity is `COLS * DOLL_ROWS` minus the
-four cells the portrait occupies — eight at three rows, twelve at four. A fourth
-row buys exactly four slots, so adding them one at a time would leave the grid
-ragged for two commits.
-
-**The doll now sheds its tail row at the 480 floor** and says so in a line of
-grey text. That is the designed drop policy and there is a test that a shed row
-is always accompanied by that note — a slot may be held back, never silently
-lost.
-
-## The two-hander and the off hand — `item_bailiffs_maul`, `item_paired_shivs`
-
-**The rule these two exist to teach.** `slot_forbid` is ported
-(`engine/interface/ActorInventory.lua:437-457`): a two-hander refuses to go on
-while the off hand is full, and anything for the off hand refuses while the
-two-hander is held. Upstream carries the rule on exactly one weapon family —
-`BASE_GREATSWORD`, `2hswords.lua:23` — and the whole trade is legible only if the
-player can see, at a glance, that one weapon is *big* and the other is *a pair*.
-The silhouette is doing the teaching here, more than for any other item so far.
-
-Both are in `PENDING_ICON_IDS` (`src/server/content/items.ts`) and render as a
-letter in the cell until the art lands.
-
-| id | tier | what it is |
-|---|---|---|
-| `item_bailiffs_maul` | rare | A long two-handed enforcement maul — a squared iron head on a shafted haft, municipal seal stamped into the cheek. It should read as needing a shoulder behind it. Read the length: this is the only item in the game whose picture has to say "both hands" before the tooltip does. |
-| `item_paired_shivs` | uncommon | TWO short blades drawn as a pair — crossed, or one behind the other — improvised from case-file tools: a letter opener and a filed-down pen knife, taped grips. The pairing is the whole read; a single blade here would be indistinguishable from a one-handed weapon. |
-
-**Cut them at 64x64**, matching every other `item_*` file on disk.
-
-**Acceptance:** as for the first three weapons — each id resolves in the
-manifest, and moving it from `PENDING_ICON_IDS` to `KNOWN_ICON_IDS` keeps
-`npm run check` green.
-
-## The two vitals — `item_coroners_apron`, `item_tourniquet_band`
-
-**Why these two exist.** `wielder.max_life` and `wielder.life_regen` are the two
-most common things a piece of gear does in `tome/data` — 39 and 42 items — and
-this game had both mechanics ported and neither reachable from an item. These
-are the first two pieces of gear whose entire effect is a pool rather than a
-combat getter, so their pictures have to say "you last longer" and not "you hit
-harder": nothing on them is sharp.
-
-Both are in `PENDING_ICON_IDS` (`src/server/content/items.ts`) and render as a
-letter in the cell until the art lands.
-
-| id | tier | what it is |
-|---|---|---|
-| `item_coroners_apron` | common | A heavy waxed-canvas apron over the chest, dark and practical, straps crossed at the back. Stains that have been scrubbed and did not come out. It is a BODY piece that is not armour — protection from the work rather than from a blow. |
-| `item_tourniquet_band` | rare | A wound strap for the hand and forearm — a buckled leather band with a windlass rod through it, cord neatly wrapped. Field-surgical, not decorative. It should read as something you would use on yourself, mid-corridor, in a hurry. |
-
-**Cut them at 64x64**, matching every other `item_*` file on disk.
-
-**Acceptance:** as for the weapons — each id resolves in the manifest, and
-moving it from `PENDING_ICON_IDS` to `KNOWN_ICON_IDS` keeps `npm run check`
-green.
-
----
-
-## `icon_status_blinded` — the status that takes the screen away
-
-**What it is:** Blinded, ported from `physical.lua:640-663`
-(`EFF_BLINDED`, *"The target is blinded, unable to see anything."*). Applied by
-the High Inquisitor's orb — a quarter of connecting hits, three turns, from
-`cursed/darkness.lua:399-401`.
-
-**What it does to the player, which is the thing to draw against:** sight radius
-drops to its floor of one tile. The playfield goes dark past your own feet, the
-server stops sending you bodies you cannot see, and the character sheet's Vision
-range row reads 1. In a party your friends still see for you; solo it is the
-heaviest status in the game.
-
-**What it should look like:** not an eye with a line through it — every game
-draws that. This one is an archive idiom: a page of citations gone to solid
-black, or a reader's lamp snuffed with the smoke still rising. It wants to read
-as *information withheld* rather than as injury, because that is what the Index
-does. Keep it legible at 24 pixels on a badge strip beside `Cn` and `St`.
-
-**Cut it at 64x64**, matching the nineteen `icon_status_*` files already on disk.
-
-**Until it exists** the player sees the two-letter fallback `Bd`, which is
-legible and says nothing. That is worse here than for most statuses, because
-this is one a player has to recognise instantly to know why the screen changed.
-
-**Acceptance:** the id resolves in the manifest and `npm run check` stays green.
-
----
-
-## `icon_status_pinned` — the status that takes your feet and not your turn
-
-**What it is:** Pinned, ported from `physical.lua:982-998` (`EFF_PINNED`,
-*"The target is pinned to the ground, unable to move."*). Applied by the Writ of
-Seizure — a tenth of connecting blows, three turns, from `egos/ammo.lua:509-518`.
-
-**What it does, which is the thing to draw against:** you can still fight, cast
-and be healed. You cannot LEAVE. Against something in melee that costs you
-nothing; against something shooting from range it is most of the answer to it.
-It is a positional status and the icon should read as *held in place* rather
-than as damage or as incapacity.
-
-**What it should look like:** the Inner Datum idiom is administrative rather
-than physical — a seal pressed through a page and into the desk, a document
-spiked on a bill-file, a stamp that has gone through the paper. Avoid chains and
-manacles; nothing in this world restrains you with metal, it restrains you with
-paperwork. Keep it legible at 24 pixels beside `Bd` and `St`.
-
-**Cut it at 64x64**, matching the twenty `icon_status_*` files already on disk.
-
-**Until it exists** the player sees the two-letter fallback `Pi` — `Pn` is
-Off-balance's.
-
-**Acceptance:** the id resolves in the manifest and `npm run check` stays green.

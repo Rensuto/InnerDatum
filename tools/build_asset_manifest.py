@@ -27,26 +27,58 @@ ASSETS = REPO / "client" / "public" / "assets"
 OUT = ASSETS / "manifest.placeholders.json"
 
 # provenance:
-#   derived  — cropped/composited from real Outer Index art. FINAL QUALITY.
+#   derived  — recovered, cropped, composited, or deterministically prepared
+#              from an approved project source master. FINAL QUALITY.
 #   stand-in — procedurally generated. Replace with hand-drawn art.
 #   upscaled — real art, but DRAWN FOR A SMALLER CELL and doubled to fit this
 #              one. Not final: the pixels are duplicated, not painted. This is
 #              DETECTED rather than declared (see `is_upscaled`), so it clears
 #              itself the moment native art is dropped in its place.
 PROVENANCE = [
-    ("characters/chr_player_watchman_s.png",        "derived",  "crop col0 chr_player_watchman_s"),
-    ("characters/chr_player_inspector_s.png",       "derived",  "crop col0 chr_player_detective_s"),
-    ("characters/chr_player_enforcer_s.png",        "derived",  "crop col0 chr_player_enforcer_s"),
-    ("characters/chr_player_voidling_s.png",        "derived",  "crop col0 chr_player_voidling_s"),
-    ("characters/chr_player_alchemist_s.png",       "derived",  "paper-doll composite"),
-    ("characters/chr_player_cipher_clerk_s.png",    "derived",  "paper-doll composite"),
+    ("items/redactor/",                          "derived",  "ImageGen source + deterministic native reduction"),
+    ("items/core-active/",                       "derived",  "ImageGen source + deterministic native reduction"),
+    ("items/monster/",                           "derived",  "ImageGen source + deterministic native reduction"),
+    ("items/active/",                            "derived",  "ImageGen source + deterministic native reduction"),
+    ("items/sustain/",                           "derived",  "ImageGen source + deterministic native reduction"),
+    ("items/passive/",                           "derived",  "ImageGen source + deterministic native reduction"),
+    # The eleven commissioned equipment icons (weapons, belt, gloves, apron...).
+    # Without this row they match the broad `items/` stand-in row below and are
+    # reported as procedural slot silhouettes - finished art counted as debt.
+    ("items/equipment/",                         "derived",  "ImageGen source + deterministic native reduction"),
+    ("ui/icons/status/production/",              "derived",  "native code-authored status glyph"),
+    # The six attribute icons for the stat rail. Same reason as `items/equipment/`:
+    # the broad `ui/` row is a stand-in row and would claim them.
+    ("ui/icons/stats/",                          "derived",  "ImageGen source + deterministic native reduction"),
+    ("characters/chr_player_watchman_s.png",        "derived",  "direct high-resolution source-cell rebake"),
+    ("characters/chr_player_inspector_s.png",       "derived",  "direct high-resolution source-cell rebake"),
+    ("characters/chr_player_enforcer_s.png",        "derived",  "direct high-resolution source-cell rebake"),
+    ("characters/chr_player_voidling_s.png",        "derived",  "direct high-resolution source-cell rebake"),
+    ("characters/chr_player_alchemist_s.png",       "derived",  "ImageGen source + deterministic native reduction"),
+    ("characters/chr_player_cipher_clerk_s.png",    "derived",  "ImageGen source + deterministic native reduction"),
     ("characters/chr_npc_bent_watchman_s.png",      "derived",  "paper-doll composite"),
+    ("characters/chr_player_redactor_s.png",        "derived",  "ImageGen source + deterministic native reduction"),
+    ("characters/chr_player_redactor_downed_s.png", "derived",  "ImageGen source + deterministic native reduction"),
+    ("characters/chr_npc_counter_keeper_s.png",     "derived",  "ImageGen source + deterministic native reduction"),
+    ("characters/chr_player_watchman_downed_s.png", "derived", "authored prone ImageGen source + deterministic native reduction"),
+    ("characters/chr_player_inspector_downed_s.png","derived", "authored prone ImageGen source + deterministic native reduction"),
+    ("characters/chr_player_alchemist_downed_s.png","derived", "authored prone ImageGen source + deterministic native reduction"),
+    ("enemies/enemy_index_husk_s.png",              "derived",  "direct high-resolution source-cell rebake"),
+    ("enemies/enemy_index_eidolon_s.png",           "derived",  "direct high-resolution source-cell rebake"),
+    ("enemies/enemy_index_wraith_s.png",            "derived",  "direct high-resolution source-cell rebake"),
+    ("enemies/enemy_disgraced_inspector_s.png",     "derived",  "direct high-resolution source-cell rebake + authored palette"),
+    ("enemies/enemy_high_inquisitor_s.png",         "derived",  "direct high-resolution alpha-master rebake"),
+    ("enemies/enemy_index_cairn_s.png",             "derived",  "ImageGen source + deterministic native reduction"),
+    ("enemies/enemy_index_glut_s.png",              "derived",  "ImageGen source + deterministic native reduction"),
+    ("enemies/enemy_index_husk_elite_s.png",        "derived",  "ImageGen source + deterministic native reduction"),
     ("enemies/",                                    "derived",  "paper-doll composite"),
-    ("characters/chr_player_watchman_downed_s.png", "stand-in", "rotated token + contact outline"),
-    ("characters/chr_player_inspector_downed_s.png","stand-in", "rotated token + contact outline"),
-    ("characters/chr_player_alchemist_downed_s.png","stand-in", "rotated token + contact outline"),
-    # The overworld tileset is hand-drawn to ART-OVERWORLD.md, like the icons.
-    ("tiles/",                                      "derived",  "hand-drawn overworld tileset"),
+    ("ui/icons/characters/icon_character_the_redactor.png", "derived", "ImageGen source + deterministic native reduction"),
+    ("ui/pips/ui_pip_ink.png",                      "derived",  "ImageGen source + deterministic native reduction"),
+    ("tiles/tile_ow_landmark_redaction.png",        "derived",  "ImageGen source + deterministic native reduction"),
+    # Longest-prefix matching makes the two scale-specific rows win over the
+    # broad world family.
+    ("tiles/world-settlement/",                     "derived",  "ImageGen roof master + deterministic 4x4 phases"),
+    ("tiles/local/",                                "derived",  "native 64px local terrain remaster"),
+    ("tiles/",                                      "derived",  "authored overworld terrain pipeline"),
     ("branding/",                                   "stand-in", "procedural emblem"),
     ("items/",                                      "stand-in", "procedural slot silhouette"),
     ("props/",                                      "stand-in", "procedural"),
@@ -73,6 +105,8 @@ MILESTONE = [
     ("items/",               "M6"),
     ("ui/chrome/ui_item_frame", "M6"),
     ("ui/chrome/ui_inventory",  "M6"),
+    ("tiles/world-settlement/", "M7"),   # connected world-map roof masses
+    ("tiles/local/",         "M7"),   # player-scale common/inner terrain
     ("tiles/",               "M7"),   # the overworld
 ]
 
@@ -86,7 +120,10 @@ MILESTONE = [
 # mark on a CELL -- the targeting squares, the area fill, the token rings, the
 # downed silhouette, the ping -- drawn on the map grid at TILE_PX. The frames,
 # chrome and icons are interface art drawn at `hudScale`, a different number.
-MAP_SPACE = ("characters/", "enemies/", "props/", "ui/markers/")
+MAP_SPACE = (
+    "characters/", "enemies/", "props/", "ui/markers/",
+    "tiles/local/", "tiles/world-settlement/",
+)
 
 
 def is_upscaled(im: Image.Image, rel: str) -> bool:
@@ -140,7 +177,8 @@ def build():
     doc = {
         "_comment": (
             "Generated by tools/build_asset_manifest.py. 'derived' assets are "
-            "cropped or composited from the author's existing Outer Index art "
+            "recovered, cropped, composited, or deterministically prepared "
+            "from an approved project source master "
             "and are final quality. 'stand-in' assets are procedurally "
             "generated placeholders: correct dimensions, correct names, correct "
             "palette, meant to be overwritten by hand-drawn art. Replacing one "
@@ -175,7 +213,7 @@ if __name__ == "__main__":
 
     c = doc["counts"]
     print(f"{c['total']} assets indexed -> {OUT.relative_to(REPO)}")
-    print(f"  {c['derived_final']:3d} derived from real art (final quality)")
+    print(f"  {c['derived_final']:3d} derived final assets")
     print(f"  {c['stand_in_replaceable']:3d} procedural stand-ins (replace at leisure)")
     print(f"  {c['upscaled_for_the_cell']:3d} drawn for the old cell and doubled (needs native art)")
     print("  by milestone: " + ", ".join(

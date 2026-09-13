@@ -26,9 +26,12 @@ import type { Item } from '../../src/server/content/items.ts';
  * repository has no art at all and must still run. So a test that resolved icon
  * ids by reading the disk would pass vacuously on exactly the machine that most
  * needs the check (CI, and any contributor who is not the author). The
- * COMMITTED inventory of what art exists is `ASSETS-REQUIRED.md:84-109`, which
- * lists all 23 `item_*` ids and their sizes; the 22 ids below were taken from
- * there by hand. (`client/public/assets/manifest.placeholders.json` is NOT
+ * COMMITTED inventory of what art exists is `ASSETS-REQUIRED.md`, and the ids
+ * below were taken from it by hand. (This cited a line range and two counts —
+ * "all 23", "the 22 below" — and both went stale the day eleven commissions
+ * were delivered at once. A count restated in prose is a second copy of the
+ * list with nothing to keep it in step; the list itself is the count.)
+ * (`client/public/assets/manifest.placeholders.json` is NOT
  * committed — `.gitignore:56` ignores that whole directory — so it cannot be
  * anybody's cross-check, whatever a fresh working tree happens to contain.)
  *
@@ -47,6 +50,22 @@ const MANIFEST_ITEM_ICONS: readonly string[] = [
   // docs/assets-needed.md:290 and docs/art-pipeline.md:322 and is loaded by the
   // `icon_active_` prefix the hotbar already pulls.
   'icon_active_alchemic_vial',
+  // ═══ THE ELEVEN COMMISSIONS, DELIVERED ═══
+  // Weapons, belt, gloves, apron, the rest — authored ahead of their art under
+  // `PENDING_ICON_IDS`, drawn in one pass to `items/equipment/` (64x64), and
+  // moved across. Added here BY HAND for the reason this list exists at all: a
+  // copy that one edit can change on both sides proves nothing.
+  'item_archivists_mantle',
+  'item_bailiffs_hook',
+  'item_bailiffs_maul',
+  'item_coroners_apron',
+  'item_evidence_belt',
+  'item_handlers_gloves',
+  'item_paired_shivs',
+  'item_service_baton',
+  'item_tourniquet_band',
+  'item_witness_locket',
+  'item_writ_of_seizure',
   'item_inquisitors_breeches',
   'item_inquisitors_cipher',
   'item_inquisitors_cowl',
@@ -150,11 +169,15 @@ describe('the item catalogue', () => {
     expect(ITEMS).toHaveLength(34);
     expect(ITEMS.filter((item) => item.slot !== undefined)).toHaveLength(33);
     expect(ITEMS.filter((item) => item.use !== undefined)).toHaveLength(1);
-    // 23 DRAWN ICONS still, and 26 items: the three weapons name commissioned
-    // ids instead. The 23rd icon is the ability vial (see the list above) and
-    // the draught is what names it — the first thing in this game you buy in
-    // order to SPEND it.
-    expect(MANIFEST_ITEM_ICONS).toHaveLength(23);
+    // ═══ ONE ICON PER ITEM — DRAWN OR COMMISSIONED ═══
+    // This read "23 drawn icons still, and 26 items", and had already gone stale
+    // before the art arrived: the catalogue grew past it while eleven commissioned
+    // ids sat in `PENDING_ICON_IDS`. So it is asserted as the RELATIONSHIP rather
+    // than as a literal. The drawn and commissioned lists together account for
+    // every item exactly once — which stays true when the next item is authored
+    // ahead of its art, and is what `PENDING_ICON_IDS` exists to allow. Pinning
+    // the drawn count alone would make that legitimate step a test failure.
+    expect(MANIFEST_ITEM_ICONS.length + PENDING_ICON_IDS.length).toBe(ITEMS.length);
     expect(ITEM_CATALOGUE.size).toBe(34);
   });
 

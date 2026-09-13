@@ -822,6 +822,12 @@ const RING_BLEED = 2;
 
 export const KNOWN_ICON_IDS: readonly string[] = Object.freeze([
   'icon_active_alchemic_vial',
+  'item_archivists_mantle',
+  'item_bailiffs_hook',
+  'item_bailiffs_maul',
+  'item_coroners_apron',
+  'item_evidence_belt',
+  'item_handlers_gloves',
   'item_inquisitors_breeches',
   'item_inquisitors_cipher',
   'item_inquisitors_cowl',
@@ -837,6 +843,9 @@ export const KNOWN_ICON_IDS: readonly string[] = Object.freeze([
   'item_inspectors_signet',
   'item_inspectors_slacks',
   'item_leather_chest',
+  'item_paired_shivs',
+  'item_service_baton',
+  'item_tourniquet_band',
   'item_watchmans_badge',
   'item_watchmans_boots',
   'item_watchmans_brass_ring',
@@ -844,6 +853,8 @@ export const KNOWN_ICON_IDS: readonly string[] = Object.freeze([
   'item_watchmans_cap',
   'item_watchmans_coat',
   'item_watchmans_trousers',
+  'item_witness_locket',
+  'item_writ_of_seizure',
 ]);
 
 /**
@@ -876,20 +887,16 @@ export const KNOWN_ICON_IDS: readonly string[] = Object.freeze([
  * It is logged in ASSETS-REQUIRED.md and `npm run art:needs` reports it as
  * missing, which is the correct backlog signal. An id that stays here forever
  * is a bug in the process, not in this list.
+ *
+ * ═══ EMPTY, AND THAT IS THE LIST WORKING ═══
+ * All eleven commissions — the weapons, the belt, the gloves, the apron and the
+ * rest — were delivered in one art pass (`items/equipment/`, 64x64, native
+ * reduction from an approved source master) and moved to `KNOWN_ICON_IDS`. The
+ * list stays rather than being deleted because it is the MECHANISM: the next
+ * item authored ahead of its art lands here, `check-assets` demands its brief,
+ * and `validateItems` still refuses a typo. An empty backlog is not an absent one.
  */
-export const PENDING_ICON_IDS: readonly string[] = Object.freeze([
-  'item_service_baton',
-  'item_bailiffs_hook',
-  'item_writ_of_seizure',
-  'item_witness_locket',
-  'item_archivists_mantle',
-  'item_evidence_belt',
-  'item_handlers_gloves',
-  'item_bailiffs_maul',
-  'item_paired_shivs',
-  'item_coroners_apron',
-  'item_tourniquet_band',
-]);
+export const PENDING_ICON_IDS: readonly string[] = Object.freeze([]);
 
 // ---------------------------------------------------------------------------
 // The catalogue

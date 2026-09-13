@@ -499,6 +499,37 @@ const NEEDED_ASSET_PREFIXES = [
   // documented, deliberate fallback for art that has not arrived. Neither side
   // is wrong on its own, and nothing in between compared the two spellings.
   'icon_active_',
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * AND THEN IT HAPPENED AGAIN, ONE PREFIX OVER, FOR SEVENTY-TWO ICONS.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * The note above fixed `icon_ability_` -> `icon_active_` and stopped there. But
+   * talents are not all actives: the trees declare `icon_passive_*` and
+   * `icon_sustain_*` too, and neither family was ever admitted. So every passive
+   * and every sustain in the Talent panel drew its first letter — 42 of them on
+   * one Alchemist screenshot alone — while all 64 passive and all 8 sustain PNGs
+   * sat registered in the manifest and on disk, filtered out before they loaded.
+   *
+   * Exactly the invisible-from-both-ends shape the paragraph above describes, and
+   * the reason it recurred is that the fix corrected ONE spelling rather than
+   * asking which families a talent can name. So the answer is stated here as a
+   * list: a talent icon is active, passive, sustain or monster.
+   *
+   * ALL FOUR VERIFIED PRESENT before adding, which is this array's rule (see the
+   * v10 note below): passive 64 and sustain 8 were already manifest rows; monster
+   * was 6 of 7, with the seventh (`icon_monster_bear_down`) registered by the
+   * same manifest rebuild that registers the stat icons.
+   */
+  'icon_passive_',
+  'icon_sustain_',
+  'icon_monster_',
+  /**
+   * THE SIX ATTRIBUTE ICONS — `icon_stat_strength` and its five siblings, drawn
+   * beside the stat rail in the Talent panel. Registered by the manifest rebuild
+   * that landed them; not a prefix cast ahead of art that does not exist.
+   */
+  'icon_stat_',
   // M4. `chr_player_` above already covers the three `*_downed_s` bodies.
   'icon_status_',
   // M5. The turn cards' portraits (`icon_character_the_*`). Half the family is

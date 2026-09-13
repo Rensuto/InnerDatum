@@ -257,12 +257,27 @@ describe('the fillRect overlays stay art-free', () => {
       'chr_npc_',
       'enemy_',
       'tile_ow_',
+      'tile_local_',
       'ui_token_ring_',
       'ui_tile_marker_',
       'ui_icon_turn_',
       'ui_hotbar_slot_',
       'ui_pip_',
       'icon_active_',
+      // ═══ FOUR PREFIXES, AND ALL FOUR ARE THE FIRST KIND ═══
+      // `icon_passive_` and `icon_sustain_` are the `icon_ability_` bug recurring
+      // one family over: the fix above corrected ONE spelling and never asked
+      // which families a talent can name. Every passive and sustain drew a
+      // letter — 42 on one Alchemist screenshot — while all 64 passive and all 8
+      // sustain PNGs were ALREADY manifest rows, filtered out before loading.
+      // `icon_monster_` was 6 of 7 registered; `icon_stat_` is the six attribute
+      // icons. Each was verified as manifest rows AND files before being listed,
+      // which is the only thing that separates a legitimate prefix from the
+      // invented one this assertion is for.
+      'icon_passive_',
+      'icon_sustain_',
+      'icon_monster_',
+      'icon_stat_',
       'icon_status_',
       'icon_character_',
       'ui_panel_',
