@@ -2397,7 +2397,16 @@ export type TalentHitKind = (typeof TalentHitKind)[keyof typeof TalentHitKind];
 
 export type TalentHit =
   | { readonly kind: typeof TalentHitKind.Stat; readonly stat: StatKey }
-  | { readonly kind: typeof TalentHitKind.UnspendStat; readonly stat: StatKey }
+  | {
+      readonly kind: typeof TalentHitKind.UnspendStat;
+      readonly stat: StatKey;
+      /**
+       * THE BADGE THAT WAS PRESSED, so main.ts can keep its pixels a take-back
+       * after the server empties the window and the badge disappears. See
+       * `takeBackStillOffered`.
+       */
+      readonly badge: PanelRect;
+    }
   | { readonly kind: typeof TalentHitKind.Close }
   | {
       readonly kind: typeof TalentHitKind.Spend;
@@ -2414,6 +2423,8 @@ export type TalentHit =
       readonly kind: typeof TalentHitKind.Unlearn;
       readonly index: number;
       readonly talentId: string;
+      /** The badge that was pressed — see `UnspendStat.badge`. */
+      readonly badge: PanelRect;
     }
   | { readonly kind: typeof TalentHitKind.Row; readonly index: number };
 
@@ -2506,6 +2517,39 @@ export function talentDeepenAt(
       point.y >= head.y &&
       point.y < head.y + head.h
     ) {
+      /**
+       * ═══════════════════════════════════════════════════════════════════════
+       * EXCEPT WHERE A TAKE-BACK BADGE IS DRAWN OVER THE BAND.
+       * ═══════════════════════════════════════════════════════════════════════
+       *
+       * The badge sits two pixels above and left of its icon (`talentMinusRect`)
+       * and the icons start `CAT_HEAD_H` below the heading, so the top two rows
+       * of every badge lie INSIDE this band. The painter draws the badge after
+       * the heading, so those pixels look like the badge; and main.ts asks this
+       * reader before `talentPanelHitAt`. Two presses aimed at a take-back
+       * therefore armed and then spent a CATEGORY point — the scarcest currency
+       * in the game, on the control that exists to undo a mistake.
+       *
+       * Pixels that show a badge answer as the badge. The hit test gives them the
+       * take-back; this reader declines them. A badge is drawn only over an icon
+       * wholly on screen, so the three agree on exactly which pixels those are.
+       */
+      const onBadge = placed.cells.some((box, n) => {
+        const cell = placed.row.kind === TalentRowKind.Category ? placed.row.talents[n] : undefined;
+        if (cell === undefined || !cell.canUnlearn) return false;
+        // ONLY A BADGE THAT IS DRAWN, which is one over an icon wholly on screen
+        // (`drawRow`). Over a clipped icon there is no badge, and these pixels
+        // are the heading's.
+        if (!cellOnScreen(box, geometry.grid.viewport)) return false;
+        const minus = talentMinusRect(box);
+        return (
+          point.x >= minus.x &&
+          point.x < minus.x + minus.w &&
+          point.y >= minus.y &&
+          point.y < minus.y + minus.h
+        );
+      });
+      if (onBadge) return null;
       return placed.row.tree;
     }
   }
@@ -2646,7 +2690,7 @@ export function talentPanelHitAt(
       // would make it unreachable. The grid's rule, one currency over — see
       // `statMinusRect`.
       if (unspendableStats.includes(entry.key) && inside(statMinusRect(icon))) {
-        return { kind: TalentHitKind.UnspendStat, stat: entry.key };
+        return { kind: TalentHitKind.UnspendStat, stat: entry.key, badge: statMinusRect(icon) };
       }
       if (inside(icon)) return { kind: TalentHitKind.Stat, stat: entry.key };
     }
@@ -2665,6 +2709,30 @@ export function talentPanelHitAt(
       const box = placed.cells[n];
       const cell = talents[n];
       if (box === undefined || cell === undefined) continue;
+      /**
+       * ═══ THE WHOLE DRAWN BADGE, NOT ONLY THE PART OVER THE ICON ═══
+       * `talentMinusRect` overhangs its icon by two pixels up and left, and this
+       * used to be asked only after `inside(box)` — so the overhang, which the
+       * painter draws and which lies in the heading's press band, answered as
+       * nothing here and as a category spend there (see `talentDeepenAt`).
+       *
+       * STILL CLIPPED LIKE AN ICON: the icon must be wholly on screen, and the
+       * point must be inside the grid viewport, whose clip is what decides
+       * whether an overhanging badge pixel was drawn at all.
+       */
+      if (
+        cell.canUnlearn &&
+        inside(talentMinusRect(box)) &&
+        inside(geometry.grid.viewport) &&
+        cellOnScreen(box, geometry.grid.viewport)
+      ) {
+        return {
+          kind: TalentHitKind.Unlearn,
+          index: n,
+          talentId: cell.id,
+          badge: talentMinusRect(box),
+        };
+      }
       if (!inside(box)) continue;
       // CLIPPED AWAY IS NOT CLICKABLE. See `cellOnScreen`.
       if (!cellOnScreen(box, geometry.grid.viewport)) continue;
@@ -2679,16 +2747,9 @@ export function talentPanelHitAt(
        * spend and a press on any other is an arm. That is the same safety the
        * old `+` had, on a bigger target.
        */
-      /**
-       * THE TAKE-BACK CORNER IS TESTED FIRST, and it has to be: it is carved
-       * OUT of the icon's own box, so a fall-through to the icon would make the
-       * badge unreachable. It needs no arm/confirm of its own — the two-press
-       * rule exists because a spend is irreversible, and this is the thing that
-       * makes one reversible.
-       */
-      if (cell.canUnlearn && inside(talentMinusRect(box))) {
-        return { kind: TalentHitKind.Unlearn, index: n, talentId: cell.id };
-      }
+      // THE TAKE-BACK CORNER was answered above, before the icon it is carved out
+      // of. It needs no arm/confirm of its own — the two-press rule exists
+      // because a spend is irreversible, and this is what makes one reversible.
       return cell.id === armedId && cell.canSpend
         ? { kind: TalentHitKind.Spend, index: n, talentId: cell.id }
         : { kind: TalentHitKind.Row, index: n };
@@ -2696,6 +2757,100 @@ export function talentPanelHitAt(
   }
 
   return null;
+}
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * IS A TAKE-BACK STILL OFFERED UNDER THIS POINT?
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * The question main.ts's take-back guard asks. A take-back that empties the
+ * server's window makes its badge vanish on the next frame, and the pixels under
+ * it turn back into the heading's deepen offer and the icon's arm — so a player
+ * pressing the badge again and again, to take back several ranks, would arm and
+ * then SPEND a point with the gesture meant to refund one. While the pointer
+ * stays on the badge it was pressed on, a press there is either this — another
+ * take-back — or nothing.
+ */
+export function takeBackStillOffered(
+  rect: PanelRect,
+  rows: readonly TalentRow[],
+  px: number,
+  py: number,
+  /** The same offset the painter used — see `talentPanelGeometry`. */
+  scroll: number,
+  unspendableStats: readonly string[],
+): boolean {
+  const hit = talentPanelHitAt(rect, rows, px, py, scroll, null, unspendableStats);
+  return (
+    hit !== null && (hit.kind === TalentHitKind.Unlearn || hit.kind === TalentHitKind.UnspendStat)
+  );
+}
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE TAKE-BACK GUARD, AS A RULE — press by press, with the clock passed in.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * After a take-back press the badge's neighbourhood is guarded: a press there
+ * that no longer finds a take-back is swallowed rather than read as a deepen or
+ * an arm. Three things end it, and a mousemove is not one of them:
+ *
+ *   A PRESS ELSEWHERE. Outside the zone the player is aiming at something else.
+ *   TIME. `TAKE_BACK_GUARD_MS` after the last press in the zone. A swallowed
+ *     press refreshes it, so a player still hammering the spot stays guarded
+ *     however long they keep it up.
+ *   A TAKE-BACK STILL OFFERED passes straight through, and the press branch
+ *     re-arms the guard with the badge it lands on.
+ *
+ * ═══ WHY NOT "UNTIL THE POINTER LEAVES" ═══
+ * That was the first rule, and a review broke it: the zone was the exact 10px
+ * badge, so a hand drifting two pixels out and back between presses released it
+ * and the next two presses armed and spent. A pointer at rest is not a steady
+ * hand, and a touch has no hover at all. So the zone carries a margin, the rule
+ * is decided by presses and time, and nothing a pointer merely does ends it.
+ */
+export const TAKE_BACK_GUARD_MS = 1500;
+/** How far past the badge a drifting press is still read as aimed at it. */
+export const TAKE_BACK_GUARD_MARGIN = 12;
+
+export type TakeBackGuard = {
+  /** The pressed badge, grown by `TAKE_BACK_GUARD_MARGIN` on every side. */
+  readonly zone: PanelRect;
+  /** `Date.now()` at which it lapses. */
+  readonly until: number;
+};
+
+/** The guard a take-back press on `badge` leaves behind. */
+export function guardTakeBack(badge: PanelRect, now: number): TakeBackGuard {
+  const m = TAKE_BACK_GUARD_MARGIN;
+  return {
+    zone: { x: badge.x - m, y: badge.y - m, w: badge.w + m * 2, h: badge.h + m * 2 },
+    until: now + TAKE_BACK_GUARD_MS,
+  };
+}
+
+/**
+ * What a press does to the guard: whether it is swallowed, and the guard after it.
+ * `stillOffered` is `takeBackStillOffered` at the press — the caller asks it,
+ * because only the caller holds the rows.
+ */
+export function pressAgainstGuard(
+  guard: TakeBackGuard | null,
+  point: { readonly x: number; readonly y: number },
+  now: number,
+  stillOffered: boolean,
+): { readonly swallow: boolean; readonly guard: TakeBackGuard | null } {
+  if (guard === null || now >= guard.until) return { swallow: false, guard: null };
+  const { zone } = guard;
+  const inside =
+    point.x >= zone.x &&
+    point.x < zone.x + zone.w &&
+    point.y >= zone.y &&
+    point.y < zone.y + zone.h;
+  if (!inside) return { swallow: false, guard: null };
+  if (stillOffered) return { swallow: false, guard };
+  return { swallow: true, guard: { zone, until: now + TAKE_BACK_GUARD_MS } };
 }
 
 /**
@@ -3732,6 +3887,11 @@ function drawRow(
   // `canSpend` — an index cannot name an icon now that categories exist, since
   // index 0 means something different in every one of them.
   _hovered: number | null,
+  /**
+   * THE GRID'S CLIP. A take-back badge is drawn only over an icon wholly inside
+   * it, which is exactly when `talentPanelHitAt` answers the badge.
+   */
+  viewport: PanelRect,
 ): void {
   const { row, rect } = placed;
 
@@ -3779,7 +3939,12 @@ function drawRow(
         drawRowRing(ctx, box, armed ? 2 : 1);
 
         // THE TAKE-BACK BADGE — see `drawMinusBadge`.
-        if (cell.canUnlearn) drawMinusBadge(ctx, talentMinusRect(box));
+        // ONLY OVER AN ICON WHOLLY ON SCREEN — the rule the hit test answers it by.
+        // A badge over a clipped icon was drawn and pressed nothing, and in the
+        // heading band it covered pixels the deepen offer still owns.
+        if (cell.canUnlearn && cellOnScreen(box, viewport)) {
+          drawMinusBadge(ctx, talentMinusRect(box));
+        }
 
         // `n/max`, centred under the icon — TalentTrees.lua:429-433, with
         // LevelupDialog.lua:537-549's three-way colour split on this palette.
@@ -3982,7 +4147,8 @@ export function drawTalentPanel(options: TalentPanelDrawOptions): void {
   );
   ctx.clip();
   for (const placed of geometry.placed) {
-    if (placed.row.kind === TalentRowKind.Category) drawRow(ctx, sprites, placed, armedId, hovered);
+    if (placed.row.kind === TalentRowKind.Category)
+      drawRow(ctx, sprites, placed, armedId, hovered, geometry.grid.viewport);
   }
   ctx.restore();
 
@@ -4127,7 +4293,8 @@ export function drawTalentPanel(options: TalentPanelDrawOptions): void {
 
   // AND EVERYTHING THAT IS NOT A STRIP, OUTSIDE THE CLIP.
   for (const placed of geometry.placed) {
-    if (placed.row.kind !== TalentRowKind.Category) drawRow(ctx, sprites, placed, armedId, hovered);
+    if (placed.row.kind !== TalentRowKind.Category)
+      drawRow(ctx, sprites, placed, armedId, hovered, geometry.grid.viewport);
   }
 
   /**

@@ -31,6 +31,12 @@ import {
   TALENT_SCROLL_STEP,
   categoryHeadRect,
   talentDeepenAt,
+  talentPanelDeepenAt,
+  takeBackStillOffered,
+  TAKE_BACK_GUARD_MARGIN,
+  TAKE_BACK_GUARD_MS,
+  guardTakeBack,
+  pressAgainstGuard,
   talentPanelRows,
   talentTipAt,
 } from '../../src/client/ui/talents.ts';
@@ -2112,6 +2118,285 @@ describe('the deepen offer', () => {
       talentPanelGeometry(rect, rows, NO_SCROLL),
     );
     expect(below).toBeNull();
+  });
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE TAKE-BACK BADGE OVERHANGS INTO THE HEADING'S PRESS BAND.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `talentMinusRect` sits two pixels above and left of its icon, and the icons
+   * start `CAT_HEAD_H` below the heading — so the badge's top rows are drawn
+   * inside the band the deepen reader answers, which main.ts asks FIRST. Two
+   * presses on the visible badge of a deepenable tree armed and then spent a
+   * category point. Every assertion goes through `talentPanelDeepenAt`, the
+   * entry point main.ts calls, and runs at the production bands too.
+   */
+  const withTakeBacks = () =>
+    deepenable({
+      deepenable: ['watch/discipline', 'watch/the-line'],
+      loadout: [
+        talent({ id: 'talent:crude_blow', name: 'Crude Blow', unlearnable: true, ...DISCIPLINE }),
+        talent({ id: 'talent:ward_rush', name: 'Ward Rush', ...DISCIPLINE }),
+        talent({ id: 'talent:iron_curtain', name: 'Iron Curtain', unlearnable: true, ...THE_LINE }),
+        talent({ id: 'talent:lockdown', name: 'Lockdown', ...THE_LINE }),
+      ],
+    });
+  const stripOf = (geometry: ReturnType<typeof talentPanelGeometry>, tree: string) => {
+    const placed = geometry.placed.find(
+      (p) => p.row.kind === TalentRowKind.Category && p.row.tree === tree,
+    );
+    if (placed === undefined || placed.row.kind !== TalentRowKind.Category) {
+      throw new Error(`${tree} was not placed`);
+    }
+    return { placed, row: placed.row };
+  };
+  const BADGE_BANDS = [
+    REAL,
+    { width: 772, height: 367, top: 17, bottom: 276 },
+    { width: 640, height: 320, top: 63, bottom: 229 },
+  ];
+
+  it('never reads a press on any drawn pixel of a take-back badge as a category spend', () => {
+    const rows = talentPanelRows(withTakeBacks());
+    for (const size of BADGE_BANDS) {
+      const rect = rectAt(size);
+      const geometry = talentPanelGeometry(rect, rows, NO_SCROLL);
+      const { placed, row } = stripOf(geometry, 'watch/discipline');
+      const icon = placed.cells[row.talents.findIndex((cell) => cell.canUnlearn)];
+      if (icon === undefined) throw new Error('the take-back cell was not placed');
+      const minus = talentMinusRect(icon);
+      const head = categoryHeadRect(placed.rect);
+      const vp = geometry.grid.viewport;
+      // THE FIXTURE MUST PUT THE BADGE IN THE BAND, AND ALL OF IT IN THE CLIP.
+      expect(minus.y, 'the badge does not reach the heading band').toBeLessThan(head.y + head.h);
+      expect(minus.x >= vp.x && minus.y >= vp.y, 'the badge is clipped').toBe(true);
+
+      for (let y = minus.y; y < minus.y + minus.h; y += 1) {
+        for (let x = minus.x; x < minus.x + minus.w; x += 1) {
+          const where = `${String(x)},${String(y)} at ${JSON.stringify(size)}`;
+          expect(talentPanelDeepenAt(rect, rows, x, y, NO_SCROLL), where).toBeNull();
+          // EVEN WITH THE ICON ARMED, the badge carved out of it is the take-back.
+          const hit = talentPanelHitAt(rect, rows, x, y, NO_SCROLL, 'talent:crude_blow');
+          expect(hit?.kind, where).toBe(TalentHitKind.Unlearn);
+          if (hit?.kind === TalentHitKind.Unlearn) {
+            expect(hit.talentId).toBe('talent:crude_blow');
+            expect(hit.badge).toEqual(minus);
+          }
+        }
+      }
+    }
+  });
+
+  it('still offers the deepen beside a badge, and above a talent without one', () => {
+    const rows = talentPanelRows(withTakeBacks());
+    for (const size of BADGE_BANDS) {
+      const rect = rectAt(size);
+      const { placed, row } = stripOf(
+        talentPanelGeometry(rect, rows, NO_SCROLL),
+        'watch/discipline',
+      );
+      const minus = talentMinusRect(
+        placed.cells[row.talents.findIndex((cell) => cell.canUnlearn)] as PanelRect,
+      );
+      const bare = talentMinusRect(
+        placed.cells[row.talents.findIndex((cell) => !cell.canUnlearn)] as PanelRect,
+      );
+      const deepen = (x: number, y: number) => talentPanelDeepenAt(rect, rows, x, y, NO_SCROLL);
+      expect(deepen(minus.x - 1, minus.y), 'left of the badge').toBe('watch/discipline');
+      expect(deepen(minus.x + minus.w, minus.y + 1), 'right of the badge').toBe('watch/discipline');
+      expect(deepen(bare.x + 3, bare.y), 'over a talent with no take-back').toBe(
+        'watch/discipline',
+      );
+      expect(deepen(minus.x + 3, minus.y - 1), 'the row above the badge').toBe('watch/discipline');
+    }
+  });
+
+  const badgeAt = (ops: readonly Op[], m: PanelRect) =>
+    ops.filter(
+      (op) =>
+        op.kind === 'fillRect' &&
+        op.args[0] === m.x &&
+        op.args[1] === m.y &&
+        op.args[2] === m.w &&
+        op.args[3] === m.h,
+    ).length;
+
+  it('answers only the part of a badge that was drawn, as the grid scrolls', () => {
+    const rows = talentPanelRows(withTakeBacks());
+    const rect = rectAt({ width: 640, height: 320, top: 63, bottom: 229 });
+    const unscrolled = talentPanelGeometry(rect, rows, NO_SCROLL);
+    const { placed, row } = stripOf(unscrolled, 'watch/discipline');
+    const n = row.talents.findIndex((cell) => cell.canUnlearn);
+    // THE SCROLL THAT PUTS THE ICON FLUSH WITH THE GRID TOP, derived, not restated.
+    const flush = (placed.cells[n] as PanelRect).y - unscrolled.grid.viewport.y;
+    expect(unscrolled.grid.maxScroll, 'the fixture cannot scroll that far').toBeGreaterThan(flush);
+    for (const scroll of [flush - 1, flush]) {
+      const g = talentPanelGeometry(rect, rows, scroll);
+      expect(g.grid.scroll).toBe(scroll);
+      const icon = stripOf(g, 'watch/discipline').placed.cells[n] as PanelRect;
+      const minus = talentMinusRect(icon);
+      const vp = g.grid.viewport;
+      const label = `scroll ${String(scroll)}`;
+      // THE PAINTER DRAWS IT: the icon is still wholly inside the clip.
+      expect(badgeAt(paintOps({ rect, rows, scroll }), minus), label).toBe(1);
+      // ABOVE THE CLIP: never painted, so it answers nothing at all.
+      expect(talentPanelHitAt(rect, rows, minus.x + 3, vp.y - 1, scroll), label).toBeNull();
+      expect(talentPanelDeepenAt(rect, rows, minus.x + 3, vp.y - 1, scroll), label).toBeNull();
+      // THE FIRST ROW INSIDE IT: painted, so the take-back.
+      expect(talentPanelHitAt(rect, rows, minus.x + 3, vp.y, scroll)?.kind, label).toBe(
+        TalentHitKind.Unlearn,
+      );
+      // AND THE LEFT OVERHANG BESIDE THE ICON, which is painted too.
+      expect(talentPanelHitAt(rect, rows, minus.x, icon.y + 3, scroll)?.kind, label).toBe(
+        TalentHitKind.Unlearn,
+      );
+    }
+    // ONE PAST FLUSH the icon's top row is clipped: no badge drawn, none pressed.
+    const past = flush + 1;
+    const g = talentPanelGeometry(rect, rows, past);
+    const minus = talentMinusRect(stripOf(g, 'watch/discipline').placed.cells[n] as PanelRect);
+    expect(
+      badgeAt(paintOps({ rect, rows, scroll: past }), minus),
+      'drawn over a clipped icon',
+    ).toBe(0);
+    expect(talentPanelHitAt(rect, rows, minus.x + 3, g.grid.viewport.y + 1, past)).toBeNull();
+  });
+
+  it('paints no badge over a clipped icon, and leaves the heading its pixels', () => {
+    const rows = talentPanelRows(withTakeBacks());
+    const rect = rectAt({ width: 640, height: 320, top: 63, bottom: 229 });
+    const at0 = talentPanelGeometry(rect, rows, NO_SCROLL);
+    // THE CELL INDEX IS THE ROW'S, not the geometry's: unscrolled, The Line is below
+    // the fold at this band and not placed at all.
+    const line = categories(rows).find((row) => row.tree === 'watch/the-line');
+    if (line === undefined) throw new Error('the fixture has no The Line');
+    const n = line.talents.findIndex((cell) => cell.canUnlearn);
+    // A SCROLL where The Line's heading is wholly on screen and its icon PARTLY is —
+    // the edge a rule allowing overlap would get wrong. Wholly below the clip,
+    // every rule agrees and the case proves nothing.
+    let found: number | null = null;
+    for (let s = 0; s <= at0.grid.maxScroll && found === null; s += 1) {
+      const g = talentPanelGeometry(rect, rows, s);
+      const strip = g.placed.find(
+        (p) => p.row.kind === TalentRowKind.Category && p.row.tree === 'watch/the-line',
+      );
+      const icon = strip?.cells[n];
+      if (strip === undefined || icon === undefined) continue;
+      const head = categoryHeadRect(strip.rect);
+      const vp = g.grid.viewport;
+      const headIn = head.y >= vp.y && head.y + head.h <= vp.y + vp.h;
+      const iconIn = icon.y >= vp.y && icon.y + icon.h <= vp.y + vp.h;
+      const iconPartly = icon.y >= vp.y && icon.y < vp.y + vp.h;
+      if (headIn && iconPartly && !iconIn) found = s;
+    }
+    expect(found, 'no scroll half-clips the icon under a visible heading').not.toBeNull();
+    const scroll = found ?? 0;
+    const g = talentPanelGeometry(rect, rows, scroll);
+    const minus = talentMinusRect(stripOf(g, 'watch/the-line').placed.cells[n] as PanelRect);
+
+    expect(talentPanelDeepenAt(rect, rows, minus.x + 3, minus.y, scroll)).toBe('watch/the-line');
+    expect(talentPanelHitAt(rect, rows, minus.x + 3, minus.y, scroll)).toBeNull();
+
+    expect(badgeAt(paintOps({ rect, rows, scroll }), minus), 'a badge over a clipped icon').toBe(0);
+    // THE CONTROL: the same painter does draw a badge over a whole icon.
+    const visible = talentPanelGeometry(rect, rows, NO_SCROLL);
+    const wholeAt0 = talentMinusRect(
+      stripOf(visible, 'watch/discipline').placed.cells[
+        stripOf(visible, 'watch/discipline').row.talents.findIndex((cell) => cell.canUnlearn)
+      ] as PanelRect,
+    );
+    expect(badgeAt(paintOps({ rect, rows, scroll: NO_SCROLL }), wholeAt0)).toBe(1);
+  });
+
+  it('tells a take-back that is still offered from one that has gone', () => {
+    // The question main.ts's guard asks before letting a press on a badge it
+    // just refunded reach the deepen offer or the icon's arm.
+    const rect = rectAt(REAL);
+    const offered = talentPanelRows(withTakeBacks());
+    const geometry = talentPanelGeometry(rect, offered, NO_SCROLL);
+    const { placed, row } = stripOf(geometry, 'watch/discipline');
+    const minus = talentMinusRect(
+      placed.cells[row.talents.findIndex((cell) => cell.canUnlearn)] as PanelRect,
+    );
+    expect(takeBackStillOffered(rect, offered, minus.x + 3, minus.y, NO_SCROLL, [])).toBe(true);
+    const gone = talentPanelRows(deepenable());
+    expect(takeBackStillOffered(rect, gone, minus.x + 3, minus.y, NO_SCROLL, [])).toBe(false);
+
+    // AND THE ATTRIBUTE BADGE, whose window the server names in `unspendableStats`.
+    if (geometry.stats === null) throw new Error('no attribute column');
+    const con = statMinusRect(statCellRects(geometry.stats)[2] as PanelRect);
+    expect(takeBackStillOffered(rect, offered, con.x + 3, con.y + 3, NO_SCROLL, ['con'])).toBe(
+      true,
+    );
+    expect(takeBackStillOffered(rect, offered, con.x + 3, con.y + 3, NO_SCROLL, [])).toBe(false);
+
+    // AND ON A SCROLLED GRID, which is where main.ts asks it most: the same pixel
+    // is a badge at one scroll and a heading at another.
+    const band = rectAt({ width: 640, height: 320, top: 63, bottom: 229 });
+    const flat = talentPanelGeometry(band, offered, NO_SCROLL);
+    const cell = stripOf(flat, 'watch/discipline');
+    const k = cell.row.talents.findIndex((t) => t.canUnlearn);
+    const flush = (cell.placed.cells[k] as PanelRect).y - flat.grid.viewport.y;
+    const scrolled = talentPanelGeometry(band, offered, flush);
+    const sm = talentMinusRect(stripOf(scrolled, 'watch/discipline').placed.cells[k] as PanelRect);
+    const py = scrolled.grid.viewport.y + 1;
+    expect(takeBackStillOffered(band, offered, sm.x + 3, py, flush, [])).toBe(true);
+    expect(takeBackStillOffered(band, offered, sm.x + 3, py, NO_SCROLL, [])).toBe(false);
+  });
+
+  /**
+   * ═══ THE GUARD, PRESS BY PRESS ═══
+   * A take-back that empties the window makes the badge vanish, and its pixels are
+   * a deepen offer and an arm again. These are the sequences a review walked.
+   */
+  describe('the take-back guard', () => {
+    const badge = { x: 100, y: 100, w: 10, h: 10 };
+    const on = { x: 104, y: 104 };
+
+    it('swallows presses on a vanished badge for as long as they keep coming', () => {
+      let guard = guardTakeBack(badge, 0);
+      for (const at of [400, 800, 1200, 1600, 2000, 2400]) {
+        const step = pressAgainstGuard(guard, on, at, false);
+        expect(step.swallow, `press at ${String(at)}ms`).toBe(true);
+        guard = step.guard as NonNullable<typeof guard>;
+      }
+    });
+
+    it('still swallows a press that drifted a little off the badge', () => {
+      // THE REVIEW'S CASE: two pixels out and back between presses used to release it.
+      const guard = guardTakeBack(badge, 0);
+      const drift = { x: badge.x - 2, y: badge.y + 3 };
+      expect(pressAgainstGuard(guard, drift, 400, false).swallow).toBe(true);
+      const edge = { x: badge.x - TAKE_BACK_GUARD_MARGIN, y: badge.y };
+      expect(pressAgainstGuard(guard, edge, 400, false).swallow).toBe(true);
+    });
+
+    it('lets a press elsewhere through, and ends', () => {
+      const guard = guardTakeBack(badge, 0);
+      const away = { x: badge.x + badge.w + TAKE_BACK_GUARD_MARGIN, y: badge.y };
+      expect(pressAgainstGuard(guard, away, 400, false)).toEqual({ swallow: false, guard: null });
+    });
+
+    it('lapses TAKE_BACK_GUARD_MS after the last press, and not before', () => {
+      const guard = guardTakeBack(badge, 0);
+      expect(pressAgainstGuard(guard, on, TAKE_BACK_GUARD_MS - 1, false).swallow).toBe(true);
+      expect(pressAgainstGuard(guard, on, TAKE_BACK_GUARD_MS, false)).toEqual({
+        swallow: false,
+        guard: null,
+      });
+    });
+
+    it('lets a take-back that is still offered through, and keeps guarding', () => {
+      const guard = guardTakeBack(badge, 0);
+      const step = pressAgainstGuard(guard, on, 400, true);
+      expect(step.swallow).toBe(false);
+      expect(step.guard).toEqual(guard);
+    });
+
+    it('does nothing at all with no guard', () => {
+      expect(pressAgainstGuard(null, on, 0, false)).toEqual({ swallow: false, guard: null });
+    });
   });
 });
 

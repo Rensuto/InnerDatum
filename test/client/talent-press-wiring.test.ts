@@ -95,6 +95,55 @@ describe('the talent panel press wiring', () => {
     expect(block.slice(rowStart)).not.toContain('pressTalentPlus(');
   });
 
+  it('decides every press against the take-back guard before any reader that can spend', () => {
+    // A take-back that empties the window makes its badge vanish, and the pixels
+    // under it are a deepen offer and an arm. See `takeBackGuard` in main.ts, and
+    // the guard's sequences in talents.test.ts.
+    const mousedown = CODE.slice(at("canvas.addEventListener('mousedown'", CODE));
+    const decided = at('pressAgainstGuard(', mousedown);
+    const deepen = at('talentPanelDeepenAt(', mousedown);
+    expect(decided, 'the guard is asked after a reader that can spend').toBeLessThan(deepen);
+    const guard = mousedown.slice(at('const guardHere =', mousedown), deepen);
+    // ONLY INSIDE THE PANEL, asked the question with the panel's own scroll and
+    // stat list, and it RETURNS — a guard that only called preventDefault would
+    // fall straight through to the deepen offer.
+    expect(guard).toContain('inRect(layout.talents, point.x, point.y)');
+    expect(guard).toContain('takeBackStillOffered(');
+    expect(guard).toContain('talentScroll,');
+    expect(guard).toContain('progress?.unspendableStats ?? [],');
+    expect(guard).toContain('takeBackGuard = guarded.guard;');
+    expect(guard).toContain('event.preventDefault();');
+    expect(guard).toContain('return;');
+
+    const block = talentPressBlock();
+    const unlearn = at('hit.kind === TalentHitKind.Unlearn', block);
+    expect(
+      at('takeBackGuard = guardTakeBack(hit.badge, Date.now());', block, unlearn),
+    ).toBeLessThan(at('pressTalentMinus(hit.talentId)', block, unlearn));
+    const unspend = at('hit.kind === TalentHitKind.UnspendStat', block);
+    expect(
+      at('takeBackGuard = guardTakeBack(hit.badge, Date.now());', block, unspend),
+    ).toBeLessThan(at("t: 'unspend_stat'", block, unspend));
+  });
+
+  it('never lets a pointer merely moving end the guard, and clears it when the panel moves', () => {
+    // A HAND AT REST IS NOT STEADY: the first guard let go on a two-pixel drift.
+    // BOUNDED BY THE NEXT LISTENER, whatever it is: the wheel handler is registered
+    // between mousemove and mousedown, and it clears the guard on purpose.
+    const moveAt = at("canvas.addEventListener('mousemove'", CODE);
+    const mousemove = CODE.slice(moveAt, at('canvas.addEventListener(', CODE, moveAt + 1));
+    expect(mousemove).not.toContain('takeBackGuard');
+    // ...AND IT DOES END when what lies under a still pointer changes.
+    for (const head of ['function toggleTalentPanel(', 'function onViewportChange(']) {
+      expect(fnBody(head), `${head} keeps a stale guard`).toContain('takeBackGuard = null;');
+    }
+    const wheel = at('talentScroll + step,', CODE);
+    expect(
+      at('takeBackGuard = null;', CODE, wheel) - wheel,
+      'a scroll keeps a stale guard',
+    ).toBeLessThan(200);
+  });
+
   it('pins the description column to a pressed attribute before pressing it', () => {
     const block = talentPressBlock();
     const branch = at('hit.kind === TalentHitKind.Stat', block);

@@ -132,7 +132,7 @@
  *   starting cannot leave a panel overlapping the cards on one surface only.
  */
 
-import type { StatKey, TalentCell } from './ui/talents.ts';
+import type { StatKey, TakeBackGuard, TalentCell } from './ui/talents.ts';
 import { DIR_ORDER, chebyshev, sameTile, step } from '../shared/coords.ts';
 import { parseCommand } from './input/commands.ts';
 import { bindGameKeys, gameKeymap, setKeymap, TurnCommand, UiCommand } from './input/keys.ts';
@@ -313,6 +313,9 @@ import {
   talentPanelHitAt,
   talentIdAt,
   talentStatAt,
+  takeBackStillOffered,
+  guardTakeBack,
+  pressAgainstGuard,
   pointsWaiting,
   talentPanelGeometry,
   talentTipAt,
@@ -1953,6 +1956,17 @@ let talentFocusId: string | null = null;
  * ui/talents.ts.
  */
 let talentFocusStat: StatKey | null = null;
+/**
+ * ═══ THE NEIGHBOURHOOD OF A TAKE-BACK JUST PRESSED, or null ═══
+ * A take-back that empties the server's window makes the badge vanish on the
+ * next loadout frame, and its pixels turn back into the heading's deepen press
+ * and the icon's arm. Pressing the badge again and again — to take back several
+ * ranks — would then arm, and then SPEND, a point. `pressAgainstGuard` decides
+ * each press against it: presses and time end it, never a mere pointer move.
+ * Set by the two take-back branches; cleared whenever what lies under a still
+ * pointer changes (a scroll, the panel opening or closing, the window resizing).
+ */
+let takeBackGuard: TakeBackGuard | null = null;
 /**
  * WHICH ATTRIBUTE IS ONE PRESS FROM BEING BOUGHT, or null.
  *
@@ -7080,6 +7094,9 @@ async function boot(): Promise<void> {
 
   // --- viewport ------------------------------------------------------------
   function onViewportChange(): void {
+    // A RESIZE RE-CENTRES THE TALENT PANEL under a still pointer, so a take-back
+    // guard's zone would cover whatever arrived there. See `takeBackGuard`.
+    takeBackGuard = null;
     // resize() returns false when nothing moved, so a resize storm (dragging a
     // window edge fires continuously) does not queue a draw per event.
     if (renderer.resize()) requestDraw();
@@ -7555,6 +7572,8 @@ async function boot(): Promise<void> {
     // left shows a player a middle of a list they did not scroll to, and the
     // first tree is the one they came for.
     talentScroll = 0;
+    // AND NO GUARD survives the panel moving under the pointer. See `takeBackGuard`.
+    takeBackGuard = null;
     if (!talentsVisible) {
       talentsCloseHovered = false;
       talentsHoveredRow = null;
@@ -10839,6 +10858,8 @@ async function boot(): Promise<void> {
           talentPanelRows(talentPanelView()),
           talentScroll + step,
         ).grid.scroll;
+        // A SCROLL MOVES THE BADGE out from under the guard. See `takeBackGuard`.
+        takeBackGuard = null;
         requestDraw();
         return;
       }
@@ -12361,6 +12382,30 @@ async function boot(): Promise<void> {
        * code the other irreversible spends use. This is the scarcest currency
        * in the game and it must not have its own weaker confirmation.
        */
+      // ═══ A TAKE-BACK'S NEIGHBOURHOOD STAYS A TAKE-BACK OR NOTHING ═══
+      // Asked before every reader that could arm or spend — see `takeBackGuard`.
+      // ONLY INSIDE THE PANEL: a press anywhere else is aimed at something else,
+      // and releases it rather than being swallowed by a rect the panel left.
+      const guardHere = inRect(layout.talents, point.x, point.y) ? takeBackGuard : null;
+      const guarded = pressAgainstGuard(
+        guardHere,
+        point,
+        Date.now(),
+        guardHere !== null &&
+          takeBackStillOffered(
+            layout.talents,
+            talentPanelRows(talentPanelView()),
+            point.x,
+            point.y,
+            talentScroll,
+            progress?.unspendableStats ?? [],
+          ),
+      );
+      takeBackGuard = guarded.guard;
+      if (guarded.swallow) {
+        event.preventDefault();
+        return;
+      }
       const deepenTree = talentPanelDeepenAt(
         layout.talents,
         talentPanelRows(talentPanelView()),
@@ -12397,6 +12442,7 @@ async function boot(): Promise<void> {
       // that merely points at something.
       if (hit !== null && hit.kind === TalentHitKind.Unlearn) {
         event.preventDefault();
+        takeBackGuard = guardTakeBack(hit.badge, Date.now());
         pressTalentMinus(hit.talentId);
         return;
       }
@@ -12416,6 +12462,7 @@ async function boot(): Promise<void> {
       // `talentMinusRect`.
       if (hit !== null && hit.kind === TalentHitKind.UnspendStat) {
         event.preventDefault();
+        takeBackGuard = guardTakeBack(hit.badge, Date.now());
         if (
           !socket.send({
             v: PROTOCOL_VERSION,
