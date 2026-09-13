@@ -262,6 +262,56 @@ describe('what follows a character through a door', () => {
     expect(after?.kind === 'player' ? after.unspentStatPoints : null).toBe(2);
   });
 
+  it('carries zoom, interface scale and the panel layout, as copies', async () => {
+    /**
+     * THE `settings` FRAME'S THREE, which this list dropped: without them the
+     * far side's next `set_zoom` echo sends `uiScale: 0` and an empty layout,
+     * and the client applies both — the interface shrinking and every panel
+     * snapping home in the middle of a walk. The layout must arrive as a COPY:
+     * one object shared by two bodies would let the far side's drag rewrite what
+     * the near side's pending save writes.
+     */
+    const { actorId, frames, socket } = await hello(server.port);
+    const body = server.realms.realmOf(actorId)?.world.getActor(actorId);
+    expect(body).toBeDefined();
+    if (body === undefined || body.kind !== 'player') return;
+
+    const layout = {
+      offsets: { talents: { dx: 40, dy: -12 } },
+      logSize: { w: 420, h: 180 },
+      partySize: null,
+      logStyle: null,
+    };
+    body.zoom = 1;
+    body.uiScale = 2;
+    body.panels = layout;
+
+    await stepOnto(server.realms, actorId, socket, doorCell(server.realms));
+
+    const after = server.realms.realmOf(actorId)?.world.getActor(actorId);
+    expect(after, 'no body on the far side').toBeDefined();
+    expect(after, 'the crossing kept the same body').not.toBe(body);
+    expect(after?.zoom, 'the zoom did not follow').toBe(1);
+    expect(after?.uiScale, 'the interface scale did not follow').toBe(2);
+    expect(after?.panels, 'the panel layout did not follow').toEqual(layout);
+    expect(after?.panels, 'the layout is shared, not copied').not.toBe(layout);
+
+    // ═══ AND THE SYMPTOM ITSELF: THE FAR SIDE'S NEXT ECHO ═══
+    // Without the carry this frame sent `uiScale: 0` and an empty layout, and the
+    // client applies both as absolute values.
+    frames.length = 0;
+    socket.send(JSON.stringify({ v: PROTOCOL_VERSION, t: 'set_zoom', zoom: 1 }));
+    const deadline = Date.now() + FRAME_TIMEOUT_MS;
+    // A POLL, NOT PACING: the loop header sits between the send and the sleep.
+    while (latest(frames, 'settings') === undefined && Date.now() < deadline) {
+      await sleep(5);
+    }
+    const echo = latest(frames, 'settings');
+    expect(echo, 'no settings echo on the far side').toBeDefined();
+    expect(echo?.['uiScale'], 'the far side forgot the interface scale').toBe(2);
+    expect(echo?.['panels'], 'the far side forgot the panel layout').toEqual(layout);
+  });
+
   it('carries the hit-point ceiling, and does not file the body down to it', async () => {
     /**
      * ═══════════════════════════════════════════════════════════════════════════

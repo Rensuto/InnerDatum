@@ -337,6 +337,7 @@ import type {
   ClientUnequip,
   LoadoutTalent,
   LogLine,
+  PanelLayoutView,
   PartyAction,
   ResourceView,
   ServerMsg,
@@ -1804,6 +1805,18 @@ export type CharacterSnapshot = {
    */
   readonly hotbar?: readonly (string | null)[];
   /**
+   * ═══ THE `settings` FRAME'S THREE — zoom, interface scale, panel layout ═══
+   * DECLARED HERE BECAUSE THEY WERE NOT, and that was the whole bug: the save
+   * layer has carried all three since they shipped (`CharacterFile.zoom`,
+   * `fileFor`, `openCharacter`), but this type never named them, so the gateway
+   * never put them in a snapshot and never took them out of a restore. They
+   * lived on the body alone — a reconnect inside the grace kept them, and every
+   * restart and every deploy reset them while `settings` said `persisted: true`.
+   */
+  readonly zoom?: number;
+  readonly uiScale?: number;
+  readonly panels?: PanelLayoutView;
+  /**
    * WHICH LOCKED DISCIPLINES THIS CHARACTER BOUGHT — tree ids.
    *
    * Declared structurally here exactly as `hotbar` above is, so the gateway and
@@ -2075,6 +2088,18 @@ export type CharacterRestore = {
    * one. See `CharacterFile.hotbar`.
    */
   readonly hotbar?: readonly (string | null)[];
+  /**
+   * ═══ THE `settings` FRAME'S THREE — zoom, interface scale, panel layout ═══
+   * DECLARED HERE BECAUSE THEY WERE NOT, and that was the whole bug: the save
+   * layer has carried all three since they shipped (`CharacterFile.zoom`,
+   * `fileFor`, `openCharacter`), but this type never named them, so the gateway
+   * never put them in a snapshot and never took them out of a restore. They
+   * lived on the body alone — a reconnect inside the grace kept them, and every
+   * restart and every deploy reset them while `settings` said `persisted: true`.
+   */
+  readonly zoom?: number;
+  readonly uiScale?: number;
+  readonly panels?: PanelLayoutView;
   /**
    * WHICH LOCKED DISCIPLINES THIS CHARACTER BOUGHT — tree ids.
    *
@@ -3871,11 +3896,23 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     actor: Actor,
   ): {
     keybinds?: Readonly<Record<string, readonly string[]>>;
+    zoom?: number;
+    uiScale?: number;
+    panels?: PanelLayoutView;
     explored?: string;
     exploredElsewhere?: Readonly<Record<string, string>>;
     filed?: readonly string[];
   } => ({
     ...(actor.keybinds === undefined ? {} : { keybinds: keybindsRecord(actor.keybinds) }),
+    // THE THREE `settings` FIELDS, which no snapshot carried — see
+    // `CharacterSnapshot.zoom`. Absent means never set, and `fileFor` then
+    // carries forward whatever the file already held rather than erasing it.
+    ...(actor.zoom === undefined ? {} : { zoom: actor.zoom }),
+    ...(actor.uiScale === undefined ? {} : { uiScale: actor.uiScale }),
+    // CLONED, DEFENSIVELY. The save layer holds this across a debounce, and
+    // today every handler REPLACES the layout object rather than editing it — a
+    // clone keeps that true of the snapshot even if one day a handler does not.
+    ...(actor.panels === undefined ? {} : { panels: structuredClone(actor.panels) }),
     // COPIED, NOT ALIASED, for `keybindsRecord`'s first reason: the save layer
     // holds this by reference across a debounce while the body goes on being
     // played, and an alias would let a drag halfway through the write change
@@ -6959,6 +6996,15 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
         'restored a character’s hotbar',
       );
     }
+    /**
+     * ═══ AND THE THREE `settings` FIELDS, ABOVE THE LINE THAT RETURNS EARLY ═══
+     * The keymap return below skips everything after it for the common player,
+     * who never rebound a key — a restore placed under it would never run for
+     * exactly the people who have only ever moved a panel or zoomed.
+     */
+    if (restore.zoom !== undefined) actor.zoom = restore.zoom;
+    if (restore.uiScale !== undefined) actor.uiScale = restore.uiScale;
+    if (restore.panels !== undefined) actor.panels = structuredClone(restore.panels);
     if (restore.keybinds === undefined) return;
     actor.keybinds = keybindsRecord(restore.keybinds);
     app.log.info(
@@ -9342,6 +9388,12 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       stat: [...from.lastLearnt.stat],
     };
     if (from.keybinds !== undefined) to.keybinds = from.keybinds;
+    // THE `settings` THREE. Without them the next `set_zoom` echo on the far
+    // side sends `uiScale: 0` and an empty layout, and the client applies both —
+    // the interface shrinking and every panel snapping home mid-session.
+    if (from.zoom !== undefined) to.zoom = from.zoom;
+    if (from.uiScale !== undefined) to.uiScale = from.uiScale;
+    if (from.panels !== undefined) to.panels = structuredClone(from.panels);
     // THE BAG AND THE DOLL, THEN THE SHEET. `equipped` is owned by the equipment
     // verbs and `combat` by `recomposeCombat` and nothing else — a write to the
     // first without the second leaves a detective wearing a coat that changes no
