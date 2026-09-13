@@ -901,6 +901,39 @@ describe('choose_class, accepted', () => {
     expect(self?.maxHp).toBe(ALCHEMIST.maxHp);
   });
 
+  it("resends progress, so the attribute column shows the chosen class's six", async () => {
+    /**
+     * `progress` carries the six attributes, as composed and as bought, and the
+     * re-clothe rewrites both. Its memo WOULD send the correction — on the next
+     * pump, and `choose_class` does not pump. A fresh Alchemist's talent panel
+     * drew the provisional Watchman's Strength 24 against her own 10 until she
+     * took a step, and measured the level ceiling against it.
+     */
+    server = await boot('choice-progress');
+
+    const client = await connect(server.port);
+    const welcome = await client.hello('ren-handle');
+    const body = bodyOf(welcome);
+    await client.waitFor('class_options');
+    client.clear();
+
+    client.send({ t: 'choose_class', classId: ALCHEMIST.id });
+    await client.settle();
+
+    const progress = client.all('progress');
+    expect(progress, 'no progress frame followed the class choice').toHaveLength(1);
+    const six = ['str', 'dex', 'con', 'mag', 'wil', 'cun'] as const;
+    const sheet = body.combat?.stats;
+    if (sheet === undefined) throw new Error('the chosen body has no sheet');
+    const expected = Object.fromEntries(six.map((key) => [key, sheet[key]]));
+    // THE BOUGHT SIX ARE THE CLASS'S TOO: nothing is spent at creation.
+    expect(progress[0]?.['stats']).toEqual(expected);
+    expect(progress[0]?.['statBase']).toEqual(expected);
+    // AND THEY ARE THE ALCHEMIST'S, not a sheet that merely changed.
+    const authored = ALCHEMIST.combat.stats;
+    expect(expected).toEqual(Object.fromEntries(six.map((key) => [key, authored?.[key]])));
+  });
+
   it('leaves the join rotation exactly where it was', async () => {
     // ═══════════════════════════════════════════════════════════════════════
     // A CHOSEN CLASS IS NOT A ROLLED ONE.

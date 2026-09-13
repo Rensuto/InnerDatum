@@ -12937,6 +12937,17 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     sendLoadout(session);
     sendHotbarIfChanged(session);
 
+    // ═══ AND THE PROGRESS FRAME, BECAUSE THE SIX ATTRIBUTES ARE THE CLASS'S NOW ═══
+    // `progress` carries `stats`, `statBase` and `statGains`, and the re-clothe
+    // above rewrote all three. Its memo key already includes the six, so
+    // `refreshViewers` WOULD correct it — on the next pump, and this frame is
+    // deliberately non-pumping. Until then the talent panel drew the provisional
+    // Watchman's attributes on an Alchemist (Strength 24 where she has 10) and
+    // measured the level ceiling against them: the turn strip's bug below, one
+    // frame over. Found by rendering the panel from a real capture, where the
+    // character sheet and the attribute column disagreed about the same body.
+    sendProgressIfChanged(session);
+
     // ═══ AND THE INVENTORY PANEL, WHICH IS THE ONE FRAME THE MEMO CANNOT SEE
     // ═══
     // `sendInventoryIfChanged` keys on the two ID LISTS, and a class choice
