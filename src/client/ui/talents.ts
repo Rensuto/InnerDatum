@@ -138,6 +138,8 @@
 import type { HoverCard } from './panel.ts';
 import { PALETTE } from '../render/canvas.ts';
 import {
+  BlitAnchor,
+  blitReduced,
   drawButton,
   drawHeader,
   drawPanel,
@@ -151,6 +153,7 @@ import {
 import {
   CATEGORY_POINT_LEVELS,
   MASTERY_STEP,
+  STAT_MAX,
   canRaiseStat,
   isGenericTree,
 } from '../../shared/progression.ts';
@@ -388,24 +391,104 @@ function windowWantsDetail(width: number): boolean {
  * THE ATTRIBUTE COLUMN — ToME'S LEVELUP DIALOG PUTS THE STATS DOWN THE LEFT.
  * ═══════════════════════════════════════════════════════════════════════════
  *
- * Six rows: the name, the value, and a `+` while there is a point in hand. The
- * player sent that screen and asked for the attribute points on this page.
+ * `LevelupDialog.lua:737-755` builds it as a `TalentTrees` widget fifty pixels
+ * wide holding six one-node trees, so upstream's attribute column is the same
+ * furniture as its talent columns: a framed icon per stat with `%d (%d)` centred
+ * under it (`TalentTrees.lua:414-433`). No name, no `+`. The icon IS the control,
+ * exactly as it is in the grid beside it.
  *
- * ═══ TEXT AND NOT ICONS, AND THAT IS AN ART CONSTRAINT STATED OUT LOUD ═══
- * Upstream draws a portrait strip of six stat icons. There are no stat icons in
- * this manifest and inventing keys for them would paint the pink missing-asset
- * square six times down the side of the screen — the same trap `drawTalentIcon`
- * documents. Names are also better at this size: `STR 25` is unambiguous where a
- * 12-pixel glyph of a fist is a guess.
+ * ═══ IT WAS TEXT, AND THAT WAS AN ART CONSTRAINT WHICH NO LONGER HOLDS ═══
+ * The column used to be six `STR 25 +` rows because there were no stat icons
+ * and inventing keys would have painted the missing-asset square six times. The
+ * six `icon_stat_*` files were delivered in the art-completion pass, and asked
+ * for on this page in the player's words: *"draw the talent page similar to
+ * ToME with the icons on the left. try to get close to 1:1 as you can"*.
  *
- * ═══ 78 PIXELS, MEASURED RATHER THAN GUESSED ═══
- * The widest row is `CON 100 +` — nine characters of the 10px monospace at six
- * pixels each is 54, plus the `+` hit box and the padding either side. It is
- * deliberately the NARROWEST of the three columns because it is the one whose
- * content cannot grow: there are exactly six stats and the values are bounded at
- * 100 by `load.lua:182-189`.
+ * ═══ ONE CELL IS `STAT_CELL_W` WIDE, WHICH IS THE CAPTION AND NOT THE ICON ═══
+ * The icon is `ICON_PX`, the grid's own size and an exact halving of the 64px
+ * art. The caption under it is `25 (20)` — seven characters of the 10px face at
+ * six pixels each is 42 — and a cell narrower than its caption would print into
+ * its neighbour. Upstream's is fifty and clips the text (`TalentTrees.lua:388`);
+ * clipping a number is not a trade this column makes, so the cell is sized to it.
  */
-const STATS_W = 78;
+const STAT_CELL_W = 44;
+/** Between two cells side by side, when the column is two wide. */
+const STAT_CELL_GAP = 6;
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * ONE COLUMN WHERE IT FITS, TWO WHERE IT DOES NOT — AND NEVER A DROPPED STAT.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Upstream stacks all six down one column because its dialog is nine tenths of
+ * a desktop screen tall. Ours is not. The HUD band (`panelBand` in main.ts)
+ * leaves the column 135 pixels at the 640x320 floor, 182 in the Discord frame
+ * this game is played in, and 89 and 136 once combat's turn cards take their
+ * 46 off the top. Six cells of `STAT_PITCH` need 293.
+ *
+ * The text column's answer was to drop the rows that did not fit, which was
+ * safe only because nobody measured it at those sizes: a dropped stat is a stat
+ * that cannot be bought, and there is no other route to buying it. So the cells
+ * FOLD into a second column — row-major, which keeps upstream's reading order
+ * (`STR DEX / CON MAG / WIL CUN`) — with two pixels of air under each caption
+ * rather than the grid's seven. That is what keeps full-size icons in the
+ * Discord frame IN COMBAT as well as out of it; with the grid's air they would
+ * shrink the moment a fight started. Only where even that does not fit do the
+ * icons drop to SIXTEEN pixels, the other exact reduction of the 64-pixel art
+ * and the one the hotbar's chips already use.
+ *
+ * ═══ THE FIXTURE BAND IS NOT THE REAL ONE ═══
+ * The first version of this fold was sized against the tests' 640x320 fixture
+ * (a 40..280 band, a 163-pixel column) and placed all six there. At the band the
+ * game actually hands this panel it placed four, and two in combat.
+ * `test/client/talents.test.ts` now asks the production bands.
+ *
+ * ASKED OF THE COLUMN'S OWN HEIGHT, which `talentPanelRect` can only know as a
+ * panel height: it chooses a width tier before any geometry exists. So the one
+ * conversion between the two is `statsBodyFor`, and the geometry cuts the
+ * column to exactly that height — two derivations of the column's width would
+ * disagree at exactly one panel height.
+ */
+type StatLayout = {
+  readonly columns: 1 | 2;
+  /** `ICON_PX`, or `STAT_ICON_SMALL_PX` where 32 does not fit even folded. */
+  readonly iconPx: number;
+  /** Top of one cell to the top of the next, down a column. */
+  readonly pitch: number;
+};
+
+function statsLayoutFor(bodyH: number): StatLayout {
+  const fits = (columns: number, iconPx: number, pitch: number): boolean => {
+    const lines = Math.ceil(STAT_ROWS.length / columns);
+    return (lines - 1) * pitch + iconPx + RANK_H <= bodyH;
+  };
+  if (fits(1, ICON_PX, STAT_PITCH)) return { columns: 1, iconPx: ICON_PX, pitch: STAT_PITCH };
+  if (fits(2, ICON_PX, STAT_PITCH_FOLDED)) {
+    return { columns: 2, iconPx: ICON_PX, pitch: STAT_PITCH_FOLDED };
+  }
+  return { columns: 2, iconPx: STAT_ICON_SMALL_PX, pitch: STAT_PITCH_SMALL };
+}
+
+/**
+ * The height `talentPanelGeometry` gives the attribute column in a panel this
+ * tall: everything under the header, the counter strip and its air, above the
+ * bottom inset. Mirrors `countersTop`, `top` and `bottom` there.
+ */
+function statsBodyFor(panelH: number): number {
+  return Math.max(0, panelH - HEADER_H - INSET - COUNTER_H - COUNTER_GAP_BELOW - INSET);
+}
+
+/**
+ * The attribute column's width at a given panel height. See `statsLayoutFor`.
+ *
+ * The small layout is as wide as the folded one on purpose: the cell is sized
+ * to its caption, not its icon, so dropping to sixteen pixels never moves the
+ * width tier and never shifts the grid under a pointer.
+ */
+function statsWidthFor(panelH: number): number {
+  const { columns } = statsLayoutFor(statsBodyFor(panelH));
+  return columns * STAT_CELL_W + (columns - 1) * STAT_CELL_GAP;
+}
 
 const PANEL_W = 480;
 /**
@@ -430,9 +513,20 @@ const PANEL_W = 480;
  * right way round; the other way leaves a player looking at a `Stats: 3` they
  * cannot act on.
  */
-const PANEL_W_STATS = PANEL_W + COL_GAP + STATS_W;
-/** All three columns. See `DETAIL_W` and `STATS_W`. */
-const PANEL_W_WIDE = PANEL_W_STATS + COL_GAP + DETAIL_W;
+function panelWStats(panelH: number): number {
+  return PANEL_W + COL_GAP + statsWidthFor(panelH);
+}
+/**
+ * All three columns. See `DETAIL_W` and `statsLayoutFor`.
+ *
+ * A FUNCTION OF THE HEIGHT, because the attribute column is: a short panel folds
+ * its six cells into two columns and is that much wider. Both tiers stay derived
+ * from the column rather than pinned, for the reason the grid's gutter tests
+ * give — a fixed panel width with a wider column pushes icons under the bar.
+ */
+function panelWWide(panelH: number): number {
+  return panelWStats(panelH) + COL_GAP + DETAIL_W;
+}
 const PANEL_MIN_W = 176;
 /**
  * ═══════════════════════════════════════════════════════════════════════════
@@ -1269,6 +1363,30 @@ export function pressSpend(armed: string | null, talentId: string): SpendPress {
   return { armed: talentId, spend: null };
 }
 
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * A CONFIRM THAT ARRIVES TOO SOON AFTER THE ARM IS A DOUBLE-CLICK, NOT A DECISION.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Arm-then-confirm exists so a spend is two decisions. Once the ICON became the
+ * control — the grid's, and now the attribute column's — a double-click on it
+ * is both presses in one gesture, and a double-click is what a great many
+ * players do to anything that looks like a button. The `+` it replaced was too
+ * small to double-click by accident; a 32-pixel icon is not.
+ *
+ * So a confirm inside `SPEND_CONFIRM_MIN_MS` of its arm is ignored, and the arm
+ * STANDS — the next deliberate press spends. Nothing is refused and no notice
+ * is shown, because nothing went wrong: the player simply has not pressed twice
+ * yet in the sense this rule means.
+ *
+ * PURE, with the clock passed in, so the boundary is tested as a number.
+ */
+export const SPEND_CONFIRM_MIN_MS = 300;
+
+export function confirmTooSoon(armedAt: number | null, now: number): boolean {
+  return armedAt !== null && now - armedAt < SPEND_CONFIRM_MIN_MS;
+}
+
 // ---------------------------------------------------------------------------
 // Layout
 // ---------------------------------------------------------------------------
@@ -1313,17 +1431,21 @@ export function talentPanelRect(options: {
   const room = width - PANEL_MARGIN * 2;
   /**
    * THE WIDE TIER NOW ALSO ASKS THE WINDOW, and the two questions are different.
-   * `room >= PANEL_W_WIDE` says the description column would FIT; upstream's
+   * `room >= panelWWide(h)` says the description column would FIT; upstream's
    * `game.w * 0.9 >= 1000` says it is WANTED. Below that upstream keeps the
    * floating tooltip and gives the list every pixel, and so do we — a panel that
    * grew a prose column just because it could would be spending 266 pixels on
    * the windows least able to spare them.
+   *
+   * THE HEIGHT IS SETTLED FIRST, because the attribute column's width depends on
+   * it — see `statsLayoutFor`. Nothing about the height depends on the width.
    */
+  const h = panelHeightFor(height, band);
   const tier =
-    room >= PANEL_W_WIDE && windowWantsDetail(width)
-      ? PANEL_W_WIDE
-      : room >= PANEL_W_STATS
-        ? PANEL_W_STATS
+    room >= panelWWide(h) && windowWantsDetail(width)
+      ? panelWWide(h)
+      : room >= panelWStats(h)
+        ? panelWStats(h)
         : Math.min(PANEL_W, room);
   /**
    * ═══════════════════════════════════════════════════════════════════════════
@@ -1347,7 +1469,7 @@ export function talentPanelRect(options: {
    * — with about 22% of the box inked.
    *
    * ═══ THE TIER IS ALREADY THE ANSWER ═══
-   * `PANEL_W_WIDE` IS the content width by construction: the grid, plus the
+   * `panelWWide` IS the content width by construction: the grid, plus the
    * stats strip, plus the description column, plus the gaps between them. There
    * is nothing to add and nothing to derive — the widest tier is the whole
    * shape, so taking it is taking exactly what the content needs.
@@ -1363,15 +1485,18 @@ export function talentPanelRect(options: {
    * fraction without the reflow copies the number and not the behaviour.
    */
   const w = Math.min(tier, room);
-  /**
-   * AGAINST THE WHOLE WINDOW, THEN FITTED TO THE BAND — LevelupDialog.lua:89
-   * measures `game.h`, the entire screen, and the band is already that screen
-   * minus the HUD docks. Taking the share of the BAND instead would count them
-   * twice and hand back a shorter panel than the flat 300 it replaced.
-   */
-  const wantedH = Math.max(PANEL_ABS_MIN_H, Math.floor(height * PANEL_MAX_FILL_H));
-  const h = Math.min(wantedH, band - PANEL_MARGIN * 2);
   return { x: Math.floor((width - w) / 2), y: top + PANEL_MARGIN, w, h };
+}
+
+/**
+ * AGAINST THE WHOLE WINDOW, THEN FITTED TO THE BAND — LevelupDialog.lua:89
+ * measures `game.h`, the entire screen, and the band is already that screen
+ * minus the HUD docks. Taking the share of the BAND instead would count them
+ * twice and hand back a shorter panel than the flat 300 it replaced.
+ */
+function panelHeightFor(height: number, band: number): number {
+  const wantedH = Math.max(PANEL_ABS_MIN_H, Math.floor(height * PANEL_MAX_FILL_H));
+  return Math.min(wantedH, band - PANEL_MARGIN * 2);
 }
 
 /**
@@ -1605,70 +1730,130 @@ export type TalentPaneView = {
  */
 /**
  * ═══════════════════════════════════════════════════════════════════════════
- * THE SIX, IN ToME'S OWN ORDER — `load.lua:182-189`.
+ * THE SIX, IN THE LEVELUP DIALOG'S ORDER — `LevelupDialog.lua:571`.
  * ═══════════════════════════════════════════════════════════════════════════
  *
- * Strength, Dexterity, Magic, Willpower, Cunning, Constitution. Authored order
- * and never sorted, for the reason the class picker gives about its cards: a row
- * that moves between two frames is a row somebody misclicks, and this one spends
- * a point that nothing refunds.
+ * Strength, Dexterity, Constitution, Magic, Willpower, Cunning. This was
+ * `load.lua:182-189`'s DEFINITION order (Constitution last), and upstream's
+ * dialog does not use that: it lists `STAT_STR, STAT_DEX, STAT_CON, STAT_MAG,
+ * STAT_WIL, STAT_CUN` explicitly, and so does its character sheet
+ * (`CharacterSheet.lua:803-808`). The screen is what is being ported, so its
+ * order is the one drawn.
+ *
+ * Authored and never sorted, for the reason the class picker gives about its
+ * cards: a cell that moves between two frames is a cell somebody misclicks.
  *
  * LUCK IS NOT HERE. Upstream defines it, hides it, starts it at 50 and grants no
- * way to raise it — a seventh row would be a promise the rest of the game does
+ * way to raise it — a seventh cell would be a promise the rest of the game does
  * not keep.
  *
- * THE SHORT CODE IS WHAT IS DRAWN. Three characters is what fits in 78 pixels
- * beside a value and a `+`, they are upstream's own, and the character sheet a
- * key away spells all six out in full.
+ * ═══ `icon` IS A LITERAL PER ROW, NOT BUILT FROM THE NAME ═══
+ * `stats/<name>.png` upstream (`:562`); here the six files are
+ * `icon_stat_<name>`, and a key assembled from a template is exactly what
+ * `test/client/assets.test.ts` and `npm run art:needs` refuse — neither can see
+ * which files a template needs. The LABEL is what a bare clone draws in the
+ * frame instead, because a first letter cannot tell Constitution from Cunning.
  */
 export const STAT_ROWS = [
-  { key: 'str', label: 'STR', name: 'Strength' },
-  { key: 'dex', label: 'DEX', name: 'Dexterity' },
-  { key: 'mag', label: 'MAG', name: 'Magic' },
-  { key: 'wil', label: 'WIL', name: 'Willpower' },
-  { key: 'cun', label: 'CUN', name: 'Cunning' },
-  { key: 'con', label: 'CON', name: 'Constitution' },
+  { key: 'str', label: 'STR', name: 'Strength', icon: 'icon_stat_strength' },
+  { key: 'dex', label: 'DEX', name: 'Dexterity', icon: 'icon_stat_dexterity' },
+  { key: 'con', label: 'CON', name: 'Constitution', icon: 'icon_stat_constitution' },
+  { key: 'mag', label: 'MAG', name: 'Magic', icon: 'icon_stat_magic' },
+  { key: 'wil', label: 'WIL', name: 'Willpower', icon: 'icon_stat_willpower' },
+  { key: 'cun', label: 'CUN', name: 'Cunning', icon: 'icon_stat_cunning' },
 ] as const;
 
 export type StatKey = (typeof STAT_ROWS)[number]['key'];
 
-/** One attribute row is a label, a value and a `+`, on one line. */
-const STAT_ROW_H = 14;
-/** The `+` is a square at the right-hand end of the row. */
-const STAT_PLUS_PX = 11;
+/**
+ * ONE ATTRIBUTE CELL, TOP TO TOP: the icon, its caption, and the grid's own air.
+ * The same three measurements a talent strip is made of, less the heading a
+ * one-node tree does not have (`TalentTrees.lua:398` draws none).
+ */
+const STAT_PITCH = ICON_PX + RANK_H + CAT_PAD;
 
 /**
- * The take-back badge, in pixels. Deliberately smaller than `STAT_PLUS_PX`:
- * this is the rarest control on the screen and the only destructive one.
+ * THE SMALL ICON, for a column too short for six 32s even folded. A QUARTER of
+ * the 64-pixel art, which is an exact reduction — see `blitReduced`, which the
+ * column draws through so no other ratio can reach the screen.
  */
+const STAT_ICON_SMALL_PX = 16;
+/**
+ * Air under a caption once the column has folded: the least that keeps the
+ * caption off the icon below it. See `statsLayoutFor` for why it is not
+ * `CAT_PAD`.
+ */
+const STAT_FOLD_AIR = 2;
+const STAT_PITCH_FOLDED = ICON_PX + RANK_H + STAT_FOLD_AIR;
+const STAT_PITCH_SMALL = STAT_ICON_SMALL_PX + RANK_H + STAT_FOLD_AIR;
+
+/** The take-back badge, in pixels. The rarest control on the screen. */
 const MINUS_PX = 10;
 
 /**
- * Where each attribute row lands inside the column.
+ * ═══════════════════════════════════════════════════════════════════════════
+ * WHERE EACH ATTRIBUTE'S ICON LANDS INSIDE THE COLUMN — in `STAT_ROWS` order.
+ * ═══════════════════════════════════════════════════════════════════════════
  *
- * ONE FUNCTION, TWO READERS — the painter and the hit test — which is this
- * file's standing rule and matters more here than anywhere else in it: a `+`
- * whose hit box is one row above where it is drawn spends a point on the wrong
- * attribute. There IS an `unspend_stat` now, and it does not soften this: the
- * window is three points deep and town-gated, so a stray spend in a delve is
- * still not undoable until you walk out.
+ * ONE FUNCTION, EVERY READER — the painter, the hit test and the hover — which
+ * is this file's standing rule and matters most here: an icon whose hit box is
+ * a cell away from where it is drawn spends a point on the wrong attribute.
+ * `unspend_stat` does not soften that; its window is three points deep and
+ * town-gated, so a stray spend in a delve is not undoable until you walk out.
  *
- * A HEADING LINE FIRST. `Stats: 3` is what upstream's dialog leads with and it
- * is the only place the count appears on this screen, so the rows start one line
- * down.
+ * Each icon is centred in its `STAT_CELL_W` cell, so the caption centred under
+ * it has the cell's width to print in. `statsLayoutFor` decides one column or
+ * two, and 32 pixels or 16, from the SAME height this box was cut from.
+ *
+ * A CELL THAT STILL DOES NOT FIT IS LEFT OUT rather than drawn half off the
+ * panel — below the floor the grid beside it shows nothing either, and a half
+ * icon is a target whose other half is somewhere the pointer cannot see.
  */
-export function statRowRects(box: PanelRect): readonly PanelRect[] {
+export function statCellRects(box: PanelRect): readonly PanelRect[] {
   const out: PanelRect[] = [];
-  const top = box.y + STAT_ROW_H;
+  const { columns, iconPx, pitch } = statsLayoutFor(box.h);
+  const inset = Math.floor((STAT_CELL_W - iconPx) / 2);
   for (let i = 0; i < STAT_ROWS.length; i += 1) {
-    const y = top + i * STAT_ROW_H;
-    if (y + STAT_ROW_H > box.y + box.h) break;
-    out.push({ x: box.x, y, w: box.w, h: STAT_ROW_H });
+    const col = i % columns;
+    const line = Math.floor(i / columns);
+    const y = box.y + line * pitch;
+    if (y + iconPx + RANK_H > box.y + box.h) break;
+    out.push({ x: box.x + col * (STAT_CELL_W + STAT_CELL_GAP) + inset, y, w: iconPx, h: iconPx });
   }
   return out;
 }
 
-/** The `+` inside a row, which is the only part of it that is pressable. */
+/**
+ * THE WHOLE CELL — icon AND caption — which is upstream's mousezone
+ * (`TalentTrees.lua:433`: `y2 = dy + frame_size + addh`). A HOVER reads this; a
+ * PRESS reads only the icon, for the reason `talentPanelHitAt` gives.
+ */
+export function statCellZone(icon: PanelRect): PanelRect {
+  const inset = Math.floor((STAT_CELL_W - icon.w) / 2);
+  return { x: icon.x - inset, y: icon.y, w: STAT_CELL_W, h: icon.h + RANK_H };
+}
+
+/**
+ * THE TAKE-BACK BADGE ON AN ATTRIBUTE — the icon's corner, as on a talent, or
+ * beside a small icon rather than on it.
+ *
+ * A ten-pixel badge in the corner of a SIXTEEN-pixel icon covers most of it, and
+ * the badge is asked before the icon: the press that buys would have a
+ * six-pixel sliver left. So a small icon's badge sits in the cell's own margin
+ * to its left, where it takes nothing from the control beside it.
+ *
+ * ONE RECT, read by the hit test and by `drawMinusBadge`.
+ */
+export function statMinusRect(icon: PanelRect): PanelRect {
+  if (icon.w >= ICON_PX) return talentMinusRect(icon);
+  return {
+    x: icon.x - MINUS_PX - 2,
+    y: icon.y + Math.floor((icon.h - MINUS_PX) / 2),
+    w: MINUS_PX,
+    h: MINUS_PX,
+  };
+}
+
 /**
  * ═══════════════════════════════════════════════════════════════════════════
  * THE TAKE-BACK CORNER OF AN ICON. LevelupDialog.lua's `minus`, placed.
@@ -1689,42 +1874,6 @@ export function statRowRects(box: PanelRect): readonly PanelRect[] {
  */
 export function talentMinusRect(icon: PanelRect): PanelRect {
   return { x: icon.x - 2, y: icon.y - 2, w: MINUS_PX, h: MINUS_PX };
-}
-
-/**
- * ═══════════════════════════════════════════════════════════════════════════
- * THE TAKE-BACK ON AN ATTRIBUTE ROW, LEFT OF THE `+` AND CLEAR OF IT.
- * ═══════════════════════════════════════════════════════════════════════════
- *
- * `MINUS_PX` wide, one pixel smaller than the `+` and separated from it by
- * `STAT_MINUS_GAP` — the same reasoning `talentMinusRect` carries: two controls
- * that do OPPOSITE things must not be adjacent targets, and the common one must
- * stay the easy press.
- *
- * ═══ IT IS NOT ARMED, AND THE `+` IS ═══
- * `armedStat` exists because a spend used to be permanent. A take-back is the
- * undo, and putting an undo behind a confirm is friction protecting nothing: a
- * mis-pressed `−` is recovered by the `+` two pixels away, which hands the point
- * straight back. The asymmetry is the point rather than an inconsistency.
- */
-const STAT_MINUS_GAP = 3;
-
-export function statMinusRect(row: PanelRect): PanelRect {
-  return {
-    x: row.x + row.w - STAT_PLUS_PX - STAT_MINUS_GAP - MINUS_PX,
-    y: row.y + Math.floor((row.h - MINUS_PX) / 2),
-    w: MINUS_PX,
-    h: MINUS_PX,
-  };
-}
-
-export function statPlusRect(row: PanelRect): PanelRect {
-  return {
-    x: row.x + row.w - STAT_PLUS_PX,
-    y: row.y + Math.floor((row.h - STAT_PLUS_PX) / 2),
-    w: STAT_PLUS_PX,
-    h: STAT_PLUS_PX,
-  };
 }
 
 export function talentPanelGeometry(
@@ -1804,14 +1953,19 @@ export function talentPanelGeometry(
    * other way round is how a two-column grid ends up half underneath a stat row.
    *
    * IT IS EARNED BEFORE THE DESCRIPTION, which inverts the order the two landed
-   * in. See `PANEL_W_STATS`: spending a point has no other route in the game,
+   * in. See `panelWStats`: spending a point has no other route in the game,
    * and reading a description has the hover card.
+   *
+   * ITS WIDTH IS THE RECT'S HEIGHT TALKING — see `statsLayoutFor`. Its height
+   * is `statsBodyFor`, which is `bottom - top` spelled out once for the tier
+   * choice that has to know it before this function runs.
    */
-  const hasStats = fullW >= COL_W * 2 + COL_GAP + COL_GAP + STATS_W;
+  const statsW = statsWidthFor(rect.h);
+  const hasStats = fullW >= COL_W * 2 + COL_GAP + COL_GAP + statsW;
   const stats: PanelRect | null = hasStats
-    ? { x, y: top, w: STATS_W, h: Math.max(0, bottom - top) }
+    ? { x, y: top, w: statsW, h: statsBodyFor(rect.h) }
     : null;
-  const afterStats = hasStats ? STATS_W + COL_GAP : 0;
+  const afterStats = hasStats ? statsW + COL_GAP : 0;
 
   /**
    * ═══════════════════════════════════════════════════════════════════════════
@@ -1877,7 +2031,8 @@ export function talentPanelGeometry(
    * decline rather than draw a column it cannot fit.
    */
   const hasDetail =
-    rect.w >= PANEL_W_WIDE && fullW >= COL_W * 2 + COL_GAP + COL_GAP + STATS_W + COL_GAP + DETAIL_W;
+    rect.w >= panelWWide(rect.h) &&
+    fullW >= COL_W * 2 + COL_GAP + COL_GAP + statsW + COL_GAP + DETAIL_W;
   const detail: PanelRect | null = hasDetail
     ? {
         x: x + fullW - DETAIL_W,
@@ -2470,25 +2625,30 @@ export function talentPanelHitAt(
    * still first because it is first on screen, and because a reader tracing a
    * press down this function should meet the surfaces in the order the eye does.
    *
-   * ONLY THE `+` ANSWERS. The rest of a row is a label and a number, and a hit
-   * on it would arm a spend the player never aimed at — the same reason the
-   * grid's `+` is the icon rather than a separate button, in reverse: here there
-   * IS room for a small target, so the small target is what is asked about.
+   * ═══ THE ICON ANSWERS, AND ONLY THE ICON ═══
+   * This was *"ONLY THE `+` ANSWERS"*, when a row was a label, a number and a
+   * small button, and a hit on the label would have armed a spend the player
+   * never aimed at. The row is an icon now, the way upstream draws it and the
+   * way the grid beside it already works: the icon IS the `+`, behind the same
+   * arm-then-confirm (`pressSpend`). The CAPTION under it does not answer — a
+   * press on a number is still not a press on a control — and neither does the
+   * air between two cells.
    */
   const statBox = geometry.stats;
   if (statBox !== null) {
-    const rowRects = statRowRects(statBox);
-    for (let i = 0; i < rowRects.length; i += 1) {
-      const row = rowRects[i];
+    const icons = statCellRects(statBox);
+    for (let i = 0; i < icons.length; i += 1) {
+      const icon = icons[i];
       const entry = STAT_ROWS[i];
-      if (row === undefined || entry === undefined) continue;
-      // THE `−` IS ASKED FIRST because it is the smaller of the two and they do
-      // not overlap: asking the larger one first would be harmless today and
-      // would silently swallow the small one the day the gap is tightened.
-      if (unspendableStats.includes(entry.key) && inside(statMinusRect(row))) {
+      if (icon === undefined || entry === undefined) continue;
+      // THE TAKE-BACK BADGE IS ASKED FIRST, and it has to be: on a full-size
+      // icon it is carved out of the icon's own box, so asking the icon first
+      // would make it unreachable. The grid's rule, one currency over — see
+      // `statMinusRect`.
+      if (unspendableStats.includes(entry.key) && inside(statMinusRect(icon))) {
         return { kind: TalentHitKind.UnspendStat, stat: entry.key };
       }
-      if (inside(statPlusRect(row))) return { kind: TalentHitKind.Stat, stat: entry.key };
+      if (inside(icon)) return { kind: TalentHitKind.Stat, stat: entry.key };
     }
   }
 
@@ -2616,6 +2776,37 @@ export function talentIdAt(
   return cellAt(rows, hit.index, px, py, rect, scroll)?.id ?? null;
 }
 
+/**
+ * WHICH ATTRIBUTE THE POINTER IS OVER, or null — the hover half of the column.
+ *
+ * Over the whole cell (`statCellZone`), not just the icon: the description
+ * column and the card both follow this, and a player reading `25 (20)` is
+ * asking about that stat. The PRESS reader is `talentPanelHitAt`, which asks
+ * the icon alone.
+ */
+export function talentStatAt(
+  rect: PanelRect,
+  rows: readonly TalentRow[],
+  px: number,
+  py: number,
+  /** The same offset the painter used — see `talentPanelGeometry`. */
+  scroll: number,
+): StatKey | null {
+  const statBox = talentPanelGeometry(rect, rows, scroll).stats;
+  if (statBox === null) return null;
+  const icons = statCellRects(statBox);
+  for (let i = 0; i < icons.length; i += 1) {
+    const icon = icons[i];
+    const entry = STAT_ROWS[i];
+    if (icon === undefined || entry === undefined) continue;
+    const zone = statCellZone(icon);
+    if (px >= zone.x && px < zone.x + zone.w && py >= zone.y && py < zone.y + zone.h) {
+      return entry.key;
+    }
+  }
+  return null;
+}
+
 export function talentTipAt(
   rect: PanelRect,
   rows: readonly TalentRow[],
@@ -2639,41 +2830,32 @@ export function talentTipAt(
    * THE ATTRIBUTE COLUMN ANSWERS FIRST, AND ONLY TO A HOVER.
    * ═══════════════════════════════════════════════════════════════════════════
    *
-   * `talentPanelHitAt` states the press rule for this column and it is
-   * unchanged: *"ONLY THE `+` ANSWERS. The rest of a row is a label and a
-   * number, and a hit on it would arm a spend the player never aimed at."*
+   * `talentPanelHitAt` states the press rule for this column: the icon answers
+   * a press and the caption does not.
    *
    * A HOVER IS NOT A PRESS, which is the whole reason this can be a second
    * reader over the same geometry rather than a new `TalentHit` variant — the
    * same split the file already makes for `Header`, and for the same stated
-   * reason. Pointing at a row is safe; pressing it is not.
+   * reason. Pointing at a cell is safe; pressing it is not.
    *
-   * ═══ WHY THE ROW AND NOT JUST THE `+` ═══
-   * The card is the thing that makes the `+` a decision rather than a guess, so
-   * it has to be readable BEFORE the pointer is over the button. A player
-   * hovering the word "Constitution" is asking exactly the question this
-   * answers.
+   * ═══ AND IT IS NOW THE ONLY PLACE THE NAME IS WRITTEN ═══
+   * The column draws an icon and a number, as upstream's does, so on a window
+   * without the description column this card is what says the lantern is
+   * Willpower. It answers over the WHOLE cell, caption included — upstream's
+   * mousezone — so the answer is readable before the pointer is on the control.
    */
-  if (statGains !== undefined) {
-    const statBox = talentPanelGeometry(rect, rows, scroll).stats;
-    if (statBox !== null) {
-      const rowRects = statRowRects(statBox);
-      for (let i = 0; i < rowRects.length; i += 1) {
-        const row = rowRects[i];
-        const entry = STAT_ROWS[i];
-        if (row === undefined || entry === undefined) continue;
-        if (px < row.x || px >= row.x + row.w || py < row.y || py >= row.y + row.h) continue;
-        const lines = statGains[entry.key] ?? [];
-        return {
-          title: entry.name,
-          meta: 'per point',
-          // AND IT SAYS SO WHEN IT BUYS NOTHING. A stat with an empty list is a
-          // real answer — a body whose Magic feeds nothing it owns — and a card
-          // that vanished would read as a broken hover.
-          lines: lines.length === 0 ? ['Nothing this body can use.'] : [...lines],
-        };
-      }
-    }
+  const stat = statGains === undefined ? null : talentStatAt(rect, rows, px, py, scroll);
+  if (stat !== null && statGains !== undefined) {
+    const entry = STAT_ROWS.find((row) => row.key === stat);
+    const lines = statGains[stat] ?? [];
+    return {
+      title: entry?.name ?? stat,
+      meta: 'per point',
+      // AND IT SAYS SO WHEN IT BUYS NOTHING. A stat with an empty list is a
+      // real answer — a body whose Magic feeds nothing it owns — and a card
+      // that vanished would read as a broken hover.
+      lines: lines.length === 0 ? ['Nothing this body can use.'] : [...lines],
+    };
   }
 
   /**
@@ -2686,9 +2868,9 @@ export function talentTipAt(
    * `Spend` would put the card on a different code path for no reason.
    */
   const hit = talentPanelHitAt(rect, rows, px, py, scroll);
-  // NO CARD OVER AN ATTRIBUTE. There is no cell behind one, and the column
-  // already draws its own name and value — a card repeating them would be the
-  // same words twice with one copy following the pointer.
+  // NO TALENT CARD OVER AN ATTRIBUTE. There is no talent cell behind one; its
+  // own card is the branch above, and without `statGains` there is nothing to
+  // put on one.
   if (
     hit === null ||
     hit.kind === TalentHitKind.Close ||
@@ -2873,8 +3055,113 @@ function drawColumnRule(
   }
 }
 
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * WHAT ONE ATTRIBUTE CELL LOOKS LIKE — `LevelupDialog.lua:582-600`, on this palette.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Upstream's two colour functions, and every signal they carry kept:
+ *
+ *   FRAME (`color`, :582-591): gold if the stat changed since the dialog opened,
+ *   green if it is at a ceiling, grey otherwise. "Changed since it opened" is
+ *   upstream's `actor_dup` comparison, and the thing it GATES there is the `−`
+ *   (:264-267). Ours gates the `−` on `ProgressMsg.unspendableStats`, so that is
+ *   what lights the frame gold here — the frame and the take-back corner can
+ *   never disagree about whether this point can come back.
+ *
+ *   CAPTION (`status`, :592-600): `%d (%d)` — composed, then as bought — grey at
+ *   a ceiling, green otherwise.
+ *
+ * ═══ THE PALETTE HAS NO GREEN, SO THE CEILING IS A SHAPE ═══
+ * `PALETTE` is "the only colours this game is allowed to use", and it has no
+ * green in it. The ceiling therefore borrows upstream's OTHER way of saying
+ * "cannot be learned": `TalentTrees.lua:420-421`'s `do_shadow`, a black quad
+ * over the icon. It survives greyscale, which a hue swap would not — this file's
+ * standing rule for any state a player acts on.
+ *
+ * BUYABLE is the grid's own convention for its icons: PARCHMENT when a press
+ * would do something, SLATE when it would not. ARMED is the grid's too — gold,
+ * two pixels — and it cannot outlive the thing it arms: a capped or empty-handed
+ * cell is never drawn armed, because a lit control that does nothing is the one
+ * `ui/hotbar.ts` refuses.
+ *
+ * PURE and exported, so the rules are tested as rules and the painter is tested
+ * for reading them.
+ */
+export type StatCellLook = {
+  readonly frame: string;
+  /** Two when armed, else one. */
+  readonly ring: 1 | 2;
+  /** Upstream's `do_shadow`, on an attribute at its ceiling. */
+  readonly dimmed: boolean;
+  readonly caption: string;
+  /** The caption with the bracket dropped, for a cell too narrow for both. */
+  readonly captionShort: string;
+  readonly captionInk: string;
+};
+
+export function statCellLook(input: {
+  /** Composed — `ProgressMsg.stats`. */
+  readonly value: number;
+  /** As bought — `ProgressMsg.statBase`. Null against a server that sends none. */
+  readonly base: number | null;
+  readonly level: number;
+  readonly unspent: number;
+  readonly armed: boolean;
+  /** The server lists it in `unspendableStats`. */
+  readonly changed: boolean;
+}): StatCellLook {
+  /**
+   * ASKED OF THE BOUGHT VALUE, not the composed one — see `statBase`. With no
+   * base in hand (an older server) nothing is capped and the server's refusal
+   * is the backstop, which is the behaviour this column has always had.
+   */
+  const capped = input.base !== null && !canRaiseStat(input.base, input.level);
+  const buyable = input.unspent > 0 && !capped;
+  const armed = input.armed && buyable;
+  const value = String(Math.round(input.value));
+  return {
+    frame: armed || input.changed ? PALETTE.GOLD : buyable ? PALETTE.PARCHMENT : PALETTE.SLATE,
+    ring: armed ? 2 : 1,
+    dimmed: capped,
+    /**
+     * ═══ BOTH NUMBERS, ALWAYS — `("%d (%d)"):format(...)` at :596 and :598 ═══
+     * This used to print the bracket only when the two differed, on the grounds
+     * that `14 (14)` is furniture. Upstream prints it on every cell, and it is
+     * not furniture there: a column of pairs is what lets the one pair that
+     * DIFFERS be seen as different, and it is the ported screen.
+     */
+    caption: input.base === null ? value : `${value} (${String(Math.round(input.base))})`,
+    captionShort: value,
+    captionInk: capped ? PALETTE.GREY_HI : PALETTE.PARCHMENT,
+  };
+}
+
+/** Upstream's `do_shadow` quad is black at 200/255 — `TalentTrees.lua:421`. */
+const SHADOW_ALPHA = 200 / 255;
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE ATTRIBUTE COLUMN — six framed icons, each with its `%d (%d)` under it.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `TalentTrees.lua:414-433`, which is the same painter upstream uses for a
+ * talent: icon, tinted frame, status text centred beneath. So this is built from
+ * the grid's own pieces — its frame, `drawRowRing`, `drawMinusBadge` —
+ * and a player reads one visual language across all three columns.
+ *
+ * ═══ NO HEADING, NO HAIRLINE ═══
+ * It drew `Stats: N` over the first row and a hairline down its edge. The count
+ * is the counter box above the column (`b_stat`, `LevelupDialog.lua:757`), which
+ * is the only place upstream says it, and the edge is `drawColumnRule`. Both
+ * were second copies painted on top of the first.
+ *
+ * NOTHING AT ALL WITHOUT VALUES. A client that has had no `progress` frame yet
+ * must not invent zeroes — six cells of `0 (0)` is a lie about a character.
+ */
 function drawStats(
   ctx: CanvasRenderingContext2D,
+  sprites: SpriteSource,
   box: PanelRect,
   values: Readonly<Record<string, number>> | null,
   unspent: number,
@@ -2885,114 +3172,137 @@ function drawStats(
   /** `ProgressMsg.unspendableStats`. Empty means no `−` anywhere. */
   unspendable: readonly string[],
 ): void {
+  if (box.w <= 0 || box.h <= 0 || values === null) return;
+
+  const icons = statCellRects(box);
+  for (let i = 0; i < icons.length; i += 1) {
+    const icon = icons[i];
+    const entry = STAT_ROWS[i];
+    if (icon === undefined || entry === undefined) continue;
+    const changed = unspendable.includes(entry.key);
+    const look = statCellLook({
+      value: values[entry.key] ?? 0,
+      base: bought?.[entry.key] ?? null,
+      level,
+      unspent,
+      armed: armed === entry.key,
+      changed,
+    });
+
+    drawStatIcon(ctx, sprites, entry, icon, look.frame);
+    if (look.dimmed) {
+      // INSIDE THE FRAME, so the frame still says which way it is lit.
+      ctx.globalAlpha = SHADOW_ALPHA;
+      ctx.fillStyle = PALETTE.INK;
+      ctx.fillRect(icon.x + 1, icon.y + 1, icon.w - 2, icon.h - 2);
+      ctx.globalAlpha = 1;
+    }
+    if (look.ring === 2) {
+      ctx.fillStyle = look.frame;
+      drawRowRing(ctx, icon, 2);
+    }
+    if (changed) drawMinusBadge(ctx, statMinusRect(icon));
+
+    /**
+     * CENTRED UNDER THE ICON, in the grid's rank face and at the grid's rank
+     * baseline — `TalentTrees.lua:429`'s `(frame_size - key.w) / 2`. A caption
+     * wider than the cell and its gap would print into the neighbour when the
+     * column is two wide, so it drops the bracket instead of clipping a digit
+     * (upstream clips; see `STAT_CELL_W`).
+     */
+    ctx.font = FONT_LEVEL;
+    ctx.textAlign = 'center';
+    // SET HERE, NOT INHERITED. `drawCounterBox` runs before this and leaves the
+    // baseline alphabetic, which put every caption four pixels higher than the
+    // grid's rank counters beside it.
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = look.captionInk;
+    const fits = ctx.measureText(look.caption).width <= STAT_CELL_W + STAT_CELL_GAP - 2;
+    ctx.fillText(
+      fits ? look.caption : look.captionShort,
+      icon.x + icon.w / 2,
+      // The grid's rank baseline under a full icon; tucked two pixels closer
+      // under a small one, whose pitch has no air to spare.
+      icon.y + icon.h + (icon.w >= ICON_PX ? RANK_H - 2 : RANK_H - 4),
+    );
+    ctx.textAlign = 'left';
+  }
+}
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * ONE ATTRIBUTE ICON: ground, art, frame. Through `blitReduced`, not `drawImage`.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `drawTalentIcon` scales whatever it is given to the box, which is safe for a
+ * talent because the box is always 32 and the art is always 64. This column
+ * draws at 32 AND at 16, so the ratio is checked rather than assumed: a file
+ * that does not divide exactly draws the three-letter code instead of a torn
+ * resample — the refusal `blitReduced` exists to make.
+ *
+ * THE CODE, NOT A LETTER, on a bare clone: `C` would be Constitution and
+ * Cunning both. Drawn in the rank face so `WIL` still fits a sixteen-pixel
+ * frame's neighbourhood.
+ */
+function drawStatIcon(
+  ctx: CanvasRenderingContext2D,
+  sprites: SpriteSource,
+  entry: (typeof STAT_ROWS)[number],
+  box: PanelRect,
+  border: string,
+): void {
   if (box.w <= 0 || box.h <= 0) return;
+  ctx.fillStyle = PALETTE.VOID;
+  ctx.fillRect(box.x, box.y, box.w, box.h);
+  if (!blitReduced(ctx, sprites, entry.icon, box, BlitAnchor.Centre, STAT_MAX_REDUCTION)) {
+    ctx.font = box.w >= ICON_PX ? FONT_ICON_FALLBACK : FONT_LEVEL;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = PALETTE.SILVER;
+    ctx.fillText(entry.label, box.x + box.w / 2, box.y + box.h / 2);
+    ctx.textAlign = 'left';
+  }
+  ctx.fillStyle = border;
+  ctx.fillRect(box.x, box.y, box.w, 1);
+  ctx.fillRect(box.x, box.y + box.h - 1, box.w, 1);
+  ctx.fillRect(box.x, box.y, 1, box.h);
+  ctx.fillRect(box.x + box.w - 1, box.y, 1, box.h);
+}
 
-  // A HAIRLINE DOWN THE INSIDE EDGE, matching the description column's. The
-  // panel is one window with three columns, not three panels.
+/** 64 to 16 is a reduction of four, and nothing past it is allowed. */
+const STAT_MAX_REDUCTION = 4;
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE TAKE-BACK BADGE — drawn only on what the SERVER says is open.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * A filled square with a bar through it, because a bare `-` glyph at ten pixels
+ * is indistinguishable from a stray line on the ring. The fill is what makes it
+ * read as a control, and it is drawn OVER the icon's own corner so it cannot be
+ * mistaken for part of the art.
+ *
+ * ═══ THE FORM CARRIES IT, NOT THE COLOUR ═══
+ * The obvious choice was CRIMSON and it is FORBIDDEN: `test/client/assets.test.ts`
+ * reserves it for "hostiles are engaged" and nothing else, and reserves VIOLET_HI
+ * for the missing-asset box. The same rule (`ui/partypanel.ts:78-92`) says a
+ * state must never be carried by colour ALONE anyway — so this is the only
+ * FILLED BLOCK on any icon, which is what distinguishes it in greyscale, at a
+ * glance, and for a player who cannot separate red from green.
+ *
+ * SLATE, which the grid already uses for "you cannot press this", with a
+ * PARCHMENT bar over it. Quiet on purpose: it is the rarest control on the
+ * screen and it should not compete with the icons a player is choosing between.
+ *
+ * ONE PAINTER FOR BOTH COLUMNS, handed the rect the hit test asks —
+ * `talentMinusRect` for a talent, `statMinusRect` for an attribute — so the two
+ * badges are the same control.
+ */
+function drawMinusBadge(ctx: CanvasRenderingContext2D, minus: PanelRect): void {
   ctx.fillStyle = PALETTE.SLATE;
-  ctx.fillRect(box.x + box.w + Math.floor(COL_GAP / 2), box.y, 1, box.h);
-
-  ctx.font = FONT_META;
-  // GOLD WHILE THERE IS SOMETHING TO SPEND, grey when there is not — the same
-  // signal the escape menu's `TALENTS (2)` uses for the other currency.
-  ctx.fillStyle = unspent > 0 ? PALETTE.GOLD : PALETTE.GREY;
-  ctx.fillText(`Stats: ${String(unspent)}`, box.x, box.y + STAT_ROW_H / 2);
-
-  if (values === null) return;
-
-  const rects = statRowRects(box);
-  ctx.font = FONT_BODY;
-  for (let i = 0; i < rects.length; i += 1) {
-    const row = rects[i];
-    const entry = STAT_ROWS[i];
-    if (row === undefined || entry === undefined) continue;
-    const value = values[entry.key] ?? 0;
-    const base = bought?.[entry.key] ?? null;
-    const mid = row.y + row.h / 2;
-
-    ctx.fillStyle = PALETTE.GREY_HI;
-    ctx.fillText(entry.label, row.x, mid);
-    /**
-     * ═══ `25 (20)` — COMPOSED, WITH WHAT YOU BOUGHT IN BRACKETS ═══
-     * LevelupDialog.lua:624-627 draws exactly this pair, and it answers the
-     * question a single number cannot: how much of my Strength is MINE. It also
-     * explains a greyed `+` beside a value that looks nowhere near any limit —
-     * the ceiling binds on the bracketed number.
-     *
-     * ONLY WHEN THEY DIFFER. Printing `(20)` beside a bare 20 on every row would
-     * be furniture, and the same argument the mastery header makes for leaving
-     * `(x1.00)` unsaid.
-     */
-    ctx.fillStyle = PALETTE.PARCHMENT;
-    const shown =
-      base === null || Math.round(base) === Math.round(value)
-        ? String(Math.round(value))
-        : `${String(Math.round(value))} (${String(Math.round(base))})`;
-    ctx.fillText(shown, row.x + 26, mid);
-
-    if (unspent <= 0) continue;
-
-    /**
-     * ═══════════════════════════════════════════════════════════════════════
-     * THE `+` GOES DEAD AT THE LEVEL CEILING — LevelupDialog.lua:255-260.
-     * ═══════════════════════════════════════════════════════════════════════
-     *
-     * Upstream refuses the press AND paints the row when either clause binds
-     * (:584, :593, :610-616), so a player learns the limit before spending
-     * rather than by being told no. This is that, on the control itself.
-     *
-     * ASKED OF THE BOUGHT VALUE, not the composed one — see `statBase`. With no
-     * base in hand (an older server) every `+` stays live and the server's
-     * refusal is the backstop, which is the behaviour this column has always had.
-     */
-    const capped = base !== null && !canRaiseStat(base, level);
-    const plus = statPlusRect(row);
-    const isArmed = armed === entry.key && !capped;
-    // ARMED IS A FILL, NOT A COLOUR CHANGE ALONE — `ui/partypanel.ts` states the
-    // rule this file follows everywhere: never colour alone.
-    ctx.fillStyle = isArmed ? PALETTE.GOLD : PALETTE.SLATE;
-    ctx.fillRect(plus.x, plus.y, plus.w, plus.h);
-    /**
-     * AND A CAPPED CONTROL WEARS A DASH, NOT A PLUS. A greyed `+` is still a
-     * plus, and the one thing a player must not do here is press hopefully at a
-     * control that has nothing to give — the glyph change is the shape signal
-     * this file uses everywhere in place of colour alone.
-     */
-    ctx.fillStyle = capped ? PALETTE.GREY : isArmed ? PALETTE.INK : PALETTE.BONE;
-    ctx.textAlign = 'center';
-    ctx.fillText(capped ? '–' : '+', plus.x + plus.w / 2, plus.y + plus.h / 2);
-    ctx.textAlign = 'left';
-  }
-
-  /**
-   * ═══════════════════════════════════════════════════════════════════════════
-   * AND THE TAKE-BACK, ON ITS OWN PASS — LevelupDialog.lua:264-272.
-   * ═══════════════════════════════════════════════════════════════════════════
-   *
-   * A SECOND LOOP RATHER THAN A BRANCH IN THE FIRST, because the first one is
-   * gated on `unspent <= 0`: with no points in hand it `continue`s before it
-   * draws anything, and that is exactly the state a player is in when they most
-   * want the `−` — they just spent their last point on the wrong row.
-   *
-   * The rule the first loop enforces is upstream's `+` rule; this one is
-   * upstream's `−` rule, and the two genuinely have different preconditions.
-   */
-  for (let i = 0; i < rects.length; i += 1) {
-    const row = rects[i];
-    const entry = STAT_ROWS[i];
-    if (row === undefined || entry === undefined) continue;
-    if (!unspendable.includes(entry.key)) continue;
-
-    const minus = statMinusRect(row);
-    // NO ARMED STATE — see `statMinusRect`. A take-back is the undo, and the
-    // fill is the plain one so the `+` beside it stays the louder control.
-    ctx.fillStyle = PALETTE.SLATE;
-    ctx.fillRect(minus.x, minus.y, minus.w, minus.h);
-    ctx.fillStyle = PALETTE.BONE;
-    ctx.textAlign = 'center';
-    ctx.fillText('−', minus.x + minus.w / 2, minus.y + minus.h / 2);
-    ctx.textAlign = 'left';
-  }
+  ctx.fillRect(minus.x, minus.y, minus.w, minus.h);
+  ctx.fillStyle = PALETTE.PARCHMENT;
+  ctx.fillRect(minus.x + 2, minus.y + Math.floor(minus.h / 2), minus.w - 4, 1);
 }
 
 function drawDetail(
@@ -3232,6 +3542,120 @@ function drawDetail(
   }
 }
 
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ *   ONE ATTRIBUTE, IN FULL, DOWN THE RIGHT — `LevelupDialog.lua:850-914`.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Upstream's `getStatDesc`: the stat's paragraph, then `Current value:` and
+ * `Base value:`, then `Stat gives:` and one line per thing a point moves. This
+ * is that, in the talent pane's own grammar — icon and gold name, dim labels and
+ * lit values — so a player moving the pointer from a talent to a stat reads the
+ * same shape of answer.
+ *
+ * ═══ NO PARAGRAPH ═══
+ * Upstream's text is `defineStat`'s description (`load.lua:182-187`), which is
+ * about spell power, mana, stamina and PSI — a game that is not this one. The
+ * list under `Per point` is measured off this body by the server
+ * (`ProgressMsg.statGains`), so it is the true paragraph, and the one upstream
+ * writes by hand below its prose anyway.
+ *
+ * ═══ THE CEILING IS SAID IN WORDS ═══
+ * The cell shows it as a shadow; this is where the shadow is explained, in the
+ * two sentences upstream keeps apart (`:255-260`) because they send a player
+ * opposite ways — wait a level, or never.
+ */
+function drawStatDetail(
+  ctx: CanvasRenderingContext2D,
+  sprites: SpriteSource,
+  box: PanelRect,
+  stat: StatKey,
+  values: Readonly<Record<string, number>> | null,
+  bought: Readonly<Record<string, number>> | null,
+  level: number,
+  gains: Readonly<Record<string, readonly string[]>> | undefined,
+  wrap: (text: string, maxPx: number) => readonly string[],
+): void {
+  if (box.w <= 0 || box.h <= 0) return;
+  const entry = STAT_ROWS.find((row) => row.key === stat);
+  if (entry === undefined) return;
+
+  const x = box.x + 6;
+  const w = box.w - 12;
+  let y = box.y + 4;
+  const bottom = box.y + box.h;
+
+  const iconBox = { x, y, w: ICON_PX, h: ICON_PX };
+  drawStatIcon(ctx, sprites, entry, iconBox, PALETTE.SLATE);
+
+  const textX = x + ICON_PX + 6;
+  ctx.font = FONT_META;
+  ctx.fillStyle = PALETTE.GOLD;
+  ctx.fillText(fitText(ctx, entry.name, w - ICON_PX - 6), textX, y + 8);
+  ctx.font = FONT_BODY;
+  ctx.fillStyle = PALETTE.GREY_HI;
+  ctx.fillText(fitText(ctx, 'Attribute', w - ICON_PX - 6), textX, y + 21);
+  y += ICON_PX + 6;
+
+  const field = (label: string, value: string): void => {
+    if (y + 12 > bottom) return;
+    ctx.font = FONT_BODY;
+    ctx.fillStyle = PALETTE.GREY;
+    const head = `${label}: `;
+    ctx.fillText(head, x, y + 6);
+    const headW = ctx.measureText(head).width;
+    ctx.fillStyle = PALETTE.PARCHMENT;
+    ctx.fillText(fitText(ctx, value, w - headW), x + headW, y + 6);
+    y += 12;
+  };
+
+  const value = values?.[stat];
+  const base = bought?.[stat] ?? null;
+  if (value !== undefined) field('Current value', String(Math.round(value)));
+  if (base !== null) field('Base value', String(Math.round(base)));
+
+  const lines = (text: string, ink: string): boolean => {
+    ctx.font = FONT_BODY;
+    ctx.fillStyle = ink;
+    for (const part of wrap(text, w)) {
+      if (y + 12 > bottom) return false;
+      ctx.fillText(part, x, y + 6);
+      y += 12;
+    }
+    return true;
+  };
+
+  if (base !== null && !canRaiseStat(base, level)) {
+    y += 4;
+    // ORANGE, the pane's refusal ink — the same fact the press would be told.
+    const said = lines(
+      base < STAT_MAX
+        ? `At its maximum for level ${String(level)} — it can rise again next level.`
+        : 'At its maximum.',
+      PALETTE.ORANGE,
+    );
+    if (!said) return;
+  }
+
+  if (gains === undefined) return;
+  y += 4;
+  if (y + 12 > bottom) return;
+  ctx.font = FONT_META;
+  ctx.fillStyle = PALETTE.GREY;
+  ctx.fillText('Per point', x, y + 6);
+  y += 12;
+  const perPoint = gains[stat] ?? [];
+  // GOLD — what one point buys, in the colour the next-rank line and the hover
+  // card already use for exactly that.
+  if (perPoint.length === 0) {
+    lines('Nothing this body can use.', PALETTE.GREY_HI);
+    return;
+  }
+  for (const gain of perPoint) {
+    if (!lines(gain, PALETTE.GOLD)) return;
+  }
+}
+
 function drawTalentIcon(
   ctx: CanvasRenderingContext2D,
   sprites: SpriteSource,
@@ -3337,49 +3761,25 @@ function drawRow(
         const atCap = cell.level >= cell.maxLevel;
         const ink = armed ? PALETTE.GOLD : cell.canSpend ? PALETTE.PARCHMENT : PALETTE.SLATE;
 
+        drawTalentIcon(ctx, sprites, cell.icon, cell.name, box, ink);
+
         /**
          * THE RING CARRIES THE STATE, AND IT HAS TO SURVIVE GREYSCALE — the rule
          * ui/panel.ts sets for every control in this client. Armed is a thick
          * ring, buyable is a thin one, and a talent you cannot afford is drawn in
          * slate rather than hidden: a control that vanishes when it is refused
          * teaches a player it does not exist.
+         *
+         * AFTER THE ICON, NOT BEFORE IT. It was drawn first, and
+         * `drawTalentIcon`'s ground fill painted over it — so "armed" was a
+         * one-pixel gold border against a one-pixel parchment one, which is
+         * colour alone on the one state a player must not miss.
          */
         ctx.fillStyle = ink;
         drawRowRing(ctx, box, armed ? 2 : 1);
 
-        drawTalentIcon(ctx, sprites, cell.icon, cell.name, box, ink);
-
-        /**
-         * ═══════════════════════════════════════════════════════════════════
-         * THE TAKE-BACK BADGE — drawn only on what the SERVER says is open.
-         * ═══════════════════════════════════════════════════════════════════
-         *
-         * A filled square with a bar through it, because a bare `-` glyph at
-         * ten pixels is indistinguishable from a stray line on the ring. The
-         * fill is what makes it read as a control, and it is drawn OVER the
-         * icon's own corner so it cannot be mistaken for part of the art.
-         *
-         * ═══ THE FORM CARRIES IT, NOT THE COLOUR ═══
-         * The obvious choice was CRIMSON and it is FORBIDDEN:
-         * `test/client/assets.test.ts` reserves it for "hostiles are engaged"
-         * and nothing else, and reserves VIOLET_HI for the missing-asset box.
-         * The same rule (`ui/partypanel.ts:78-92`) says a state must never be
-         * carried by colour ALONE anyway — so this is the only FILLED BLOCK on
-         * any icon in the grid, which is what distinguishes it in greyscale, at
-         * a glance, and for a player who cannot separate red from green.
-         *
-         * SLATE, which the grid already uses for "you cannot press this", with a
-         * PARCHMENT bar over it. Quiet on purpose: it is the rarest control on
-         * the screen and it should not compete with fourteen icons a player is
-         * actually choosing between.
-         */
-        if (cell.canUnlearn) {
-          const minus = talentMinusRect(box);
-          ctx.fillStyle = PALETTE.SLATE;
-          ctx.fillRect(minus.x, minus.y, minus.w, minus.h);
-          ctx.fillStyle = PALETTE.PARCHMENT;
-          ctx.fillRect(minus.x + 2, minus.y + Math.floor(minus.h / 2), minus.w - 4, 1);
-        }
+        // THE TAKE-BACK BADGE — see `drawMinusBadge`.
+        if (cell.canUnlearn) drawMinusBadge(ctx, talentMinusRect(box));
 
         // `n/max`, centred under the icon — TalentTrees.lua:429-433, with
         // LevelupDialog.lua:537-549's three-way colour split on this palette.
@@ -3477,8 +3877,8 @@ export type TalentPanelDrawOptions = {
   readonly focusId?: string | null;
   /**
    * THE SIX, COMPOSED, from `ProgressMsg.stats`. Null before the first frame or
-   * against a server that does not send them — the column then draws its heading
-   * and no rows, which is honest about a build with nothing to show.
+   * against a server that does not send them — the column then draws no cells,
+   * which is honest about a build with nothing to show.
    */
   readonly stats?: Readonly<Record<string, number>> | null;
   /**
@@ -3487,27 +3887,37 @@ export type TalentPanelDrawOptions = {
    *
    *   the CEILING, which upstream binds on the bought value (`no_inc`) so that a
    *     good coat never costs you a point you already own;
-   *   and the ROW, which draws `25 (20)` when the two differ — the only way to
-   *     tell "I bought this" from "my armour is doing this".
+   *   and the CAPTION, which draws `25 (20)` — the only way to tell "I bought
+   *     this" from "my armour is doing this".
    *
    * Null against a server too old to send it, and then the column behaves
-   * exactly as it did before this existed: every `+` live, no brackets.
+   * exactly as it did before this existed: every cell live, no brackets.
    */
   readonly statBase?: Readonly<Record<string, number>> | null;
-  /** Attribute points in hand. Zero draws no `+` anywhere. */
+  /** Attribute points in hand. Zero leaves every cell unlit. */
   readonly unspentStats?: number;
   /**
    * WHICH ATTRIBUTE IS ONE PRESS FROM BEING BOUGHT, or null. The same two-press
-   * rule the grid uses. `unspend_stat` exists now and the arming stays — see
-   * `statMinusRect` for why the `−` is the one control here that is not armed.
+   * rule the grid uses. `unspend_stat` exists now and the arming stays — the
+   * take-back window is three points deep and town-gated. The `−` is the one
+   * control here that is not armed: an undo behind a confirm protects nothing.
    */
   readonly armedStat?: string | null;
   /**
    * WHICH ATTRIBUTES THE SERVER SAYS ARE STILL TAKE-BACKABLE — `ProgressMsg`'s
-   * `unspendableStats`. A `−` is drawn on exactly these rows and nowhere else,
+   * `unspendableStats`. A `−` is drawn on exactly these cells and nowhere else,
    * so the column cannot offer a refund the server will refuse.
    */
   readonly unspendableStats?: readonly string[];
+  /**
+   * WHICH ATTRIBUTE THE DESCRIPTION COLUMN IS ABOUT, or null — the stat twin of
+   * `focusId`, and never set at the same time as it. Upstream's column answers
+   * a hover over a stat with `getStatDesc` (`LevelupDialog.lua:741-750`), and
+   * with the name no longer printed in the column this pane is where it is.
+   */
+  readonly focusStat?: StatKey | null;
+  /** `ProgressMsg.statGains` — what one point buys, for the description column. */
+  readonly statGains?: Readonly<Record<string, readonly string[]>>;
 };
 
 /**
@@ -3732,6 +4142,7 @@ export function drawTalentPanel(options: TalentPanelDrawOptions): void {
   if (geometry.stats !== null) {
     drawStats(
       ctx,
+      sprites,
       geometry.stats,
       options.stats ?? null,
       Math.max(0, Math.floor(options.unspentStats ?? 0)),
@@ -3747,7 +4158,20 @@ export function drawTalentPanel(options: TalentPanelDrawOptions): void {
     );
   }
 
-  if (geometry.detail !== null) {
+  const focusStat = options.focusStat ?? null;
+  if (geometry.detail !== null && focusStat !== null) {
+    drawStatDetail(
+      ctx,
+      sprites,
+      geometry.detail,
+      focusStat,
+      options.stats ?? null,
+      options.statBase ?? null,
+      Math.max(1, Math.floor(options.level ?? 1)),
+      options.statGains,
+      talentWrapper(),
+    );
+  } else if (geometry.detail !== null) {
     const focus = options.focusId ?? null;
     let cell: TalentCell | null = null;
     if (focus !== null) {
@@ -3763,20 +4187,60 @@ export function drawTalentPanel(options: TalentPanelDrawOptions): void {
     drawDetail(ctx, sprites, geometry.detail, cell, talentWrapper());
   }
 
-  // ONE SENTENCE ABOUT THE PRESS, and only while something is armed. A permanent
-  // legend would be furniture; this is the moment the warning is worth reading,
-  // and it is drawn last so it sits over whatever row it is about.
-  if (armedId !== null) {
-    const y = rect.y + rect.h - INSET - NOTE_ROW_H;
-    ctx.font = FONT_META;
-    ctx.fillStyle = PALETTE.INK;
-    ctx.fillRect(rect.x + INSET, y, Math.max(0, rect.w - INSET * 2), NOTE_ROW_H);
-    ctx.fillStyle = PALETTE.ORANGE;
-    ctx.fillText(
-      fitText(ctx, 'press + again to spend — there is no refund', Math.max(0, rect.w - INSET * 2)),
-      rect.x + INSET,
-      y + NOTE_ROW_H / 2,
-    );
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * ONE SENTENCE ABOUT THE PRESS, over the points sentence, while something is armed.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * A permanent legend would be furniture; this is the moment the warning is
+   * worth reading.
+   *
+   * ═══ ABOVE THE GRID, NOT ALONG THE BOTTOM ═══
+   * It was a strip across the panel's last twelve pixels, and the attribute
+   * column runs to that same edge: whenever the column only just fits, the
+   * strip was painted over the bottom row of captions — exactly the numbers a
+   * player arming a stat is reading. The sentence slot is the panel's one line
+   * of prose, and it is where upstream's own message bar sits relative to the
+   * columns (`t_messages`, `LevelupDialog.lua:834`): above them, centred over the
+   * middle.
+   *
+   * ═══ IT NAMES WHAT IS ARMED ═══
+   * `press again` beside two columns of icons leaves the player to find the one
+   * with the gold ring. A stat or a talent says its own name; a tree's deepen
+   * arm has no single name to give and says the bare sentence.
+   */
+  const armedStatKey = options.armedStat ?? null;
+  if (armedId !== null || armedStatKey !== null) {
+    const slot = geometry.placed.find((placed) => placed.row.kind === TalentRowKind.Points);
+    if (slot !== undefined) {
+      let named: string | null = null;
+      if (armedStatKey !== null) {
+        named = STAT_ROWS.find((row) => row.key === armedStatKey)?.name ?? null;
+      } else {
+        for (const row of rows) {
+          if (row.kind !== TalentRowKind.Category) continue;
+          const found = row.talents.find((talent) => talent.id === armedId);
+          if (found !== undefined) {
+            named = found.name;
+            break;
+          }
+        }
+      }
+      ctx.font = FONT_META;
+      ctx.textBaseline = 'middle';
+      ctx.fillStyle = PALETTE.INK;
+      ctx.fillRect(slot.rect.x, slot.rect.y, slot.rect.w, slot.rect.h);
+      ctx.fillStyle = PALETTE.ORANGE;
+      ctx.fillText(
+        fitText(
+          ctx,
+          named === null ? 'press again to spend' : `press ${named} again to spend`,
+          slot.rect.w - 6,
+        ),
+        slot.rect.x + 6,
+        slot.rect.y + slot.rect.h / 2,
+      );
+    }
   }
 
   // The close control. The key that opened the panel closes it too and always
@@ -3797,13 +4261,17 @@ export const TALENT_PANEL_MIN_H = PANEL_MIN_H;
 /** As above, for the width. */
 export const TALENT_PANEL_MIN_W = PANEL_MIN_W;
 /**
- * THE WIDEST SHAPE — grid, stats strip, description column and the gaps.
+ * THE WIDE SHAPE AT A PANEL HEIGHT — grid, attribute column, description column
+ * and the gaps. A function because the attribute column folds on a short panel;
+ * see `statsLayoutFor`.
  *
  * Exported so a test can assert the panel is exactly its content width without
  * restating the sum, which is the arithmetic-model trap this suite keeps
  * falling into: a test that re-adds the terms agrees with any implementation
  * that adds them the same way, including a wrong one.
  */
-export const TALENT_PANEL_WIDE_W = PANEL_W_WIDE;
+export function talentPanelWideW(panelH: number): number {
+  return panelWWide(panelH);
+}
 /** The air the panel leaves around itself inside its band. */
 export const TALENT_PANEL_MARGIN = PANEL_MARGIN;

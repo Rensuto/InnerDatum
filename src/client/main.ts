@@ -132,7 +132,7 @@
  *   starting cannot leave a panel overlapping the cards on one surface only.
  */
 
-import type { TalentCell } from './ui/talents.ts';
+import type { StatKey, TalentCell } from './ui/talents.ts';
 import { DIR_ORDER, chebyshev, sameTile, step } from '../shared/coords.ts';
 import { parseCommand } from './input/commands.ts';
 import { bindGameKeys, gameKeymap, setKeymap, TurnCommand, UiCommand } from './input/keys.ts';
@@ -301,15 +301,18 @@ import {
 // THE CEILING RULE, SHARED WITH THE SERVER THAT ENFORCES IT. One function, so
 // a greyed `+` and a refused frame can never disagree about where the limit is.
 import { STAT_MAX, canRaiseStat } from '../shared/progression.ts';
+import { statName } from '../shared/stats.ts';
 import { resourceLabel } from './ui/resource.ts';
 import {
   TalentHitKind,
+  confirmTooSoon,
   drawTalentPanel,
   pressSpend,
   talentPanelDeepenAt,
   talentPanelDragAt,
   talentPanelHitAt,
   talentIdAt,
+  talentStatAt,
   pointsWaiting,
   talentPanelGeometry,
   talentTipAt,
@@ -1944,6 +1947,13 @@ let talentsHoveredRow: number | null = null;
  */
 let talentFocusId: string | null = null;
 /**
+ * WHICH ATTRIBUTE THE DESCRIPTION COLUMN IS ABOUT, or null — `talentFocusId`'s
+ * twin for the stat column, and the two are never set together: whichever the
+ * pointer reached last is the one the pane describes. See `focusStat` in
+ * ui/talents.ts.
+ */
+let talentFocusStat: StatKey | null = null;
+/**
  * WHICH ATTRIBUTE IS ONE PRESS FROM BEING BOUGHT, or null.
  *
  * THE SAME TWO-PRESS RULE THE GRID USES. It was written when `spend_stat` had
@@ -1964,6 +1974,13 @@ let talentFocusId: string | null = null;
  */
 let talentsArmedStat: string | null = null;
 let talentsArmedId: string | null = null;
+/**
+ * WHEN EACH ARM WAS SET, in `Date.now()` milliseconds — so a confirm that lands
+ * inside `SPEND_CONFIRM_MIN_MS` of it is read as the second half of a
+ * double-click rather than a second decision. See `confirmTooSoon`.
+ */
+let talentsArmedAt: number | null = null;
+let talentsArmedStatAt: number | null = null;
 
 /**
  * THE INVENTORY PANEL (v10), AND IT DEFAULTS OFF FOR THE SHEET'S OWN REASON.
@@ -4867,9 +4884,12 @@ const paintHud: HudPainter = (ctx, width, height) => {
       // the box wants the number.
       categories: progress?.unspentCategories ?? 0,
       armedStat: talentsArmedStat,
-      // WHICH ROWS GET A `−`. The server's answer, never the client's — see
+      // WHICH CELLS GET A `−`. The server's answer, never the client's — see
       // `ProgressMsg.unspendableStats`.
       unspendableStats: progress?.unspendableStats ?? [],
+      // THE STAT TWIN OF `focusId`, and what one point in it buys.
+      focusStat: talentFocusStat,
+      statGains: progress?.statGains,
     });
 
     /**
@@ -7521,8 +7541,8 @@ async function boot(): Promise<void> {
    * Open or put away the talent panel.
    *
    * THE ARM GOES WITH IT, always. `talentsArmedId` only means anything while the
-   * sentence explaining it is on screen — "press + again to spend, there is no
-   * refund" is drawn by the panel — so an arm that survived a close would be one
+   * sentence explaining it is on screen — "press again to spend" is drawn by
+   * the panel — so an arm that survived a close would be one
    * press away from spending a point on a screen the player is not looking at.
    *
    * IT SENDS NOTHING. There is no "the panel is open" frame and there must not
@@ -7542,6 +7562,7 @@ async function boot(): Promise<void> {
       // last talent while the panel is open precisely so it does not empty under
       // a pointer that has stopped moving in order to READ it.
       talentFocusId = null;
+      talentFocusStat = null;
     }
     talentsArmedId = null;
     talentsArmedStat = null;
@@ -7603,12 +7624,28 @@ async function boot(): Promise<void> {
      * ASKED OF THE BOUGHT VALUE — `ProgressMsg.statBase`. Off the composed one
      * this would fire on the wrong rows the moment anybody put a coat on.
      */
+    /**
+     * ═══ AND AN EMPTY HAND IS ASKED FIRST — `LevelupDialog.lua:251-254` ═══
+     * The column used to hide its `+` with no point in hand, so this press could
+     * not happen. The icon is always there now, as upstream's is, and upstream
+     * answers it before either ceiling: *"You have no stat points left!"* Arming
+     * an icon that cannot be bought would put the gold ring on a control that
+     * does nothing.
+     */
+    if ((progress?.unspentStats ?? 0) <= 0) {
+      showNotice('no stat points left');
+      talentsArmedStat = null;
+      requestDraw();
+      return;
+    }
     const base = progress?.statBase?.[stat as 'str'] ?? null;
     if (base !== null && progress !== null && !canRaiseStat(base, progress.level)) {
+      // THE NAME, NOT THE KEY. `str is at its maximum` was a database identifier
+      // in a sentence — the refusal `shared/stats.ts` was written to end.
       showNotice(
         base < STAT_MAX
-          ? `${stat} is at its maximum for level ${String(progress.level)} — try again next level`
-          : `${stat} is already at its maximum`,
+          ? `${statName(stat)} is at its maximum for level ${String(progress.level)} — try again next level`
+          : `${statName(stat)} is already at its maximum`,
       );
       // THE ARM IS CLEARED TOO. Leaving it armed would put a gold plate on a
       // control that cannot be bought, which is the "lit button that does
@@ -7617,7 +7654,13 @@ async function boot(): Promise<void> {
       requestDraw();
       return;
     }
+    // A DOUBLE-CLICK IS ONE GESTURE, not the two decisions the arm asks for.
+    if (talentsArmedStat === stat && confirmTooSoon(talentsArmedStatAt, Date.now())) {
+      requestDraw();
+      return;
+    }
     const next = pressSpend(talentsArmedStat, stat);
+    if (next.armed !== null) talentsArmedStatAt = Date.now();
     talentsArmedStat = next.armed;
     if (next.spend === null) {
       requestDraw();
@@ -7636,7 +7679,13 @@ async function boot(): Promise<void> {
   }
 
   function pressTalentPlus(talentId: string): void {
+    // A DOUBLE-CLICK IS ONE GESTURE — see `confirmTooSoon`. The arm stands.
+    if (talentsArmedId === talentId && confirmTooSoon(talentsArmedAt, Date.now())) {
+      requestDraw();
+      return;
+    }
     const next = pressSpend(talentsArmedId, talentId);
+    if (next.armed !== null) talentsArmedAt = Date.now();
     talentsArmedId = next.armed;
     if (next.spend === null) {
       requestDraw();
@@ -10563,15 +10612,18 @@ async function boot(): Promise<void> {
        * A POINTER OVER NOTHING LEAVES THE PANE ALONE. See `talentFocusId`.
        */
       if (layout.talents !== null) {
-        const focused = talentIdAt(
-          layout.talents,
-          talentPanelRows(talentPanelView()),
-          point.x,
-          point.y,
-          talentScroll,
-        );
-        if (focused !== null && focused !== talentFocusId) {
+        const rowsNow = talentPanelRows(talentPanelView());
+        const focused = talentIdAt(layout.talents, rowsNow, point.x, point.y, talentScroll);
+        // AN ATTRIBUTE CELL IS FOCUSED THE SAME WAY, and clears the talent: the
+        // pane describes whichever the pointer reached last.
+        const focusedStat = talentStatAt(layout.talents, rowsNow, point.x, point.y, talentScroll);
+        if (focusedStat !== null && focusedStat !== talentFocusStat) {
+          talentFocusStat = focusedStat;
+          talentFocusId = null;
+          requestDraw();
+        } else if (focused !== null && (focused !== talentFocusId || talentFocusStat !== null)) {
           talentFocusId = focused;
+          talentFocusStat = null;
           requestDraw();
         }
       }
@@ -12348,17 +12400,20 @@ async function boot(): Promise<void> {
         pressTalentMinus(hit.talentId);
         return;
       }
-      // AN ATTRIBUTE'S `+`, ABOVE THE ROW BRANCH BELOW for the reason the grid's
+      // AN ATTRIBUTE'S ICON, ABOVE THE ROW BRANCH BELOW for the reason the grid's
       // Spend branch is above it: a press that buys must never also be read as a
       // press that merely points at something.
       if (hit !== null && hit.kind === TalentHitKind.Stat) {
         event.preventDefault();
+        // THE PRESS PINS THE PANE TOO, for the touch reason the grid's does below.
+        talentFocusStat = hit.stat;
+        talentFocusId = null;
         pressStatPlus(hit.stat);
         return;
       }
-      // AND ITS `−`. NOT ARMED, unlike the `+` beside it: a take-back IS the
-      // undo, and a mis-press is recovered by the `+` two pixels away. See
-      // `statMinusRect`.
+      // AND ITS `−`. NOT ARMED, unlike the icon it sits on: a take-back IS the
+      // undo, and a mis-press is recovered by pressing the icon again. See
+      // `talentMinusRect`.
       if (hit !== null && hit.kind === TalentHitKind.UnspendStat) {
         event.preventDefault();
         if (
@@ -12419,20 +12474,47 @@ async function boot(): Promise<void> {
          * `level` check, which is the same rule `affordable` applies to grey
          * the slot out.
          */
+        /**
+         * ═══════════════════════════════════════════════════════════════════
+         * AND A PRESS ON AN ICON ARMS IT. THIS WAS THE HALF THAT WAS MISSING.
+         * ═══════════════════════════════════════════════════════════════════
+         *
+         * `talentPanelHitAt` returns `Spend` only for the icon that is ALREADY
+         * armed, and until this line nothing armed one: this branch pinned the
+         * pane or began a drag and returned. So a talent point could not be
+         * spent with the mouse at all — `spend_point`, and `unlock_tree` from a
+         * locked tree's icon, were unreachable, and only the heading's deepen
+         * press worked. The hit test and `pressSpend` were each tested, and the
+         * click that joins them was not.
+         *
+         * SET DIRECTLY, NEVER THROUGH `pressTalentPlus`. A Row hit is by
+         * construction not the confirm half — the confirm is the `Spend` branch
+         * above — so this must be unable to spend even if the arm moved between
+         * the press and a drag's release. Pressing an icon that cannot be bought
+         * disarms instead: the player has changed their mind.
+         */
+        const pressedCell = pressed === null ? null : talentCellById(pressed);
+        const armPressed = (): void => {
+          const armed = pressedCell !== null && pressedCell.canSpend ? pressedCell.id : null;
+          if (armed !== null && armed !== talentsArmedId) talentsArmedAt = Date.now();
+          talentsArmedId = armed;
+        };
         const bindable =
           pressed === null ? undefined : loadout.find((entry) => entry.id === pressed);
         if (bindable !== undefined && bindable.level >= 1) {
           event.preventDefault();
           beginDrag({ kind: DragKind.Talent, talentId: bindable.id }, point.x, point.y, () => {
-            if (bindable.id !== talentFocusId) {
-              talentFocusId = bindable.id;
-              requestDraw();
-            }
+            talentFocusId = bindable.id;
+            talentFocusStat = null;
+            armPressed();
+            requestDraw();
           });
           return;
         }
-        if (pressed !== null && pressed !== talentFocusId) {
+        if (pressed !== null) {
           talentFocusId = pressed;
+          talentFocusStat = null;
+          armPressed();
           requestDraw();
         }
       }
@@ -12798,6 +12880,7 @@ function forgetTheWorld(): void {
   // `hello` block, and blanking the level for one frame would flicker the
   // sheet's identity block on every reconnect.
   talentsArmedId = null;
+  talentsArmedStat = null;
   // M4. A welcome is the reconnect path AND the floor reset after a party
   // wipe, so every snapshot-driven surface is emptied rather than carried
   // across: the badges, the party rows and the point markers all describe a
@@ -12992,6 +13075,7 @@ function applyServerMessage(msg: ServerMsg): void {
       targeting?.cancel();
       pendingTalentId = null;
       talentsArmedId = null;
+      talentsArmedStat = null;
       tokenMenu?.close();
       cancelTravel();
       forgetInspections();
@@ -14096,6 +14180,7 @@ function applyServerMessage(msg: ServerMsg): void {
       // press from spending an irreversible point while the player is reading
       // about something else entirely. Re-arming costs one click.
       talentsArmedId = null;
+      talentsArmedStat = null;
       // The aim was refused, so the mode is over — reopening it on the same
       // talent is one keypress, and leaving a ring up after a "too close" makes
       // it look as though the shot is still pending.

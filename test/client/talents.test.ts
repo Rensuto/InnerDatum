@@ -17,11 +17,16 @@ import {
   talentPanelGeometry,
   talentPanelHitAt,
   talentPanelRect,
-  TALENT_PANEL_WIDE_W,
+  talentPanelWideW,
   STAT_ROWS,
   drawTalentPanel,
-  statPlusRect,
-  statRowRects,
+  SPEND_CONFIRM_MIN_MS,
+  confirmTooSoon,
+  statCellLook,
+  statCellRects,
+  statMinusRect,
+  talentMinusRect,
+  talentStatAt,
   talentIdAt,
   TALENT_SCROLL_STEP,
   categoryHeadRect,
@@ -34,6 +39,7 @@ import { TALENT_MAX_LEVEL } from '../../src/shared/progression.ts';
 import type { TalentPanelView, TalentRow } from '../../src/client/ui/talents.ts';
 import type { PanelRect } from '../../src/client/ui/panel.ts';
 import { ResourceKind } from '../../src/shared/protocol.ts';
+import { PALETTE } from '../../src/client/render/canvas.ts';
 import type { LoadoutTalent, ProgressMsg } from '../../src/shared/protocol.ts';
 /**
  * THE INJECTED WRAPPER IS GONE, ALONG WITH THE PARAMETER IT FED.
@@ -1208,6 +1214,11 @@ const NO_ART = { sprite: () => undefined } as unknown as Parameters<
 const SIX = { str: 25, dex: 14, con: 21, mag: 10, wil: 14, cun: 12 };
 
 function paintPanel(over: Partial<Parameters<typeof drawTalentPanel>[0]> = {}): string[] {
+  return paintOps(over).flatMap((op) => (op.kind === 'fillText' ? [String(op.args[0])] : []));
+}
+
+/** Every canvas call the painter made, for a case that needs more than the text. */
+function paintOps(over: Partial<Parameters<typeof drawTalentPanel>[0]> = {}): Op[] {
   const rect = talentPanelRect({ width: 1280, height: 720, top: 60, bottom: 640 });
   if (rect === null) throw new Error('no panel');
   const ops: Op[] = [];
@@ -1226,7 +1237,7 @@ function paintPanel(over: Partial<Parameters<typeof drawTalentPanel>[0]> = {}): 
     unspentStats: 3,
     ...over,
   });
-  return ops.flatMap((op) => (op.kind === 'fillText' ? [String(op.args[0])] : []));
+  return ops;
 }
 
 describe('the attribute column', () => {
@@ -1266,63 +1277,305 @@ describe('the attribute column', () => {
     }
   });
 
-  it('answers the hit test by stat, not by index', () => {
+  /**
+   * ═══ EVERY SIZE THIS GAME IS PLAYED AT, IN THE BAND IT IS ACTUALLY GIVEN ═══
+   * The text column was checked for six rows at 1280x720 alone, where it was
+   * 503 pixels tall. The first icon fold was then checked against `FLOOR` and
+   * `REAL` — whose 40..280 and 40..320 bands are rounder than anything the game
+   * produces — and placed all six there while placing four at the real floor.
+   *
+   * These are `panelBand` in main.ts: the top is the turn bar (14) plus the dock
+   * margin (3), plus the turn cards (46) in combat; the bottom is the height less
+   * the hotbar (60), two prose lines (14 each) and the margin (3).
+   */
+  const band = (width: number, height: number, combat: boolean) => ({
+    width,
+    height,
+    top: 14 + (combat ? 46 : 0) + 3,
+    bottom: height - 60 - 14 * 2 - 3,
+  });
+  const SIZES = [
+    { name: 'the floor fixture', size: FLOOR },
+    { name: 'the Discord fixture', size: REAL },
+    { name: '640x320', size: band(640, 320, false) },
+    { name: '640x320 in combat', size: band(640, 320, true) },
+    { name: '772x367', size: band(772, 367, false) },
+    { name: '772x367 in combat', size: band(772, 367, true) },
+    { name: '640x384', size: { width: 640, height: 384, top: 60, bottom: 300 } },
+    { name: '1280x720', size: band(1280, 720, false) },
+  ] as const;
+
+  it('answers the hit test by stat, not by index, at every size', () => {
     /**
      * `spend_stat` NAMES ONE OF SIX. An index would be a second ordering to keep
      * in step with `STAT_ROWS`, and the failure mode is a point spent on the
-     * wrong attribute — which nothing refunds.
+     * wrong attribute — which nothing outside town refunds.
      */
-    const rect = talentPanelRect({ width: 1280, height: 720, top: 60, bottom: 640 });
-    if (rect === null) throw new Error('no panel');
-    const rows = talentPanelRows(view());
-    const g = talentPanelGeometry(rect, rows, NO_SCROLL);
-    if (g.stats === null) throw new Error('no column');
+    for (const { name, size } of SIZES) {
+      const rect = rectAt(size);
+      const rows = talentPanelRows(view());
+      const g = talentPanelGeometry(rect, rows, NO_SCROLL);
+      if (g.stats === null) throw new Error(`no column at ${name}`);
 
-    const boxes = statRowRects(g.stats);
-    expect(boxes.length, 'the column has room for fewer than six').toBe(STAT_ROWS.length);
-
-    for (let i = 0; i < boxes.length; i += 1) {
-      const plus = statPlusRect(boxes[i] as PanelRect);
-      const hit = talentPanelHitAt(rect, rows, plus.x + 1, plus.y + 1, NO_SCROLL);
-      expect(hit?.kind, `row ${String(i)} is not a stat hit`).toBe(TalentHitKind.Stat);
-      if (hit?.kind === TalentHitKind.Stat) expect(hit.stat).toBe(STAT_ROWS[i]?.key);
+      const icons = statCellRects(g.stats);
+      expect(icons.length, `a stat was dropped at ${name}`).toBe(STAT_ROWS.length);
+      for (let i = 0; i < icons.length; i += 1) {
+        const icon = icons[i] as PanelRect;
+        const cx = icon.x + Math.floor(icon.w / 2);
+        const cy = icon.y + Math.floor(icon.h / 2);
+        const hit = talentPanelHitAt(rect, rows, cx, cy, NO_SCROLL);
+        expect(hit?.kind, `cell ${String(i)} at ${name} is not a stat hit`).toBe(
+          TalentHitKind.Stat,
+        );
+        if (hit?.kind === TalentHitKind.Stat) expect(hit.stat).toBe(STAT_ROWS[i]?.key);
+      }
     }
   });
 
-  it('does not answer for the label or the value, only the +', () => {
-    // A hit anywhere on the row would arm a spend the player never aimed at.
-    const rect = talentPanelRect({ width: 1280, height: 720, top: 60, bottom: 640 });
-    if (rect === null) throw new Error('no panel');
+  it('folds into two columns where six do not stack, and keeps every cell inside', () => {
+    /**
+     * ═══ A DROPPED STAT CANNOT BE BOUGHT ═══
+     * There is no other route to spending an attribute point, so a cell that
+     * does not fit is not a cosmetic loss. The column folds instead — and it
+     * must fold only where it has to, or a tall window wastes the width the
+     * player asked this panel not to waste.
+     */
+    const columnsAt = (size: (typeof SIZES)[number]['size']): number => {
+      const rect = rectAt(size);
+      const g = talentPanelGeometry(rect, talentPanelRows(view()), NO_SCROLL);
+      if (g.stats === null) throw new Error('no column');
+      const icons = statCellRects(g.stats);
+      for (const icon of icons) {
+        expect(icon.x).toBeGreaterThanOrEqual(g.stats.x);
+        expect(icon.x + icon.w).toBeLessThanOrEqual(g.stats.x + g.stats.w);
+        expect(icon.y).toBeGreaterThanOrEqual(g.stats.y);
+        expect(icon.y + icon.h).toBeLessThanOrEqual(g.stats.y + g.stats.h);
+      }
+      for (let a = 0; a < icons.length; a += 1) {
+        for (let b = a + 1; b < icons.length; b += 1) {
+          const p = icons[a] as PanelRect;
+          const q = icons[b] as PanelRect;
+          const apart =
+            p.x + p.w <= q.x || q.x + q.w <= p.x || p.y + p.h <= q.y || q.y + q.h <= p.y;
+          expect(apart, `cells ${String(a)} and ${String(b)} overlap`).toBe(true);
+        }
+      }
+      return new Set(icons.map((icon) => icon.x)).size;
+    };
+    expect(columnsAt(FLOOR)).toBe(2);
+    expect(columnsAt(REAL)).toBe(2);
+    expect(columnsAt({ width: 1280, height: 720, top: 60, bottom: 640 })).toBe(1);
+    for (const { size } of SIZES) columnsAt(size);
+  });
+
+  it('drops to sixteen-pixel icons only where two columns of 32 cannot fit', () => {
+    // THE DISCORD FRAME KEEPS FULL-SIZE ICONS IN COMBAT. Icons that shrank the
+    // moment a fight started would move under the pointer at the worst time.
+    const iconAt = (size: (typeof SIZES)[number]['size']): number => {
+      const g = talentPanelGeometry(rectAt(size), talentPanelRows(view()), NO_SCROLL);
+      if (g.stats === null) throw new Error('no column');
+      return (statCellRects(g.stats)[0] as PanelRect).w;
+    };
+    expect(iconAt(band(640, 320, true))).toBe(16);
+    expect(iconAt(band(640, 320, false))).toBe(32);
+    expect(iconAt(band(772, 367, true))).toBe(32);
+    expect(iconAt(band(772, 367, false))).toBe(32);
+    expect(iconAt(band(1280, 720, false))).toBe(32);
+  });
+
+  it('keeps a small icon whole — its take-back badge sits beside it, not on it', () => {
+    /**
+     * The badge is asked before the icon. A ten-pixel corner on a sixteen-pixel
+     * icon would leave the press that buys a six-pixel sliver.
+     */
+    const size = band(640, 320, true);
+    const rect = rectAt(size);
     const rows = talentPanelRows(view());
     const g = talentPanelGeometry(rect, rows, NO_SCROLL);
     if (g.stats === null) throw new Error('no column');
-    const first = statRowRects(g.stats)[0] as PanelRect;
-    const onLabel = talentPanelHitAt(rect, rows, first.x + 2, first.y + 2, NO_SCROLL);
-    expect(onLabel?.kind).not.toBe(TalentHitKind.Stat);
+    const cun = statCellRects(g.stats)[5] as PanelRect;
+    const badge = statMinusRect(cun);
+    const overlaps =
+      badge.x < cun.x + cun.w &&
+      cun.x < badge.x + badge.w &&
+      badge.y < cun.y + cun.h &&
+      cun.y < badge.y + badge.h;
+    expect(overlaps, 'the badge covers the small icon').toBe(false);
+    expect(badge.x, 'the badge left its cell').toBeGreaterThanOrEqual(g.stats.x);
+
+    const onBadge = talentPanelHitAt(rect, rows, badge.x + 5, badge.y + 5, NO_SCROLL, null, [
+      'cun',
+    ]);
+    expect(onBadge?.kind).toBe(TalentHitKind.UnspendStat);
+    const onIcon = talentPanelHitAt(rect, rows, cun.x + 8, cun.y + 8, NO_SCROLL, null, ['cun']);
+    expect(onIcon?.kind).toBe(TalentHitKind.Stat);
   });
 
-  it('paints the count and all six, and the + only while there is a point', () => {
+  it('draws the 64-pixel art at exactly a half or a quarter, never a fraction', () => {
+    /**
+     * The HUD draws with smoothing off, so only an exact divisor stays sharp —
+     * see `blitReduced`. The column draws at 32 and at 16, so the ratio is
+     * checked where it is drawn rather than assumed.
+     */
+    const art = {
+      sprite: (id: string) =>
+        id.startsWith('icon_stat_') ? { id, image: {}, w: 64, h: 64 } : undefined,
+    } as unknown as Parameters<typeof drawTalentPanel>[0]['sprites'];
+    const sizesDrawn = (rect: PanelRect): number[] =>
+      paintOps({ sprites: art, rect })
+        .filter((op) => op.kind === 'drawImage')
+        .map((op) => Number(op.args[3]));
+    const tall = rectAt(band(1280, 720, false));
+    expect(sizesDrawn(tall)).toEqual([32, 32, 32, 32, 32, 32]);
+    const short = rectAt(band(640, 320, true));
+    expect(sizesDrawn(short)).toEqual([16, 16, 16, 16, 16, 16]);
+  });
+
+  it('reads in the levelup dialog order, STR DEX CON MAG WIL CUN', () => {
+    // `LevelupDialog.lua:571` — the screen's own order, not `load.lua`'s
+    // definition order, which puts Constitution last.
+    expect(STAT_ROWS.map((row) => row.key)).toEqual(['str', 'dex', 'con', 'mag', 'wil', 'cun']);
+  });
+
+  it('does not answer for the caption or the air between cells, only the icon', () => {
+    // A press on a number is not a press on a control, and a press between two
+    // icons must not arm whichever one the arithmetic happens to round towards.
+    const rect = rectAt(FLOOR);
+    const rows = talentPanelRows(view());
+    const g = talentPanelGeometry(rect, rows, NO_SCROLL);
+    if (g.stats === null) throw new Error('no column');
+    const [str, dex] = statCellRects(g.stats) as [PanelRect, PanelRect];
+    const onCaption = talentPanelHitAt(rect, rows, str.x + 16, str.y + str.h + 4, NO_SCROLL);
+    expect(onCaption?.kind).not.toBe(TalentHitKind.Stat);
+    const between = talentPanelHitAt(rect, rows, str.x + str.w + 2, str.y + 16, NO_SCROLL);
+    expect(dex.x, 'the fixture needs two cells side by side').toBeGreaterThan(str.x + str.w + 2);
+    expect(between?.kind).not.toBe(TalentHitKind.Stat);
+  });
+
+  it('asks the take-back corner before the icon it is carved out of', () => {
+    const rect = rectAt(REAL);
+    const rows = talentPanelRows(view());
+    const g = talentPanelGeometry(rect, rows, NO_SCROLL);
+    if (g.stats === null) throw new Error('no column');
+    const con = statCellRects(g.stats)[2] as PanelRect;
+    const corner = talentMinusRect(con);
+    const px = corner.x + corner.w - 2;
+    const py = corner.y + corner.h - 2;
+
+    const offered = talentPanelHitAt(rect, rows, px, py, NO_SCROLL, null, ['con']);
+    expect(offered?.kind).toBe(TalentHitKind.UnspendStat);
+    if (offered?.kind === TalentHitKind.UnspendStat) expect(offered.stat).toBe('con');
+
+    // AND ONLY WHERE THE SERVER OFFERED IT: the same pixel is the icon otherwise.
+    const refused = talentPanelHitAt(rect, rows, px, py, NO_SCROLL, null, ['dex']);
+    expect(refused?.kind).toBe(TalentHitKind.Stat);
+  });
+
+  it('paints the count and six cells, with or without a point in hand', () => {
+    /**
+     * ═══ THE ICONS DO NOT VANISH WITH THE LAST POINT ═══
+     * The text column hid its `+` with nothing to spend. Upstream's stat icons
+     * are always there, because they are also where the VALUE is — so all six
+     * stay and simply stop being lit. On a bare clone the frame holds the
+     * three-letter code, which is how these assertions see the six.
+     */
     const withPoints = paintPanel();
     expect(withPoints).toContain('Stats: 3');
     for (const entry of STAT_ROWS) expect(withPoints).toContain(entry.label);
-    expect(withPoints.filter((t) => t === '+')).toHaveLength(STAT_ROWS.length);
 
-    // ═══ NO POINTS, NO `+` ═══
-    // A control that is always there teaches a player to press it and be
-    // refused, and the refusal costs a round trip to be told what the screen
-    // already knew.
     const spent = paintPanel({ unspentStats: 0 });
     expect(spent).toContain('Stats: 0');
-    expect(spent.filter((t) => t === '+')).toHaveLength(0);
+    for (const entry of STAT_ROWS) expect(spent).toContain(entry.label);
   });
 
-  it('draws its heading but no rows when the server has said nothing', () => {
+  it('draws the count but no cells when the server has said nothing', () => {
     // THE HALF THAT MUST NOT MOVE. A client that has had no `progress` frame
-    // yet, or one outliving a server without attributes, must not invent zeroes
-    // — six rows of `STR 0` is a lie about a character.
+    // yet must not invent zeroes — six cells of `0 (0)` is a lie about a
+    // character.
     const silent = paintPanel({ stats: null, unspentStats: 0 });
     expect(silent).toContain('Stats: 0');
-    expect(silent).not.toContain('STR');
+    for (const entry of STAT_ROWS) expect(silent).not.toContain(entry.label);
+  });
+
+  it('draws the art when it is there, and the code only when it is not', () => {
+    // `icon` is a literal per row — see `STAT_ROWS`. Asserted through the
+    // painter, so a row whose key never reaches `sprites.sprite` is caught.
+    const asked: string[] = [];
+    const sprites = {
+      sprite: (id: string) => {
+        asked.push(id);
+        return undefined;
+      },
+    } as unknown as Parameters<typeof drawTalentPanel>[0]['sprites'];
+    paintPanel({ sprites });
+    for (const entry of STAT_ROWS) expect(asked).toContain(entry.icon);
+  });
+
+  it('answers a hover over the whole cell, caption included', () => {
+    const rect = rectAt(FLOOR);
+    const rows = talentPanelRows(view());
+    const g = talentPanelGeometry(rect, rows, NO_SCROLL);
+    if (g.stats === null) throw new Error('no column');
+    const wil = statCellRects(g.stats)[4] as PanelRect;
+    expect(talentStatAt(rect, rows, wil.x + 16, wil.y + wil.h + 4, NO_SCROLL)).toBe('wil');
+    const card = talentTipAt(rect, rows, wil.x + 16, wil.y + 16, NO_SCROLL, {
+      str: [],
+      dex: [],
+      con: [],
+      mag: [],
+      wil: ['Mental save +0.4'],
+      cun: [],
+    });
+    expect(card?.title).toBe('Willpower');
+    expect(card?.lines).toEqual(['Mental save +0.4']);
+  });
+
+  it('names what is armed, in the sentence slot above the grid and not over the column', () => {
+    /**
+     * The warning was a strip along the panel's bottom edge — the edge the
+     * attribute column runs to — and it painted over the last row of captions
+     * whenever the column only just fitted.
+     */
+    const rect = talentPanelRect({ width: 1280, height: 720, top: 60, bottom: 640 });
+    if (rect === null) throw new Error('no panel');
+    const g = talentPanelGeometry(rect, talentPanelRows(view()), NO_SCROLL);
+    if (g.stats === null) throw new Error('no column');
+    const right = g.stats.x + g.stats.w;
+
+    const ops = paintOps({ armedStat: 'con' });
+    const said = ops.find(
+      (op) => op.kind === 'fillText' && String(op.args[0]) === 'press Constitution again to spend',
+    );
+    expect(said, 'the armed attribute is not named').toBeDefined();
+    expect(
+      Number(said?.args[1]),
+      'the warning is over the attribute column',
+    ).toBeGreaterThanOrEqual(right);
+    expect(Number(said?.args[2]), 'the warning is below the grid').toBeLessThan(g.grid.viewport.y);
+
+    const talent = talentPanelRows(view()).find((row) => row.kind === TalentRowKind.Category);
+    const first = talent?.kind === TalentRowKind.Category ? talent.talents[0] : undefined;
+    if (first === undefined) throw new Error('the fixture has no talent');
+    expect(paintPanel({ armedId: first.id })).toContain(`press ${first.name} again to spend`);
+    expect(paintPanel()).not.toContain('press again to spend');
+  });
+
+  it('describes a focused attribute in the description column', () => {
+    // `getStatDesc`, LevelupDialog.lua:850-914: the values, then what a point
+    // buys. With the name no longer printed in the column, this is where it is.
+    const texts = paintPanel({
+      level: 3,
+      stats: { str: 25, dex: 14, con: 21, mag: 10, wil: 14, cun: 12 },
+      statBase: { str: 20, dex: 14, con: 21, mag: 10, wil: 14, cun: 12 },
+      focusStat: 'str',
+      focusId: 'strike',
+      statGains: { str: ['Physical power +1.0'], dex: [], con: [], mag: [], wil: [], cun: [] },
+    });
+    expect(texts).toContain('Strength');
+    expect(texts).toContain('Current value: ');
+    expect(texts).toContain('Base value: ');
+    expect(texts).toContain('Per point');
+    expect(texts).toContain('Physical power +1.0');
   });
 });
 
@@ -1434,9 +1687,9 @@ describe('the talent panel uses the room it has', () => {
      */
     const wide = rectAt({ width: 1280, height: 720, top: 17, bottom: 629 });
     expect(wide.w, 'the panel is spending the viewport on whitespace again').toBeLessThanOrEqual(
-      TALENT_PANEL_WIDE_W,
+      talentPanelWideW(wide.h),
     );
-    expect(wide.w, 'the panel stopped reaching its widest shape').toBe(TALENT_PANEL_WIDE_W);
+    expect(wide.w, 'the panel stopped reaching its widest shape').toBe(talentPanelWideW(wide.h));
     // AND IT STILL NEVER OVERRUNS. A tier is a promise about a shape, not a
     // licence to exceed the window it is drawn in.
     const tight = rectAt(REAL);
@@ -1575,42 +1828,53 @@ describe('the two purses, which are not interchangeable', () => {
 describe('the attribute ceiling is on the control, not only in the refusal', () => {
   /**
    * ═══════════════════════════════════════════════════════════════════════════
-   * LevelupDialog.lua:255-260 refuses the press; :584, :593 and :610-616 PAINT
-   * the row so the player knows before they press.
+   * LevelupDialog.lua:255-260 refuses the press; :582-600 PAINT the cell so the
+   * player knows before they press.
    * ═══════════════════════════════════════════════════════════════════════════
    *
-   * Ours had no ceiling at all below an unreachable 100, so three points a level
-   * could all go into one attribute. Now the rule is ported, this column has to
-   * show it — a `+` that looks live and earns a red refusal banner is the worst
-   * of both.
+   * Upstream lights a capped stat's frame green. This palette has no green, so
+   * the cell wears upstream's other "cannot be learned" mark — `do_shadow`, a
+   * dark quad over the icon — and that quad is what these tests look for.
    */
 
   /** `SIX` is str 25 / dex 14 / con 21 / mag 10 / wil 14 / cun 12, all composed. */
-  const glyphs = (over: Partial<Parameters<typeof drawTalentPanel>[0]>) =>
-    paintPanel(over).filter((text) => text === '+' || text === '–');
+  const dimmed = (over: Partial<Parameters<typeof drawTalentPanel>[0]>): string[] => {
+    const rect = talentPanelRect({ width: 1280, height: 720, top: 60, bottom: 640 });
+    if (rect === null) throw new Error('no panel');
+    const g = talentPanelGeometry(rect, talentPanelRows(view()), NO_SCROLL);
+    if (g.stats === null) throw new Error('no column');
+    const icons = statCellRects(g.stats);
+    const fills = paintOps(over).filter((op) => op.kind === 'fillRect');
+    return STAT_ROWS.flatMap((entry, i) => {
+      const icon = icons[i] as PanelRect;
+      const quad = fills.some(
+        (op) =>
+          op.args[0] === icon.x + 1 &&
+          op.args[1] === icon.y + 1 &&
+          op.args[2] === icon.w - 2 &&
+          op.args[3] === icon.h - 2,
+      );
+      return quad ? [entry.key] : [];
+    });
+  };
 
-  it('greys the attributes at the ceiling and leaves the rest live', () => {
+  it('shades the attributes at the ceiling and leaves the rest live', () => {
     /**
      * At level 3 the ceiling is 24.2. Of the six BOUGHT values below, only `str`
-     * at 25 is at or over it, so exactly one control goes dead — and the other
-     * five must not, or the whole column would look broken on the level where
-     * one attribute happens to be ahead.
+     * at 25 is at or over it, so exactly one cell goes dark — and the other five
+     * must not, or the whole column would look broken on the level where one
+     * attribute happens to be ahead.
      */
-    const drawn = glyphs({
-      level: 3,
-      statBase: { str: 25, dex: 14, con: 21, mag: 10, wil: 14, cun: 12 },
-    });
-    expect(drawn.filter((g) => g === '–')).toHaveLength(1);
-    expect(drawn.filter((g) => g === '+')).toHaveLength(5);
+    expect(
+      dimmed({ level: 3, statBase: { str: 25, dex: 14, con: 21, mag: 10, wil: 14, cun: 12 } }),
+    ).toEqual(['str']);
   });
 
-  it('opens the control again as the level catches up', () => {
+  it('opens the cell again as the level catches up', () => {
     // Level 18: the ceiling is 45.2 and nothing here is near it.
-    const drawn = glyphs({
-      level: 18,
-      statBase: { str: 25, dex: 14, con: 21, mag: 10, wil: 14, cun: 12 },
-    });
-    expect(drawn.filter((g) => g === '–')).toHaveLength(0);
+    expect(
+      dimmed({ level: 18, statBase: { str: 25, dex: 14, con: 21, mag: 10, wil: 14, cun: 12 } }),
+    ).toEqual([]);
   });
 
   it('asks the BOUGHT value, not the composed one', () => {
@@ -1621,35 +1885,70 @@ describe('the attribute ceiling is on the control, not only in the refusal', () 
      * good coat must never cost you a point you already own, or taking it off
      * would be a way to level up.
      */
-    const drawn = glyphs({
-      level: 3,
-      stats: { str: 25, dex: 14, con: 21, mag: 10, wil: 14, cun: 12 },
-      statBase: { str: 20, dex: 14, con: 21, mag: 10, wil: 14, cun: 12 },
-    });
-    expect(drawn.filter((g) => g === '–')).toHaveLength(0);
+    expect(
+      dimmed({
+        level: 3,
+        stats: { str: 25, dex: 14, con: 21, mag: 10, wil: 14, cun: 12 },
+        statBase: { str: 20, dex: 14, con: 21, mag: 10, wil: 14, cun: 12 },
+      }),
+    ).toEqual([]);
   });
 
-  it('leaves every control live against a server that sends no base', () => {
+  it('leaves every cell live against a server that sends no base', () => {
     // The additive-field contract: an older server loses the affordance, never
     // the ability to spend. The server's refusal is the backstop.
-    const drawn = glyphs({ level: 1, statBase: null });
-    expect(drawn.filter((g) => g === '–')).toHaveLength(0);
-    expect(drawn.filter((g) => g === '+')).toHaveLength(6);
+    expect(dimmed({ level: 1, statBase: null })).toEqual([]);
   });
 
-  it('prints the base in brackets when armour is doing some of the work', () => {
-    // `25 (20)` — LevelupDialog.lua:624-627. It is also what explains a greyed
-    // control beside a number that looks nowhere near any limit.
+  it('prints both numbers on every cell, as upstream does', () => {
+    // `("%d (%d)"):format(getStat(sid), getStat(sid, nil, nil, true))` —
+    // LevelupDialog.lua:596 and :598. Composed first, bought in brackets.
     const texts = paintPanel({
       level: 3,
       stats: { str: 25, dex: 14, con: 21, mag: 10, wil: 14, cun: 12 },
       statBase: { str: 20, dex: 14, con: 21, mag: 10, wil: 14, cun: 12 },
     });
     expect(texts).toContain('25 (20)');
-    // ...AND NOT WHEN THEY AGREE. `(14)` beside a bare 14 on every row is
-    // furniture — the same argument the mastery header makes for `(x1.00)`.
-    expect(texts).toContain('14');
-    expect(texts).not.toContain('14 (14)');
+    expect(texts).toContain('14 (14)');
+  });
+});
+
+describe('a confirm too soon after its arm is a double-click', () => {
+  it('holds the arm for SPEND_CONFIRM_MIN_MS and no longer', () => {
+    expect(confirmTooSoon(1000, 1000 + SPEND_CONFIRM_MIN_MS - 1)).toBe(true);
+    expect(confirmTooSoon(1000, 1000 + SPEND_CONFIRM_MIN_MS)).toBe(false);
+    // Nothing armed is never "too soon" — there is no first press to be soon after.
+    expect(confirmTooSoon(null, 0)).toBe(false);
+  });
+});
+
+describe('statCellLook — the cell rules, as rules', () => {
+  const base = { value: 14, base: 14, level: 10, unspent: 3, armed: false, changed: false };
+
+  it('never draws a cell armed that a press could not buy', () => {
+    // A gold ring on a control that does nothing is the lit dead button
+    // ui/hotbar.ts refuses.
+    expect(statCellLook({ ...base, armed: true }).ring).toBe(2);
+    expect(statCellLook({ ...base, armed: true, unspent: 0 }).ring).toBe(1);
+    expect(statCellLook({ ...base, armed: true, base: 40, level: 3 }).ring).toBe(1);
+  });
+
+  it('lights the frame gold exactly where the take-back corner is offered', () => {
+    // Upstream's gold is "changed since the dialog opened", which is what gates
+    // its `−` (:264-267). Ours gates the `−` on `unspendableStats`.
+    expect(statCellLook({ ...base, changed: true, unspent: 0 }).frame).toBe(PALETTE.GOLD);
+    expect(statCellLook({ ...base, unspent: 0 }).frame).toBe(PALETTE.SLATE);
+    expect(statCellLook(base).frame).toBe(PALETTE.PARCHMENT);
+  });
+
+  it('greys the caption at the ceiling only', () => {
+    expect(statCellLook({ ...base, base: 40, level: 3 }).captionInk).toBe(PALETTE.GREY_HI);
+    expect(statCellLook(base).captionInk).toBe(PALETTE.PARCHMENT);
+  });
+
+  it('prints the composed value alone when no base arrived', () => {
+    expect(statCellLook({ ...base, value: 17, base: null }).caption).toBe('17');
+    expect(statCellLook({ ...base, value: 17 }).caption).toBe('17 (14)');
   });
 });
 
