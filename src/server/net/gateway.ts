@@ -275,8 +275,11 @@ import {
   OVERWORLD_ID,
   RealmKind,
   SITES,
+  STAIRS_DOWN_SITE_ID,
   TIDE_MS,
+  floorsOfSite,
   isShared,
+  stairsDownOf,
 } from '../world/realms.ts';
 import { regionNamedIn } from '../../shared/level.ts';
 import { roamerAt, tickRoamers } from '../world/roamers.ts';
@@ -5631,7 +5634,14 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
      */
     const siteId = full.siteId;
     const siteDef = siteId === undefined ? undefined : SITES.get(siteId);
-    if (siteId !== undefined && siteDef !== undefined && isFileable(siteDef)) {
+    // ONLY THE LAST FLOOR CLOSES THE CASE. The file is about the place, and the
+    // place is not cleared while a floor under it is still full.
+    if (
+      siteId !== undefined &&
+      siteDef !== undefined &&
+      isFileable(siteDef) &&
+      full.floor >= floorsOfSite(siteId)
+    ) {
       for (const body of realm.world.allActors()) {
         if (body.kind !== ActorKind.Player || !body.alive) continue;
         if (opts.downed !== undefined && isDowned(opts.downed, body.id)) continue;
@@ -7893,6 +7903,12 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
 
   const markersFor = (realm: Realm, actorId?: string): SiteView[] => {
     const authored = [...realm.sites.entries()].flatMap(([cell, siteId]) => {
+      // A STAIR DOWN, named as upstream names its DOWN grid
+      // (data/general/grids/basic.lua:47) and drawn as a stair.
+      if (siteId === STAIRS_DOWN_SITE_ID) {
+        const [sx, sy] = cell.split(',');
+        return [{ x: Number(sx), y: Number(sy), marker: 'stair', name: 'Next level' }];
+      }
       const def = SITES.get(siteId);
       if (def === undefined) return [];
       const parts = cell.split(',');
@@ -10153,10 +10169,30 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
      * there. Sending that player to the one overworld is the same answer this
      * line has always given, and it is the right one while there is one map.
      */
+    // ═══ ON A LOWER FLOOR THE THRESHOLD IS THE STAIR BACK UP ═══ Upstream's UP
+    // grid, "previous level", `change_level = -1`
+    // (data/general/grids/basic.lua:34-42), arriving on the floor above's stair
+    // down (`default_down`, class/Game.lua:1250). The party strength is read only
+    // if that floor was reaped and has to be built again.
+    const above =
+      from.kind === RealmKind.Inner && from.floor > 1 && from.siteId !== undefined
+        ? SITES.get(from.siteId)
+        : undefined;
     const cameFrom =
       session.enteredFromRealm === null ? undefined : realms.get(session.enteredFromRealm);
     const to =
-      cameFrom !== undefined && cameFrom.kind === RealmKind.Overworld ? cameFrom : realms.overworld;
+      above !== undefined
+        ? realms.open(
+            above,
+            from.partyId ?? actorId,
+            { level: body.level, size: 1 },
+            undefined,
+            undefined,
+            from.floor - 1,
+          )
+        : cameFrom !== undefined && cameFrom.kind === RealmKind.Overworld
+          ? cameFrom
+          : realms.overworld;
     // ONE-WAY, AND ONLY FOR AN AMBUSH. A delve stays open behind you.
     if (from.lingerMs === 0) from.sealed = true;
 
@@ -10182,15 +10218,19 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     // BACK WHERE THEY WENT IN, when the tile is still free. `placeAtSpawn` has
     // already put a body somewhere legal, so a taken doorstep costs a step of
     // accuracy rather than an error.
-    const back = session.enteredFrom;
+    const back = above !== undefined ? stairsDownOf(to) : session.enteredFrom;
     if (back !== null && to.world.actorAt(back.x, back.y) === undefined) {
       const moved = to.world.placeAt(actorId, back);
       if (!moved) app.log.warn({ actorId, back }, 'could not restore the entry tile');
     }
-    session.enteredFrom = null;
-    // CLEARED WITH THE TILE IT DESCRIBES. Two halves of one fact, and a stale
-    // realm id under a null coordinate would be a doorway to nowhere.
-    session.enteredFromRealm = null;
+    // KEPT WHILE THEY ARE STILL INSIDE: going up a floor is not the way out, and
+    // the way out still needs the door they came in by.
+    if (above === undefined) {
+      session.enteredFrom = null;
+      // CLEARED WITH THE TILE IT DESCRIBES. Two halves of one fact, and a stale
+      // realm id under a null coordinate would be a doorway to nowhere.
+      session.enteredFromRealm = null;
+    }
     // Back in the open. The next door they walk into arms from scratch.
     session.exitArmed = false;
 
@@ -10354,6 +10394,13 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     const siteId = from.sites.get(`${body.x},${body.y}`);
     if (siteId === undefined) return;
 
+    // ═══ A STAIR DOWN ═══ Upstream's DOWN grid, "next level", `change_level = 1`
+    // (data/general/grids/basic.lua:44-52): the party's next floor of this site.
+    if (siteId === STAIRS_DOWN_SITE_ID) {
+      goDown(session, from);
+      return;
+    }
+
     const site = SITES.get(siteId);
     if (site === undefined) {
       // The map names a door this build has no room behind. A content bug, not a
@@ -10381,12 +10428,28 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    * `why` reaches only the log. It is what makes "I was suddenly somewhere else"
    * answerable after the fact.
    */
+  /**
+   * DOWN A FLOOR. The party's next floor of the site this body is in, opened on
+   * first use and the same one after. They arrive on its threshold, as upstream
+   * arrives on a level's up stair (`default_up`, class/Game.lua:1249). The kill
+   * lock is the step's own (`stairsShut` in the move handler), which runs before
+   * any crossing, so it shuts a stair as it shuts a door.
+   */
+  const goDown = (session: Session, from: Realm): void => {
+    if (from.kind !== RealmKind.Inner || from.siteId === undefined) return;
+    if (from.floor >= floorsOfSite(from.siteId)) return;
+    const site = SITES.get(from.siteId);
+    if (site === undefined) return;
+    crossInto(session, site, 'went down', undefined, undefined, from.floor + 1);
+  };
+
   const crossInto = (
     session: Session,
     site: SiteDef,
     why: string,
     ground?: Ground,
     lead?: MonsterTemplate,
+    floor?: number,
   ): void => {
     const realms = opts.realms;
     const actorId = session.actorId;
@@ -10428,6 +10491,8 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
         ground,
         // AND SO IS THIS, for the same reason and the same one site.
         lead,
+        // AND WHICH FLOOR, for the stair down. Absent is the first.
+        floor,
       ),
       why,
       site.id,

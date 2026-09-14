@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { populateDelve, specFor } from '../../src/server/content/delve.ts';
+import { floorsOf, populateDelve, specFor } from '../../src/server/content/delve.ts';
 import { createWorld } from '../../src/server/world/world.ts';
 import { SITES } from '../../src/server/world/realms.ts';
 import { PROP_IDS } from '../../src/shared/props.ts';
@@ -29,7 +29,7 @@ function delveOn(spec: DelveSpec, seed = 'dressing'): ReturnType<typeof createWo
     spawns: [{ x: 4, y: 4 }],
     sites: new Map<string, string>(),
   };
-  populateDelve(world, map, spec);
+  populateDelve(world, map, spec, undefined, floorsOf(spec));
   return world;
 }
 
@@ -122,7 +122,7 @@ describe('a boss room is dressed', () => {
       spawns: [{ x: 4, y: 4 }],
       sites: new Map<string, string>(),
     };
-    const monsters = populateDelve(world, map, spec);
+    const monsters = populateDelve(world, map, spec, undefined, floorsOf(spec));
 
     // The same floor, built again: the dressing must not have moved the stream
     // between the boss and the litter that follows it.
@@ -133,7 +133,7 @@ describe('a boss room is dressed', () => {
       spawns: [{ x: 4, y: 4 }],
       sites: new Map<string, string>(),
     };
-    expect(populateDelve(again, secondMap, spec)).toBe(monsters);
+    expect(populateDelve(again, secondMap, spec, undefined, floorsOf(spec))).toBe(monsters);
     expect(again.groundItems().map((g) => g.itemId)).toEqual(
       world.groundItems().map((g) => g.itemId),
     );

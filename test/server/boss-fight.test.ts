@@ -11,7 +11,8 @@ import { createEffectState, registerEffect } from '../../src/server/engine/effec
 import { createPartyState } from '../../src/server/engine/party.ts';
 import { wsGateway } from '../../src/server/net/gateway.ts';
 import { createTurnEngine } from '../../src/server/turn-engine.ts';
-import { createRealms } from '../../src/server/world/realms.ts';
+import { createRealms, floorsOfSite, stairsDownOf } from '../../src/server/world/realms.ts';
+import { canWalk } from '../../src/shared/level.ts';
 import { ActorKind, ActorRank } from '../../src/shared/protocol.ts';
 import { PROTOCOL_VERSION } from '../../src/shared/version.ts';
 import type { Realms } from '../../src/server/world/realms.ts';
@@ -204,6 +205,31 @@ async function walkToTheAltar(realms: Realms, client: Client): Promise<void> {
   const altar = [...(dark?.sites ?? [])].find(([, id]) => id === 'site:redaction:watchers_altar');
   if (altar === undefined) throw new Error('the Redaction has no altar');
   await step('realm:site:redaction', altar[0]);
+
+  // AND DOWN TO ITS LAST FLOOR, where the Watcher is. The floors on the way are
+  // emptied first, so nothing stands on a stair or shuts it with a kill.
+  for (;;) {
+    const realm = realms.realmOf(client.actorId);
+    if (realm?.siteId === undefined || realm.floor >= floorsOfSite(realm.siteId)) break;
+    const stairs = stairsDownOf(realm);
+    if (stairs === null) throw new Error('a floor above the last has no stair down');
+    for (const actor of realm.world.allActors()) {
+      if (actor.kind === ActorKind.Monster) realm.world.removeActor(actor.id);
+    }
+    const walker = realm.world.getActor(client.actorId);
+    if (walker === undefined) throw new Error('no body');
+    const beside = [
+      { dx: -1, dy: 0, dir: 'e' },
+      { dx: 1, dy: 0, dir: 'w' },
+      { dx: 0, dy: -1, dir: 's' },
+      { dx: 0, dy: 1, dir: 'n' },
+    ].find((s) => canWalk(realm.world.level, stairs.x + s.dx, stairs.y + s.dy));
+    if (beside === undefined) throw new Error('a stair with no open ground beside it');
+    walker.x = stairs.x + beside.dx;
+    walker.y = stairs.y + beside.dy;
+    client.send({ t: 'move', dir: beside.dir });
+    await sleep(250);
+  }
 }
 
 /** The boss, and the room it is standing in. */
@@ -244,7 +270,9 @@ describe('fighting the Watcher', () => {
      */
     const spec = specFor('site:redaction:watchers_altar');
     expect(spec, 'the redacted altar has no delve spec').toBeDefined();
-    const roomLevel = spec === undefined ? 1 : delveLevel(spec);
+    // THE LAST FLOOR'S LEVEL: a floor down is a level up (`populateDelve`).
+    const roomLevel =
+      spec === undefined ? 1 : delveLevel(spec) + floorsOfSite('site:redaction:watchers_altar') - 1;
     expect(roomLevel, 'the redacted altar is still a level-1 room').toBeGreaterThan(1);
     expect(boss.maxHp, 'the boss did not grow with its room').toBeGreaterThan(INDEX_WATCHER.maxHp);
     expect(boss.maxHp).toBe(

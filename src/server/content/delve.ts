@@ -836,11 +836,80 @@ export function delveLevel(spec: DelveSpec, party: PartyStrength = LONE_BEGINNER
   return zoneBaseLevel(spec.levelRange, spec.levelScheme ?? ZoneLevelScheme.Fixed, party.level);
 }
 
+/**
+ * The top of upstream's first tier of zones. Every early zone that spans it is a
+ * `level_range = {1, 5}` zone.
+ */
+const FIRST_TIER_TOP_LEVEL = 5;
+/** How deep a first-tier zone goes. See `floorsOf`. */
+const FIRST_TIER_FLOORS = 3;
+/** How deep a zone past the first tier goes. See `floorsOf`. */
+const DEEPER_FLOORS = 4;
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * HOW MANY FLOORS A DELVE HAS — upstream's `max_level`, by tier.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Upstream's zones are several levels deep, and the depth follows the tier. The
+ * first-tier zones are all the same depth: Trollmire
+ * (data/zones/trollmire/zone.lua:28), the Ruins of Kor'Pul
+ * (data/zones/ruins-kor-pul/zone.lua:27), the Ritch Tunnels, the Blighted Ruins,
+ * Murgol's lair, Norgos' lair, the Heart of the Gloom, the Rhaloren camp and the
+ * escape from Reknor. The tier after it (the Old Forest, Daikara, the Maze, the
+ * Sandworm lair) and the commonest zones past that (Reknor, the temporal rift,
+ * the Conclave vault) go one floor deeper.
+ *
+ * A delve names a level rather than an upstream zone, so its depth is read off
+ * the tier its level falls in.
+ */
+export function floorsOf(spec: DelveSpec): number {
+  return spec.levelRange[0] <= FIRST_TIER_TOP_LEVEL ? FIRST_TIER_FLOORS : DEEPER_FLOORS;
+}
+
+/**
+ * WHERE A FLOOR'S STAIR DOWN GOES: the walkable tile furthest from the door, by
+ * steps. Upstream's generators put the down stair somewhere the floor has to be
+ * crossed to reach; the furthest tile is that, and it is decided by the map
+ * alone, so a floor's stair is always in the same place for the same seed.
+ */
+export function stairsDownCell(map: AuthoredMap): TileXY | undefined {
+  const door = map.spawns[0];
+  if (door === undefined) return undefined;
+  const { w, h } = map.view;
+  const seen = new Uint8Array(w * h);
+  const doors = new Set(map.spawns.map((t) => `${String(t.x)},${String(t.y)}`));
+  const queue: TileXY[] = [door];
+  seen[door.y * w + door.x] = 1;
+  let furthest: TileXY | undefined;
+  for (let head = 0; head < queue.length; head += 1) {
+    const at = queue[head];
+    if (at === undefined) continue;
+    if (!doors.has(`${String(at.x)},${String(at.y)}`)) furthest = at;
+    for (const [dx, dy] of [
+      [1, 0],
+      [-1, 0],
+      [0, 1],
+      [0, -1],
+    ] as const) {
+      const x = at.x + dx;
+      const y = at.y + dy;
+      if (x < 0 || y < 0 || x >= w || y >= h || seen[y * w + x] === 1) continue;
+      if (!canWalk(map.view, x, y)) continue;
+      seen[y * w + x] = 1;
+      queue.push({ x, y });
+    }
+  }
+  return furthest;
+}
+
 export function populateDelve(
   world: World,
   map: AuthoredMap,
   spec: DelveSpec,
   party: PartyStrength = LONE_BEGINNER,
+  /** Which floor this is, from 1. Upstream's `level.level`. */
+  floor = 1,
 ): number {
   const door = map.spawns[0] ?? { x: Math.floor(map.view.w / 2), y: Math.floor(map.view.h / 2) };
   const candidates = roomFor(world, door);
@@ -961,7 +1030,9 @@ export function populateDelve(
     // so every body in it was level 1 — see `DelveSpec.level`.
     const actor = world.addMonster(
       qualified(world, `delve_${String(i)}`),
-      monsterInit(template, at, delveLevel(spec, party)),
+      // ONE LEVEL A FLOOR DOWN, upstream's `base_level + level.level - 1`
+      // (engine/Zone.lua:195).
+      monsterInit(template, at, delveLevel(spec, party) + floor - 1),
     );
     /**
      * THE SAME DROP ROLL THE OVERWORLD USES — AND NOW THE SAME EGO ROLL TOO.
@@ -1013,7 +1084,10 @@ export function populateDelve(
    * and feeds `delveHeadroom`'s scaling; a boss is additive to the room, not a
    * substitution for part of it.
    */
-  if (spec.boss !== undefined) {
+  // ON THE LAST FLOOR, where upstream keeps its set piece: the escape from
+  // Reknor's last level is a static map with its boss in it
+  // (data/zones/reknor-escape/zone.lua:72-82).
+  if (spec.boss !== undefined && floor >= floorsOf(spec)) {
     let far = candidates[0];
     let best = -1;
     for (const cell of candidates) {
@@ -1038,7 +1112,7 @@ export function populateDelve(
        */
       const boss = world.addMonster(
         qualified(world, 'delve_boss'),
-        monsterInit(spec.boss, far, delveLevel(spec, party) + BOSS_LEVELS_ABOVE_ROOM),
+        monsterInit(spec.boss, far, delveLevel(spec, party) + floor - 1 + BOSS_LEVELS_ABOVE_ROOM),
       );
       /**
        * AND IT IS HOLDING SOMETHING, GUARANTEED.

@@ -7,8 +7,9 @@ import { createDownedState } from '../../src/server/engine/downed.ts';
 import { createPartyState } from '../../src/server/engine/party.ts';
 import { wsGateway } from '../../src/server/net/gateway.ts';
 import { createTurnEngine } from '../../src/server/turn-engine.ts';
-import { SITES, createRealms } from '../../src/server/world/realms.ts';
+import { SITES, createRealms, floorsOfSite, stairsDownOf } from '../../src/server/world/realms.ts';
 import { fileableCount, isFileable } from '../../src/server/world/casefile.ts';
+import { canWalk } from '../../src/shared/level.ts';
 import { ActorKind } from '../../src/shared/protocol.ts';
 import { PROTOCOL_VERSION } from '../../src/shared/version.ts';
 import type { Realms } from '../../src/server/world/realms.ts';
@@ -149,7 +150,7 @@ async function hello(port: number): Promise<Client> {
 }
 
 /** Walk onto the first fileable site's cell, which opens it. */
-async function enterADelve(realms: Realms, client: Client): Promise<string> {
+async function enterADelve(realms: Realms, client: Client, toTheBottom = true): Promise<string> {
   const door = [...realms.overworld.sites].find(([, siteId]) => {
     const def = SITES.get(siteId);
     return def !== undefined && isFileable(def);
@@ -162,6 +163,31 @@ async function enterADelve(realms: Realms, client: Client): Promise<string> {
   body.y = Number(ys);
   client.send({ t: 'move', dir: 'e' });
   await sleep(250);
+
+  // AND DOWN TO THE LAST FLOOR, where a case is closed. The floors on the way are
+  // emptied first, so nothing stands on a stair or shuts it with a kill.
+  while (toTheBottom) {
+    const realm = realms.realmOf(client.actorId);
+    if (realm?.siteId === undefined || realm.floor >= floorsOfSite(realm.siteId)) break;
+    const stairs = stairsDownOf(realm);
+    if (stairs === null) throw new Error('a floor above the last has no stair down');
+    for (const actor of realm.world.allActors()) {
+      if (actor.kind === ActorKind.Monster) realm.world.removeActor(actor.id);
+    }
+    const walker = realm.world.getActor(client.actorId);
+    if (walker === undefined) throw new Error('no body');
+    const beside = [
+      { dx: -1, dy: 0, dir: 'e' },
+      { dx: 1, dy: 0, dir: 'w' },
+      { dx: 0, dy: -1, dir: 's' },
+      { dx: 0, dy: 1, dir: 'n' },
+    ].find((s) => canWalk(realm.world.level, stairs.x + s.dx, stairs.y + s.dy));
+    if (beside === undefined) throw new Error('a stair with no open ground beside it');
+    walker.x = stairs.x + beside.dx;
+    walker.y = stairs.y + beside.dy;
+    client.send({ t: 'move', dir: beside.dir });
+    await sleep(250);
+  }
   return door[1];
 }
 
@@ -292,17 +318,22 @@ describe('closing a case', () => {
      * the world map. So the player has to go home before the question can even
      * be asked.
      */
-    const inside = server.realms.realmOf(client.actorId);
-    const exit = inside?.spawns[0];
-    if (exit === undefined) throw new Error('the delve has no way out');
-    const body = inside?.world.getActor(client.actorId);
-    if (body === undefined) throw new Error('no body');
-    body.x = exit.x;
-    body.y = exit.y;
-    client.send({ t: 'move', dir: 'w' });
-    await sleep(150);
-    client.send({ t: 'move', dir: 'e' });
-    await sleep(300);
+    // UP EVERY FLOOR: from the last one, each threshold is the stair to the floor
+    // above, and only the first floor's leads out.
+    for (let floor = floorsOfSite(siteId); floor >= 1; floor -= 1) {
+      const inside = server.realms.realmOf(client.actorId);
+      if (inside?.id === server.realms.overworld.id) break;
+      const exit = inside?.spawns[0];
+      if (exit === undefined) throw new Error('the delve has no way out');
+      const body = inside?.world.getActor(client.actorId);
+      if (body === undefined) throw new Error('no body');
+      body.x = exit.x;
+      body.y = exit.y;
+      client.send({ t: 'move', dir: 'w' });
+      await sleep(150);
+      client.send({ t: 'move', dir: 'e' });
+      await sleep(300);
+    }
     expect(server.realms.realmOf(client.actorId)?.id, 'never got back out').toBe(
       server.realms.overworld.id,
     );
@@ -363,6 +394,30 @@ describe('closing a case', () => {
 
     expect(client.lines().some((l) => l.startsWith('Filed.'))).toBe(true);
     expect(client.lines().some((l) => l.includes('closed every case'))).toBe(false);
+  });
+
+  it('does not close a case on a floor above the last', async () => {
+    // The file is about the place, and the place is not cleared while a floor
+    // under it is still full.
+    const client = await hello(server.port);
+    await enterADelve(server.realms, client, false);
+    const realm = server.realms.realmOf(client.actorId);
+    expect(realm?.floor, 'precondition: on the first floor').toBe(1);
+    expect(floorsOfSite(realm?.siteId ?? ''), 'precondition: a floor below it').toBeGreaterThan(1);
+    await sleep(200);
+    leaveOneAlmostDead(server.realms, client.actorId);
+    await sleep(200);
+    await keepSwinging(server.realms, client);
+
+    const left = server.realms
+      .realmOf(client.actorId)
+      ?.world.allActors()
+      .filter((a) => a.kind === ActorKind.Monster && a.alive);
+    expect(left, 'precondition: the floor was cleared').toEqual([]);
+    expect(
+      client.lines().some((l) => l.startsWith('Filed.')),
+      'the first floor closed the case',
+    ).toBe(false);
   });
 
   it('does not send a progress frame every pump forever', async () => {

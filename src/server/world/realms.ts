@@ -67,7 +67,14 @@ import { ActorKind } from '../../shared/protocol.ts';
 // correct here — but `specFor` is the one that knows about both maps, and the
 // import disappearing is the proof there is no reader left asking the narrower
 // question.
-import { delveLevel, populateDelve, redactedSpec, specFor } from '../content/delve.ts';
+import {
+  delveLevel,
+  floorsOf,
+  populateDelve,
+  redactedSpec,
+  specFor,
+  stairsDownCell,
+} from '../content/delve.ts';
 import type { MonsterTemplate } from '../content/monsters.ts';
 import { seedAmbush } from '../content/encounter.ts';
 import { createWorld } from './world.ts';
@@ -163,6 +170,39 @@ export const TIDE_MS = 2000;
 
 /** The one realm id that is a constant, because there is only ever one. */
 export const OVERWORLD_ID = 'realm:overworld';
+
+/**
+ * THE SITE ID A STAIR DOWN IS FILED UNDER in a floor's `sites`. Not a site in
+ * `SITES`: walking onto it takes the party's next floor of the site they are in.
+ * Upstream's DOWN grid (data/general/grids/basic.lua:44-52).
+ */
+export const STAIRS_DOWN_SITE_ID = 'stairs:down';
+
+/** How many floors a site has: a delve's own depth, and one for anything else. */
+export function floorsOfSite(siteId: string): number {
+  const spec = specFor(siteId);
+  return spec === undefined ? 1 : floorsOf(spec);
+}
+
+/** `map` with a stair down on the furthest tile from its door, when it has one. */
+function withStairsDown(map: AuthoredMap): AuthoredMap {
+  const at = stairsDownCell(map);
+  if (at === undefined) return map;
+  return {
+    ...map,
+    sites: new Map([...map.sites, [`${String(at.x)},${String(at.y)}`, STAIRS_DOWN_SITE_ID]]),
+  };
+}
+
+/** Where a floor's stair down is, or null on a floor with none. */
+export function stairsDownOf(realm: Realm): TileXY | null {
+  for (const [cell, siteId] of realm.sites) {
+    if (siteId !== STAIRS_DOWN_SITE_ID) continue;
+    const [x, y] = cell.split(',');
+    return { x: Number(x), y: Number(y) };
+  }
+  return null;
+}
 
 /**
  * One roaming danger on the overworld. Deliberately tiny: a position, a name to
@@ -484,6 +524,8 @@ export type Realm = {
    * the returned object and absent in every later lookup.
    */
   baseLevel?: number;
+  /** Which floor of its site this is, from 1: upstream's `level.level`. */
+  readonly floor: number;
 };
 
 /**
@@ -603,6 +645,7 @@ export type SiteDef = {
     map: AuthoredMap,
     party: PartyStrength,
     lead?: MonsterTemplate,
+    floor?: number,
   ) => void;
 
   /**
@@ -645,6 +688,8 @@ export type Realms = {
     party?: PartyStrength,
     ground?: Ground,
     lead?: MonsterTemplate,
+    /** Which floor, from 1. Each floor is its own instance. */
+    floor?: number,
   ): Realm;
   /**
    * Close an instance and forget it. Refuses to close the overworld and refuses
@@ -788,6 +833,7 @@ export function createRealms(opts: RealmsOptions): Realms {
       readonly siteId?: string;
       readonly lingerMs?: number;
       readonly lighting?: SiteLighting;
+      readonly floor?: number;
     },
   ): Realm => {
     // THE REALM'S OWN ID, THREADED IN. Everything minted inside this world
@@ -825,6 +871,7 @@ export function createRealms(opts: RealmsOptions): Realms {
       // honest value rather than a large number pretending to be a policy.
       lingerMs: extra.lingerMs ?? 0,
       sealed: false,
+      floor: extra.floor ?? 1,
       ...extra,
     };
     /**
@@ -940,6 +987,8 @@ export function createRealms(opts: RealmsOptions): Realms {
      * outside it.
      */
     lead?: MonsterTemplate,
+    /** Which floor of the site, from 1. Each floor is its own instance. */
+    floor = 1,
   ): Realm => {
     /**
      * A COMMON SITE IGNORES THE PARTY ENTIRELY. There is one office, and
@@ -991,7 +1040,9 @@ export function createRealms(opts: RealmsOptions): Realms {
       // monsters and all, which makes running away and pausing the fight the
       // same verb. See `Realm.sealed`.
       if (realm.sealed) continue;
-      if (realm.partyId === partyId && realm.siteId === site.id) return realm;
+      if (realm.partyId === partyId && realm.siteId === site.id && realm.floor === floor) {
+        return realm;
+      }
     }
 
     instanceSeq += 1;
@@ -1000,14 +1051,17 @@ export function createRealms(opts: RealmsOptions): Realms {
     // at the moment it is built and has nothing to say afterwards — a realm that
     // remembered it would be a second answer to "what does this floor look
     // like", and the tiles are already the first.
-    const builtMap = site.map(seedFor(opts.seed, id), ground);
+    // EVERY FLOOR BUT THE LAST HAS A STAIR DOWN.
+    const drawn = site.map(seedFor(opts.seed, id), ground);
+    const builtMap = floor < floorsOfSite(site.id) ? withStairsDown(drawn) : drawn;
     const realm = build(id, RealmKind.Inner, site.name, builtMap, {
       partyId,
       siteId: site.id,
+      floor,
       lingerMs: site.lingerMs,
       ...(site.lighting === undefined ? {} : { lighting: site.lighting }),
     });
-    site.populate?.(realm.world, builtMap, party, lead);
+    site.populate?.(realm.world, builtMap, party, lead, floor);
     /**
      * AND WHAT LEVEL THAT POPULATION WAS BUILT AT, for whoever has to SAY it —
      * the level feeling on arrival (shared/zone.ts) is the only reader today.
@@ -1015,7 +1069,7 @@ export function createRealms(opts: RealmsOptions): Realms {
      * one line above, so the two cannot disagree.
      */
     const spec = specFor(site.id);
-    if (spec !== undefined) realm.baseLevel = delveLevel(spec, party);
+    if (spec !== undefined) realm.baseLevel = delveLevel(spec, party) + floor - 1;
     return realm;
   };
 
@@ -1443,9 +1497,15 @@ const AUTHORED_SITES: readonly (readonly [string, SiteDef])[] = (
            * solo-sized room earn four times the experience for a quarter of
            * the work.
            */
-          populate: (world: World, built: AuthoredMap, party: PartyStrength): void => {
+          populate: (
+            world: World,
+            built: AuthoredMap,
+            party: PartyStrength,
+            _lead?: MonsterTemplate,
+            floor = 1,
+          ): void => {
             const spec = specFor(id);
-            if (spec !== undefined) populateDelve(world, built, spec, party);
+            if (spec !== undefined) populateDelve(world, built, spec, party, floor);
           },
         }
       : {}),
@@ -1559,9 +1619,15 @@ const REDACTED_SITES: readonly (readonly [string, SiteDef])[] = [
          * counts, and it answers a town with a fight rather than with
          * `undefined`.
          */
-        populate: (world: World, built: AuthoredMap, party: PartyStrength): void => {
+        populate: (
+          world: World,
+          built: AuthoredMap,
+          party: PartyStrength,
+          _lead?: MonsterTemplate,
+          floor = 1,
+        ): void => {
           const spec = redactedSpec(originalId);
-          if (spec !== undefined) populateDelve(world, built, spec, party);
+          if (spec !== undefined) populateDelve(world, built, spec, party, floor);
         },
       },
     ] as const,

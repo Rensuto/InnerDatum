@@ -9,7 +9,7 @@ import {
 } from '../../src/server/content/monsters.ts';
 import { specFor } from '../../src/server/content/delve.ts';
 import { createTurnEngine } from '../../src/server/turn-engine.ts';
-import { SITES, createRealms } from '../../src/server/world/realms.ts';
+import { SITES, createRealms, floorsOfSite } from '../../src/server/world/realms.ts';
 import { ActorKind, ActorRank } from '../../src/shared/protocol.ts';
 
 /**
@@ -150,7 +150,15 @@ describe('the room it is in', () => {
     expect(site).toBeDefined();
     if (site === undefined) return;
 
-    const realm = realms.open(site, 'party', { level: 8, size: 4 });
+    // ITS LAST FLOOR, which is where a boss is placed (`populateDelve`).
+    const realm = realms.open(
+      site,
+      'party',
+      { level: 8, size: 4 },
+      undefined,
+      undefined,
+      floorsOfSite(site.id),
+    );
     const boss = [...realm.world.allActors()].find(
       (a) => a.kind === ActorKind.Monster && a.rank === ActorRank.Boss,
     );
