@@ -2808,6 +2808,27 @@ export function createSaveStore(options: SaveStoreOptions): SaveStore {
       };
     }
 
+    /**
+     * ═══ AN IMMEDIATE SAVE RETIRES THE AUTOSAVE WAITING FOR THE SAME FILE ═══
+     * `scheduleCharacter` promises "the newest snapshot wins", and this is the
+     * other half of that promise. The file being written now was snapshotted
+     * after the one waiting in `pending`, and holds everything it did. Left
+     * queued, that older one fired when its debounce ran out and wrote itself
+     * OVER this one: walk a step (the pump queues an autosave), spend a talent
+     * point inside the window (written at once), and when the window closed the
+     * file held the unspent point again. The body in memory was still right, so
+     * the next save repaired it — but `close` only drains `pending`, it does
+     * not snapshot anyone, so a restart before that next save kept the old file.
+     *
+     * Before any `await`, as `retireCharacter` does: a snapshot scheduled while
+     * this write is in flight was taken after it, and must still land.
+     */
+    const waiting = pending.get(path);
+    if (waiting !== undefined) {
+      clearTimeout(waiting.timer);
+      pending.delete(path);
+    }
+
     const stamped: CharacterFile = {
       ...file,
       schemaVersion: CURRENT_VERSIONS[SchemaKind.Character],

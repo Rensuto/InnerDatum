@@ -798,6 +798,37 @@ describe('character files', () => {
     expect(loaded.file?.name).toBe('died');
   });
 
+  it('does not let an older autosave, still waiting, overwrite a newer immediate save', async () => {
+    /**
+     * THE HALF "THE NEWEST SNAPSHOT WINS" WAS MISSING. The test above stops the
+     * moment the immediate write lands — and the stale autosave was still
+     * queued behind it, due to fire when its debounce ran out and write the
+     * OLDER snapshot over the newer file. A player who walked a step and then
+     * spent a talent point inside the window had the point unspent on disk.
+     */
+    store.scheduleCharacter(sampleCharacter({ name: 'older, still waiting' }));
+    const result = await store.saveCharacter(sampleCharacter({ name: 'newer' }), SaveReason.Manual);
+    expect(result.outcome).toBe(SaveOutcome.Written);
+    // THE WAITING ONE IS RETIRED, not merely outrun.
+    expect(store.pendingCount()).toBe(0);
+
+    // Whatever the debounce would have done, flushing is the same thing sooner.
+    await store.flush();
+    const loaded = await store.loadCharacter(OWNER, CHAR);
+    expect(loaded.file?.name).toBe('newer');
+  });
+
+  it('still writes an autosave scheduled after an immediate save', async () => {
+    // The retirement is of what was waiting BEFORE the immediate write. A snapshot
+    // taken after it is newer again, and must land.
+    await store.saveCharacter(sampleCharacter({ name: 'saved at once' }), SaveReason.Manual);
+    store.scheduleCharacter(sampleCharacter({ name: 'later still' }));
+    expect(store.pendingCount()).toBe(1);
+    await store.flush();
+    const loaded = await store.loadCharacter(OWNER, CHAR);
+    expect(loaded.file?.name).toBe('later still');
+  });
+
   it('close() flushes what was pending and then refuses further writes', async () => {
     store.scheduleCharacter(sampleCharacter({ name: 'last words' }));
     await store.close();
