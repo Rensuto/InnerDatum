@@ -356,3 +356,39 @@ files exist the doll and the bag draw a letter in their place.
 the bag scale them down. Each must read as a lantern at 32x32 and be told apart
 from the other two by shape and flame colour, not by size alone.
 
+
+## The standing commission: people, bestiary, bosses, effects, items, props
+
+**A backlog to draw from for a long while.** The list lives in
+[content/art-requests.ts](content/art-requests.ts), not here: every id in it is
+reported by `npm run art:needs` as requested art, and as missing until a file
+of that id is deployed. Each entry carries its size, where it appears, the ToME
+entry it stands in for, and a one-line brief.
+
+It holds seven lists:
+
+- **Townsfolk**: a face for each of the ten named townsfolk, who all share
+  `chr_npc_counter_keeper_s` today, and the watch, clerks, shopkeepers, clergy
+  and camp folk who fill the towns.
+- **Enemies**: ToME's bestiary families (rodents, worm masses, molds, oozes,
+  snakes, wolves, bears, spiders, ants, swarms, skeletons, ghouls, ghosts,
+  wights, vampires, liches, bone giants, gangs, thieves, brutes, automata,
+  crystals, plants, cats, rock-eaters, minotaurs, horrors), each renamed and
+  redrawn for Alderbrook, weakest to strongest.
+- **Bosses**: ToME's early uniques, each moved to the delve it now guards,
+  including a dedicated sprite for The Watcher and the intro cave's boss.
+- **Effects** (`ui_fx_*`): a projectile, a hit and an area tile for each of
+  ToME's twelve damage types, plus beams, weapon swings, shots, class
+  signatures, heals, shields, teleports, status loops and hazards.
+- **Status icons**, **items** and **props**: ToME's effects, base items and
+  traps that have no picture here yet, and furniture for every town and delve.
+
+**Effects are frame strips and are not wired yet.** One frame per actor is still
+the whole animation system, so a `ui_fx_*` strip is 64x64 frames laid left to
+right: 4 frames (256x64) for a loop, 6 frames (384x64) for something played
+once. Projectiles are drawn pointing east. The file header gives the full
+convention and the colour family for each damage type.
+
+**Style.** Gaslit Alderbrook: soot, brass, ink and paper. The Redacted show loose
+pages, black redaction bars, strike-throughs and a faint static; the Filed are
+people. Bodies face south in one frame and must read in silhouette at 48x64.
