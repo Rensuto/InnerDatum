@@ -36,6 +36,7 @@ import {
   createTalentBook,
   sheetForBody,
   spendByPurse,
+  sheetAfterPurchase,
   treesForClass,
 } from './content/classes.ts';
 import { originLifeDelta, originOf } from './content/origins.ts';
@@ -1545,33 +1546,24 @@ export function buildServer() {
    *
    * THE LISTS ARE PASSED, NOT READ OFF THE BODY, so a caller cannot rebuild
    * against a list it has not written yet. Both callers write first.
+   *
+   * ═══ AND THE BODY IS PASSED TOO, for what was NOT bought ═══
+   * The origin and the inscriptions. Built from the two lists alone, the sheet
+   * read an absent origin as the baseline and dropped every racial talent the
+   * moment a category point was spent. See `sheetAfterPurchase`, which now owns
+   * the build and the carry and is tested where this closure cannot be.
    */
   const rebuildTalentSheet = (
     actorId: string,
     definition: ClassDef,
+    body: Parameters<typeof sheetAfterPurchase>[2],
     opened: readonly string[],
     deepened: readonly string[],
   ): void => {
-    const previous = talentEngine.sheetOf(actorId);
-    const sheet = sheetForBody(definition, {
-      unlockedTrees: opened,
-      deepenedTrees: deepened,
-    });
-    if (previous !== undefined) {
-      // EVERY RANK THE CHARACTER HAD, CARRIED ACROSS.
-      for (const [id, rank] of previous.points) {
-        if (sheet.points.has(id)) sheet.points.set(id, rank);
-      }
-      // AND THE STANCES THEY WERE HOLDING, for the same reason: a discipline
-      // bought mid-fight must not put a player's methods down.
-      for (const id of previous.sustained) {
-        if (sheet.points.has(id)) sheet.sustained.add(id);
-      }
-      sheet.resource.value = previous.resource.value;
-      sheet.ap = previous.ap;
-      sheet.mp = previous.mp;
-    }
-    talentEngine.attach(actorId, sheet);
+    talentEngine.attach(
+      actorId,
+      sheetAfterPurchase(talentEngine.sheetOf(actorId), definition, body, opened, deepened),
+    );
     refreshPassives(actorId);
   };
 
@@ -1834,7 +1826,7 @@ export function buildServer() {
 
       const opened = [...already, treeId];
       body.unlockedTrees = opened;
-      rebuildTalentSheet(actorId, definition, opened, body.deepenedTrees ?? []);
+      rebuildTalentSheet(actorId, definition, body, opened, body.deepenedTrees ?? []);
       return true;
     },
 
@@ -1881,7 +1873,7 @@ export function buildServer() {
 
       const next = [...deepened, treeId];
       body.deepenedTrees = next;
-      rebuildTalentSheet(actorId, definition, body.unlockedTrees ?? [], next);
+      rebuildTalentSheet(actorId, definition, body, body.unlockedTrees ?? [], next);
       return true;
     },
 

@@ -1175,6 +1175,61 @@ export type PurchasedTrees = {
   readonly origin?: string;
 };
 
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE SHEET AFTER A CATEGORY POINT IS SPENT — rebuilt, with everything carried.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Both things a category point buys rebuild the sheet from scratch: unlocking a
+ * discipline changes `opened`, deepening one changes `deepened`. What the body
+ * did NOT just buy — its ORIGIN and its INSCRIPTIONS — comes from `body`, and
+ * that is the half this function exists to not forget.
+ *
+ * ═══ IT DID FORGET IT ═══
+ * main.ts built this sheet from the two lists alone, and `sheetForBody` reads an
+ * absent origin as the baseline. So the moment an Indexed character bought a
+ * discipline or deepened a tree, the rebuilt sheet had no Gift of the Highborn — no
+ * racial talent at all, for any origin — and the rank carry below skipped them
+ * because the new sheet had no entry to carry onto. They came back only on the
+ * next reconnect, when `attachClass` built the sheet from the whole body.
+ *
+ * ═══ THE CARRY IS THE DANGEROUS PART ═══
+ * Every rank, every stance and the three pools are read off the OLD sheet and
+ * written onto the new one. Each is a silent, unrecoverable loss if forgotten: a
+ * player spends the scarcest currency in the game and has their ranks reset.
+ *
+ * THE LISTS ARE PASSED, NOT READ OFF THE BODY, so a caller cannot rebuild
+ * against a list it has not written yet.
+ */
+export function sheetAfterPurchase(
+  previous: TalentSheet | undefined,
+  definition: ClassDef,
+  body: PurchasedTrees,
+  opened: readonly string[],
+  deepened: readonly string[],
+): TalentSheet {
+  const sheet = sheetForBody(definition, {
+    origin: body.origin,
+    inscriptions: body.inscriptions,
+    unlockedTrees: opened,
+    deepenedTrees: deepened,
+  });
+  if (previous === undefined) return sheet;
+  // EVERY RANK THE CHARACTER HAD, CARRIED ACROSS.
+  for (const [id, rank] of previous.points) {
+    if (sheet.points.has(id)) sheet.points.set(id, rank);
+  }
+  // AND THE STANCES THEY WERE HOLDING, for the same reason: a discipline bought
+  // mid-fight must not put a player's methods down.
+  for (const id of previous.sustained) {
+    if (sheet.points.has(id)) sheet.sustained.add(id);
+  }
+  sheet.resource.value = previous.resource.value;
+  sheet.ap = previous.ap;
+  sheet.mp = previous.mp;
+  return sheet;
+}
+
 export function sheetForClass(
   definition: ClassDef,
   /**

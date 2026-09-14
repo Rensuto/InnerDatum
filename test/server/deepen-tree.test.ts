@@ -11,10 +11,14 @@ import { readFileSync } from 'node:fs';
 
 import {
   CLASSES,
+  sheetAfterPurchase,
   sheetForBody,
   sheetForClass,
   treesForClass,
 } from '../../src/server/content/classes.ts';
+import { INDEXED } from '../../src/server/content/origins.ts';
+import { INSCRIPTIONS } from '../../src/server/content/inscriptions.ts';
+import { higherHeal } from '../../src/server/talents/higher_heal.ts';
 import { TALENT_TREES } from '../../src/server/content/talent-trees.ts';
 import { talentLevelOf } from '../../src/server/engine/talents.ts';
 import { toLoadoutView } from '../../src/server/content/classes.ts';
@@ -245,6 +249,89 @@ describe('what a returning player still has', () => {
       (sheetForClass(definition).mastery.get(tree) ?? 1) + MASTERY_STEP,
       10,
     );
+  });
+});
+
+describe('what the body did NOT just buy survives the rebuild', () => {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * SPENDING A CATEGORY POINT STRIPPED AN ORIGIN'S TALENTS.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * main.ts rebuilt the sheet from the two purchase lists and nothing else, and
+   * `sheetForBody` reads an absent origin as the baseline. An Indexed character
+   * who bought a discipline lost Gift of the Highborn from the sheet — and its rank, which
+   * the carry could not put anywhere — until they next reconnected.
+   */
+  const locked = () => {
+    const tree = TALENT_TREES.find((candidate) => candidate.locked === true);
+    if (tree === undefined) throw new Error('no locked tree to buy');
+    return tree.id;
+  };
+
+  it('keeps the origin`s talents, at their ranks, through a purchase', () => {
+    const definition = anyClass();
+    const body = { origin: INDEXED.id };
+    const previous = sheetForBody(definition, body);
+    expect(previous.points.get(higherHeal.id), 'the fixture has no Gift of the Highborn').toBe(1);
+
+    const bought = sheetAfterPurchase(previous, definition, body, [locked()], []);
+    expect(bought.points.get(higherHeal.id), 'buying a discipline dropped it').toBe(1);
+    const deepened = sheetAfterPurchase(previous, definition, body, [], [ownTree(definition)]);
+    expect(deepened.points.get(higherHeal.id), 'deepening a tree dropped it').toBe(1);
+  });
+
+  it('keeps what is written on the body, not the birth set', () => {
+    // TODAY EVERY BODY CARRIES ALL THREE, so no live character could tell. This
+    // pins the contract `PurchasedTrees.inscriptions` states — absent means the
+    // birth set — so the day a body holds a different set, a purchase keeps it.
+    const definition = anyClass();
+    const [kept, ...dropped] = INSCRIPTIONS;
+    if (kept === undefined || dropped.length === 0) throw new Error('too few inscriptions');
+    const body = { origin: INDEXED.id, inscriptions: [kept.id] };
+    const next = sheetAfterPurchase(
+      sheetForBody(definition, body),
+      definition,
+      body,
+      [locked()],
+      [],
+    );
+    expect(next.points.has(kept.grants.id)).toBe(true);
+    for (const entry of dropped) {
+      expect(next.points.has(entry.grants.id), `${entry.id} came back`).toBe(false);
+    }
+  });
+
+  it('carries every rank, every stance and the three pools across', () => {
+    const definition = anyClass();
+    const body = { origin: INDEXED.id };
+    const previous = sheetForBody(definition, body);
+    const raised = definition.loadout[0]?.id;
+    if (raised === undefined) throw new Error('the class has no loadout');
+    previous.points.set(raised, 3);
+    previous.sustained.add(raised);
+    previous.resource.value = 7;
+    previous.ap = 2;
+    previous.mp = 1;
+
+    const next = sheetAfterPurchase(previous, definition, body, [locked()], []);
+    expect(next.points.get(raised)).toBe(3);
+    expect(next.sustained.has(raised)).toBe(true);
+    expect([next.resource.value, next.ap, next.mp]).toEqual([7, 2, 1]);
+  });
+
+  it('is what both category spends in main.ts rebuild with, and they hand it the body', () => {
+    // A SOURCE GUARD, for `attachClass`' reason below: `unlockTree`, `deepenTree`
+    // and the rebuild are closures inside `buildServer`, and every gateway test
+    // injects its own engine — nothing in the tree drives them.
+    const main = readFileSync(new URL('../../src/server/main.ts', import.meta.url), 'utf8')
+      .split('\n')
+      .filter((line) => !/^\s*(\/\/|\*|\/\*)/.test(line))
+      .join('\n');
+    expect(main).toMatch(
+      /sheetAfterPurchase\(\s*talentEngine\.sheetOf\(actorId\),\s*definition,\s*body,\s*opened,\s*deepened,?\s*\)/,
+    );
+    expect(main.match(/rebuildTalentSheet\(actorId, definition, body, /g)?.length).toBe(2);
   });
 });
 
