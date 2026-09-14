@@ -14,6 +14,7 @@ import {
   toResourceView,
   PLAYER_RESIST_CAP,
 } from '../../src/server/content/classes.ts';
+import { ITEM_CATALOGUE } from '../../src/server/content/items.ts';
 import { downedSpriteFor } from '../../src/server/engine/downed.ts';
 import { AiProfile } from '../../src/server/engine/actor.ts';
 import {
@@ -333,15 +334,19 @@ describe('a first-ever join', () => {
      *
      * The claim this test is making — the body is clothed from that ClassDef
      * and not from a rotation counter or a stale file — is unchanged.
+     *
+     * AND PLUS THE BRASS LANTERN every character is born wearing
+     * (`grantBirthKit`). Light radius is the one mod it moves.
      */
+    const lantern = ITEM_CATALOGUE.get('item_brass_lantern')?.wielder?.mods;
     expect(first.combat?.stats).toEqual(WATCHMAN.combat.stats);
-    expect(first.combat?.mods).toEqual(WATCHMAN.combat.mods);
+    expect(first.combat?.mods).toEqual({ ...WATCHMAN.combat.mods, ...lantern });
     expect(first.combat?.profile?.resistsCap?.all).toBe(PLAYER_RESIST_CAP);
     // …and the Alchemist really is the squishiest body rather than a third
     // Watchman with different art.
     expect(third.maxHp).toBe(ALCHEMIST.maxHp);
     expect(third.combat?.stats).toEqual(ALCHEMIST.combat.stats);
-    expect(third.combat?.mods).toEqual(ALCHEMIST.combat.mods);
+    expect(third.combat?.mods).toEqual({ ...ALCHEMIST.combat.mods, ...lantern });
   });
 
   it('rotates past six players without ever reaching a class that does not exist', async () => {

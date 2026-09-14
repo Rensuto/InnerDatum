@@ -4000,8 +4000,9 @@ function charSheetView(): {
      * THE PAPER DOLL, for the sheet's Equipment tab.
      *
      * `undefined` UNTIL THE FRAME LANDS, and deliberately not `{}`: an empty map
-     * means "wearing nothing", which is a real state a level-1 character can be
-     * in, and the tab draws the two differently. `inventory` starts null, so the
+     * means "wearing nothing", which is a real state for a character who has
+     * taken off even their lantern, and the tab draws the two differently.
+     * `inventory` starts null, so the
      * distinction is free here and would have to be invented anywhere else.
      */
     equipped: inventory?.equipped,
@@ -6399,7 +6400,7 @@ async function boot(): Promise<void> {
      * did not already know to go looking for it"*, and that the tree is *"dead
      * content for a party that never presses `g`"*. Both sentences are true of
      * the bag and they bite sooner: the first thing that drops in a first
-     * session is the first gear that player has ever owned.
+     * session is the first gear, after their lantern, that player has ever owned.
      *
      * MEASURED across the client: `show_talents` is named to the player twice,
      * `revive` and `respawn` once each — and `show_inventory` is named

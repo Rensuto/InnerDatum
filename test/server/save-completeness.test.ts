@@ -64,6 +64,7 @@ const FULL = {
   // field — the parser was right and the fixture was wrong.
   carried: ['item_watchmans_cap'],
   equipped: { body: 'item_watchmans_coat' },
+  kitGranted: ['item_brass_lantern'],
   keybinds: { move_n: ['w'] },
   /**
    * THE FOUR THIS FIXTURE NEVER MENTIONED, and whose absence made the guard at

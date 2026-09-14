@@ -262,6 +262,29 @@ describe('what follows a character through a door', () => {
     expect(after?.kind === 'player' ? after.unspentStatPoints : null).toBe(2);
   });
 
+  it('carries the record of the birth kit, so the lantern is given once', async () => {
+    /**
+     * `kitGranted` is what keeps `grantBirthKit` from handing out a second
+     * lantern. A crossing that dropped it would leave the far body with no
+     * record, the next save would write none, and the next join would give the
+     * lantern again.
+     */
+    const { actorId, socket } = await hello(server.port);
+    const body = server.realms.realmOf(actorId)?.world.getActor(actorId);
+    expect(body).toBeDefined();
+    if (body === undefined || body.kind !== 'player') return;
+    expect(body.kitGranted, 'precondition: the join gave the kit').toEqual(['item_brass_lantern']);
+
+    await stepOnto(server.realms, actorId, socket, doorCell(server.realms));
+
+    const after = server.realms.realmOf(actorId)?.world.getActor(actorId);
+    expect(after, 'the crossing kept the same body').not.toBe(body);
+    expect(after?.kind === 'player' ? after.kitGranted : null, 'the record did not follow').toEqual(
+      ['item_brass_lantern'],
+    );
+    expect(after?.equipped?.['lite'], 'the lantern did not follow').toBe('item_brass_lantern');
+  });
+
   it('carries zoom, interface scale and the panel layout, as copies', async () => {
     /**
      * THE `settings` FRAME'S THREE, which this list dropped: without them the

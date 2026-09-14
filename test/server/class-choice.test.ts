@@ -22,6 +22,7 @@ import {
   classPointBonus,
   genericPointBonus,
 } from '../../src/server/content/origins.ts';
+import { ITEM_CATALOGUE } from '../../src/server/content/items.ts';
 import { higherHeal } from '../../src/server/talents/higher_heal.ts';
 import { talentRuntimeFor } from '../../src/server/main.ts';
 import { wsGateway } from '../../src/server/net/gateway.ts';
@@ -844,9 +845,13 @@ describe('choose_class, accepted', () => {
      *
      * The claim this test is making — the body is clothed from that ClassDef
      * and not from a rotation counter or a stale file — is unchanged.
+     *
+     * AND PLUS THE BRASS LANTERN every character is born wearing
+     * (`grantBirthKit`). Light radius is the one mod it moves.
      */
+    const lantern = ITEM_CATALOGUE.get('item_brass_lantern')?.wielder?.mods;
     expect(body.combat?.stats).toEqual(ALCHEMIST.combat.stats);
-    expect(body.combat?.mods).toEqual(ALCHEMIST.combat.mods);
+    expect(body.combat?.mods).toEqual({ ...ALCHEMIST.combat.mods, ...lantern });
     expect(body.combat?.profile?.resistsCap?.all).toBe(PLAYER_RESIST_CAP);
     expect(body.hpRegen).toBe(ALCHEMIST.hpRegen);
     // FULL, at the NEW ceiling: the choice happens at character creation, so the

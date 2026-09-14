@@ -1636,6 +1636,14 @@ const LIGHT_SOURCES: readonly Item[] = [
   },
 ];
 
+/**
+ * WHAT EVERY CHARACTER IS GIVEN AT BIRTH, by id: upstream's `resolvers.equip` in
+ * the base birth descriptor hands each one a brass lantern
+ * (data/birth/descriptors.lua:75-77). The gateway gives it once per character;
+ * see `PlayerActor.kitGranted`.
+ */
+export const BIRTH_KIT: readonly string[] = Object.freeze(['item_brass_lantern']);
+
 export const ITEMS: readonly Item[] = Object.freeze([
   ...WATCHMAN_KIT,
   ...INSPECTOR_KIT,

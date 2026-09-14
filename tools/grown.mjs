@@ -8,9 +8,10 @@
 // Every difficulty probe in this directory builds its character the same way —
 // `addPlayer`, `p.combat = cls.combat`, `sheetForClass(cls)` — and that body is
 // LEVEL 1, WEARING NOTHING, with four birth talents at rank 1. For the opening
-// ambush that is exactly right: the gateway's own note records that "A NEW
-// CHARACTER WEARS NOTHING ... the classes have no starting kit at all", so a
-// naked level-1 body is the honest measurement of the first fight.
+// ambush that is exactly right: the classes have no starting kit, and the one
+// thing a new character is born wearing is a brass lantern (`grantBirthKit` in
+// the gateway), which moves no combat number. So a level-1 body with an empty
+// doll is still the honest measurement of the first fight.
 //
 // It is the WRONG body for everything after it. `delve-run.mjs` sends that
 // character into all sixteen delves and reports 0 of 8 on every row — including

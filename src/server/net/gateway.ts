@@ -135,7 +135,7 @@ import type { OriginDef } from '../content/origins.ts';
  * an item id carries NOTHING on its own (slot, icon and wielder all live in the
  * catalogue), so a layer that has to validate one has to be able to ask.
  */
-import { SLOT_ORDER } from '../content/items.ts';
+import { BIRTH_KIT, SLOT_ORDER } from '../content/items.ts';
 import { moneyAmountOf, moneyName } from '../content/money.ts';
 import { partyMaxLevel } from '../content/loot.ts';
 import { blurbFor } from '../content/places.ts';
@@ -1813,6 +1813,8 @@ export type CharacterSnapshot = {
    * that filled these unconditionally would empty a returning player's bag the
    * first time a fixture snapshot was written.
    */
+  /** The birth kit already handed over, by item id. See `PlayerActor.kitGranted`. */
+  readonly kitGranted?: readonly string[];
   readonly carried?: readonly string[];
   /** Slot name -> item id. See `carried` above; the two travel together. */
   readonly equipped?: Readonly<Record<string, string>>;
@@ -2099,6 +2101,8 @@ export type CharacterRestore = {
    * `CharacterSnapshot.carried` for why that is a compile-time guarantee rather
    * than a convention.
    */
+  /** The birth kit already handed over, by item id. See `PlayerActor.kitGranted`. */
+  readonly kitGranted?: readonly string[];
   readonly carried?: readonly string[];
   /** Slot name -> item id, as the file holds it. Validated on the way onto the body. */
   readonly equipped?: Readonly<Record<string, string>>;
@@ -2793,9 +2797,10 @@ const NO_TRAPS_KEY = '[]';
  *
  * Same seeding argument as `NO_PROJECTILES_KEY`, one level down: the key is
  * per-SOCKET (like `viewerKey` and `progressKey`) because a resumed connection
- * has seen nothing, and it is seeded with the empty state so that the
- * overwhelmingly common player — carrying nothing, wearing nothing, for the
- * whole first fight of a delve — is never sent an `inventory` frame saying so.
+ * has seen nothing, and it is seeded with the empty state so that a player
+ * carrying nothing and wearing nothing is never sent an `inventory` frame
+ * saying so. That is no longer a new character, who is born wearing a brass
+ * lantern (`grantBirthKit`); it is one who has taken everything off.
  *
  * The moment they pick something up the key moves and the frame goes; the moment
  * they drop their last thing it moves BACK and an empty frame goes, which is
@@ -3833,15 +3838,25 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    * player who genuinely dropped everything has `carried: []` on the actor — the
    * loot verbs always write an array, never delete the field — so the claim is
    * made and the disk is emptied, which is correct. The undefined case is a
-   * fixture, the e2e harness, and any body that has never touched an item.
+   * fixture, the e2e harness, and any bag or doll that has never been touched.
+   * A new character's doll has been: `grantBirthKit` put a brass lantern on it.
    *
    * TWO SEPARATE SPREADS RATHER THAN ONE OBJECT, because the two are
    * independently absent: a character can be wearing a coat and carrying nothing.
    */
   const loadoutFields = (
     actor: Actor,
-  ): { carried?: readonly string[]; equipped?: Readonly<Record<string, string>> } => ({
+  ): {
+    carried?: readonly string[];
+    equipped?: Readonly<Record<string, string>>;
+    kitGranted?: readonly string[];
+  } => ({
     ...(actor.carried === undefined ? {} : { carried: [...actor.carried] }),
+    // WITH THE LOADOUT IT RECORDS, so the two are written or withheld together: a
+    // body whose lantern is not saved must not have its gift saved either.
+    ...(actor.kind !== 'player' || actor.kitGranted === undefined
+      ? {}
+      : { kitGranted: [...actor.kitGranted] }),
     ...(actor.equipped === undefined ? {} : { equipped: wornRecord(actor.equipped) }),
   });
 
@@ -6985,6 +7000,9 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     // ABSENT MEANS "THIS PORT CANNOT SAY", so the body keeps whatever it has —
     // which for a fresh body is nothing. It must never be read as "this
     // character owns nothing", because that is what `[]` and `{}` say.
+    // THE KIT'S RECORD FIRST, ahead of the early return below: a file can say a
+    // lantern was given without saying anything about the bag.
+    if (restore.kitGranted !== undefined) actor.kitGranted = [...restore.kitGranted];
     if (restore.carried === undefined && restore.equipped === undefined) return;
 
     const dropped: string[] = [];
@@ -7224,6 +7242,45 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       { actorId: actor.id, actions: Object.keys(actor.keybinds).length },
       'restored a character’s key bindings',
     );
+  };
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE BIRTH KIT — what upstream hands every character when it is made.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `data/birth/descriptors.lua:75-77` equips every character with a brass
+   * lantern at birth. This hands over each piece of `BIRTH_KIT` a body has not
+   * been given: worn when its slot is free, into the bag when it is not, and not
+   * at all when the bag is full, in which case it waits for the next join.
+   *
+   * ONCE, AND RECORDED. `kitGranted` is what makes it once. "The slot is empty"
+   * would be the wrong test: it would hand a new lantern to everybody who ever
+   * took theirs off.
+   */
+  const grantBirthKit = (actor: Actor): void => {
+    if (actor.kind !== 'player') return;
+    const given = new Set(actor.kitGranted ?? []);
+    let changed = false;
+    for (const id of BIRTH_KIT) {
+      if (given.has(id)) continue;
+      const item = resolveItem(id);
+      if (item === undefined) continue;
+      if (item.slot !== undefined && actor.equipped?.[item.slot] === undefined) {
+        actor.equipped = { ...actor.equipped, [item.slot]: id };
+      } else if ((actor.carried?.length ?? 0) < INVENTORY_CAP) {
+        actor.carried = [...(actor.carried ?? []), id];
+      } else {
+        continue;
+      }
+      given.add(id);
+      changed = true;
+    }
+    if (!changed) return;
+    actor.kitGranted = [...given];
+    // THE SHEET TOO, or the lantern is worn and moves no number. `restoreLoadout`
+    // says the same thing about gear arriving from a file.
+    recomposeCombat(actor, opts.effects ?? null, resolveItem);
   };
 
   /**
@@ -9192,6 +9249,11 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
         actor.hp = Math.max(1, Math.min(actor.maxHp, actor.hp));
       }
 
+      // ═══ AND THE BIRTH KIT, ONCE THE FILE HAS SAID WHAT IS ALREADY WORN ═══
+      // Fresh bodies only, like everything in this block: a resumed body was
+      // handed its kit on the join that made it. See `grantBirthKit`.
+      grantBirthKit(actor);
+
       // ═══ AND DOES THIS BODY OWE US A CHOICE? A THREE-VALUED READ ═══
       // Three states of the character file mean "nobody has ever picked": there
       // is no file at all (a first-ever join, or an anonymous socket), the file
@@ -9760,6 +9822,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     // number, which is Trap 1 arriving through a door. See `restoreLoadout`,
     // which states the same contract for the load path.
     if (from.carried !== undefined) to.carried = [...from.carried];
+    if (from.kitGranted !== undefined) to.kitGranted = [...from.kitGranted];
     if (from.equipped !== undefined) to.equipped = { ...from.equipped };
     /**
      * ═══════════════════════════════════════════════════════════════════════
@@ -14854,10 +14917,11 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
      * AND IF THEY ARE STANDING THERE WITH NOTHING ON THAT PART OF THEM, SAY SO.
      * ═════════════════════════════════════════════════════════════════════════
      *
-     * A NEW CHARACTER WEARS NOTHING. Measured: `projectInventory` on a fresh
-     * body answers `equipped: {}` and `carried: []` — the classes have no
-     * starting kit at all, so the first thing that drops is the first gear that
-     * player has ever owned, and putting it on is their first real upgrade.
+     * A NEW CHARACTER WEARS A LANTERN AND NOTHING ELSE. The classes have no
+     * starting kit, and the birth kit is upstream's brass lantern alone
+     * (`grantBirthKit`), so the first piece that drops for any other slot is the
+     * first that player has ever owned, and putting it on is their first real
+     * upgrade.
      *
      * Nothing told them. The transcript said *"picks up the Reinforced
      * Watchman's Trousers"* and stopped, and a player who never opens the bag

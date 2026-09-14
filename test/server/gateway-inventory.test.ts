@@ -40,6 +40,13 @@ import type {
 import type { World } from '../../src/server/world/world.ts';
 
 /**
+ * The doll every character is born with: upstream's brass lantern
+ * (data/birth/descriptors.lua:75-77), put on by `grantBirthKit` at the first
+ * join. "Nothing on the doll changed" means this, not `{}`.
+ */
+const BORN_WEARING = { lite: 'item_brass_lantern' };
+
+/**
  * ═══════════════════════════════════════════════════════════════════════════
  * THE FOUR LOOT VERBS: WHO MAY, WHAT THEY COST THE WORLD, AND WHAT SURVIVES A
  * SAVE.
@@ -834,7 +841,7 @@ describe('no loot frame can name anybody but its sender', () => {
     for (const error of ren.all('error')) expect(error['code']).toBe('bad_message');
     // NOTHING HAPPENED. Not the bag, not the doll, not the floor.
     expect(body.carried).toEqual(['item_watchmans_cap']);
-    expect(body.equipped ?? {}).toEqual({});
+    expect(body.equipped ?? {}).toEqual(BORN_WEARING);
     expect(floorIds()).toEqual(['item_watchmans_coat']);
   });
 
@@ -927,9 +934,9 @@ describe('no loot frame can name anybody but its sender', () => {
     expect(ren.last('error')?.['code']).toBe('bad_message');
     // NEITHER BODY MOVED. Not Ren's doll, and — the half that would be theft —
     // not Alex's bag.
-    expect(renBody.equipped ?? {}).toEqual({});
+    expect(renBody.equipped ?? {}).toEqual(BORN_WEARING);
     expect(alexBody.carried).toEqual(['item_watchmans_coat']);
-    expect(alexBody.equipped ?? {}).toEqual({});
+    expect(alexBody.equipped ?? {}).toEqual(BORN_WEARING);
   });
 
   it('refuses a drop naming an id NOBODY holds, with the same refusal', async () => {
@@ -1288,7 +1295,7 @@ describe('a body on the floor', () => {
     expect(ren.all('error')).toHaveLength(4);
     for (const error of ren.all('error')) expect(error['code']).toBe('not_your_turn');
     expect(body.carried).toEqual(['item_watchmans_cap']);
-    expect(body.equipped ?? {}).toEqual({});
+    expect(body.equipped ?? {}).toEqual(BORN_WEARING);
     expect(floorIds()).toEqual(['item_watchmans_coat']);
   });
 
@@ -1463,7 +1470,7 @@ describe('a loadout survives a snapshot and a restore', () => {
     // flush list here would silently assert against the state before the equip.
     const filed = server.saves.queued.at(-1)?.find((s) => s.actorId === body.id);
     expect(filed?.carried).toEqual(['item_watchmans_cap']);
-    expect(filed?.equipped).toEqual({ body: 'item_watchmans_coat' });
+    expect(filed?.equipped).toEqual({ body: 'item_watchmans_coat', ...BORN_WEARING });
     await server.close();
 
     // ═══ A FRESH WORLD, A FRESH PROCESS'S WORTH OF STATE ═══
@@ -1474,10 +1481,12 @@ describe('a loadout survives a snapshot and a restore', () => {
       classId: WATCHMAN.id,
       carried: filed?.carried,
       equipped: filed?.equipped,
+      kitGranted: filed?.kitGranted,
     };
 
     const second = await connect(server.port);
     const restored = bodyOf(await second.hello('ren-handle'));
+    // One cap and no second lantern: the record came back with the doll.
     expect(restored.carried).toEqual(['item_watchmans_cap']);
     expect(restored.equipped?.['body']).toBe('item_watchmans_coat');
 
@@ -1488,7 +1497,7 @@ describe('a loadout survives a snapshot and a restore', () => {
     // AND THE PANEL AGREES, off the frames the restored socket actually got —
     // sent on the welcome path, after the gear landed and the sheet recomposed.
     const panel = second.last('inventory');
-    expect(Object.keys((panel?.['equipped'] ?? {}) as Frame)).toEqual(['body']);
+    expect(Object.keys((panel?.['equipped'] ?? {}) as Frame)).toEqual(['body', 'lite']);
   });
 
   it('carries an ABSENCE forward rather than emptying a bag it cannot speak for', async () => {
@@ -1500,9 +1509,14 @@ describe('a loadout survives a snapshot and a restore', () => {
     // binding.carried`, so an absence leaves the disk exactly as it found it
     // while an empty array OVERWRITES a returning player's bag with nothing. A
     // body that has never touched an item must therefore produce neither key.
+    //
+    // A BRAND-NEW CHARACTER IS NOT THAT BODY. It is born wearing a brass lantern
+    // (`grantBirthKit`), and that is a real claim about its doll. The body with
+    // nothing to say is a file that records the gift and says nothing about a bag
+    // or a doll.
     server = await boot('loot-absent');
     const ren = await connect(server.port);
-    playsThe(WATCHMAN);
+    playsThe(WATCHMAN, { kitGranted: ['item_brass_lantern'] });
     const body = bodyOf(await ren.hello('ren-handle'));
 
     const filed = server.saves.flushes.at(-1)?.snapshots.find((s) => s.actorId === body.id);
@@ -1547,6 +1561,8 @@ describe('a loadout survives a snapshot and a restore', () => {
         legs: 'item_watchmans_coat',
         head: 'item_watchmans_cap',
       },
+      // Given its lantern long ago, so the doll below is only what the file says.
+      kitGranted: ['item_brass_lantern'],
     };
 
     const body = bodyOf(await ren.hello('ren-handle'));
@@ -1581,13 +1597,13 @@ describe('the first thing you ever pick up', () => {
   it('tells a bare-legged player that their legs are bare', async () => {
     /**
      * ═══════════════════════════════════════════════════════════════════════
-     * A NEW CHARACTER WEARS NOTHING, AND NOTHING SAID SO.
+     * A NEW CHARACTER WEARS A LANTERN AND NOTHING ELSE, AND NOTHING SAID SO.
      * ═══════════════════════════════════════════════════════════════════════
      *
-     * Measured: `projectInventory` on a fresh body answers `equipped: {}` and
-     * `carried: []` — the classes have no starting kit at all. So the first
-     * thing that drops is the first gear that player has ever owned, and putting
-     * it on is their first real upgrade.
+     * The classes have no starting kit, and the birth kit is upstream's brass
+     * lantern alone (`grantBirthKit`). So the first piece that drops for any
+     * other slot is the first that player has ever owned, and putting it on is
+     * their first real upgrade.
      *
      * The transcript said *"picks up the Reinforced Watchman's Trousers"* and
      * stopped. A player who never opens the bag never equips anything and
@@ -1603,7 +1619,7 @@ describe('the first thing you ever pick up', () => {
     playsThe(WATCHMAN);
     const body = bodyOf(await ren.hello('ren-handle'));
     standAt(body, 10, 10);
-    expect(body.equipped ?? {}, 'the fixture already dressed them').toEqual({});
+    expect(body.equipped?.['legs'], 'the fixture already dressed their legs').toBeUndefined();
     server.world.addGroundItem({ x: 10, y: 10 }, 'item_watchmans_trousers');
 
     ren.send({ t: 'pickup' });
@@ -2107,5 +2123,62 @@ describe('what you put on changes how much of you there is', () => {
     expect(ren.last('error')).toBeUndefined();
     expect(body.equipped?.mainhand).toBe('item_writ_of_seizure');
     expect(body.carried).toEqual(['item_bailiffs_maul']);
+  });
+});
+
+describe('the birth kit: a brass lantern, once per character', () => {
+  /**
+   * `data/birth/descriptors.lua:75-77` equips every character with a brass
+   * lantern at birth. The gateway gives it on a fresh join and records that it
+   * did, in `kitGranted`, so it is given exactly once.
+   */
+  it('equips a brand-new character with a brass lantern', async () => {
+    server = await boot('kit-new');
+    const ren = await connect(server.port);
+    const body = bodyOf(await ren.hello('ren-handle'));
+    expect(body.equipped?.['lite']).toBe('item_brass_lantern');
+    expect(body.kitGranted).toEqual(['item_brass_lantern']);
+  });
+
+  it('gives one, once, to a character made before the lantern existed', async () => {
+    server = await boot('kit-old-save');
+    const ren = await connect(server.port);
+    playsThe(WATCHMAN, { carried: [], equipped: { head: 'item_watchmans_cap' } });
+    const body = bodyOf(await ren.hello('ren-handle'));
+    expect(body.equipped).toEqual({ head: 'item_watchmans_cap', lite: 'item_brass_lantern' });
+    expect(body.kitGranted).toEqual(['item_brass_lantern']);
+  });
+
+  it('gives no second one to a character who has had theirs and took it off', async () => {
+    server = await boot('kit-already-given');
+    const ren = await connect(server.port);
+    playsThe(WATCHMAN, { carried: [], equipped: {}, kitGranted: ['item_brass_lantern'] });
+    const body = bodyOf(await ren.hello('ren-handle'));
+    expect(body.equipped?.['lite']).toBeUndefined();
+    expect(body.carried ?? []).not.toContain('item_brass_lantern');
+  });
+
+  it('puts it in the bag when the light slot is already taken', async () => {
+    server = await boot('kit-slot-taken');
+    const ren = await connect(server.port);
+    playsThe(WATCHMAN, { carried: [], equipped: { lite: 'item_dwarven_lantern' } });
+    const body = bodyOf(await ren.hello('ren-handle'));
+    expect(body.equipped?.['lite']).toBe('item_dwarven_lantern');
+    expect(body.carried).toEqual(['item_brass_lantern']);
+    expect(body.kitGranted).toEqual(['item_brass_lantern']);
+  });
+
+  it('writes the record down with the bag, so taking the lantern off is kept', async () => {
+    server = await boot('kit-written');
+    const ren = await connect(server.port);
+    playsThe(WATCHMAN, { carried: [], equipped: {} });
+    const body = bodyOf(await ren.hello('ren-handle'));
+    ren.send({ t: 'unequip', slot: 'lite' });
+    await ren.settle();
+
+    const filed = server.saves.queued.at(-1)?.find((s) => s.actorId === body.id);
+    expect(filed?.kitGranted).toEqual(['item_brass_lantern']);
+    expect(filed?.carried).toEqual(['item_brass_lantern']);
+    expect(filed?.equipped ?? {}).not.toHaveProperty('lite');
   });
 });

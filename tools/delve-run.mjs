@@ -71,9 +71,9 @@ const RUNS = Number(process.argv[2] ?? 8);
  * ═══ EVERY NUMBER THIS TOOL EVER PRINTED WAS A LEVEL-1 BODY WEARING NOTHING ═══
  * The bodies below were built the way every probe here builds one: `addPlayer`,
  * the class combat sheet, `sheetForClass`. That is a character with four birth
- * talents at rank 1 and an empty paper doll — which the gateway's own note
- * confirms is what a NEW character is (*"the classes have no starting kit at
- * all"*) and is therefore exactly right for the opening ambush.
+ * talents at rank 1 and an empty paper doll. A NEW character also wears the
+ * brass lantern the gateway's `grantBirthKit` hands out, which moves no combat
+ * number, so this is still exactly right for the opening ambush.
  *
  * It is the wrong body for a DELVE. This tool sent it into all sixteen,
  * including the ones a party reaches after twenty levels and a lot of gear, and

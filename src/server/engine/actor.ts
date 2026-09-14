@@ -508,6 +508,14 @@ type ActorCommon = {
    * reference that somebody mutated is how two players end up sharing a coat.
    */
   carried?: readonly string[];
+  /**
+   * THE BIRTH KIT ALREADY HANDED OVER, by item id. Upstream equips every new
+   * character with a brass lantern (data/birth/descriptors.lua:75-77). This is the
+   * record that it happened: a character who drops or sells the lantern does not
+   * get another on the next join, and a character made before the lantern existed
+   * gets it once. See the gateway's `grantBirthKit`.
+   */
+  kitGranted?: readonly string[];
 
   // --- preferences ----------------------------------------------------------
   /**

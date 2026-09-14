@@ -552,6 +552,14 @@ export type CharacterFile = {
    */
   readonly carried?: readonly string[];
   /**
+   * THE BIRTH KIT ALREADY GIVEN, by item id — see the gateway's `grantBirthKit`.
+   *
+   * OPTIONAL, AND ABSENT MEANS NOTHING GIVEN YET: every file written before the
+   * kit existed has been given nothing, so it gets the kit once on its next join.
+   * `SCHEMA_VERSION` stays 1 for the reason `carried` gives.
+   */
+  readonly kitGranted?: readonly string[];
+  /**
    * WHAT IS BEING WORN: SLOT NAME -> ITEM ID, at most one per slot.
    *
    * `Record<string, string>`, not `Record<Slot, ItemId>`, because this is a
@@ -1075,6 +1083,8 @@ export type CharacterInit = {
    */
   readonly carried?: readonly string[];
   readonly equipped?: Readonly<Record<string, string>>;
+  /** The birth kit already handed over, by item id. See `PlayerActor.kitGranted`. */
+  readonly kitGranted?: readonly string[];
   /**
    * THE KEYMAP, PASSED STRAIGHT THROUGH — INCLUDING THE ABSENCE, for the reason
    * the two item fields above are. There is a right default for a level (1) and
@@ -1205,6 +1215,7 @@ export function createCharacterFile(init: CharacterInit): CharacterFile {
     // opinion about its bag or about which key means "walk north-east".
     carried: init.carried,
     equipped: init.equipped,
+    kitGranted: init.kitGranted,
     keybinds: init.keybinds,
     hotbar: init.hotbar,
     unlockedTrees: init.unlockedTrees,
@@ -1806,6 +1817,29 @@ const KEYBIND_PROBLEMS_PER_ACTION = 2;
  * asserting something on a player's behalf. That collapse is the exact failure
  * `keybinds` spends three paragraphs forbidding.
  */
+/**
+ * THE BIRTH KIT ALREADY GIVEN: item ids, kept whether or not this build still
+ * knows the item, because the record is of a GIFT and not of a holding, and
+ * dropping an id would hand the piece over again. Absent stays absent.
+ */
+function parseKitGranted(value: unknown, problems: string[]): string[] | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (!Array.isArray(value)) {
+    problems.push('kitGranted: not an array — dropped, so the birth kit is given again');
+    return undefined;
+  }
+  const out: string[] = [];
+  for (const [index, entry] of value.entries()) {
+    const id = asString(entry);
+    if (id === null || id === '') {
+      problems.push(`kitGranted[${index}]: not an item id — dropped`);
+      continue;
+    }
+    if (!out.includes(id)) out.push(id);
+  }
+  return out;
+}
+
 function parseZoom(value: unknown, problems: string[]): number | undefined {
   return parseStep(value, ZOOM_MIN, ZOOM_MAX, 'zoom', 'tiles back to the default size', problems);
 }
@@ -2155,6 +2189,7 @@ export function parseCharacterFile(doc: unknown): ParseResult {
   // bag's copy, and the character would lose the item twice over.
   const equipped = parseEquipped(doc.equipped, problems);
   const carried = parseCarried(doc.carried, problems);
+  const kitGranted = parseKitGranted(doc.kitGranted, problems);
 
   return {
     ok: true,
@@ -2186,6 +2221,7 @@ export function parseCharacterFile(doc: unknown): ParseResult {
       // disk and a pre-items file re-serialises byte-identically.
       carried,
       equipped,
+      kitGranted,
       keybinds: parseKeybinds(doc.keybinds, problems),
       hotbar: parseHotbar(doc.hotbar, problems),
       unlockedTrees: parseUnlockedTrees(doc.unlockedTrees, problems),
@@ -2288,6 +2324,7 @@ export function serialiseCharacter(file: CharacterFile): string {
     }
   }
   const carried = file.carried === undefined ? undefined : [...file.carried];
+  const kitGranted = file.kitGranted === undefined ? undefined : [...file.kitGranted];
   /**
    * THE BAR AND THE TWO PURCHASE LISTS, copied on exactly `carried`'s terms.
    *
@@ -2363,6 +2400,7 @@ export function serialiseCharacter(file: CharacterFile): string {
     // below the bridge that needs to tell them apart.
     carried,
     equipped,
+    kitGranted,
     // THE THIRD MEMBER OF THAT EXCEPTION, and the cost of getting it wrong is
     // the same one restated: writing `{}` for a character who has never opened
     // the Keys screen rewrites every save in `data/characters/` on first load,
@@ -3363,6 +3401,7 @@ const REASON_BY_LABEL: Readonly<Record<string, SaveReason>> = {
 export type SavedLoadout = {
   readonly carried?: readonly string[];
   readonly equipped?: Readonly<Record<string, string>>;
+  readonly kitGranted?: readonly string[];
 };
 
 /**
@@ -3537,6 +3576,8 @@ type Binding = {
    */
   readonly carried?: readonly string[];
   readonly equipped?: Readonly<Record<string, string>>;
+  /** The birth kit already handed over, by item id. See `PlayerActor.kitGranted`. */
+  readonly kitGranted?: readonly string[];
   /**
    * ═══ AND THE SAME FALLBACK ONE MORE TIME, FOR THE KEYMAP ═══
    * OPTIONAL, joining the two above rather than the four required ones, and the
@@ -3673,6 +3714,7 @@ export function createCharacterBridge(options: CharacterBridgeOptions): PersistP
       // statement: the player dropped everything.
       carried: snapshot.carried ?? binding.carried,
       equipped: snapshot.equipped ?? binding.equipped,
+      kitGranted: snapshot.kitGranted ?? binding.kitGranted,
       // ═══ AND THE KEYMAP, WITH THE `?? binding` THAT IS THE WHOLE BUG TWICE ═══
       // The missing half of this line is the one-way valve that shipped for
       // progression and then again for items: read the binding unconditionally
@@ -3843,6 +3885,7 @@ export function createCharacterBridge(options: CharacterBridgeOptions): PersistP
       // nobody has yet said anything about this character's items either.
       carried: file?.carried,
       equipped: file?.equipped,
+      kitGranted: file?.kitGranted,
       // NO `??` HERE EITHER, and the same sentence covers it: an absent keymap
       // is carried forward AS an absence, so `fileFor` leaves the key off the
       // file rather than asserting "this player reset every binding" on behalf
@@ -3927,6 +3970,7 @@ export function createCharacterBridge(options: CharacterBridgeOptions): PersistP
       // would be a second opinion that can disagree with the first.
       carried: file.carried,
       equipped: file.equipped,
+      kitGranted: file.kitGranted,
       // ═══ AND THE KEYMAP COMING BACK — THE HALF THAT IS THE ENTIRE FEATURE ═══
       // "No one likes to reconfigure keybinds" is the whole of the request, and
       // it is this one line that answers it: `fileFor` above now writes the
