@@ -203,11 +203,11 @@ describe('talentPanelRows builds categories', () => {
     expect(line?.talents.find((t) => t.name === 'Standing Orders')?.passive).toBe(true);
   });
 
-  it('prints the mastery only when it is not one', () => {
-    // Six "(x1.00)" headers would be six pieces of furniture teaching a player to
-    // stop reading the number that matters.
+  it('prints the mastery and the purse on every heading, as upstream does', () => {
+    // `LevelupDialog.lua:493-500`: every known type shows its mastery and names its
+    // purse. Ruled 1:1 in Inner Datum's style, so "(x1.00)" and "class" are said.
     const plain = categories(talentPanelRows(view()))[0];
-    expect(plain?.text).toBe('Discipline');
+    expect(plain?.text).toBe('Discipline  (x1.00)  — class');
 
     const tuned = talentPanelRows(
       view({
@@ -215,7 +215,7 @@ describe('talentPanelRows builds categories', () => {
         passives: [],
       }),
     );
-    expect(categories(tuned)[0]?.text).toBe('Discipline  (x1.30)');
+    expect(categories(tuned)[0]?.text).toBe('Discipline  (x1.30)  — class');
   });
 
   describe('the level the game computes with', () => {
@@ -246,7 +246,7 @@ describe('talentPanelRows builds categories', () => {
     /**
      * AND NOT WHERE IT WOULD ONLY RESTATE THE RANK. A tree at mastery 1 makes
      * the two figures identical, and a second row saying "3.0" beside "3 → 4" is
-     * the furniture the mastery header refuses for `(x1.00)` one screen up.
+     * a row that only restates the rank.
      */
     it('says nothing on a tree with no mastery', () => {
       const texts = paintPanel({
@@ -1890,13 +1890,13 @@ describe('the two purses, which are not interchangeable', () => {
     expect(points?.kind === TalentRowKind.Points ? points.unspent : 0).toBe(2);
   });
 
-  it('marks the generic strip so the player can see which purse it spends', () => {
+  it('marks every strip with the purse it spends from', () => {
     const rows = talentPanelRows(twoTrees({ progress: progress(1, 1) }));
     const generic = categories(rows).find((row) => row.tree === 'generic/groundwork');
     const klass = categories(rows).find((row) => row.tree === 'watch/discipline');
-    expect(generic?.text).toContain('generic');
-    // AND THE CLASS ONE IS NOT MARKED. Labelling the majority case is furniture.
-    expect(klass?.text).toBe('Discipline');
+    expect(generic?.text).toContain('— generic');
+    // AND THE CLASS ONE IS MARKED TOO, as upstream names the purse on every node.
+    expect(klass?.text).toBe('Discipline  (x1.00)  — class');
   });
 
   it('still falls back to the level sentence when every purse is empty', () => {
@@ -2122,6 +2122,21 @@ describe('the pane says what the next rank wants, before it refuses you', () => 
 describe('the deepen offer', () => {
   const deepenable = (over: Partial<TalentPanelView> = {}) =>
     view({ deepenable: ['watch/discipline'], categories: 1, ...over });
+
+  it('says a tree has been deepened, on that tree alone, and never offers it again', () => {
+    // Upstream's gold status (:500), in words: `LoadoutMsg.deepened` names the tree.
+    const rows = categories(
+      talentPanelRows(
+        view({ deepened: ['watch/discipline'], deepenable: ['watch/the-line'], categories: 1 }),
+      ),
+    );
+    const deepenedRow = rows.find((row) => row.tree === 'watch/discipline');
+    const other = rows.find((row) => row.tree === 'watch/the-line');
+    expect(deepenedRow?.text).toContain('— deepened');
+    expect(deepenedRow?.text).not.toContain('deepen to');
+    expect(other?.text).not.toContain('— deepened');
+    expect(other?.text).toContain('deepen to');
+  });
 
   it('appears on the named category and on no other', () => {
     const rows = categories(talentPanelRows(deepenable()));

@@ -1204,6 +1204,8 @@ export function talentPanelRows(view: TalentPanelView): readonly TalentRow[] {
    */
   const deepenOffer =
     (view.categories ?? 0) > 0 ? new Set(view.deepenable ?? []) : new Set<string>();
+  // ALREADY DEEPENED — `LoadoutMsg.deepened`. Said on the heading below.
+  const deepenedTrees = new Set(view.deepened ?? []);
   const byTree = new Map<string, { text: string; deepen: boolean; cells: TalentCell[] }>();
   for (const talent of shown) {
     const key = talent.tree ?? '';
@@ -1212,22 +1214,21 @@ export function talentPanelRows(view: TalentPanelView): readonly TalentRow[] {
       const mastery = talent.mastery ?? 1;
       const heading = talent.treeName ?? talent.tree ?? '';
       group = {
-        // "Discipline  (x1.30)" — upstream's own header shape. ONE POINT OH IS
-        // LEFT UNSAID: printing "(x1.00)" on every category would be furniture
-        // teaching a player to stop reading the number that matters.
         /**
-         * AND WHICH PURSE IT SPENDS FROM. Upstream marks every node `(generic)`
-         * or `(class)` (LevelupDialog.lua:583) and puts the two in physically
-         * separate columns (:812-836); ours mixes both kinds into one flow grid,
-         * so without the mark there is nothing on screen that says why one strip
-         * is live and the one under it is grey.
-         *
-         * ONLY GENERIC IS MARKED. Class trees are the majority and the default,
-         * and labelling every one of them `(class)` is the furniture the mastery
-         * line above already refuses to print.
+         * ═══ UPSTREAM'S FACTS, IN THIS PANEL'S STYLE — LevelupDialog.lua:493-500 ═══
+         * Every known type's node names its purse, "(class)" or "(generic)", and
+         * its status column shows the mastery ALWAYS, gold once the type has been
+         * improved and green before. So every heading here carries all three:
+         *   - the mastery, including "(x1.00)";
+         *   - which purse the tree spends from, class or generic;
+         *   - whether it has been deepened.
+         * An earlier version left 1.00 and "class" unsaid as furniture. The user
+         * ruled for upstream's information in Inner Datum's colours, so the
+         * deepened state is said in words on the suffix this heading already
+         * uses, not in a second ink.
          */
-        text: `${mastery === 1 ? heading : `${heading}  (x${mastery.toFixed(2)})`}${
-          isGenericTree(key) ? '  — generic' : ''
+        text: `${heading}  (x${mastery.toFixed(2)})  — ${isGenericTree(key) ? 'generic' : 'class'}${
+          deepenedTrees.has(key) ? '  — deepened' : ''
         }${
           /**
            * AND THE OFFER, ON THE HEADER, because the thing bought is the
