@@ -310,23 +310,27 @@ export function tierRequirements(ctx: TierContext): readonly TierRequirement[] {
 }
 
 /**
- * One requirement, as the player reads it. Present tense whether or not it is
- * met, because this line is a FACT about the talent and not a refusal — the
- * refusal has its own sentence in `tierRefusalText`, and a list that switched
- * grammar as you levelled would read as two different screens.
+ * One requirement, as the player reads it: upstream's words from
+ * `getTalentReqDesc` (engine/interface/ActorTalents.lua:744-798), without the
+ * mark the panel prints before each. Present tense whether or not it is met,
+ * because this line is a FACT about the talent and not a refusal; the refusal
+ * has its own sentence in `tierRefusalText`.
+ *
+ * ═══ NO BRACKETED FIGURE ═══
+ * This printed what the character has beside what the talent needs, as
+ * `Willpower 20 (18)`. Upstream does not, and the panel marks an unmet line with
+ * `!` and colours it, so the bracket said a third time what the line said.
  */
 export function tierRequirementText(req: TierRequirement): string {
   switch (req.kind) {
     case TierRefusal.Depth:
-      return `${String(req.needed)} others in this discipline (${String(req.have)})`;
+      // `("- Lower talents of the same category: %d"):format(t.type[2] - 1)`, :761.
+      return `Lower talents of the same category: ${String(req.needed)}`;
     case TierRefusal.Level:
-      return `level ${String(req.needed)}`;
+      // `("- Level %d"):format(v)`, :775.
+      return `Level ${String(req.needed)}`;
     case TierRefusal.Stat:
-      // NAME FIRST, WHICH IS UPSTREAM'S ORDER: `("- %s %d"):format(self.stats_def[s].name, v)`
-      // at engine/interface/ActorTalents.lua:769. The bracketed figure is ours
-      // and has no upstream counterpart — ToME carries met/unmet in the colour,
-      // and a list that only coloured would be unreadable in one glance here,
-      // where the same strip also carries depth and level.
-      return `${statName(req.stat)} ${String(req.needed)} (${String(req.have)})`;
+      // NAME FIRST: `("- %s %d"):format(self.stats_def[s].name, v)`, :769.
+      return `${statName(req.stat)} ${String(req.needed)}`;
   }
 }

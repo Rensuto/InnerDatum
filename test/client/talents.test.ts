@@ -33,6 +33,8 @@ import {
   talentHeaderMessage,
   talentPressRefusal,
   statCellLook,
+  layoutRuns,
+  talentDescRuns,
   statCellRects,
   statCellZone,
   statMinusRect,
@@ -57,7 +59,12 @@ import {
 } from '../../src/client/ui/talents.ts';
 import { HEADER_H } from '../../src/client/ui/panel.ts';
 import { TALENT_MAX_LEVEL } from '../../src/shared/progression.ts';
-import type { TalentPanelView, TalentRow } from '../../src/client/ui/talents.ts';
+import type {
+  TalentCell,
+  TalentPanelView,
+  TalentRow,
+  TextRun,
+} from '../../src/client/ui/talents.ts';
 import type { PanelRect } from '../../src/client/ui/panel.ts';
 import { ResourceKind } from '../../src/shared/protocol.ts';
 import { PALETTE } from '../../src/client/render/canvas.ts';
@@ -258,7 +265,9 @@ describe('talentPanelRows builds categories', () => {
       expect(texts).toContain('3.0');
     });
 
-    it('prints 0.0 before the talent is learned', () => {
+    it('prints rank one’s before the talent is learned, as upstream does', () => {
+      // LevelupDialog.lua:956-962: an unlearned talent is described at the rank
+      // one point buys, so this is 1.3 and never 0.0.
       const texts = paintPanel({
         rows: talentPanelRows(
           view({
@@ -268,7 +277,8 @@ describe('talentPanelRows builds categories', () => {
         ),
         focusId: 'a',
       });
-      expect(texts).toContain('0.0');
+      expect(texts).toContain('1.3');
+      expect(texts).not.toContain('0.0');
     });
   });
 
@@ -286,14 +296,14 @@ describe('talentPanelRows builds categories', () => {
         focusId: fixture.id,
       });
     expect(modeOf({ id: 'p', name: 'P', kind: 'passive', ...DISCIPLINE }, true)).toContain(
-      'Passive — always on',
+      'Passive',
     );
     expect(modeOf({ id: 's', name: 'S', kind: 'sustained', ...DISCIPLINE }, false)).toContain(
-      'Sustained — toggle, stays on',
+      'Sustained',
     );
     const active = modeOf({ id: 'a', name: 'A', ...DISCIPLINE }, false);
     expect(active).toContain('Activated');
-    expect(active).not.toContain('Sustained — toggle, stays on');
+    expect(active).not.toContain('Sustained');
   });
 
   it('degrades to one unnamed category when the server sends no tree', () => {
@@ -531,8 +541,8 @@ describe('hovering an icon explains it', () => {
     const box = firstBox();
     if (box === undefined) return;
     const card = talentTipAt(rect, rows, box.x + 2, box.y + 2, NO_SCROLL);
-    expect(card?.title).toContain('Crude Blow');
-    expect(card?.title).toContain(`1/${String(TALENT_MAX_LEVEL)}`);
+    expect(card?.title).toBe('Crude Blow');
+    expect(card?.meta).toBe('Current talent level: 1 [-> 2]');
   });
 
   it('names the pool the cost is in, not always Resolve', () => {
@@ -563,10 +573,10 @@ describe('hovering an icon explains it', () => {
     if (box === undefined) return;
 
     const card = talentTipAt(rect, costedRows, box.x + 2, box.y + 2, NO_SCROLL);
-    expect(card?.meta ?? '').toContain('Reagents');
+    expect(card?.lines.join(' ') ?? '').toContain('Reagents cost: 2');
     // AND NOT THE WORD IT USED TO SAY. The bug read as correct for years of
     // Watchman testing because Resolve is what it printed.
-    expect(card?.meta ?? '').not.toContain('resolve');
+    expect(card?.lines.join(' ') ?? '').not.toContain('resolve');
   });
 
   it('carries the whole description and the next rank, unabridged', () => {
@@ -575,8 +585,7 @@ describe('hovering an icon explains it', () => {
     const box = firstBox();
     if (box === undefined) return;
     const card = talentTipAt(rect, rows, box.x + 2, box.y + 2, NO_SCROLL);
-    expect(card?.lines.join(' ')).toContain('110% weapon damage');
-    expect((card?.nextLines ?? []).join(' ')).toContain('130% weapon damage');
+    expect(card?.lines.join(' ')).toContain('110% [->130%] weapon damage');
     for (const line of [...(card?.lines ?? []), ...(card?.nextLines ?? [])]) {
       expect(line).not.toContain('…');
     }
@@ -591,7 +600,8 @@ describe('hovering an icon explains it', () => {
     const box = idx >= 0 ? cat?.cells[idx] : undefined;
     if (box === undefined) return;
     const card = talentTipAt(rect, rows, box.x + 2, box.y + 2, NO_SCROLL);
-    expect(card?.meta).toBe('always on');
+    expect(card?.lines).toContain('Use mode: Passive');
+    expect(card?.lines.join(' ')).not.toContain('AP cost');
   });
 
   it('says a sustain is a toggle rather than pricing it like an attack', () => {
@@ -625,10 +635,10 @@ describe('hovering an icon explains it', () => {
     if (box === undefined) throw new Error('the stance fixture drew no cell');
 
     const card = talentTipAt(rect, stanceRows, box.x + 2, box.y + 2, NO_SCROLL);
-    expect(card?.meta, 'a sustain must say it toggles').toContain('toggle, stays on');
+    expect(card?.lines, 'a sustain must say it is one').toContain('Use mode: Sustained');
     // AND IT STILL PRINTS THE PRICE. A toggle is not free; what changed is that
     // the card leads with what the press DOES.
-    expect(card?.meta).toContain('AP');
+    expect(card?.lines).toContain('AP cost: 3');
   });
 
   it('is null when the pointer is not on an icon', () => {
@@ -2135,17 +2145,16 @@ describe('the pane says what the next rank wants, before it refuses you', () => 
     // THE ONE THAT WAS MISSING ENTIRELY. A met requirement is the whole reason
     // this exists — it is what lets a player plan three ranks ahead.
     const texts = withReqs([{ text: '18 str (25)', met: true }]);
-    expect(texts).toContain('Needs');
-    expect(texts.some((t) => t.includes('18 str (25)'))).toBe(true);
+    expect(texts).toContain('- 18 str (25)');
   });
 
   it('marks an unmet one differently without relying on colour', () => {
-    // `!` versus `·` — the rule ui/partypanel.ts states and this file follows
-    // everywhere. A player who cannot separate orange from bone still reads it.
+    // `!` versus upstream's `-`: the rule ui/partypanel.ts states and this file
+    // follows everywhere. A player who cannot separate orange from bone reads it.
     const unmet = withReqs([{ text: '18 str (14)', met: false }]);
     const met = withReqs([{ text: '18 str (25)', met: true }]);
     expect(unmet.some((t) => t.startsWith('!'))).toBe(true);
-    expect(met.some((t) => t.startsWith('·'))).toBe(true);
+    expect(met.some((t) => t.startsWith('- '))).toBe(true);
     expect(met.some((t) => t.startsWith('!'))).toBe(false);
   });
 
@@ -2159,8 +2168,8 @@ describe('the pane says what the next rank wants, before it refuses you', () => 
   });
 
   it('says nothing at all when there is nothing to require', () => {
-    // A talent at its cap has no next rank, and an empty heading is furniture.
-    expect(withReqs([])).not.toContain('Needs');
+    // A talent at its cap has no next rank to require anything.
+    expect(withReqs([]).some((t) => t.startsWith('- ') || t.startsWith('! '))).toBe(false);
   });
 });
 
@@ -3184,5 +3193,202 @@ describe('the four point counters, laid out as ToME lays them out', () => {
     // player decides how to spend a point is the worst place for that.
     const source = readFileSync('src/client/ui/talents.ts', 'utf8');
     expect(source).toContain('options.rows.find((row) => row.kind === TalentRowKind.Points)');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// THE DESCRIPTION COLUMN IS UPSTREAM'S getTalentDesc, AND IT WRAPS
+// ---------------------------------------------------------------------------
+
+describe('a talent is described as upstream describes it', () => {
+  /**
+   * REPORTED: the column cut long lines off at its right edge, explained more
+   * than ToME does, and still left it hard to tell what a talent did. The text
+   * is LevelupDialog.lua:917-981 now, in its order, wrapped.
+   */
+  const cellOf = (over: Partial<LoadoutTalent> = {}, passive = false): TalentCell => {
+    const fixture = talent({ id: 'x', name: 'Crude Blow', ...DISCIPLINE, ...over });
+    const rows = talentPanelRows(
+      view({ loadout: passive ? [] : [fixture], passives: passive ? [fixture] : [] }),
+    );
+    const cell = categories(rows)
+      .flatMap((row) => row.talents)
+      .find((c) => c.id === 'x');
+    if (cell === undefined) throw new Error('the fixture drew no cell');
+    return cell;
+  };
+  const textOf = (cell: TalentCell): string =>
+    talentDescRuns(cell)
+      .map((run) => run.text)
+      .join('');
+
+  it('reads in upstream’s order and words, with the next rank inline', () => {
+    expect(textOf(cellOf({ requires: [{ text: 'Strength 18', met: true }] }))).toBe(
+      [
+        'Current talent level: 1 [-> 2]',
+        '- Strength 18',
+        'Effective talent level: 1.0 [->2.0]',
+        'Use mode: Activated',
+        'AP cost: 3',
+        'Range: melee/personal',
+        'Description: Slam an adjacent enemy for 110% [->130%] weapon damage and drive it back a tile.',
+      ].join('\n'),
+    );
+  });
+
+  it('describes an unlearned talent at rank one, with no arrow', () => {
+    const text = textOf(cellOf({ level: 0, mastery: 1.3 }));
+    expect(text.startsWith('First talent level: 1\n')).toBe(true);
+    expect(text).toContain('Effective talent level: 1.3\n');
+    // `descNext` is what one point buys, and it is printed whole.
+    expect(text).toContain('Description: Slam an adjacent enemy for 130% weapon damage');
+    expect(text).not.toContain('[->');
+  });
+
+  it('prints the cap without an arrow', () => {
+    const text = textOf(cellOf({ level: TALENT_MAX_LEVEL, descNext: null }));
+    expect(text.startsWith(`Current talent level: ${String(TALENT_MAX_LEVEL)}\n`)).toBe(true);
+    expect(text).not.toContain('[->');
+    expect(text).toContain('110% weapon damage');
+  });
+
+  it('prices a passive in nothing and names its mode', () => {
+    const text = textOf(
+      cellOf({ kind: 'passive', cost: { ap: 0, mp: 0, resource: 0 }, range: 0 }, true),
+    );
+    expect(text).toContain('Use mode: Passive\n');
+    expect(text).not.toContain('AP cost');
+    expect(text).not.toContain('Range:');
+  });
+
+  it('names the pool, and a sustain’s cost as a reservation, as upstream does', () => {
+    const pooled = (kind: LoadoutTalent['kind']): string =>
+      textOf({
+        ...cellOf({ kind, cost: { ap: 3, mp: 0, resource: 2 } }),
+        pool: ResourceKind.Reagents,
+      });
+    expect(pooled('active')).toContain('Reagents cost: 2\n');
+    expect(pooled('sustained')).toContain('Sustain reagents cost: 2\n');
+  });
+
+  it('prints a range and a cooldown as bare numbers', () => {
+    const text = textOf(cellOf({ range: 6, cooldownTurns: 8 }));
+    expect(text).toContain('Range: 6\n');
+    expect(text).toContain('Cooldown: 8\n');
+  });
+
+  it('marks an unmet requirement with a mark as well as a colour', () => {
+    const runs = talentDescRuns(cellOf({ requires: [{ text: 'Magic 24', met: false }] }));
+    const unmet = runs.find((run) => run.text.startsWith('! Magic 24'));
+    expect(unmet?.ink).toBe(PALETTE.ORANGE);
+    const met = talentDescRuns(cellOf({ requires: [{ text: 'Magic 24', met: true }] }));
+    expect(met.find((run) => run.text.startsWith('- Magic 24'))?.ink).toBe(PALETTE.BONE);
+  });
+
+  it('names an unowned tree as the requirement', () => {
+    expect(textOf({ ...cellOf(), unlocks: 'watch/discipline' })).toContain(
+      '! Talent category known\n',
+    );
+  });
+
+  it('closes the description with what the talent scales with', () => {
+    expect(textOf(cellOf({ scales: 'damage from your weapon (Strength)' }))).toContain(
+      'drive it back a tile. Damage from your weapon (Strength).',
+    );
+  });
+
+  it('diffs token by token, so only what moves is marked', () => {
+    const text = textOf(
+      cellOf({ desc: 'Deal 10 damage (2 turns).', descNext: 'Deal 12 damage (3 turns).' }),
+    );
+    expect(text).toContain('Description: Deal 10 [->12] damage (2 [->3] turns).');
+    // Wording that changes with rank cannot be walked token by token.
+    const reworded = textOf(cellOf({ desc: 'Hits once.', descNext: 'Hits twice as hard.' }));
+    expect(reworded).toContain('Description: Hits once. [->Hits twice as hard.]');
+  });
+
+  it('paints nothing past the column’s right edge, and cuts nothing short', () => {
+    const rect = talentPanelRect({ width: 1280, height: 720, top: 60, bottom: 640 });
+    if (rect === null) throw new Error('no panel');
+    const long = talent({
+      id: 'x',
+      name: 'An Extraordinarily Long Talent Name That Will Not Fit',
+      ...DISCIPLINE,
+      requires: [{ text: 'Lower talents of the same category: 2', met: false }],
+      desc:
+        'Hurl a vial up to 5 tiles. Every enemy on the target tile and its four orthogonal ' +
+        'neighbours takes 150% fire damage. Allies are never hit.',
+      descNext:
+        'Hurl a vial up to 5 tiles. Every enemy on the target tile and its four orthogonal ' +
+        'neighbours takes 165% fire damage. Allies are never hit.',
+    });
+    const rows = talentPanelRows(view({ loadout: [long], passives: [] }));
+    const detail = talentPanelGeometry(rect, rows, NO_SCROLL).detail;
+    if (detail === null) throw new Error('no column at this size');
+    const painted = paintOps({ rows, focusId: 'x' }).filter(
+      (op) =>
+        op.kind === 'fillText' &&
+        Number(op.args[1]) >= detail.x &&
+        Number(op.args[2]) >= detail.y &&
+        Number(op.args[2]) <= detail.y + detail.h,
+    );
+    for (const op of painted) {
+      const text = String(op.args[0]);
+      expect(text, 'a line was cut short').not.toContain('…');
+      expect(Number(op.args[1]) + text.length * 6, text).toBeLessThanOrEqual(detail.x + detail.w);
+    }
+    const all = painted.map((op) => String(op.args[0])).join(' ');
+    for (const word of ['Fit', 'category:', 'orthogonal', 'never', 'hit.', '[->', '165%']) {
+      expect(all, word).toContain(word);
+    }
+  });
+});
+
+describe('layoutRuns wraps, and never cuts', () => {
+  const mono = (text: string): number => text.length * 6;
+  const texts = (lines: readonly (readonly TextRun[])[]): string[] =>
+    lines.map((line) => line.map((run) => run.text).join(''));
+
+  it('breaks at spaces and keeps every line inside the width', () => {
+    const lines = texts(layoutRuns([{ text: 'one two three four', ink: 'a' }], 60, mono));
+    expect(lines).toEqual(['one two', 'three four']);
+    for (const line of lines) expect(mono(line)).toBeLessThanOrEqual(60);
+  });
+
+  it('holds a word together across an ink change, and breaks before it', () => {
+    const lines = layoutRuns(
+      [
+        { text: 'deal 110%', ink: 'a' },
+        { text: ' [->', ink: 'b' },
+        { text: '130%', ink: 'c' },
+        { text: ']', ink: 'b' },
+      ],
+      60,
+      mono,
+    );
+    expect(texts(lines)).toEqual(['deal 110%', '[->130%]']);
+    expect(lines[1]?.map((run) => run.ink)).toEqual(['b', 'c', 'b']);
+  });
+
+  it('gives a space the ink of the text it was typed in', () => {
+    const [line] = layoutRuns(
+      [
+        { text: 'Use mode: ', ink: 'label' },
+        { text: 'Passive', ink: 'value' },
+      ],
+      600,
+      mono,
+    );
+    expect(line?.map((run) => run.text)).toEqual(['Use mode: ', 'Passive']);
+  });
+
+  it('splits a word wider than the line by character rather than dropping its end', () => {
+    const lines = texts(layoutRuns([{ text: 'Unbreakablename', ink: 'a' }], 36, mono));
+    expect(lines.join('')).toBe('Unbreakablename');
+    for (const line of lines) expect(mono(line)).toBeLessThanOrEqual(36);
+  });
+
+  it('ends a line at a newline', () => {
+    expect(texts(layoutRuns([{ text: 'a\nb', ink: 'a' }], 600, mono))).toEqual(['a', 'b']);
   });
 });

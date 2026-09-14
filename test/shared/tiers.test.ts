@@ -342,8 +342,18 @@ describe('a requirement names the stat rather than keying it', () => {
     tierRequirementText({ kind: TierRefusal.Stat, needed, have, met: have >= needed, stat });
 
   it('prints the full name, in upstream order', () => {
-    expect(req('wil', 20, 18)).toBe('Willpower 20 (18)');
-    expect(req('str', 24, 1)).toBe('Strength 24 (1)');
+    expect(req('wil', 20, 18)).toBe('Willpower 20');
+    expect(req('str', 24, 1)).toBe('Strength 24');
+  });
+
+  it('words depth and level as upstream does', () => {
+    // engine/interface/ActorTalents.lua:761 and :775.
+    expect(tierRequirementText({ kind: TierRefusal.Depth, needed: 2, have: 0, met: false })).toBe(
+      'Lower talents of the same category: 2',
+    );
+    expect(tierRequirementText({ kind: TierRefusal.Level, needed: 6, have: 1, met: false })).toBe(
+      'Level 6',
+    );
   });
 
   it('covers every stat a talent may gate on, luck included', () => {

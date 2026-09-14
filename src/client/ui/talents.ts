@@ -602,16 +602,6 @@ function panelTitle(level: number | null | undefined): string {
   return `${PANEL_TITLE} · Lv ${String(Math.max(0, Math.floor(level)))}`;
 }
 
-/**
- * THE ARROW THAT MAKES THE DIFF A DIFF.
- *
- * ToME writes the same relation as `" [->"` … `"]"` around the two values
- * (LevelupDialog.lua:953-955's `diff` closure, used at :969-970). One glyph
- * rather than four characters because our two values are whole SENTENCES on
- * separate lines rather than two numbers inline, and a leading arrow is what
- * marks the second line as "and this is what the point buys" without a label.
- */
-const ARROW = '→';
 /** The word half of the at-cap signal. See the header: never colour alone. */
 /** The word half of the a-point-is-available signal. */
 /** The `+` once it is armed. A different GLYPH, not merely a different colour. */
@@ -723,7 +713,7 @@ export type TalentCell = {
    * WHAT MAKES IT BIGGER — `LoadoutTalent.scales`, pre-rendered server-side.
    *
    * NULL MEANS SAY NOTHING. The talent declares no scaling, or the server is
-   * older than the field. Both print no line, which is the honest answer: a
+   * older than the field. Both add no sentence, which is the honest answer: a
    * claim nobody has checked against what the talent does is worse than none.
    */
   readonly scales: string | null;
@@ -3382,42 +3372,23 @@ export function talentTipAt(
       : cellAt(rows, hit.index, px, py, rect, scroll);
   if (cell === undefined) return null;
 
+  /**
+   * THE SAME TEXT AS THE DESCRIPTION COLUMN, which this card stands in for on a
+   * panel too narrow to have one: the rank line as its meta, the rest wrapped.
+   * A card has one ink, so the `[->` marks carry the next rank on their own.
+   */
   const wrap = talentWrapper();
   // A CARD WIDE ENOUGH TO READ AND NARROW ENOUGH TO SIT BESIDE ITS ICON. 240 is
   // about forty monospace characters, which is a sentence and a half.
   const width = 240;
+  const [rank = '', ...body] = talentDescRuns(cell)
+    .map((run) => run.text)
+    .join('')
+    .split('\n');
   return {
-    // "0/5" IS THE HONEST COUNTER and it is left as it is — the card is a
-    // glance, and a word where a number belongs makes the column ragged. The
-    // pane behind it spells out what 0 means.
-    title: `${cell.name}  ${cell.level}/${cell.maxLevel}`,
-    // WHAT IT COSTS TO PRESS, or that it is never pressed. Printing an AP cost
-    // on a passive would be a lie about how the talent works.
-    meta: cell.passive
-      ? 'always on'
-      : [
-          // A SUSTAIN LEADS WITH WHAT THE PRESS DOES. Upstream says it as
-          // `Use mode: Sustained`; this card has one line rather than a row
-          // per fact, so it goes first and the price follows it. Without it
-          // a stance read as an attack that happened to cost nothing to aim.
-          cell.sustain ? 'toggle, stays on' : null,
-          `${cell.cost.ap} AP`,
-          cell.cost.resource > 0 && cell.pool !== undefined
-            ? `${cell.cost.resource} ${resourceLabel(cell.pool)}`
-            : null,
-          cell.cooldownTurns > 0 ? `${cell.cooldownTurns}t cooldown` : null,
-          cell.range >= 2 ? `${cell.range} tiles` : 'melee',
-        ]
-          .filter((part) => part !== null)
-          .join('  ·  '),
-    // THE REFUSAL RIDES WITH THE DESCRIPTION rather than in `nextLines`, which
-    // this card paints gold — a lock rendered in the "what one point buys"
-    // colour would be the one sentence on the card that means its opposite.
-    lines: [
-      ...wrap(cell.desc, width),
-      ...(cell.lockedReason === null ? [] : wrap(cell.lockedReason, width)),
-    ],
-    nextLines: cell.descNext === null ? [] : wrap(`${ARROW} ${cell.descNext}`, width),
+    title: cell.name,
+    meta: rank,
+    lines: body.filter((text) => text !== '').flatMap((text) => wrap(text, width)),
   };
 }
 
@@ -3435,7 +3406,7 @@ export function talentTipAt(
  * `2 [-> 3]` is upstream's exact grammar and it is better than a second
  * paragraph: the question a player is answering is "what does this point BUY",
  * and an answer that makes them hold two numbers in their head across four lines
- * is answering a different one. `ARROW` is the same glyph the hover card uses.
+ * is answering a different one.
  *
  * IT DRAWS NOTHING WHEN NOTHING IS FOCUSED except a line saying so — an empty
  * column reads as a panel that failed to load, and this screen is most often
@@ -3794,12 +3765,276 @@ function drawMinusBadge(ctx: CanvasRenderingContext2D, minus: PanelRect): void {
   ctx.fillRect(minus.x + 2, minus.y + Math.floor(minus.h / 2), minus.w - 4, 1);
 }
 
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * ONE RUN OF TEXT IN ONE INK — what the description column is built from.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Upstream builds its pane as a `tstring`, text with colour changes inside it,
+ * and lays it out by width. This is that on this palette. A `\n` ends a line.
+ */
+export type TextRun = { readonly text: string; readonly ink: string; readonly bold?: boolean };
+
+/** Appends a run, folded into the last one when the ink and weight match. */
+function pushRun(into: TextRun[], run: TextRun): void {
+  const last = into[into.length - 1];
+  if (last !== undefined && last.ink === run.ink && last.bold === run.bold) {
+    into[into.length - 1] = { ...last, text: last.text + run.text };
+  } else {
+    into.push(run);
+  }
+}
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * WHAT THE NEXT RANK CHANGES, INLINE — `engine/utils.lua:1557-1569`.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `tstring:diffWith` over `tokenize(" ()[]")` (`engine/utils.lua:1385`): both
+ * texts split at spaces and brackets, compared token by token, and a token that
+ * differs printed as `now [->next]` (LevelupDialog.lua:953-955). So a player
+ * reads `110% [->130%] weapon damage` once, not the sentence twice.
+ *
+ * TOKEN COUNTS THAT DIFFER are the one case upstream's walk misaligns: wording
+ * that changes with rank rather than a number. That is printed whole.
+ */
+function diffRuns(now: string, next: string, ink: string): TextRun[] {
+  const tokens = (text: string): string[] => text.split(/([ ()[\]\n])/).filter((t) => t !== '');
+  const a = tokens(now);
+  const b = tokens(next);
+  const out: TextRun[] = [];
+  const changed = (from: string, to: string): void => {
+    pushRun(out, { text: from, ink: PALETTE.PARCHMENT });
+    pushRun(out, { text: ' [->', ink: PALETTE.GREY_HI });
+    pushRun(out, { text: to, ink: PALETTE.GOLD });
+    pushRun(out, { text: ']', ink: PALETTE.GREY_HI });
+  };
+  if (a.length !== b.length) {
+    changed(now, next);
+    return out;
+  }
+  a.forEach((token, i) => {
+    const other = b[i] ?? token;
+    if (token === other) pushRun(out, { text: token, ink });
+    else changed(token, other);
+  });
+  return out;
+}
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * ONE TALENT, AS UPSTREAM'S LEVELUP DIALOG DESCRIBES IT — LevelupDialog.lua:917-981.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `getTalentDesc`, in its order and its words:
+ *
+ *   the rank line    `First talent level: 1`, `Current talent level: 2 [-> 3]`,
+ *                    or `Current talent level: 5` at the cap (:956-977);
+ *   requirements     one line each, met or not (ActorTalents.lua:744-798);
+ *   the rest         `getTalentFullDescription` (tome/class/Actor.lua:6200-6342):
+ *                    effective level, use mode, costs, range, cooldown and
+ *                    `Description:`, diffed against the next rank so what one
+ *                    point changes is printed inline.
+ *
+ * AN UNLEARNED TALENT IS DESCRIBED AT RANK ONE (:962): the talent a player is
+ * deciding to buy, not the zero it does today.
+ *
+ * ═══ WHAT WENT, BECAUSE UPSTREAM HAS NONE OF IT ═══
+ * A mode sentence under the name, a `Talent level` row that explained itself, a
+ * `Scales` row, the refusal paragraph, a `Needs` heading, and the next rank's
+ * description printed a second time underneath. The unmet requirement lines ARE
+ * the refusal, as upstream's red ones are.
+ *
+ * ═══ WHAT IS OURS ═══
+ *   - `AP cost`. Upstream prices a talent in time; this game prices it in action
+ *     points, so the line names what a player spends.
+ *   - What it scales with closes the description as a sentence. Upstream's own
+ *     descriptions say it in their prose; ours are authored without it, and the
+ *     server renders the phrase (`LoadoutTalent.scales`).
+ *   - A mark as well as a colour on a requirement: `-` met, `!` not. Upstream
+ *     uses green and red alone, and this file never lets colour carry a state on
+ *     its own (ui/partypanel.ts).
+ */
+export function talentDescRuns(cell: TalentCell): TextRun[] {
+  const out: TextRun[] = [];
+  const add = (text: string, ink: string, bold = false): void => {
+    pushRun(out, bold ? { text, ink, bold } : { text, ink });
+  };
+  const end = (): void => {
+    add('\n', PALETTE.PARCHMENT);
+  };
+  const field = (label: string, value: string): void => {
+    add(label, PALETTE.GREY_HI);
+    add(value, PALETTE.PARCHMENT);
+    end();
+  };
+  const effective = (rank: number): string => (rank * cell.mastery).toFixed(1);
+
+  const unlearned = cell.level < 1;
+  const capped = !unlearned && cell.level >= cell.maxLevel;
+  const next = unlearned || capped ? null : cell.descNext;
+
+  if (unlearned) {
+    add('First talent level: 1', PALETTE.PARCHMENT, true);
+  } else if (capped) {
+    add(`Current talent level: ${String(cell.level)}`, PALETTE.PARCHMENT, true);
+  } else {
+    add(`Current talent level: ${String(cell.level)} [-> `, PALETTE.PARCHMENT, true);
+    add(String(cell.level + 1), PALETTE.GOLD, true);
+    add(']', PALETTE.PARCHMENT, true);
+  }
+  end();
+
+  // A TREE THIS CHARACTER DOES NOT OWN: upstream's first requirement line
+  // (ActorTalents.lua:754-756), and the only one that applies until it is bought.
+  if (cell.unlocks !== null) {
+    add('! Talent category known', PALETTE.ORANGE);
+    end();
+  }
+  for (const req of cell.requires) {
+    add(`${req.met ? '-' : '!'} ${req.text}`, req.met ? PALETTE.BONE : PALETTE.ORANGE);
+    end();
+  }
+
+  add('Effective talent level: ', PALETTE.GREY_HI);
+  if (next === null) {
+    add(effective(unlearned ? 1 : cell.level), PALETTE.PARCHMENT);
+  } else {
+    for (const run of diffRuns(
+      effective(cell.level),
+      effective(cell.level + 1),
+      PALETTE.PARCHMENT,
+    )) {
+      pushRun(out, run);
+    }
+  }
+  end();
+
+  field('Use mode: ', cell.passive ? 'Passive' : cell.sustain ? 'Sustained' : 'Activated');
+  if (!cell.passive) {
+    field('AP cost: ', String(cell.cost.ap));
+    if (cell.cost.resource > 0 && cell.pool !== undefined) {
+      const pool = resourceLabel(cell.pool);
+      // A SUSTAIN RESERVES, and upstream says so: `Sustain %s cost`.
+      field(
+        cell.sustain ? `Sustain ${pool.toLowerCase()} cost: ` : `${pool} cost: `,
+        String(cell.cost.resource),
+      );
+    }
+    field('Range: ', cell.range >= 2 ? String(Math.floor(cell.range)) : 'melee/personal');
+  }
+  if (cell.cooldownTurns > 0) field('Cooldown: ', String(cell.cooldownTurns));
+
+  add('Description: ', PALETTE.GREY_HI);
+  const scales =
+    cell.scales === null || cell.scales === ''
+      ? ''
+      : ` ${cell.scales.charAt(0).toUpperCase()}${cell.scales.slice(1)}.`;
+  const now = (unlearned ? (cell.descNext ?? cell.desc) : cell.desc) + scales;
+  if (next === null) {
+    add(now, PALETTE.SILVER);
+  } else {
+    for (const run of diffRuns(now, next + scales, PALETTE.SILVER)) pushRun(out, run);
+  }
+  return out;
+}
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * RUNS INTO LINES NO WIDER THAN `maxPx`, AND NOTHING IS CUT.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Reported: the column cut long text off at its right edge. Every row went
+ * through `fitText`, which ends a line in `…` at the width, so a cost, a
+ * requirement or a name longer than the column lost its end. Upstream's pane
+ * wraps its text to the width, and so does this.
+ *
+ * Words break at spaces and hold together across an ink change, so
+ * `110% [->130%]` breaks before the bracket and never inside it. A space takes
+ * the ink of the text it was typed in. A word wider than a whole line is split
+ * by character rather than clipped.
+ */
+export function layoutRuns(
+  runs: readonly TextRun[],
+  maxPx: number,
+  measure: (text: string, bold: boolean) => number,
+): TextRun[][] {
+  const lines: TextRun[][] = [];
+  let line: TextRun[] = [];
+  let lineW = 0;
+  let word: TextRun[] = [];
+  let space: TextRun | null = null;
+
+  const breakLine = (): void => {
+    lines.push(line);
+    line = [];
+    lineW = 0;
+  };
+  const place = (): void => {
+    const parts = word;
+    word = [];
+    if (parts.length === 0) return;
+    const gap = space !== null && line.length > 0 ? measure(' ', space.bold === true) : 0;
+    const wordW = parts.reduce((sum, part) => sum + measure(part.text, part.bold === true), 0);
+    if (line.length > 0 && lineW + gap + wordW > maxPx) {
+      breakLine();
+    } else if (space !== null && gap > 0) {
+      pushRun(line, { ...space, text: ' ' });
+      lineW += gap;
+    }
+    space = null;
+    if (wordW <= maxPx - lineW) {
+      for (const part of parts) pushRun(line, part);
+      lineW += wordW;
+      return;
+    }
+    for (const part of parts) {
+      for (const ch of part.text) {
+        const chW = measure(ch, part.bold === true);
+        if (line.length > 0 && lineW + chW > maxPx) breakLine();
+        pushRun(line, { ...part, text: ch });
+        lineW += chW;
+      }
+    }
+  };
+
+  for (const run of runs) {
+    for (const piece of run.text.split(/( +|\n)/)) {
+      if (piece === '') continue;
+      if (piece === '\n') {
+        place();
+        breakLine();
+        space = null;
+      } else if (piece.trim() === '') {
+        place();
+        space = run;
+      } else {
+        pushRun(word, { ...run, text: piece });
+      }
+    }
+  }
+  place();
+  if (line.length > 0) lines.push(line);
+  return lines;
+}
+
+/** One line of the description column. */
+const DETAIL_LINE_H = 12;
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE DESCRIPTION COLUMN: icon and name, then `talentDescRuns`, wrapped.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * The icon stays beside the name, so the column and the grid are visibly about
+ * the same thing. Everything under it is upstream's text, laid out by
+ * `layoutRuns` at the column's width.
+ */
 function drawDetail(
   ctx: CanvasRenderingContext2D,
   sprites: SpriteSource,
   box: PanelRect,
   cell: TalentCell | null,
-  wrap: (text: string, maxPx: number) => readonly string[],
 ): void {
   if (box.w <= 0 || box.h <= 0) return;
 
@@ -3810,220 +4045,54 @@ function drawDetail(
 
   const x = box.x + 6;
   const w = box.w - 12;
-  let y = box.y + 4;
   const bottom = box.y + box.h;
+  let y = box.y + 4;
+  ctx.textAlign = 'left';
 
-  const line = (text: string, font: string, ink: string, gap = 12): void => {
-    if (y + gap > bottom) return;
-    ctx.font = font;
-    ctx.fillStyle = ink;
-    ctx.fillText(fitText(ctx, text, w), x, y + gap / 2);
-    y += gap;
+  const measure = (text: string, bold: boolean): number => {
+    ctx.font = bold ? FONT_META : FONT_BODY;
+    return ctx.measureText(text).width;
+  };
+  /** Paints laid-out lines from `left`; false once the column is full. */
+  const paint = (lines: readonly (readonly TextRun[])[], left: number): boolean => {
+    for (const line of lines) {
+      if (y + DETAIL_LINE_H > bottom) return false;
+      let at = left;
+      for (const run of line) {
+        ctx.font = run.bold === true ? FONT_META : FONT_BODY;
+        ctx.fillStyle = run.ink;
+        ctx.fillText(run.text, at, y + DETAIL_LINE_H / 2);
+        at += ctx.measureText(run.text).width;
+      }
+      y += DETAIL_LINE_H;
+    }
+    return true;
   };
 
   if (cell === null) {
-    line('Point at a talent.', FONT_BODY, PALETTE.GREY);
+    paint(layoutRuns([{ text: 'Point at a talent.', ink: PALETTE.GREY }], w, measure), x);
     return;
   }
 
-  // THE ICON BESIDE THE NAME, so the pane and the grid are visibly about the
-  // same thing — the eye travels from the icon it clicked to the icon up here.
-  const iconBox = { x, y, w: ICON_PX, h: ICON_PX };
-  drawTalentIcon(ctx, sprites, cell.icon, cell.name, iconBox, PALETTE.SLATE);
-
-  const textX = x + ICON_PX + 6;
-  ctx.font = FONT_META;
-  ctx.fillStyle = PALETTE.GOLD;
-  ctx.fillText(fitText(ctx, cell.name, w - ICON_PX - 6), textX, y + 8);
-  ctx.font = FONT_BODY;
-  ctx.fillStyle = PALETTE.GREY_HI;
-  // THE USE MODE, upstream's second line (`Actor.lua:6219-6223`): Passive,
-  // Sustained or Activated. A sustain read "Activated" here, which is the one
-  // thing it is not — it is switched on and stays on, as the hover card says.
-  const mode = cell.passive
-    ? 'Passive — always on'
-    : cell.sustain
-      ? 'Sustained — toggle, stays on'
-      : 'Activated';
-  ctx.fillText(fitText(ctx, mode, w - ICON_PX - 6), textX, y + 21);
-  y += ICON_PX + 6;
-
-  /** `Label: value`, with the label dim so the value is what the eye lands on. */
-  const field = (label: string, value: string, ink: string = PALETTE.PARCHMENT): void => {
-    if (y + 12 > bottom) return;
-    ctx.font = FONT_BODY;
-    ctx.fillStyle = PALETTE.GREY;
-    const head = `${label}: `;
-    ctx.fillText(head, x, y + 6);
-    const headW = ctx.measureText(head).width;
-    ctx.fillStyle = ink;
-    ctx.fillText(fitText(ctx, value, w - headW), x + headW, y + 6);
-    y += 12;
-  };
-
-  // ═══ THE LINE THE WHOLE PANE EXISTS FOR ═══
-  // What this talent is now, and what the point in your hand would make it.
-  // GOLD when there is a point to spend and the talent can take one, because
-  // that is the only state in which the second number is an OFFER rather than a
-  // fact about the future.
-  field(
-    'Talent level',
-    /**
-     * THREE STATES, NOT TWO. A talent at rank 0 is OWNED AND UNLEARNED — the
-     * class has it in a tree and this character has never put a point in it —
-     * and "0 → 1 (of 5)" describes that as though it were ordinary progress.
-     * It is the one row on this pane where the `+` does something categorically
-     * different: it LEARNS the talent rather than deepening it.
-     */
-    cell.level < 1
-      ? `not learned — one point learns it`
-      : cell.level >= cell.maxLevel
-        ? `${String(cell.level)}/${String(cell.maxLevel)} — mastered`
-        : `${String(cell.level)} ${ARROW} ${String(cell.level + 1)}  (of ${String(cell.maxLevel)})`,
-    cell.canSpend ? PALETTE.GOLD : PALETTE.PARCHMENT,
+  const top = y;
+  drawTalentIcon(
+    ctx,
+    sprites,
+    cell.icon,
+    cell.name,
+    { x, y: top, w: ICON_PX, h: ICON_PX },
+    PALETTE.SLATE,
   );
+  y = top + 2;
+  const name = layoutRuns(
+    [{ text: cell.name, ink: PALETTE.GOLD, bold: true }],
+    w - ICON_PX - 6,
+    measure,
+  );
+  if (!paint(name, x + ICON_PX + 6)) return;
+  y = Math.max(y, top + ICON_PX) + 6;
 
-  /**
-   * ═══════════════════════════════════════════════════════════════════════════
-   * THE LEVEL THE GAME COMPUTES WITH — `Actor.lua:6217`, and it is the FIRST
-   * line of every talent description upstream.
-   * ═══════════════════════════════════════════════════════════════════════════
-   *
-   *     d:add(..., "Effective talent level: ", ..., ("%.1f"):format(self:getTalentLevel(t)))
-   *
-   * The row above is the rank a player BUYS. `getTalentLevel` is
-   * `getTalentLevelRaw x mastery` (`ActorTalents.lua:826`) and that is what
-   * every number in the description below is computed from — so on a signature
-   * tree a rank-3 talent is a 3.9, and the pane said 3 and printed 3.9's
-   * numbers without ever naming the gap.
-   *
-   * ═══ PRINTED ALWAYS, AS UPSTREAM PRINTS IT ═══
-   * `getTalentFullDescription` has no condition on that line: a talent at
-   * mastery 1.00 reads 3.0 beside its rank of 3, and one not yet learned reads
-   * 0.0. An earlier version skipped both as a second format of the same number.
-   * The user ruled for upstream's information in Inner Datum's style, and the
-   * line is upstream's, so it is here on every talent.
-   */
-  field('Effective level', (cell.level * cell.mastery).toFixed(1));
-
-  if (!cell.passive) {
-    field('Cost', `${String(cell.cost.ap)} AP`);
-    if (cell.cost.resource > 0 && cell.pool !== undefined) {
-      field('Resource', `${String(cell.cost.resource)} ${resourceLabel(cell.pool)}`);
-    }
-    field('Range', cell.range >= 2 ? `${String(cell.range)} tiles` : 'melee');
-    field('Cooldown', cell.cooldownTurns > 0 ? `${String(cell.cooldownTurns)} turns` : 'none');
-  }
-
-  /**
-   * ═══ AND WHAT MAKES IT BIGGER, WHICH IS NOT WHAT GATES IT ═══
-   *
-   * Asked for directly, and it is the one thing this pane could not answer: the
-   * Needs list below is the GATE, and on most talents it names a different stat
-   * from the one that moves the numbers. Lockdown is gated on Constitution and
-   * lands on Physical power, which is Strength.
-   *
-   * OUTSIDE THE `passive` GUARD, deliberately. A passive has no cost, range or
-   * cooldown to print — and for several of them the scaling is the only
-   * interesting fact there is.
-   *
-   * `Scales` rather than upstream's `Is:` tag (`tome/class/Actor.lua:6309-6315`
-   * renders `Is: a spell` from `Talents.is_a_type`). The tag names a SCHOOL and
-   * leaves the player to know which stat the school reads; the question asked
-   * here was the stat, so the row names both.
-   */
-  if (cell.scales !== null && cell.scales !== '') field('Scales', cell.scales);
-
-  y += 4;
-  ctx.font = FONT_BODY;
-  ctx.fillStyle = PALETTE.SILVER;
-  for (const text of wrap(cell.desc, w)) {
-    if (y + 12 > bottom) return;
-    ctx.fillText(text, x, y + 6);
-    y += 12;
-  }
-
-  /**
-   * ═══════════════════════════════════════════════════════════════════════════
-   * AND WHY THE POINT CANNOT GO HERE — ABOVE the next-rank line, deliberately.
-   * ═══════════════════════════════════════════════════════════════════════════
-   *
-   * The gold line below says what one point WOULD buy. Printing that first and
-   * the refusal underneath reads as an offer withdrawn; printing the refusal
-   * first reads as a condition on an offer that still stands, which is what
-   * this actually is — every one of these three sentences names something the
-   * player can go and do.
-   *
-   * ORANGE, not the missing-asset violet and not the gold: it is the only place
-   * on this pane that is a REFUSAL, and it must not be mistaken at a glance for
-   * the thing one point buys.
-   */
-  if (cell.lockedReason !== null) {
-    y += 4;
-    ctx.fillStyle = PALETTE.ORANGE;
-    for (const text of wrap(cell.lockedReason, w)) {
-      if (y + 12 > bottom) return;
-      ctx.fillText(text, x, y + 6);
-      y += 12;
-    }
-  }
-
-  /**
-   * ═══════════════════════════════════════════════════════════════════════════
-   * WHAT THE NEXT RANK WANTS — every clause, met or not.
-   * ═══════════════════════════════════════════════════════════════════════════
-   *
-   * ═══ THE REFUSAL ABOVE ONLY EXISTS ONCE IT IS TOO LATE ═══
-   * `lockedReason` is absent whenever the gate passes, so it taught nobody
-   * anything until the day it stopped them. A player at rank 2 with 14 Strength
-   * saw a live `+`, spent, and found out at rank 4 that the talent had wanted 18
-   * all along — three points into a tree already committed to.
-   *
-   * `getTalentReqDesc` (ActorTalents.lua:744-798) lists every requirement EVERY
-   * time, coloured by whether it is met, and the levelup pane diffs the current
-   * list against the next rank's (LevelupDialog.lua:963-970). This is that list.
-   *
-   * ═══ A MARK AND A COLOUR, NEVER A COLOUR ALONE ═══
-   * `·` for met and `!` for not, before the ink is chosen — the rule
-   * ui/partypanel.ts states and this file follows everywhere. The unmet ones
-   * take ORANGE, the same ink the refusal above uses, because they are the same
-   * fact seen earlier.
-   */
-  if (cell.requires.length > 0) {
-    y += 4;
-    ctx.font = FONT_META;
-    ctx.fillStyle = PALETTE.GREY;
-    if (y + 12 <= bottom) {
-      ctx.fillText('Needs', x, y + 6);
-      y += 12;
-    }
-    ctx.font = FONT_BODY;
-    for (const req of cell.requires) {
-      if (y + 12 > bottom) return;
-      ctx.fillStyle = req.met ? PALETTE.BONE : PALETTE.ORANGE;
-      ctx.fillText(fitText(ctx, `${req.met ? '·' : '!'} ${req.text}`, w), x, y + 6);
-      y += 12;
-    }
-  }
-
-  if (cell.descNext !== null) {
-    y += 4;
-    // ═══ THE NEXT RANK IN GOLD, WHICH IS WHAT THE HOVER CARD ALREADY USES ═══
-    // The one thing on this pane that is not true yet, so it must not read as a
-    // fact — upstream keeps its `[-> n]` numbers in their own colour for exactly
-    // that reason. GOLD rather than a new colour because `drawHoverCard` paints
-    // `nextLines` gold and the two surfaces describe the same talent: a player
-    // who learns the colour on one must not have to learn it again on the other.
-    //
-    // NOT `VIOLET_HI`, which was the first choice and is RESERVED — it IS the
-    // missing-asset box, pinned by test/client/assets.test.ts.
-    ctx.fillStyle = PALETTE.GOLD;
-    for (const text of wrap(`${ARROW} ${cell.descNext}`, w)) {
-      if (y + 12 > bottom) return;
-      ctx.fillText(text, x, y + 6);
-      y += 12;
-    }
-  }
+  paint(layoutRuns(talentDescRuns(cell), w, measure), x);
 }
 
 /**
@@ -4045,7 +4114,7 @@ function drawDetail(
  * writes by hand below its prose anyway.
  *
  * ═══ THE CEILING IS SAID IN WORDS ═══
- * The cell shows it as a shadow; this is where the shadow is explained, in the
+ * The cell greys its caption; this is where that is explained, in the
  * two sentences upstream keeps apart (`:255-260`) because they send a player
  * opposite ways — wait a level, or never.
  */
@@ -4650,7 +4719,7 @@ export function drawTalentPanel(options: TalentPanelDrawOptions): void {
         }
       }
     }
-    drawDetail(ctx, sprites, geometry.detail, cell, talentWrapper());
+    drawDetail(ctx, sprites, geometry.detail, cell);
   }
 
   /**
