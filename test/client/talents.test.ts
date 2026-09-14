@@ -1226,9 +1226,15 @@ describe('the description column', () => {
  * (`Actor.lua:3748`), six stats, `spend_stat` with no refund — and this is the
  * only surface a player can act on it through.
  */
-type Op = { readonly kind: string; readonly args: readonly unknown[] };
+type Op = {
+  readonly kind: string;
+  readonly args: readonly unknown[];
+  /** The `fillStyle` in force when the call was made. */
+  readonly fill: unknown;
+};
 
 function recorder(ops: Op[]): CanvasRenderingContext2D {
+  let fill: unknown = null;
   return new Proxy(
     {},
     {
@@ -1236,10 +1242,13 @@ function recorder(ops: Op[]): CanvasRenderingContext2D {
         if (prop === 'measureText') return (text: string) => ({ width: text.length * 6 });
         if (prop === 'canvas') return { width: 1280, height: 720 };
         return (...args: unknown[]) => {
-          ops.push({ kind: prop, args });
+          ops.push({ kind: prop, args, fill });
         };
       },
-      set: () => true,
+      set: (_t, prop: string, value: unknown) => {
+        if (prop === 'fillStyle') fill = value;
+        return true;
+      },
     },
   ) as unknown as CanvasRenderingContext2D;
 }
@@ -1944,18 +1953,36 @@ describe('the attribute ceiling is on the control, not only in the refusal', () 
    * player knows before they press.
    * ═══════════════════════════════════════════════════════════════════════════
    *
-   * Upstream lights a capped stat's frame green. This palette has no green, so
-   * the cell wears upstream's other "cannot be learned" mark — `do_shadow`, a
-   * dark quad over the icon — and that quad is what these tests look for.
+   * Upstream greys a capped stat's `%d (%d)` (:593-597), and that grey caption
+   * is what these tests look for. It lays nothing over the stat's icon.
    */
 
-  /** `SIX` is str 25 / dex 14 / con 21 / mag 10 / wil 14 / cun 12, all composed. */
-  const dimmed = (over: Partial<Parameters<typeof drawTalentPanel>[0]>): string[] => {
+  const statIcons = (): PanelRect[] => {
     const rect = talentPanelRect({ width: 1280, height: 720, top: 60, bottom: 640 });
     if (rect === null) throw new Error('no panel');
     const g = talentPanelGeometry(rect, talentPanelRows(view()), NO_SCROLL);
     if (g.stats === null) throw new Error('no column');
-    const icons = statCellRects(g.stats);
+    return [...statCellRects(g.stats)];
+  };
+
+  /** `SIX` is str 25 / dex 14 / con 21 / mag 10 / wil 14 / cun 12, all composed. */
+  const greyed = (over: Partial<Parameters<typeof drawTalentPanel>[0]>): string[] => {
+    const icons = statIcons();
+    const texts = paintOps(over).filter((op) => op.kind === 'fillText');
+    return STAT_ROWS.flatMap((entry, i) => {
+      const icon = icons[i] as PanelRect;
+      // CENTRED UNDER ITS ICON — that is where the painter puts a caption.
+      const caption = texts.find(
+        (op) => op.args[1] === icon.x + icon.w / 2 && Number(op.args[2]) >= icon.y + icon.h,
+      );
+      if (caption === undefined) throw new Error(`no caption under ${entry.key}`);
+      return caption.fill === PALETTE.GREY_HI ? [entry.key] : [];
+    });
+  };
+
+  /** The stats whose icon has anything painted over it inside its frame. */
+  const shaded = (over: Partial<Parameters<typeof drawTalentPanel>[0]>): string[] => {
+    const icons = statIcons();
     const fills = paintOps(over).filter((op) => op.kind === 'fillRect');
     return STAT_ROWS.flatMap((entry, i) => {
       const icon = icons[i] as PanelRect;
@@ -1970,22 +1997,33 @@ describe('the attribute ceiling is on the control, not only in the refusal', () 
     });
   };
 
-  it('shades the attributes at the ceiling and leaves the rest live', () => {
+  it('greys the caption of the attributes at the ceiling and leaves the rest live', () => {
     /**
      * At level 3 the ceiling is 24.2. Of the six BOUGHT values below, only `str`
-     * at 25 is at or over it, so exactly one cell goes dark — and the other five
-     * must not, or the whole column would look broken on the level where one
-     * attribute happens to be ahead.
+     * at 25 is at or over it, so exactly one caption goes grey — and the other
+     * five must not, or the whole column would look broken on the level where
+     * one attribute happens to be ahead.
      */
     expect(
-      dimmed({ level: 3, statBase: { str: 25, dex: 14, con: 21, mag: 10, wil: 14, cun: 12 } }),
+      greyed({ level: 3, statBase: { str: 25, dex: 14, con: 21, mag: 10, wil: 14, cun: 12 } }),
     ).toEqual(['str']);
+  });
+
+  it('draws nothing over a capped attribute icon', () => {
+    /**
+     * REPORTED: an Alchemist's Magic icon was darker than the other five. Their
+     * Magic starts at 22 against a level-1 ceiling of 21.4, and the cell laid a
+     * dark quad over the art. Upstream never shades a stat.
+     */
+    const capped = { level: 3, statBase: { str: 25, dex: 14, con: 21, mag: 10, wil: 14, cun: 12 } };
+    expect(greyed(capped)).toEqual(['str']);
+    expect(shaded(capped)).toEqual([]);
   });
 
   it('opens the cell again as the level catches up', () => {
     // Level 18: the ceiling is 45.2 and nothing here is near it.
     expect(
-      dimmed({ level: 18, statBase: { str: 25, dex: 14, con: 21, mag: 10, wil: 14, cun: 12 } }),
+      greyed({ level: 18, statBase: { str: 25, dex: 14, con: 21, mag: 10, wil: 14, cun: 12 } }),
     ).toEqual([]);
   });
 
@@ -1998,7 +2036,7 @@ describe('the attribute ceiling is on the control, not only in the refusal', () 
      * would be a way to level up.
      */
     expect(
-      dimmed({
+      greyed({
         level: 3,
         stats: { str: 25, dex: 14, con: 21, mag: 10, wil: 14, cun: 12 },
         statBase: { str: 20, dex: 14, con: 21, mag: 10, wil: 14, cun: 12 },
@@ -2009,7 +2047,7 @@ describe('the attribute ceiling is on the control, not only in the refusal', () 
   it('leaves every cell live against a server that sends no base', () => {
     // The additive-field contract: an older server loses the affordance, never
     // the ability to spend. The server's refusal is the backstop.
-    expect(dimmed({ level: 1, statBase: null })).toEqual([]);
+    expect(greyed({ level: 1, statBase: null })).toEqual([]);
   });
 
   it('prints both numbers on every cell, as upstream does', () => {

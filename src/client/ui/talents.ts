@@ -3570,12 +3570,16 @@ function drawColumnRule(
  *   CAPTION (`status`, :592-600): `%d (%d)` — composed, then as bought — grey at
  *   a ceiling, green otherwise.
  *
- * ═══ THE PALETTE HAS NO GREEN, SO THE CEILING IS A SHAPE ═══
- * `PALETTE` is "the only colours this game is allowed to use", and it has no
- * green in it. The ceiling therefore borrows upstream's OTHER way of saying
- * "cannot be learned": `TalentTrees.lua:420-421`'s `do_shadow`, a black quad
- * over the icon. It survives greyscale, which a hue swap would not — this file's
- * standing rule for any state a player acts on.
+ * ═══ THE CEILING IS THE GREY CAPTION, AND NOTHING OVER THE ICON ═══
+ * Upstream greys the `%d (%d)` of a stat at its ceiling (:593-597) and leaves
+ * the stat itself alone. This cell used to lay `TalentTrees.lua`'s `do_shadow`
+ * quad over the icon as well, standing in for the green frame this palette
+ * cannot draw. That quad is upstream's mark for a TALENT that cannot be
+ * learned, not for a stat, and on a stat it read as broken art: an Alchemist
+ * starts with Magic 22 against a level-1 ceiling of 21.4, so the one attribute
+ * they care most about was the one drawn dark. The caption carries the ceiling
+ * now, as upstream's does, and the frame drops to SLATE with it because the cell
+ * cannot be bought.
  *
  * BUYABLE is the grid's own convention for its icons: PARCHMENT when a press
  * would do something, SLATE when it would not. ARMED is the grid's too — gold,
@@ -3590,8 +3594,6 @@ export type StatCellLook = {
   readonly frame: string;
   /** Two when armed, else one. */
   readonly ring: 1 | 2;
-  /** Upstream's `do_shadow`, on an attribute at its ceiling. */
-  readonly dimmed: boolean;
   readonly caption: string;
   /** The caption with the bracket dropped, for a cell too narrow for both. */
   readonly captionShort: string;
@@ -3621,7 +3623,6 @@ export function statCellLook(input: {
   return {
     frame: armed || input.changed ? PALETTE.GOLD : buyable ? PALETTE.PARCHMENT : PALETTE.SLATE,
     ring: armed ? 2 : 1,
-    dimmed: capped,
     /**
      * ═══ BOTH NUMBERS, ALWAYS — `("%d (%d)"):format(...)` at :596 and :598 ═══
      * This used to print the bracket only when the two differed, on the grounds
@@ -3634,9 +3635,6 @@ export function statCellLook(input: {
     captionInk: capped ? PALETTE.GREY_HI : PALETTE.PARCHMENT,
   };
 }
-
-/** Upstream's `do_shadow` quad is black at 200/255 — `TalentTrees.lua:421`. */
-const SHADOW_ALPHA = 200 / 255;
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════
@@ -3688,13 +3686,6 @@ function drawStats(
     });
 
     drawStatIcon(ctx, sprites, entry, icon, look.frame);
-    if (look.dimmed) {
-      // INSIDE THE FRAME, so the frame still says which way it is lit.
-      ctx.globalAlpha = SHADOW_ALPHA;
-      ctx.fillStyle = PALETTE.INK;
-      ctx.fillRect(icon.x + 1, icon.y + 1, icon.w - 2, icon.h - 2);
-      ctx.globalAlpha = 1;
-    }
     if (look.ring === 2) {
       ctx.fillStyle = look.frame;
       drawRowRing(ctx, icon, 2);
