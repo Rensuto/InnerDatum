@@ -635,6 +635,22 @@
  * ═══════════════════════════════════════════════════════════════════════════
 
 
+ * CONSIDERED AND NOT BUMPED (AN OVERWORLD REMEMBERED BY SIGHT). An
+ * overworld's memory, on `RealmMsg.explored` and `VisionMsg.remembered`, is
+ * what the character saw rather than a disc around where they stood, and
+ * PROTOCOL_VERSION STAYS 23.
+ *
+ * ═══ WHY THIS DOES NOT FORCE A BUMP ═══
+ * Neither field changes shape; the bits simply cover what sight reached. A
+ * client already merges memory rather than replacing it, so nothing it held
+ * is taken away.
+ *
+ * `SCHEMA_VERSION` STAYS 1. A saved overworld memory keeps the disc it was
+ * written with, and memory only ever grows, so no file needs converting.
+ *
+ * ═══════════════════════════════════════════════════════════════════════════
+
+
  * 22 -> 23 (TRAPS). `TrapsMsg` is a new outbound frame — every trap THIS
  * VIEWER has found out about — and it is 6 -> 7's argument in its most literal
  * form yet.

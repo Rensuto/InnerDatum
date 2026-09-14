@@ -348,6 +348,48 @@ describe('a town remembers what you saw in it', () => {
   });
 });
 
+describe('the overworld remembers by sight too', () => {
+  it('sends back exactly what was in sight, not a disc around where you stood', async () => {
+    /**
+     * THE OVERWORLD KEPT A DISC at the reveal radius, through ridges and
+     * trees, while the client drew the same disc for itself. The client draws
+     * the server's memory now, so the overworld is remembered as anywhere else.
+     */
+    const client = await connect(server.port);
+    const { actorId, token } = await hello(client);
+    const overworld = server.realms.overworld;
+    client.send({ t: 'hold' });
+    await sleep(TIDE_MS * 4);
+    const body = overworld.world.getActor(actorId);
+    if (body === undefined) throw new Error('no body on the overworld');
+    const here = { x: body.x, y: body.y };
+    const seen = sightFrom(overworld, here, sightRadiusOf(body));
+
+    const memory = await memoryOnReturn(client, token, overworld);
+    expect(memory, 'the overworld frame carried no memory at all').toBeDefined();
+    if (memory === undefined) return;
+
+    const { level } = overworld.world;
+    const wrong: string[] = [];
+    let hiddenInsideTheDisc = 0;
+    for (let y = 0; y < level.h; y += 1) {
+      for (let x = 0; x < level.w; x += 1) {
+        const cell = keyOf({ x, y });
+        if (fogHas(memory, level.w, x, y) !== seen.has(cell)) wrong.push(cell);
+        const dx = x - here.x;
+        const dy = y - here.y;
+        if (dx * dx + dy * dy <= REVEAL_RADIUS * REVEAL_RADIUS && !seen.has(cell)) {
+          hiddenInsideTheDisc += 1;
+        }
+      }
+    }
+    // NOT VACUOUS: some ground inside the old disc is out of sight from the
+    // spawn, so a memory drawn as that disc cannot pass.
+    expect(hiddenInsideTheDisc).toBeGreaterThan(0);
+    expect(wrong, 'remembered tiles differ from exactly what was in sight').toEqual([]);
+  });
+});
+
 describe('loot stays on the map after it leaves sight', () => {
   it('keeps a pile you saw on the floor frame once you are nowhere in sight of it', async () => {
     const client = await connect(server.port);

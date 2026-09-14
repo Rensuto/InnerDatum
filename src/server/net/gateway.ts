@@ -295,7 +295,6 @@ import {
   fogFromBase64,
   fogHas,
   fogToBase64,
-  revealDisc,
   revealDiscExcept,
 } from '../../shared/fog.ts';
 import type { FastifyPluginAsync } from 'fastify';
@@ -4021,7 +4020,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    * rebuilt every time it crosses a realm (`crossInto` makes a new one) and the
    * map must not be rebuilt with it. Keyed by actor id, which is what survives.
    *
-   * EVERY REALM KEEPS ONE, AND ONLY AN OVERWORLD'S IS SAVED. A delve or a town
+   * EVERY REALM KEEPS ONE, AND ONLY AN OVERWORLD'S IS SAVED. Every realm
    * remembers by sight, as upstream's map does (`revealFor`), for as long as
    * the process runs. Instanced realms mint an id per opening, so a saved copy
    * could never be matched again, and a closed one's memory is dropped with the
@@ -4107,12 +4106,13 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    * you had walked past dropped off the floor frame the moment it left sight,
    * and a reconnect inside a delve arrived with nothing on the map.
    *
-   * ═══ BY SIGHT, EXCEPT ON AN OVERWORLD ═══
-   * Everywhere else the memory is `computeSeen` at the body's own
-   * `sightRadiusOf`, so a wall stops it exactly where it stops the eye. An
-   * overworld keeps its disc at `REVEAL_RADIUS` for now, because the client
-   * reveals the same disc locally and the two must agree after a reload. The
-   * client reading the server's sight is the step that changes both together.
+   * ═══ BY SIGHT, IN EVERY REALM ═══
+   * The memory is `computeSeen` at the body's own `sightRadiusOf`, so a wall or
+   * a ridge stops it exactly where it stops the eye. An overworld kept a disc at
+   * `REVEAL_RADIUS` while the client revealed the same disc locally, because the
+   * two had to agree after a reload; the client draws the server's memory now,
+   * so there is only one, and the overworld is remembered as this port ruled:
+   * lit, at the ordinary sight radius, like anywhere else.
    *
    * The answer lets the caller skip work: a party standing still must not write
    * a file on every pump, and standing still is what a party does most.
@@ -4120,9 +4120,6 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
   const revealFor = (realm: Realm, actorId: string, body: Actor): boolean => {
     const level = realm.world.level;
     const memory = fogFor(actorId, realm);
-    if (realm.kind === RealmKind.Overworld) {
-      return revealDisc(memory, level.w, level.h, body.x, body.y);
-    }
     return rememberSeen(memory, computeSeen(level, body, sightRadiusOf(body)));
   };
 

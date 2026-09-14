@@ -259,9 +259,8 @@ export function tilesInSight(
  * coat you walked past; you do not remember where a husk was standing.
  *
  * ═══ TWO TERMS, AND THE SIGHT ONE IS ALMOST ALWAYS SUBSUMED ═══
- *   REMEMBERED is the character's own fog bitset for this realm. On an
- *     overworld it is a disc at `REVEAL_RADIUS` (12) around every tile they
- *     stood on; everywhere else it is what they saw, at their own sight radius.
+ *   REMEMBERED is the character's own fog bitset for this realm: what they
+ *     saw, at their own sight radius, in every realm.
  *   SEEN is `canSee` at `DEFAULT_SIGHT_RADIUS` (10), from each of `eyes`.
  *
  * THE SERVER REMEMBERS BEFORE IT ASKS. Every pump writes each player's sight

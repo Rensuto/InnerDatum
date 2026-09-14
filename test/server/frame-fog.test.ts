@@ -307,9 +307,9 @@ describe('knownTile — the rule the gateway actually spends', () => {
      *
      * THE COMMENT HERE USED TO CLAIM MORE THAN THAT. It said sight 20 exceeded
      * `REVEAL_RADIUS` 12 by eight tiles, so both terms were load-bearing. With
-     * the radius corrected to 10 the containment runs the other way: everything
-     * within sight is inside the reveal disc, so once a character has taken a
-     * step this term is subsumed. It is kept because upstream ORs seen and
+     * the radius corrected to 10, and memory written by sight before every
+     * frame is built, everything within sight is already remembered once a pump
+     * has run, so this term is subsumed. It is kept because upstream ORs seen and
      * remembered (`Object.lua:28-29`) and because "before the first step" is a
      * real state, not because it catches ground memory misses.
      */

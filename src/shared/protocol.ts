@@ -6719,8 +6719,9 @@ export type RealmMsg = {
    * memory is saved as well. About 2,836 characters for a 170x100 region,
    * against roughly 130 KB for the same fact as a list of cells.
    *
-   * After this the CLIENT keeps revealing locally, so neither side sends
-   * anything per step. The server's copy outlives the tab; this is the seed.
+   * After this every `vision` window adds what the viewer remembers around
+   * them, and the client reveals nothing for itself. The server's copy
+   * outlives the tab; this is the seed.
    */
   explored?: string;
   /**

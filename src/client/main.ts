@@ -1292,10 +1292,11 @@ let worldMapOpen = false;
  * ═══ THE SERVER'S COPY IS THE AUTHORITY, AND IT PERSISTS ═══
  * This map is the SESSION's, and it is seeded from the save on every realm
  * frame — see the `msg.explored` branch in the socket handler, which merges the
- * server's bitset into whatever this session has already revealed rather than
- * replacing it. The client keeps revealing locally at the same radius so
- * neither side sends anything per step; `gateway.ts` writes the bitset onto the
- * character file and `test/server/fog-persistence.test.ts` pins the round trip.
+ * server's bitset into whatever this session already holds rather than
+ * replacing it. After that, every `vision` window adds what the viewer
+ * remembers around them (`client/vision.ts`); the client reveals nothing for
+ * itself. `gateway.ts` writes the bitset onto the character file and
+ * `test/server/fog-persistence.test.ts` pins the round trip.
  *
  * THIS NOTE USED TO SAY THE OPPOSITE — "it is not persisted, so a reload
  * forgets the map", with a paragraph about the schema bump that persisting it
@@ -1305,10 +1306,10 @@ let worldMapOpen = false;
  * codebase a comment describing an ABSENCE is the least trustworthy thing in
  * it, since nothing fails when one goes stale.
  *
- * It is also NOT a visibility rule — the playfield still draws everything in
- * range, because the server decides what a client may know and this is a
- * drawing convenience on top of what it already sent. Anyone using it to hide
- * information from a hostile client is reading it wrong.
+ * It is also NOT where visibility is decided. The server decided what this
+ * character saw before the bits were sent, and this set only remembers the
+ * answer. Anyone using it to hide information from a hostile client is reading
+ * it wrong: what matters is what the server chose not to send.
  */
 const explored = new Map<string, Set<string>>();
 
