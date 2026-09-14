@@ -310,6 +310,7 @@ import {
   talentMessageWake,
   talentPanelHeadingAt,
   headingPressRefusal,
+  treeSpendFor,
   confirmTooSoon,
   statPressRefusal,
   talentPressRefusal,
@@ -7805,9 +7806,9 @@ async function boot(): Promise<void> {
      * second authority on the id space; `deepenable` is the answer to exactly
      * this question and it arrives on the same frame the panel was drawn from.
      */
-    const deepening = deepenable.includes(next.spend) ? next.spend : null;
-    const cell = talentCellById(next.spend);
-    const tree = deepening ?? cell?.unlocks ?? null;
+    // A DEEPENABLE HEADING, A LOCKED HEADING, OR AN ICON IN A LOCKED TREE — see
+    // `treeSpendFor`. Anything else is a talent point.
+    const tree = treeSpendFor(next.spend, deepenable, unlockable, talentCellById(next.spend));
     // SENT FROM THE BRANCH RATHER THAN THROUGH A SHARED VARIABLE: the two
     // frames are different members of a closed union, and widening them into
     // one object loses the literal `v` the protocol pins.
@@ -12497,6 +12498,19 @@ async function boot(): Promise<void> {
         talentScroll,
       );
       if (heading !== null) {
+        // ═══ A LOCKED TREE'S HEADING BUYS THE TREE, WITH A POINT IN HAND ═══
+        // `learnType(+)` on a type the actor does not know learns it
+        // (LevelupDialog.lua:432-435). Its icons already did; the heading was
+        // dead. The same two-press arm as the icons and the deepen offer, through
+        // `pressTalentPlus`, whose confirm recognises the id — see `treeSpendFor`.
+        if (
+          unlockable.some((tree) => tree.id === heading) &&
+          (progress?.unspentCategories ?? 0) > 0
+        ) {
+          event.preventDefault();
+          pressTalentPlus(heading);
+          return;
+        }
         const refusal = headingPressRefusal({
           deepened: deepened.includes(heading),
           category: progress?.unspentCategories ?? 0,

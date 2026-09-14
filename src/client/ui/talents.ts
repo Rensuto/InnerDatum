@@ -1562,6 +1562,32 @@ export function talentPressRefusal(
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════
+ * WHICH TREE A CONFIRMED SPEND BUYS, or null for a talent point.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * The arm holds one id, and a category point can be armed three ways: on a
+ * deepenable tree's heading, on a LOCKED tree's heading, or on any icon inside a
+ * locked tree (which carries its tree in `TalentCell.unlocks`). Each confirm is
+ * the same `unlock_tree` frame — the server decides whether that means unlock or
+ * deepen (`handleUnlockTree`) — so this only has to recognise the id.
+ *
+ * CHECKED AGAINST THE SERVER'S OWN LISTS rather than by shape: a tree id and a
+ * talent id are both strings, and telling them apart by prefix would be a second
+ * authority on the id space.
+ */
+export function treeSpendFor(
+  spend: string,
+  deepenable: readonly string[],
+  unlockable: readonly { readonly id: string }[],
+  cell: { readonly unlocks: string | null } | null,
+): string | null {
+  if (deepenable.includes(spend)) return spend;
+  if (unlockable.some((tree) => tree.id === spend)) return spend;
+  return cell?.unlocks ?? null;
+}
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
  * WHY A PRESS ON A TREE HEADING BUYS NOTHING — `LevelupDialog.lua:417-426`.
  * ═══════════════════════════════════════════════════════════════════════════
  *

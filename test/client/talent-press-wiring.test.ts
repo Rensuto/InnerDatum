@@ -264,6 +264,16 @@ describe('the talent panel press wiring', () => {
     expect(branch).toContain('return;');
     // AND THE LIST COMES OFF THE LOADOUT FRAME.
     expect(CODE).toContain('deepened = msg.deepened ?? [];');
+    // A LOCKED HEADING WITH A POINT IN HAND ARMS ITS TREE — before any refusal,
+    // and only for a tree the server lists as unlockable.
+    const arms = at('pressTalentPlus(heading);', branch);
+    expect(at('unlockable.some((tree) => tree.id === heading)', branch)).toBeLessThan(arms);
+    expect(arms).toBeLessThan(at('headingPressRefusal(', branch));
+    expect(branch.slice(0, arms)).toContain('(progress?.unspentCategories ?? 0) > 0');
+    // AND ITS CONFIRM SENDS `unlock_tree`: the confirm resolves the armed id.
+    expect(fnBody('function pressTalentPlus(')).toContain(
+      'treeSpendFor(next.spend, deepenable, unlockable, talentCellById(next.spend))',
+    );
   });
 
   it('hands the panel its message and the clock the fade is measured against', () => {

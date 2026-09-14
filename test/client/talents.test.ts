@@ -46,6 +46,7 @@ import {
   talentHeadingAt,
   talentPanelHeadingAt,
   headingPressRefusal,
+  treeSpendFor,
   takeBackStillOffered,
   TAKE_BACK_GUARD_MARGIN,
   TAKE_BACK_GUARD_MS,
@@ -2352,6 +2353,27 @@ describe('the deepen offer', () => {
     }
     // THE BADGE CASE WAS REACHED, or the assertion above proved nothing.
     expect(badgesSeen).toBeGreaterThan(0);
+  });
+
+  it('confirms a category point on any of the three things that arm one', () => {
+    // A deepenable heading, a locked heading, an icon inside a locked tree. And a
+    // talent id, which is none of them, stays a talent point.
+    const deepenableIds = ['watch/discipline'];
+    const unlockableTrees = [{ id: 'generic/leverage' }];
+    expect(treeSpendFor('watch/discipline', deepenableIds, unlockableTrees, null)).toBe(
+      'watch/discipline',
+    );
+    expect(treeSpendFor('generic/leverage', deepenableIds, unlockableTrees, null)).toBe(
+      'generic/leverage',
+    );
+    expect(
+      treeSpendFor('talent:lever', deepenableIds, unlockableTrees, { unlocks: 'generic/leverage' }),
+    ).toBe('generic/leverage');
+    expect(
+      treeSpendFor('talent:crude_blow', deepenableIds, unlockableTrees, { unlocks: null }),
+    ).toBeNull();
+    // A LOCKED TREE IS NOT DEEPENABLE, and an id on neither list is not a tree.
+    expect(treeSpendFor('watch/the-line', deepenableIds, unlockableTrees, null)).toBeNull();
   });
 
   it('refuses a heading press in learnType’s order: once, then points', () => {
