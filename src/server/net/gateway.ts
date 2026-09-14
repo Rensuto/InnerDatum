@@ -5763,41 +5763,59 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    * remember-FALSE). The rule itself is `knownTile` in `shared/sight.ts`, which
    * carries the argument for both terms — briefly: every pump writes what each
    * player sees into their own memory first (`rememberWhatPlayersSee`), so the
-   * seen term only adds what somebody else in the realm can see. That is the
-   * party's pooled sight, and it goes when each player is given their own.
+   * seen term adds nothing once a pump has run and covers the moment before one.
+   * The eyes are the viewer's own — see `eyesOf`.
    */
   const knownTilesFor = (
     session: Session,
     realm: PumpTarget,
   ): ((x: number, y: number) => boolean) => {
     const world = realm.world;
-    const eyes = eyesIn(world);
+    const eyes = eyesOf(session, world);
     const remembered =
       session.actorId === null ? undefined : fogFor(session.actorId, opts.realms?.get(realm.id));
     return (x, y) => knownTile(world.level, eyes, remembered, x, y);
   };
 
   /**
-   * EVERY PAIR OF EYES IN A REALM — the party's, unioned (`Game.lua#playerFOV`).
+   * ═══════════════════════════════════════════════════════════════════════════
+   * ONE VIEWER'S EYES: THEIR OWN BODY, AND NOBODY ELSE'S.
+   * ═══════════════════════════════════════════════════════════════════════════
    *
-   * REALM-WIDE RATHER THAN PARTY-WIDE, and the two are the same wherever it
-   * could matter: an `Inner` realm is instanced, *"one party, alone, with the
-   * monsters"* (`realms.ts`), and a `Common` realm *"requires that nothing ever
-   * spawns here"*. So the only realms holding several parties are the ones with
-   * nothing to hide, and this is why the effects and projectile frames can still
-   * be BUILT ONCE and broadcast: every viewer standing in a realm gets a frame
-   * that is byte-identical anyway.
+   * Upstream computes sight for the character being played and no one else:
+   * `tome/class/Game.lua:1755` calls `self.player:playerFOV()`, and `playerFOV`
+   * (`tome/class/Player.lua:519-672`) sweeps from that character's own tile. The
+   * one exception is a talent, Shadow Senses, which reads a doomed shadow's
+   * sight, and nothing in this game grants it. So a monster only your teammate
+   * can see is not on your board, as it would not be on a ToME player's screen.
+   * Your teammates always are — see `projectActors`.
+   *
+   * This was every player in the realm, on the strength of a note that
+   * `playerFOV` unioned every party member onto one map. It does not.
    *
    * Dead bodies keep their eyes. A downed detective is still a player watching
    * the screen, and blacking them out would punish the one person who most needs
    * to see what is happening to the party standing over them.
+   *
+   * NO BODY IN THIS WORLD, NO EYES: such a viewer is shown its teammates only.
+   */
+  const eyesOf = (session: Session, world: World): Actor[] => {
+    const body = session.actorId === null ? undefined : world.getActor(session.actorId);
+    return body === undefined ? [] : [body];
+  };
+
+  /**
+   * EVERY PLAYER'S EYES IN A REALM, for the three frames still built once per
+   * realm and broadcast: effects, projectiles and zones. Each of those is built
+   * per viewer in a later step. Nothing else may use this — `fov.test.ts`
+   * scrapes the gateway to hold that.
    */
   const eyesIn = (world: World): TileXY[] =>
     world.allActors().filter((actor) => actor.kind === ActorKind.Player);
 
   /**
    * ═══════════════════════════════════════════════════════════════════════════
-   * THE PARTY'S EYES, AND THE FRAMES EACH CLIENT IS OWED BECAUSE OF THEM.
+   * EACH VIEWER'S EYES, AND THE FRAMES THEIR CLIENT IS OWED BECAUSE OF THEM.
    * ═══════════════════════════════════════════════════════════════════════════
    *
    * `engine/Actor.lua:520` gates sight on TWO terms — `core.fov.distance <= self.sight`
@@ -5812,16 +5830,14 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    * an actor it does not know. Filtering the snapshot alone would therefore hide
    * a monster until the next level-up. The transitions are the feature.
    *
-   * Computed ONCE for the realm rather than once per session, because the eyes
-   * are the party's and the party is the realm — see `projectActors`.
+   * Computed PER SESSION, from that viewer's own eyes — see `eyesOf`.
    */
   const reconcileSight = (realmId: string, world: World): void => {
-    const eyes = eyesIn(world);
-    const seen = visibleActorIds(world, eyes);
     const byId = new Map(world.allActors().map((actor) => [actor.id, actor] as const));
 
     for (const session of sessions.values()) {
       if (!session.helloDone || realmFor(session).id !== realmId) continue;
+      const seen = visibleActorIds(world, eyesOf(session, world));
 
       // ENTERED SIGHT. `joined` carries the whole `ActorView`, which is exactly
       // what a client that has never held this actor needs — sprite, maxHp and
@@ -5904,16 +5920,14 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    * had. Hence per-session, and hence the ledger assignment beside the send.
    */
   const resyncBoard = (realmId: string, world: World, exceptConnId?: string): void => {
-    const eyes = eyesIn(world);
-    const actors = projectActors(world, eyes);
-    // THE LEDGER IS THE FRAME'S OWN ID LIST, not a second computation that could
-    // disagree with it. See `sendRealm`.
-    const held = new Set(actors.map((actor) => actor.id));
     for (const session of sessions.values()) {
       if (!session.helloDone || realmFor(session).id !== realmId) continue;
       if (session.connId === exceptConnId) continue;
+      const actors = projectActors(world, eyesOf(session, world));
       send(session.socket, { v: PROTOCOL_VERSION, t: 'state', actors });
-      session.visible = new Set(held);
+      // THE LEDGER IS THE FRAME'S OWN ID LIST, not a second computation that
+      // could disagree with it. See `sendRealm`.
+      session.visible = new Set(actors.map((actor) => actor.id));
     }
   };
 
@@ -7953,8 +7967,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     // `view.actors` rather than recomputing visibility makes that structural: it
     // is not possible for the frame and the ledger to disagree, because there is
     // only one list.
-    const eyes = eyesIn(realm.world);
-    const view = projectWorld(realm.world, eyes);
+    const view = projectWorld(realm.world, eyesOf(session, realm.world));
     session.visible = new Set(view.actors.map((actor) => actor.id));
     /**
      * THE LANDMARKS, and they are the reason the first overworld had none.
@@ -9063,8 +9076,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     engine.setConnected(actor.id, true);
 
     // Fogged, and the ledger taken from the frame — see `sendRealm`.
-    const welcomeEyes = eyesIn(world);
-    const view = projectWorld(world, welcomeEyes);
+    const view = projectWorld(world, eyesOf(session, world));
     session.visible = new Set(view.actors.map((actor) => actor.id));
     send(session.socket, {
       v: PROTOCOL_VERSION,

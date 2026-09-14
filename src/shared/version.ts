@@ -502,6 +502,25 @@
  * ═══════════════════════════════════════════════════════════════════════════
 
 
+ * CONSIDERED AND NOT BUMPED (ONLY WHAT YOU CAN SEE). `joined`, `left` and the
+ * boards on `state`, `welcome` and `realm` are built from each viewer's own body
+ * rather than every player in the realm, and PROTOCOL_VERSION STAYS 23.
+ *
+ * The change: a monster only your teammate can see is no longer on your board,
+ * and a pile only they can see is no longer on your floor.
+ *
+ * ═══ WHY THIS DOES NOT FORCE A BUMP ═══
+ * No frame changes shape and none is added: the same frames reach fewer
+ * sockets, carrying fewer actors. A client already copes with an actor it was
+ * never sent — it drops a move for an id it does not hold, and `LeftMsg` has
+ * always meant "walked out of view", never "died". So a client built before
+ * this draws a smaller board that is true, and nothing on it is a lie.
+ *
+ * `SCHEMA_VERSION` STAYS 1. Nothing about sight is saved.
+ *
+ * ═══════════════════════════════════════════════════════════════════════════
+
+
  * 22 -> 23 (TRAPS). `TrapsMsg` is a new outbound frame — every trap THIS
  * VIEWER has found out about — and it is 6 -> 7's argument in its most literal
  * form yet.

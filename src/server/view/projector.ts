@@ -408,12 +408,14 @@ export function projectProps(world: World): readonly PropView[] | undefined {
  * This docblock said *"Today: everyone"* from M1 until this commit, and
  * CLAUDE.md non-negotiable 4 called it an ACCEPTED LEAK.
  *
- * ═══ EYES ARE THE PARTY'S, NOT THE VIEWER'S ═══
- * `mod/class/Game.lua#playerFOV` computes FOV for the player AND every party
- * member, unioned onto one `seens` map. Ours is a co-op game played in a voice
- * channel over a shared Case Log, so the union is both the faithful answer and
- * the only tolerable one — a party that cannot see what its own scout sees would
- * spend the session reading tile coordinates to each other out loud.
+ * ═══ EYES ARE THE VIEWER'S OWN ═══
+ * Upstream computes sight for the character being played and no one else:
+ * `tome/class/Game.lua:1755` calls `self.player:playerFOV()`, which sweeps from
+ * that character's own tile. This block used to say `playerFOV` unioned every
+ * party member onto one `seens` map, and argued a co-op game could tolerate
+ * nothing else; the function does no such thing. The gateway builds every board
+ * from one viewer's body (`eyesOf`). This still takes a LIST, because the frames
+ * still built once per realm — effects, projectiles, zones — pass every player.
  *
  * ═══ PLAYERS ARE NEVER HIDDEN FROM PLAYERS ═══
  * Upstream's party is always on the map because it is always `game.party`. The

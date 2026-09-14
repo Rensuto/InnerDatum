@@ -2,7 +2,7 @@
 // Copyright (C) 2026 Dalton Barraclough
 // Ported from t-engine4 game/engines/default/engine/Actor.lua:47 (`self.sight = t.sight or 20`)
 //                       game/engines/default/engine/Actor.lua:520 (distance AND line)
-//                       game/modules/tome/class/Game.lua (playerFOV — the party's eyes, unioned)
+//                       game/modules/tome/class/Game.lua:1755 (playerFOV: the played character's sight alone)
 // T-Engine4 (C) 2009-2018 Nicolas Casalini "DarkGod" -- https://te4.org/license
 
 import { readFileSync } from 'node:fs';
@@ -12,6 +12,7 @@ import Fastify from 'fastify';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { DEFAULT_SIGHT_RADIUS, canSee } from '../../src/shared/sight.ts';
+import { REVEAL_RADIUS } from '../../src/shared/fog.ts';
 import { projectActors, visibleActorIds } from '../../src/server/view/projector.ts';
 import { createWorld } from '../../src/server/world/world.ts';
 import { createDownedState } from '../../src/server/engine/downed.ts';
@@ -226,10 +227,10 @@ describe('the projected board', () => {
     expect(projectActors(world, [{ x: 1, y: 1 }]).map((a) => a.id)).toContain('p2');
   });
 
-  it('unions the party`s eyes — what your scout sees, you see', () => {
-    // `Game.lua#playerFOV` computes FOV for the player AND every party member
-    // onto one `seens` map. The far husk is invisible from the door and obvious
-    // from where the scout is standing.
+  it('unions a list of eyes, which only the frames still built per realm hand it', () => {
+    // The board is built from ONE viewer's body now (`eyesOf` in the gateway),
+    // and the wire tests below hold that. This is the projector's own rule for a
+    // list, which effects, projectiles and zones still pass.
     const { world, far } = peopled();
     const alone = projectActors(world, [{ x: 1, y: 1 }]).map((a) => a.id);
     const scouted = projectActors(world, [
@@ -304,9 +305,12 @@ afterEach(async () => {
 
 type Client = {
   actorId: string;
+  readonly frames: readonly Record<string, unknown>[];
   send(frame: Record<string, unknown>): void;
   /** Every actor id this client's board holds, replaying the frames it got. */
   board(): Set<string>;
+  /** The cells of the latest `ground` frame, or none if there has not been one. */
+  ground(): Set<string>;
 };
 
 async function hello(port: number): Promise<Client> {
@@ -335,6 +339,7 @@ async function hello(port: number): Promise<Client> {
     if (typeof id === 'string') {
       return {
         actorId: id,
+        frames,
         send(frame): void {
           socket.send(JSON.stringify({ v: PROTOCOL_VERSION, ...frame }));
         },
@@ -369,11 +374,50 @@ async function hello(port: number): Promise<Client> {
           }
           return held;
         },
+        ground(): Set<string> {
+          const last = [...frames].reverse().find((f) => f['t'] === 'ground');
+          const rows = last?.['items'];
+          const cells = new Set<string>();
+          if (!Array.isArray(rows)) return cells;
+          for (const row of rows as { cell?: unknown }[]) {
+            if (Array.isArray(row.cell)) cells.add(row.cell.join(','));
+          }
+          return cells;
+        },
       };
     }
     if (Date.now() >= deadline) throw new Error('no welcome came back');
     await sleep(5);
   }
+}
+
+/**
+ * A body's tile and a tile beside it, both free floor, in sight of each other,
+ * and more than `minDist` from every tile in `from`.
+ *
+ * FAR BY DISTANCE RATHER THAN BY A WALL, so the fixture leans on nothing about
+ * the map's walls: past the sight radius nothing is in sight, and past the
+ * overworld's reveal disc nothing is remembered either.
+ */
+function farPair(
+  world: World,
+  from: readonly { x: number; y: number }[],
+  minDist: number,
+): { body: { x: number; y: number }; lurk: { x: number; y: number } } {
+  const level = world.level;
+  const free = (x: number, y: number): boolean =>
+    canWalk(level, x, y) && world.actorAt(x, y) === undefined;
+  const far = (x: number, y: number): boolean =>
+    from.every((tile) => (tile.x - x) ** 2 + (tile.y - y) ** 2 > minDist * minDist);
+  for (let y = 1; y < level.h - 1; y += 1) {
+    for (let x = 1; x < level.w - 2; x += 1) {
+      if (!free(x, y) || !free(x + 1, y) || !far(x, y) || !far(x + 1, y)) continue;
+      const body = { x, y };
+      const lurk = { x: x + 1, y };
+      if (canSee(level, body, lurk)) return { body, lurk };
+    }
+  }
+  throw new Error('no free pair of tiles that far from everyone');
 }
 
 describe('a monster walking into and out of sight', () => {
@@ -435,6 +479,108 @@ describe('a monster walking into and out of sight', () => {
     expect(client.board(), 'it left sight and stayed on the board').not.toContain(lurker.id);
   });
 
+  it('does not put a monster on your board that only your teammate can see', async () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * EACH PLAYER SEES WITH THEIR OWN EYES. This file used to assert the union.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * Upstream computes sight for the character being played and no one else
+     * (`Game.lua:1755` calls `self.player:playerFOV()`). The board was built
+     * from every player in the realm instead, so a monster a teammate had found
+     * across the map was on everybody's screen.
+     */
+    const mine = await hello(server.port);
+    const theirs = await hello(server.port);
+    const world = server.realms.overworld.world;
+    const me = world.getActor(mine.actorId);
+    const scout = world.getActor(theirs.actorId);
+    if (me === undefined || scout === undefined) throw new Error('no body');
+    const { body, lurk } = farPair(world, [me], REVEAL_RADIUS + 2);
+    scout.x = body.x;
+    scout.y = body.y;
+    const lurker = world.addMonster('lurker', {
+      name: 'Index Husk',
+      sprite: 'enemy_index_husk_s',
+      x: lurk.x,
+      y: lurk.y,
+      profile: AiProfile.MeleeChaser,
+      aggroRange: 0,
+    });
+
+    theirs.send({ t: 'hold' });
+    await sleep(250);
+    mine.send({ t: 'hold' });
+    await sleep(250);
+
+    expect(theirs.board(), 'the scout standing beside it was not shown it').toContain(lurker.id);
+    expect(mine.board(), 'a monster only your teammate can see is on your board').not.toContain(
+      lurker.id,
+    );
+  });
+
+  it('does not put a pile on your floor that only your teammate can see', async () => {
+    const mine = await hello(server.port);
+    const theirs = await hello(server.port);
+    const world = server.realms.overworld.world;
+    const me = world.getActor(mine.actorId);
+    const scout = world.getActor(theirs.actorId);
+    if (me === undefined || scout === undefined) throw new Error('no body');
+    const { body, lurk } = farPair(world, [me], REVEAL_RADIUS + 2);
+    scout.x = body.x;
+    scout.y = body.y;
+    world.addGroundItem(lurk, 'item_watchmans_cap');
+    const cell = `${String(lurk.x)},${String(lurk.y)}`;
+
+    theirs.send({ t: 'hold' });
+    await sleep(250);
+    mine.send({ t: 'hold' });
+    await sleep(250);
+
+    expect(theirs.ground(), 'the scout standing beside it was not shown it').toContain(cell);
+    expect(mine.ground(), 'a pile only your teammate can see is on your floor').not.toContain(cell);
+  });
+
+  it('hands a player who joins a board built from their own body alone', async () => {
+    const theirs = await hello(server.port);
+    const overworld = server.realms.overworld;
+    const world = overworld.world;
+    const scout = world.getActor(theirs.actorId);
+    if (scout === undefined) throw new Error('no body');
+    // FAR FROM EVERY SPAWN, because the joiner will stand on or beside one.
+    const { body, lurk } = farPair(world, [...overworld.spawns, scout], DEFAULT_SIGHT_RADIUS + 4);
+    scout.x = body.x;
+    scout.y = body.y;
+    const lurker = world.addMonster('lurker', {
+      name: 'Index Husk',
+      sprite: 'enemy_index_husk_s',
+      x: lurk.x,
+      y: lurk.y,
+      profile: AiProfile.MeleeChaser,
+      aggroRange: 0,
+    });
+    theirs.send({ t: 'hold' });
+    await sleep(250);
+    expect(theirs.board(), 'the scout standing beside it was not shown it').toContain(lurker.id);
+
+    const mine = await hello(server.port);
+    const rows = mine.frames.find((f) => f['t'] === 'welcome')?.['actors'];
+    const welcomed = Array.isArray(rows) ? (rows as { id?: unknown }[]).map((row) => row.id) : [];
+    expect(welcomed.length, 'the welcome carried no board at all').toBeGreaterThan(0);
+    expect(welcomed, 'the welcome board').not.toContain(lurker.id);
+    await sleep(150);
+    // AND THE REALM FRAME'S OWN LIST, not only the board it leaves: the next
+    // sight pass would send `left` for a monster this frame should never have
+    // carried, and the board would look right while the frame was wrong.
+    const realmRows = mine.frames.find((f) => f['t'] === 'realm')?.['actors'];
+    const arrived = Array.isArray(realmRows)
+      ? (realmRows as { id?: unknown }[]).map((row) => row.id)
+      : [];
+    expect(arrived.length, 'the realm frame carried no board at all').toBeGreaterThan(0);
+    expect(arrived, 'the realm board').not.toContain(lurker.id);
+    expect(mine.board(), 'the board after the realm frame').not.toContain(lurker.id);
+  });
+
   it('and you are always on your own board', async () => {
     const client = await hello(server.port);
     client.send({ t: 'hold' });
@@ -448,6 +594,24 @@ describe('a monster walking into and out of sight', () => {
 // ---------------------------------------------------------------------------
 
 describe('every player-facing send is fogged', () => {
+  it('builds no board and no floor from every player in the realm', () => {
+    // `eyesIn` pools every player's eyes, and only the three frames still built
+    // once per realm may use it. A board or a floor built from it would show a
+    // player what only a teammate can see.
+    const text = readFileSync(new URL('../../src/server/net/gateway.ts', import.meta.url), 'utf8')
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/\/\/[^\n]*/g, '');
+    const uses = [...text.matchAll(/eyesIn\(/g)].map((m) =>
+      text.slice(Math.max(0, m.index - 160), m.index + 40),
+    );
+    expect(uses.length, 'nothing pools eyes any more, so delete `eyesIn`').toBeGreaterThan(0);
+    const strays = uses.filter((window) => !/project(?:Effects|Projectiles|Zones)\(/.test(window));
+    expect(
+      strays,
+      'the pooled eyes feed something other than effects, projectiles or zones',
+    ).toEqual([]);
+  });
+
   it('no snapshot reaches a socket unfiltered', () => {
     /**
      * `projectActors(world)` with no eyes is the WHOLE BOARD, and it is a

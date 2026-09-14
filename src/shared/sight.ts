@@ -265,10 +265,10 @@ export function tilesInSight(
  *   SEEN is `canSee` at `DEFAULT_SIGHT_RADIUS` (10), from each of `eyes`.
  *
  * THE SERVER REMEMBERS BEFORE IT ASKS. Every pump writes each player's sight
- * into their memory before any frame is built, so for the viewer's own eyes the
- * second term adds nothing. It adds what OTHER eyes in `eyes` can see, it covers
- * the moment before the first pump, and it is kept because upstream ORs the two
- * (`engine/Object.lua:28-29`).
+ * into their memory before any frame is built, and the gateway hands this the
+ * viewer's own eyes, so the second term adds nothing once a pump has run. It
+ * covers the moment before the first one, and it is kept because upstream ORs
+ * the two (`engine/Object.lua:28-29`).
  *
  * ═══ AND THIS PARAGRAPH USED TO SAY THE OPPOSITE ═══
  * It read *"THOSE RADII DISAGREE BY EIGHT TILES"* and flagged a divergence from
