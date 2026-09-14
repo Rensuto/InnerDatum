@@ -1359,6 +1359,17 @@ const B64_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz012345
  * before one arrives. See `client/vision.ts`.
  */
 let vision: VisionWindow | null = null;
+
+/** Nothing remembered: the answer before a map has arrived. */
+const NO_MEMORY: ReadonlySet<string> = new Set<string>();
+
+/**
+ * What this viewer remembers of the map on screen, keyed `"x,y"`. Every travel
+ * target is checked against it — see `travelTargetAllowed`.
+ */
+function rememberedHere(): ReadonlySet<string> {
+  return (currentRealmId === null ? undefined : explored.get(currentRealmId)) ?? NO_MEMORY;
+}
 let connection = 'connecting';
 let lastError: string | null = null;
 
@@ -2999,7 +3010,7 @@ function coveredByPanel(layout: HudLayout, px: number, py: number): boolean {
 function minimapCardAt(px: number, py: number, viewW: number): HoverCard | null {
   const tile = minimapTileAt(px, py, viewW);
   if (tile === null) return null;
-  const walkable = level !== null && travelTargetAllowed(level, tile);
+  const walkable = level !== null && travelTargetAllowed(level, tile, rememberedHere());
   return {
     title: `${String(tile.x)},${String(tile.y)}`,
     meta: walkable ? 'click to travel here' : 'you cannot walk there',
@@ -6875,7 +6886,7 @@ async function boot(): Promise<void> {
       h: here.h,
       // THE SAME PREDICATE THE VERB MENU GREYS ITS TRAVEL ROW ON, so
       // "somewhere I can walk" is one question with one answer.
-      passable: (x, y) => travelTargetAllowed(here, { x, y }),
+      passable: (x, y) => travelTargetAllowed(here, { x, y }, rememberedHere()),
       seen: explored.get(currentRealmId) ?? new Set<string>(),
       items: ground
         .filter((item) => item.cell[0] !== me.x || item.cell[1] !== me.y)
@@ -8681,7 +8692,7 @@ async function boot(): Promise<void> {
     return {
       kind: 'tile',
       tile,
-      walkable: level !== null && travelTargetAllowed(level, tile),
+      walkable: level !== null && travelTargetAllowed(level, tile, rememberedHere()),
       loot: lootAt(tile),
       pile: pileAt(tile),
     };
@@ -12985,7 +12996,7 @@ async function boot(): Promise<void> {
         // A REFUSAL IN WORDS, not a dead click. Water and walls are on this map
         // and pointing at one is an ordinary thing to do; `travelTargetAllowed`
         // is the same question the verb menu greys its own row on.
-        if (level === null || !travelTargetAllowed(level, mapped)) {
+        if (level === null || !travelTargetAllowed(level, mapped, rememberedHere())) {
           showNotice('you cannot walk there');
           return;
         }
@@ -13084,7 +13095,13 @@ async function boot(): Promise<void> {
       return;
     }
 
-    const intent = mouseIntentAt({ self: me, tile, actors: [...actors.values()], level });
+    const intent = mouseIntentAt({
+      self: me,
+      tile,
+      actors: [...actors.values()],
+      level,
+      remembered: rememberedHere(),
+    });
     switch (intent.kind) {
       case MouseIntentKind.Bump:
         // ONE `move`, and nothing else. Walking into an adjacent hostile IS the

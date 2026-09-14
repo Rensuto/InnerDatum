@@ -689,7 +689,7 @@ describe('the minimap is wired to something', () => {
     expect(body).toContain('beginTravel(mapped, false)');
     // AND IT REFUSES IN WORDS on ground you cannot walk on, rather than being a
     // dead click on the water that is drawn right there on the map.
-    expect(body).toContain('travelTargetAllowed(level, mapped)');
+    expect(body).toContain('travelTargetAllowed(level, mapped, rememberedHere())');
   });
 
   it('sits after the panel guard and before shift-click and targeting', () => {
@@ -796,7 +796,7 @@ describe('auto-explore walks through the travel system', () => {
     // explorer and not two.
     const start = at('function exploreLeg(): void {');
     const arm = CODE.slice(start, CODE.indexOf('function beginTravel(', start));
-    expect(arm).toContain('travelTargetAllowed(here, { x, y })');
+    expect(arm).toContain('travelTargetAllowed(here, { x, y }, rememberedHere())');
   });
 
   it('is CONTINUOUS: the arrival asks for the next frontier', () => {
@@ -1343,5 +1343,32 @@ describe('the action bar’s cogwheel', () => {
   it('saves its style and reads it back, snapped', () => {
     expect(between('function savePanelLayout(): void {', '\n  }')).toContain('hotbarStyle:');
     expect(CODE).toContain('snapHotbarStyle(msg.panels.hotbarStyle)');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// TRAVEL ENDS ONLY ON REMEMBERED GROUND
+// ---------------------------------------------------------------------------
+
+describe('travel ends only on ground this viewer remembers', () => {
+  /**
+   * `travelTargetAllowed` takes the memory as an argument, so the rule is tested
+   * as a rule in mouseintent.test.ts. What only this file can see is that main.ts
+   * hands it the server's memory of the map on screen, at every travel target.
+   */
+  it('reads the server’s memory of this map', () => {
+    expect(between('function rememberedHere(): ReadonlySet<string> {', '\n}')).toContain(
+      'explored.get(currentRealmId)',
+    );
+  });
+
+  it('asks it for the click, the minimap and the verb menu', () => {
+    expect(CODE).toContain('remembered: rememberedHere(),');
+    expect(CODE).toContain(
+      'const walkable = level !== null && travelTargetAllowed(level, tile, rememberedHere());',
+    );
+    expect(CODE).toContain(
+      'walkable: level !== null && travelTargetAllowed(level, tile, rememberedHere()),',
+    );
   });
 });

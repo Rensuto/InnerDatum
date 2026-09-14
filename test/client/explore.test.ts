@@ -276,7 +276,7 @@ describe('the flood and the walk agree about a door', () => {
     from: { x: 1, y: 1 },
     w: W,
     h: 3,
-    passable: (x, y) => travelTargetAllowed(level, { x, y }),
+    passable: (x, y) => travelTargetAllowed(level, { x, y }, seen),
     seen,
     items: [],
     threat: null,

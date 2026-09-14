@@ -85,10 +85,15 @@ export type MouseSnapshot = {
   /** Every body the client knows about, corpses included. */
   readonly actors: readonly ActorView[];
   readonly level: LevelView | null;
+  /**
+   * The tiles this viewer remembers on this map, keyed `"x,y"` — the server's
+   * memory, as `client/vision.ts` keeps it. Travel may only end on one.
+   */
+  readonly remembered: ReadonlySet<string>;
 };
 
 /**
- * MAY TRAVEL END HERE? Today: exactly `canRoute`.
+ * MAY TRAVEL END HERE? On ground this viewer remembers, that `canRoute` admits.
  *
  * ═══════════════════════════════════════════════════════════════════════════
  * IT WAS `canWalk`, AND A DOOR IS WHY IT IS NOT ANY MORE
@@ -112,47 +117,34 @@ export type MouseSnapshot = {
  * which is precisely the property this function exists to have.
  *
  * ===========================================================================
- * THIS IS THE SINGLE PLACE AN M6 "HAS THIS TILE BEEN SEEN" CLAUSE LANDS
+ * AND THE "HAS THIS TILE BEEN SEEN" CLAUSE HAS LANDED HERE, AS IT WAS MEANT TO
  * ===========================================================================
- * HALF OF THIS ARRIVED. `projectActors` now filters to what the party can see,
- * so a monster in the dark is genuinely absent from the client's actor map and
- * cannot be clicked. `projectLevel` still sends the whole map, so "can I click
- * into an unseen TILE" remains open — and that is the clause this predicate
- * still exists to hold, in one place, at one cost.
+ * This note said the clause would land in this one predicate, and then found it
+ * could not: the client kept two memories — a disc for the map, a sight sweep
+ * for the playfield — and a click gated on either would disagree with a surface
+ * drawn from the other. There is one memory now, the server's, and every
+ * surface draws it: the playfield, the minimap and the region map.
  *
- * SO NOTHING ELSE IN THIS FEATURE MAY ASK THE QUESTION DIRECTLY. Not the click
- * handler, not the path preview, not the verb menu: they call this. A second
- * site that tests `canWalk` for the same purpose is a site that will still allow
- * travel into unexplored dark on the day this one stops.
+ * So travel may end only on a tile this viewer remembers, as this port ruled.
  *
- * ═══════════════════════════════════════════════════════════════════════════
- * AND "IN ONE PLACE" TURNS OUT TO BE FALSE. THE CLAUSE IS TWO CLAUSES.
- * ═══════════════════════════════════════════════════════════════════════════
- * The paragraph above was written when there was one memory. There are two now
- * and they answer different questions, because the surfaces do:
- *
- *   `explored`  — a DISC at `REVEAL_RADIUS`, no line of sight, per realm. What
- *                 the MINIMAP and the region map draw. `fog.ts` defends the
- *                 shape in one line: *"Generous: this is a map, not a torch."*
- *   `witnessed` — `canSee` at `DEFAULT_SIGHT_RADIUS`, per realm. What the
- *                 PLAYFIELD draws, because a disc on the playfield would show
- *                 the floor plan of a building you had walked past the outside
- *                 of.
- *
- * Four of this predicate's five callers are tactical (the click, the verb menu,
- * `VerbTarget.walkable`, auto-explore's flood) and two are on the MINIMAP — a
- * hover card and a click. Gating all five on `witnessed` would refuse a minimap
- * click to a place the minimap is drawing; gating them on `explored` would
- * permit a playfield click into ground the playfield has blacked out. Neither
- * is one clause.
- *
- * So the seen-gate is NOT ADDED YET, and this note is the finding rather than an
- * apology: whoever adds it has to split this function or hand it the memory,
- * and either way the "one place, one cost" promise above is the thing that has
- * to be re-argued rather than relied on.
+ * ═══ UPSTREAM DOES NOT REFUSE; IT ASSUMES ═══
+ * ToME's click-to-move paths with `use_has_seen` (PlayerMouse.lua:71), and its
+ * A* counts a grid the player has not seen as open (engine/Astar.lua:128-134).
+ * That is safe there because its client never holds terrain it has not shown.
+ * This client is sent the whole map, so a route that found or failed to find a
+ * way through the dark would say what is in it. Refusing the destination keeps
+ * the dark dark.
+ * Every caller shares it: the click, the minimap click and hover, the verb menu
+ * and auto-explore. Explore is not starved by it: its flood walks remembered
+ * ground and heads for the edge of it, which is a remembered tile beside an
+ * unseen one.
  */
-export function travelTargetAllowed(level: LevelView, tile: TileXY): boolean {
-  return canRoute(level, tile.x, tile.y);
+export function travelTargetAllowed(
+  level: LevelView,
+  tile: TileXY,
+  remembered: ReadonlySet<string>,
+): boolean {
+  return canRoute(level, tile.x, tile.y) && remembered.has(`${String(tile.x)},${String(tile.y)}`);
 }
 
 function none(reason: string): MouseIntent {
@@ -189,6 +181,11 @@ export function mouseIntentAt(snapshot: MouseSnapshot): MouseIntent {
     if (dir !== undefined) return { kind: MouseIntentKind.Bump, dir };
   }
 
-  if (!travelTargetAllowed(level, tile)) return none('that is a wall');
+  if (!canRoute(level, tile.x, tile.y)) return none('that is a wall');
+  // A DIFFERENT SENTENCE, because it is a different reason: the ground may be
+  // open, and nothing on this client says so.
+  if (!travelTargetAllowed(level, tile, snapshot.remembered)) {
+    return none('you have not seen that ground');
+  }
   return { kind: MouseIntentKind.Travel, to: tile, stopShort: occupant !== undefined };
 }

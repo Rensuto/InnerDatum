@@ -85,11 +85,20 @@ function detective(id: string, x: number, y: number): ActorView {
   };
 }
 
+/** Every tile of `level`, as a memory — a viewer who has seen the whole floor. */
+function everyTile(level: LevelView): Set<string> {
+  const out = new Set<string>();
+  for (let y = 0; y < level.h; y += 1) {
+    for (let x = 0; x < level.w; x += 1) out.add(`${String(x)},${String(y)}`);
+  }
+  return out;
+}
+
 function snapshot(
   tile: { x: number; y: number },
   actors: readonly ActorView[] = [],
 ): MouseSnapshot {
-  return { self: SELF, tile, actors, level: OPEN };
+  return { self: SELF, tile, actors, level: OPEN, remembered: everyTile(OPEN) };
 }
 
 /**
@@ -164,17 +173,35 @@ describe('mouseIntentAt', () => {
   });
 
   it('says nothing can be clicked before the board arrives', () => {
-    const reason = reasonOf(mouseIntentAt({ self: null, tile: SELF, actors: [], level: null }));
+    const reason = reasonOf(
+      mouseIntentAt({ self: null, tile: SELF, actors: [], level: null, remembered: new Set() }),
+    );
     expect(reason.length).toBeGreaterThan(0);
   });
 });
 
 describe('travelTargetAllowed', () => {
-  it('is terrain today, and is the only place the M6 fog clause will land', () => {
-    expect(travelTargetAllowed(OPEN, { x: 4, y: 3 })).toBe(true);
-    expect(travelTargetAllowed(OPEN, { x: 0, y: 0 })).toBe(false);
-    // Fails closed off-grid, because `canWalk` does.
-    expect(travelTargetAllowed(OPEN, { x: 99, y: 99 })).toBe(false);
+  it('is terrain AND memory: travel ends only on routable ground this viewer remembers', () => {
+    const seen = everyTile(OPEN);
+    expect(travelTargetAllowed(OPEN, { x: 4, y: 3 }, seen)).toBe(true);
+    expect(travelTargetAllowed(OPEN, { x: 0, y: 0 }, seen)).toBe(false);
+    // Fails closed off-grid, because `canRoute` does.
+    expect(travelTargetAllowed(OPEN, { x: 99, y: 99 }, seen)).toBe(false);
+    // THE CLAUSE THAT LANDED: open ground nobody has seen is not a destination.
+    expect(travelTargetAllowed(OPEN, { x: 4, y: 3 }, new Set())).toBe(false);
+  });
+
+  it('says why a click into unseen ground is refused, and does not call it a wall', () => {
+    const intent = mouseIntentAt({
+      self: SELF,
+      tile: { x: 6, y: 3 },
+      actors: [],
+      level: OPEN,
+      remembered: new Set(),
+    });
+    expect(reasonOf(intent)).toBe('you have not seen that ground');
+    // ...while a real wall that has been seen still says it is a wall.
+    expect(reasonOf(mouseIntentAt(snapshot({ x: 0, y: 0 })))).toBe('that is a wall');
   });
 });
 
@@ -203,17 +230,23 @@ describe('a door is a travel destination', () => {
   };
 
   it('lets travel end on a shut door, which the walk opens on its way in', () => {
-    expect(travelTargetAllowed(DOOR_MAP, { x: 5, y: 3 })).toBe(true);
+    expect(travelTargetAllowed(DOOR_MAP, { x: 5, y: 3 }, everyTile(DOOR_MAP))).toBe(true);
   });
 
   it('and the click layer offers a walk rather than calling it a wall', () => {
-    const intent = mouseIntentAt({ self: SELF, tile: { x: 5, y: 3 }, actors: [], level: DOOR_MAP });
+    const intent = mouseIntentAt({
+      self: SELF,
+      tile: { x: 5, y: 3 },
+      actors: [],
+      level: DOOR_MAP,
+      remembered: everyTile(DOOR_MAP),
+    });
     // ADJACENT, so this is the step case rather than the travel case — either
     // way it is a MOVE, and the claim is that it is not `None('that is a wall')`.
     expect(intent.kind).not.toBe(MouseIntentKind.None);
   });
 
   it('still refuses an actual wall, so this did not simply open everything', () => {
-    expect(travelTargetAllowed(DOOR_MAP, { x: 0, y: 0 })).toBe(false);
+    expect(travelTargetAllowed(DOOR_MAP, { x: 0, y: 0 }, everyTile(DOOR_MAP))).toBe(false);
   });
 });
