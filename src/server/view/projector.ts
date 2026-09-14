@@ -1351,26 +1351,17 @@ function toClassOptionView(definition: ClassDef): ClassOptionView {
 // ---------------------------------------------------------------------------
 
 /*
- * WHY THESE TWO ARE WHOLE-WORLD AND NOT PER-VIEWER, TODAY.
+ * WHICH OF THESE TWO IS PER VIEWER, AND WHY THE OTHER IS NOT.
  *
- * MVP ships SHARED PARTY FOV (game-design.md § 12 — per-player FOV is an M6
- * refinement that "roughly quadruples netcode complexity"). Under shared FOV
- * every recipient's answer to "who has what on them" is byte-identical, so
- * building the frame once and broadcasting it is not a shortcut, it is the
- * correct amount of work — and protocol.ts's `EffectsMsg` and `PartyMsg` are
- * `BroadcastMsg` members for exactly that reason.
+ * THE BADGE ROW IS PER VIEWER. It was built once and broadcast while the party
+ * shared one sight, when every recipient's answer to "who has what on them" was
+ * the same. Sight is each player's own now, so `projectEffects` takes the
+ * recipient's visible set and `EffectsMsg` is a `ViewerMsg`: a badge is a fact
+ * about a body, and a body you cannot see has no badges you can see.
  *
- * FOV HAS LANDED FOR THE ACTOR LIST AND NOT FOR THIS, so the direction of the
- * argument has REVERSED and the note has to say so: `projectActors` now filters
- * and `projectEffects` does not, which means this frame describes the timed effects on
- * monsters the recipient cannot see. It is a live leak, not a parked one.
- *
- * The fix is unchanged and still small: `projectEffects` gains the eyes and a
- * `visibleActorIds` test, and `EffectsMsg` moves from `BroadcastMsg` to
- * `ViewerMsg` — which `Exclude`-derives a compile error at every site that was
- * broadcasting it. What FOV actually cost in the gateway (a per-session ledger
- * and a transition machine) it will NOT cost again here: effects are keyed by
- * actor id, and the ledger that says which ids a client holds already exists.
+ * THE PARTY PANEL IS NOT, because players are never fogged from each other.
+ * Everyone's answer to "who is on this floor and how are they" is the same, so
+ * `PartyMsg` is still built once and broadcast.
  *
  * A BADGE IS NOT A LEAK; THE MECHANICS BEHIND IT WOULD BE. What goes on the wire
  * is the icon, the name and the turns remaining. The save that was rolled, the
@@ -1575,27 +1566,15 @@ export function projectEffects(
  * the only representation that survives a park, a reconnect and a resync, which
  * are the three moments an orb is most likely to be in flight.
  *
- * ═══ FOV SEAM, AND IT IS THE ONE PLACE THE FILTER WILL GO (M6) ═══
+ * ═══ FOV SEAM, AND THIS IS WHERE THE FILTER WENT ═══
  *
  * Upstream marks a projectile `display_on_seen = true`, `display_on_remember =
  * false`, `display_on_unknown = false` (engine/Projectile.lua:29-31): an orb is drawn
  * on tiles you can SEE RIGHT NOW and is never remembered, because where a bolt
- * was two turns ago is not where it is. Ours ships the whole sky to everybody,
- * and the sentence that used to excuse that — *"leaks nothing `projectActors`
- * does not already leak"* — is now FALSE IN THE OTHER DIRECTION: the actor list
- * is filtered and the sky is not, so an orb is currently the most direct
- * position leak on the wire.
- *
- * THE DAY PER-PLAYER FOV LANDS, THE FILTER IS AN EDIT TO THIS BODY AND TO
- * NOTHING ELSE: this function takes the viewer and admits only orbs whose
- * CURRENT tile `visible(viewer, tile)` allows, with no remembered-tile fallback.
- * An orb's tile is a POSITION, and an orb crossing an unexplored room says
- * something is shooting in it and roughly where from — which is the shooter's
- * position, arrived at by inference, and therefore exactly the class of leak
- * CLAUDE.md non-negotiable 4 exists for. `ProjectilesMsg` moves from
- * `BroadcastMsg` to `ViewerMsg` in the same commit; `BroadcastMsg` is
- * `Exclude`-derived, so that move is one line in protocol.ts and a compile error
- * at every site that was broadcasting it.
+ * was two turns ago is not where it is. So this takes the viewer's eyes and
+ * admits only orbs whose CURRENT tile they can see, with no remembered-tile
+ * fallback, and `ProjectilesMsg` is a `ViewerMsg`. An orb crossing an unexplored
+ * room would say something is shooting in it, and roughly where from.
  *
  * ═══ TURNS, NEVER MILLISECONDS ═══
  *
@@ -1815,7 +1794,7 @@ export function projectTerrain(world: World): TerrainMsg {
 /**
  * ═══════════════════════════════════════════════════════════════════════════
  * EVERY ITEM ON THE FLOOR. COMPLETE AND ABSOLUTE, exactly like
- * `projectProjectiles` directly above — and it is a BROADCAST, not a gate.
+ * `projectProjectiles` directly above, and gated by what this player knows.
  * ═══════════════════════════════════════════════════════════════════════════
  *
  * An empty array means the floor is clear, and a client REPLACES its list
@@ -1825,28 +1804,19 @@ export function projectTerrain(world: World): TerrainMsg {
  * walk the length of the map to pick up a thing that is not there. NEVER A
  * PATCH — there is no "taken" or "dropped" message and there must not be one.
  *
- * ═══ IT IS NOT FOV-GATED AND THIS COMMENT WILL NOT PRETEND OTHERWISE ═══
- * Ground items go to the whole room, matching the accepted leak `ProjectilesMsg`
- * already carries (protocol.ts:846-865 — broadcast today, with the written
- * caveat that it moves to `ViewerMsg` the day per-player FOV lands). The caveat
- * applies here VERBATIM and it is sharper: an orb crossing an unexplored room
- * says something is shooting in it; a coat lying in one says something DIED in
- * it, and it stays there for the rest of the delve. This used to be excused by
- * fog of war being level-wide — *"leaks nothing `projectActors` does not already
- * leak"*. THAT EXCUSE IS SPENT: the actor list is filtered now and this is not,
- * so a coat in an unexplored room is a live leak. The fix is unchanged — this
- * function takes the eyes, admits only items on tiles those eyes allow, and
- * `GroundMsg` moves from `BroadcastMsg` to `ViewerMsg` in the same commit.
- * `BroadcastMsg` is `Exclude`-derived, so that is one line in protocol.ts plus a
- * compile error at every site that was broadcasting it.
+ * ═══ GATED BY MEMORY, NOT BY SIGHT ═══
+ * `engine/Object.lua:28-29` gives objects `display_on_remember = true`, so a pile
+ * shows on any tile this character has seen, now or before: `knownTile`. A coat
+ * lying in a room nobody has entered would say something died in it, so it is
+ * not sent, and `GroundMsg` is a `ViewerMsg` built from each player's memory.
  *
- * ═══ IT IS BROADCAST FOR A SECOND, POSITIVE REASON TOO ═══
+ * ═══ ONE FLOOR FOR EVERYBODY, FOR A POSITIVE REASON ═══
  * The pile is UNOWNED and shared, first pickup wins (see `DropSchema`, which
  * labels that rule a DEVIATION with no upstream citation — ToME is
  * single-player and has no party to own anything). Per-player instancing would
  * triple the effective drop rate and delete the sentence "you take it, I've got
  * a coat", which is the entire social point of a game played in a voice
- * channel. One floor, one frame, everybody looking at the same thing.
+ * channel. One floor, seen through each player's own memory of it.
  *
  * ═══ INSERTION ORDER, AND IT IS THE PICKUP ORDER ═══
  * `world.groundItems()` hands back the world's own stable insertion order, which

@@ -1463,9 +1463,10 @@ export type LogLane = (typeof LogLane)[keyof typeof LogLane];
  *
  * FOV SEAM, AND IT IS THE SHARP ONE. architecture.md is explicit that the event
  * log leaks visibility more often than the tile grid does — "you hear a door
- * open" is a position. MVP ships SHARED PARTY FOV (game-design.md § 12), so one
- * line list is true for the whole party and `log` is broadcast. When per-player
- * FOV lands at M6 this frame becomes per-recipient and joins `ViewerMsg`.
+ * open" is a position. So the Record lane is written per viewer (`recordTo`): a
+ * line naming nobody this player holds is not sent, and an unseen side reads
+ * "something". `LogMsg` stays broadcastable for the narration that names only
+ * players, who are never fogged.
  */
 export type LogLine = {
   /**
@@ -2078,7 +2079,7 @@ export type PingedMsg = {
  * the body. It is what the map layer reads to draw a prone body and what the
  * revive prompt reads to know somebody is lying next to you — and reviving a
  * stranger is legal and always was, so that list must stay level-wide. It is
- * BROADCAST, because under shared party FOV it is identical for everyone.
+ * BROADCAST, because players are never fogged, so it is identical for everyone.
  *
  * `party_state` is YOUR PARTY: the people who share your barrier, who is
  * leading, and the invites waiting on your answer. It is per-recipient — a
@@ -6145,24 +6146,16 @@ export type ProgressMsg = {
  * wire in two named switch arms in src/server/turn-engine.ts, each carrying the
  * written argument that the floor is a snapshot frame's job.
  *
- * ═══ IT IS A BROADCAST TODAY AND MUST MOVE TO `ViewerMsg` WITH PER-PLAYER FOV ═══
- * Verbatim the caveat `ProjectilesMsg` carries, and it applies here more sharply.
- * A floor item's tile is a POSITION, and a position is exactly the class of fact
- * the FOV projector exists to gate: a coat appearing in an unexplored room says
- * something died in it. Fog of war is still level-wide (there is one `LevelView`
- * and one actor list for everybody), so shipping this to the room leaks nothing
- * that `ActorView` does not already leak. THE DAY PER-PLAYER FOV LANDS, THIS
- * FRAME MOVES INTO `ViewerMsg` IN THE SAME COMMIT — `BroadcastMsg` is
- * `Exclude`-derived, so that move is one line here and a compile error everywhere
- * it was being broadcast. src/server/view/projector.ts's header states the same
- * accepted-leak argument from the server's side, and names the three frames
- * (actors, projectiles, ground) that move together when FOV lands.
+ * ═══ PER VIEWER, BY MEMORY ═══
+ * A floor item's tile is a POSITION, and a coat appearing in an unexplored room
+ * says something died in it. So each player is sent the piles on tiles they have
+ * seen, now or before (`knownTile`), and this is a `ViewerMsg`.
  *
- * ═══ IT IS BROADCAST RATHER THAN PER-PLAYER FOR A SECOND, POSITIVE REASON ═══
+ * ═══ ONE FLOOR FOR EVERYBODY, FOR A POSITIVE REASON ═══
  * The pile is unowned and shared. Per-player instancing would triple the
  * effective drop rate and delete the sentence "you take it, I've got a coat",
  * which is the entire social point of a game played in a voice channel. One floor,
- * one frame, everybody looking at the same thing.
+ * seen through each player's own memory of it.
  */
 export type GroundMsg = {
   v: typeof PROTOCOL_VERSION;

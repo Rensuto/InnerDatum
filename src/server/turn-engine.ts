@@ -1638,9 +1638,9 @@ function buildRestView(
 ): RestView {
   /**
    * THE NEAREST HOSTILE THIS BODY CAN SEE. Upstream keeps a `spotted` list
-   * maintained by its FOV pass (Player.lua:974); we have no such list yet
-   * (CLAUDE.md is blunt that per-player FOV is M6), so this asks the same
-   * question directly of every actor in the realm.
+   * maintained by its FOV pass (Player.lua:974). The server keeps each player's
+   * own sight now, but this still asks the question directly of every actor in
+   * the realm, with the same `canSee` that sight is built from.
    *
    * NEAREST rather than first, because the bearing is the whole point of the
    * message — pointing a player at a husk across the room while one stands

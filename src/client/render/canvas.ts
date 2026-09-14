@@ -1042,19 +1042,12 @@ const LOS_SHADE_ALPHA = 0.55;
  * with `map:apply(x, y, fovdist[sqdist])` for everything in sight, and anything
  * else falls to `color_obscure`.
  *
- * ═══ THIS IS THE `seens` HALF ONLY, AND SAYING SO IS THE POINT ═══
- * Upstream has THREE states — seen now, remembered, never seen — and the third
- * draws nothing at all. Ours has two, because "remembered" here is still
- * EVERYTHING: the client holds the whole map, so the honest rendering of what it
- * knows is "in sight, or obscured".
- *
- * The missing third state is not a rendering job. `fog.ts`'s bitset is a pure
- * DISC with no line of sight — its own note calls it *"a map, not a torch"* —
- * which is right for the minimap it feeds and useless here: it would uncover
- * whole rooms through their walls. A never-seen state needs a second,
- * LOS-gated, per-character memory on the server, which is `docs/tome-port.md`'s
- * *"per-player FOV for correct fog-of-war netcode"* and a separate piece of
- * work. Until it exists this change makes no claim it cannot keep.
+ * ═══ THREE STATES, AS UPSTREAM HAS ═══
+ * Seen now, remembered, and never seen, which draws nothing at all. This began
+ * as two, "in sight or obscured", because the client's only memory was a disc
+ * with no line of sight. The server keeps each player's memory now, by sight,
+ * and sends it in the `vision` window, so `paintLight` draws the third state
+ * too: see `client/vision.ts`.
  */
 const OBSCURE_WASH_ALPHA = 1 - MAP_OBSCURE_BRIGHTNESS;
 /**

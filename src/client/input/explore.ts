@@ -106,9 +106,9 @@ export type ExploreView = {
   /**
    * The nearest hostile THE VIEWER CAN SEE, as an offset, or null.
    *
-   * "Can see" is the caller's job and is load-bearing: since FOV the actor list
-   * is the PARTY'S union, so a body being on the board is not evidence that this
-   * player can see it. `main.ts#nearestVisibleHostile` applies `canSee`.
+   * "Can see" is the caller's job. The board is this player's own sight, built by
+   * the server, so a hostile on it is one this player can see:
+   * `main.ts#nearestVisibleHostile` hands in the nearest.
    */
   readonly threat: { readonly name: string; readonly dx: number; readonly dy: number } | null;
 };
@@ -129,16 +129,11 @@ export type ExploreView = {
  * out one I could see plainly at 11, because sight is 10 and the radius was 12.
  * Two filters, neither of them "can I see it".
  *
- * So the caller now hands in only what the viewer can SEE — `canSee` from this
- * body, the same rule travel and the rest check spend — and this module tests
- * `threat !== null` and nothing else. That is a CONTRACT and it is stated on the
- * field: `ExploreView.threat` is a hostile the viewer can see, or null.
- *
- * ═══ WHY THE TEST DID NOT MOVE IN HERE ═══
- * `canSee` needs a `LevelView` to ask `blocksSightAt`, and this module
- * deliberately takes a `passable` PREDICATE rather than a map — that is what
- * makes "does it stop for a husk" a unit test rather than a session. Handing it
- * a level to keep the rule local would trade that for tidiness.
+ * So the caller hands in only what the viewer can SEE, and this module tests
+ * `threat !== null` and nothing else. When sight became each player's own, the
+ * board itself became that list and the caller stopped filtering it. That is a
+ * CONTRACT and it is stated on the field: `ExploreView.threat` is a hostile the
+ * viewer can see, or null.
  */
 
 /**
