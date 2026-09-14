@@ -70,6 +70,7 @@ import { ActorKind } from '../../shared/protocol.ts';
 import {
   delveLevel,
   floorsOf,
+  forArea,
   populateDelve,
   redactedSpec,
   specFor,
@@ -1525,7 +1526,7 @@ const AUTHORED_SITES: readonly (readonly [string, SiteDef])[] = (
             floor = 1,
           ): void => {
             const spec = specFor(id);
-            if (spec !== undefined) populateDelve(world, built, spec, party, floor);
+            if (spec !== undefined) populateDelve(world, built, forArea(spec, built), party, floor);
           },
         }
       : {}),
@@ -1647,7 +1648,7 @@ const REDACTED_SITES: readonly (readonly [string, SiteDef])[] = [
           floor = 1,
         ): void => {
           const spec = redactedSpec(originalId);
-          if (spec !== undefined) populateDelve(world, built, spec, party, floor);
+          if (spec !== undefined) populateDelve(world, built, forArea(spec, built), party, floor);
         },
       },
     ] as const,

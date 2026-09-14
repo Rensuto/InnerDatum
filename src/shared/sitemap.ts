@@ -42,6 +42,7 @@ import { TileCode } from './protocol.ts';
 import { partition } from './bsp.ts';
 import type { BspNode } from './bsp.ts';
 import { placeVault, stampVault } from './vault.ts';
+import type { VaultShape } from './vault.ts';
 import { VAULTS_BY_SHAPE } from './vaults.ts';
 import type { TileXY } from './coords.ts';
 import type { Rng } from './rng.ts';
@@ -134,8 +135,28 @@ const WORKS_MIN_ROOM = 7;
  */
 const DOOR_CHANCE = 50;
 
-const W = 34;
-const H = 30;
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * UPSTREAM'S LEVEL SIZE.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Every site was 34 by 30, which is small beside upstream: its first-tier zone
+ * levels are 50 by 50 (data/zones/ruins-kor-pul/zone.lua:30) and so are its
+ * smaller towns (data/zones/town-zigur/zone.lua:27). Trollmire's forest is 65 by
+ * 40. So a site is 50 by 50 now, whatever its shape, and the generators below
+ * scale with it: a cave carves the same fraction, a works cuts more rooms, a town
+ * lays more blocks.
+ */
+const W = 50;
+const H = 50;
+
+/** The area every fixed count in this file was measured on, before the resize. */
+const TUNED_AREA = 34 * 30;
+
+/** `n` things per site of the tuned size, for a site of this size. */
+function byArea(n: number): number {
+  return Math.max(1, Math.round((n * W * H) / TUNED_AREA));
+}
 const MARGIN = 1;
 
 type Grid = number[];
@@ -158,41 +179,6 @@ function room(g: Grid, x0: number, y0: number, x1: number, y1: number, code: num
   for (let y = y0; y <= y1; y += 1) {
     for (let x = x0; x <= x1; x += 1) put(g, x, y, code);
   }
-}
-
-/**
- * ═══════════════════════════════════════════════════════════════════════════
- * A CORRIDOR THAT REMEMBERS WHERE IT BROKE THROUGH — `RoomsLoader.lua:910-916`.
- * ═══════════════════════════════════════════════════════════════════════════
- *
- * ```lua
- * for _, t in ipairs(tun) do
- *   if t[3] and self.data.door then self.possible_doors[#self.possible_doors+1] = t end
- * ```
- *
- * Upstream's tunneller collects the tiles it walked and flags the ones that
- * crossed into a room; `placeDoors` then rolls only over THOSE. That is the
- * whole reason its `door_chance` can be 50 and still leave a floor with a
- * handful of doors.
- *
- * A tile this converted from WALL to FLOOR is exactly that flag: it is where
- * the passage broke through something solid. Surveying the finished map instead
- * — which is what the first version did — offers about thirty candidates on a
- * 34x30 floor, because it also finds every gap two rooms happen to share and
- * every wall a corridor merely clipped on its way past.
- */
-/** A straight corridor. The only thing every shape below has in common. */
-function corridor(g: Grid, a: TileXY, b: TileXY): void {
-  let { x, y } = a;
-  while (x !== b.x) {
-    put(g, x, y, TileCode.FLOOR);
-    x += x < b.x ? 1 : -1;
-  }
-  while (y !== b.y) {
-    put(g, x, y, TileCode.FLOOR);
-    y += y < b.y ? 1 : -1;
-  }
-  put(g, b.x, b.y, TileCode.FLOOR);
 }
 
 // ---------------------------------------------------------------------------
@@ -268,7 +254,9 @@ function cave(g: Grid, rng: Rng): TileXY {
  */
 function ruin(g: Grid, rng: Rng): TileXY {
   room(g, MARGIN, MARGIN, W - MARGIN - 1, H - MARGIN - 1, TileCode.FLOOR);
-  const fragments = rng.int('site.ruin.count', 14, 22);
+  // AS MANY FRAGMENTS FOR THE AREA as the tuned ruin had, or a bigger ruin is an
+  // emptier one.
+  const fragments = rng.int('site.ruin.count', byArea(14), byArea(22));
   for (let i = 0; i < fragments; i += 1) {
     const x = rng.int('site.ruin.x', 2, W - 3);
     const y = rng.int('site.ruin.y', 2, H - 3);
@@ -452,13 +440,22 @@ function works(g: Grid, rng: Rng, crossings: TileXY[], rooms: TileRect[]): TileX
  *
  * Passable here means FLOOR and nothing else, which is what `block_move`
  * reduces to on a map whose only codes are floor, wall and door.
+ *
+ * ═══ AND BLOCKED MEANS WALL, WHICH IS WHERE THIS LEAVES UPSTREAM ═══
+ * `block_move` counts a door as blocked on the other axis as well, so upstream's
+ * rule lets a door hang with another door at its side: `++` again, turned. It
+ * happened here once the repair corridor learned to go around a drawn room: the
+ * corridor ran down the room's wall past a mouth that had just been given a
+ * door, and the tile beside that door was a crossing too. A doorway is a hole in
+ * a wall, so both tiles on the blocked axis have to be wall.
  */
 function canDoor(g: Grid, x: number, y: number): boolean {
   const open = (cx: number, cy: number): boolean => at(g, cx, cy) === TileCode.FLOOR;
+  const wall = (cx: number, cy: number): boolean => at(g, cx, cy) === TileCode.WALL;
   const openNS = open(x, y - 1) && open(x, y + 1);
   const openEW = open(x - 1, y) && open(x + 1, y);
-  const blockedNS = !open(x, y - 1) && !open(x, y + 1);
-  const blockedEW = !open(x - 1, y) && !open(x + 1, y);
+  const blockedNS = wall(x, y - 1) && wall(x, y + 1);
+  const blockedEW = wall(x - 1, y) && wall(x + 1, y);
   return (openNS && blockedEW) || (openEW && blockedNS);
 }
 
@@ -517,20 +514,126 @@ function crossable(code: number): boolean {
 }
 
 /**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * WHAT A DRAWN ROOM FORBIDS A CORRIDOR — `RoomsLoader.lua:526-536` (`roomFrom`).
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * ```lua
+ * self.map.room_map[i-1+x][j-1+y].room = id
+ * if c == '#' and (i == 1 or i == room.w or j == 1 or j == room.h) then -- forces tunnelling around edge walls
+ *   self.map.room_map[i-1+x][j-1+y].room = nil
+ *   self.map.room_map[i-1+x][j-1+y].can_open = false
+ * ```
+ *
+ * Upstream marks every cell of a placed room, and the walls on its edge as cells
+ * no tunnel may open. Its tunneller then goes around those walls, walks through
+ * the rest of the room without writing a tile of it, and lays floor only where
+ * it walked outside one (`RoomsLoader.lua:814-817`).
+ *
+ * ONE FLAG DOES BOTH HALVES HERE. A repair corridor has to be one a body can
+ * follow, so it walks a drawn cell only where that cell is already a way
+ * through, and every wall of the room, on its edge or not, is one it goes around.
+ *
+ * `connect` had neither half. Its corridor ran straight from the threshold to
+ * whatever was stranded, through a room if one was in the way, and floored
+ * everything it crossed. Measured over eighty floors a shape before this: a
+ * drawn cell rewritten in 32 works rooms, 20 cave rooms and 5 ruin rooms, most
+ * of them edge walls. A door whose wall is gone is a door standing in the open.
+ */
+/** A cell of `held` that a stamped room drew. */
+const HELD = 1;
+
+/** Mark the cells a stamped room drew in `held`. */
+function holdRoom(held: Uint8Array, shape: VaultShape, at: TileXY): void {
+  for (let y = 0; y < shape.h; y += 1) {
+    for (let x = 0; x < shape.w; x += 1) {
+      const code = shape.tiles[y * shape.w + x];
+      // A BLANK IS NOT PART OF THE DRAWING. The stamp leaves the ground there as
+      // it was, and so may a corridor: it is how a room is drawn open to the
+      // floor around it, as the sealed shaft is at its foot.
+      if (code === null || code === undefined) continue;
+      held[tileIndex(at.x + x, at.y + y, W)] = HELD;
+    }
+  }
+}
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE REPAIR CORRIDOR, AROUND A DRAWN ROOM RATHER THAN THROUGH IT.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * The shortest way from the threshold to what was stranded that writes none of a
+ * drawn room: through a drawn cell only where it is already a way through, so
+ * every wall of the room is one the corridor goes around.
+ *
+ * Where no room is in the way it digs the cells the straight corridor did. An
+ * earlier version tried that corridor first, and over eighty floors a shape the
+ * two never differed by a tile.
+ *
+ * A room is always placed with a ring of open bounds around it (`vaultFits`),
+ * and its own door is crossable, so a room stamped into rock is reached through
+ * that door.
+ */
+function dig(g: Grid, held: Uint8Array, from: TileXY, to: TileXY): void {
+  const start = tileIndex(from.x, from.y, W);
+  const came = new Int32Array(W * H).fill(-1);
+  came[start] = start;
+  const queue = [start];
+  for (let head = 0; head < queue.length; head += 1) {
+    const idx = queue[head] ?? start;
+    const x = idx % W;
+    const y = (idx - x) / W;
+    for (const [dx, dy] of [
+      [1, 0],
+      [-1, 0],
+      [0, 1],
+      [0, -1],
+    ] as const) {
+      const nx = x + dx;
+      const ny = y + dy;
+      if (nx < MARGIN || ny < MARGIN || nx >= W - MARGIN || ny >= H - MARGIN) continue;
+      const n = tileIndex(nx, ny, W);
+      if (came[n] !== -1) continue;
+      if (held[n] === HELD && !crossable(at(g, nx, ny))) continue;
+      came[n] = idx;
+      queue.push(n);
+    }
+  }
+  // BACK FROM THE STRANDED CELL, which is floor already. Nothing is written if
+  // no way was found: `came` of the goal is still -1.
+  for (let i = came[tileIndex(to.x, to.y, W)] ?? -1; i !== -1 && i !== start; i = came[i] ?? -1) {
+    if (held[i] !== HELD) put(g, i % W, (i - (i % W)) / W, TileCode.FLOOR);
+  }
+}
+
+/**
  * Carve from the spawn to anything the shape stranded.
  *
  * Flood from the spawn, then run a corridor to the nearest cell of each
  * unreached pocket, repeatedly, until everything walkable is connected. Cheap
- * on a 34x30 grid and it makes "the far side is reachable" true by construction
+ * on a 50x50 grid and it makes "the far side is reachable" true by construction
  * rather than by inspection.
  */
 /**
- * `corridor`, plus the list of tiles it had to break through to get there.
+ * ═══════════════════════════════════════════════════════════════════════════
+ * A CORRIDOR THAT REMEMBERS WHERE IT BROKE THROUGH — `RoomsLoader.lua:910-916`.
+ * ═══════════════════════════════════════════════════════════════════════════
  *
- * SEPARATE FROM `corridor` rather than an optional argument on it, because the
- * other three shapes have no use for the list and an optional out-parameter on
- * the one primitive every shape shares is how a helper starts growing a second
- * job. See the note above `corridor`.
+ * ```lua
+ * for _, t in ipairs(tun) do
+ *   if t[3] and self.data.door then self.possible_doors[#self.possible_doors+1] = t end
+ * ```
+ *
+ * Upstream's tunneller collects the tiles it walked and flags the ones that
+ * crossed into a room; `placeDoors` then rolls only over THOSE. That is the
+ * whole reason its `door_chance` can be 50 and still leave a floor with a
+ * handful of doors.
+ *
+ * A tile this converted from WALL to FLOOR is exactly that flag: it is where
+ * the passage broke through something solid. Surveying the finished map instead
+ * — which is what the first version did — offers about thirty candidates on a
+ * 34x30 floor, because it also finds every gap two rooms happen to share and
+ * every wall a corridor merely clipped on its way past.
  */
 function tunnel(g: Grid, a: TileXY, b: TileXY, crossings: TileXY[]): void {
   let { x, y } = a;
@@ -549,7 +652,7 @@ function tunnel(g: Grid, a: TileXY, b: TileXY, crossings: TileXY[]): void {
   step();
 }
 
-function connect(g: Grid, from: TileXY): void {
+function connect(g: Grid, from: TileXY, held: Uint8Array): void {
   for (let pass = 0; pass < 12; pass += 1) {
     const seen = new Set<number>();
     const stack = [tileIndex(from.x, from.y, W)];
@@ -585,7 +688,7 @@ function connect(g: Grid, from: TileXY): void {
       }
     }
     if (orphan === null) return;
-    corridor(g, from, orphan);
+    dig(g, held, from, orphan);
   }
 }
 
@@ -691,6 +794,8 @@ export function makeSiteMap(
    */
   const crossings: TileXY[] = [];
   const rooms: TileRect[] = [];
+  /** The cells a stamped room holds, which no repair corridor writes. See `dig`. */
+  const held = new Uint8Array(W * H);
 
   const spawn =
     shape === SiteShape.Town
@@ -793,16 +898,18 @@ export function makeSiteMap(
         h: spot.shape.h,
       });
     }
-    if (spot !== null)
+    if (spot !== null) {
       stampVault(spot.shape, spot.at, (x, y, code) => {
         put(g, x, y, code);
       });
+      holdRoom(held, spot.shape, spot.at);
+    }
   }
 
   // The threshold is always floor, whatever the shape did to it — you arrive
   // here, and `leaveRealm` treats it as the door.
   put(g, spawn.x, spawn.y, TileCode.FLOOR);
-  connect(g, spawn);
+  connect(g, spawn, held);
 
   /**
    * AND THE DOORS, LAST OF EVERYTHING THAT WRITES FLOOR — see `hangDoors`.

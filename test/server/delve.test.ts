@@ -1,10 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
-import { DELVES, specFor, dangerWord, partyHint } from '../../src/server/content/delve.ts';
+import { DELVES, specFor, dangerWord, forArea, partyHint } from '../../src/server/content/delve.ts';
 import type { DelveSpec } from '../../src/server/content/delve.ts';
 import { RealmKind, SITES, createRealms } from '../../src/server/world/realms.ts';
 import { createTurnEngine } from '../../src/server/turn-engine.ts';
 import { ActorKind } from '../../src/shared/protocol.ts';
+import { SiteShape, makeSiteMap } from '../../src/shared/sitemap.ts';
 import { Faction } from '../../src/server/engine/actor.ts';
 
 /**
@@ -322,6 +323,58 @@ describe('whether to bring somebody', () => {
       const hint = partyHint(spec);
       if (word === 'grim' || word === 'dangerous') expect(hint).not.toBeNull();
       else expect(hint).toBeNull();
+    }
+  });
+});
+
+describe('bands for the floor they are spread over', () => {
+  /**
+   * EVERY BAND WAS MEASURED ON A 34 BY 30 SITE, and sites are upstream's 50 by
+   * 50 now (`data/zones/ruins-kor-pul/zone.lua:30`). Litter and traps grow
+   * with the floor, or a bigger delve is a barer one; the monsters stay the
+   * fight the delve was tuned to be.
+   */
+  const built = makeSiteMap('bands-for-the-floor', SiteShape.Works);
+  const tuned = { ...built, view: { ...built.view, w: 34, h: 30 } };
+
+  it('leaves a band alone on the size it was tuned on and grows it with the area', () => {
+    const underworks = specFor('site:underworks');
+    if (underworks === undefined) throw new Error('no spec for the Underworks');
+    const spec: DelveSpec = { ...underworks, monsters: [4, 6], litter: [2, 3], traps: [1, 2] };
+    expect(forArea(spec, tuned)).toEqual(spec);
+
+    expect(built.view.w * built.view.h, 'precondition: an upstream-sized site').toBe(2500);
+    const wide = forArea(spec, built);
+    expect(wide.monsters, 'the fight a delve was tuned to be').toEqual(spec.monsters);
+    expect(wide.litter).toEqual([5, 7]);
+    expect(wide.traps).toEqual([2, 5]);
+    expect(wide.roster).toBe(spec.roster);
+    expect(wide.levelRange).toEqual(spec.levelRange);
+
+    const { traps: _none, ...trapless } = spec;
+    expect('traps' in forArea(trapless, built), 'a delve with no traps was given some').toBe(false);
+  });
+
+  it('is what a delve is stocked with, from either map', () => {
+    for (const siteId of ['site:underworks', 'site:redaction:watchers_altar']) {
+      const spec = specFor(siteId);
+      if (spec === undefined) throw new Error(`no spec for ${siteId}`);
+      const wide = forArea(spec, built);
+      const realm = realms(`stocked-${siteId}`).open(site(siteId), 'party');
+
+      // THE LITTER, plus the one lore note a floor may carry.
+      const ground = realm.world.groundItems().length;
+      expect(ground, `${siteId} is littered for the size it was tuned on`).toBeGreaterThan(
+        spec.litter[1] + 1,
+      );
+      expect(ground, siteId).toBeGreaterThanOrEqual(wide.litter[0]);
+      expect(ground, siteId).toBeLessThanOrEqual(wide.litter[1] + 1);
+
+      const monsters = realm.world.allActors().filter((a) => a.kind === ActorKind.Monster).length;
+      expect(monsters, `${siteId} is not the fight it was tuned to be`).toBeLessThanOrEqual(
+        spec.monsters[1],
+      );
+      expect(monsters, siteId).toBeGreaterThanOrEqual(1);
     }
   });
 });

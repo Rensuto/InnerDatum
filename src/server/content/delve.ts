@@ -903,6 +903,43 @@ export function stairsDownCell(map: AuthoredMap): TileXY | undefined {
   return furthest;
 }
 
+/** The site width every band in `DELVES` was measured on. See `forArea`. */
+const TUNED_SITE_WIDTH = 34;
+/** The site height every band in `DELVES` was measured on. See `forArea`. */
+const TUNED_SITE_HEIGHT = 30;
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * A DELVE'S BANDS, FOR THE FLOOR THEY ARE SPREAD OVER.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Every band in `DELVES` was measured on a site of `TUNED_SITE_WIDTH` by
+ * `TUNED_SITE_HEIGHT`. Sites are upstream's level size now (shared/sitemap.ts),
+ * so the litter and the traps grow with the floor's area: a bigger floor is not
+ * a barer one.
+ *
+ * ═══ THE MONSTERS DO NOT, AND THAT WAS MEASURED ═══
+ * Upstream's first-tier levels hold `nb_npc = {20, 30}` on that area
+ * (data/zones/ruins-kor-pul/zone.lua:55), and growing the monster band with the
+ * area would land a dense delve near it. `tools/delve-run.mjs` said what that
+ * does to fights tuned on the smaller floor: nearly every floor a lone body or
+ * a party used to clear became one almost nobody cleared, resting between
+ * fights or not. The monster band is the fight a delve was tuned to be, so it
+ * stays that fight, spread over more ground.
+ */
+export function forArea(spec: DelveSpec, map: AuthoredMap): DelveSpec {
+  const scale = (map.view.w * map.view.h) / (TUNED_SITE_WIDTH * TUNED_SITE_HEIGHT);
+  const band = (b: readonly [number, number]): readonly [number, number] => [
+    Math.round(b[0] * scale),
+    Math.round(b[1] * scale),
+  ];
+  return {
+    ...spec,
+    litter: band(spec.litter),
+    ...(spec.traps === undefined ? {} : { traps: band(spec.traps) }),
+  };
+}
+
 export function populateDelve(
   world: World,
   map: AuthoredMap,

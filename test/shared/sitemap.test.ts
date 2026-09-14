@@ -8,7 +8,9 @@ import {
   makeSiteMap,
 } from '../../src/shared/sitemap.ts';
 import { RealmKind, SITES } from '../../src/server/world/realms.ts';
-import { VAULTS_BY_SHAPE } from '../../src/shared/vaults.ts';
+import { ALL_VAULTS, VAULTS_BY_SHAPE } from '../../src/shared/vaults.ts';
+import { turnVault } from '../../src/shared/vault.ts';
+import type { VaultTurn } from '../../src/shared/vault.ts';
 import { TileCode, blocksSight, isWalkable } from '../../src/shared/protocol.ts';
 import type { SitePalette } from '../../src/shared/sitemap.ts';
 
@@ -345,6 +347,51 @@ describe('a stamped room never seals the floor it was stamped into', () => {
     });
   }
 
+  for (const shape of SHAPES.filter((s) => (VAULTS_BY_SHAPE[s] ?? []).length > 0)) {
+    it(`never writes over the room it drew in a ${shape}`, () => {
+      /**
+       * ═══════════════════════════════════════════════════════════════════════
+       * UPSTREAM'S TUNNELLER GOES AROUND A ROOM'S EDGE AND WRITES NONE OF IT.
+       * ═══════════════════════════════════════════════════════════════════════
+       *
+       * `RoomsLoader.lua:814-817`. The repair corridor here used to run straight
+       * through a drawn room and floor whatever it crossed, which is how a works
+       * came to have a door standing in open ground: the corridor took the wall
+       * on either side of it. Measured over eighty floors a shape, a drawn cell
+       * was rewritten in 32 works rooms, 20 cave rooms and 5 ruin rooms.
+       *
+       * Every drawn cell, turned the way the room was laid, against the finished
+       * floor. That also covers a door hung inside the room, which would replace
+       * a floor cell.
+       */
+      let stamped = 0;
+      for (let n = 0; n < 80; n += 1) {
+        const seed = `vault-intact-${shape}-${String(n)}`;
+        const map = makeSiteMap(seed, shape);
+        const { w, tiles } = map.view;
+        for (const placed of map.vaults ?? []) {
+          const vault = ALL_VAULTS.find((v) => v.id === placed.id);
+          if (vault === undefined) throw new Error(`${seed}: no room called ${placed.id}`);
+          const drawn = turnVault(vault, placed.turn as VaultTurn);
+          stamped += 1;
+          for (let y = 0; y < drawn.h; y += 1) {
+            for (let x = 0; x < drawn.w; x += 1) {
+              const want = drawn.tiles[y * drawn.w + x];
+              if (want === null || want === undefined) continue;
+              const cx = placed.at.x + x;
+              const cy = placed.at.y + y;
+              expect(
+                tiles[cy * w + cx],
+                `${seed}: ${placed.id} was rewritten at ${String(cx)},${String(cy)}`,
+              ).toBe(want);
+            }
+          }
+        }
+      }
+      expect(stamped, 'no room was stamped, so nothing was checked').toBeGreaterThan(0);
+    });
+  }
+
   it('is the same map for the same seed, vault and all', () => {
     // A vault drawn from an unseeded number would make two players in one
     // instance disagree about where the walls are. `docs/tome-port.md`'s
@@ -561,6 +608,13 @@ describe('a stamped room never seals the floor it was stamped into', () => {
  */
 describe('a works is rooms and corridors', () => {
   const SEEDS = Array.from({ length: 30 }, (_, i) => `works-${String(i)}`);
+  /**
+   * A WIDER SWEEP FOR THE TWO RULES A DOOR BREAKS RARELY. With the blocked axis
+   * read as "not floor" rather than "wall", 32 works in 2000 hung a door beside
+   * a door, and the first of them is works-78: outside `SEEDS`, so both tests
+   * below passed without the rule they are about.
+   */
+  const DOOR_SEEDS = Array.from({ length: 100 }, (_, i) => `works-${String(i)}`);
 
   it('leaves between half and two thirds of the floor walkable', () => {
     /**
@@ -590,33 +644,33 @@ describe('a works is rooms and corridors', () => {
     let withDoors = 0;
     let most = 0;
     let total = 0;
+    let cut = 0;
     for (const seed of SEEDS) {
       const map = makeSiteMap(seed, SiteShape.Works);
       const doors = map.view.tiles.filter((code) => code === TileCode.DOOR).length;
+      const rooms = map.rooms?.length ?? 0;
+      expect(rooms, `${seed}: a works cut no rooms`).toBeGreaterThan(0);
       if (doors > 0) withDoors += 1;
-      most = Math.max(most, doors);
+      most = Math.max(most, doors / rooms);
       total += doors;
+      cut += rooms;
     }
     expect(withDoors, 'a works floor came out with no door at all').toBe(SEEDS.length);
     /**
-     * THE MEAN IS THE TUNING AND THE MAX IS THE GUARD. Measured over eighty
-     * seeds at `DOOR_CHANCE`, the floor carries about seven — half the rooms on
-     * a building of ten. At upstream's literal 50% it was sixteen, which is a
-     * pause every few steps; the note on the constant explains why the
-     * percentage had to move to keep the density.
-     */
-    /**
-     * THE MEAN IS THE TUNING AND THE MAX IS THE GUARD. Measured over eighty
-     * seeds at upstream's own `door_chance` of 50, rolled over the tiles a
-     * tunnel broke through: a mean of 10.6, between 5 and 18.
+     * THE MEAN IS THE TUNING AND THE MAX IS THE GUARD, PER ROOM CUT, because a
+     * bigger building cuts more rooms and so has more mouths to hang one on.
+     * Measured over two hundred seeds at upstream's own `door_chance` of 50,
+     * rolled over the tiles a tunnel broke through: 0.68 doors a room on a 34 by
+     * 30 floor, and 0.72 on a 50 by 50 one, where no floor carried more than 0.93.
      *
      * The band is generous on purpose. It is here to catch the shape of the
      * mistake this file has already made once — surveying the whole map for
      * anything doorway-shaped, which offered thirty candidates and put sixteen
-     * doors on a floor — not to pin a number that moves when a room size does.
+     * doors on a floor of about eleven rooms — not to pin a number that moves
+     * when a room size does.
      */
-    expect(total / SEEDS.length, 'a works is a sequence of pauses again').toBeLessThan(15);
-    expect(most, 'some works sealed nearly every room it cut').toBeLessThan(25);
+    expect(total / cut, 'a works is a sequence of pauses again').toBeLessThan(1);
+    expect(most, 'some works sealed nearly every room it cut').toBeLessThan(1.5);
   });
 
   it('hangs at least some doors that are the ONLY way into a room', () => {
@@ -763,7 +817,7 @@ describe('a works is rooms and corridors', () => {
      * `block_move` and a door blocks move. Asserted directly, because it is the
      * only observable difference between the two halves.
      */
-    for (const seed of SEEDS) {
+    for (const seed of DOOR_SEEDS) {
       const map = makeSiteMap(seed, SiteShape.Works);
       const { w, h, tiles } = map.view;
       const door = (x: number, y: number): boolean =>
@@ -791,7 +845,7 @@ describe('a works is rooms and corridors', () => {
      * needed, because that pass runs last and could in principle open the ground
      * beside a door that was legal when it was hung.
      */
-    for (const seed of SEEDS) {
+    for (const seed of DOOR_SEEDS) {
       const map = makeSiteMap(seed, SiteShape.Works);
       const { w, h, tiles } = map.view;
       const code = (x: number, y: number): number =>
@@ -808,5 +862,31 @@ describe('a works is rooms and corridors', () => {
         }
       }
     }
+  });
+});
+
+describe('a ruin on a bigger site', () => {
+  it('lays as many fragments for its area as the ruin it was tuned on', () => {
+    /**
+     * `byArea` scales the fragment count with the site. Without it a 50 by 50
+     * ruin keeps the count of a 34 by 30 one and opens up. Measured over two
+     * hundred seeds, inside the rim: the tuned ruin was 90.7% walkable, the
+     * scaled one is 92.2%, and an unscaled one was 96.2%.
+     */
+    const { w, h } = SITE_MAP_SIZE;
+    const N = 60;
+    let share = 0;
+    for (let n = 0; n < N; n += 1) {
+      const { tiles } = makeSiteMap(`ruin-density-${String(n)}`, SiteShape.Ruin).view;
+      let open = 0;
+      for (let y = 1; y < h - 1; y += 1) {
+        for (let x = 1; x < w - 1; x += 1) {
+          if (isWalkable(tiles[y * w + x] ?? TileCode.WALL)) open += 1;
+        }
+      }
+      share += open / ((w - 2) * (h - 2));
+    }
+    expect(share / N, 'a ruin opened up on the bigger site').toBeLessThan(0.94);
+    expect(share / N, 'a ruin filled in on the bigger site').toBeGreaterThan(0.88);
   });
 });
