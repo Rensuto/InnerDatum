@@ -161,7 +161,8 @@ import type { DownedState } from '../engine/downed.ts';
 import type { EffectState } from '../engine/effects.ts';
 import type { CombatSheet } from '../engine/combat.ts';
 import type { Actor, World } from '../world/world.ts';
-import { canSee } from '../../shared/sight.ts';
+import { fogHas } from '../../shared/fog.ts';
+import { visionOf } from './eyesight.ts';
 import type { TileXY } from '../../shared/coords.ts';
 
 /**
@@ -585,13 +586,15 @@ export function visibleActorIds(
   eyes: readonly SightEye[],
 ): Set<string> {
   const out = new Set<string>();
+  // ONE SEEN SET PER EYE, by the light there is (`visionOf`), worked out once.
+  const sights = eyes.map((eye) => visionOf(world, eye).seen);
   for (const actor of world.allActors()) {
     // See the header: teammates are never fogged.
     if (actor.kind === ActorKind.Player) {
       out.add(actor.id);
       continue;
     }
-    if (eyes.some((eye) => canSee(world.level, eye, actor, sightRadiusOf(eye)))) out.add(actor.id);
+    if (sights.some((seen) => fogHas(seen, world.level.w, actor.x, actor.y))) out.add(actor.id);
   }
   return out;
 }
@@ -1601,6 +1604,7 @@ export function projectProjectiles(world: World, eyes?: readonly SightEye[]): Pr
   const projectiles: ProjectileView[] = [];
   // Resolved once rather than per orb: `sourceId` is redacted against it below.
   const seen = eyes === undefined ? undefined : visibleActorIds(world, eyes);
+  const sights = eyes?.map((eye) => visionOf(world, eye).seen);
 
   for (const proj of world.projectilesInFlight()) {
     // A DETONATED ORB IS NOT IN THE AIR. `actProjectile` drops a landed orb from
@@ -1629,7 +1633,7 @@ export function projectProjectiles(world: World, eyes?: readonly SightEye[]): Pr
      * still going to resolve either way. So the shot shows and the shooter is
      * redacted — see `ProjectileView.sourceId`.
      */
-    if (eyes !== undefined && !eyes.some((eye) => canSee(world.level, eye, at, sightRadiusOf(eye))))
+    if (sights !== undefined && !sights.some((sight) => fogHas(sight, world.level.w, at.x, at.y)))
       continue;
     const shooterSeen = seen === undefined || seen.has(proj.sourceId);
 
@@ -1709,12 +1713,13 @@ export function projectProjectiles(world: World, eyes?: readonly SightEye[]): Pr
 export function projectZones(world: World, eyes?: readonly SightEye[]): ZonesMsg {
   /** Tile key -> the entry that wins it, plus what it beat. */
   const claimed = new Map<string, { view: ZoneTileView; damage: number }>();
+  const sights = eyes?.map((eye) => visionOf(world, eye).seen);
 
   for (const zone of world.zones()) {
     for (const tile of zone.tiles) {
       if (
-        eyes !== undefined &&
-        !eyes.some((eye) => canSee(world.level, eye, tile, sightRadiusOf(eye)))
+        sights !== undefined &&
+        !sights.some((sight) => fogHas(sight, world.level.w, tile.x, tile.y))
       ) {
         continue;
       }

@@ -258,16 +258,17 @@ export function tilesInSight(
  * and the opposite of `engine/Actor.lua:30-34`, which is remember-FALSE. You remember a
  * coat you walked past; you do not remember where a husk was standing.
  *
- * ═══ TWO TERMS, AND THE SIGHT ONE IS ALMOST ALWAYS SUBSUMED ═══
- *   REMEMBERED is the character's own fog bitset for this realm: what they
- *     saw, at their own sight radius, in every realm.
- *   SEEN is `canSee` at `DEFAULT_SIGHT_RADIUS` (10), from each of `eyes`.
+ * ═══ TWO TERMS ═══
+ *   REMEMBERED is the character's own fog bitset for this realm: what they kept
+ *     of what they saw, in every realm.
+ *   SEEN is what they see this turn by the light there is (`visionOf` on the
+ *     server).
  *
- * THE SERVER REMEMBERS BEFORE IT ASKS. Every pump writes each player's sight
- * into their memory before any frame is built, and the gateway hands this the
- * viewer's own eyes, so the second term adds nothing once a pump has run. It
- * covers the moment before the first one, and it is kept because upstream ORs
- * the two (`engine/Object.lua:28-29`).
+ * THE SERVER REMEMBERS BEFORE IT ASKS. Every pump writes what each player keeps
+ * into their memory before any frame is built. Where the level is lit, the seen
+ * term adds nothing once a pump has run. In the dark it is the only term for a
+ * floor a lantern shows, which memory does not keep. Upstream ORs the two
+ * (`engine/Object.lua:28-29`).
  *
  * ═══ AND THIS PARAGRAPH USED TO SAY THE OPPOSITE ═══
  * It read *"THOSE RADII DISAGREE BY EIGHT TILES"* and flagged a divergence from
@@ -286,11 +287,11 @@ export function tilesInSight(
  */
 export function knownTile(
   level: LevelView,
-  eyes: readonly TileXY[],
+  seen: Uint8Array | undefined,
   remembered: Uint8Array | undefined,
   x: number,
   y: number,
 ): boolean {
   if (remembered !== undefined && fogHas(remembered, level.w, x, y)) return true;
-  return eyes.some((eye) => canSee(level, eye, { x, y }));
+  return seen !== undefined && fogHas(seen, level.w, x, y);
 }

@@ -85,7 +85,9 @@ import type { Combatant, PrimaryStats } from '../engine/derived.ts';
 import type { CombatSheet } from '../engine/combat.ts';
 import type { TypeTable } from '../engine/damage.ts';
 import type { Actor, World } from '../world/world.ts';
-import { canSee, hasLineOfSight } from '../../shared/sight.ts';
+import { hasLineOfSight } from '../../shared/sight.ts';
+import { fogHas } from '../../shared/fog.ts';
+import { visionOf } from './eyesight.ts';
 import { boughtSheet, effectDef, effectsOn } from '../engine/effects.ts';
 import type { EffectState } from '../engine/effects.ts';
 
@@ -875,10 +877,11 @@ export function inspectActor(
   effects?: EffectState,
 ): InspectView | null {
   if (!target.alive && target.kind !== ActorKind.Player) return null;
-  // THE BOARD'S OWN RULE — see the fog-of-war note at the top of this file.
+  // THE BOARD'S OWN RULE — see the fog-of-war note at the top of this file. The
+  // viewer's own seen set (`visionOf`), so a husk in the dark cannot be read.
   if (
     target.kind !== ActorKind.Player &&
-    !canSee(world.level, viewer, target, sightRadiusOf(viewer))
+    !fogHas(visionOf(world, viewer).seen, world.level.w, target.x, target.y)
   ) {
     return null;
   }

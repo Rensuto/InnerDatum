@@ -20,6 +20,7 @@ import {
 } from '../../src/server/view/projector.ts';
 import { visibleActorIds } from '../../src/server/view/projector.ts';
 import { DEFAULT_SIGHT_RADIUS, knownTile, sightDistance } from '../../src/shared/sight.ts';
+import { computeSeen } from '../../src/shared/vision.ts';
 import { createDownedState } from '../../src/server/engine/downed.ts';
 import { createPartyState } from '../../src/server/engine/party.ts';
 import { wsGateway } from '../../src/server/net/gateway.ts';
@@ -291,13 +292,16 @@ describe('knownTile — the rule the gateway actually spends', () => {
     const world = field();
     return world.level;
   };
+  /** What an eye at (x, y) sees on a level lit everywhere. */
+  const seenFrom = (lvl: World['level'], x: number, y: number): Uint8Array =>
+    computeSeen(lvl, { x, y }, DEFAULT_SIGHT_RADIUS);
 
   it('a tile you have walked is known, from anywhere on the map', () => {
     const lvl = level();
     const remembered = createFog(lvl.w, lvl.h);
     fogSet(remembered, lvl.w, 25, 1);
     // The eyes are nowhere near it — memory alone must carry this.
-    expect(knownTile(lvl, [{ x: 1, y: 1 }], remembered, 25, 1)).toBe(true);
+    expect(knownTile(lvl, seenFrom(lvl, 1, 1), remembered, 25, 1)).toBe(true);
   });
 
   it('a tile you can see is known even with no memory at all', () => {
@@ -314,13 +318,13 @@ describe('knownTile — the rule the gateway actually spends', () => {
      * real state, not because it catches ground memory misses.
      */
     const lvl = level();
-    expect(knownTile(lvl, [{ x: 1, y: 1 }], undefined, 9, 1)).toBe(true);
+    expect(knownTile(lvl, seenFrom(lvl, 1, 1), undefined, 9, 1)).toBe(true);
   });
 
   it('a tile that is neither is not', () => {
     const lvl = level();
     const empty = createFog(lvl.w, lvl.h);
-    expect(knownTile(lvl, [{ x: 1, y: 1 }], empty, 25, 1)).toBe(false);
+    expect(knownTile(lvl, seenFrom(lvl, 1, 1), empty, 25, 1)).toBe(false);
   });
 
   it('and sight still stops at a wall', () => {
@@ -329,10 +333,10 @@ describe('knownTile — the rule the gateway actually spends', () => {
       world.level.tiles[y * world.level.w + 5] = TileCode.WALL;
     }
     const empty = createFog(world.level.w, world.level.h);
-    expect(knownTile(world.level, [{ x: 1, y: 3 }], empty, 9, 3)).toBe(false);
+    expect(knownTile(world.level, seenFrom(world.level, 1, 3), empty, 9, 3)).toBe(false);
     // ...but memory sees through it, which is the whole point of remembering.
     fogSet(empty, world.level.w, 9, 3);
-    expect(knownTile(world.level, [{ x: 1, y: 3 }], empty, 9, 3)).toBe(true);
+    expect(knownTile(world.level, seenFrom(world.level, 1, 3), empty, 9, 3)).toBe(true);
   });
 });
 

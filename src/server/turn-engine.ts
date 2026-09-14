@@ -24,12 +24,7 @@
 
 import { inBounds, step } from '../shared/coords.ts';
 import { bound } from '../shared/scale.ts';
-import {
-  HEAL_FACTOR_MAX,
-  HEAL_FACTOR_MIN,
-  healingFactor,
-  sightRadiusOf,
-} from './engine/derived.ts';
+import { HEAL_FACTOR_MAX, HEAL_FACTOR_MIN, healingFactor } from './engine/derived.ts';
 import { REST_MAX_TURNS, RestStop, restBonus, restCheck } from '../shared/rest.ts';
 import type { RestResult, RestView } from '../shared/rest.ts';
 import {
@@ -93,7 +88,9 @@ import type {
 import { toDisplayName } from './view/projector.ts';
 import type { TurnState } from './view/projector.ts';
 import { hasLineOfSight } from '../shared/sight.ts';
-import { canSee, sightDistance } from '../shared/sight.ts';
+import { sightDistance } from '../shared/sight.ts';
+import { fogHas } from '../shared/fog.ts';
+import { visionOf } from './view/eyesight.ts';
 import { currentTile, orbOnMyLine } from './engine/projectile.ts';
 import type { Actor, World } from './world/world.ts';
 
@@ -1640,7 +1637,7 @@ function buildRestView(
    * THE NEAREST HOSTILE THIS BODY CAN SEE. Upstream keeps a `spotted` list
    * maintained by its FOV pass (Player.lua:974). The server keeps each player's
    * own sight now, but this still asks the question directly of every actor in
-   * the realm, with the same `canSee` that sight is built from.
+   * the realm, against the seen set this body's own vision frame is cut from.
    *
    * NEAREST rather than first, because the bearing is the whole point of the
    * message — pointing a player at a husk across the room while one stands
@@ -1648,6 +1645,9 @@ function buildRestView(
    */
   let threat: RestView['threat'] = null;
   let best = Infinity;
+  // WHAT THIS BODY SEES BY THE LIGHT THERE IS (`visionOf`), so a husk in the
+  // dark does not break a rest.
+  const seenNow = visionOf(world, self).seen;
   for (const other of world.allActors()) {
     if (other === self || !other.alive || !isHostile(self, other)) continue;
     /**
@@ -1657,11 +1657,11 @@ function buildRestView(
      * separately — the pair `visibleEnemies` uses for monster AGGRO, which is a
      * different question. Upstream asks this one with `core.fov.calc_circle`
      * (Player.lua:854), a CIRCLE, so a husk at a diagonal 10 was interrupting
-     * rests here at a true distance of 14. `canSee` is that circle plus the
-     * wall test, and it is the same function the FOV projection spends.
+     * rests here at a true distance of 14. The seen set is that circle, the wall
+     * test and the light, and every player-facing frame reads the same one.
      */
     const dist = sightDistance(self, other);
-    if (dist >= best || !canSee(world.level, self, other, sightRadiusOf(self))) continue;
+    if (dist >= best || !fogHas(seenNow, world.level.w, other.x, other.y)) continue;
     best = dist;
     threat = { name: toDisplayName(other.name), dx: other.x - self.x, dy: other.y - self.y };
   }
@@ -1683,7 +1683,7 @@ function buildRestView(
   for (const proj of world.projectilesInFlight()) {
     if (proj.landed || proj.sourceId === self.id) continue;
     const at = currentTile(proj);
-    if (!canSee(world.level, self, at, sightRadiusOf(self))) continue;
+    if (!fogHas(seenNow, world.level.w, at.x, at.y)) continue;
     if (!orbOnMyLine(proj, self)) continue;
     // NEAREST WINS, shared with the actor pass above, so the sentence names
     // whichever thing is closest rather than whichever was scanned last.

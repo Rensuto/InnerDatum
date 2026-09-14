@@ -195,7 +195,7 @@ import { Faction, StandingOrder, incMoney, isHostile, isMonster } from '../engin
  * player wearing a coat that changes no number — Trap 1, arriving through the
  * one door the type system cannot close.
  */
-import { combatArmor, sightRadiusOf, stat as statValue } from '../engine/derived.ts';
+import { combatArmor, stat as statValue } from '../engine/derived.ts';
 import { boughtSheet, recomposeCombat, restoreOnReentry } from '../engine/effects.ts';
 /**
  * WHICH PARTY A BODY BELONGS TO — asked in exactly one place, at exactly one
@@ -224,8 +224,9 @@ import { loreById, loreIdOfNote } from '../content/lore.ts';
 // saves.ts's only reference back to this file is `import type`, so this arrow
 // adds no runtime cycle.
 import { UNASSIGNED_CLASS } from '../persist/saves.ts';
-import { canSee, knownTile } from '../../shared/sight.ts';
-import { computeSeen, cutWindow, rememberSeen } from '../../shared/vision.ts';
+import { knownTile } from '../../shared/sight.ts';
+import { cutWindow, rememberSeen } from '../../shared/vision.ts';
+import { visionOf } from '../view/eyesight.ts';
 import { attackBlockedReason, inspectActor } from '../view/inspect.ts';
 import {
   fogEvent,
@@ -4122,8 +4123,9 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    * and a reconnect inside a delve arrived with nothing on the map.
    *
    * ═══ BY SIGHT, IN EVERY REALM ═══
-   * The memory is `computeSeen` at the body's own `sightRadiusOf`, so a wall or
-   * a ridge stops it exactly where it stops the eye. An overworld kept a disc at
+   * The memory is what `visionOf` keeps: the lit tiles this body sees and the
+   * terrain that is always remembered, so a wall or a ridge stops it exactly
+   * where it stops the eye. An overworld kept a disc at
    * `REVEAL_RADIUS` while the client revealed the same disc locally, because the
    * two had to agree after a reload; the client draws the server's memory now,
    * so there is only one, and the overworld is remembered as this port ruled:
@@ -4133,9 +4135,8 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    * a file on every pump, and standing still is what a party does most.
    */
   const revealFor = (realm: Realm, actorId: string, body: Actor): boolean => {
-    const level = realm.world.level;
     const memory = fogFor(actorId, realm);
-    return rememberSeen(memory, computeSeen(level, body, sightRadiusOf(body)));
+    return rememberSeen(memory, visionOf(realm.world, body).remember);
   };
 
   /**
@@ -5844,10 +5845,11 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     realm: PumpTarget,
   ): ((x: number, y: number) => boolean) => {
     const world = realm.world;
-    const eyes = eyesOf(session, world);
+    const eye = eyesOf(session, world).at(0);
+    const seen = eye === undefined ? undefined : visionOf(world, eye).seen;
     const remembered =
       session.actorId === null ? undefined : fogFor(session.actorId, opts.realms?.get(realm.id));
-    return (x, y) => knownTile(world.level, eyes, remembered, x, y);
+    return (x, y) => knownTile(world.level, seen, remembered, x, y);
   };
 
   /**
@@ -8010,16 +8012,17 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     // anywhere else (`tome/class/Player.lua:523-527`), and a creature outside it
     // is not shown. Every roamer on the map went to every player, so danger a
     // teammate was walking toward on the far side of the moor was on your map
-    // too. A viewer is shown a roamer when `canSee` admits it at their own
-    // `sightRadiusOf`. No viewer at all still means every marker, as the rest of
+    // too. A viewer is shown a roamer on a tile their own vision (`visionOf`)
+    // sees. No viewer at all still means every marker, as the rest of
     // this function reads an absent `actorId`; a viewer whose body is not in
     // this realm sees none.
     const viewer = actorId === undefined ? undefined : realm.world.getActor(actorId);
+    const viewerSees = viewer === undefined ? undefined : visionOf(realm.world, viewer).seen;
     const wandering = [...realm.roamers.values()]
       .filter((r) =>
         actorId === undefined
           ? true
-          : viewer !== undefined && canSee(realm.world.level, viewer, r, sightRadiusOf(viewer)),
+          : viewerSees !== undefined && fogHas(viewerSees, realm.world.level.w, r.x, r.y),
       )
       .map((r) => ({
         x: r.x,
@@ -8188,8 +8191,8 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    * THIS VIEWER'S WINDOW OF SIGHT AND MEMORY, WHEN IT CHANGED. See `VisionMsg`.
    * ═══════════════════════════════════════════════════════════════════════════
    *
-   * Seen is `computeSeen` from the viewer's own body at their own
-   * `sightRadiusOf`, the rule every other frame is fogged by; remembered is the
+   * Seen is `visionOf` the viewer's own body, by the light there is: the rule
+   * every other frame is fogged by. Remembered is the
    * memory `rememberWhatPlayersSee` has already written for this pump. Both are
    * cut to the same square around the body.
    */
@@ -8200,15 +8203,9 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     const body = realm?.world.getActor(session.actorId);
     if (realm === undefined || body === undefined) return;
     const level = realm.world.level;
-    const radius = sightRadiusOf(body);
-    const seen = cutWindow(
-      computeSeen(level, body, radius),
-      level.w,
-      level.h,
-      body.x,
-      body.y,
-      radius,
-    );
+    const vision = visionOf(realm.world, body);
+    const radius = vision.reach;
+    const seen = cutWindow(vision.seen, level.w, level.h, body.x, body.y, radius);
     const remembered = cutWindow(fogFor(body.id, realm), level.w, level.h, body.x, body.y, radius);
     const msg = {
       v: PROTOCOL_VERSION,
