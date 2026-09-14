@@ -717,19 +717,17 @@ type HostileSide = {
  * and always have, so this is arithmetic over what the viewer was sent, not a
  * disclosure.
  *
- * FOV SEAM, AND IT IS THE SHARP ONE. Under shared party FOV (game-design.md
- * § 12) that argument holds exactly. When per-player FOV lands at M6 it stops
- * holding: a sum over hostiles the viewer cannot see is a count of what is in
- * the next room, which is the strongest single leak in this file. At that point
- * this function takes the viewer and sums only what `visible(viewer, actor)`
- * admits — and the aggregate's `portrait` has to be filtered the same way, for
- * the same reason.
+ * FOV SEAM, AND IT WAS THE SHARP ONE. Under pooled sight that argument held.
+ * Once each viewer had their own eyes it stopped holding: a sum over hostiles
+ * the viewer cannot see is a count of what is in the next room. So this takes
+ * the ids the viewer can see and sums only those, and the `portrait` comes from
+ * the same set, for the same reason. Absent means every hostile.
  *
  * The FACE is the highest-ranked living hostile, ties broken by turn order so
  * the answer is stable frame to frame. It is a face for the side, not a roster:
  * an elite in the room should be what the card shows.
  */
-function hostileSide(world: World): HostileSide {
+function hostileSide(world: World, seen?: ReadonlySet<string>): HostileSide {
   let hp = 0;
   let maxHp = 0;
   let count = 0;
@@ -742,6 +740,8 @@ function hostileSide(world: World): HostileSide {
     // are not part of what the party is fighting and a card that counted them
     // would say the fight is going worse than it is.
     if (!actor.alive) continue;
+    // ONLY WHAT THIS VIEWER CAN SEE — see the FOV note above.
+    if (seen !== undefined && !seen.has(actor.id)) continue;
     hp += actor.hp;
     maxHp += actor.maxHp;
     count += 1;
@@ -810,6 +810,7 @@ function projectTurnActors(
   state: TurnState,
   bellMs: number | null,
   downed: DownedState | undefined,
+  seen: ReadonlySet<string> | undefined,
 ): TurnActor[] {
   const blocking = new Set(state.whoseTurn);
   const standingBy = new Set(state.standingBy);
@@ -852,7 +853,7 @@ function projectTurnActors(
   }
 
   if (state.engagement > 0) {
-    const side = hostileSide(world);
+    const side = hostileSide(world, seen);
     cards.push({
       id: MONSTERS_TURN_ID,
       name: MONSTERS_DISPLAY_NAME,
@@ -900,6 +901,8 @@ function projectTurnActors(
  * @param downed the survival table, or undefined for a server with no survival
  *   system wired in — in which case nobody is ever down, exactly as in
  *   `projectParty`.
+ * @param seen the actor ids this viewer can see. The monsters card sums only
+ *   those; absent means every hostile, for a fixture or the GM console.
  */
 export function projectTurn(
   viewer: Actor,
@@ -907,6 +910,7 @@ export function projectTurn(
   state: TurnState,
   bellMs: number | null,
   downed?: DownedState,
+  seen?: ReadonlySet<string>,
 ): TurnMsg {
   return {
     v: PROTOCOL_VERSION,
@@ -917,7 +921,7 @@ export function projectTurn(
     // place in the process, so no two clients can disagree about whether the
     // party is in a fight — see the note on `TurnMsg.inCombat`.
     inCombat: state.engagement > 0,
-    actors: projectTurnActors(viewer, world, state, bellMs, downed),
+    actors: projectTurnActors(viewer, world, state, bellMs, downed, seen),
     whoseTurn: [...state.whoseTurn],
     committed: [...state.committed],
     standingBy: [...state.standingBy],

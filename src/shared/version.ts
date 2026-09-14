@@ -574,6 +574,21 @@
  * ═══════════════════════════════════════════════════════════════════════════
 
 
+ * CONSIDERED AND NOT BUMPED (A MONSTERS CARD FOR WHAT YOU CAN SEE). The
+ * monsters card on `turn` sums only the hostiles its recipient can see, and
+ * PROTOCOL_VERSION STAYS 23.
+ *
+ * ═══ WHY THIS DOES NOT FORCE A BUMP ═══
+ * `turn` was already built per recipient and the card keeps its shape; only
+ * the numbers in it are smaller where a teammate's fight is out of sight. A
+ * client built before this draws the card from whatever the frame says, and
+ * already guards a card with nothing in it.
+ *
+ * `SCHEMA_VERSION` STAYS 1. Nothing about sight is saved.
+ *
+ * ═══════════════════════════════════════════════════════════════════════════
+
+
  * 22 -> 23 (TRAPS). `TrapsMsg` is a new outbound frame — every trap THIS
  * VIEWER has found out about — and it is 6 -> 7's argument in its most literal
  * form yet.

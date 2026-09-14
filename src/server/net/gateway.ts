@@ -592,6 +592,25 @@ type Session = {
   lastProjectilesKey?: string;
   lastZonesKey?: string;
   /**
+   * The last `turn` frame this socket was sent, as a comparison key. See
+   * `sendTurn`.
+   *
+   * PER SESSION, because the monsters card now sums only the hostiles this
+   * viewer can see, so two players in one realm can be owed different cards
+   * from the same barrier state.
+   *
+   * ═══ WHY EVERY MEMO IN THIS FILE HAD TO STOP BEING ONE VARIABLE ═══
+   * A change-detector answers "did this frame's content move since I last sent
+   * it". Shared across recipients it answers a different question — "did it
+   * move since the last one I looked at" — and the failure is SUPPRESSION,
+   * which is invisible: one recipient's key overwrites another's, a genuinely
+   * changed frame compares equal, and that recipient is never told. On the turn
+   * frame that means a party is not shown that the barrier is now waiting on
+   * them, which game-design.md § 4 names as the way this genre dies. That is why
+   * this was a map per realm, and it is why it is per session now.
+   */
+  lastTurnKey?: string;
+  /**
    * The overworld cell this body stepped off when it crossed into a site, and
    * where `leaveRealm` puts it back.
    *
@@ -2981,20 +3000,6 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
   const bells = new Map<string, Bell>();
 
   /**
-   * The last barrier state broadcast PER REALM, as a key. See `turnKey`.
-   *
-   * ═══ WHY EVERY MEMO IN THIS FILE HAD TO BECOME A MAP ═══
-   * A change-detector answers "did this frame's content move since I last sent
-   * it". With one variable and N realms it answers a different question — "did
-   * it move since the last realm I looked at" — and the failure is SUPPRESSION,
-   * which is invisible: realm A's key overwrites realm B's, B's genuinely
-   * changed frame compares equal to A's, and B is never told. On the turn frame
-   * that means a party is not shown that the barrier is now waiting on them,
-   * which game-design.md § 4 names as the way this genre dies.
-   */
-  const lastTurnKeys = new Map<string, string>();
-
-  /**
    * Names ANONYMOUS players — the ones with no verified Discord identity behind
    * them. A verified player is named by Discord; see `resolveActor`.
    */
@@ -4669,7 +4674,8 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    * is answering "is the game waiting on ME?".
    */
   const sendTurn = (session: Session, state: TurnState, bellMs: number | null): void => {
-    const { world, engine } = realmFor(session);
+    const realm = realmFor(session);
+    const { world, engine } = realm;
     const actorId = session.actorId;
     if (actorId === null) return;
     const viewer = world.getActor(actorId);
@@ -4686,7 +4692,33 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     // `opts.downed` is the SAME survival table the engine mutates (main.ts
     // creates one and hands it to both), so the card's `downed` flag and the
     // countdown on the party panel can never disagree about who is on the floor.
-    send(session.socket, projectTurn(viewer, world, scoped, bellMs, opts.downed));
+    //
+    // ═══ AND THE MONSTERS CARD IS THIS VIEWER'S TOO ═══
+    // It sums only the hostiles this viewer's own eyes can see (`eyesOf`), so a
+    // fight a teammate is having out of sight adds nothing to it.
+    const msg = projectTurn(
+      viewer,
+      world,
+      scoped,
+      bellMs,
+      opts.downed,
+      visibleActorIds(world, eyesOf(session, world)),
+    );
+    // ═══ SENT WHEN THIS VIEWER'S FRAME MOVED ═══
+    // The barrier terms and the players' hit points, as the per-realm key had
+    // them, plus this viewer's monsters card: a monster walking into sight moves
+    // nothing else, and the card would otherwise sit stale until the barrier did.
+    const side = msg.actors.find((card) => card.kind === 'monsters');
+    const key = [
+      turnKey(state, bells.has(realm.id)),
+      playerHpKey(realm),
+      side === undefined
+        ? '-'
+        : `${String(Math.ceil(side.hp))}/${String(side.maxHp)}:${side.portrait ?? ''}`,
+    ].join('|');
+    if (key === session.lastTurnKey) return;
+    session.lastTurnKey = key;
+    send(session.socket, msg);
   };
 
   /**
@@ -4855,9 +4887,9 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
   };
 
   const broadcastTurnIfChanged = (realm: PumpTarget, state: TurnState): void => {
-    const key = `${turnKey(state, bells.has(realm.id))}|${playerHpKey(realm)}`;
-    if (key === lastTurnKeys.get(realm.id)) return;
-    lastTurnKeys.set(realm.id, key);
+    // EACH FRAME IS COMPARED AGAINST ITS RECIPIENT'S OWN MEMO, inside `sendTurn`.
+    // The monsters card differs per viewer, so a key for the whole realm would
+    // suppress a card that changed for one player and not for the others.
 
     const bellMs = bellRemainingMs(realm.id);
     for (const session of sessions.values()) {
@@ -9723,7 +9755,6 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    */
   const forgetRealmMemos = (realmId: string): void => {
     clearBell(realmId);
-    lastTurnKeys.delete(realmId);
     lastPartyKeys.delete(realmId);
     lastTerrainKeys.delete(realmId);
     lastShopKeys.delete(realmId);
@@ -13254,10 +13285,13 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     // reading the provisional Watchman's 34/34 and their portrait — until their
     // first step, which out of combat can be minutes.
     //
-    // THE MEMO IS CLEARED RATHER THAN BYPASSED, so the frame goes to EVERYBODY.
-    // Every other player's strip carries this card too, and a unicast would fix
-    // it for the one person who cannot see their own portrait anyway.
-    lastTurnKeys.delete(realm.id);
+    // EVERY MEMO IN THE REALM IS CLEARED RATHER THAN BYPASSED, so the frame goes
+    // to EVERYBODY. Every other player's strip carries this card too, and a
+    // unicast would fix it for the one person who cannot see their own portrait
+    // anyway.
+    for (const other of sessions.values()) {
+      if (realmFor(other).id === realm.id) other.lastTurnKey = undefined;
+    }
     broadcastTurnIfChanged(realm, engine.turnState());
 
     // ═══ IMMEDIATE, NOT THE 5s DEBOUNCE, AND THE LABEL IS `join` ═══

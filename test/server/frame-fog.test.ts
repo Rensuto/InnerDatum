@@ -362,6 +362,9 @@ describe('every player-facing frame is built with eyes', () => {
       // fixture and the GM console both want the ungated frame); this is what
       // holds the gateway to the other reading.
       ['projectZones', 'eyesOf'],
+      // AND THE MONSTERS CARD. `projectTurn` takes an OPTIONAL set of visible ids,
+      // so a gateway call without one sums every hostile on the floor.
+      ['projectTurn', 'eyesOf'],
     ] as const) {
       for (const match of text.matchAll(new RegExp(`${fn}\\(`, 'g'))) {
         const call = text.slice(match.index, match.index + 220);

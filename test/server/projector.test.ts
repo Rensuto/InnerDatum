@@ -576,6 +576,35 @@ describe('projectTurn', () => {
     expect(side?.portrait).toBe('enemy_index_husk_elite_s');
   });
 
+  it('sums only the hostiles this viewer can see, and wears only their faces', () => {
+    // PER-PLAYER SIGHT. A sum over hostiles the viewer cannot see is a count of
+    // what is in the next room, and the elite's face would name it.
+    const world = room();
+    const dalt = world.addPlayer('actor_a', 'Dalt');
+    const husk = monster(world, 'mon_a', 5, 5);
+    world.addMonster('mon_elite', {
+      name: 'Index Husk',
+      sprite: 'enemy_index_husk_elite_s',
+      x: 6,
+      y: 5,
+      profile: AiProfile.MeleeChaser,
+      rank: ActorRank.Elite,
+    });
+    const seen = new Set([dalt.id, husk.id]);
+
+    const [, side] = projectTurn(
+      dalt,
+      world,
+      barrier({ engagement: 5 }),
+      null,
+      undefined,
+      seen,
+    ).actors;
+    expect(side?.hp).toBe(husk.hp);
+    expect(side?.maxHp).toBe(husk.maxHp);
+    expect(side?.portrait).toBe(husk.sprite);
+  });
+
   it('marks exactly one card as self, and a different one for each viewer', () => {
     const world = room();
     const dalt = world.addPlayer('actor_a', 'Dalt');
