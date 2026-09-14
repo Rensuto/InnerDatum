@@ -360,10 +360,10 @@ from the other two by shape and flame colour, not by size alone.
 ## The standing commission: people, bestiary, bosses, effects, items, props
 
 **A backlog to draw from for a long while.** The list lives in
-[content/art-requests.ts](content/art-requests.ts), not here: every id in it is
-reported by `npm run art:needs` as requested art, and as missing until a file
-of that id is deployed. Each entry carries its size, where it appears, the ToME
-entry it stands in for, and a one-line brief.
+[content/art-requests.ts](content/art-requests.ts), not here. It is a catalogue
+rather than code: `npm run art:needs` tracks an id once the code that draws it
+names it, and not before. Each entry carries its id, size, where it appears,
+the ToME entry it stands in for, and a one-line brief.
 
 It holds seven lists:
 

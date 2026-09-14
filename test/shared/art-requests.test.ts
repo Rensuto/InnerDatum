@@ -6,13 +6,13 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 import {
-  BOSS_ART_REQUESTS,
-  EFFECT_ART_REQUESTS,
-  ENEMY_ART_REQUESTS,
-  ITEM_ART_REQUESTS,
-  PROP_ART_REQUESTS,
-  STATUS_ICON_ART_REQUESTS,
-  TOWNSFOLK_ART_REQUESTS,
+  BOSS_ART_COMMISSION,
+  EFFECT_ART_COMMISSION,
+  ENEMY_ART_COMMISSION,
+  ITEM_ART_COMMISSION,
+  PROP_ART_COMMISSION,
+  STATUS_ICON_ART_COMMISSION,
+  TOWNSFOLK_ART_COMMISSION,
 } from '../../content/art-requests.ts';
 import type { ArtRequest } from '../../content/art-requests.ts';
 
@@ -21,22 +21,23 @@ import type { ArtRequest } from '../../content/art-requests.ts';
  * THE COMMISSION IS READ BY A SCANNER, SO IT HAS TO BE WHAT THE SCANNER READS.
  * ═══════════════════════════════════════════════════════════════════════════
  *
- * `tools/art-needs.mjs` collects every string in an `*ART_REQUESTS` constant
- * that looks like an asset id: one of its stems, then lower-case words joined
- * by underscores. An id outside that shape is silently not a request, and
- * nobody draws it.
+ * The ids follow `tools/art-needs.mjs`'s shape — one of its stems, then
+ * lower-case words joined by underscores — so the day one is wired, the
+ * inventory counts it. Until then they stay out of that inventory: the
+ * repository keeps no `*ART_REQUESTS` constant, and an id in an `id:` field is
+ * a name to the scanner, not a picture.
  */
 const STEMS = ['chr_npc_', 'enemy_', 'icon_', 'item_', 'prop_', 'ui_'] as const;
 const ID = /^[a-z0-9]+(?:_[a-z0-9]+)*$/;
 
 const ALL: readonly (readonly [string, readonly ArtRequest[]])[] = [
-  ['townsfolk', TOWNSFOLK_ART_REQUESTS],
-  ['enemies', ENEMY_ART_REQUESTS],
-  ['bosses', BOSS_ART_REQUESTS],
-  ['effects', EFFECT_ART_REQUESTS],
-  ['status icons', STATUS_ICON_ART_REQUESTS],
-  ['items', ITEM_ART_REQUESTS],
-  ['props', PROP_ART_REQUESTS],
+  ['townsfolk', TOWNSFOLK_ART_COMMISSION],
+  ['enemies', ENEMY_ART_COMMISSION],
+  ['bosses', BOSS_ART_COMMISSION],
+  ['effects', EFFECT_ART_COMMISSION],
+  ['status icons', STATUS_ICON_ART_COMMISSION],
+  ['items', ITEM_ART_COMMISSION],
+  ['props', PROP_ART_COMMISSION],
 ];
 
 describe('the standing art commission', () => {
@@ -76,16 +77,24 @@ describe('the standing art commission', () => {
     }
   });
 
-  it('spells every id out, because the scanner cannot read an id built at runtime', () => {
+  it('spells every id out in an `id:` field, where the art inventory leaves it alone', () => {
     /**
-     * tools/art-needs.mjs counts only string literals inside an `*ART_REQUESTS`
-     * constant, so an id assembled from a template is silently not a request.
-     * Thirty-six damage-type effects were once built that way and went uncounted.
+     * An id built from a template is one nobody can search for, and an id passed
+     * anywhere but an `id:` field is read by tools/art-needs.mjs as art the code
+     * already draws. Both happened to this file once: thirty-six effects were
+     * built from a template, and the first version's constants were counted as
+     * requests by an inventory that is meant to hold none.
      */
     const text = readFileSync(new URL('../../content/art-requests.ts', import.meta.url), 'utf8');
+    expect(/\bconst\s+[A-Z_]*ART_REQUESTS\b/.test(text), 'a constant is a request list again').toBe(
+      false,
+    );
     for (const [list, requests] of ALL) {
       for (const { id } of requests) {
-        expect(text.includes(`'${id}'`), `${list}: ${id} is not spelled out`).toBe(true);
+        const hits = text.split(`'${id}'`).length - 1;
+        const named = text.split(`id: '${id}'`).length - 1;
+        expect(hits, `${list}: ${id} is not spelled out once`).toBe(1);
+        expect(named, `${list}: ${id} is not in an id field`).toBe(1);
       }
     }
   });
