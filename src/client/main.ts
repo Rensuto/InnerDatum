@@ -132,7 +132,13 @@
  *   starting cannot leave a panel overlapping the cards on one surface only.
  */
 
-import type { StatKey, TakeBackGuard, TalentCell } from './ui/talents.ts';
+import type {
+  StatKey,
+  TakeBackGuard,
+  TalentCell,
+  TalentMessage,
+  TalentRefusal,
+} from './ui/talents.ts';
 import { DIR_ORDER, chebyshev, sameTile, step } from '../shared/coords.ts';
 import { parseCommand } from './input/commands.ts';
 import { bindGameKeys, gameKeymap, setKeymap, TurnCommand, UiCommand } from './input/keys.ts';
@@ -298,14 +304,13 @@ import {
   PARTY_PANE_COMPACT_W,
   PARTY_PANE_MIN_H,
 } from './ui/partypanel.ts';
-// THE CEILING RULE, SHARED WITH THE SERVER THAT ENFORCES IT. One function, so
-// a greyed `+` and a refused frame can never disagree about where the limit is.
-import { STAT_MAX, canRaiseStat } from '../shared/progression.ts';
-import { statName } from '../shared/stats.ts';
 import { resourceLabel } from './ui/resource.ts';
 import {
   TalentHitKind,
+  talentMessageWake,
   confirmTooSoon,
+  statPressRefusal,
+  talentPressRefusal,
   drawTalentPanel,
   pressSpend,
   talentPanelDeepenAt,
@@ -1995,6 +2000,11 @@ let talentsArmedId: string | null = null;
  */
 let talentsArmedAt: number | null = null;
 let talentsArmedStatAt: number | null = null;
+/**
+ * WHAT THE TALENT PANEL'S MESSAGE LINE IS SAYING, and since when — a refusal
+ * held and then faded in the title bar. See `talentHeaderMessage`.
+ */
+let talentMessage: TalentMessage | null = null;
 
 /**
  * THE INVENTORY PANEL (v10), AND IT DEFAULTS OFF FOR THE SHEET'S OWN REASON.
@@ -4904,6 +4914,9 @@ const paintHud: HudPainter = (ctx, width, height) => {
       // THE STAT TWIN OF `focusId`, and what one point in it buys.
       focusStat: talentFocusStat,
       statGains: progress?.statGains,
+      // THE MESSAGE LINE, and the clock its fade is measured against.
+      message: talentMessage,
+      now: Date.now(),
     });
 
     /**
@@ -7585,6 +7598,41 @@ async function boot(): Promise<void> {
     }
     talentsArmedId = null;
     talentsArmedStat = null;
+    // A MESSAGE BELONGS TO THE PRESS THAT CAUSED IT, on the screen it was made on.
+    talentMessage = null;
+    requestDraw();
+  }
+
+  /**
+   * SAY A REFUSAL ON THE TALENT PANEL'S MESSAGE LINE — upstream's `subtleMessage`
+   * (`LevelupDialog.lua:171-174`).
+   *
+   * IT REDRAWS ONLY WHILE IT HAS TO. The client draws on demand (the header of
+   * this file), and a message needs no frames while it holds — only the half
+   * second it fades over, and the one that clears it. A newer refusal replaces
+   * the older one and restarts the clock, as `setTextColor` does upstream.
+   */
+  let talentMessageTimer = 0;
+  function sayOnTalentPanel(refusal: TalentRefusal): void {
+    const said: TalentMessage = { ...refusal, at: Date.now() };
+    talentMessage = said;
+    if (talentMessageTimer !== 0) window.clearTimeout(talentMessageTimer);
+    talentMessageTimer = 0;
+    // EVERY WAIT IS `talentMessageWake`'S ANSWER, so the frames asked for are the
+    // ones the painter's alpha changes on, and the message is cleared on the
+    // frame that alpha reaches 0 — not one early, and not one left over.
+    const tick = (): void => {
+      talentMessageTimer = 0;
+      // RETIRED MEANWHILE, by a newer refusal or a press that bought. The line
+      // belongs to that now.
+      if (talentMessage !== said) return;
+      const wait = talentMessageWake(said, Date.now());
+      if (wait === null) talentMessage = null;
+      else talentMessageTimer = window.setTimeout(tick, wait);
+      requestDraw();
+    };
+    const first = talentMessageWake(said, said.at);
+    if (first !== null) talentMessageTimer = window.setTimeout(tick, first);
     requestDraw();
   }
 
@@ -7638,34 +7686,34 @@ async function boot(): Promise<void> {
      * TWO SENTENCES, BECAUSE UPSTREAM SAYS TWO AND THEY MEAN OPPOSITE THINGS.
      * *"…until next level"* sends the player to spend the point elsewhere and
      * come back; the bare maximum means never. LevelupDialog.lua:255-260 keeps
-     * them apart for exactly this reason, and the server's own refusal does too.
+     * them apart for exactly this reason. (The server's own refusal keeps them
+     * apart too, but draws its line at STAT_MAX alone; these are the words a
+     * player reads.)
      *
      * ASKED OF THE BOUGHT VALUE — `ProgressMsg.statBase`. Off the composed one
      * this would fire on the wrong rows the moment anybody put a coat on.
      */
     /**
-     * ═══ AND AN EMPTY HAND IS ASKED FIRST — `LevelupDialog.lua:251-254` ═══
-     * The column used to hide its `+` with no point in hand, so this press could
-     * not happen. The icon is always there now, as upstream's is, and upstream
-     * answers it before either ceiling: *"You have no stat points left!"* Arming
-     * an icon that cannot be bought would put the gold ring on a control that
-     * does nothing.
+     * ═══ UPSTREAM'S THREE REFUSALS, ON THE PANEL'S OWN MESSAGE LINE ═══
+     * `statPressRefusal` is `LevelupDialog.lua:251-262` in its order: an empty
+     * hand, then the two ceilings, each with its own sentence. They used to go to
+     * the notice line at the bottom of the window, away from the pointer that
+     * pressed; upstream says them on the dialog, and so does this.
+     *
+     * AN EMPTY HAND IS ASKED FIRST. The icon is always there, as upstream's is,
+     * and arming an icon that cannot be bought would put the gold ring on a
+     * control that does nothing. ASKED OF THE BOUGHT VALUE — `ProgressMsg
+     * .statBase` — or it would fire on the wrong rows the moment anybody put a
+     * coat on.
      */
-    if ((progress?.unspentStats ?? 0) <= 0) {
-      showNotice('no stat points left');
-      talentsArmedStat = null;
-      requestDraw();
-      return;
-    }
     const base = progress?.statBase?.[stat as 'str'] ?? null;
-    if (base !== null && progress !== null && !canRaiseStat(base, progress.level)) {
-      // THE NAME, NOT THE KEY. `str is at its maximum` was a database identifier
-      // in a sentence — the refusal `shared/stats.ts` was written to end.
-      showNotice(
-        base < STAT_MAX
-          ? `${statName(stat)} is at its maximum for level ${String(progress.level)} — try again next level`
-          : `${statName(stat)} is already at its maximum`,
-      );
+    const refusal = statPressRefusal({
+      unspent: progress?.unspentStats ?? 0,
+      base,
+      level: progress?.level ?? 1,
+    });
+    if (refusal !== null) {
+      sayOnTalentPanel(refusal);
       // THE ARM IS CLEARED TOO. Leaving it armed would put a gold plate on a
       // control that cannot be bought, which is the "lit button that does
       // nothing" ui/hotbar.ts refuses.
@@ -7673,6 +7721,8 @@ async function boot(): Promise<void> {
       requestDraw();
       return;
     }
+    // A PRESS THAT BUYS RETIRES THE LAST REFUSAL — see `answerPressed`.
+    talentMessage = null;
     // A DOUBLE-CLICK IS ONE GESTURE, not the two decisions the arm asks for.
     if (talentsArmedStat === stat && confirmTooSoon(talentsArmedStatAt, Date.now())) {
       requestDraw();
@@ -7698,6 +7748,8 @@ async function boot(): Promise<void> {
   }
 
   function pressTalentPlus(talentId: string): void {
+    // A PRESS THAT BUYS RETIRES THE LAST REFUSAL — see `answerPressed`.
+    talentMessage = null;
     // A DOUBLE-CLICK IS ONE GESTURE — see `confirmTooSoon`. The arm stands.
     if (talentsArmedId === talentId && confirmTooSoon(talentsArmedAt, Date.now())) {
       requestDraw();
@@ -12540,11 +12592,35 @@ async function boot(): Promise<void> {
          * the press and a drag's release. Pressing an icon that cannot be bought
          * disarms instead: the player has changed their mind.
          */
-        const pressedCell = pressed === null ? null : talentCellById(pressed);
-        const armPressed = (): void => {
+        /**
+         * ═══ AND A PRESS THAT CANNOT ARM SAYS WHY ═══
+         * `LevelupDialog.lua:365-379` answers every refused learn in words — no
+         * points of that kind, prerequisites not met, already fully known. This
+         * was silent: the press disarmed and nothing on the screen changed.
+         * `talentPressRefusal` is null exactly when `canSpend` is true, so it
+         * speaks on precisely the presses the arm declines.
+         *
+         * ONE READ, AT THE MOMENT OF ACTING. On the drag route this runs at the
+         * release, and a progress frame may have moved a purse since the press.
+         * The cell, its `canSpend` and the purses are all read here, together, so
+         * the arm and the words cannot answer two different frames.
+         *
+         * AND A PRESS THAT BUYS RETIRES THE LAST REFUSAL, or its words would sit
+         * over the arm's sentence for the rest of their fade.
+         */
+        const answerPressed = (): void => {
+          const pressedCell = pressed === null ? null : talentCellById(pressed);
           const armed = pressedCell !== null && pressedCell.canSpend ? pressedCell.id : null;
           if (armed !== null && armed !== talentsArmedId) talentsArmedAt = Date.now();
           talentsArmedId = armed;
+          if (pressedCell === null) return;
+          const refusal = talentPressRefusal(pressedCell, {
+            class: progress?.unspent ?? 0,
+            generic: progress?.unspentGenerics ?? 0,
+            category: progress?.unspentCategories ?? 0,
+          });
+          if (refusal === null) talentMessage = null;
+          else sayOnTalentPanel(refusal);
         };
         const bindable =
           pressed === null ? undefined : loadout.find((entry) => entry.id === pressed);
@@ -12553,7 +12629,7 @@ async function boot(): Promise<void> {
           beginDrag({ kind: DragKind.Talent, talentId: bindable.id }, point.x, point.y, () => {
             talentFocusId = bindable.id;
             talentFocusStat = null;
-            armPressed();
+            answerPressed();
             requestDraw();
           });
           return;
@@ -12561,7 +12637,7 @@ async function boot(): Promise<void> {
         if (pressed !== null) {
           talentFocusId = pressed;
           talentFocusStat = null;
-          armPressed();
+          answerPressed();
           requestDraw();
         }
       }

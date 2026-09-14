@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs';
 
 import { describe, expect, it } from 'vitest';
 
-import { CATEGORY_POINT_LEVELS } from '../../src/shared/progression.ts';
+import { CATEGORY_POINT_LEVELS, MAX_CHARACTER_LEVEL } from '../../src/shared/progression.ts';
 
 import {
   TALENT_PANEL_MARGIN,
@@ -21,7 +21,17 @@ import {
   STAT_ROWS,
   drawTalentPanel,
   SPEND_CONFIRM_MIN_MS,
+  TALENT_MESSAGE_FADE_MS,
+  TALENT_MESSAGE_HOLD_MS,
+  TALENT_FADE_STEP_MS,
+  talentMessageAlpha,
+  talentMessageWake,
+  TalentMessageTone,
   confirmTooSoon,
+  statPressRefusal,
+  statNeverRises,
+  talentHeaderMessage,
+  talentPressRefusal,
   statCellLook,
   statCellRects,
   statMinusRect,
@@ -372,33 +382,29 @@ describe('the grid lays out in columns', () => {
     expect(cats[0]?.rect.x).toBeLessThan(cats[1]?.rect.x ?? 0);
   });
 
-  it('captions each column with the purse it spends', () => {
+  it('puts each purse’s counter over its own column, and no caption repeats it', () => {
     /**
      * `tome/dialogs/LevelupDialog.lua:814-836` places `b_class` and `b_generic`
-     * directly over their own pane, so "Class points: 2" is read above the
-     * column those points can be spent in. Ours had one merged sentence and a
-     * `· generic` suffix on the heading, which this file's own note called out
-     * as the reason nothing on screen said why one strip was live and the one
-     * under it grey.
+     * directly over their own pane, and nothing else: no caption row. Ours had
+     * both — `Class points: 2` in its box and `CLASS  2 points` under it — two
+     * renderings of one number twenty-nine pixels of grid tall.
      */
-    const geometry = talentPanelGeometry(
-      rectAt(REAL),
-      talentPanelRows(view({ progress: progress(2, 3) })),
-      NO_SCROLL,
-    );
+    const rows = talentPanelRows(view({ progress: progress(2, 3) }));
+    const rect = rectAt(REAL);
+    const geometry = talentPanelGeometry(rect, rows, NO_SCROLL);
     expect(geometry.panes).toHaveLength(2);
     expect(geometry.panes[0]?.generic).toBe(false);
     expect(geometry.panes[1]?.generic).toBe(true);
-    expect(geometry.panes[0]?.text).toContain('2');
-    expect(geometry.panes[1]?.text).toContain('3');
-    // Each caption sits over its own column, and neither scrolls with it.
     const cats = geometry.placed.filter((p) => p.row.kind === TalentRowKind.Category);
     expect(geometry.panes[0]?.rect.x).toBe(cats[0]?.rect.x);
-    for (const cat of cats) {
-      expect(cat.rect.y).toBeGreaterThanOrEqual(
-        (geometry.panes[0]?.rect.y ?? 0) + (geometry.panes[0]?.rect.h ?? 0),
-      );
-    }
+
+    const texts = paintOps({ rect, rows }).filter((op) => op.kind === 'fillText');
+    const klass = texts.find((op) => String(op.args[0]) === 'Class points: 2');
+    expect(klass, 'the class counter is gone').toBeDefined();
+    // OVER ITS OWN COLUMN: the box starts at the pane and its text is padded in.
+    expect(Number(klass?.args[1])).toBe((geometry.panes[0]?.rect.x ?? 0) + 5);
+    expect(texts.map((op) => String(op.args[0]))).toContain('Generic points: 3');
+    expect(texts.some((op) => /^(CLASS|GENERIC)\b/.test(String(op.args[0])))).toBe(false);
   });
 });
 
@@ -1536,28 +1542,31 @@ describe('the attribute column', () => {
     expect(card?.lines).toEqual(['Mental save +0.4']);
   });
 
-  it('names what is armed, in the sentence slot above the grid and not over the column', () => {
+  it('names what is armed, centred in the title bar over the category counter', () => {
     /**
-     * The warning was a strip along the panel's bottom edge — the edge the
-     * attribute column runs to — and it painted over the last row of captions
-     * whenever the column only just fitted.
+     * Upstream's message line is `{hcenter=self.b_types, top=-self.t_messages.h}`
+     * (`LevelupDialog.lua:834`): above the columns, centred on the middle rule.
+     * The warning was a strip over the grid, and before that along the bottom
+     * edge the attribute column runs to, where it covered the last captions.
      */
     const rect = talentPanelRect({ width: 1280, height: 720, top: 60, bottom: 640 });
     if (rect === null) throw new Error('no panel');
     const g = talentPanelGeometry(rect, talentPanelRows(view()), NO_SCROLL);
     if (g.stats === null) throw new Error('no column');
-    const right = g.stats.x + g.stats.w;
+    const [klass, generic] = g.panes;
+    if (klass === undefined || generic === undefined) throw new Error('no panes');
+    const mid = Math.round((klass.rect.x + klass.rect.w + generic.rect.x) / 2);
 
     const ops = paintOps({ armedStat: 'con' });
     const said = ops.find(
       (op) => op.kind === 'fillText' && String(op.args[0]) === 'press Constitution again to spend',
     );
     expect(said, 'the armed attribute is not named').toBeDefined();
-    expect(
-      Number(said?.args[1]),
-      'the warning is over the attribute column',
-    ).toBeGreaterThanOrEqual(right);
-    expect(Number(said?.args[2]), 'the warning is below the grid').toBeLessThan(g.grid.viewport.y);
+    expect(Number(said?.args[1]), 'not centred on the middle rule').toBe(mid);
+    expect(Number(said?.args[2]), 'not in the title bar').toBeLessThan(rect.y + 24);
+    expect(Number(said?.args[1]), 'over the attribute column').toBeGreaterThanOrEqual(
+      g.stats.x + g.stats.w,
+    );
 
     const talent = talentPanelRows(view()).find((row) => row.kind === TalentRowKind.Category);
     const first = talent?.kind === TalentRowKind.Category ? talent.talents[0] : undefined;
@@ -1828,6 +1837,15 @@ describe('the two purses, which are not interchangeable', () => {
     expect(points?.kind === TalentRowKind.Points ? points.text : '').toBe(
       'no points — next at level 3',
     );
+    // AND IT IS THE TITLE BAR'S RESTING LINE, which is the only place it is
+    // painted now — and only while there is truly nothing to spend.
+    expect(points?.kind === TalentRowKind.Points ? points.levelNote : null).toBe(
+      'no points — next at level 3',
+    );
+    const busy = talentPanelRows(twoTrees({ progress: progress(1, 0) })).find(
+      (row) => row.kind === TalentRowKind.Points,
+    );
+    expect(busy?.kind === TalentRowKind.Points ? busy.levelNote : 'unset').toBeNull();
   });
 });
 
@@ -2424,7 +2442,14 @@ describe('the points sentence is not drawn on top of the attribute column', () =
     ['the reported window', REAL],
   ] as const) {
     it(`clears the stats box at ${name}`, () => {
-      const geometry = talentPanelGeometry(rectAt(size), talentPanelRows(view()), NO_SCROLL);
+      // A NOTE ROW is the only sentence the grid places now — the Points row is
+      // not placed at all — so the fixture is the loadout-less panel that has one.
+      const rows = talentPanelRows(view({ loadout: [], passives: [] }));
+      const geometry = talentPanelGeometry(rectAt(size), rows, NO_SCROLL);
+      expect(
+        geometry.placed.some((placed) => placed.row.kind === TalentRowKind.Points),
+        'the points sentence is placed again',
+      ).toBe(false);
       const stats = geometry.stats;
       expect(stats, 'no attribute column — this case proves nothing').not.toBeNull();
 
@@ -2450,7 +2475,11 @@ describe('the points sentence is not drawn on top of the attribute column', () =
      * it exactly within the grid's own span rather than past it.
      */
     const rect = rectAt(FLOOR);
-    const geometry = talentPanelGeometry(rect, talentPanelRows(view()), NO_SCROLL);
+    const geometry = talentPanelGeometry(
+      rect,
+      talentPanelRows(view({ loadout: [], passives: [] })),
+      NO_SCROLL,
+    );
     for (const placed of geometry.placed) {
       if (placed.row.kind === TalentRowKind.Category) continue;
       expect(placed.rect.x + placed.rect.w).toBeLessThanOrEqual(rect.x + rect.w);
@@ -2469,28 +2498,276 @@ describe('the points sentence is not drawn on top of the attribute column', () =
  * over their own pane. Ours flowed both kinds through one width-packed grid and
  * distinguished them with a `· generic` suffix on the heading.
  */
-describe('the pane captions', () => {
-  it('are painted, one per purse, with their own counts', () => {
-    const texts = paintPanel({ rows: talentPanelRows(view({ progress: progress(2, 3) })) });
-    expect(texts.some((t) => t.startsWith('CLASS') && t.includes('2'))).toBe(true);
-    expect(texts.some((t) => t.startsWith('GENERIC') && t.includes('3'))).toBe(true);
-  });
-
-  it('say `1 point` rather than `1 points`', () => {
+describe('no caption repeats the counters', () => {
+  it('paints each purse once, in its box, including an empty one', () => {
     const texts = paintPanel({ rows: talentPanelRows(view({ progress: progress(1, 0) })) });
-    expect(texts).toContain('CLASS  1 point');
-    expect(texts).toContain('GENERIC  0 points');
+    expect(texts.some((t) => /^(CLASS|GENERIC)\b/.test(t))).toBe(false);
+    expect(texts).toContain('Class points: 1');
+    // A PURSE WITH NOTHING IN IT STILL HAS ITS BOX. "Generic points: 0" over an
+    // empty column answers "where do generic points go"; a missing box does not.
+    expect(texts).toContain('Generic points: 0');
+  });
+});
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE MESSAGE LINE — `LevelupDialog.lua:171-179` and `StatusBox.lua:57-69`.
+ * ═══════════════════════════════════════════════════════════════════════════
+ */
+describe('the message line', () => {
+  const said = (text: string, at = 1000) => ({ text, tone: TalentMessageTone.Error, at });
+
+  it('holds a refusal for a second, fades it over half of one, then lets the arm speak', () => {
+    const rows = talentPanelRows(view());
+    const base = { rows, armedId: 'talent:crude_blow', armedStat: null, message: said('Nope!') };
+    const at = (now: number) => talentHeaderMessage({ ...base, now });
+    expect(at(1000 + TALENT_MESSAGE_HOLD_MS - 1)).toMatchObject({ text: 'Nope!', alpha: 1 });
+    expect(at(1000 + TALENT_MESSAGE_HOLD_MS + TALENT_MESSAGE_FADE_MS / 2)?.alpha).toBeCloseTo(0.5);
+    expect(at(1000 + TALENT_MESSAGE_HOLD_MS + TALENT_MESSAGE_FADE_MS)?.text).toBe(
+      'press Crude Blow again to spend',
+    );
   });
 
-  it('and a pane with nothing in it still carries its caption', () => {
+  it('holds for StatusBox’s second and fades over its half — StatusBox.lua:57-69', () => {
+    // PINNED AS NUMBERS: every other test in this block is written in these
+    // constants, and would pass whatever they held.
+    expect([TALENT_MESSAGE_HOLD_MS, TALENT_MESSAGE_FADE_MS]).toEqual([1000, 500]);
+    expect(TALENT_FADE_STEP_MS).toBeLessThanOrEqual(TALENT_MESSAGE_FADE_MS / 5);
+  });
+
+  it('asks for a frame exactly when the line changes, and stops when it is gone', () => {
+    const message = said('Nope!', 1000);
+    // NOTHING WHILE IT HOLDS: one wake, at the end of the hold.
+    expect(talentMessageWake(message, 1000)).toBe(TALENT_MESSAGE_HOLD_MS);
+    expect(talentMessageWake(message, 1000 + TALENT_MESSAGE_HOLD_MS - 1)).toBe(1);
+    // STEPS THROUGH THE FADE, and the last step lands on its end, not past it.
+    expect(talentMessageWake(message, 1000 + TALENT_MESSAGE_HOLD_MS)).toBe(TALENT_FADE_STEP_MS);
+    const end = 1000 + TALENT_MESSAGE_HOLD_MS + TALENT_MESSAGE_FADE_MS;
+    expect(talentMessageWake(message, end - 1)).toBe(1);
+    expect(talentMessageWake(message, end)).toBeNull();
+    // THE JOIN: the scheduler lets go on exactly the frame the painter's alpha
+    // reaches nothing — never early (a message cut off mid-fade) and never late
+    // (frames spent redrawing a line with nothing on it).
+    for (let now = 900; now <= end + 100; now += 7) {
+      expect(talentMessageWake(message, now) === null, `at ${String(now)}`).toBe(
+        talentMessageAlpha(message, now) === 0,
+      );
+    }
+  });
+
+  it('tells the detail pane the same "never" the title bar is told', () => {
+    // A 60 AT LEVEL 30 is stopped by the lifetime bound, not the pace: the press
+    // says "further", and the pane pinned to that stat must not promise a level.
+    const text = (base: number, level: number) =>
+      paintPanel({
+        focusStat: 'str',
+        stats: { ...SIX, str: base },
+        statBase: { ...SIX, str: base },
+        level,
+      }).join(' ');
+    expect(statPressRefusal({ unspent: 1, base: 60, level: 30 })?.text).toBe(
+      'You cannot increase this stat further!',
+    );
+    expect(text(60, 30)).toContain('At its maximum.');
+    expect(text(60, 30)).not.toContain('rise again next level');
+    // AND WHERE THE PACE STOPS IT, both say wait.
+    expect(text(28, 2)).toContain('rise again next level');
+    // ONE RULE UNDER BOTH: "never" exactly when the press says "further".
+    for (const [base, level] of [
+      [60, 30],
+      [28, 2],
+      [60, 28],
+      [60, MAX_CHARACTER_LEVEL],
+      [100, 50],
+      [59, 28],
+    ] as const) {
+      expect(statNeverRises(base, level), `${String(base)} at level ${String(level)}`).toBe(
+        statPressRefusal({ unspent: 1, base, level })?.text ===
+          'You cannot increase this stat further!',
+      );
+    }
+  });
+
+  it('paints an error orange and upstream’s two yellows gold', () => {
+    const rows = talentPanelRows(view());
+    const ink = (tone: TalentMessageTone) =>
+      talentHeaderMessage({
+        rows,
+        armedId: null,
+        armedStat: null,
+        message: { text: 'Said.', tone, at: 0 },
+        now: 0,
+      })?.ink;
+    expect(ink(TalentMessageTone.Error)).toBe(PALETTE.ORANGE);
+    expect(ink(TalentMessageTone.Warning)).toBe(PALETTE.GOLD);
+    expect(ink(TalentMessageTone.Other)).toBe(PALETTE.GOLD);
+  });
+
+  it('says the level note only when nothing is armed and nothing was refused', () => {
+    const rows = talentPanelRows(view({ progress: progress(0, 0) }));
+    const quiet = { rows, armedId: null, armedStat: null, message: null, now: 0 };
+    expect(talentHeaderMessage(quiet)?.text).toBe('no points — next at level 3');
+    expect(talentHeaderMessage({ ...quiet, armedStat: 'wil' })?.text).toBe(
+      'press Willpower again to spend',
+    );
+    const busy = talentPanelRows(view({ progress: progress(1, 0) }));
+    expect(talentHeaderMessage({ ...quiet, rows: busy })).toBeNull();
+  });
+
+  it('is painted centred in the title bar while it holds, and not after it fades', () => {
+    const rect = talentPanelRect({ width: 1280, height: 720, top: 60, bottom: 640 });
+    if (rect === null) throw new Error('no panel');
+    const message = said('Prerequisites not met!');
+    const holding = paintOps({ message, now: 1500 }).find(
+      (op) => op.kind === 'fillText' && String(op.args[0]) === 'Prerequisites not met!',
+    );
+    expect(holding, 'the refusal was not said').toBeDefined();
+    expect(Number(holding?.args[2])).toBeLessThan(rect.y + 24);
+    expect(
+      paintPanel({ message, now: 1000 + TALENT_MESSAGE_HOLD_MS + TALENT_MESSAGE_FADE_MS }),
+    ).not.toContain('Prerequisites not met!');
+  });
+
+  it('refuses a talent press in upstream’s order, and exactly when it cannot arm', () => {
     /**
-     * "GENERIC 0 points" over an empty column answers "where do generic points
-     * go". A missing column answers nothing, and this character has no generic
-     * tree at all — which is the ordinary state before the first generic
-     * discipline is bought.
+     * `learnTalent(+)` — `LevelupDialog.lua:365-379`: the purse, then the
+     * prerequisites, then the rank cap. And null EXACTLY when `canSpend` is true,
+     * so the words and the arm never disagree about whether a press buys.
      */
-    const texts = paintPanel({ rows: talentPanelRows(view()) });
-    expect(texts.some((t) => t.startsWith('GENERIC'))).toBe(true);
+    const fixture = (p: ReturnType<typeof progress>, categories: number) =>
+      view({
+        progress: p,
+        categories,
+        loadout: [
+          talent({ id: 'maxed', name: 'Maxed', level: TALENT_MAX_LEVEL, ...DISCIPLINE }),
+          // CAPPED BELOW THE GAME'S MAXIMUM: "already fully known" is its OWN cap,
+          // and a rule comparing against TALENT_MAX_LEVEL would say nothing here.
+          talent({ id: 'single', name: 'Single', level: 1, maxLevel: 1, ...DISCIPLINE }),
+          talent({
+            id: 'gated',
+            name: 'Gated',
+            level: 0,
+            locked: true,
+            lockedReason: 'level 4',
+            ...DISCIPLINE,
+          }),
+          talent({ id: 'open', name: 'Open', level: 1, ...DISCIPLINE }),
+          talent({
+            id: 'gen',
+            name: 'Gen',
+            level: 1,
+            tree: 'generic/groundwork',
+            treeName: 'Groundwork',
+          }),
+        ],
+        passives: [],
+        unlockable: [
+          {
+            id: 'generic/leverage',
+            name: 'Leverage',
+            blurb: 'Weight.',
+            talents: [talent({ id: 'lever', name: 'Lever', level: 0 })],
+          },
+        ],
+      });
+    const cellsOf = (v: TalentPanelView) =>
+      categories(talentPanelRows(v)).flatMap((row) => row.talents);
+    const purses = (p: ReturnType<typeof progress>, category: number) => ({
+      class: p.unspent,
+      generic: p.unspentGenerics,
+      category,
+    });
+
+    // EVERY COMBINATION of empty and not, at two depths. A refusal that read the
+    // wrong purse passes any list where the purses happen to move together.
+    const depths = [0, 1, 2];
+    const combinations = depths.flatMap((cls) =>
+      depths.flatMap((gen) => [0, 1].map((cat) => [cls, gen, cat] as const)),
+    );
+    expect(combinations).toHaveLength(18);
+    for (const [c, g, k] of combinations) {
+      const p = progress(c, g);
+      for (const cell of cellsOf(fixture(p, k))) {
+        expect(
+          talentPressRefusal(cell, purses(p, k)) === null,
+          `${cell.id} at ${String(c)}/${String(g)}/${String(k)}`,
+        ).toBe(cell.canSpend);
+      }
+    }
+
+    const p = progress(1, 0);
+    const text = (id: string) =>
+      talentPressRefusal(
+        cellsOf(fixture(p, 0)).find((cell) => cell.id === id) as never,
+        purses(p, 0),
+      )?.text;
+    expect(text('gated')).toBe('Prerequisites not met!');
+    expect(text('maxed')).toBe('You already fully know this talent!');
+    expect(text('gen')).toBe('You have no generic talent points left!');
+    expect(text('lever')).toBe('You have no category points left!');
+    expect(text('open')).toBeUndefined();
+    // THE PURSE IS ASKED FIRST, even of a talent that is also gated.
+    const empty = progress(0, 0);
+    expect(
+      talentPressRefusal(
+        cellsOf(fixture(empty, 0)).find((cell) => cell.id === 'gated') as never,
+        purses(empty, 0),
+      )?.text,
+    ).toBe('You have no class talent points left!');
+  });
+
+  it('refuses an attribute press with upstream’s three sentences', () => {
+    // `incStat` — `LevelupDialog.lua:251-262`.
+    expect(statPressRefusal({ unspent: 0, base: 10, level: 1 })?.text).toBe(
+      'You have no stat points left!',
+    );
+    // Level 3's ceiling is 24.2; level 4's is 25.6 — the next level opens 25.
+    expect(statPressRefusal({ unspent: 1, base: 25, level: 3 })?.text).toBe(
+      'You cannot increase this stat further until next level!',
+    );
+    // The flat ceiling of 60 does not move with a level, so it is the other sentence.
+    expect(statPressRefusal({ unspent: 1, base: 60, level: 40 })?.text).toBe(
+      'You cannot increase this stat further!',
+    );
+    // A STARTING STAT ABOVE THE PACE — a class's 24 with an origin's 4 — waits for
+    // levels, not forever: 28 opens at level 6, whose ceiling is 28.4. Asking only
+    // whether the NEXT level opens it told this player "further" at levels 2 to 4.
+    expect(statPressRefusal({ unspent: 3, base: 28, level: 2 })?.text).toBe(
+      'You cannot increase this stat further until next level!',
+    );
+    // WHERE BOTH BIND, THE LIFETIME BOUND SPEAKS. Level 28's pace is 59.2 and its
+    // lifetime bound 60, and no level opens a 60; upstream asks the pace first and
+    // says "until next level" here — the one sentence this does not copy.
+    expect(statPressRefusal({ unspent: 1, base: 60, level: 28 })?.text).toBe(
+      'You cannot increase this stat further!',
+    );
+    // AND AT THE LEVEL CAP there is no next level to wait for.
+    expect(statPressRefusal({ unspent: 1, base: 60, level: MAX_CHARACTER_LEVEL })?.text).toBe(
+      'You cannot increase this stat further!',
+    );
+    expect(statPressRefusal({ unspent: 1, base: 14, level: 3 })).toBeNull();
+    expect(statPressRefusal({ unspent: 1, base: null, level: 3 })).toBeNull();
+  });
+
+  it('gives the grid its twenty-nine pixels back at the floor, the middle tiers and the wide one', () => {
+    // `panelBand`: top = 14 + 3 (+46 in combat), bottom = height − 91. The grid
+    // starts where the attribute column does, at the counters plus their air.
+    for (const size of [
+      { width: 640, height: 320, top: 17, bottom: 229 },
+      { width: 640, height: 320, top: 63, bottom: 229 },
+      { width: 772, height: 367, top: 17, bottom: 276 },
+      { width: 772, height: 367, top: 63, bottom: 276 },
+      { width: 640, height: 480, top: 17, bottom: 389 },
+      { width: 640, height: 480, top: 63, bottom: 389 },
+      // THE WIDE TIER, with the description column: the usual desktop window.
+      { width: 1280, height: 720, top: 17, bottom: 629 },
+      { width: 1280, height: 720, top: 63, bottom: 629 },
+    ]) {
+      const rect = rectAt(size);
+      const g = talentPanelGeometry(rect, talentPanelRows(view()), NO_SCROLL);
+      expect(g.grid.viewport.y - rect.y, JSON.stringify(size)).toBe(57);
+      if (g.stats !== null) expect(g.grid.viewport.y).toBe(g.stats.y);
+    }
   });
 });
 

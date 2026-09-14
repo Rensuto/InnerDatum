@@ -1051,6 +1051,16 @@ export const STAT_MIN = 1;
 export const STAT_MAX = 100;
 
 /**
+ * THE LIFETIME HALF OF `statCeilingForLevel`, ALONE — upstream's second test
+ * (LevelupDialog.lua:259), the one that answers "further" rather than "until
+ * next level". Named so the talent panel can ask which half binds without
+ * restating it.
+ */
+export function statLifetimeCeilingForLevel(level: number): number {
+  return 60 + Math.max(0, level - 50);
+}
+
+/**
  * ═══════════════════════════════════════════════════════════════════════════
  * HOW HIGH ONE ATTRIBUTE MAY GO AT THIS LEVEL — LevelupDialog.lua:255-260.
  * ═══════════════════════════════════════════════════════════════════════════
@@ -1074,7 +1084,7 @@ export const STAT_MAX = 100;
  * the fraction is kept and the caller compares against it directly.
  */
 export function statCeilingForLevel(level: number): number {
-  return Math.min(level * 1.4 + 20, 60 + Math.max(0, level - 50));
+  return Math.min(level * 1.4 + 20, statLifetimeCeilingForLevel(level));
 }
 
 /**

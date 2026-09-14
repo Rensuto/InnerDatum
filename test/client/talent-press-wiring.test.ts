@@ -74,12 +74,12 @@ describe('the talent panel press wiring', () => {
     // the plain path. Arming on one and not the other leaves half the grid dead.
     const block = talentPressBlock();
     const drag = at('beginDrag({ kind: DragKind.Talent', block);
-    const armsInDrag = block.indexOf('armPressed();', drag);
+    const armsInDrag = block.indexOf('answerPressed();', drag);
     const dragReturn = at('return;', block, drag);
     expect(armsInDrag, 'the drag release does not arm').toBeGreaterThan(drag);
     expect(armsInDrag, 'the drag release does not arm').toBeLessThan(dragReturn);
     expect(
-      block.indexOf('armPressed();', dragReturn),
+      block.indexOf('answerPressed();', dragReturn),
       'the plain press does not arm',
     ).toBeGreaterThan(dragReturn);
   });
@@ -137,6 +137,9 @@ describe('the talent panel press wiring', () => {
     for (const head of ['function toggleTalentPanel(', 'function onViewportChange(']) {
       expect(fnBody(head), `${head} keeps a stale guard`).toContain('takeBackGuard = null;');
     }
+    // AND A MESSAGE BELONGS TO THE PANEL IT WAS SAID ON: a reopened panel must
+    // not repeat an old refusal at a player who has not pressed anything.
+    expect(fnBody('function toggleTalentPanel(')).toContain('talentMessage = null;');
     const wheel = at('talentScroll + step,', CODE);
     expect(
       at('takeBackGuard = null;', CODE, wheel) - wheel,
@@ -168,9 +171,79 @@ describe('the talent panel press wiring', () => {
     expect(talentPressBlock()).toContain('talentsArmedAt = Date.now();');
   });
 
-  it('answers an empty hand before arming an attribute — LevelupDialog.lua:251-254', () => {
+  it('answers a refused attribute press in words before it can arm — LevelupDialog.lua:251-262', () => {
     const body = fnBody('function pressStatPlus(');
-    const empty = at('(progress?.unspentStats ?? 0) <= 0', body);
-    expect(empty).toBeLessThan(at('pressSpend(talentsArmedStat, stat)', body));
+    const refusal = at('statPressRefusal(', body);
+    expect(refusal).toBeLessThan(at('pressSpend(talentsArmedStat, stat)', body));
+    expect(body.indexOf('sayOnTalentPanel(refusal)', refusal)).toBeGreaterThan(refusal);
+    // ASKED WITH THE BOUGHT VALUE, THE STAT PURSE AND THE LEVEL, by name: a
+    // swapped argument passes every test of the pure function.
+    expect(body).toContain("const base = progress?.statBase?.[stat as 'str'] ?? null;");
+    expect(body).toContain('unspent: progress?.unspentStats ?? 0,');
+    expect(body).toContain('level: progress?.level ?? 1,');
+    // A PRESS PAST THE REFUSAL RETIRES THE LAST ONE, before it arms or spends.
+    expect(at('talentMessage = null;', body, refusal)).toBeLessThan(
+      at('pressSpend(talentsArmedStat, stat)', body),
+    );
+    const talent = fnBody('function pressTalentPlus(');
+    expect(at('talentMessage = null;', talent)).toBeLessThan(
+      at('pressSpend(talentsArmedId, talentId)', talent),
+    );
+  });
+
+  it('answers a talent press that cannot arm in words — LevelupDialog.lua:365-379', () => {
+    // Both Row routes call `answerPressed`, which arms first and then asks
+    // `talentPressRefusal` — so the words speak on exactly the presses the arm
+    // declined, and say the message on the panel's own line.
+    const block = talentPressBlock();
+    const defined = at('const answerPressed = (): void => {', block);
+    // ONE READ, AT THE MOMENT OF ACTING: the cell is looked up inside the answer,
+    // so the drag route's release reads one frame for the arm and the words.
+    const lookup = 'const pressedCell = pressed === null ? null : talentCellById(pressed);';
+    const reads = at(lookup, block, defined);
+    expect(block.indexOf('talentCellById(pressed)'), 'the cell is read before the answer').toBe(
+      reads + lookup.indexOf('talentCellById(pressed)'),
+    );
+    const arms = at('talentsArmedId = armed;', block, defined);
+    const asks = at('talentPressRefusal(pressedCell', block, defined);
+    const says = at('sayOnTalentPanel(refusal)', block, defined);
+    expect(reads).toBeLessThan(arms);
+    expect(arms).toBeLessThan(asks);
+    expect(asks).toBeLessThan(says);
+    // WITH THE THREE PURSES BY NAME — a swapped pair passes every pure test.
+    const call = block.slice(asks, says);
+    expect(call).toContain('class: progress?.unspent ?? 0,');
+    expect(call).toContain('generic: progress?.unspentGenerics ?? 0,');
+    expect(call).toContain('category: progress?.unspentCategories ?? 0,');
+    // AND A PRESS THAT BUYS RETIRES THE LAST REFUSAL, or it covers the arm.
+    expect(call).toContain('if (refusal === null) talentMessage = null;');
+  });
+
+  it('times the message line by `talentMessageWake`, and clears it when that says gone', () => {
+    // StatusBox.lua:57-69's hold and fade are `talentMessageWake`'s to state, and
+    // talents.test.ts holds it to the painter's alpha; this is that the timer asks
+    // it on every wake, and lets go of a message something newer has replaced.
+    const body = fnBody('function sayOnTalentPanel(');
+    const records = at('talentMessage = said;', body);
+    const first = at('const first = talentMessageWake(said, said.at);', body);
+    expect(records).toBeLessThan(first);
+    const tick = body.slice(at('const tick = (): void => {', body), first);
+    expect(tick).toContain('if (talentMessage !== said) return;');
+    expect(tick).toContain('const wait = talentMessageWake(said, Date.now());');
+    expect(tick).toContain('if (wait === null) talentMessage = null;');
+    expect(tick).toContain('else talentMessageTimer = window.setTimeout(tick, wait);');
+    expect(tick).toContain('requestDraw();');
+    expect(body.slice(first)).toContain(
+      'if (first !== null) talentMessageTimer = window.setTimeout(tick, first);',
+    );
+  });
+
+  it('hands the panel its message and the clock the fade is measured against', () => {
+    // Without these two the refusal is recorded, timed and redrawn for — and
+    // never painted, because the painter is the only reader of either.
+    const draw = at('drawTalentPanel({', CODE);
+    const call = CODE.slice(draw, at('});', CODE, draw));
+    expect(call).toContain('message: talentMessage');
+    expect(call).toContain('now: Date.now()');
   });
 });

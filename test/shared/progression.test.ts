@@ -16,6 +16,7 @@ import {
   STAT_MAX,
   canRaiseStat,
   statCeilingForLevel,
+  statLifetimeCeilingForLevel,
   NO_STAIRS_GAME_TURNS,
   stairsLockedFor,
   reentryHealFraction,
@@ -403,6 +404,9 @@ describe('how high one attribute may go at this level', () => {
      */
     expect(statCeilingForLevel(29)).toBe(60);
     expect(statCeilingForLevel(49)).toBe(60);
+    // ...and the lifetime half alone, which the talent panel asks to pick its words.
+    expect(statLifetimeCeilingForLevel(28)).toBe(60);
+    expect(statCeilingForLevel(28)).toBeLessThan(statLifetimeCeilingForLevel(28));
     // ...and only past 50 does it move again, one a level.
     expect(statCeilingForLevel(51)).toBe(61);
     expect(statCeilingForLevel(60)).toBe(70);

@@ -156,6 +156,7 @@ import {
   STAT_MAX,
   canRaiseStat,
   isGenericTree,
+  statLifetimeCeilingForLevel,
 } from '../../shared/progression.ts';
 import type {
   LoadoutTalent,
@@ -246,16 +247,6 @@ const BAR_GAP = 3;
 const BAR_MIN_THUMB = 8;
 /** Between the two columns of categories. */
 const COL_GAP = 14;
-/**
- * The caption strip over each tree pane. One bold line and air under it.
- *
- * IT DOES NOT SCROLL. Upstream's `b_class` and `b_generic` sit in the layout
- * table at `top=0`, outside the `TalentTrees` widget they label
- * (`tome/dialogs/LevelupDialog.lua:814-836`), so the counter stays put while
- * the trees under it move. A caption that scrolled away would leave the player
- * looking at two unlabelled columns of disciplines that spend different purses.
- */
-const PANE_HEAD_H = 15;
 /**
  * How many icons a strip is sized for.
  *
@@ -710,6 +701,13 @@ export type TalentCell = {
    */
   readonly canUnlearn: boolean;
   /**
+   * WHICH PURSE A PRESS WOULD SPEND — `isGenericTree` of the talent's tree. Carried
+   * so a refused press can name the purse it found empty, as upstream's
+   * `learnTalent` does (`LevelupDialog.lua:365-371`), without the client holding
+   * a second copy of the tree table.
+   */
+  readonly generic: boolean;
+  /**
    * WHY THE NEXT POINT CANNOT GO HERE, in the server's own words — or null.
    *
    * ═══ A GREY BUTTON WITHOUT THIS IS WORSE THAN A LIVE ONE ═══
@@ -825,11 +823,11 @@ export type TalentRow =
       /** The whole sentence, composed by `pointsText`. One copy, read by the painter. */
       readonly text: string;
       /**
-       * THE TWO PURSES, SEPARATELY, because the panes are captioned with them.
+       * THE TWO PURSES, SEPARATELY, because each counter box sits over its own pane.
        *
        * `unspent` above is their SUM — it exists to light the plate, and a plate
        * that lit for one purse and not the other left four level-ups in five
-       * looking like nothing had happened. It cannot caption a pane, because a
+       * looking like nothing had happened. It cannot label a pane, because a
        * pane can only be spent from one of the two.
        *
        * Upstream keeps them apart the whole way down: `b_class` and `b_generic`
@@ -839,6 +837,13 @@ export type TalentRow =
        */
       readonly classPoints: number;
       readonly genericPoints: number;
+      /**
+       * WHEN EVERY PURSE IS EMPTY, the sentence that says when the next point
+       * comes — `no points — next at level 4` — and null otherwise. It is the
+       * title bar's resting line (see `talentHeaderMessage`): the four counter
+       * boxes say how many of each, and this is the one thing they cannot say.
+       */
+      readonly levelNote: string | null;
     }
   | { readonly kind: typeof TalentRowKind.Note; readonly text: string };
 
@@ -1038,6 +1043,11 @@ function pointsText(progress: ProgressMsg): string {
     return `${purses.join(' · ')} to spend`;
   }
 
+  return levelNoteText(progress);
+}
+
+/** What a character with nothing to spend is told: when the next point comes, or never. */
+function levelNoteText(progress: ProgressMsg): string {
   // The cap. `xpToNext` is 0 there and is never a denominator — ui/charsheet.ts
   // :428-441 and ui/xpbar.ts handle the same sentinel the same way.
   if (!Number.isFinite(progress.xpToNext) || progress.xpToNext <= 0) {
@@ -1079,6 +1089,7 @@ export function talentPanelRows(view: TalentPanelView): readonly TalentRow[] {
       kind: TalentRowKind.Points,
       unspent: unspent + generics,
       text: pointsText(progress),
+      levelNote: pointsWaiting(progress) > 0 ? null : levelNoteText(progress),
       classPoints: unspent,
       genericPoints: generics,
     });
@@ -1142,6 +1153,7 @@ export function talentPanelRows(view: TalentPanelView): readonly TalentRow[] {
     // ABSENT MEANS NO, which is what every client believed before the field
     // existed and is why the server may omit it.
     canUnlearn: talent.unlearnable === true,
+    generic: isGenericTree(talent.tree ?? ''),
     lockedReason: talent.locked === true ? (talent.lockedReason ?? 'Not yet.') : null,
     // `?? []` — absent means a server that does not send them, and the pane then
     // shows exactly what it showed before this existed.
@@ -1313,6 +1325,7 @@ export function talentPanelRows(view: TalentPanelView): readonly TalentRow[] {
         // A LOCKED TREE HAS NOTHING TO TAKE BACK. Its ranks were never bought,
         // so no spend of theirs is in the ledger and the server would refuse.
         canUnlearn: false,
+        generic: isGenericTree(tree.id),
         mastery: talent.mastery ?? 1,
         /**
          * NO REQUIREMENT LIST ON A TREE YOU DO NOT OWN. The only thing standing
@@ -1382,6 +1395,213 @@ export function pressSpend(armed: string | null, talentId: string): SpendPress {
  * PURE, with the clock passed in, so the boundary is tested as a number.
  */
 export const SPEND_CONFIRM_MIN_MS = 300;
+
+/** Air between the message line and the title or the × either side of it. */
+const MESSAGE_AIR = 8;
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * A REFUSED PRESS SAYS WHY — `LevelupDialog.lua:171-179`'s `subtleMessage`.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Upstream answers every press it will not act on, in words, on its message
+ * line. Ours answered none of them on this screen: a press on a talent with no
+ * point in hand did nothing at all, and a stat at its ceiling put a sentence on
+ * the notice line at the bottom of the window, away from the pointer.
+ *
+ * THE THREE TONES ARE UPSTREAM'S (:177-179): error `{255,100,100}`, warning
+ * `{255,255,80}`, other `{255,215,0}`. `PALETTE` has none of them, so error is
+ * ORANGE — this file's refusal ink — and the two yellows are GOLD. The words
+ * carry the message; the ink only sorts it.
+ */
+export const TalentMessageTone = {
+  Error: 'error',
+  Warning: 'warning',
+  Other: 'other',
+} as const;
+export type TalentMessageTone = (typeof TalentMessageTone)[keyof typeof TalentMessageTone];
+
+export type TalentRefusal = { readonly text: string; readonly tone: TalentMessageTone };
+/** A refusal and when it was said, so the line can fade it. */
+export type TalentMessage = TalentRefusal & { readonly at: number };
+
+/**
+ * HOW LONG A MESSAGE HOLDS, THEN FADES — `LevelupDialog.lua:805` builds the box
+ * with `delay = 1`, and `StatusBox.lua:57-69` holds for that many seconds and
+ * then "ease[s] out over 0.5 s".
+ */
+export const TALENT_MESSAGE_HOLD_MS = 1000;
+export const TALENT_MESSAGE_FADE_MS = 500;
+
+function toneInk(tone: TalentMessageTone): string {
+  return tone === TalentMessageTone.Error ? PALETTE.ORANGE : PALETTE.GOLD;
+}
+
+/** A message's opacity at `now`: whole while it holds, falling to 0 over the fade. */
+export function talentMessageAlpha(message: TalentMessage | null, now: number): number {
+  if (message === null) return 0;
+  const age = now - message.at;
+  if (age < TALENT_MESSAGE_HOLD_MS) return 1;
+  return Math.max(0, 1 - (age - TALENT_MESSAGE_HOLD_MS) / TALENT_MESSAGE_FADE_MS);
+}
+
+/** Redraw cadence while a message fades: smooth enough, and only for half a second. */
+export const TALENT_FADE_STEP_MS = 50;
+
+/**
+ * HOW LONG UNTIL A SAID MESSAGE NEXT NEEDS A FRAME, or null once it is gone.
+ *
+ * The client draws on demand, so the message line asks for the frames
+ * `talentMessageAlpha` changes on: none while it holds, one each
+ * `TALENT_FADE_STEP_MS` through the fade, and the one that clears it. Null
+ * exactly when the alpha has reached 0 — the scheduler and the painter read the
+ * same clock, and must not disagree about whether the message is still there.
+ */
+export function talentMessageWake(message: TalentMessage, now: number): number | null {
+  const age = now - message.at;
+  if (age < TALENT_MESSAGE_HOLD_MS) return TALENT_MESSAGE_HOLD_MS - age;
+  const left = TALENT_MESSAGE_HOLD_MS + TALENT_MESSAGE_FADE_MS - age;
+  return left > 0 ? Math.min(TALENT_FADE_STEP_MS, left) : null;
+}
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * WHAT THE TITLE BAR SAYS THIS FRAME, or null.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ *   1. A REFUSAL still inside its hold-and-fade — upstream's only use of the line.
+ *   2. WHAT IS ARMED — `press Crude Blow again to spend`. Ours: upstream spends
+ *      on one press against a snapshot it can restore, and this game cannot.
+ *   3. THE LEVEL NOTE, when every purse is empty — `no points — next at level 4`.
+ *
+ * A refusal outranks the arm because it is always the newest thing the player
+ * did: any later press that arms or spends retires it (main.ts), and so does the
+ * end of its fade, and the arm's sentence comes back then.
+ */
+export function talentHeaderMessage(input: {
+  readonly rows: readonly TalentRow[];
+  readonly armedId: string | null;
+  readonly armedStat: string | null;
+  readonly message: TalentMessage | null;
+  readonly now: number;
+}): { readonly text: string; readonly ink: string; readonly alpha: number } | null {
+  const alpha = talentMessageAlpha(input.message, input.now);
+  if (input.message !== null && alpha > 0) {
+    return { text: input.message.text, ink: toneInk(input.message.tone), alpha };
+  }
+  if (input.armedStat !== null) {
+    const name = STAT_ROWS.find((row) => row.key === input.armedStat)?.name;
+    return {
+      text: name === undefined ? 'press again to spend' : `press ${name} again to spend`,
+      ink: PALETTE.ORANGE,
+      alpha: 1,
+    };
+  }
+  if (input.armedId !== null) {
+    let name: string | null = null;
+    for (const row of input.rows) {
+      if (row.kind !== TalentRowKind.Category) continue;
+      const found = row.talents.find((talent) => talent.id === input.armedId);
+      if (found !== undefined) {
+        name = found.name;
+        break;
+      }
+    }
+    // A TREE'S DEEPEN ARM has no single name to give and says the bare sentence.
+    return {
+      text: name === null ? 'press again to spend' : `press ${name} again to spend`,
+      ink: PALETTE.ORANGE,
+      alpha: 1,
+    };
+  }
+  const points = input.rows.find((row) => row.kind === TalentRowKind.Points);
+  if (points !== undefined && points.kind === TalentRowKind.Points && points.levelNote !== null) {
+    return { text: points.levelNote, ink: PALETTE.GREY_HI, alpha: 1 };
+  }
+  return null;
+}
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * WHY A PRESS ON A TALENT BUYS NOTHING — `LevelupDialog.lua:365-379`, in its order.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `learnTalent(+)` asks the purse, then `canLearnTalent`, then the rank cap, and
+ * says the first that fails. Null exactly when `cell.canSpend` is true, so the
+ * words and the arm can never disagree about whether a press would buy.
+ *
+ * A LOCKED DISCIPLINE'S ICON spends a CATEGORY point here, not a talent point
+ * (see `TalentCell.unlocks`), so its one refusal is `learnType`'s
+ * (`LevelupDialog.lua:424-426`).
+ */
+export function talentPressRefusal(
+  cell: TalentCell,
+  purses: { readonly class: number; readonly generic: number; readonly category: number },
+): TalentRefusal | null {
+  if (cell.unlocks !== null) {
+    return purses.category > 0
+      ? null
+      : { text: 'You have no category points left!', tone: TalentMessageTone.Error };
+  }
+  if ((cell.generic ? purses.generic : purses.class) < 1) {
+    return {
+      text: `You have no ${cell.generic ? 'generic' : 'class'} talent points left!`,
+      tone: TalentMessageTone.Error,
+    };
+  }
+  if (cell.lockedReason !== null) {
+    return { text: 'Prerequisites not met!', tone: TalentMessageTone.Error };
+  }
+  if (cell.level >= cell.maxLevel) {
+    return { text: 'You already fully know this talent!', tone: TalentMessageTone.Warning };
+  }
+  return null;
+}
+
+/**
+ * WHETHER NO LEVEL WILL EVER OPEN THIS STAT AGAIN: the engine's maximum, or the
+ * lifetime bound. The one rule the title bar's "further" and the detail pane's
+ * "At its maximum." both read, so the two can never tell a player opposite things
+ * about the same stat in the same frame. See `statPressRefusal` for why the
+ * level pace is not part of it.
+ */
+export function statNeverRises(base: number, level: number): boolean {
+  return base >= STAT_MAX || base >= statLifetimeCeilingForLevel(level);
+}
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * WHY A PRESS ON AN ATTRIBUTE BUYS NOTHING — `LevelupDialog.lua:251-262`.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Upstream's three sentences in upstream's order. The two ceilings send a player
+ * opposite ways — wait for levels, or never — so which one binds decides the words.
+ *
+ * "FURTHER" IS THE LIFETIME BOUND'S WORD, AND ONLY ITS. Upstream asks the level
+ * pace first (:255) and says "until next level" whenever the pace binds — even
+ * where the lifetime bound of 60 binds as well, so at level 28 a stat of 60 is
+ * told to wait for a level that will not open it. This asks the lifetime bound
+ * first, so that one case says "further", the true sentence of the two.
+ * Everywhere else the pace is what stops the stat, and upstream's "until next
+ * level" stands however far away the opening is: a class's starting 24 with an
+ * origin's 4 on top waits until level 6.
+ */
+export function statPressRefusal(input: {
+  readonly unspent: number;
+  readonly base: number | null;
+  readonly level: number;
+}): TalentRefusal | null {
+  if (input.unspent <= 0) {
+    return { text: 'You have no stat points left!', tone: TalentMessageTone.Error };
+  }
+  if (input.base === null || canRaiseStat(input.base, input.level)) return null;
+  return statNeverRises(input.base, input.level)
+    ? { text: 'You cannot increase this stat further!', tone: TalentMessageTone.Warning }
+    : {
+        text: 'You cannot increase this stat further until next level!',
+        tone: TalentMessageTone.Other,
+      };
+}
 
 export function confirmTooSoon(armedAt: number | null, now: number): boolean {
   return armedAt !== null && now - armedAt < SPEND_CONFIRM_MIN_MS;
@@ -1699,21 +1919,20 @@ export type TalentPanelGeometry = {
    */
   readonly counters: PanelRect;
   /**
-   * THE TWO TREE PANES AND THEIR CAPTIONS — class on the left, generic on the
-   * right. Always two, in that order, even when one holds nothing.
+   * THE TWO TREE PANES — class on the left, generic on the right. Always two, in
+   * that order, even when one holds nothing.
    *
    * See `paneOf`. Upstream places its counter directly over its own pane
    * (`tome/dialogs/LevelupDialog.lua:814-836`), and an empty pane still carries
-   * its caption there, because "Generic points: 0" over an empty column is the
+   * its counter there, because "Generic points: 0" over an empty column is the
    * answer to "where do generic points go" and a missing column is not.
    */
   readonly panes: readonly TalentPaneView[];
 };
 
-/** One tree pane's caption strip. The categories themselves scroll beneath it. */
+/** Where one tree pane's column is, for the counter box over it. Categories scroll beneath. */
 export type TalentPaneView = {
   readonly rect: PanelRect;
-  readonly text: string;
   readonly generic: boolean;
 };
 
@@ -1926,7 +2145,7 @@ export function talentPanelGeometry(
    *
    * MEASURED FIRST, NOT DRAWN OVER. The four boxes were nearly painted at
    * `rect.y + HEADER_H` on top of whatever was already there — at the 640x320
-   * floor the stats column starts at y 78 and the pane captions at y 104, so
+   * floor the stats column starts at y 78 and the pane captions then at y 104, so
    * the Stats box would have landed on the first attribute row and the class
    * and generic boxes squarely on the captions. Taking the height out of `top`
    * is what makes the row a LAYOUT rather than an overlay.
@@ -2127,12 +2346,24 @@ export function talentPanelGeometry(
   const barX = x + afterStats + gridSpace + BAR_GAP;
 
   const categories = rows.filter((row) => row.kind === TalentRowKind.Category);
-  const others = rows.filter((row) => row.kind !== TalentRowKind.Category);
+  /**
+   * ═══ THE POINTS SENTENCE IS NOT PLACED ANY MORE ═══
+   * It said `2 class · 1 generic to spend` over the grid, directly under four
+   * counter boxes saying the same numbers — upstream's dialog has the boxes and
+   * no sentence (`LevelupDialog.lua:814-836`). The row still travels in `rows`
+   * because the counters read their purses from it, and its one fact the boxes
+   * cannot give, the level note, moved to the title bar. Twenty-nine pixels of
+   * grid came back with the captions: at the 640x320 floor in combat the grid
+   * went from sixty pixels — less than one tree — to eighty-nine.
+   */
+  const others = rows.filter(
+    (row) => row.kind !== TalentRowKind.Category && row.kind !== TalentRowKind.Points,
+  );
 
   const placed: PlacedTalentRow[] = [];
   let cursor = top;
 
-  // ── the sentence rows, above the grid ────────────────────────────────────
+  // ── any rows that are not the grid, above it ─────────────────────────────
   //
   // IN THE GRID'S SPACE, NOT THE PANEL'S. `afterStats` is the reserve taken off
   // the LEFT for the attribute column, and it was applied to `gridX` and `barX`
@@ -2201,31 +2432,16 @@ export function talentPanelGeometry(
     if (stack !== undefined) stack.push(row);
   }
 
-  /**
-   * THE CAPTIONS, ABOVE THE PANES AND OUTSIDE THE SCROLL.
-   *
-   * Composed from the two purses the `Points` row carries separately. A missing
-   * `Points` row means no `progress` frame has arrived, and a caption that
-   * claimed a count then would be claiming one it does not have.
-   */
-  const points = rows.find((row) => row.kind === TalentRowKind.Points);
-  const purse = (generic: boolean): string => {
-    if (points === undefined || points.kind !== TalentRowKind.Points) {
-      return generic ? 'GENERIC' : 'CLASS';
-    }
-    const n = generic ? points.genericPoints : points.classPoints;
-    return `${generic ? 'GENERIC' : 'CLASS'}  ${String(n)} point${n === 1 ? '' : 's'}`;
-  };
-
   const contentH = Math.max(stacks[0]?.length ?? 0, stacks[1]?.length ?? 0) * CAT_H;
-  const viewportH = Math.max(0, gridBottom - cursor - PANE_HEAD_H);
+  const viewportH = Math.max(0, gridBottom - cursor);
   const maxScroll = Math.max(0, contentH - viewportH);
   const applied = Math.max(0, Math.min(Math.floor(scroll), maxScroll));
-  const gridTop = cursor + PANE_HEAD_H;
+  const gridTop = cursor;
   const gridViewport: PanelRect = { x: gridX, y: gridTop, w: gridW, h: viewportH };
   const panes: TalentPaneView[] = [0, 1].map((pane) => ({
-    rect: { x: gridX + pane * (COL_W + COL_GAP), y: cursor, w: COL_W, h: PANE_HEAD_H },
-    text: purse(pane === 1),
+    // NO HEIGHT: a pane is where a column is, for the counter box over it. The
+    // caption that used to fill this rect repeated that box's number.
+    rect: { x: gridX + pane * (COL_W + COL_GAP), y: cursor, w: COL_W, h: 0 },
     generic: pane === 1,
   }));
 
@@ -2271,11 +2487,11 @@ export function talentPanelGeometry(
        * A STRIP ENTIRELY ABOVE OR BELOW THE WINDOW IS NOT PLACED AT ALL.
        *
        * Not merely invisible: UNPLACED. A rect the painter clips away is still in
-       * the list the HIT TEST walks, and the hazard is not hypothetical — the
-       * sentence rows are laid out immediately above `cursor`, so a strip scrolled
-       * off the top of the window carries a negative-ish `y` that lands squarely
-       * on top of them. A player clicking the points sentence would spend a point
-       * on a discipline that is not on the screen, and there is no refund gesture.
+       * the list the HIT TEST walks, and the hazard is not hypothetical. Whatever
+       * sits immediately above `cursor` (the points sentence, when this was
+       * written) is where a strip scrolled off the top of the window lands, with a
+       * negative-ish `y`. A player clicking there would spend a point on a
+       * discipline that is not on the screen, and there is no refund gesture.
        *
        * Clipping in the painter would hide the strip and leave that click armed.
        * The cheapest way to disarm it is for the row not to exist.
@@ -2329,7 +2545,7 @@ export function talentPanelGeometry(
   /**
    * AND `cursor` IS NOT ADVANCED, BECAUSE THE GRID IS THE LAST THING PLACED.
    *
-   * The sentence rows are laid out ABOVE the grid and the grid runs to
+   * Everything else is laid out ABOVE the grid, and the grid runs to
    * `gridBottom`, so there is nothing below it to push down. The old advance
    * was already dead weight; a scrolled grid makes it actively misleading,
    * since "how far down the content reached" and "how far down the panel is
@@ -3784,7 +4000,7 @@ function drawStatDetail(
     y += 4;
     // ORANGE, the pane's refusal ink — the same fact the press would be told.
     const said = lines(
-      base < STAT_MAX
+      !statNeverRises(base, level)
         ? `At its maximum for level ${String(level)} — it can rise again next level.`
         : 'At its maximum.',
       PALETTE.ORANGE,
@@ -3961,24 +4177,11 @@ function drawRow(
       return;
     }
 
-    case TalentRowKind.Points: {
-      /**
-       * THE COUNT IS ALWAYS DRAWN; THE PLATE IS THE EMPHASIS AND IS NOT.
-       * LevelupDialog.lua:757-784 keeps its counters on screen at zero and
-       * :690-691 lights a glow only above zero. See `pointsText` for the whole
-       * argument and for what it reverses.
-       */
-      const armedToSpend = row.unspent > 0;
-      ctx.font = FONT_META;
-      ctx.textAlign = 'left';
-      if (armedToSpend) {
-        ctx.fillStyle = PALETTE.GOLD;
-        ctx.fillRect(rect.x, rect.y + 1, 3, Math.max(1, rect.h - 3));
-      }
-      ctx.fillStyle = armedToSpend ? PALETTE.GOLD : PALETTE.GREY_HI;
-      ctx.fillText(fitText(ctx, row.text, rect.w - 6), rect.x + 6, rect.y + rect.h / 2);
+    case TalentRowKind.Points:
+      // NEVER PLACED — see `talentPanelGeometry`. The counter boxes read its
+      // purses and the title bar its level note; painting it too would say the
+      // same numbers twice, which is why it was taken out.
       return;
-    }
 
     case TalentRowKind.Detail:
       // NEVER PLACED. It survives as the CONTENT of the hover card that replaced
@@ -4083,6 +4286,10 @@ export type TalentPanelDrawOptions = {
   readonly focusStat?: StatKey | null;
   /** `ProgressMsg.statGains` — what one point buys, for the description column. */
   readonly statGains?: Readonly<Record<string, readonly string[]>>;
+  /** The last refusal the panel was told to say, or null. See `talentHeaderMessage`. */
+  readonly message?: TalentMessage | null;
+  /** `Date.now()` for this frame, which is what a message's fade is measured against. */
+  readonly now?: number;
 };
 
 /**
@@ -4123,8 +4330,8 @@ export function drawTalentPanel(options: TalentPanelDrawOptions): void {
    *
    * A strip half scrolled past the top of the window must be drawn half — and
    * only the grid rows can be in that state, so only they go inside the clip.
-   * The points sentence, the stats column and the description pane are outside
-   * it and always whole.
+   * The counters, the stats column and the description pane are outside it and
+   * always whole.
    *
    * ToME does the same thing with the same intent: TalentTrees.lua:388 wraps its
    * list in `core.display.glScissor(true, screen_x, screen_y, self.w, self.h)`.
@@ -4176,26 +4383,6 @@ export function drawTalentPanel(options: TalentPanelDrawOptions): void {
   }
 
   /**
-   * THE TWO PANE CAPTIONS, OUTSIDE THE CLIP because they do not scroll.
-   *
-   * `CLASS  2 points` over the left column and `GENERIC  3 points` over the
-   * right, which is upstream's `b_class` and `b_generic` placed directly over
-   * their own tree pane (`tome/dialogs/LevelupDialog.lua:814-836`). Before
-   * this the two purses were told apart only by a `· generic` suffix on a
-   * heading, and this file's own note admitted that left nothing on screen
-   * saying why one strip was live and the one under it grey.
-   *
-   * A PANE WITH NOTHING IN IT STILL CARRIES ITS CAPTION. "GENERIC 0 points"
-   * over an empty column answers "where do generic points go"; a missing
-   * column answers nothing.
-   */
-  for (const pane of geometry.panes) {
-    ctx.font = FONT_LEVEL;
-    ctx.fillStyle = pane.generic ? PALETTE.GREY_HI : PALETTE.GOLD;
-    ctx.fillText(pane.text, pane.rect.x, pane.rect.y + pane.rect.h - 4);
-  }
-
-  /**
    * ═══════════════════════════════════════════════════════════════════════════
    * THE FOUR COUNTERS AND THE RULES — LevelupDialog.lua:757-784, :807-840.
    * ═══════════════════════════════════════════════════════════════════════════
@@ -4212,8 +4399,8 @@ export function drawTalentPanel(options: TalentPanelDrawOptions): void {
    * the row reads at a glance — the number is above the pile it can be spent
    * on, so there is nothing to match up.
    *
-   * OURS ALREADY PLACED TWO OF THEM THAT WAY: the pane captions above are per
-   * column already. The boxes put the other two in the same discipline.
+   * THE TWO PANES ARE PER COLUMN, so the class and generic boxes sit over their
+   * own, and the stats and category boxes follow the same discipline.
    *
    * ═══ NO HORIZONTAL RULE UNDER THEM, AND THAT IS UPSTREAM TOO ═══
    * `hsep` is declared at :809 and never used. The only thing below the
@@ -4234,10 +4421,9 @@ export function drawTalentPanel(options: TalentPanelDrawOptions): void {
     );
   }
   /**
-   * THE TWO SPENDABLE PURSES RIDE THE `Points` ROW, which is where the pane
-   * captions already read them from (`purse` in `talentPanelGeometry`). Taking
-   * them off the same row is what stops the box and the caption under it
-   * disagreeing about the same number.
+   * THE TWO SPENDABLE PURSES RIDE THE `Points` ROW. The row is no longer placed
+   * (see `talentPanelGeometry`), but it still carries the purses and the level
+   * note, so the boxes read them off it rather than deriving them a second time.
    */
   const pointsRow = options.rows.find((row) => row.kind === TalentRowKind.Points);
   const classPoints =
@@ -4356,57 +4542,44 @@ export function drawTalentPanel(options: TalentPanelDrawOptions): void {
 
   /**
    * ═══════════════════════════════════════════════════════════════════════════
-   * ONE SENTENCE ABOUT THE PRESS, over the points sentence, while something is armed.
+   * THE MESSAGE LINE — upstream's `t_messages`, centred over the middle rule.
    * ═══════════════════════════════════════════════════════════════════════════
    *
-   * A permanent legend would be furniture; this is the moment the warning is
-   * worth reading.
+   * `LevelupDialog.lua:803-806` builds a `StatusBox` two thirds of the dialog
+   * wide and `:834` places it `{hcenter=self.b_types, top=-self.t_messages.h}`:
+   * above the columns, centred on the Category counter, which sits on the middle
+   * rule. Here that is the title bar, which is the one strip above the counters.
    *
-   * ═══ ABOVE THE GRID, NOT ALONG THE BOTTOM ═══
-   * It was a strip across the panel's last twelve pixels, and the attribute
-   * column runs to that same edge: whenever the column only just fits, the
-   * strip was painted over the bottom row of captions — exactly the numbers a
-   * player arming a stat is reading. The sentence slot is the panel's one line
-   * of prose, and it is where upstream's own message bar sits relative to the
-   * columns (`t_messages`, `LevelupDialog.lua:834`): above them, centred over the
-   * middle.
+   * WHAT IT SAYS is `talentHeaderMessage`: a refusal first, faded out the way
+   * `StatusBox.lua:57-69` fades one; otherwise what is armed; otherwise when the
+   * next point comes. The last two are ours — upstream has no arm and no level
+   * note — and they are what used to be the sentence row over the grid.
    *
-   * ═══ IT NAMES WHAT IS ARMED ═══
-   * `press again` beside two columns of icons leaves the player to find the one
-   * with the gold ring. A stat or a talent says its own name; a tree's deepen
-   * arm has no single name to give and says the bare sentence.
+   * CLEAR OF THE TITLE AND THE ×, both measured here: centred on the rule, but
+   * never wider than twice the smaller of the two distances to them.
    */
-  const armedStatKey = options.armedStat ?? null;
-  if (armedId !== null || armedStatKey !== null) {
-    const slot = geometry.placed.find((placed) => placed.row.kind === TalentRowKind.Points);
-    if (slot !== undefined) {
-      let named: string | null = null;
-      if (armedStatKey !== null) {
-        named = STAT_ROWS.find((row) => row.key === armedStatKey)?.name ?? null;
-      } else {
-        for (const row of rows) {
-          if (row.kind !== TalentRowKind.Category) continue;
-          const found = row.talents.find((talent) => talent.id === armedId);
-          if (found !== undefined) {
-            named = found.name;
-            break;
-          }
-        }
-      }
-      ctx.font = FONT_META;
+  const said = talentHeaderMessage({
+    rows,
+    armedId,
+    armedStat: options.armedStat ?? null,
+    message: options.message ?? null,
+    now: options.now ?? 0,
+  });
+  if (said !== null && classPane !== undefined && genericPane !== undefined) {
+    ctx.font = FONT_META;
+    const titleRight =
+      rect.x + PANEL_PAD + Math.ceil(ctx.measureText(panelTitle(options.level)).width);
+    const mid = Math.round((classPane.rect.x + classPane.rect.w + genericPane.rect.x) / 2);
+    const half = Math.min(mid - titleRight - MESSAGE_AIR, geometry.close.x - MESSAGE_AIR - mid);
+    if (half > 0) {
+      ctx.globalAlpha = said.alpha;
+      ctx.textAlign = 'center';
+      // SET, NOT INHERITED: `drawCounterBox` leaves the baseline alphabetic.
       ctx.textBaseline = 'middle';
-      ctx.fillStyle = PALETTE.INK;
-      ctx.fillRect(slot.rect.x, slot.rect.y, slot.rect.w, slot.rect.h);
-      ctx.fillStyle = PALETTE.ORANGE;
-      ctx.fillText(
-        fitText(
-          ctx,
-          named === null ? 'press again to spend' : `press ${named} again to spend`,
-          slot.rect.w - 6,
-        ),
-        slot.rect.x + 6,
-        slot.rect.y + slot.rect.h / 2,
-      );
+      ctx.fillStyle = said.ink;
+      ctx.fillText(fitText(ctx, said.text, half * 2), mid, rect.y + HEADER_H / 2);
+      ctx.globalAlpha = 1;
+      ctx.textAlign = 'left';
     }
   }
 
