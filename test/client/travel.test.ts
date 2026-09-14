@@ -544,10 +544,11 @@ describe('hostileAlert', () => {
     expect(hostileAlert(sense(false, []), sense(true, []))).toBe(true);
   });
 
-  it('fires when a live hostile enters the radius', () => {
-    const before = sense(false, [husk('m1', 29, 29)]);
+  it('fires when a live hostile joins the board', () => {
+    // A hostile coming into view ARRIVES on the board: the server builds it from
+    // this player's own sight.
     const after = sense(false, [husk('m1', 7, 7)]);
-    expect(hostileAlert(before, after)).toBe(true);
+    expect(hostileAlert(sense(false, []), after)).toBe(true);
   });
 
   /**
@@ -561,11 +562,10 @@ describe('hostileAlert', () => {
    * straight past.
    */
   it('fires when the TRAVELLER closes on a hostile that never moved, mid-fight', () => {
-    const stationary = [husk('m1', 20, 5)];
-    // 15 tiles away, then 7 — the husk has not moved a square, and `inCombat`
-    // was already true at both ends.
-    const before = sense(true, stationary, { x: 5, y: 5 });
-    const after = sense(true, stationary, { x: 13, y: 5 });
+    // The husk has not moved a square and `inCombat` was already true at both
+    // ends; walking into sight of it is what put it on the board.
+    const before = sense(true, [], { x: 5, y: 5 });
+    const after = sense(true, [husk('m1', 20, 5)], { x: 13, y: 5 });
     expect(hostileAlert(before, after)).toBe(true);
   });
 
@@ -582,31 +582,26 @@ describe('hostileAlert', () => {
 
   it('fires for a hostile at NINE tiles, which the old radius of 8 missed', () => {
     /**
-     * The gap the constant left. `TRAVEL_ALERT_RADIUS` was 8 and answered "how
-     * far can something notice ME"; the question travel asks is "what have I
-     * just noticed", which upstream bounds by SIGHT (Player.lua:854). A husk
-     * that walked into view at nine tiles down a corridor used to be watched in
-     * silence while the walk carried on toward it.
+     * `TRAVEL_ALERT_RADIUS` was 8 and answered "how far can something notice
+     * ME"; the question travel asks is "what have I just noticed", which upstream
+     * bounds by SIGHT (Player.lua:849-858). There is no distance in the rule now.
      */
-    const before = sense(false, [husk('m1', 30, 5)]);
     const after = sense(false, [husk('m1', 14, 5)]);
-    expect(hostileAlert(before, after)).toBe(true);
+    expect(hostileAlert(sense(false, []), after)).toBe(true);
   });
 
-  it('stays quiet for one that is close but behind a wall', () => {
+  it('trusts the board over its own map: a hostile the server sent is seen, wall or not', () => {
     /**
-     * And the half a radius could never express at all: chebyshev has no idea
-     * what a wall is. Two tiles away through solid rock is not a sighting, and
-     * a walk that stopped for it would stop in every corridor in the game.
+     * THIS ASSERTED SILENCE, when the client judged sight for itself with
+     * `canSee` at the default radius. The server builds the board from this
+     * player's own sight, at a radius the client cannot know, so a hostile it
+     * sent is one this player can see even where the client's copy of the map
+     * shows a wall between them.
      */
     const walled = mapOf(['##########', '#....#...#', '#....#...#', '#....#...#', '##########']);
     const at: TileXY = { x: 3, y: 2 };
-    const before = sense(false, [], at, walled);
     const after = sense(false, [husk('m1', 7, 2)], at, walled);
-    expect(hostileAlert(before, after)).toBe(false);
-    // ...and the control: the SAME distance with no wall between does fire.
-    const open2 = sense(false, [husk('m1', 7, 2)], at, FIELD);
-    expect(hostileAlert(sense(false, [], at, FIELD), open2)).toBe(true);
+    expect(hostileAlert(sense(false, [], at, walled), after)).toBe(true);
   });
 
   it('ignores a corpse entering sight', () => {
@@ -769,17 +764,15 @@ describe('travel.takeHalt', () => {
 describe('nearestSeenHostile', () => {
   /**
    * ═══════════════════════════════════════════════════════════════════════════
-   * "ON MY BOARD" STOPPED MEANING "I CAN SEE IT" THE DAY FOV LANDED.
+   * "ON MY BOARD" STOPPED MEANING "I CAN SEE IT" WHEN FOV LANDED, AND MEANS IT AGAIN.
    * ═══════════════════════════════════════════════════════════════════════════
    *
-   * `reconcileSight` computes the visible set ONCE per realm from every player's
-   * eyes, so the actor list a client holds is the PARTY'S union. main.ts's
-   * `nearestVisibleHostile` scanned it by distance alone — named for a sight it
-   * did not apply since M3 — and handed `exploreTarget` husks that only a
-   * teammate could see as reasons this player may not walk.
-   *
-   * Upstream refuses the same thing in the same words: `spotHostiles` walks the
-   * player's own circle because *"telepathy wont prevent resting"*.
+   * When FOV first landed the actor list a client held was the PARTY'S pooled
+   * sight, so a husk only a teammate could see was on it, and this helper
+   * filtered the board through `canSee` from this body. The server now builds
+   * each player's board from that player's own eyes at their own sight radius,
+   * which is what upstream's `spotHostiles` walks (Player.lua:849-858). So a
+   * hostile on the board is one this player can see, and the rule is membership.
    */
   const me: TileXY = { x: 2, y: 2 };
 
@@ -795,21 +788,28 @@ describe('nearestSeenHostile', () => {
     });
   });
 
-  it('IGNORES one behind a wall that a teammate can see', () => {
-    // The whole point. It is on the board legitimately — somebody else is
-    // looking at it — and it is not a reason THIS body may not walk.
+  it('trusts the board over its own map: a hostile the server sent counts, wall or not', () => {
+    // THIS ASSERTED NULL, when the board was the party's pooled sight. The server
+    // sends a player only what their own eyes can see, at a radius the client
+    // cannot know, so a hostile on the board is a reason this body may not walk
+    // even where the client's copy of the map shows a wall between them.
     const walled = mapOf(['#######', '#..#..#', '#..#..#', '#..#..#', '#######']);
-    expect(nearestSeenHostile(walled, { x: 2, y: 2 }, [husk('m1', 5, 2)])).toBeNull();
+    expect(nearestSeenHostile(walled, { x: 2, y: 2 }, [husk('m1', 5, 2)])).toEqual({
+      name: 'Index Husk',
+      dx: 3,
+      dy: 0,
+    });
   });
 
-  it('ignores one beyond sight, however much of the board it is on', () => {
+  it('has no distance in the rule: a hostile on the board counts however far off', () => {
+    // THIS ASSERTED NULL beyond the default sight radius. A hostile that far away
+    // is only on the board because this player can see it.
     const field = mapOf(
       Array.from({ length: 30 }, (_, y) =>
         y === 0 || y === 29 ? '#'.repeat(30) : `#${'.'.repeat(28)}#`,
       ),
     );
-    expect(nearestSeenHostile(field, { x: 2, y: 2 }, [husk('m1', 25, 2)])).toBeNull();
-    expect(nearestSeenHostile(field, { x: 2, y: 2 }, [husk('m1', 9, 2)])?.name).toBe('Index Husk');
+    expect(nearestSeenHostile(field, { x: 2, y: 2 }, [husk('m1', 25, 2)])?.dx).toBe(23);
   });
 
   it('ignores a corpse and ignores a teammate', () => {

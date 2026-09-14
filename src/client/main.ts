@@ -2971,28 +2971,16 @@ function minimapCardAt(px: number, py: number, viewW: number): HoverCard | null 
  * *"the client has no LOS"* (untrue: `targeting.ts` carried a byte-identical
  * copy), then that the sharper answer was available but unneeded.
  *
- * IT BECAME NEEDED THE DAY FOV LANDED, and in a direction nobody predicted.
- * `actors` is no longer everything on the map, but it is not MY sight either —
- * `reconcileSight` computes `visibleActorIds(world, eyesIn(world))` once for the
- * whole realm, so the list is the PARTY'S union. A husk that only a teammate
- * across the floor can see is legitimately on my board, and a distance scan
- * would hand it to `exploreTarget` as a reason I may not walk.
+ * IT BECAME NEEDED THE DAY FOV LANDED. The board was then the whole party's
+ * pooled sight, so a husk only a teammate across the floor could see was on it,
+ * and the scan filtered it through `canSee` from this body.
  *
- * Upstream draws exactly this line and says why: `spotHostiles` walks the
- * player's OWN `calc_circle` and its comment is *"only see LOS actors, so
- * telepathy wont prevent resting"* (Player.lua:853). Someone else's eyes are our
- * telepathy.
- *
- * So the test is `canSee` from THIS body — the same rule travel and the rest
- * check spend. NO BOARD, NO SIGHT: before the first `state` there is nothing to
- * trace through, and refusing to explore is the safe direction on a frame where
- * we cannot answer.
- *
- * IT USED TO SAY `projectActors` *"sends them all today and says so"*. It no
- * longer does: FOV filters the actor list to what the party can see, so the
- * husk-behind-a-wall case this comment called the safe direction to be wrong in
- * is now mostly gone — the server never sends that husk. What remains is a husk
- * behind a wall that a TEAMMATE can see, which is on your board legitimately.
+ * THE BOARD IS THIS PLAYER'S OWN SIGHT NOW, built by the server at their own
+ * sight radius, so every hostile on it is one this player can see — which is
+ * what upstream's `spotHostiles` walks (Player.lua:849-858). The rule is in
+ * `input/travel.ts`, and it is membership. NO BOARD, NO SIGHT: before the first
+ * `state` there is nothing to answer from, and refusing to explore is the safe
+ * direction.
  */
 function nearestVisibleHostile(
   me: TileXY,

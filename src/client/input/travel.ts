@@ -88,7 +88,6 @@
 
 import { DIR_ORDER, sameTile, step } from '../../shared/coords.ts';
 import { canRoute, canWalk } from '../../shared/level.ts';
-import { canSee } from '../../shared/sight.ts';
 import { findPath } from '../../shared/path.ts';
 import { ActorKind, TurnActorState } from '../../shared/protocol.ts';
 import type { Dir, TileXY } from '../../shared/coords.ts';
@@ -124,30 +123,25 @@ function travelMaxNodes(level: LevelView): number {
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════
- * THERE IS NO TRAVEL RADIUS ANY MORE. `hostileAlert` ASKS `canSee`.
+ * THERE IS NO TRAVEL RADIUS, AND NO SIGHT RULE HERE EITHER. THE BOARD IS SIGHT.
  * ═══════════════════════════════════════════════════════════════════════════
  *
- * `TRAVEL_ALERT_RADIUS` was 8, measured with `chebyshev`, and the reasoning was
- * sound for the game it was written in: 8 is the authored `aggroRange` of the M2
- * monsters (monsters.ts:248, :350) and the number `anyContact` arms the
- * engagement clock with (scheduler.ts:1539), so the radius arm and the
- * `inCombat` arm tended to fire on the same turn.
+ * `TRAVEL_ALERT_RADIUS` was 8, measured with `chebyshev`: the authored
+ * `aggroRange` of the M2 monsters (monsters.ts:248, :350) and the number
+ * `anyContact` arms the engagement clock with (scheduler.ts:1539). It answered
+ * "how far can something notice ME", when the question travel asks is "what
+ * have I just NOTICED" — upstream stops a run for whatever `spotHostiles`
+ * returns, and that walks the player's own sight (Player.lua:849-858). A husk
+ * that walked into view at 9 tiles down a corridor never tripped it.
  *
- * TWO THINGS MADE IT WRONG. It answers "how far can something notice ME", and
- * the question travel asks is "what have I just NOTICED" — upstream stops a run
- * for anything `spotHostiles` returns, which is bounded by sight, not by the
- * monster's aggro range (Player.lua:854). And the client used to be sent every
- * actor on the map, so a radius was the only filter available; since FOV the
- * list is already fogged and the radius is a second, narrower one on top.
- *
- * The two did not line up in either direction. A husk that walks into view at 9
- * tiles down a corridor never tripped it, so the walk carried on toward
- * something the player could see; and chebyshev 8 on a pure diagonal is
- * euclidean 11.3, further than the server would ever have sent.
- *
- * So the rule is `canSee` from `shared/sight.ts` — the same function the FOV
- * projection and the rest check spend, at the same radius, measured the same
- * way. One sight rule.
+ * It was replaced by `canSee` from this body, because the board used to hold
+ * more than this body could see: first every actor on the map, then the whole
+ * party's pooled sight. Neither is true now. The server builds each player's
+ * board from that player's own eyes at their own sight radius, so a hostile on
+ * this client's board IS one this player can see — including by a talent or an
+ * item that widens their sight, which a `canSee` at the default radius here
+ * could not know about. So the rule is membership, and there is one sight rule,
+ * on the server.
  */
 
 /** What `begin` did. Three answers, never conflated — see path.ts:303-311. */
@@ -307,15 +301,13 @@ export type HostileSense = {
   /** Every body the client knows about, corpses and allies included. */
   readonly actors: readonly ActorView[];
   /**
-   * WHERE THE VIEWER STOOD WHEN THIS OBSERVATION WAS TAKEN, and the whole reason
-   * the radius arm of `hostileAlert` can fire at all. Measuring both ends of the
-   * comparison from the CURRENT tile makes a stationary hostile permanently
-   * old news — see that function's header.
+   * WHERE THE VIEWER STOOD WHEN THIS OBSERVATION WAS TAKEN. `hostileAlert` no
+   * longer measures from it: the server's board already says what this seat can
+   * see, and a hostile coming into view arrives on it.
    */
   readonly self: TileXY;
   /**
-   * The map, because the rule this feeds is now `canSee` and `canSee` asks
-   * about walls. Nullable for the same reason `TravelWorld.level` is: there is
+   * The map, only so that no board means nothing is seen. Nullable for the same reason `TravelWorld.level` is: there is
    * a window before the first board arrives, and a walk cannot be running in it.
    */
   readonly level: LevelView | null;
@@ -384,9 +376,10 @@ export function liveActorAt(actors: readonly ActorView[], tile: TileXY): ActorVi
  * straight past — and sometimes straight up against — a stationary husk, and
  * only stopped once one of its swings actually connected.
  *
- * WHEN PER-PLAYER FOV LANDS, THIS FUNCTION IS THE ONE PLACE THAT CHANGES: it
- * becomes "an id in `next.actors` that was not in `prev.actors` at all", and
- * every caller and every other rule in this file stays exactly as it is.
+ * PER-PLAYER FOV LANDED, AND THIS WAS THE ONE PLACE THAT CHANGED, as this note
+ * said it would be: the alert is now "an id in `next` that was not in `prev`",
+ * because an id on this client's board is one this player can see. Every caller
+ * and every other rule in this file stayed as it was.
  */
 /**
  * ═══════════════════════════════════════════════════════════════════════════
@@ -397,29 +390,23 @@ export function liveActorAt(actors: readonly ActorView[], tile: TileXY): ActorVi
  * member is closest; both used to spell their own scan and one of them forgot
  * the sight term for two milestones.
  *
- * ═══ "CAN SEE" IS NOT "IS ON THE BOARD", AND THAT IS NEW ═══
- * Since FOV the actor list is the PARTY'S union — `reconcileSight` computes it
- * once per realm from every player's eyes — so a husk only a teammate can see is
- * legitimately on this client's board. Upstream draws the same line for the same
- * reason: `spotHostiles` walks the player's OWN circle, commenting *"only see LOS
- * actors, so telepathy wont prevent resting"* (Player.lua:853). Somebody else's
- * eyes are our telepathy.
+ * ═══ ON THE BOARD IS SEEN ═══
+ * This used to filter the board through `canSee` from this body, because the
+ * board was the whole party's pooled sight and a husk only a teammate could see
+ * was on it. Upstream draws that line for the same reason: `spotHostiles` walks
+ * the player's OWN sight, *"only see LOS actors, so telepathy wont prevent
+ * resting"* (Player.lua:849-858). The board is this player's own sight now, so
+ * the filter was a second rule at the wrong radius, and it is gone.
  *
  * NO LEVEL MEANS NOTHING IS SEEN. Before the first board there is nothing to
  * trace through, and an empty answer stops a walk from starting rather than
  * letting one run on a frame that cannot be reasoned about.
  */
-export function seenHostiles(
-  level: LevelView | null,
-  from: TileXY,
-  actors: readonly ActorView[],
-): ActorView[] {
+export function seenHostiles(level: LevelView | null, actors: readonly ActorView[]): ActorView[] {
   if (level === null) return [];
   // `isHostileBody` already excludes every Player, so the viewer's own body
   // needs no special case here.
-  return actors.filter(
-    (actor) => actor.alive && isHostileBody(actor) && canSee(level, from, actor),
-  );
+  return actors.filter((actor) => actor.alive && isHostileBody(actor));
 }
 
 /**
@@ -439,7 +426,7 @@ export function nearestSeenHostile(
 ): { readonly name: string; readonly dx: number; readonly dy: number } | null {
   let best: { name: string; dx: number; dy: number } | null = null;
   let bestDist = Infinity;
-  for (const actor of seenHostiles(level, from, actors)) {
+  for (const actor of seenHostiles(level, actors)) {
     const dx = actor.x - from.x;
     const dy = actor.y - from.y;
     const dist = Math.max(Math.abs(dx), Math.abs(dy));
@@ -453,8 +440,8 @@ export function nearestSeenHostile(
 export function hostileAlert(prev: HostileSense, next: HostileSense): boolean {
   if (!prev.inCombat && next.inCombat) return true;
 
-  const before = new Set(seenHostiles(prev.level, prev.self, prev.actors).map((a) => a.id));
-  for (const actor of seenHostiles(next.level, next.self, next.actors)) {
+  const before = new Set(seenHostiles(prev.level, prev.actors).map((a) => a.id));
+  for (const actor of seenHostiles(next.level, next.actors)) {
     if (!before.has(actor.id)) return true;
   }
   return false;
