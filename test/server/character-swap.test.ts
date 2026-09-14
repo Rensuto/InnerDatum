@@ -146,7 +146,7 @@ type Harness = {
 let harness: Harness | undefined;
 let root: string | undefined;
 
-async function start(): Promise<Harness> {
+async function start(disconnectGraceMs?: number): Promise<Harness> {
   root = await mkdtemp(join(tmpdir(), 'inner-datum-swap-'));
   const app = Fastify({ logger: false });
   const talents = createContentTalentEngine();
@@ -180,6 +180,7 @@ async function start(): Promise<Harness> {
     realms,
     sessions: identityPort(),
     persist: bridge,
+    ...(disconnectGraceMs === undefined ? {} : { disconnectGraceMs }),
   });
   await app.listen({ host: '127.0.0.1', port: 0 });
   const address = app.server.address();
@@ -380,6 +381,40 @@ describe('changing character', () => {
      * thing `resolveActor` finds on the NEXT swap.
      */
     expect(harness.actorCount(), 'the old body was left standing in the world').toBe(before + 1);
+  });
+
+  it('keeps the character it swapped to after the old body’s grace runs out', async () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * THE OLD BODY'S RECALL TIMER OUTLIVED THE SWAP.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * A swap arrives on a new socket while the old body sits out its reconnect
+     * grace (see `createCharacter`). The swap took that body out of the world
+     * and deleted its entry from `graceTimers` WITHOUT clearing the timer, so
+     * `cancelGrace` on the new body found nothing to cancel and the timer still
+     * fired. `recallBody` asks nothing about who is standing there by then: it
+     * saved, dropped the binding and removed the character the player had
+     * swapped TO — ten minutes into playing it, in production.
+     *
+     * The grace is shortened so the timer fires inside the test.
+     */
+    const GRACE_MS = 150;
+    harness = await start(GRACE_MS);
+    const first = await createCharacter(harness.port, 0);
+    first.client.close();
+    // LET THE CLOSE LAND FIRST, so the old body is on its grace when the swap
+    // arrives — that is the state the client's rehandshake produces. A swap
+    // that beat the close would find a live socket and no timer at all.
+    await sleep(40);
+    const second = await createCharacter(harness.port, 1);
+    expect(harness.actorCount()).toBe(1);
+    second.client.forget();
+
+    await sleep(GRACE_MS * 4);
+
+    expect(harness.actorCount(), 'the old grace recalled the swapped-to body').toBe(1);
+    expect(second.client.all('left'), 'the player was told their own body left').toEqual([]);
   });
 
   it('gives a character back unchanged after playing a different one', async () => {

@@ -8640,7 +8640,13 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
           // WHILE IT IS STILL STANDING THERE. See above — this line is the
           // difference between changing character and losing one.
           saveNow('character-swap');
-          graceTimers.delete(actorId);
+          // CLEARED, NOT JUST FORGOTTEN. A swap arrives on a new socket while this
+          // body sits out its reconnect grace, so its recall timer is live. Deleting
+          // the map entry left that timer running and took away the only handle
+          // `cancelGrace` has on it — and `recallBody` asks nothing about who is
+          // standing there when it fires. It saved, dropped the binding and removed
+          // the body of the character swapped TO, one grace after the swap.
+          cancelGrace(actorId);
           dropResumeToken(actorId);
           connByActor.delete(actorId);
           spokeAtMs.delete(actorId);
