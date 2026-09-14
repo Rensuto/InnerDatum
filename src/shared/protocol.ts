@@ -7019,6 +7019,17 @@ export type ViewerMsg =
   // `broadcast(fogged)`.
   | StateMsg
   | SweepMsg
+  // ═══ AND THE PLAYER LANE, FOR THE SWEEP'S OWN REASON ═══
+  // Each of these names an actor, as a sweep event does, and each copy goes
+  // through `fogEvent` against the recipient's own ledger. A shared copy would
+  // hand the room the id, the tile and the fate of a monster only one player
+  // can see.
+  | MovedMsg
+  | AttackedMsg
+  | DamagedMsg
+  | DiedMsg
+  | UsedMsg
+  | ErasedMsg
   // ═══ AND GROUND LOOT, FOR A DIFFERENT REASON THAN THOSE TWO ═══
   // `state` and `sweep` are per viewer because of what a viewer can SEE. This
   // one is per viewer because of what a viewer REMEMBERS: `engine/Object.lua:28-29`

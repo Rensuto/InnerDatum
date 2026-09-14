@@ -344,6 +344,7 @@ import type {
   ServerMsg,
   SiteView,
   TurnEvent,
+  ViewerMsg,
 } from '../../shared/protocol.ts';
 import type { ClassDef } from '../content/classes.ts';
 import type { Slot } from '../content/items.ts';
@@ -2483,13 +2484,15 @@ function wireVersion(payload: unknown): number | undefined {
  * already handles it, and the sweep's `MoveEvent` carries the extra `fromX`/
  * `fromY` that only a paced replay needs.
  *
- * The return type is `BroadcastMsg`, not `ServerMsg`: everything in the player
- * lane goes to the whole room, so a viewer-private frame must not be
- * constructible here even by accident.
+ * The return type is `ViewerMsg`, not `BroadcastMsg`. Each copy is built for one
+ * recipient from `fogEvent`'s answer for that recipient, so handing one to the
+ * whole room is a compile error rather than a leak of a monster the room cannot
+ * see. See the player-lane loop in `pumpRealm`.
  *
  * ═══ NULL IS A REAL ANSWER, AND M4 IS WHY ═══
- * The five M4 event kinds — effect_applied, effect_expired, downed, revived,
- * erased — have NO immediate-lane wrapper, on purpose. Every one of them is a
+ * Four M4 event kinds — effect_applied, effect_expired, downed, revived — have NO
+ * immediate-lane wrapper, on purpose. (`erased` was a fifth until a wipe needed
+ * one; see `ErasedMsg`.) Every one of them is a
  * CONSEQUENCE of an action that already produced a frame, and every one of them
  * is also carried by a COMPLETE snapshot sent in the same pump: `effects` says
  * who has what on them, `party` says who is down and for how many more turns.
@@ -2507,7 +2510,7 @@ function wireVersion(payload: unknown): number | undefined {
  * next event kind still breaks this function at lint time and its author still
  * has to decide, in writing, which lane carries it.
  */
-function messageForEvent(event: TurnEvent): BroadcastMsg | null {
+function messageForEvent(event: TurnEvent): ViewerMsg | null {
   switch (event.k) {
     case 'move':
       return { v: PROTOCOL_VERSION, t: 'moved', id: event.id, x: event.x, y: event.y };
@@ -6010,17 +6013,6 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
         }
       }
     }
-    /**
-     * TO THE PEOPLE STANDING HERE, and to nobody else.
-     *
-     * `broadcast`'s realm argument is a filter over sessions; `audienceFor` maps
-     * the fallback realm's `''` back to `undefined`, which is "everybody". So a
-     * gateway with no registry emits byte-for-byte the frames it always did,
-     * and this one line is the whole of the difference between the two.
-     */
-    const say = (msg: BroadcastMsg, exceptConnId?: string): void => {
-      broadcast(msg, exceptConnId, audienceFor(realm.id));
-    };
 
     let result: PumpResult;
     try {
@@ -6038,12 +6030,37 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     // built against what each player has now seen. See `rememberWhatPlayersSee`.
     rememberWhatPlayersSee(realm);
 
-    for (const event of result.playerEvents) {
-      // Null means "this kind has no immediate-lane wrapper" — see
-      // `messageForEvent`. It is delivered by the `effects`/`party` snapshots
-      // below, in this same pump.
-      const msg = messageForEvent(event);
-      if (msg !== null) say(msg);
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * THE PLAYER LANE, ONE COPY PER VIEWER — as the sweep lane below already is.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * These went to the whole realm. So a monster a teammate was fighting across
+     * the map was off your board and still in your frames: its id, the blow,
+     * the damage and the death. Upstream's log is gated on what the player can
+     * see (`Game.lua:1549-1550`), and so is this.
+     *
+     * Each event goes through `fogEvent` against the recipient's own ledger: an
+     * event naming a body that client does not hold is withheld, and an
+     * optional id it names is redacted. The ledger is read BEFORE this pump's
+     * sight pass, so a body that only came into view during this pump is not
+     * named here; `reconcileSight` sends its `joined`, carrying its current
+     * tile, at the end of the pump. Players are always held, so a player's own
+     * step, blow and talent still reach everyone in the realm.
+     */
+    if (result.playerEvents.length > 0) {
+      for (const session of sessions.values()) {
+        if (!session.helloDone || realmFor(session).id !== realm.id) continue;
+        for (const event of result.playerEvents) {
+          const heard = fogEvent(event, session.visible);
+          if (heard === null) continue;
+          // Null means "this kind has no immediate-lane wrapper" — see
+          // `messageForEvent`. It is delivered by the `effects`/`party`
+          // snapshots below, in this same pump.
+          const msg = messageForEvent(heard);
+          if (msg !== null) send(session.socket, msg);
+        }
+      }
     }
 
     // ═══ A REFUND IS UNICAST, BECAUSE NOTHING ELSE WILL EVER MENTION IT ═══

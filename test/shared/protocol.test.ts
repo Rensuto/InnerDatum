@@ -225,13 +225,11 @@ describe('viewer-private frames cannot be broadcast', () => {
       // eyes, the other filtered against that viewer's own ledger — so a single
       // shared copy would show the whole room one player's fog. Being outside
       // this union is what makes broadcasting either a compile error.
-      'moved',
+      // AND THE PLAYER LANE LEFT WITH THEM: `moved`, `attacked`, `damaged`,
+      // `died`, `used` and `erased` each go through `fogEvent` against the
+      // recipient's own ledger, exactly as the sweep does.
       'joined',
       'left',
-      'attacked',
-      'damaged',
-      'died',
-      'used',
       'log',
       'effects',
       'projectiles',
@@ -251,11 +249,13 @@ describe('viewer-private frames cannot be broadcast', () => {
     }
   });
 
-  it('keeps the public FX stamp public', () => {
-    // `used` is NOT private: everyone should see the Alchemist throw the vial.
-    // What stays private is the hotbar it came off — the cooldown that tells you
-    // she cannot do it again for four turns.
-    const used: BroadcastMsg = {
+  it('keeps the public FX stamp public, through each viewer`s own fog', () => {
+    // `used` is NOT private: everyone should see the Alchemist throw the vial,
+    // and they do, because a player is on every board. It is a `ViewerMsg`
+    // because the target it names may be a monster only she can see, and
+    // `fogEvent` redacts that per recipient. What stays private outright is the
+    // hotbar it came off — the cooldown that says she cannot throw again yet.
+    const used: ViewerMsg = {
       v: V,
       t: 'used',
       ev: {
@@ -563,13 +563,11 @@ describe('the inspect pair at the trust boundary', () => {
       // eyes, the other filtered against that viewer's own ledger — so a single
       // shared copy would show the whole room one player's fog. Being outside
       // this union is what makes broadcasting either a compile error.
-      'moved',
+      // AND THE PLAYER LANE LEFT WITH THEM: `moved`, `attacked`, `damaged`,
+      // `died`, `used` and `erased` each go through `fogEvent` against the
+      // recipient's own ledger, exactly as the sweep does.
       'joined',
       'left',
-      'attacked',
-      'damaged',
-      'died',
-      'used',
       'log',
       'effects',
       'projectiles',
@@ -1450,9 +1448,9 @@ describe('the floor is broadcast and the bag is not', () => {
     // — the type would widen and the literal would simply be one tag short.
     // These assignments are `Exclude`-derived: `broadcastable` accepts only tags
     // that SURVIVE the Exclude, and `viewerOnly` only tags that do not.
-    const broadcastable: BroadcastMsg['t'] = 'used';
+    const broadcastable: BroadcastMsg['t'] = 'log';
     const viewerOnly: Exclude<ServerMsg['t'], BroadcastMsg['t']> = 'inventory';
-    expect(broadcastable).toBe('used');
+    expect(broadcastable).toBe('log');
     expect(viewerOnly).toBe('inventory');
 
     // @ts-expect-error `inventory` does not survive the Exclude. This is the

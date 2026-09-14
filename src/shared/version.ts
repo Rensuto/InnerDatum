@@ -521,6 +521,26 @@
  * ═══════════════════════════════════════════════════════════════════════════
 
 
+ * CONSIDERED AND NOT BUMPED (ONLY WHAT YOU SAW HAPPEN). `moved`, `attacked`,
+ * `damaged`, `died`, `used` and `erased` are sent per viewer through
+ * `fogEvent` rather than to the whole realm, and PROTOCOL_VERSION STAYS 23.
+ *
+ * The change: a blow, a death or a step by a monster only a teammate can see no
+ * longer reaches you; an optional id naming something you cannot see is
+ * redacted, as it already was inside a `sweep`.
+ *
+ * ═══ WHY THIS DOES NOT FORCE A BUMP ═══
+ * No frame changes shape and none is added. Fewer copies are sent, and the
+ * ones that are sent carry either the same ids or none where an id was already
+ * optional — the absence every one of those fields documents as "do not say".
+ * A client built before this already drops a move for an actor it does not
+ * hold, so nothing it draws becomes a lie.
+ *
+ * `SCHEMA_VERSION` STAYS 1. Nothing about sight is saved.
+ *
+ * ═══════════════════════════════════════════════════════════════════════════
+
+
  * 22 -> 23 (TRAPS). `TrapsMsg` is a new outbound frame — every trap THIS
  * VIEWER has found out about — and it is 6 -> 7's argument in its most literal
  * form yet.

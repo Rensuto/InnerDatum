@@ -21,6 +21,7 @@ import { wsGateway } from '../../src/server/net/gateway.ts';
 import { createTurnEngine } from '../../src/server/turn-engine.ts';
 import { createRealms } from '../../src/server/world/realms.ts';
 import { AiProfile } from '../../src/server/engine/actor.ts';
+import { WATCHMAN } from '../../src/server/content/classes.ts';
 import { canWalk } from '../../src/shared/level.ts';
 import { TileCode } from '../../src/shared/protocol.ts';
 import { PROTOCOL_VERSION } from '../../src/shared/version.ts';
@@ -403,10 +404,13 @@ function farPair(
   world: World,
   from: readonly { x: number; y: number }[],
   minDist: number,
+  avoid: ReadonlySet<string> = new Set(),
 ): { body: { x: number; y: number }; lurk: { x: number; y: number } } {
   const level = world.level;
   const free = (x: number, y: number): boolean =>
-    canWalk(level, x, y) && world.actorAt(x, y) === undefined;
+    canWalk(level, x, y) &&
+    world.actorAt(x, y) === undefined &&
+    !avoid.has(`${String(x)},${String(y)}`);
   const far = (x: number, y: number): boolean =>
     from.every((tile) => (tile.x - x) ** 2 + (tile.y - y) ** 2 > minDist * minDist);
   for (let y = 1; y < level.h - 1; y += 1) {
@@ -579,6 +583,98 @@ describe('a monster walking into and out of sight', () => {
     expect(arrived.length, 'the realm frame carried no board at all').toBeGreaterThan(0);
     expect(arrived, 'the realm board').not.toContain(lurker.id);
     expect(mine.board(), 'the board after the realm frame').not.toContain(lurker.id);
+  });
+
+  it('does not tell you about a blow on a monster only your teammate can see', async () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * THE PLAYER LANE, PER VIEWER. A board that hides the monster is not enough.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * `moved`, `attacked`, `damaged`, `died`, `used` and `erased` went to the
+     * whole realm, so a monster your teammate was fighting across the map was
+     * off your board and still in your frames. Each copy now goes through
+     * `fogEvent` against the recipient's own ledger, as the sweep lane did.
+     */
+    const mine = await hello(server.port);
+    const theirs = await hello(server.port);
+    const overworld = server.realms.overworld;
+    const world = overworld.world;
+    const me = world.getActor(mine.actorId);
+    const scout = world.getActor(theirs.actorId);
+    if (me === undefined || scout === undefined) throw new Error('no body');
+    const doors = new Set(overworld.sites.keys());
+    const { body, lurk } = farPair(world, [me], REVEAL_RADIUS + 2, doors);
+    scout.x = body.x;
+    scout.y = body.y;
+    const lurker = world.addMonster('lurker', {
+      name: 'Index Husk',
+      sprite: 'enemy_index_husk_s',
+      x: lurk.x,
+      y: lurk.y,
+      profile: AiProfile.MeleeChaser,
+      aggroRange: 0,
+    });
+    // A MELEE CLASS, because a body that has not chosen one strikes at range and
+    // a step into an adjacent hostile is refused as too close.
+    theirs.send({ t: 'choose_class', classId: WATCHMAN.id });
+    await sleep(200);
+    theirs.send({ t: 'hold' });
+    await sleep(250);
+    expect(theirs.board(), 'the scout standing beside it was not shown it').toContain(lurker.id);
+
+    // THE BLOW: a step into a hostile is an attack.
+    theirs.send({ t: 'move', dir: 'e' });
+    await sleep(150);
+    mine.send({ t: 'hold' });
+    await sleep(150);
+    const names = (frame: Record<string, unknown>): boolean => {
+      const ev = frame['ev'];
+      if (typeof ev !== 'object' || ev === null) return false;
+      const fields = ev as Record<string, unknown>;
+      return fields['id'] === lurker.id || fields['targetId'] === lurker.id;
+    };
+    const lane = new Set(['attacked', 'damaged', 'died']);
+    const aboutIt = (frame: Record<string, unknown>): boolean =>
+      lane.has(String(frame['t'])) && names(frame);
+    const deadline = Date.now() + FRAME_TIMEOUT_MS;
+    while (!theirs.frames.some(aboutIt) && Date.now() < deadline) {
+      await sleep(10);
+    }
+    expect(theirs.frames.some(aboutIt), 'the scout never heard their own blow').toBe(true);
+    await sleep(150);
+    expect(mine.frames.filter(aboutIt), 'a blow on a monster you cannot see reached you').toEqual(
+      [],
+    );
+  });
+
+  it('always tells you where a teammate stepped, however far away', async () => {
+    // PLAYERS ARE ALWAYS HELD, so a teammate's step is never fogged. The lane
+    // being per viewer must not cost the party each other's positions.
+    const mine = await hello(server.port);
+    const theirs = await hello(server.port);
+    const overworld = server.realms.overworld;
+    const world = overworld.world;
+    const me = world.getActor(mine.actorId);
+    const scout = world.getActor(theirs.actorId);
+    if (me === undefined || scout === undefined) throw new Error('no body');
+    const doors = new Set(overworld.sites.keys());
+    const { body, lurk } = farPair(world, [me], REVEAL_RADIUS + 2, doors);
+    scout.x = body.x;
+    scout.y = body.y;
+    const stepped = (frame: Record<string, unknown>): boolean =>
+      frame['t'] === 'moved' &&
+      frame['id'] === theirs.actorId &&
+      frame['x'] === lurk.x &&
+      frame['y'] === lurk.y;
+
+    theirs.send({ t: 'move', dir: 'e' });
+    await sleep(80);
+    const deadline = Date.now() + FRAME_TIMEOUT_MS;
+    while (!mine.frames.some(stepped) && Date.now() < deadline) {
+      await sleep(10);
+    }
+    expect(mine.frames.some(stepped), 'a teammate`s step far away never reached you').toBe(true);
   });
 
   it('and you are always on your own board', async () => {
