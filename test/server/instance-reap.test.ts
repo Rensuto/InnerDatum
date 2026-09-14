@@ -9,6 +9,7 @@ import { wsGateway } from '../../src/server/net/gateway.ts';
 import { createTurnEngine } from '../../src/server/turn-engine.ts';
 import { RealmKind, createRealms } from '../../src/server/world/realms.ts';
 import { INDEX_HUSK } from '../../src/server/content/monsters.ts';
+import { DIR_ORDER, dirFromVector, dirVector } from '../../src/shared/coords.ts';
 import { canWalk } from '../../src/shared/level.ts';
 import { PROTOCOL_VERSION } from '../../src/shared/version.ts';
 import type { PartyState } from '../../src/server/engine/party.ts';
@@ -369,9 +370,23 @@ describe('the door leads back to the map you came in from', () => {
     // Step off the threshold and back onto it — `Session.exitArmed` requires the
     // door to be armed, which is deliberately two steps so a stray key cannot
     // eject you on arrival.
-    client.send({ t: 'move', dir: 'n' });
+    //
+    // ONTO A NEIGHBOUR THAT IS GROUND, found rather than assumed. This stepped
+    // north, which the walked arena always carved; upstream's forest puts trees
+    // where they fall, and on this seed the tile north of the arrival is one.
+    const breach = server.realms.get(server.realms.realmOf(actorId)?.id ?? '');
+    const door = breach?.spawns[0];
+    if (breach === undefined || door === undefined) throw new Error('no breach to step out of');
+    const off = DIR_ORDER.find((dir) => {
+      const v = dirVector(dir);
+      return canWalk(breach.world.level, door.x + v.dx, door.y + v.dy);
+    });
+    if (off === undefined) throw new Error('nothing around the arrival to step onto');
+    const back = dirFromVector(-dirVector(off).dx, -dirVector(off).dy);
+    if (back === undefined) throw new Error('no way back onto the threshold');
+    client.send({ t: 'move', dir: off });
     await sleep(60);
-    client.send({ t: 'move', dir: 's' });
+    client.send({ t: 'move', dir: back });
     await sleep(150);
 
     expect(server.realms.realmOf(actorId)?.id).toBe(home);

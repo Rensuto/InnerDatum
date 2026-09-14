@@ -11,6 +11,7 @@ import { describe, expect, it } from 'vitest';
 
 import { arenaCentre, makeArena } from '../../src/shared/arena.ts';
 import { TileCode, isWalkable } from '../../src/shared/protocol.ts';
+import { Ground } from '../../src/shared/level.ts';
 import type { AuthoredMap } from '../../src/shared/level.ts';
 
 const SEEDS = Array.from({ length: 40 }, (_, i) => `realm:site:encounter:${i + 1}`);
@@ -91,9 +92,10 @@ describe('you can be surrounded, which is what makes it an ambush', () => {
     // monster comes from that side — the thing that makes an ambush an ambush,
     // deleted by a property of the random walk rather than by any decision.
     //
-    // Restarting the walker at the centre fixed it. This asserts the OUTCOME,
-    // because the next person tuning OPEN_FRACTION or the reset interval needs
-    // to find out here rather than in play.
+    // Restarting the walker at the centre fixed it, and the forest that replaced
+    // the walk has no drift to fix. This asserts the OUTCOME, because the next
+    // person tuning a ground's zoom or sqrtPercent needs to find out here rather
+    // than in play.
     const m = makeArena(seed);
     const octants = new Set<number>();
     for (let y = 0; y < m.view.h; y += 1) {
@@ -132,5 +134,62 @@ describe('an arena is a fight, not a place', () => {
 
     const other = makeArena('realm:site:encounter:8');
     expect(other.view.tiles).not.toEqual(a.view.tiles);
+  });
+});
+
+describe('a room whose arrival is shut in', () => {
+  it('is built again, as upstream rebuilds a cavern too small to use', () => {
+    /**
+     * These seeds' first build shut the arrival tile inside a ring of trees and
+     * kept a room of one cell, found over 5000 seeds a ground. Upstream's
+     * Cavern rebuilds a level whose open region is too small
+     * (`Cavern.lua:100-109`), and so does this.
+     */
+    const sealed: readonly (readonly [Ground, number])[] = [
+      [Ground.Wood, 1361],
+      [Ground.Scree, 1579],
+      [Ground.Walls, 456],
+    ];
+    for (const [ground, n] of sealed) {
+      const m = makeArena(`realm:site:encounter:${String(n)}`, ground);
+      const interior = (m.view.w - 2) * (m.view.h - 2);
+      expect(reachable(m).size, `${ground} ${String(n)} kept the sealed room`).toBeGreaterThan(
+        interior / 3,
+      );
+    }
+  });
+});
+
+describe('each ground as open as the upstream zone it comes from', () => {
+  it('keeps each ground inside the band upstream`s numbers give it', () => {
+    /**
+     * Measured over these forty seeds, as a share of the 22x22 interior a body
+     * can stand on: OPEN (the Golem Graveyard) 92.9%, UPLAND (upstream's
+     * ambush) 83.5%, SCREE (the Mark of the Spellblaze) 78.0%, WOOD
+     * (Trollmire) 63.7%, WALLS (the Ring of Blood) 63.6%, and FEN (Slazish Fen,
+     * less its channel) 62.2%. The walk this replaced gave 62%, 42%, 36%, 34%,
+     * 46% and 42.5%.
+     */
+    const band: Readonly<Record<Ground, readonly [number, number]>> = {
+      [Ground.Open]: [0.88, 0.97],
+      [Ground.Upland]: [0.79, 0.88],
+      [Ground.Scree]: [0.73, 0.83],
+      [Ground.Wood]: [0.58, 0.69],
+      [Ground.Walls]: [0.58, 0.69],
+      [Ground.Fen]: [0.56, 0.68],
+    };
+    for (const ground of Object.values(Ground)) {
+      let share = 0;
+      for (const seed of SEEDS) {
+        const m = makeArena(seed, ground);
+        const interior = (m.view.w - 2) * (m.view.h - 2);
+        share += m.view.tiles.filter((c) => isWalkable(c)).length / interior;
+      }
+      const mean = share / SEEDS.length;
+      const [lo, hi] = band[ground];
+      const said = `${ground} is ${(mean * 100).toFixed(1)}% open`;
+      expect(mean, said).toBeGreaterThan(lo);
+      expect(mean, said).toBeLessThan(hi);
+    }
   });
 });

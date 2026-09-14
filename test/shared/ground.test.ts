@@ -192,16 +192,17 @@ describe('six grounds build six different rooms', () => {
 
     expect(openness(Ground.Open)).toBeGreaterThan(openness(Ground.Upland));
     expect(openness(Ground.Upland)).toBeGreaterThan(openness(Ground.Wood));
-    // Nearly twice the room, end to end. That is a different fight, not a tint.
-    expect(openness(Ground.Open) / openness(Ground.Wood)).toBeGreaterThan(1.5);
+    // Upstream's meadow against its mire: measured over 5000 seeds, 93% of the
+    // interior kept open against 64%. A different fight, not a tint.
+    expect(openness(Ground.Open) / openness(Ground.Wood)).toBeGreaterThan(1.3);
   });
 
-  it('leaves UPLAND the same SHAPE the game already shipped, and makes it the default', () => {
+  it('makes UPLAND upstream`s own ambush, and the default', () => {
     /**
-     * THE NO-REGRESSION HALF, and it is why UPLAND keeps `openFraction` at 0.42
-     * rather than taking the retune the design proposed. The fight the game
-     * already has is unchanged for everybody, so if somebody reports that fights
-     * feel different there is exactly one change to look at instead of six.
+     * UPLAND IS UPSTREAM'S AMBUSH: a zoom of 10 and a `sqrt_percent` of 50
+     * (`GameState.lua:802-803`). It kept the walk's 0.42 while the other five
+     * grounds were new, so a report of fights feeling different had one change
+     * to look at. The forest that replaced the walk is that change now.
      *
      * THE SHAPE, NOT THE CODES. The room is repainted — HILLS and CRAG where it
      * used to be FLOOR and WALL — and that is the whole visible point of the
@@ -219,9 +220,10 @@ describe('six grounds build six different rooms', () => {
       expect(makeArena(name, Ground.Upland).view.tiles).toEqual(makeArena(name).view.tiles);
     }
 
-    // 0.42 of the 22x22 interior is 203 cells, which is the count that has
-    // shipped since the arena existed. If this moves, the default fight moved.
-    expect(walkableCount(makeArena('realm:site:encounter:1'))).toBe(203);
+    // UPSTREAM'S AMBUSH ON THIS ROOM: 406 cells of the 22x22 interior for this
+    // seed, where the walk it replaced carved 203. If this moves, the default
+    // fight moved.
+    expect(walkableCount(makeArena('realm:site:encounter:1'))).toBe(406);
   });
 
   it('gives the fen water, and gives it to nothing else', () => {
@@ -238,13 +240,22 @@ describe('six grounds build six different rooms', () => {
      * eye, so anything you can see you can walk straight to. The tactic exists
      * nowhere else on the board.
      */
-    const water = (g: Ground): number =>
-      makeArena('realm:site:encounter:5', g).view.tiles.filter((c) => c === TileCode.WATER).length;
+    const water = (g: Ground, seed: number): number =>
+      makeArena(`realm:site:encounter:${String(seed)}`, g).view.tiles.filter(
+        (c) => c === TileCode.WATER,
+      ).length;
 
-    expect(water(Ground.Fen)).toBeGreaterThan(0);
+    // NOT EVERY FEN. A cut the ford cannot keep connected is taken back whole,
+    // which left 87 fens in 200 dry under the walk and 76 in 200 under the
+    // forest, so the claim is made over a sweep rather than one seed.
+    const seeds = Array.from({ length: 20 }, (_, i) => i + 1);
+    expect(
+      seeds.some((seed) => water(Ground.Fen, seed) > 0),
+      'no fen had water',
+    ).toBe(true);
     for (const ground of Object.values(Ground)) {
       if (ground === Ground.Fen) continue;
-      expect(water(ground), `${ground} must be dry`).toBe(0);
+      for (const seed of seeds) expect(water(ground, seed), `${ground} must be dry`).toBe(0);
     }
   });
 

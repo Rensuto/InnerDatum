@@ -25,14 +25,26 @@
  * pins, arriving at the moment it pays for itself.
  *
  * ═══════════════════════════════════════════════════════════════════════════
- * A DRUNKARD'S WALK, AND THE CHOICE IS ABOUT CONNECTIVITY
+ * UPSTREAM'S FOREST GENERATOR, AND CAVERN'S FLOOD FILL
  * ═══════════════════════════════════════════════════════════════════════════
- * Cellular automata make prettier caves and need a flood fill afterwards to
- * find and discard the pockets they strand. A walk carves a single connected
- * region BY CONSTRUCTION — every cell it opens, it opened by standing on it —
- * so "can the player reach the monsters" is answered by the algorithm rather
- * than by a repair pass. On a room this small, prettier is worth less than
- * provably-connected.
+ * This was a drunkard's walk carving open ground out of solid rock, which made
+ * every ambush a cave: about a third of the box walkable on the default ground.
+ * Upstream's ambush is its Forest generator (`GameState.lua:797-803`), open
+ * country with trees in it, and a sealed room of that is about four fifths
+ * open. A player put the difference as the fight space feeling small.
+ *
+ * So each cell is upstream's roll (`Forest.lua:147-152`): seeded noise turned
+ * into a percentage, a tree on a roll under it where the noise runs high, and a
+ * tree on a roll under its square root where it runs low. `zoom` sets how wide
+ * the clearings are and `sqrtPercent` where the thickets start, and each ground
+ * takes both from an upstream zone of its own kind of country.
+ *
+ * NOISE STRANDS POCKETS, which the walk never did. Upstream's Cavern keeps its
+ * largest open region and fills the rest (`Cavern.lua:98-106`); here the region
+ * kept is the arrival's, since that is where you are. Cavern also rebuilds a
+ * level whose region is too small (`Cavern.lua:100-109`), and here that is a
+ * room under a third of its interior: on the densest grounds about one arena in
+ * a thousand shuts the arrival tile inside a ring of trees.
  *
  * PURE, and seeded from `shared/rng.ts` with labelled draws, so an ambush is
  * reproducible from the realm that caused it. `src/shared/` bans `Math.random`
@@ -40,7 +52,9 @@
  */
 
 import { tileIndex } from './coords.ts';
+import { createNoise2 } from './noise.ts';
 import { createRng } from './rng.ts';
+import type { Rng } from './rng.ts';
 import { TileCode } from './protocol.ts';
 import type { TileXY } from './coords.ts';
 import { Ground } from './level.ts';
@@ -52,34 +66,34 @@ import type { AuthoredMap } from './level.ts';
  * The viewport is about twenty tiles wide at the smallest size this game ships
  * (canvas.ts `MAX_TILES_*` caps it at 48x32), so 24x24 is a room you can nearly
  * see the whole of — which is the point of an arena, as against a floor you
- * explore. ToME's ambush is 20x20 for the same reason.
+ * explore. ToME's ambush is 20x20 by default (`GameState.lua:826`) and its
+ * encounters ask for 14 or 18. This stays at 24, because the fight space was
+ * already the complaint and upstream's open ground on 24x24 is twice the room
+ * the walk used to carve.
  */
 const ARENA_W = 24;
 const ARENA_H = 24;
 
+/** Upstream's default ceiling on the noise percentage (`Forest.lua:36`). */
+const MAX_PERCENT = 80;
+
+/** Upstream's default octaves of noise (`Forest.lua:41`). */
+const OCTAVES = 4;
+
 /**
- * WHERE THE ONE FRACTION WENT: it is per-ground now, in `ARENAS` below, and the
- * range it used to describe is what makes six rooms out of one generator.
- *
- * *Below about a third the room is a corridor system and a ranged monster can
- * never be reached; above about a half it is an empty box and the walls stop
- * meaning anything.* Both of those were written as failure modes to stay
- * between — and both are now a ground: WOOD is the corridor system (0.34,
- * deliberately neutering anything that shoots) and OPEN is the empty box (0.62,
- * deliberately leaving you nowhere to hide). UPLAND keeps 0.42 exactly, because
- * it is the room the game already ships.
+ * The smallest room kept, as a share of the interior, before the arena is built
+ * again. Upstream's Cavern asks for a count of open cells instead
+ * (`Cavern.lua:37`); a share is the same rule for a room of fixed size.
  */
+const MIN_KEPT = 1 / 3;
+
+/** How many builds before the last is kept whatever it is: this runs inside a move. */
+const MAX_BUILDS = 8;
 
 /** One cell of margin stays solid, so the arena is always sealed. */
 const MARGIN = 1;
 
-/**
- * The eight steps, in a fixed order.
- *
- * ORDER IS PART OF THE SEED CONTRACT: the walk picks an index, so reordering
- * this array changes every arena ever generated from every seed. Same rule
- * `DIR_ORDER` states in coords.ts and for the same reason.
- */
+/** The eight steps a body can take, which is what joins one open cell to the next. */
 const STEPS: readonly TileXY[] = Object.freeze([
   { x: 1, y: 0 },
   { x: -1, y: 0 },
@@ -96,24 +110,16 @@ const STEPS: readonly TileXY[] = Object.freeze([
  * SIX ROOMS, ONE PER KIND OF COUNTRY. The ground you were caught on decides.
  * ═══════════════════════════════════════════════════════════════════════════
  *
- * Until now every ambush was the same 24x24 walk through the same two tile
- * codes, whatever you were standing on — so the moor's forest, its range and its
- * fen were a picture you crossed rather than ground you got caught on.
+ * Upstream builds every world ambush with one set of numbers and swaps only the
+ * tiles, sand and palms for the desert (`GameState.lua:815`). The moor here is
+ * classified into six grounds, and a room per ground is a fight per ground, so
+ * each takes its `zoom` and `sqrtPercent` from an upstream outdoor zone of the
+ * same kind of country. The mapping is this file's; every number is upstream's.
  *
- * Each ground moves TWO dials and nothing else: how much of the room is opened,
- * and what the two codes are. That is enough, because `openFraction` is the
- * whole character of a fight — this file already says so in as many words:
- * *"below about a third the room is a corridor system and a ranged monster can
- * never be reached; above about a half it is an empty box and the walls stop
- * meaning anything."* Those two failure modes are exactly what WOOD and OPEN
- * are FOR.
- *
- * ═══ UPLAND IS TODAY'S ROOM, TO THE DIGIT, AND THAT IS DELIBERATE ═══
- * 0.42 is the value that has shipped since the arena existed, and UPLAND is the
- * default. So the fight the game already has is unchanged for everybody, and the
- * five new ones are new — if somebody reports that fights feel different there
- * is exactly one change to look at rather than six. Retuning the old room in the
- * same commit that adds five would make that unanswerable.
+ * ═══ UPLAND IS UPSTREAM'S AMBUSH, TO THE DIGIT ═══
+ * A zoom of 10 and a `sqrt_percent` of 50 (`GameState.lua:802-803`). UPLAND is
+ * the default room, so a caller that knows nothing about terrain gets the
+ * ambush upstream would have built.
  */
 const ARENAS: Readonly<
   Record<
@@ -121,49 +127,53 @@ const ARENAS: Readonly<
     {
       readonly floor: TileCode;
       readonly wall: TileCode;
-      readonly openFraction: number;
+      readonly zoom: number;
+      readonly sqrtPercent: number;
       readonly channels: number;
     }
   >
 > = {
-  // Almost no cover. A ranged monster owns you until you close the distance,
-  // which is the fight the open moor should be.
+  // Almost no cover. A ranged monster owns you until you close the distance.
+  // The Golem Graveyard's meadow (`data/zones/golem-graveyard/zone.lua:39-40`).
   [Ground.Open]: {
     floor: TileCode.PLAINS,
     wall: TileCode.TREES,
-    openFraction: 0.62,
+    zoom: 4,
+    sqrtPercent: 70,
     channels: 0,
   },
-  // TODAY'S ROOM. Knots of dead ground, the default, and the only one of the six
-  // whose numbers are not new.
+  // UPSTREAM'S AMBUSH, and the default.
   [Ground.Upland]: {
     floor: TileCode.HILLS,
     wall: TileCode.CRAG,
-    openFraction: 0.42,
+    zoom: 10,
+    sqrtPercent: 50,
     channels: 0,
   },
-  // Sightlines of a few tiles. Ranged monsters are neutered and melee is on you
-  // before you see it — the first reason on this map to walk INTO the trees, or
-  // to keep well out of them.
+  // Short sightlines between thickets, and melee is on you before you see it.
+  // Trollmire (`data/zones/trollmire/zone.lua:50-51`).
   [Ground.Wood]: {
     floor: TileCode.GREEN,
     wall: TileCode.TREES,
-    openFraction: 0.34,
+    zoom: 7,
+    sqrtPercent: 30,
     channels: 0,
   },
-  // Corridors. You fight them one at a time if you pick the right one, which
-  // makes this the only ground that rewards choosing where to stand.
+  // Scorched ground with stands of dead trees to put between you and them. The
+  // Mark of the Spellblaze (`data/zones/mark-spellblaze/zone.lua:40-41`).
   [Ground.Scree]: {
     floor: TileCode.SOOT,
     wall: TileCode.CRAG,
-    openFraction: 0.36,
+    zoom: 4,
+    sqrtPercent: 45,
     channels: 0,
   },
-  // A yard with real corners.
+  // A walled yard: the Ring of Blood's arena (`data/zones/ring-of-blood/zone.lua:41-42`).
   [Ground.Walls]: {
     floor: TileCode.COBBLE,
     wall: TileCode.TERRACE,
-    openFraction: 0.46,
+    zoom: 5,
+    sqrtPercent: 30,
     channels: 0,
   },
   // ═══ THE FREE ONE, AND THE BEST FIGHT IN THE SET ═══
@@ -171,13 +181,71 @@ const ARENAS: Readonly<
   // in neither set's complement, "solid, and transparent". A channel across a
   // fen is genuine ranged tactics with ZERO engine change: shoot across it while
   // nothing can reach you, or walk the long way round if you cannot.
+  // Slazish Fen's bog (`data/zones/slazish-fen/zone.lua:43-44`).
   [Ground.Fen]: {
     floor: TileCode.MIRE,
     wall: TileCode.TREES,
-    openFraction: 0.44,
+    zoom: 7,
+    sqrtPercent: 30,
     channels: 2,
   },
 };
+
+/**
+ * One build of the room: upstream's roll for every cell, then the arrival's
+ * region kept and every other pocket filled.
+ */
+function forest(
+  rng: Rng,
+  spec: { readonly zoom: number; readonly sqrtPercent: number },
+  centre: TileXY,
+  build: number,
+): { readonly tiles: number[]; readonly kept: number } {
+  const tiles = new Array<number>(ARENA_W * ARENA_H).fill(TileCode.WALL);
+  const noise = createNoise2(rng, `arena.noise.${String(build)}`);
+
+  // `Forest.lua:148-152`, which counts its cells from 1. One roll a cell, from
+  // 0 to 99 and under the chance: `rng.percent` is engine C the reference tree
+  // does not carry, and that is its usual reading. The margin stays solid so the
+  // room is sealed.
+  for (let x = MARGIN; x < ARENA_W - MARGIN; x += 1) {
+    for (let y = MARGIN; y < ARENA_H - MARGIN; y += 1) {
+      const n = noise.fbmPerlin(
+        (spec.zoom * (x + 1)) / ARENA_W,
+        (spec.zoom * (y + 1)) / ARENA_H,
+        OCTAVES,
+      );
+      const v = Math.floor((n / 2 + 0.5) * MAX_PERCENT);
+      const roll = rng.int('arena.tree', 0, 99);
+      const tree = v >= spec.sqrtPercent ? roll < v : roll < Math.sqrt(v);
+      if (!tree) tiles[tileIndex(x, y, ARENA_W)] = TileCode.FLOOR;
+    }
+  }
+
+  // YOU ARRIVE HERE, so it is ground whatever the roll said.
+  tiles[tileIndex(centre.x, centre.y, ARENA_W)] = TileCode.FLOOR;
+
+  // THE ARRIVAL'S REGION, AND NOTHING ELSE (`Cavern.lua:98-106`).
+  const seen = new Set<number>([tileIndex(centre.x, centre.y, ARENA_W)]);
+  const queue: TileXY[] = [centre];
+  while (queue.length > 0) {
+    const at = queue.pop();
+    if (at === undefined) break;
+    for (const step of STEPS) {
+      const nx = at.x + step.x;
+      const ny = at.y + step.y;
+      if (nx < 0 || ny < 0 || nx >= ARENA_W || ny >= ARENA_H) continue;
+      const i = tileIndex(nx, ny, ARENA_W);
+      if (seen.has(i) || tiles[i] !== TileCode.FLOOR) continue;
+      seen.add(i);
+      queue.push({ x: nx, y: ny });
+    }
+  }
+  for (let i = 0; i < tiles.length; i += 1) {
+    if (tiles[i] === TileCode.FLOOR && !seen.has(i)) tiles[i] = TileCode.WALL;
+  }
+  return { tiles, kept: seen.size };
+}
 
 /**
  * Build one arena.
@@ -187,80 +255,20 @@ const ARENAS: Readonly<
  * realm gets the same one back.
  *
  * `ground` is where the party was standing when something reached them. It
- * defaults to UPLAND, which is the room this generator has always built, so a
- * caller that knows nothing about terrain gets exactly what it used to get.
+ * defaults to UPLAND, upstream's own ambush.
  */
 export function makeArena(seed: string, ground: Ground = Ground.Upland): AuthoredMap {
   const spec = ARENAS[ground];
   const rng = createRng(seed);
-  const tiles: number[] = new Array<number>(ARENA_W * ARENA_H).fill(TileCode.WALL);
-
   const centre: TileXY = { x: Math.floor(ARENA_W / 2), y: Math.floor(ARENA_H / 2) };
   const interior = (ARENA_W - MARGIN * 2) * (ARENA_H - MARGIN * 2);
-  const target = Math.floor(interior * spec.openFraction);
 
-  let x = centre.x;
-  let y = centre.y;
-  let open = 0;
-
-  const carve = (cx: number, cy: number): void => {
-    const i = tileIndex(cx, cy, ARENA_W);
-    if (tiles[i] === TileCode.FLOOR) return;
-    tiles[i] = TileCode.FLOOR;
-    open += 1;
-  };
-
-  carve(x, y);
-
-  /**
-   * ═════════════════════════════════════════════════════════════════════════
-   * THE WALKER IS RETURNED TO THE CENTRE PERIODICALLY, AND WITHOUT THAT THIS
-   * GENERATOR IS UNUSABLE.
-   * ═════════════════════════════════════════════════════════════════════════
-   * A plain random walk DRIFTS. Left alone it wanders into one region and
-   * hollows it out, and the first arenas this produced opened the top-left
-   * corner while the bottom third stayed solid rock — with the arrival tile
-   * sitting on the EDGE of the open area, walls immediately to two sides.
-   *
-   * That is not merely ugly. The ambush places its monsters in an annulus
-   * around the arrival tile, so a room open on one side only means every
-   * monster comes from that side: the thing that makes an ambush an ambush,
-   * quietly deleted by a property of the random walk.
-   *
-   * Restarting from the centre every so often turns one wandering excursion
-   * into a dozen radial ones. Connectivity is untouched — the centre is open,
-   * so every excursion begins on an already-connected tile — which is the whole
-   * reason a walk was chosen over cellular automata.
-   */
-  const RESET_EVERY = Math.max(8, Math.floor(target / 10));
-
-  /**
-   * BOUNDED, and the bound is not decoration. A walk that keeps rejecting steps
-   * near a wall can in principle take a long time to reach its target, and this
-   * runs synchronously inside a player's move — the same rule the pathfinder's
-   * `maxNodes` obeys. Generous enough to be unreachable in practice, small
-   * enough that hitting it costs a millisecond and a slightly emptier room
-   * rather than a wedged server.
-   */
-  const MAX_STEPS = interior * 40;
-  for (let step = 0; step < MAX_STEPS && open < target; step += 1) {
-    if (step % RESET_EVERY === 0) {
-      x = centre.x;
-      y = centre.y;
-    }
-    const dir = STEPS[rng.int('arena.step', 0, STEPS.length - 1)];
-    if (dir === undefined) continue;
-    const nx = x + dir.x;
-    const ny = y + dir.y;
-    // Stay off the border so the room is always sealed. A rejected step still
-    // consumed its draw, which keeps the stream aligned with the step count.
-    if (nx < MARGIN || ny < MARGIN || nx >= ARENA_W - MARGIN || ny >= ARENA_H - MARGIN) {
-      continue;
-    }
-    x = nx;
-    y = ny;
-    carve(x, y);
+  // BUILT AGAIN WHILE THE ROOM IS TOO SMALL (`Cavern.lua:100-109`), and bounded.
+  let built = forest(rng, spec, centre, 0);
+  for (let build = 1; build < MAX_BUILDS && built.kept < interior * MIN_KEPT; build += 1) {
+    built = forest(rng, spec, centre, build);
   }
+  const { tiles } = built;
 
   /**
    * ═════════════════════════════════════════════════════════════════════════
@@ -376,8 +384,8 @@ export function makeArena(seed: string, ground: Ground = Ground.Upland): Authore
     view: { w: ARENA_W, h: ARENA_H, tiles },
     /**
      * YOU ARRIVE IN THE MIDDLE, which is the whole difference from the floor
-     * this replaced. The walk starts here, so the centre is always floor and
-     * always connected to everything it opened — and an ambush that surrounds
+     * this replaced. `forest` makes the centre ground and keeps only what joins
+     * it — and an ambush that surrounds
      * you needs room on every side, which a corner cannot give.
      */
     spawns: [centre],
@@ -413,7 +421,7 @@ export function arenaGround(map: AuthoredMap): Ground {
   return Ground.Upland;
 }
 
-/** Where the walk starts, exported so a test can assert against it. */
+/** Where you arrive, exported so a test can assert against it. */
 export function arenaCentre(): TileXY {
   return { x: Math.floor(ARENA_W / 2), y: Math.floor(ARENA_H / 2) };
 }
