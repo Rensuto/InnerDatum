@@ -205,6 +205,26 @@ export function stairsDownOf(realm: Realm): TileXY | null {
 }
 
 /**
+ * A delve floor and every other floor its party has open at the same site:
+ * upstream's zone, whose levels are kept together while the party is in it
+ * (engine/Zone.lua:855-858).
+ *
+ * ONLY A SITE WITH FLOORS. Anything else is a zone of one, and that matters for
+ * the ambush: a party can hold two breaches at once, and a breach left empty must
+ * close whether or not the other one is occupied.
+ */
+export function zoneOf(realms: Realms, realm: Realm): readonly Realm[] {
+  const { siteId, partyId } = realm;
+  if (realm.kind !== RealmKind.Inner || siteId === undefined || partyId === undefined) {
+    return [realm];
+  }
+  if (floorsOfSite(siteId) <= 1) return [realm];
+  return realms
+    .all()
+    .filter((r) => r.kind === RealmKind.Inner && r.partyId === partyId && r.siteId === siteId);
+}
+
+/**
  * One roaming danger on the overworld. Deliberately tiny: a position, a name to
  * show, and nothing that could make it a combatant.
  */

@@ -280,6 +280,7 @@ import {
   floorsOfSite,
   isShared,
   stairsDownOf,
+  zoneOf,
 } from '../world/realms.ts';
 import { regionNamedIn } from '../../shared/level.ts';
 import { roamerAt, tickRoamers } from '../world/roamers.ts';
@@ -9945,6 +9946,10 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     reaps.delete(realmId);
   };
 
+  /** Does this realm hold a player's body? */
+  const holdsPlayer = (realm: Realm): boolean =>
+    realm.world.allActors().some((a: Actor) => a.kind === ActorKind.Player);
+
   const reapIfEmpty = (realm: Realm): void => {
     const realms = opts.realms;
     if (realms === undefined || isShared(realm.kind)) return;
@@ -9970,6 +9975,16 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
      */
     realm.leftAtMs = Date.now();
 
+    // ═══ AND A FLOOR IS KEPT WHILE THE PARTY IS ANYWHERE IN THE DELVE ═══
+    // Upstream keeps every level of a `persistent = "zone"` zone until the zone
+    // is left (engine/Zone.lua:855-858). Every floor of the zone starts its
+    // linger, and each linger checks the whole zone before it closes anything, so
+    // no floor closes while anybody of the party is on any floor of it.
+    for (const floor of zoneOf(realms, realm)) armReap(realms, floor);
+  };
+
+  /** Close `realm` now, or when its linger runs out. See `reapIfEmpty`. */
+  const armReap = (realms: Realms, realm: Realm): void => {
     if (realm.lingerMs <= 0) {
       cancelReap(realm.id);
       if (realms.close(realm.id)) {
@@ -9989,7 +10004,8 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       // out from under somebody would leave their socket rendering a map the
       // server no longer holds.
       if (still === undefined) return;
-      if (still.world.allActors().some((a: Actor) => a.kind === ActorKind.Player)) return;
+      // AND NOBODY OF THE PARTY ON ANOTHER FLOOR OF IT, which would keep it too.
+      if (zoneOf(realms, still).some(holdsPlayer)) return;
       if (realms.close(realm.id)) {
         forgetRealmMemos(realm.id);
         app.log.info({ realmId: realm.id }, 'instance reaped after its linger');

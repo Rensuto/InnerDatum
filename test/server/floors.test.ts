@@ -12,11 +12,13 @@ import { createPartyState } from '../../src/server/engine/party.ts';
 import { wsGateway } from '../../src/server/net/gateway.ts';
 import { createTurnEngine } from '../../src/server/turn-engine.ts';
 import {
+  ENCOUNTER_SITE,
   SITES,
   STAIRS_DOWN_SITE_ID,
   createRealms,
   floorsOfSite,
   stairsDownOf,
+  zoneOf,
 } from '../../src/server/world/realms.ts';
 import { canWalk } from '../../src/shared/level.ts';
 import { ActorKind } from '../../src/shared/protocol.ts';
@@ -98,6 +100,22 @@ describe('the floors of one delve', () => {
         'the stair is on the threshold',
       ).toBe(false);
     }
+  });
+
+  it('counts every floor a party has open as one zone, and an ambush as a zone of one', () => {
+    const realms = makeRealms();
+    const first = floorOf(realms, UNDERWORKS, 'party-z', 1);
+    const second = floorOf(realms, UNDERWORKS, 'party-z', 2);
+    expect(new Set(zoneOf(realms, first))).toEqual(new Set([first, second]));
+    // ANOTHER PARTY'S COPY OF THE SAME DELVE is its own zone.
+    const theirs = floorOf(realms, UNDERWORKS, 'party-y', 1);
+    expect(zoneOf(realms, theirs)).toEqual([theirs]);
+    // TWO BREACHES FOR ONE PARTY are not one zone: an empty one must close.
+    const breach = realms.open(ENCOUNTER_SITE, 'party-z');
+    breach.sealed = true;
+    const again = realms.open(ENCOUNTER_SITE, 'party-z');
+    expect(again.id, 'precondition: a second breach').not.toBe(breach.id);
+    expect(zoneOf(realms, breach)).toEqual([breach]);
   });
 
   it('builds each floor one level deeper, as upstream`s `base_level + level - 1`', () => {
@@ -346,5 +364,78 @@ describe('the stairs, over the wire', () => {
 
     await stepOnto(client, stairs);
     expect(realmOf(client).id, 'the stair opened straight after a kill').toBe(first.id);
+  });
+
+  it('keeps the floor above while the party is below, and lets both go once they are out', async () => {
+    const client = await join();
+    const door = [...harness.realms.overworld.sites].find(([, id]) => id === UNDERWORKS);
+    if (door === undefined) throw new Error('no door to the Underworks');
+    const [dx, dy] = door[0].split(',').map(Number);
+    if (dx === undefined || dy === undefined) throw new Error('a bad door cell');
+    await stepOnto(client, { x: dx, y: dy });
+
+    // A LINGER SHORT ENOUGH TO WATCH. The default is minutes.
+    const shorten = (realm: Realm): void => {
+      (realm as unknown as { lingerMs: number }).lingerMs = 30;
+    };
+    const first = realmOf(client);
+    shorten(first);
+    clear(first);
+    const stairs = stairsDownOf(first);
+    if (stairs === null) throw new Error('the first floor has no stair down');
+    await stepOnto(client, stairs);
+    const second = realmOf(client);
+    shorten(second);
+    expect(second.floor).toBe(2);
+
+    await sleep(300);
+    expect(
+      harness.realms.get(first.id),
+      'the floor above was reaped while the party was below it',
+    ).toBeDefined();
+
+    clear(second);
+    await leaveByThreshold(client);
+    await leaveByThreshold(client);
+    expect(realmOf(client).id).toBe(harness.realms.overworld.id);
+    await sleep(300);
+    expect(harness.realms.get(first.id), 'the first floor outlived the party').toBeUndefined();
+    expect(harness.realms.get(second.id), 'the second floor outlived the party').toBeUndefined();
+  });
+
+  it('keeps the floor below when the party walks back in before its linger runs out', async () => {
+    const client = await join();
+    const door = [...harness.realms.overworld.sites].find(([, id]) => id === UNDERWORKS);
+    if (door === undefined) throw new Error('no door to the Underworks');
+    const [dx, dy] = door[0].split(',').map(Number);
+    if (dx === undefined || dy === undefined) throw new Error('a bad door cell');
+    await stepOnto(client, { x: dx, y: dy });
+
+    const shorten = (realm: Realm): void => {
+      (realm as unknown as { lingerMs: number }).lingerMs = 400;
+    };
+    const first = realmOf(client);
+    shorten(first);
+    clear(first);
+    const stairs = stairsDownOf(first);
+    if (stairs === null) throw new Error('the first floor has no stair down');
+    await stepOnto(client, stairs);
+    const second = realmOf(client);
+    shorten(second);
+    clear(second);
+
+    // UP AND OUT, which starts every floor's linger...
+    await leaveByThreshold(client);
+    await leaveByThreshold(client);
+    expect(realmOf(client).id).toBe(harness.realms.overworld.id);
+    // ...AND STRAIGHT BACK IN, before it runs out.
+    await stepOnto(client, { x: dx, y: dy });
+    expect(realmOf(client).id, 'walked back into a fresh first floor').toBe(first.id);
+
+    await sleep(700);
+    expect(
+      harness.realms.get(second.id),
+      'the floor below closed while the party was back inside the delve',
+    ).toBeDefined();
   });
 });
