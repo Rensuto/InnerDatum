@@ -272,6 +272,30 @@ describe('talentPanelRows builds categories', () => {
     });
   });
 
+  it('names each talent`s use mode in the pane — Actor.lua:6219-6223', () => {
+    // Upstream prints Passive, Sustained or Activated. A sustain used to read
+    // "Activated", so each of the three is painted and read back.
+    const modeOf = (fixture: Parameters<typeof talent>[0], passive: boolean) =>
+      paintPanel({
+        rows: talentPanelRows(
+          view({
+            loadout: passive ? [] : [talent(fixture)],
+            passives: passive ? [talent(fixture)] : [],
+          }),
+        ),
+        focusId: fixture.id,
+      });
+    expect(modeOf({ id: 'p', name: 'P', kind: 'passive', ...DISCIPLINE }, true)).toContain(
+      'Passive — always on',
+    );
+    expect(modeOf({ id: 's', name: 'S', kind: 'sustained', ...DISCIPLINE }, false)).toContain(
+      'Sustained — toggle, stays on',
+    );
+    const active = modeOf({ id: 'a', name: 'A', ...DISCIPLINE }, false);
+    expect(active).toContain('Activated');
+    expect(active).not.toContain('Sustained — toggle, stays on');
+  });
+
   it('degrades to one unnamed category when the server sends no tree', () => {
     // The additive-field contract: an old server loses the GROUPING, never the
     // talents. `tree` is optional on the wire precisely so no bump was needed.

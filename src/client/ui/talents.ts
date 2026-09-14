@@ -3846,11 +3846,15 @@ function drawDetail(
   ctx.fillText(fitText(ctx, cell.name, w - ICON_PX - 6), textX, y + 8);
   ctx.font = FONT_BODY;
   ctx.fillStyle = PALETTE.GREY_HI;
-  ctx.fillText(
-    fitText(ctx, cell.passive ? 'Passive — always on' : 'Activated', w - ICON_PX - 6),
-    textX,
-    y + 21,
-  );
+  // THE USE MODE, upstream's second line (`Actor.lua:6219-6223`): Passive,
+  // Sustained or Activated. A sustain read "Activated" here, which is the one
+  // thing it is not — it is switched on and stays on, as the hover card says.
+  const mode = cell.passive
+    ? 'Passive — always on'
+    : cell.sustain
+      ? 'Sustained — toggle, stays on'
+      : 'Activated';
+  ctx.fillText(fitText(ctx, mode, w - ICON_PX - 6), textX, y + 21);
   y += ICON_PX + 6;
 
   /** `Label: value`, with the label dim so the value is what the eye lands on. */
