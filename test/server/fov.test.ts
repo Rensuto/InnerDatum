@@ -767,6 +767,62 @@ describe('a monster walking into and out of sight', () => {
     expect(burning(mine), 'fire only your teammate can see reached you').toBe(false);
   });
 
+  it('shows you only the roamers you can see, and shows one when you walk into sight of it', async () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * DANGER ON THE MOOR IS SIGHT-GATED LIKE EVERYTHING ELSE.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * Every roamer on the map was a marker on every player's map. Now a viewer
+     * gets one only when they can see it — and gets it the moment they can,
+     * which for a player walking toward a still roamer is a PLAYER's step, not
+     * a roamer's, so it has to be re-sent after the pump rather than only when
+     * the roamers move.
+     */
+    const mine = await hello(server.port);
+    const overworld = server.realms.overworld;
+    const world = overworld.world;
+    const me = world.getActor(mine.actorId);
+    if (me === undefined) throw new Error('no body');
+    const doors = new Set(overworld.sites.keys());
+    const { body, lurk } = farPair(world, [me], REVEAL_RADIUS + 2, doors);
+    const place = (id: string, name: string, at: { x: number; y: number }): void => {
+      overworld.roamers.set(id, {
+        id,
+        x: at.x,
+        y: at.y,
+        name,
+        templateId: 'monster:index_husk',
+        sprite: 'enemy_index_husk_s',
+        homeX: at.x,
+        homeY: at.y,
+        unseen: 0,
+        goingHome: false,
+      });
+    };
+    place('roamer:far', 'a far breach', lurk);
+
+    const named = (name: string): boolean => {
+      const last = [...mine.frames].reverse().find((f) => f['t'] === 'sites' || f['t'] === 'realm');
+      const rows = last?.['sites'];
+      return Array.isArray(rows) && (rows as { name?: unknown }[]).some((row) => row.name === name);
+    };
+
+    mine.send({ t: 'hold' });
+    await sleep(250);
+    expect(named('a far breach'), 'a roamer far out of sight is on your map').toBe(false);
+
+    // WALK INTO SIGHT OF IT — placed rather than walked, as the other tests here
+    // do, and pumped by a command that moves no roamer.
+    me.x = body.x;
+    me.y = body.y;
+    mine.send({ t: 'hold' });
+    await sleep(250);
+    expect(named('a far breach'), 'a roamer you are standing beside never reached your map').toBe(
+      true,
+    );
+  });
+
   it('and you are always on your own board', async () => {
     const client = await hello(server.port);
     client.send({ t: 'hold' });

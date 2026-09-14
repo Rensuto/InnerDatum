@@ -589,6 +589,20 @@
  * ═══════════════════════════════════════════════════════════════════════════
 
 
+ * CONSIDERED AND NOT BUMPED (ONLY THE ROAMERS YOU CAN SEE). `sites` lists a
+ * roamer only when its recipient can see it, and is re-sent when that changes,
+ * and PROTOCOL_VERSION STAYS 23.
+ *
+ * ═══ WHY THIS DOES NOT FORCE A BUMP ═══
+ * `sites` was already per recipient and absolute: a client replaces its
+ * markers with whatever the frame lists. A client built before this draws fewer
+ * roamers, and gets the frame a little more often, and neither changes a shape.
+ *
+ * `SCHEMA_VERSION` STAYS 1. Nothing about sight is saved.
+ *
+ * ═══════════════════════════════════════════════════════════════════════════
+
+
  * 22 -> 23 (TRAPS). `TrapsMsg` is a new outbound frame — every trap THIS
  * VIEWER has found out about — and it is 6 -> 7's argument in its most literal
  * form yet.

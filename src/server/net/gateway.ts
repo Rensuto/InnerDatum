@@ -224,7 +224,7 @@ import { loreById, loreIdOfNote } from '../content/lore.ts';
 // saves.ts's only reference back to this file is `import type`, so this arrow
 // adds no runtime cycle.
 import { UNASSIGNED_CLASS } from '../persist/saves.ts';
-import { knownTile } from '../../shared/sight.ts';
+import { canSee, knownTile } from '../../shared/sight.ts';
 import { computeSeen, rememberSeen } from '../../shared/vision.ts';
 import { attackBlockedReason, inspectActor } from '../view/inspect.ts';
 import {
@@ -610,6 +610,17 @@ type Session = {
    * this was a map per realm, and it is why it is per session now.
    */
   lastTurnKey?: string;
+  /**
+   * The last `sites` markers this socket was sent, as a comparison key. See
+   * `sendSitesIfChanged`.
+   *
+   * A roamer on the moor is shown only when this viewer can see it, so the
+   * markers can change because the VIEWER moved, with no roamer moving at all.
+   * The roamers' own resend cannot catch that, and this memo is what lets the
+   * pump check every viewer cheaply and send only to the ones whose markers
+   * actually changed.
+   */
+  lastSitesKey?: string;
   /**
    * The overworld cell this body stepped off when it crossed into a site, and
    * where `leaveRealm` puts it back.
@@ -6061,6 +6072,8 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     // MEMORY FIRST, before any frame this pump sends, so every frame below is
     // built against what each player has now seen. See `rememberWhatPlayersSee`.
     rememberWhatPlayersSee(realm);
+    // AND THE ROAMERS EACH PLAYER CAN NOW SEE. See `sendSitesIfChanged`.
+    sendSitesIfChanged(realm);
 
     /**
      * ═══════════════════════════════════════════════════════════════════════
@@ -7927,13 +7940,30 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     // A ROAMER IS DRAWN AS A CREATURE, not as a place. `marker` stays only as
     // the fallback for a client with no creature art; `sprite` is what it
     // actually wears. See `SiteView.sprite`.
-    const wandering = [...realm.roamers.values()].map((r) => ({
-      x: r.x,
-      y: r.y,
-      marker: 'breach',
-      name: r.name,
-      sprite: r.sprite,
-    }));
+    //
+    // ═══ ONLY THE ROAMERS THIS VIEWER CAN SEE ═══
+    // On ToME's world map the player's sight is computed at a radius like
+    // anywhere else (`tome/class/Player.lua:523-527`), and a creature outside it
+    // is not shown. Every roamer on the map went to every player, so danger a
+    // teammate was walking toward on the far side of the moor was on your map
+    // too. A viewer is shown a roamer when `canSee` admits it at their own
+    // `sightRadiusOf`. No viewer at all still means every marker, as the rest of
+    // this function reads an absent `actorId`; a viewer whose body is not in
+    // this realm sees none.
+    const viewer = actorId === undefined ? undefined : realm.world.getActor(actorId);
+    const wandering = [...realm.roamers.values()]
+      .filter((r) =>
+        actorId === undefined
+          ? true
+          : viewer !== undefined && canSee(realm.world.level, viewer, r, sightRadiusOf(viewer)),
+      )
+      .map((r) => ({
+        x: r.x,
+        y: r.y,
+        marker: 'breach',
+        name: r.name,
+        sprite: r.sprite,
+      }));
 
     return [...authored, ...exits, ...wandering];
   };
@@ -7944,17 +7974,32 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    * Sent when the roamers move. `realm` would say the same thing and carry
    * 17,000 tiles to do it — affordable at 96x64, and not at ToME's 170x100.
    */
-  const sendSites = (session: Session): void => {
+  const sendSites = (session: Session, onlyIfChanged = false): void => {
     const realms = opts.realms;
     if (realms === undefined || session.realmId === null) return;
     const realm = realms.get(session.realmId);
     if (realm === undefined) return;
-    send(session.socket, {
-      v: PROTOCOL_VERSION,
-      t: 'sites',
-      realmId: realm.id,
-      sites: markersFor(realm, session.actorId ?? undefined),
-    });
+    const sites = markersFor(realm, session.actorId ?? undefined);
+    const key = JSON.stringify(sites);
+    if (onlyIfChanged && key === session.lastSitesKey) return;
+    session.lastSitesKey = key;
+    send(session.socket, { v: PROTOCOL_VERSION, t: 'sites', realmId: realm.id, sites });
+  };
+
+  /**
+   * The markers again, to every viewer on this overworld whose markers moved.
+   *
+   * Run after every pump, because a roamer comes into sight when a PLAYER steps
+   * as well as when the roamer does, and only the second one re-sent `sites`.
+   * Each viewer is compared against their own last markers, so a pump that
+   * changes nothing on anybody's map sends nothing.
+   */
+  const sendSitesIfChanged = (realm: PumpTarget): void => {
+    const full = opts.realms?.get(realm.id);
+    if (full === undefined || full.kind !== RealmKind.Overworld) return;
+    for (const session of sessions.values()) {
+      if (session.helloDone && session.realmId === full.id) sendSites(session, true);
+    }
   };
 
   /**
