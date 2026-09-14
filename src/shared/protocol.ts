@@ -597,6 +597,78 @@ export function blocksSight(code: number): boolean {
 }
 
 /**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * WHAT MEMORY KEEPS WHEN NO LIGHT IS ON IT — upstream's `always_remember`.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * A grid a carried light shows is remembered only if the level lights it or its
+ * terrain is `always_remember` (engine/Map.lua:677). ToME's grid files set that
+ * on everything with a shape and leave it off open ground:
+ *
+ *   KEPT       walls (data/general/grids/basic.lua:156), doors shut and open
+ *              (data/general/grids/basic.lua:217, :230), stairs
+ *              (data/general/grids/basic.lua:34), trees
+ *              (data/general/grids/forest.lua:61), the stone and dirt roads
+ *              (data/general/grids/forest.lua:128, :137), mountain walls
+ *              (data/general/grids/mountain.lua:30) and frozen water
+ *              (data/general/grids/ice.lua:33).
+ *   FORGOTTEN  floor (data/general/grids/basic.lua:145), grass
+ *              (data/general/grids/forest.lua:23), rocky ground
+ *              (data/general/grids/mountain.lua:22), sand
+ *              (data/general/grids/sand.lua:23), burnt ground
+ *              (data/general/grids/burntland.lua:56) and deep water
+ *              (data/general/grids/water.lua:136).
+ *
+ * Each code takes the answer of the grid it stands in for. RAIL and BRIDGE have
+ * no grid upstream; they are laid ways, so they follow the roads.
+ *
+ * A `Record` over every `TileCode`, so a code added without an answer does not
+ * compile.
+ */
+const ALWAYS_REMEMBER: Readonly<Record<TileCode, boolean>> = {
+  [TileCode.FLOOR]: false,
+  [TileCode.WALL]: true,
+  [TileCode.COBBLE]: true,
+  [TileCode.PAVING]: true,
+  [TileCode.GREEN]: false,
+  [TileCode.MIRE]: false,
+  [TileCode.SOOT]: false,
+  [TileCode.RAIL]: true,
+  [TileCode.BRIDGE]: true,
+  [TileCode.TERRACE]: true,
+  [TileCode.CIVIC]: true,
+  [TileCode.WORKS]: true,
+  [TileCode.TREES]: true,
+  [TileCode.ERASED]: true,
+  [TileCode.WATER]: false,
+  [TileCode.PLAINS]: false,
+  [TileCode.HILLS]: false,
+  [TileCode.HEATH]: false,
+  [TileCode.MOUNTAIN]: true,
+  [TileCode.CRAG]: true,
+  [TileCode.DEEPWATER]: false,
+  [TileCode.SHORE]: false,
+  [TileCode.VILLAGE_ROOF]: true,
+  [TileCode.TOWN_ROOF]: true,
+  [TileCode.CITY_ROOF]: true,
+  [TileCode.TOWN_WALL]: true,
+  [TileCode.YARD]: false,
+  [TileCode.FIELD]: false,
+  [TileCode.SNOWFIELD]: false,
+  [TileCode.CHARRED]: false,
+  [TileCode.COLD_FOREST]: true,
+  [TileCode.FROZEN_WATER]: true,
+  [TileCode.DOOR]: true,
+  [TileCode.DOOR_OPEN]: true,
+};
+
+/** Is this terrain remembered wherever it is seen, lit or not? See `ALWAYS_REMEMBER`. */
+export function alwaysRemembered(code: number): boolean {
+  // A code this build does not know is kept: forgetting a wall is the worse mistake.
+  return isKnownTile(code) ? ALWAYS_REMEMBER[code as TileCode] : true;
+}
+
+/**
  * A level as the client needs it: dimensions plus a flat row-major tile array,
  * indexed `y * w + x` (see `tileIndex` in coords.ts).
  *

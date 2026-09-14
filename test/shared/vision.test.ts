@@ -4,9 +4,9 @@
 import { describe, expect, it } from 'vitest';
 
 import { createFog, fogCount, fogHas, fogSet } from '../../src/shared/fog.ts';
-import { TileCode } from '../../src/shared/protocol.ts';
+import { TileCode, alwaysRemembered, blocksSight } from '../../src/shared/protocol.ts';
 import { canSee } from '../../src/shared/sight.ts';
-import { computeSeen, cutWindow, rememberSeen } from '../../src/shared/vision.ts';
+import { computeSeen, computeVision, cutWindow, rememberSeen } from '../../src/shared/vision.ts';
 import type { LevelView } from '../../src/shared/protocol.ts';
 
 /**
@@ -133,5 +133,105 @@ describe('cutWindow', () => {
     expect(fogHas(window.bits, window.w, 0, 0)).toBe(true);
     // (20, 0) is outside the square, and a window that wrapped would find it.
     expect(fogCount(window.bits)).toBe(1);
+  });
+});
+
+/** A level with no light of its own, as `World.lit` spells it. */
+function dark(level: LevelView): Uint8Array {
+  return new Uint8Array(level.w * level.h);
+}
+
+/** A level lit everywhere. */
+function allLit(level: LevelView): Uint8Array {
+  return new Uint8Array(level.w * level.h).fill(1);
+}
+
+describe('computeVision', () => {
+  it('is computeSeen, all of it kept, on a level lit everywhere', () => {
+    const level = fixture();
+    const vision = computeVision(level, EYE, { sight: RADIUS, lite: 2 }, allLit(level), []);
+    expect([...vision.seen]).toEqual([...computeSeen(level, EYE, RADIUS)]);
+    expect([...vision.remember]).toEqual([...vision.seen]);
+  });
+
+  it('sees no further than its lantern in the dark', () => {
+    const level = fixture();
+    const vision = computeVision(level, EYE, { sight: RADIUS, lite: 2 }, dark(level), []);
+    expect([...vision.seen], 'exactly the lantern').toEqual([...computeSeen(level, EYE, 2)]);
+    expect(fogHas(vision.seen, level.w, EYE.x, EYE.y - 3), 'in sight, but dark').toBe(false);
+  });
+
+  it('keeps the walls its lantern shows and forgets the floor', () => {
+    const level = fixture();
+    // Two tiles west of the wall at x = 13.
+    const eye = { x: 11, y: 10 };
+    const vision = computeVision(level, eye, { sight: RADIUS, lite: 2 }, dark(level), []);
+    expect(fogHas(vision.seen, level.w, 13, 10), 'the wall is seen').toBe(true);
+    expect(fogHas(vision.remember, level.w, 13, 10), 'and kept').toBe(true);
+    expect(fogHas(vision.seen, level.w, 11, 8), 'the floor is seen').toBe(true);
+    expect(fogHas(vision.remember, level.w, 11, 8), 'and not kept').toBe(false);
+  });
+
+  it('sees and keeps lit ground wherever sight reaches it, however dark the eye stands', () => {
+    const level = fixture();
+    const lit = dark(level);
+    // One lit tile five north of the eye: past the lantern, inside sight.
+    lit[(EYE.y - 5) * level.w + EYE.x] = 1;
+    const vision = computeVision(level, EYE, { sight: RADIUS, lite: 2 }, lit, []);
+    expect(fogHas(vision.seen, level.w, EYE.x, EYE.y - 5), 'seen').toBe(true);
+    expect(fogHas(vision.remember, level.w, EYE.x, EYE.y - 5), 'kept').toBe(true);
+    expect(fogHas(vision.seen, level.w, EYE.x, EYE.y - 4), 'its dark neighbour').toBe(false);
+  });
+
+  it('sees by another body’s light only what its own sight already reaches', () => {
+    const level = fixture();
+    const lights = [
+      // In the open, north.
+      { x: EYE.x, y: EYE.y - 4, lite: 1 },
+      // Behind the wall at x = 13, east.
+      { x: 15, y: 10, lite: 1 },
+    ];
+    const vision = computeVision(level, EYE, { sight: RADIUS, lite: 0 }, dark(level), lights);
+    expect(fogHas(vision.seen, level.w, EYE.x, EYE.y - 5), 'by the open light').toBe(true);
+    expect(fogHas(vision.remember, level.w, EYE.x, EYE.y - 5), 'dark floor, not kept').toBe(false);
+    expect(fogHas(vision.seen, level.w, 15, 10), 'the light behind the wall').toBe(false);
+    expect(fogHas(vision.seen, level.w, 14, 10), 'beside it, still behind the wall').toBe(false);
+  });
+
+  it('shows only its own tile with no light, however far below zero', () => {
+    const level = fixture();
+    for (const lite of [0, -1000]) {
+      const vision = computeVision(level, EYE, { sight: RADIUS, lite }, dark(level), []);
+      expect(fogCount(vision.seen), `lite ${String(lite)}`).toBe(1);
+      expect(fogHas(vision.seen, level.w, EYE.x, EYE.y), `lite ${String(lite)}`).toBe(true);
+    }
+  });
+
+  it('lets a carried light reach past sight, which upstream does not cap', () => {
+    const level = fixture();
+    const vision = computeVision(level, EYE, { sight: 3, lite: 5 }, dark(level), []);
+    expect(fogHas(vision.seen, level.w, EYE.x, EYE.y - 5)).toBe(true);
+  });
+});
+
+describe('alwaysRemembered', () => {
+  it('keeps every tile that blocks sight, and an open door', () => {
+    for (const code of Object.values(TileCode)) {
+      if (blocksSight(code)) expect(alwaysRemembered(code), `code ${String(code)}`).toBe(true);
+    }
+    expect(alwaysRemembered(TileCode.DOOR_OPEN)).toBe(true);
+  });
+
+  it('forgets open ground and keeps the roads, as upstream’s grids do', () => {
+    expect(alwaysRemembered(TileCode.FLOOR)).toBe(false);
+    expect(alwaysRemembered(TileCode.GREEN)).toBe(false);
+    expect(alwaysRemembered(TileCode.DEEPWATER)).toBe(false);
+    expect(alwaysRemembered(TileCode.COBBLE)).toBe(true);
+    expect(alwaysRemembered(TileCode.PAVING)).toBe(true);
+    expect(alwaysRemembered(TileCode.FROZEN_WATER)).toBe(true);
+  });
+
+  it('keeps a code this build does not know, rather than risk forgetting a wall', () => {
+    expect(alwaysRemembered(999)).toBe(true);
   });
 });
