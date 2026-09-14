@@ -17,6 +17,9 @@ import { createTurnEngine } from '../../src/server/turn-engine.ts';
 import { attackBlockedReason } from '../../src/server/view/inspect.ts';
 import { createWorld } from '../../src/server/world/world.ts';
 import { chebyshev } from '../../src/shared/coords.ts';
+import { canWalk } from '../../src/shared/level.ts';
+import { canSee, hasLineOfSight } from '../../src/shared/sight.ts';
+import { sightRadiusOf } from '../../src/server/engine/derived.ts';
 import { ErrorCode } from '../../src/shared/protocol.ts';
 import { PROTOCOL_VERSION } from '../../src/shared/version.ts';
 import type { Actor, World } from '../../src/server/world/world.ts';
@@ -229,6 +232,26 @@ function husk(id: string, x: number, y: number): Actor {
  * engagement clock and move things. Nothing in this file sends a frame that
  * pumps, so the arrangement below is the arrangement every assertion sees.
  */
+/**
+ * The first free floor tile with a clear line from `from` that `accept` agrees
+ * to. FOUND rather than written down, and loud when the floor has none, so a
+ * change to the test level fails here instead of passing vacuously.
+ */
+function clearTileWhere(
+  from: Actor,
+  accept: (tile: { x: number; y: number }) => boolean,
+): { x: number; y: number } {
+  const level = server.world.level;
+  for (let y = 0; y < level.h; y += 1) {
+    for (let x = 0; x < level.w; x += 1) {
+      if (!canWalk(level, x, y) || server.world.actorAt(x, y) !== undefined) continue;
+      const tile = { x, y };
+      if (hasLineOfSight(level, from, tile) && accept(tile)) return tile;
+    }
+  }
+  throw new Error('no free tile with a clear line fits, so the fixture cannot test this');
+}
+
 type Scene = {
   readonly client: Client;
   readonly viewer: Actor;
@@ -823,23 +846,55 @@ describe('inspecting ANOTHER player', () => {
     for (const row of rowsOf(seen)) expect(row['emphasis']).toBeUndefined();
   });
 
-  it('is still silence when a wall is in the way', async () => {
-    // The fog-of-war gate runs BEFORE the three-way split and is untouched by
-    // it: a party member across the floor is exactly who the FOV seam will one
-    // day withhold, and `view: null` must stay the answer rather than a
-    // stripped-down card that confirms where they are.
+  it('shows an ally behind a wall, because the board never hides a teammate', async () => {
+    // THIS ASSERTED SILENCE, as the case the FOV seam would "one day withhold".
+    // Per-player sight landed the other way: a player is on every board, so a
+    // card that went silent for one would disagree with the board it hovers
+    // over. The ally card is Defence and Armour and nothing else.
     const floor = await scene();
     const ally = await connect(server.port);
     const allyId = String((await ally.hello())?.['selfId']);
-
     const allyBody = actorOf(allyId);
     allyBody.x = 5;
     allyBody.y = 8;
-
-    expect((await floor.client.inspect(allyId))['view']).toBeNull();
-    // ...while their own sheet is still theirs to read, because the self path
-    // short-circuits the line-of-sight check.
+    expect(hasLineOfSight(server.world.level, floor.viewer, allyBody), 'the wall is gone').toBe(
+      false,
+    );
+    expect(
+      viewOf(await floor.client.inspect(allyId)),
+      'an ally behind a wall went silent',
+    ).not.toBeNull();
+    // ...and their own sheet is still theirs to read.
     expect(viewOf(await ally.inspect(allyId))?.['className']).toBe(INSPECTOR.name);
+  });
+
+  it('is silence for a hostile down a clear line but past the viewer`s sight', async () => {
+    // THE GATE WAS THE LINE ALONE, with no range, so this monster answered with a
+    // full card while the board did not show it. It now asks the board's rule.
+    const floor = await scene();
+    const level = server.world.level;
+    const radius = sightRadiusOf(floor.viewer);
+    const far = clearTileWhere(floor.viewer, (tile) => !canSee(level, floor.viewer, tile, radius));
+    const distant = husk('m_distant', far.x, far.y);
+    expect((await floor.client.inspect(distant.id))['view']).toBeNull();
+  });
+
+  it('reaches exactly as far as the viewer`s own sight, not the default', async () => {
+    const floor = await scene();
+    const level = server.world.level;
+    const wide = sightRadiusOf(floor.viewer);
+    const sheet = floor.viewer.combat;
+    if (sheet === undefined) throw new Error('a viewer with no sheet');
+    floor.viewer.combat = { ...sheet, mods: { ...sheet.mods, sight: -6 } };
+    const narrow = sightRadiusOf(floor.viewer);
+    expect(narrow, 'the modifier did not narrow sight').toBeLessThan(wide);
+    const between = clearTileWhere(
+      floor.viewer,
+      (tile) =>
+        canSee(level, floor.viewer, tile, wide) && !canSee(level, floor.viewer, tile, narrow),
+    );
+    const middling = husk('m_between', between.x, between.y);
+    expect((await floor.client.inspect(middling.id))['view']).toBeNull();
   });
 });
 

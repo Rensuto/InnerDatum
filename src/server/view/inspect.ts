@@ -34,6 +34,13 @@
  * something is there, and a client that receives one can infer a position it was
  * never meant to know. The server's answer to "what is in that dark corner" is
  * silence.
+ *
+ * "CANNOT SEE" IS THE BOARD'S RULE, NOT A SECOND ONE. A hostile is visible when
+ * `canSee` admits it at the viewer's own `sightRadiusOf` — range and a clear
+ * line, exactly what `visibleActorIds` puts on the board — and a player is
+ * always visible, because the board never hides a teammate. This gate used to
+ * be the line alone, with no range, so a monster thirty tiles down a clear
+ * corridor answered with a full card while the board did not show it at all.
  */
 
 import { hitChance } from '../../shared/checkhit.ts';
@@ -77,7 +84,7 @@ import type { Combatant, PrimaryStats } from '../engine/derived.ts';
 import type { CombatSheet } from '../engine/combat.ts';
 import type { TypeTable } from '../engine/damage.ts';
 import type { Actor, World } from '../world/world.ts';
-import { hasLineOfSight } from '../../shared/sight.ts';
+import { canSee, hasLineOfSight } from '../../shared/sight.ts';
 import { boughtSheet, effectDef, effectsOn } from '../engine/effects.ts';
 import type { EffectState } from '../engine/effects.ts';
 
@@ -863,7 +870,13 @@ export function inspectActor(
   effects?: EffectState,
 ): InspectView | null {
   if (!target.alive && target.kind !== ActorKind.Player) return null;
-  if (target.id !== viewer.id && !hasLineOfSight(world.level, viewer, target)) return null;
+  // THE BOARD'S OWN RULE — see the fog-of-war note at the top of this file.
+  if (
+    target.kind !== ActorKind.Player &&
+    !canSee(world.level, viewer, target, sightRadiusOf(viewer))
+  ) {
+    return null;
+  }
 
   const rows: InspectRow[] = [];
   const self = target.id === viewer.id;

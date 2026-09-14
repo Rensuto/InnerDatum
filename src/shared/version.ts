@@ -560,6 +560,20 @@
  * ═══════════════════════════════════════════════════════════════════════════
 
 
+ * CONSIDERED AND NOT BUMPED (A CARD ONLY FOR WHAT YOU CAN SEE). `inspected`
+ * answers `view: null` for a hostile past the viewer's sight, and gives a card
+ * for a teammate behind a wall, and PROTOCOL_VERSION STAYS 23.
+ *
+ * ═══ WHY THIS DOES NOT FORCE A BUMP ═══
+ * Both answers already existed and every client renders both: `view: null` is
+ * the silence a wall always produced, and an ally's card is the two-row card a
+ * teammate in view always got. Only which target gets which answer moved.
+ *
+ * `SCHEMA_VERSION` STAYS 1. Nothing about sight is saved.
+ *
+ * ═══════════════════════════════════════════════════════════════════════════
+
+
  * 22 -> 23 (TRAPS). `TrapsMsg` is a new outbound frame — every trap THIS
  * VIEWER has found out about — and it is 6 -> 7's argument in its most literal
  * form yet.
