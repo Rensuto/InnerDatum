@@ -12,8 +12,8 @@ import { createDownedState } from '../../src/server/engine/downed.ts';
 import { createPartyState } from '../../src/server/engine/party.ts';
 import { wsGateway } from '../../src/server/net/gateway.ts';
 import { createTurnEngine } from '../../src/server/turn-engine.ts';
-import { RealmKind, createRealms } from '../../src/server/world/realms.ts';
-import { REVEAL_RADIUS, fogBytes, fogFromBase64, fogHas } from '../../src/shared/fog.ts';
+import { RealmKind, SITES, createRealms } from '../../src/server/world/realms.ts';
+import { REVEAL_RADIUS, fogBytes, fogFromBase64, fogHas, fogSet } from '../../src/shared/fog.ts';
 import { canWalk } from '../../src/shared/level.ts';
 import { canSee } from '../../src/shared/sight.ts';
 import { PROTOCOL_VERSION } from '../../src/shared/version.ts';
@@ -427,20 +427,33 @@ describe('loot stays on the map after it leaves sight', () => {
 });
 
 describe('a closed instance takes its memory with it', () => {
-  it('drops every character`s bitset for a realm when its memos are forgotten', () => {
+  it('keeps memory on the instance`s own world, which closing lets go of', () => {
     /**
-     * A SOURCE GUARD, because nothing a player receives can show this. An
-     * instance id is never minted twice, so a closed instance's memory can
-     * never be sent again: keeping it is a leak with no symptom but the heap.
-     * `forgetRealmMemos` is a closure inside the gateway plugin.
+     * An instance id is never minted twice, so a closed instance's memory can
+     * never be sent again: keeping it would be a leak with no symptom but the
+     * heap. The memory lives on the instance's world (`World.memoryOf`), so it
+     * goes when the registry lets go of that world.
      */
+    const realms = createRealms({
+      seed: 'memory-close',
+      engineFor: (world) =>
+        createTurnEngine({ world, downed: createDownedState(), parties: createPartyState() }),
+    });
+    const mine = SITES.get('site:hollow_mine');
+    if (mine === undefined) throw new Error('no such site');
+    const delve = realms.open(mine, 'party-memory');
+    fogSet(delve.world.memoryOf('p1'), delve.world.level.w, 1, 1);
+    expect(realms.close(delve.id)).toBe(true);
+    expect(realms.get(delve.id), 'a closed instance can still be reached').toBeUndefined();
+
+    // AND THE GATEWAY KEEPS NO STORE OF ITS OWN for a closed instance to leave
+    // bitsets behind in. A source guard, because that closure is private.
     const source = readFileSync(
       new URL('../../src/server/net/gateway.ts', import.meta.url),
       'utf8',
     );
-    const start = source.indexOf('const forgetRealmMemos = ');
-    expect(start).toBeGreaterThan(-1);
-    const body = source.slice(start, source.indexOf('\n  };', start));
-    expect(body).toContain('for (const byRealm of fog.values()) byRealm.delete(realmId);');
+    expect(source, 'the gateway keeps its own memory store again').not.toMatch(
+      /Map<string, Map<string, Uint8Array>>/,
+    );
   });
 });

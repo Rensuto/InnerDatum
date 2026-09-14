@@ -291,13 +291,7 @@ import { findPath } from '../../shared/path.ts';
 import { isSafeGround } from '../../shared/protocol.ts';
 import { landmarkIdFor } from '../../shared/redaction.ts';
 import type { Ground } from '../../shared/level.ts';
-import {
-  createFog,
-  fogFromBase64,
-  fogHas,
-  fogToBase64,
-  revealDiscExcept,
-} from '../../shared/fog.ts';
+import { fogFromBase64, fogHas, fogToBase64, revealDiscExcept } from '../../shared/fog.ts';
 import type { FastifyPluginAsync } from 'fastify';
 import { Survival, downedView, isDowned } from '../engine/downed.ts';
 import { levelFeeling, levelFeelingText } from '../../shared/zone.ts';
@@ -4032,15 +4026,16 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    * walk the same region and each has their own map of it, because exploring is
    * a thing you did rather than a fact about the world.
    *
-   * Kept beside the sessions rather than on the actor, because a body is
-   * rebuilt every time it crosses a realm (`crossInto` makes a new one) and the
-   * map must not be rebuilt with it. Keyed by actor id, which is what survives.
+   * Kept on each realm's world (`World.memoryOf`) rather than on the actor,
+   * because a body is rebuilt every time it crosses a realm (`crossInto` makes a
+   * new one) and the map must not be rebuilt with it. Keyed by actor id, which
+   * is what survives.
    *
    * EVERY REALM KEEPS ONE, AND ONLY AN OVERWORLD'S IS SAVED. Every realm
    * remembers by sight, as upstream's map does (`revealFor`), for as long as
    * the process runs. Instanced realms mint an id per opening, so a saved copy
-   * could never be matched again, and a closed one's memory is dropped with the
-   * rest of its memos (`forgetRealmMemos`). See `CharacterFile.explored`.
+   * could never be matched again, and a closed one's memory goes with its
+   * world. See `CharacterFile.explored`.
    */
   /**
    * ═════════════════════════════════════════════════════════════════════════
@@ -4068,7 +4063,8 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    * SIZED PER REALM rather than from the overworld, so the second key carries
    * its own dimensions and a map of another size is simply another entry.
    */
-  const fog = new Map<string, Map<string, Uint8Array>>();
+  const memoryWorldOf = (realm?: Realm): World =>
+    (realm ?? opts.realms?.overworld)?.world ?? opts.world;
 
   /**
    * ═══════════════════════════════════════════════════════════════════════════
@@ -4092,24 +4088,17 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     return mine;
   };
 
-  const fogFor = (actorId: string, realm?: Realm): Uint8Array => {
-    const byRealm = fog.get(actorId) ?? new Map<string, Uint8Array>();
-    fog.set(actorId, byRealm);
+  const fogFor = (actorId: string, realm?: Realm): Uint8Array =>
     // ABSENT REALM MEANS THE ONE OVERWORLD, which is what every caller that
     // predates the second key meant and is the only thing it could have meant.
-    const home = realm ?? opts.realms?.overworld;
-    const key = home?.id ?? OVERWORLD_ID;
-    const existing = byRealm.get(key);
-    if (existing !== undefined) return existing;
-    const level = home?.world.level;
-    const made = createFog(level?.w ?? 1, level?.h ?? 1);
-    byRealm.set(key, made);
-    return made;
-  };
+    memoryWorldOf(realm).memoryOf(actorId);
 
   /** Has this character walked anywhere on this map? Drives the `explored` field. */
-  const fogSeen = (actorId: string, realmId: string): boolean =>
-    fog.get(actorId)?.has(realmId) === true;
+  const fogSeen = (actorId: string, realmId: string): boolean => {
+    const world =
+      opts.realms?.get(realmId)?.world ?? (realmId === OVERWORLD_ID ? opts.world : undefined);
+    return world?.hasMemoryOf(actorId) === true;
+  };
 
   /**
    * ═══════════════════════════════════════════════════════════════════════════
@@ -7134,11 +7123,12 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     if (restore.explored !== undefined && opts.realms !== undefined) {
       const home = opts.realms.overworld;
       const level = home.world.level;
-      const byRealm = fog.get(actor.id) ?? new Map<string, Uint8Array>();
       // INTO THE OVERWORLD'S SLOT, because a v1 file's single string can only
       // ever have been about the one map that existed when it was written.
-      byRealm.set(home.id, fogFromBase64(restore.explored, Math.ceil((level.w * level.h) / 8)));
-      fog.set(actor.id, byRealm);
+      home.world.setMemoryOf(
+        actor.id,
+        fogFromBase64(restore.explored, Math.ceil((level.w * level.h) / 8)),
+      );
     }
     /**
      * AND EVERY OTHER MAP, EACH SIZED AGAINST ITS OWN LEVEL.
@@ -7153,14 +7143,12 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
      * region that no longer exists is not something a player can do anyway.
      */
     if (restore.exploredElsewhere !== undefined && opts.realms !== undefined) {
-      const byRealm = fog.get(actor.id) ?? new Map<string, Uint8Array>();
       for (const [realmId, bits] of Object.entries(restore.exploredElsewhere)) {
         const realm = opts.realms.get(realmId);
         if (realm === undefined || realm.kind !== RealmKind.Overworld) continue;
         const other = realm.world.level;
-        byRealm.set(realmId, fogFromBase64(bits, Math.ceil((other.w * other.h) / 8)));
+        realm.world.setMemoryOf(actor.id, fogFromBase64(bits, Math.ceil((other.w * other.h) / 8)));
       }
-      fog.set(actor.id, byRealm);
     }
     /**
      * THE CASES THEY HAD ALREADY CLOSED.
@@ -9927,10 +9915,8 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     lastShopKeys.delete(realmId);
     clearedRealms.delete(realmId);
     residentCounts.delete(realmId);
-    // AND EVERY CHARACTER'S MEMORY OF IT. Only an instance is ever closed, its id
-    // is never minted twice and its memory is never saved, so a closed one's
-    // bitsets could never be read again and would only accumulate.
-    for (const byRealm of fog.values()) byRealm.delete(realmId);
+    // EVERY CHARACTER'S MEMORY OF IT needs nothing here: it lives on the realm's
+    // world (`World.memoryOf`) and goes with it.
   };
 
   const reaps = new Map<string, NodeJS.Timeout>();

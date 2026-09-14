@@ -49,6 +49,7 @@ import { createTurnClock } from '../../shared/energy.ts';
 import { canWalk, makeTestMap } from '../../shared/level.ts';
 import { ActorKind, TileCode } from '../../shared/protocol.ts';
 import { createRng } from '../../shared/rng.ts';
+import { createFog } from '../../shared/fog.ts';
 import { lightLevel } from '../../shared/light.ts';
 import type { SiteLighting } from '../../shared/light.ts';
 import { resolveItem } from '../content/resolve.ts';
@@ -332,6 +333,22 @@ export type World = {
    * because it never goes to a client: what reaches a player is what they saw.
    */
   readonly lit: Uint8Array;
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * WHAT EACH CHARACTER REMEMBERS OF THIS LEVEL, one bitset a character.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Upstream's map owns what is remembered (`remembers`, engine/Map.lua:649),
+   * and here the level's world does. Keyed by actor id, which survives a body
+   * being rebuilt at a door, and gone with the world when an instance closes.
+   * The gateway writes it by sight and saves an overworld's copy. Made empty the
+   * first time it is asked for.
+   */
+  memoryOf(actorId: string): Uint8Array;
+  /** Has this character's memory of this level been asked for, or handed over? */
+  hasMemoryOf(actorId: string): boolean;
+  /** Put a character's memory of this level in place, as a restore does. */
+  setMemoryOf(actorId: string, bits: Uint8Array): void;
   /** The clock and the combat state. Mutated by the scheduler, nobody else. */
   readonly turn: TurnState;
   /**
@@ -865,6 +882,16 @@ export function createWorld(
   const shopRng = root.fork('world.shop');
   // ITS OWN STREAM, so lighting a level moves no other draw. See `shared/light.ts`.
   const lit = lightLevel(level, authored.rooms ?? [], lighting, root.fork('world.light'));
+
+  /** Each character's memory of this level, by actor id. See `World.memoryOf`. */
+  const memory = new Map<string, Uint8Array>();
+  const memoryOf = (actorId: string): Uint8Array => {
+    const existing = memory.get(actorId);
+    if (existing !== undefined) return existing;
+    const made = createFog(level.w, level.h);
+    memory.set(actorId, made);
+    return made;
+  };
 
   /** Where the next join starts scanning the authored spawn cluster. */
   let spawnCursor = 0;
@@ -1412,6 +1439,11 @@ export function createWorld(
     id,
     level,
     lit,
+    memoryOf,
+    hasMemoryOf: (actorId: string): boolean => memory.has(actorId),
+    setMemoryOf: (actorId: string, bits: Uint8Array): void => {
+      memory.set(actorId, bits);
+    },
     turn,
     rng: playRng,
     lootRng,
