@@ -10719,6 +10719,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     cloak: 'shoulders',
     belt: 'waist',
     hands: 'hands',
+    lite: 'lantern hook',
   };
 
   const handleShopBuy = (session: Session, msg: ClientShopBuy): void => {

@@ -156,6 +156,8 @@ function derivedVector(sheet: CombatSheet | undefined): readonly number[] {
     // THE POOLS — see the note above on why these are read raw.
     c.mods?.maxHp ?? 0,
     c.mods?.hpRegen ?? 0,
+    // CARRIED LIGHT, raw for the pools' reason: `liteRadiusOf` is `mods.lite`.
+    c.mods?.lite ?? 0,
   ];
 }
 

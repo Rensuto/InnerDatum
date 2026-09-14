@@ -651,6 +651,29 @@
  * ═══════════════════════════════════════════════════════════════════════════
 
 
+ * 23 -> 24 (A LIGHT SOURCE). `Slot` gains `lite`, so the `unequip` intent's
+ * enum and `InventoryMsg.equipped` both gain a member.
+ *
+ * 18 -> 19'S RULE DECIDES IT: a client that draws NOTHING for a thing the server
+ * acts on is the case that bumps. A v23 client handed `equipped.lite` has no
+ * place on its doll for the key and no `unequip` that can name the slot. The
+ * lantern would be worn, moving the sheet's `Light radius`, with no cell to show
+ * it and no way to take it off: a thing a player owns and can neither see nor
+ * remove, which is worse than an unknown frame being ignored.
+ *
+ * CONSIDERED AND NOT ADDED, each of which would have forced this bump alone:
+ *
+ *   NO NEW FRAME AND NO NEW `ErrorCode`. The lanterns are items, and items
+ *   already travel in every frame that carries one.
+ *
+ * `SCHEMA_VERSION` STAYS 1. A saved `equipped` is keyed by slot name and checked
+ * against the catalogue on load, so a file with `lite` in it is one more key this
+ * build knows, and a build without it drops the entry with a logged reason
+ * rather than refusing the file.
+ *
+ * ═══════════════════════════════════════════════════════════════════════════
+
+
  * 22 -> 23 (TRAPS). `TrapsMsg` is a new outbound frame — every trap THIS
  * VIEWER has found out about — and it is 6 -> 7's argument in its most literal
  * form yet.
@@ -1015,7 +1038,7 @@
  * path rather than read from disk. When that changes it will be an OPTIONAL
  * field and docs/data-schemas.md:48-49 applies unchanged.
  */
-export const PROTOCOL_VERSION = 23;
+export const PROTOCOL_VERSION = 24;
 
 /**
  * Bumped whenever a persisted save file's shape changes. Every bump needs a

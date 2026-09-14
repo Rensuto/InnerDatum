@@ -1237,6 +1237,17 @@ describe('projectInventory', () => {
     expect(rows.find((row) => row.label === 'Vision range')?.value).toContain('+1');
   });
 
+  it('compares LIGHT RADIUS, which a lantern moves and nothing else does', () => {
+    // data/general/objects/lites.lua:30-42: the brass lantern is `lite = 2`. Without
+    // the row a lantern would compare as no change at all, on the one screen whose
+    // job is to say what a swap does.
+    const world = room();
+    const body = watchman(world);
+    body.carried = ['item_brass_lantern'];
+    const rows = projectInventory(body).carried[0]?.compare ?? [];
+    expect(rows).toContainEqual({ label: 'Light radius', value: '+2' });
+  });
+
   it('says what a landed blow leaves behind, which is the whole ring', () => {
     /**
      * `Object.lua:1310` prints `Effects on melee hit: ` and then the rider. Ours

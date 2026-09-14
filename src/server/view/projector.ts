@@ -97,6 +97,7 @@ import {
   combatMentalResist,
   combatPhysicalResist,
   combatSpellResist,
+  liteRadiusOf,
   sightRadiusOf,
   stat,
 } from '../engine/derived.ts';
@@ -2218,6 +2219,9 @@ const COMPARE_ROWS: readonly (readonly [string, (c: Combatant) => number, Compar
    * differently is how a player concludes they are different numbers.
    */
   ['Vision range', (c: Combatant): number => sightRadiusOf({ combat: c }), CompareShape.Scalar],
+  // BESIDE VISION, as on the sheet (CharacterSheet.lua:725-727). Added with the
+  // lanterns, the first items to move it: a lantern changes this and nothing else.
+  ['Light radius', (c: Combatant): number => liteRadiusOf({ combat: c }), CompareShape.Scalar],
   ['Physical save', combatPhysicalResist, CompareShape.Scalar],
   ['Spell save', combatSpellResist, CompareShape.Scalar],
   ['Mental save', combatMentalResist, CompareShape.Scalar],

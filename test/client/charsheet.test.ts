@@ -698,6 +698,8 @@ describe('the equipment rows', () => {
       'Cloak',
       'Belt',
       'Hands',
+      // The light source, appended the same way.
+      'Light',
     ]);
     // AND THE ORDER IS `SLOT_ORDER`'s, not this file's opinion of it. The label
     // is a WORD, not the slot id, so the two are compared through the record.

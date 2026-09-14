@@ -2382,6 +2382,8 @@ export const Slot = {
   Cloak: 'cloak',
   Belt: 'belt',
   Hands: 'hands',
+  /** The light source: upstream's LITE (load.lua:125). Appended; see `SLOT_ORDER`. */
+  Lite: 'lite',
 } as const;
 export type Slot = (typeof Slot)[keyof typeof Slot];
 
@@ -2417,6 +2419,8 @@ export const SLOT_ORDER = [
   'cloak',
   'belt',
   'hands',
+  // APPENDED, for the spill-order reason above.
+  'lite',
 ] as const satisfies readonly Slot[];
 
 /**

@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
 import { liteRadiusOf } from '../../src/server/engine/derived.ts';
-import { composeWielders } from '../../src/server/engine/equipment.ts';
+import { Slot, itemById } from '../../src/server/content/items.ts';
+import { composeSheet, composeWielders } from '../../src/server/engine/equipment.ts';
 import { inspectActor } from '../../src/server/view/inspect.ts';
 import { createWorld } from '../../src/server/world/world.ts';
 
@@ -36,5 +37,22 @@ describe('the light a body carries', () => {
     expect(after, 'the row is wired to a constant, not to `CombatMods.lite`').toContainEqual(
       expect.objectContaining({ label: 'Light radius', value: '2' }),
     );
+  });
+});
+
+describe('upstream’s three lanterns', () => {
+  it('are worn in the light slot and light 2, 3 and 4 tiles', () => {
+    // data/general/objects/lites.lua:30-70.
+    const lanterns = [
+      ['item_brass_lantern', 2],
+      ['item_alchemists_lamp', 3],
+      ['item_dwarven_lantern', 4],
+    ] as const;
+    for (const [id, lite] of lanterns) {
+      const item = itemById(id);
+      expect(item?.slot, id).toBe(Slot.Lite);
+      const sheet = composeSheet({}, item === undefined ? [] : [item]);
+      expect(liteRadiusOf({ combat: sheet }), id).toBe(lite);
+    }
   });
 });

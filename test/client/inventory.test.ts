@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest';
 
 import { DragKind, DraggablePanel } from '../../src/client/ui/drag.ts';
 import { hoverCardRect } from '../../src/client/ui/panel.ts';
+import type { PanelRect } from '../../src/client/ui/panel.ts';
 import {
   INVENTORY_DRAG_PANEL,
   INVENTORY_PANEL_CARRIED_MAX,
@@ -275,6 +276,44 @@ describe('the paper doll at the sizes this client actually renders', () => {
   });
 });
 
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * NO DOLL ROW IS EVER HALF DRAWN — the rule the two shedding tests assert.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Both used to say it as `drawn % INVENTORY_PANEL_COLS === 0`. That was a proxy:
+ * it held only while every doll row carried the bag's column count of cells, and
+ * the light source's fifth column put one cell alone on the bottom row, so a
+ * whole doll of thirteen read as a partial row. The doll sheds WHOLE GRID ROWS
+ * from its tail, so this reads each cell's row off a layout with room for all of
+ * them and asks that every row be drawn entirely or not at all.
+ */
+function dollRowOfEachCell(): readonly number[] {
+  const rect = roomyRect();
+  const doll = inventoryPanelGeometry(rect, inventoryPanelRows(view())).placed.find(
+    (entry) => entry.row.kind === InventoryRowKind.Doll,
+  );
+  if (doll === undefined) throw new Error('unreachable: the roomy panel must hold a doll');
+  const tops = [...new Set(doll.cells.map((box) => box.y))].sort((a, b) => a - b);
+  return doll.cells.map((box) => tops.indexOf(box.y));
+}
+
+function everyRowWhole(cells: readonly PanelRect[]): boolean {
+  const rowOf = dollRowOfEachCell();
+  const size = new Map<number, number>();
+  const drawn = new Map<number, number>();
+  cells.forEach((box, i) => {
+    const row = rowOf[i] ?? -1;
+    size.set(row, (size.get(row) ?? 0) + 1);
+    if (box.w > 0) drawn.set(row, (drawn.get(row) ?? 0) + 1);
+  });
+  for (const [row, count] of size) {
+    const seen = drawn.get(row) ?? 0;
+    if (seen !== 0 && seen !== count) return false;
+  }
+  return true;
+}
+
 function roomyRect() {
   const rect = inventoryPanelRect(ROOMY);
   if (rect === null) throw new Error('unreachable: the roomy band must hold a panel');
@@ -434,6 +473,8 @@ describe('inventoryPanelRows', () => {
       'empty',
       'empty',
       'empty',
+      'empty',
+      // The light source. Nothing in this fixture wears one.
       'empty',
     ]);
   });
@@ -859,7 +900,7 @@ describe('inventoryPanelHitAt', () => {
           if (row.kind === InventoryRowKind.Doll) {
             expect(walked, 'the doll drew nothing at all').toBeGreaterThan(0);
             expect(walked).toBeLessThanOrEqual(SLOT_ORDER.length);
-            expect(walked % INVENTORY_PANEL_COLS, 'a partial row is reachable').toBe(0);
+            expect(everyRowWhole(placed.cells), 'a partial row is reachable').toBe(true);
           }
         }
       }
@@ -1315,7 +1356,7 @@ describe('the drop policy', () => {
       if (doll === undefined) throw new Error(`unreachable: no doll at ${label}`);
       const drawn = doll.cells.filter((box) => box.w > 0).length;
       expect(drawn, `${label}: the doll drew nothing`).toBeGreaterThan(0);
-      expect(drawn % INVENTORY_PANEL_COLS, `${label}: a partial row was drawn`).toBe(0);
+      expect(everyRowWhole(doll.cells), `${label}: a partial row was drawn`).toBe(true);
       expect(drawn, `${label}: more cells than there are slots`).toBeLessThanOrEqual(
         SLOT_ORDER.length,
       );

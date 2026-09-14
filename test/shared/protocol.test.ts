@@ -1277,10 +1277,10 @@ describe('the four loot verbs at the trust boundary', () => {
     // change without a bump anyway, so the enum costs no coupling and buys a
     // refusal one layer earlier.
     //
-    // TWELVE NOW: the original seven, `mainhand`, and the second batch —
-    // `neck`, `cloak`, `belt`, `hands`. ToME defines fifteen worn inventories
-    // (`load.lua:120-134`) and this game is porting them.
-    expect(SLOT_ORDER).toHaveLength(12);
+    // THIRTEEN NOW: the original seven, `mainhand`, the second batch — `neck`,
+    // `cloak`, `belt`, `hands` — and `lite`, the light source. ToME defines fifteen
+    // worn inventories (`load.lua:120-134`) and this game is porting them.
+    expect(SLOT_ORDER).toHaveLength(13);
     for (const slot of SLOT_ORDER) {
       expect(parseClientMsg({ v: V, t: 'unequip', slot }).ok, `${slot} must parse`).toBe(true);
     }
@@ -1290,7 +1290,7 @@ describe('the four loot verbs at the trust boundary', () => {
 
     const bad: unknown[] = [
       'finger', // ToME's own name for what we call `ring`
-      'lite', // one of the three of ToME's fifteen still to come
+      'tool', // one of ToME's fifteen still to come, now that LITE has landed
       'BODY', // upstream's casing; ours is lowercased
       'inven',
       '',
@@ -1590,6 +1590,8 @@ describe('the floor is broadcast and the bag is not', () => {
         'hands',
         'head',
         'legs',
+        // Upstream's LITE, verbatim and lowercased (load.lua:125).
+        'lite',
         'mainhand',
         'neck',
         'offhand',

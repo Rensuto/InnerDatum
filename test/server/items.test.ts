@@ -141,7 +141,7 @@ function fullSlotSpread(): Item[] {
 }
 
 describe('the item catalogue', () => {
-  it('ships 33 worn items and one you drink', () => {
+  it('ships 36 worn items and one you drink', () => {
     // 23 `item_*` ids exist in the manifest. 22 are authored as equipment. The
     // 23rd `item_*` id is the ingot, and cutting it is a decision rather than an
     // oversight — see FORBIDDEN_IDS above; it draws the MONEY pile instead
@@ -166,8 +166,11 @@ describe('the item catalogue', () => {
     // upstream gear does that ours could not do at all (39 and 42 items in
     // `tome/data`). Both mechanics were already ported; only the channel was
     // missing, and a channel nothing comes down is a channel nothing tests.
-    expect(ITEMS).toHaveLength(34);
-    expect(ITEMS.filter((item) => item.slot !== undefined)).toHaveLength(33);
+    //
+    // ═══ AND THE THREE LANTERNS, ALSO AHEAD OF THEIR ART ═══
+    // Upstream's `lites.lua:30-70`, for the LITE slot they are the only items in.
+    expect(ITEMS).toHaveLength(37);
+    expect(ITEMS.filter((item) => item.slot !== undefined)).toHaveLength(36);
     expect(ITEMS.filter((item) => item.use !== undefined)).toHaveLength(1);
     // ═══ ONE ICON PER ITEM — DRAWN OR COMMISSIONED ═══
     // This read "23 drawn icons still, and 26 items", and had already gone stale
@@ -178,7 +181,7 @@ describe('the item catalogue', () => {
     // ahead of its art, and is what `PENDING_ICON_IDS` exists to allow. Pinning
     // the drawn count alone would make that legitimate step a test failure.
     expect(MANIFEST_ITEM_ICONS.length + PENDING_ICON_IDS.length).toBe(ITEMS.length);
-    expect(ITEM_CATALOGUE.size).toBe(34);
+    expect(ITEM_CATALOGUE.size).toBe(37);
   });
 
   it('names only icons that exist in the committed manifest', () => {
@@ -365,21 +368,22 @@ describe('the item catalogue', () => {
     }
   });
 
-  it('lines its three tiers up with the three drop tables, 11 / 14 / 9', () => {
+  it('lines its three tiers up with the three drop tables, 12 / 15 / 10', () => {
     // NOT COSMETIC. The roster's drop tables are meant to select on `tier`
     // rather than re-listing 23 ids somewhere else that has to stay in sync:
     //   common   = every LEGS and FEET item, plus the leather chest
     //   uncommon = every HEAD, OFFHAND and TRINKET item, AND the draught
     //   rare     = the three class BODY items and the three RINGs
+    //   and one LANTERN at each tier, as upstream's three rise in rarity
     //
     // THE DRAUGHT IS UNCOMMON ON PURPOSE and it moved this count from 9 to 10:
     // upstream's healing infusion carries `rarity = 15` against a common's 3-6,
     // and a party that can buy the good one on every visit has no decision to
     // make about drinking it.
     const byTier = (tier: string): Item[] => ITEMS.filter((item) => item.tier === tier);
-    expect(byTier('common')).toHaveLength(11);
-    expect(byTier('uncommon')).toHaveLength(14);
-    expect(byTier('rare')).toHaveLength(9);
+    expect(byTier('common')).toHaveLength(12);
+    expect(byTier('uncommon')).toHaveLength(15);
+    expect(byTier('rare')).toHaveLength(10);
     expect(byTier('common').length + byTier('uncommon').length + byTier('rare').length).toBe(
       ITEMS.length,
     );
@@ -393,13 +397,13 @@ describe('the item catalogue', () => {
     // one slot whose upgrade is felt on every swing needs something to find at
     // each step, where a HEAD piece can sensibly exist at one tier only.
     expect([...slotsOf('uncommon')].sort()).toEqual(
-      ['cloak', 'hands', 'head', 'mainhand', 'offhand', 'trinket'].sort(),
+      ['cloak', 'hands', 'head', 'lite', 'mainhand', 'offhand', 'trinket'].sort(),
     );
     // HANDS JOINED THE RARE TIER, and not as a style choice: `validateItems`
     // requires whole-number wielder grants, so the smallest `life_regen` an item
     // can carry is +1 — DOUBLE what every class authors. The guard picked the
     // tier. See `item_tourniquet_band`.
-    expect([...slotsOf('rare')].sort()).toEqual(['body', 'hands', 'mainhand', 'ring']);
+    expect([...slotsOf('rare')].sort()).toEqual(['body', 'hands', 'lite', 'mainhand', 'ring']);
   });
 
   it('resolves every authored id through the catalogue map', () => {

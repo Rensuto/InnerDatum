@@ -1225,6 +1225,8 @@ const SLOT_LABEL: Readonly<Record<Slot, string>> = {
   cloak: 'Cloak',
   belt: 'Belt',
   hands: 'Hands',
+  // Upstream's inventory calls it `Light source` (load.lua:125).
+  lite: 'Light',
 };
 
 /**

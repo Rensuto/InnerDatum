@@ -350,6 +350,8 @@ const CAPTION_BASELINE = 6;
  * budget first — which is now understated rather than overstated, since at the
  * real 320 floor even the third row is already being shed.
  */
+/** The doll's columns: five since the light source. See `DOLL_PLACES`. */
+const DOLL_COLS = 5;
 const DOLL_ROWS = 4;
 /** Three cells tall with two gaps between them, and no trailing gap. */
 const DOLL_H = DOLL_ROWS * CELL_PX + (DOLL_ROWS - 1) * CELL_GAP;
@@ -403,6 +405,13 @@ const DOLL_PLACES: Readonly<Record<Slot, DollPlace>> = {
   belt: { col: 1, row: 3 },
   neck: { col: 2, row: 3 },
   cloak: { col: 3, row: 3 },
+  /**
+   * THE FIFTH COLUMN, AND THE LIGHT SOURCE IS ITS ONLY CELL. Upstream puts LITE
+   * on its doll's bottom row, right of the rings (load.lua:148), and this is the
+   * bottom row's right-hand end. A fifth ROW was measured first and hid a slot on
+   * a 768x384 screen; a fifth column costs width the panel already has.
+   */
+  lite: { col: 4, row: 3 },
 };
 
 /**
@@ -418,8 +427,8 @@ const DOLL_PLACES: Readonly<Record<Slot, DollPlace>> = {
  * THE GRID IS FULL NOW. That cell held the note "deliberately EMPTY. Seven slots
  * do not divide into a rectangle, and a spare box that is not a slot must not
  * look like one" — true of seven, and the weapon hand is the eighth. Adding a
- * ninth needs a fourth row: capacity is `COLS * DOLL_ROWS` minus the four the
- * portrait takes, so 4x3 holds eight and 4x4 holds twelve.
+ * ninth needed a fourth row, and the thirteenth, the light source, a fifth
+ * column: capacity is columns times rows, minus the four the portrait takes.
  */
 const PORTRAIT_COL = 1;
 const PORTRAIT_COLS = 2;
@@ -499,7 +508,7 @@ const LIST_ICON_GUTTER = LIST_ICON_PX + 4;
  * between — which is upstream's own layout (`tome/dialogs/ShowEquipInven.lua` places a
  * `vsep` between the doll and the list rather than tabbing them).
  */
-const DOLL_W = 4 * CELL_PX + 3 * CELL_GAP;
+const DOLL_W = DOLL_COLS * CELL_PX + (DOLL_COLS - 1) * CELL_GAP;
 const COLUMN_SEP_W = 9;
 /** The scrollbar's width. Narrow: it is a position readout, not a grab handle. */
 const SCROLL_BAR_W = 4;
@@ -1940,7 +1949,7 @@ function cellRects(row: PanelRect, count: number): readonly PanelRect[] {
   return count <= 0 ? [] : [{ x: row.x, y: row.y, w: row.w, h: LIST_ROW_H }];
 }
 
-/** The top-left corner of one 4x3 doll box, from its grid coordinates. */
+/** The top-left corner of one doll box, from its grid coordinates. */
 function dollCellRect(row: PanelRect, place: DollPlace): PanelRect {
   return {
     x: row.x + place.col * (CELL_PX + CELL_GAP),

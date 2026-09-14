@@ -201,6 +201,8 @@ export const Slot = {
   Cloak: 'cloak',
   Belt: 'belt',
   Hands: 'hands',
+  /** The light source: upstream's LITE (load.lua:125). Appended; see `SLOT_ORDER`. */
+  Lite: 'lite',
 } as const;
 export type Slot = (typeof Slot)[keyof typeof Slot];
 
@@ -230,6 +232,7 @@ export const SLOT_ORDER = Object.freeze([
   Slot.Cloak,
   Slot.Belt,
   Slot.Hands,
+  Slot.Lite,
 ] as const) satisfies readonly Slot[];
 
 /**
@@ -888,15 +891,21 @@ export const KNOWN_ICON_IDS: readonly string[] = Object.freeze([
  * missing, which is the correct backlog signal. An id that stays here forever
  * is a bug in the process, not in this list.
  *
- * ═══ EMPTY, AND THAT IS THE LIST WORKING ═══
+ * ═══ IT EMPTIED ONCE, WHICH IS THE LIST WORKING ═══
  * All eleven commissions — the weapons, the belt, the gloves, the apron and the
  * rest — were delivered in one art pass (`items/equipment/`, 64x64, native
  * reduction from an approved source master) and moved to `KNOWN_ICON_IDS`. The
  * list stays rather than being deleted because it is the MECHANISM: the next
  * item authored ahead of its art lands here, `check-assets` demands its brief,
  * and `validateItems` still refuses a typo. An empty backlog is not an absent one.
+ *
+ * The three lanterns are the next, authored for the LITE slot ahead of their art.
  */
-export const PENDING_ICON_IDS: readonly string[] = Object.freeze([]);
+export const PENDING_ICON_IDS: readonly string[] = Object.freeze([
+  'item_brass_lantern',
+  'item_alchemists_lamp',
+  'item_dwarven_lantern',
+]);
 
 // ---------------------------------------------------------------------------
 // The catalogue
@@ -1584,6 +1593,49 @@ const SECOND_BATCH: readonly Item[] = [
   },
 ];
 
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * LIGHT SOURCES — upstream's three lanterns, for the LITE slot.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `data/general/objects/lites.lua:30-70`, value for value: the brass lantern
+ * lights 2 tiles (levels 1-20), the alchemist's lamp 3 (20-35) and the dwarven
+ * lantern 4 (35-50). A lantern moves `lite` and nothing else, which is what
+ * `liteRadiusOf` reads and the light pass will spend.
+ *
+ * THE TIERS FOLLOW UPSTREAM'S RARITY, 7 then 10 then 12, onto this catalogue's
+ * three drop tables in order: common, uncommon, rare.
+ *
+ * THE ART IS COMMISSIONED, NOT DRAWN: all three ids are in `PENDING_ICON_IDS` and
+ * briefed in ASSETS-REQUIRED.md. Until the files exist the renderer draws a letter.
+ */
+const LIGHT_SOURCES: readonly Item[] = [
+  {
+    id: 'item_brass_lantern',
+    name: 'Brass Lantern',
+    slot: Slot.Lite,
+    icon: 'item_brass_lantern',
+    tier: 'common',
+    wielder: { mods: { lite: 2 } },
+  },
+  {
+    id: 'item_alchemists_lamp',
+    name: "Alchemist's Lamp",
+    slot: Slot.Lite,
+    icon: 'item_alchemists_lamp',
+    tier: 'uncommon',
+    wielder: { mods: { lite: 3 } },
+  },
+  {
+    id: 'item_dwarven_lantern',
+    name: 'Dwarven Lantern',
+    slot: Slot.Lite,
+    icon: 'item_dwarven_lantern',
+    tier: 'rare',
+    wielder: { mods: { lite: 4 } },
+  },
+];
+
 export const ITEMS: readonly Item[] = Object.freeze([
   ...WATCHMAN_KIT,
   ...INSPECTOR_KIT,
@@ -1599,6 +1651,7 @@ export const ITEMS: readonly Item[] = Object.freeze([
   // drops. Appending only ever adds an entry at the end of a pool.
   ...TWO_HANDED_AND_OFFHAND,
   ...VITALS,
+  ...LIGHT_SOURCES,
 ]);
 
 /** Everything a player can drink. The shop and the inventory both ask. */

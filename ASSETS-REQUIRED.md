@@ -339,3 +339,20 @@ it down.
 this file rather than the first. `drawLogCog` in `src/client/ui/caselog.ts` is the
 fallback, and it is the same bargain `drawLogGrip` above it makes: a widget that
 needs art to be USABLE cannot ship behind a missing file.
+
+## Three lanterns for the light source slot
+
+**Commissioned, not drawn.** The LITE slot and upstream's three lanterns
+(`data/general/objects/lites.lua:30-70`) ship ahead of their art. Until the
+files exist the doll and the bag draw a letter in their place.
+
+| Id | Tier | What it is |
+|---|---|---|
+| `item_brass_lantern` | common | A plain brass lantern: a wick behind a sheet of greased paper, carried by a handle. The one upstream gives every character at birth. |
+| `item_alchemists_lamp` | uncommon | The same brass lantern made brighter by alchemy: a whiter, hotter flame in a slightly finer case. |
+| `item_dwarven_lantern` | rare | A heavy, iron-banded lantern made for the deepest workings, with a steady gold glow. |
+
+**Cut at 64x64** beside the other item icons in `items/equipment/`; the doll and
+the bag scale them down. Each must read as a lantern at 32x32 and be told apart
+from the other two by shape and flame colour, not by size alone.
+
