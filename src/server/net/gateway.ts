@@ -5778,6 +5778,54 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
   };
 
   /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * A `left` OR `joined` SENT OUTSIDE THE SIGHT PASS, WITH ITS LEDGER EDIT.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `Session.visible` is what each client HOLDS, and `reconcileSight` diffs it
+   * against what is seen. A realm-wide `left` for a slain monster, a recalled or
+   * swapped body, or a player walking out of the realm used to leave the id in
+   * every ledger — so the next sight pass, finding it gone, said `left` a second
+   * time. A realm-wide `joined` left the id out, and the next pass said `joined`
+   * again. The client drops both duplicates quietly, which is why nothing
+   * looked wrong; but a ledger that disagrees with the client is the one thing
+   * per-player sight cannot be built on.
+   *
+   * EXACTLY THE SESSIONS THE BROADCAST REACHES, by the same test `broadcast`
+   * applies: past hello, not the excepted connection, and in that realm.
+   */
+  const reachedBy = (
+    session: Session,
+    exceptConnId: string | undefined,
+    realmId: string | undefined,
+  ): boolean =>
+    session.helloDone &&
+    session.connId !== exceptConnId &&
+    (realmId === undefined || session.realmId === realmId);
+
+  const announceLeft = (id: string, exceptConnId?: string, realmId?: string): void => {
+    broadcast({ v: PROTOCOL_VERSION, t: 'left', id }, exceptConnId, realmId);
+    for (const session of sessions.values()) {
+      if (reachedBy(session, exceptConnId, realmId)) session.visible.delete(id);
+    }
+  };
+
+  const announceJoined = (
+    actor: Parameters<typeof toActorView>[0],
+    exceptConnId?: string,
+    realmId?: string,
+  ): void => {
+    broadcast(
+      { v: PROTOCOL_VERSION, t: 'joined', actor: toActorView(actor) },
+      exceptConnId,
+      realmId,
+    );
+    for (const session of sessions.values()) {
+      if (reachedBy(session, exceptConnId, realmId)) session.visible.add(actor.id);
+    }
+  };
+
+  /**
    * RESEND THE WHOLE BOARD, FOGGED, and reset each ledger to match it.
    *
    * The four `state` senders — realm change, rename, level-up, respawn — all
@@ -6185,7 +6233,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       if (name !== undefined) reapedNames.set(id, name);
 
       engine.reap?.(id);
-      say({ v: PROTOCOL_VERSION, t: 'left', id });
+      announceLeft(id, undefined, audienceFor(realm.id));
     }
 
     // ...and the memo lives exactly as long as the sky does. Its only reader is
@@ -6508,7 +6556,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       app.log.error({ err, actorId }, 'engine.leave threw during recall');
     }
     home.world.removePlayer(actorId);
-    broadcast({ v: PROTOCOL_VERSION, t: 'left', id: actorId }, undefined, audienceFor(home.id));
+    announceLeft(actorId, undefined, audienceFor(home.id));
     app.log.info({ actorId, realmId: home.id }, 'reconnect grace expired — body recalled');
     /**
      * AND THE INSTANCE THEY DROPPED IN MAY NOW BE EMPTY — see the long note in
@@ -8661,11 +8709,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
             app.log.error({ err, actorId }, 'engine.leave threw during a character swap');
           }
           home.world.removePlayer(actorId);
-          broadcast(
-            { v: PROTOCOL_VERSION, t: 'left', id: actorId },
-            undefined,
-            audienceFor(home.id),
-          );
+          announceLeft(actorId, undefined, audienceFor(home.id));
           app.log.info(
             { actorId, from: bound, to: msg.characterId ?? 'a new character' },
             'retired a body for a character swap',
@@ -8726,7 +8770,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
           app.log.error({ err, actorId }, 'engine.leave threw retiring an unbound body');
         }
         home.world.removePlayer(actorId);
-        broadcast({ v: PROTOCOL_VERSION, t: 'left', id: actorId }, undefined, audienceFor(home.id));
+        announceLeft(actorId, undefined, audienceFor(home.id));
         app.log.info(
           { actorId },
           'retired an unbound body rather than resume it into a saved character',
@@ -9086,11 +9130,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     // A resume reattaches to an actor everyone can already see, so it announces
     // nothing; only a genuinely new player is a `joined`.
     if (!resolved.resumed) {
-      broadcast(
-        { v: PROTOCOL_VERSION, t: 'joined', actor: toActorView(actor) },
-        session.connId,
-        audienceFor(realmFor(session).id),
-      );
+      announceJoined(actor, session.connId, audienceFor(realmFor(session).id));
       // A NEW CHARACTER EXISTS. Nothing has happened to it yet, so the pump
       // below may produce no events at all and never reach `queueSave` — but the
       // file has to exist before the first thing that changes it does. Immediate
@@ -9828,11 +9868,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     if (from.lingerMs === 0) from.sealed = true;
 
     from.world.removePlayer(actorId);
-    broadcast(
-      { v: PROTOCOL_VERSION, t: 'left', id: actorId },
-      session.connId,
-      audienceFor(from.id),
-    );
+    announceLeft(actorId, session.connId, audienceFor(from.id));
 
     // ═══ AND THE FLOOR HAS RECOVERED WHILE THEY WERE GONE ═══ Before the body
     // is placed, so nothing heals on the frame a player is standing in front of
@@ -9947,15 +9983,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     sendZonesIfAny(realmFor(session), session.socket);
     sendTerrainIfAny(realmFor(session), session.socket);
     announceArrival(session, to, to.name);
-    broadcast(
-      {
-        v: PROTOCOL_VERSION,
-        t: 'joined',
-        actor: toActorView(to.world.getActor(actorId) ?? placed),
-      },
-      session.connId,
-      audienceFor(to.id),
-    );
+    announceJoined(to.world.getActor(actorId) ?? placed, session.connId, audienceFor(to.id));
 
     app.log.info({ actorId, from: from.id, sealed: from.sealed, to: to.id }, 'a body left a realm');
     reapIfEmpty(from);
@@ -10171,11 +10199,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     // new board by the `realm` frame below, and `case 'left'` deletes an actor
     // from the map it is currently drawing — harmless in that order, and one
     // fewer frame whose correctness depends on an ordering.
-    broadcast(
-      { v: PROTOCOL_VERSION, t: 'left', id: actorId },
-      session.connId,
-      audienceFor(from.id),
-    );
+    announceLeft(actorId, session.connId, audienceFor(from.id));
 
     // ═══ AND THE FLOOR HAS RECOVERED WHILE THEY WERE GONE ═══ Before the body
     // is placed, so nothing heals on the frame a player is standing in front of
@@ -10276,11 +10300,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     // AND THE TOKEN, TO EVERYONE ALREADY IN THERE. `joined` is how a body
     // appears on a client that has a board already; the crosser's own copy came
     // in the `realm` frame's actor list a line ago, so they are excluded.
-    broadcast(
-      { v: PROTOCOL_VERSION, t: 'joined', actor: toActorView(placed) },
-      session.connId,
-      audienceFor(to.id),
-    );
+    announceJoined(placed, session.connId, audienceFor(to.id));
 
     app.log.info(
       { actorId, site: label, why, from: from.id, to: to.id, kind: to.kind },

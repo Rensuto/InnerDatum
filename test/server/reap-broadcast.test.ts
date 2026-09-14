@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { afterEach, describe, expect, it } from 'vitest';
 
@@ -304,6 +305,75 @@ describe('the kill is narrated before the body leaves', () => {
     // …and only then is the body removed, exactly once.
     expect(leftIds(client)).toEqual(['m_husk']);
     expect(server.world.getActor('m_husk')).toBeUndefined();
+  });
+
+  it('sends ONE `left` for a monster the player had already seen, not two', async () => {
+    /**
+     * THE CASE THE TEST ABOVE CANNOT REACH. That husk is placed and killed in one
+     * pump, so it never enters `Session.visible`. A husk that has been SEEN is in
+     * the ledger when it dies, and two paths could each announce its departure:
+     * the reap loop's realm-wide `left`, and `reconcileSight` a few lines later,
+     * finding an id in the ledger that is no longer in sight.
+     */
+    server = await boot('reap-seen-first');
+    const client = await connect(server.port);
+    const welcome = await client.hello();
+    const ren = placeAt(actorOf(String(welcome?.['selfId'])), 10, 10);
+    ren.hpRegen = 0;
+    ren.combat = NEVER_MISSES;
+    const monster = husk('m_husk', 13, 10, 1);
+    client.clear();
+
+    // SEEN FIRST: a step that does not reach it runs a pump, and the pump's
+    // reconcile puts the husk in this player's ledger.
+    await client.settle({ t: 'move', dir: 'w' });
+    const joinedIds = client.all('joined').map((frame) => {
+      const actor = frame['actor'] as { id?: unknown } | undefined;
+      return String(actor?.id);
+    });
+    expect(joinedIds, 'the husk was never seen, so this test proves nothing').toContain('m_husk');
+    expect(leftIds(client)).toEqual([]);
+
+    // THEN SLAIN: stand it beside the player and strike.
+    placeAt(ren, 10, 10);
+    placeAt(monster, 11, 10);
+    await client.settle({ t: 'move', dir: 'e' });
+
+    expect(server.world.getActor('m_husk'), 'the husk survived the blow').toBeUndefined();
+    expect(leftIds(client)).toEqual(['m_husk']);
+  });
+
+  it('announces a second player to the first exactly once', async () => {
+    // A new player's arrival is broadcast; the sight pass then runs. Without the
+    // ledger edit beside the broadcast, that pass announces them again.
+    server = await boot('joined-once');
+    const first = await connect(server.port);
+    await first.hello();
+    first.clear();
+    const second = await connect(server.port);
+    const secondWelcome = await second.hello();
+    const secondId = String(secondWelcome?.['selfId']);
+
+    // A PUMP, so the sight pass runs after the arrival broadcast.
+    await first.settle({ t: 'move', dir: 'w' });
+
+    const announced = first.all('joined').filter((frame) => {
+      const actor = frame['actor'] as { id?: unknown } | undefined;
+      return String(actor?.id) === secondId;
+    });
+    expect(announced).toHaveLength(1);
+  });
+
+  it('sends every `joined` and `left` through code that keeps the ledgers true', () => {
+    // A SOURCE GUARD: the realm, door and recall paths need harnesses this file
+    // does not have. `reconcileSight` sends one of each and the two `announce`
+    // helpers one each; any other literal is a send around the ledger.
+    const code = readFileSync(new URL('../../src/server/net/gateway.ts', import.meta.url), 'utf8')
+      .split('\n')
+      .filter((line) => !/^\s*(\/\/|\*|\/\*)/.test(line))
+      .join('\n');
+    expect(code.match(/t: 'left'/g)?.length, 'a `left` sent around the ledger').toBe(2);
+    expect(code.match(/t: 'joined'/g)?.length, 'a `joined` sent around the ledger').toBe(2);
   });
 
   it('leaves the corpse out of the next full board any client is sent', async () => {
