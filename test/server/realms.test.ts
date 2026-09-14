@@ -842,3 +842,34 @@ describe('a town is a place you learn; a delve is not', () => {
     expect(layout(second)).not.toBe(before);
   });
 });
+
+describe('a site’s lighting reaches the level it builds', () => {
+  /**
+   * `lightLevel` is tested as a rule in test/shared/light.test.ts. What only this
+   * file can see is the join: the site's `lighting` arriving at `createWorld`, on
+   * its own stream, without moving a draw anything else makes.
+   */
+  it('lights a site that says nothing everywhere', () => {
+    const realms = makeRealms();
+    const mine = realms.open(site('site:hollow_mine'), 'party-lit');
+    expect(mine.world.lit.length).toBe(mine.world.level.w * mine.world.level.h);
+    expect(mine.world.lit.every((bit) => bit === 1)).toBe(true);
+  });
+
+  it('builds a dark level from a dark site', () => {
+    const realms = makeRealms();
+    const dark = { ...site('site:hollow_mine'), lighting: { litRoomChance: 0 } };
+    const mine = realms.open(dark, 'party-dark');
+    expect(mine.world.lit.every((bit) => bit === 0)).toBe(true);
+  });
+
+  it('moves no draw of the world’s own stream, on a floor with rooms to roll', () => {
+    const lit = makeRealms('light-stream').open(site('site:gearford_ward'), 'party-a');
+    const dark = makeRealms('light-stream').open(
+      { ...site('site:gearford_ward'), lighting: { litRoomChance: 100 } },
+      'party-a',
+    );
+    expect(dark.world.level.tiles).toEqual(lit.world.level.tiles);
+    expect(dark.world.rng.nextU32('probe')).toBe(lit.world.rng.nextU32('probe'));
+  });
+});

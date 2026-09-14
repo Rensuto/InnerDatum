@@ -49,6 +49,8 @@ import { createTurnClock } from '../../shared/energy.ts';
 import { canWalk, makeTestMap } from '../../shared/level.ts';
 import { ActorKind, TileCode } from '../../shared/protocol.ts';
 import { createRng } from '../../shared/rng.ts';
+import { lightLevel } from '../../shared/light.ts';
+import type { SiteLighting } from '../../shared/light.ts';
 import { resolveItem } from '../content/resolve.ts';
 import { createMonsterActor, createPlayerActor } from '../engine/actor.ts';
 import { createProjectile } from '../engine/projectile.ts';
@@ -323,6 +325,13 @@ export type World = {
    * M1 and M2 nothing writes to it after construction.
    */
   readonly level: LevelView;
+  /**
+   * WHICH TILES THE LEVEL ITSELF LIGHTS, 1 or 0, row by row. Set once when the
+   * level is made, from its site's lighting, and never by play; a carried light is
+   * a separate pass. See `shared/light.ts`. Here rather than on `LevelView`
+   * because it never goes to a client: what reaches a player is what they saw.
+   */
+  readonly lit: Uint8Array;
   /** The clock and the combat state. Mutated by the scheduler, nobody else. */
   readonly turn: TurnState;
   /**
@@ -760,6 +769,8 @@ export function createWorld(
    * one, so those keep minting the bare ids they always did.
    */
   id = '',
+  /** How its site is lit. Absent is lit everywhere. See `shared/light.ts`. */
+  lighting?: SiteLighting,
 ): World {
   const authored = map ?? makeTestMap();
   const level = authored.view;
@@ -852,6 +863,8 @@ export function createWorld(
    * (seed, shop, epoch) and a lost one can be re-derived.
    */
   const shopRng = root.fork('world.shop');
+  // ITS OWN STREAM, so lighting a level moves no other draw. See `shared/light.ts`.
+  const lit = lightLevel(level, authored.rooms ?? [], lighting, root.fork('world.light'));
 
   /** Where the next join starts scanning the authored spawn cluster. */
   let spawnCursor = 0;
@@ -1398,6 +1411,7 @@ export function createWorld(
   return {
     id,
     level,
+    lit,
     turn,
     rng: playRng,
     lootRng,

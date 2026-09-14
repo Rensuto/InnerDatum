@@ -56,6 +56,7 @@
 import { arenaGround, makeArena } from '../../shared/arena.ts';
 import { ShopShelf } from '../content/shops.ts';
 import { SiteShape, makeSiteMap } from '../../shared/sitemap.ts';
+import type { SiteLighting } from '../../shared/light.ts';
 import type { Ground } from '../../shared/level.ts';
 import { TileCode } from '../../shared/protocol.ts';
 import { REDACTION_SITE_ID, makeOverworld } from '../../shared/level.ts';
@@ -585,6 +586,11 @@ export type SiteDef = {
    */
   readonly map: (seed: string, ground?: Ground) => AuthoredMap;
   /**
+   * HOW THE SITE IS LIT. Absent is lit everywhere, which is how every site has
+   * been drawn so far. See `shared/light.ts`.
+   */
+  readonly lighting?: SiteLighting;
+  /**
    * Seeds the population. Called once, after the world exists.
    *
    * MUST BE ABSENT ON A `Common` SITE. Enforced at construction rather than
@@ -777,13 +783,18 @@ export function createRealms(opts: RealmsOptions): Realms {
     kind: RealmKind,
     name: string,
     map: AuthoredMap,
-    extra: { readonly partyId?: string; readonly siteId?: string; readonly lingerMs?: number },
+    extra: {
+      readonly partyId?: string;
+      readonly siteId?: string;
+      readonly lingerMs?: number;
+      readonly lighting?: SiteLighting;
+    },
   ): Realm => {
     // THE REALM'S OWN ID, THREADED IN. Everything minted inside this world
     // prefixes with it, so two parties in the same delve stop sharing
     // monster ids — and therefore stop sharing the process-wide status,
     // Downed and talent tables that key off them. See `World.id`.
-    const world = createWorld(seedFor(opts.seed, id), map, id);
+    const world = createWorld(seedFor(opts.seed, id), map, id, extra.lighting);
     const engine = opts.engineFor(world);
     const realm: Realm = {
       id,
@@ -888,6 +899,7 @@ export function createRealms(opts: RealmsOptions): Realms {
     if (site.kind === RealmKind.Common) assertNoCombatInSharedSpace(site);
     const realm = build(`realm:${site.id}`, site.kind, site.name, site.map(`realm:${site.id}`), {
       siteId: site.id,
+      ...(site.lighting === undefined ? {} : { lighting: site.lighting }),
     });
     commonBySite.set(site.id, realm);
   }
@@ -960,6 +972,7 @@ export function createRealms(opts: RealmsOptions): Realms {
         site.map(`realm:${site.id}`),
         {
           siteId: site.id,
+          ...(site.lighting === undefined ? {} : { lighting: site.lighting }),
         },
       );
       commonBySite.set(site.id, built);
@@ -992,6 +1005,7 @@ export function createRealms(opts: RealmsOptions): Realms {
       partyId,
       siteId: site.id,
       lingerMs: site.lingerMs,
+      ...(site.lighting === undefined ? {} : { lighting: site.lighting }),
     });
     site.populate?.(realm.world, builtMap, party, lead);
     /**

@@ -41,6 +41,14 @@ const SPAWN_CHAR = '@';
  * network. That split is why `makeTestLevel()` below still returns a bare
  * `LevelView` and every one of its ~60 existing call sites is untouched.
  */
+/** A rectangle of tiles, both corners inclusive. */
+export type TileRect = {
+  readonly x0: number;
+  readonly y0: number;
+  readonly x1: number;
+  readonly y1: number;
+};
+
 export type AuthoredMap = {
   readonly view: LevelView;
   /** Where the server places joining bodies, in row-major order. */
@@ -69,6 +77,13 @@ export type AuthoredMap = {
    * So the generator records what it did. This is server-side only: `RealmMsg`
    * carries a `LevelView`, never an `AuthoredMap`.
    */
+  /**
+   * THE ROOMS A GENERATOR CARVED, walls included. Only a generator that builds
+   * rooms fills it; a cave, a ruin and a town carve none. Read by the level's
+   * light: upstream lights a room whole on a roll
+   * (engine/generator/map/RoomsLoader.lua:625, :652). See `shared/light.ts`.
+   */
+  readonly rooms?: readonly TileRect[];
   readonly vaults?: readonly {
     readonly id: string;
     readonly at: TileXY;

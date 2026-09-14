@@ -37,6 +37,7 @@
 
 import { tileIndex } from './coords.ts';
 import { createRng } from './rng.ts';
+import type { TileRect } from './level.ts';
 import { TileCode } from './protocol.ts';
 import { partition } from './bsp.ts';
 import type { BspNode } from './bsp.ts';
@@ -311,7 +312,7 @@ function ruin(g: Grid, rng: Rng): TileXY {
  * building. `connect` still runs afterwards, so reachability is true by
  * construction whatever the corridors did.
  */
-function works(g: Grid, rng: Rng, crossings: TileXY[]): TileXY {
+function works(g: Grid, rng: Rng, crossings: TileXY[], rooms: TileRect[]): TileXY {
   const tree = partition(
     W - MARGIN * 2,
     H - MARGIN * 2,
@@ -362,6 +363,9 @@ function works(g: Grid, rng: Rng, crossings: TileXY[]): TileXY {
       // tile wide, and the parent joins whatever its other half offered.
       if (at.x1 < at.x0 || at.y1 < at.y0) return null;
       room(g, at.x0, at.y0, at.x1, at.y1, TileCode.FLOOR);
+      // THE ROOM AND ITS WALLS, which is what upstream lights when a room's roll
+      // hits: every cell of the room's own map (RoomsLoader.lua:652).
+      rooms.push({ x0: at.x0 - 1, y0: at.y0 - 1, x1: at.x1 + 1, y1: at.y1 + 1 });
       const centre = {
         x: Math.floor((at.x0 + at.x1) / 2),
         y: Math.floor((at.y0 + at.y1) / 2),
@@ -686,6 +690,7 @@ export function makeSiteMap(
    * which is the only one that tunnels between rooms it cut.
    */
   const crossings: TileXY[] = [];
+  const rooms: TileRect[] = [];
 
   const spawn =
     shape === SiteShape.Town
@@ -694,7 +699,7 @@ export function makeSiteMap(
         ? cave(g, rng)
         : shape === SiteShape.Ruin
           ? ruin(g, rng)
-          : works(g, rng, crossings);
+          : works(g, rng, crossings, rooms);
 
   /**
    * ═══════════════════════════════════════════════════════════════════════════
@@ -860,6 +865,7 @@ export function makeSiteMap(
 
   return {
     vaults: placed,
+    rooms,
     view: { w: W, h: H, tiles: g },
     spawns: [spawn],
     /** A floor is somewhere you are, not somewhere you leave from. */
