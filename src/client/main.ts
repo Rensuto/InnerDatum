@@ -204,6 +204,7 @@ import {
   charSheetTipAt,
   drawCharSheet,
 } from './ui/charsheet.ts';
+import type { SheetRow } from './ui/charsheet.ts';
 // v12 — THE DRAG PRIMITIVES. Pure arithmetic and a closed set of panel names.
 // The offsets themselves live in THIS file (see `panelOffsets`) because they are
 // session-local browser state; what lives there is the one clamp, the one
@@ -2501,6 +2502,28 @@ let hoveredActorId: string | null = null;
 let pointerPoint: TileXY | null = null;
 
 /**
+ * WHETHER THE LAST PAINT PUT A CARD UNDER THE POINTER: the hover card, the
+ * talent panel's card, the actor card or the floor's card.
+ *
+ * Every card is anchored to `pointerPoint`, and this client paints on demand.
+ * A move used to ask for a paint only when a hover flag changed, and the sheet's
+ * talent rows, the party pane and the minimap have no flag — so a card stayed
+ * where the pointer had been, describing the field it had left, until a server
+ * frame happened to repaint. Reported from the character sheet as tooltips that
+ * update on the tick. The mousemove handler now paints whenever a card is up or
+ * `pointerCardAt` says one would open, so a card follows the pointer at the
+ * display's rate, and a pointer over nothing with a card still costs no paint.
+ */
+let pointerCardDrawn = false;
+
+/**
+ * THE CHARACTER SHEET'S ROWS AS THE LAST PAINT BUILT THEM, or null when it drew
+ * no sheet. `charSheetRows` is built once per paint; the mousemove handler asks
+ * about the rows on screen rather than building a second copy.
+ */
+let paintedSheetRows: readonly SheetRow[] | null = null;
+
+/**
  * THE ANSWERS, KEYED BY ACTOR ID AND STAMPED WITH THE TURN THEY DESCRIBE.
  *
  * A hit for the CURRENT game turn draws immediately and sends nothing, so
@@ -4494,6 +4517,144 @@ function drawDragGhost(ctx: CanvasRenderingContext2D, spriteSource: SpriteSource
 }
 
 /**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE HOVER CARDS, LAST, OVER EVERYTHING THEY EXPLAIN.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Asked for by name for the bag, the tree and the action bar. Drawn here
+ * rather than inside each panel because a card that respected its panel's
+ * bounds would be clipped by the thing it is describing — and because the
+ * ORDER matters: the bar is at the foot of the screen and its card goes above
+ * the pointer, so it lands on top of the board rather than under the bar.
+ *
+ * ONE CARD AT MOST. A pointer is in one place, so the first surface that
+ * claims it wins, and the panels are asked in the order they are stacked.
+ *
+ * ═══ ASKED BY THE PAINT AND BY THE MOUSEMOVE HANDLER ═══
+ * The paint draws what this returns; the handler asks it to decide whether a
+ * move should paint at all. One function, so the two can never disagree about
+ * whether a card is under the pointer. See `pointerCardDrawn`.
+ */
+function hoverCardAt(
+  layout: HudLayout,
+  sheetRows: readonly SheetRow[] | null,
+  px: number,
+  py: number,
+  width: number,
+  height: number,
+): HoverCard | null {
+  return (
+    (layout.inventory === null
+      ? null
+      : inventoryTipAt(
+          layout.inventory,
+          inventoryRowsFor(layout.inventory),
+          // THE VIEW, so the card can ask about the item under the POINTER
+          // rather than only the one the strip is focused on — see
+          // `inventoryTipAt`. It carries the `inventory` frame itself, so this
+          // is the same view the rows were built from and not a second one.
+          inventoryViewFor(layout.inventory),
+          px,
+          py,
+          invScroll,
+        )) ??
+    /**
+     * ═══ THE MINIMAP, WHICH IS A CONTROL AND HAS TO SAY SO ═══
+     *
+     * Upstream registers a `desc_fct` over its minimap zone
+     * (Minimalist.lua:1652) for the same reason: three mouse meanings that
+     * nothing on screen would otherwise announce. A control nobody knows about
+     * is very nearly no control.
+     *
+     * STILL ASKED FIRST, AND NOW GATED, because the sentence this used to
+     * carry — *"the minimap sits in the top-right corner where no panel is
+     * docked"* — stopped being true. Measured at an 809x378 interface box the
+     * minimap's 99x99 square overlaps the top-right corner of all three
+     * centred panels, and the corner it takes is the one holding the close
+     * button and the last tab.
+     *
+     * HIT-TEST ORDER MIRRORS PAINT ORDER, which is this file's rule and is
+     * what makes it a gate rather than a reorder: the minimap is painted
+     * BEFORE the panels now, so a point inside an open panel belongs to that
+     * panel even when nothing in it wants a card. Answering "you are pointing
+     * at the map" over a sheet the player opened is the same fault as drawing
+     * the map on top of it.
+     */
+    (coveredByPanel(layout, px, py) ? null : minimapCardAt(px, py, width)) ??
+    /**
+     * THE PARTY PANE, AND IT IS ASKED BEFORE THE BAR FOR A REASON.
+     *
+     * In Portraits mode this card is not an extra — it is the ONLY place the
+     * name, the hp numbers, the state word and the downed clock exist at all.
+     * The pane paints three initials at 640 wide and says everything else in a
+     * shade, which `ui/partypanel.ts`'s own note now records. The bar is at the
+     * foot of the screen and the pane is down the left edge, so the two cannot
+     * both claim a pointer anyway; the order is stated rather than left to
+     * whichever rect happens to be tested first.
+     */
+    (layout.party === null || layout.pane === null
+      ? null
+      : partyPaneTipAt(layout.party, layout.pane, px, py)) ??
+    /**
+     * THE CHARACTER SHEET'S TALENT ROWS, whose description the sheet has
+     * never had room to draw anywhere. Asked after the bag and the pane and
+     * before the bar, which is the order the four are stacked on screen.
+     */
+    (layout.sheet === null || sheetRows === null
+      ? null
+      : charSheetTipAt(layout.sheet, sheetRows, px, py)) ??
+    hotbarTipAt(hotbarView(), px, py, width, height)
+  );
+}
+
+/**
+ * ═══ ...AND ONLY ON A PANEL THAT HAS NO DESCRIPTION COLUMN ═══
+ * On a wide window the pane on the right is already saying all of this, in
+ * more room and without moving. A card floating over the icons repeating the
+ * column beside them is the same sentence twice, and the copy that follows
+ * the pointer is the one that covers the other icons.
+ *
+ * `talentPanelGeometry` OWNS THE ANSWER rather than a width test here: it is
+ * what decides whether the column exists, and a second copy of that
+ * threshold would disagree with it at exactly one window size.
+ */
+function talentCardAt(rect: PanelRect, px: number, py: number): HoverCard | null {
+  const talentRows = talentPanelRows(talentPanelView());
+  if (talentPanelGeometry(rect, talentRows, talentScroll).detail !== null) return null;
+  return talentTipAt(
+    rect,
+    talentRows,
+    px,
+    py,
+    talentScroll,
+    // WHAT EACH ATTRIBUTE IS BUYING — see `ProgressMsg.statGains`. Passed
+    // straight through: the server measured these against this body's own
+    // composed sheet and the panel's job is to put them under the pointer.
+    progress?.statGains,
+    // AND THE BADGES, so a hover over one names what it takes back.
+    progress?.unspendableStats ?? [],
+  );
+}
+
+/**
+ * WOULD A PAINT PUT A CARD UNDER THIS POINT? The two cards the pointer opens on
+ * its own. The actor and floor cards open through `noteHoveredActor`, which
+ * paints when the hovered tile changes.
+ */
+function pointerCardAt(
+  layout: HudLayout,
+  px: number,
+  py: number,
+  width: number,
+  height: number,
+): boolean {
+  return (
+    (layout.talents !== null && talentCardAt(layout.talents, px, py) !== null) ||
+    hoverCardAt(layout, paintedSheetRows, px, py, width, height) !== null
+  );
+}
+
+/**
  * The HUD layer, handed to the renderer as a painter so that render/ never has
  * to import ui/ (see `HudPainter` in render/canvas.ts).
  *
@@ -4503,6 +4664,9 @@ function drawDragGhost(ctx: CanvasRenderingContext2D, spriteSource: SpriteSource
  * then the refusal notice.
  */
 const paintHud: HudPainter = (ctx, width, height) => {
+  // NOTHING IS UP UNTIL THIS PAINT DRAWS IT. See `pointerCardDrawn`.
+  pointerCardDrawn = false;
+  paintedSheetRows = null;
   if (sprites === null) return;
   const layout = hudLayout(width, height);
 
@@ -4734,6 +4898,7 @@ const paintHud: HudPainter = (ctx, width, height) => {
   // a second opinion about which sections the short-panel ladder conceded — so
   // the card could describe a talent that is not on screen.
   const sheetRows = layout.sheet === null ? null : charSheetRows(charSheetView(), sheetTab);
+  paintedSheetRows = sheetRows;
   if (layout.sheet !== null && sheetRows !== null) {
     drawCharSheet({
       // THE SAME PAGE `charSheetRows` WAS BUILT FOR. See `SheetTab`.
@@ -4831,36 +4996,11 @@ const paintHud: HudPainter = (ctx, width, height) => {
      * every rect in this file lives in; the card clamps itself to the viewport
      * rather than flipping sides, so it never moves while the pointer is still.
      */
-    /**
-     * ═══ ...AND ONLY ON A PANEL THAT HAS NO DESCRIPTION COLUMN ═══
-     * On a wide window the pane on the right is already saying all of this, in
-     * more room and without moving. A card floating over the icons repeating the
-     * column beside them is the same sentence twice, and the copy that follows
-     * the pointer is the one that covers the other icons.
-     *
-     * `talentPanelGeometry` OWNS THE ANSWER rather than a width test here: it is
-     * what decides whether the column exists, and a second copy of that
-     * threshold would disagree with it at exactly one window size.
-     */
-    const talentRows = talentPanelRows(talentPanelView());
-    const hasDetailPane =
-      talentPanelGeometry(layout.talents, talentRows, talentScroll).detail !== null;
-    if (pointerPoint !== null && !hasDetailPane) {
-      const card = talentTipAt(
-        layout.talents,
-        talentRows,
-        pointerPoint.x,
-        pointerPoint.y,
-        talentScroll,
-        // WHAT EACH ATTRIBUTE IS BUYING — see `ProgressMsg.statGains`. Passed
-        // straight through: the server measured these against this body's own
-        // composed sheet and the panel's job is to put them under the pointer.
-        progress?.statGains,
-        // AND THE BADGES, so a hover over one names what it takes back.
-        progress?.unspendableStats ?? [],
-      );
+    if (pointerPoint !== null) {
+      const card = talentCardAt(layout.talents, pointerPoint.x, pointerPoint.y);
       if (card !== null) {
         drawHoverCard(ctx, sprites, card, pointerPoint.x, pointerPoint.y, width, height);
+        pointerCardDrawn = true;
       }
     }
   }
@@ -4956,85 +5096,14 @@ const paintHud: HudPainter = (ctx, width, height) => {
   drawHotbar({ ctx, sprites, view: hotbarView(), width, height });
 
   /**
-   * ═══════════════════════════════════════════════════════════════════════════
-   * THE HOVER CARDS, LAST, OVER EVERYTHING THEY EXPLAIN.
-   * ═══════════════════════════════════════════════════════════════════════════
-   *
-   * Asked for by name for the bag, the tree and the action bar. Drawn here
-   * rather than inside each panel because a card that respected its panel's
-   * bounds would be clipped by the thing it is describing — and because the
-   * ORDER matters: the bar is at the foot of the screen and its card goes above
-   * the pointer, so it lands on top of the board rather than under the bar.
-   *
-   * ONE CARD AT MOST. A pointer is in one place, so the first surface that
-   * claims it wins, and the panels are asked in the order they are stacked.
+   * THE HOVER CARDS, LAST, OVER EVERYTHING THEY EXPLAIN. See `hoverCardAt`,
+   * which the mousemove handler asks too.
    */
   if (pointerPoint !== null) {
-    const card =
-      (layout.inventory === null
-        ? null
-        : inventoryTipAt(
-            layout.inventory,
-            inventoryRowsFor(layout.inventory),
-            // THE VIEW, so the card can ask about the item under the POINTER
-            // rather than only the one the strip is focused on — see
-            // `inventoryTipAt`. It carries the `inventory` frame itself, so this
-            // is the same view the rows were built from and not a second one.
-            inventoryViewFor(layout.inventory),
-            pointerPoint.x,
-            pointerPoint.y,
-            invScroll,
-          )) ??
-      /**
-       * ═══ THE MINIMAP, WHICH IS A CONTROL AND HAS TO SAY SO ═══
-       *
-       * Upstream registers a `desc_fct` over its minimap zone
-       * (Minimalist.lua:1652) for the same reason: three mouse meanings that
-       * nothing on screen would otherwise announce. A control nobody knows about
-       * is very nearly no control.
-       *
-       * STILL ASKED FIRST, AND NOW GATED, because the sentence this used to
-       * carry — *"the minimap sits in the top-right corner where no panel is
-       * docked"* — stopped being true. Measured at an 809x378 interface box the
-       * minimap's 99x99 square overlaps the top-right corner of all three
-       * centred panels, and the corner it takes is the one holding the close
-       * button and the last tab.
-       *
-       * HIT-TEST ORDER MIRRORS PAINT ORDER, which is this file's rule and is
-       * what makes it a gate rather than a reorder: the minimap is painted
-       * BEFORE the panels now, so a point inside an open panel belongs to that
-       * panel even when nothing in it wants a card. Answering "you are pointing
-       * at the map" over a sheet the player opened is the same fault as drawing
-       * the map on top of it.
-       */
-      (coveredByPanel(layout, pointerPoint.x, pointerPoint.y)
-        ? null
-        : minimapCardAt(pointerPoint.x, pointerPoint.y, width)) ??
-      /**
-       * THE PARTY PANE, AND IT IS ASKED BEFORE THE BAR FOR A REASON.
-       *
-       * In Portraits mode this card is not an extra — it is the ONLY place the
-       * name, the hp numbers, the state word and the downed clock exist at all.
-       * The pane paints three initials at 640 wide and says everything else in a
-       * shade, which `ui/partypanel.ts`'s own note now records. The bar is at the
-       * foot of the screen and the pane is down the left edge, so the two cannot
-       * both claim a pointer anyway; the order is stated rather than left to
-       * whichever rect happens to be tested first.
-       */
-      (layout.party === null || layout.pane === null
-        ? null
-        : partyPaneTipAt(layout.party, layout.pane, pointerPoint.x, pointerPoint.y)) ??
-      /**
-       * THE CHARACTER SHEET'S TALENT ROWS, whose description the sheet has
-       * never had room to draw anywhere. Asked after the bag and the pane and
-       * before the bar, which is the order the four are stacked on screen.
-       */
-      (layout.sheet === null || sheetRows === null
-        ? null
-        : charSheetTipAt(layout.sheet, sheetRows, pointerPoint.x, pointerPoint.y)) ??
-      hotbarTipAt(hotbarView(), pointerPoint.x, pointerPoint.y, width, height);
+    const card = hoverCardAt(layout, sheetRows, pointerPoint.x, pointerPoint.y, width, height);
     if (card !== null) {
       drawHoverCard(ctx, sprites, card, pointerPoint.x, pointerPoint.y, width, height);
+      pointerCardDrawn = true;
     }
   }
 
@@ -5211,6 +5280,7 @@ const paintHud: HudPainter = (ctx, width, height) => {
       viewportW: width,
       viewportH: height,
     });
+    pointerCardDrawn = true;
   }
 
   /**
@@ -5278,6 +5348,7 @@ const paintHud: HudPainter = (ctx, width, height) => {
         viewportW: width,
         viewportH: height,
       });
+      pointerCardDrawn = true;
     }
   }
 
@@ -10508,10 +10579,17 @@ async function boot(): Promise<void> {
     // hovered: it is where the card WOULD open, and a stale one would put the
     // next card wherever the pointer was when it last crossed a token.
     pointerPoint = point;
+    // A CARD FOLLOWS THE POINTER — see `pointerCardDrawn`. Every hover below
+    // paints only when its flag changes; a card that is up moves on every move.
+    if (pointerCardDrawn) requestDraw();
     if (point !== null) {
       tokenMenu?.hoverAt(point.x, point.y);
       const { hudW: logicalW, hudH: logicalH } = renderer.metrics();
       const layout = hudLayout(logicalW, logicalH);
+      // ...AND ONE THAT WOULD OPEN HERE OPENS NOW, not on the next server frame.
+      if (!pointerCardDrawn && pointerCardAt(layout, point.x, point.y, logicalW, logicalH)) {
+        requestDraw();
+      }
       const over = respawnPromptHit(layout.respawn, point.x, point.y);
       if (over !== respawnHovered) {
         respawnHovered = over;
@@ -10926,6 +11004,7 @@ async function boot(): Promise<void> {
     // window would be the one surface here with no way to dismiss it.
     pointerPoint = null;
     noteHoveredActor(null);
+    if (pointerCardDrawn) requestDraw();
 
     if (hoveredSlot === -1) return;
     hoveredSlot = -1;

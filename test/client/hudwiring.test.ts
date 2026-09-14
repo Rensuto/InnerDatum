@@ -710,7 +710,7 @@ describe('the minimap is wired to something', () => {
     // Upstream registers a `desc_fct` over the zone (Minimalist.lua:1652) for
     // the same reason. Ours is a hover card, asked first because nothing else is
     // docked in that corner.
-    expect(CODE).toContain('minimapCardAt(pointerPoint.x, pointerPoint.y, width)');
+    expect(CODE).toContain('minimapCardAt(px, py, width)');
   });
 });
 
@@ -1130,9 +1130,9 @@ describe('the minimap is drawn under the panels, not over them', () => {
      * everything that is not a talent row, so a pointer on the `[E]quip` tab
      * would fall straight through to the minimap again. The gate is the fix.
      */
-    expect(CODE).toContain('coveredByPanel(layout, pointerPoint.x, pointerPoint.y)');
-    const gate = CODE.indexOf('coveredByPanel(layout, pointerPoint.x, pointerPoint.y)');
-    const ask = CODE.indexOf('minimapCardAt(pointerPoint.x, pointerPoint.y, width)');
+    expect(CODE).toContain('coveredByPanel(layout, px, py)');
+    const gate = CODE.indexOf('coveredByPanel(layout, px, py)');
+    const ask = CODE.indexOf('minimapCardAt(px, py, width)');
     expect(ask, 'the minimap card is asked ungated').toBeGreaterThan(gate);
   });
 });
@@ -1164,5 +1164,76 @@ describe('a refusal outlives its banner', () => {
     // speaking, and a refusal is the rules declining rather than a person
     // talking. The Margin gets three lines a minute and this would bury them.
     expect(CODE.slice(banner, logged + 200)).toContain('LogLane.Record');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// A CARD FOLLOWS THE POINTER BETWEEN SERVER FRAMES
+// ---------------------------------------------------------------------------
+
+describe('a card follows the pointer between paints', () => {
+  /**
+   * REPORTED from the character sheet: a card did not follow the pointer from
+   * one field to the next, and seemed to update on the server's tick. It did.
+   * Every card is anchored to `pointerPoint`, this client paints on demand, and
+   * a move asked for a paint only when a hover flag changed. The sheet's talent
+   * rows, the party pane and the minimap have no flag, and a card moving inside
+   * one field never changed one.
+   */
+  const PAINT_HEAD = 'const paintHud: HudPainter = (ctx, width, height) => {';
+  const paint = (): string => between(PAINT_HEAD, '\n};\n');
+
+  it('forgets the last card before it paints anything', () => {
+    expect(between(PAINT_HEAD, 'if (sprites === null) return;')).toContain(
+      'pointerCardDrawn = false;',
+    );
+  });
+
+  it('records every card it paints, before the next one', () => {
+    const body = paint();
+    const heads = ['drawHoverCard(', 'drawTooltip({', 'drawLootTip({'];
+    const calls: number[] = [];
+    for (const head of heads) {
+      for (let i = body.indexOf(head); i >= 0; i = body.indexOf(head, i + 1)) calls.push(i);
+    }
+    calls.sort((a, b) => a - b);
+    expect(calls.length, 'the four card paints').toBe(4);
+    expect(body.split('pointerCardDrawn = true;').length - 1).toBe(calls.length);
+    calls.forEach((call, n) => {
+      const set = body.indexOf('pointerCardDrawn = true;', call);
+      expect(set, `card paint ${String(n)} is recorded`).toBeGreaterThan(call);
+      expect(set, `card paint ${String(n)} is recorded before the next`).toBeLessThan(
+        calls[n + 1] ?? body.length,
+      );
+    });
+  });
+
+  it('paints on a move while a card is up, and when one would open', () => {
+    const move = between(
+      "canvas.addEventListener('mousemove', (event) => {",
+      "canvas.addEventListener('mouseleave'",
+    );
+    const anchor = at('pointerPoint = point;', move);
+    expect(at('if (pointerCardDrawn) requestDraw();', move)).toBeGreaterThan(anchor);
+    expect(at('pointerCardAt(layout, point.x, point.y, logicalW, logicalH)', move)).toBeGreaterThan(
+      anchor,
+    );
+  });
+
+  it('asks the same functions the paint draws from', () => {
+    expect(paint()).toContain(
+      'hoverCardAt(layout, sheetRows, pointerPoint.x, pointerPoint.y, width, height)',
+    );
+    expect(paint()).toContain('talentCardAt(layout.talents, pointerPoint.x, pointerPoint.y)');
+    const ask = between('function pointerCardAt(', '\n}\n');
+    expect(ask).toContain('hoverCardAt(layout, paintedSheetRows, px, py, width, height)');
+    expect(ask).toContain('talentCardAt(layout.talents, px, py)');
+    expect(paint()).toContain('paintedSheetRows = sheetRows;');
+  });
+
+  it('takes the card away when the pointer leaves the canvas', () => {
+    expect(
+      between("canvas.addEventListener('mouseleave', () => {", 'if (hoveredSlot === -1) return;'),
+    ).toContain('if (pointerCardDrawn) requestDraw();');
   });
 });
