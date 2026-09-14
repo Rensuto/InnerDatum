@@ -8199,6 +8199,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       v: PROTOCOL_VERSION,
       t: 'vision',
       realmId: realm.id,
+      sight: vision.sight,
       x0: seen.x0,
       y0: seen.y0,
       w: seen.w,

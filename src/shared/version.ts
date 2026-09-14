@@ -648,6 +648,15 @@
  * `SCHEMA_VERSION` STAYS 1. A saved overworld memory keeps the disc it was
  * written with, and memory only ever grows, so no file needs converting.
  *
+ * CONSIDERED AND NOT BUMPED (HOW FAR YOU SEE). `VisionMsg` gains `sight`, the
+ * viewer's own sight radius, and PROTOCOL_VERSION STAYS 24.
+ *
+ * ═══ WHY THIS DOES NOT FORCE A BUMP ═══
+ * An older client ignores the key and aims with the plain line, and the server
+ * answers a line it will not allow with the same typed `no_los` it always has.
+ * A new client reads it to draw upstream's player line before the server has
+ * to refuse.
+ *
  * ═══════════════════════════════════════════════════════════════════════════
 
 

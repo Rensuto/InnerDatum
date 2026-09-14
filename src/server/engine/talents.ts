@@ -1278,6 +1278,8 @@ export type TalentWorld = {
    * `teleportRandom`, and by nothing else so far.
    */
   vaultAt(x: number, y: number): string | undefined;
+  /** The line a body is allowed, when the world can say (`World.lineClearFor`). */
+  lineClearFor?(actor: TalentActor, to: TileXY): boolean;
 };
 
 /**
@@ -2832,7 +2834,9 @@ function checkTargeting(
   // which is how the authored `min_range` reads and how the ring's hole is cut.
   if (targeting.minRange > 0 && distance < targeting.minRange) return TalentRefusal.MinRange;
 
-  if (targeting.requiresLos && distance > 1 && !hasLineOfSight(world.level, actor, target)) {
+  const lineClear = (): boolean =>
+    world.lineClearFor?.(actor, target) ?? hasLineOfSight(world.level, actor, target);
+  if (targeting.requiresLos && distance > 1 && !lineClear()) {
     return TalentRefusal.NoLineOfSight;
   }
 

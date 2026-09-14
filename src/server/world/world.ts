@@ -50,6 +50,8 @@ import { canWalk, makeTestMap } from '../../shared/level.ts';
 import { ActorKind, TileCode } from '../../shared/protocol.ts';
 import { createRng } from '../../shared/rng.ts';
 import { createFog } from '../../shared/fog.ts';
+import { lineOfSightFor } from '../view/eyesight.ts';
+import type { LineActor } from '../view/eyesight.ts';
 import { lightLevel } from '../../shared/light.ts';
 import type { SiteLighting } from '../../shared/light.ts';
 import { resolveItem } from '../content/resolve.ts';
@@ -349,6 +351,12 @@ export type World = {
   hasMemoryOf(actorId: string): boolean;
   /** Put a character's memory of this level in place, as a restore does. */
   setMemoryOf(actorId: string, bits: Uint8Array): void;
+  /**
+   * Is the line from `actor` to `to` clear for a shot or a talent? A player's is
+   * upstream's player line, across what they see and what they remember
+   * (class/Player.lua:679-719); anybody else's is plain line of sight.
+   */
+  lineClearFor(actor: LineActor, to: TileXY): boolean;
   /** The clock and the combat state. Mutated by the scheduler, nobody else. */
   readonly turn: TurnState;
   /**
@@ -1435,7 +1443,7 @@ export function createWorld(
     return out;
   };
 
-  return {
+  const world: World = {
     id,
     level,
     lit,
@@ -1444,6 +1452,7 @@ export function createWorld(
     setMemoryOf: (actorId: string, bits: Uint8Array): void => {
       memory.set(actorId, bits);
     },
+    lineClearFor: (actor: LineActor, to: TileXY): boolean => lineOfSightFor(world, actor, to),
     turn,
     rng: playRng,
     lootRng,
@@ -1487,4 +1496,5 @@ export function createWorld(
     props: (): readonly Prop[] => [...props.values()],
     itemsAt,
   };
+  return world;
 }

@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { AiProfile } from '../../src/server/engine/actor.ts';
 import { DamageType } from '../../src/server/engine/damage.ts';
 import { createDownedState } from '../../src/server/engine/downed.ts';
+import { sightRadiusOf } from '../../src/server/engine/derived.ts';
 import { composeWielders } from '../../src/server/engine/equipment.ts';
 import { createPartyState } from '../../src/server/engine/party.ts';
 import { wsGateway } from '../../src/server/net/gateway.ts';
@@ -391,6 +392,7 @@ describe('the dark, over the wire', () => {
     const y0 = Number(frame?.['y0']);
     const w = Number(frame?.['w']);
     const h = Number(frame?.['h']);
+    expect(frame?.['sight'], 'the vision frame carries no sight radius').toBe(sightRadiusOf(body));
     const seen = fogFromBase64(String(frame?.['seen']), fogBytes(w, h));
     const remembered = fogFromBase64(String(frame?.['remembered']), fogBytes(w, h));
     expect(fogHas(seen, w, spot.x - x0, spot.y - y0), 'the lantern did not show it').toBe(true);

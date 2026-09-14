@@ -180,6 +180,41 @@ export function hasLineOfSight(level: LevelView, from: TileXY, to: TileXY): bool
   return true;
 }
 
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * CAN A PLAYER DRAW A LINE TO THIS TILE? Upstream's `Player:lineFOV`.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * A target the player sees gets the ordinary line: only what blocks an eye
+ * stops it (class/Player.lua:705-708). A target they do not see can only be
+ * reached across ground they know: every tile on the way must be within sight,
+ * seen or remembered, and not block an eye. Any other tile stops the line
+ * (class/Player.lua:709-714). So nobody aims down a dark corridor they have
+ * never walked.
+ *
+ * Everybody else keeps `hasLineOfSight`: upstream's monster line is its own
+ * rule (class/NPC.lua:162-226) and is not ported.
+ */
+export function playerLineClear(
+  level: LevelView,
+  from: TileXY,
+  to: TileXY,
+  sightRadius: number,
+  seen: (x: number, y: number) => boolean,
+  remembered: (x: number, y: number) => boolean,
+): boolean {
+  if (seen(to.x, to.y)) return hasLineOfSight(level, from, to);
+  const line = bresenham(from, to);
+  for (let i = 1; i < line.length - 1; i += 1) {
+    const tile = line[i];
+    if (tile === undefined) continue;
+    if (!seen(tile.x, tile.y) && !remembered(tile.x, tile.y)) return false;
+    if (blocksSightAt(level, tile.x, tile.y) || sightDistance(from, tile) > sightRadius)
+      return false;
+  }
+  return true;
+}
+
 /** `core.fov.distance` — the straight line between two tiles, in tiles. */
 export function sightDistance(from: TileXY, to: TileXY): number {
   const dx = to.x - from.x;

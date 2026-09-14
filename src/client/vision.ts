@@ -31,12 +31,16 @@ export type VisionWindow = {
   readonly h: number;
   /** One bit per tile of the window, row-major from (x0, y0). */
   readonly seen: Uint8Array;
+  /** The viewer's sight radius, off the frame. */
+  readonly sight: number;
 };
 
 /** What the renderer asks of a tile, in level coordinates. */
 export type VisionView = {
   readonly seen: (x: number, y: number) => boolean;
   readonly remembered: (x: number, y: number) => boolean;
+  /** How far this viewer's sight reaches, for a line toward what they cannot see. */
+  readonly sight: number;
 };
 
 /**
@@ -60,6 +64,7 @@ export function readVisionFrame(msg: VisionMsg, memory: Set<string>): VisionWind
     w: msg.w,
     h: msg.h,
     seen: fogFromBase64(msg.seen, bytes),
+    sight: msg.sight,
   };
 }
 
@@ -77,6 +82,7 @@ export function visionViewOf(
 ): VisionView | null {
   if (window === null || window.realmId !== realmId) return null;
   return {
+    sight: window.sight,
     seen: (x, y) =>
       x >= window.x0 &&
       y >= window.y0 &&

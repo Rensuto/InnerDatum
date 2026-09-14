@@ -703,6 +703,50 @@ describe('the loadout cap — PLAN.md § 5', () => {
   });
 });
 
+describe('the line a talent needs is the world`s to answer, when it can', () => {
+  /**
+   * `World.lineClearFor` is how a player's talent gets upstream's player line
+   * (class/Player.lua:679-719) at resolution. The turn engine's own harness has
+   * no talent runtime and never resolves one, so the join between this check
+   * and the world's answer is exercised here, with a world that answers.
+   */
+  function aimedShot(walls: readonly (readonly [number, number])[]) {
+    const f = fixture(PLENTY, walls);
+    const inspector = f.add(INSPECTOR, 'ins', 5, 5);
+    refill(f.engine, 'ins');
+    const shot = INSPECTOR.loadout.find(
+      (talent) =>
+        talent.targeting.requiresLos &&
+        talent.targeting.affinity === Affinity.Hostile &&
+        talent.targeting.shape === TargetShape.Single,
+    );
+    if (shot === undefined) throw new Error('the Inspector has no aimed shot to test');
+    // One tile past the dead zone, straight along the row.
+    const husk = f.addMonster('husk', 5 + shot.targeting.minRange + 1, 5);
+    return { f, inspector, shot, aim: { x: husk.x, y: husk.y, actorId: husk.id } };
+  }
+
+  it('lets the talent past a wall when the world says the line is clear', () => {
+    const { f, inspector, shot, aim } = aimedShot([[6, 5]]);
+    expect(canUseTalent(f.engine, inspector, shot, aim, f.world), 'the plain line').toBe(
+      TalentRefusal.NoLineOfSight,
+    );
+    expect(
+      canUseTalent(f.engine, inspector, shot, aim, { ...f.world, lineClearFor: () => true }),
+      'the world`s line',
+    ).toBe(null);
+  });
+
+  it('refuses it across open floor when the world says the line is not clear', () => {
+    const { f, inspector, shot, aim } = aimedShot([]);
+    expect(canUseTalent(f.engine, inspector, shot, aim, f.world), 'the plain line').toBe(null);
+    expect(
+      canUseTalent(f.engine, inspector, shot, aim, { ...f.world, lineClearFor: () => false }),
+      'the world`s line',
+    ).toBe(TalentRefusal.NoLineOfSight);
+  });
+});
+
 describe('MELEE REACH — the Watchman can swing on a DIAGONAL', () => {
   it('lets all four melee talents reach a husk standing corner to corner', () => {
     // ═══════════════════════════════════════════════════════════════════════

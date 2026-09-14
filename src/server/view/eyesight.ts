@@ -22,6 +22,9 @@
  * fixture's bare tile) excludes nobody.
  */
 import { liteRadiusOf, sightRadiusOf } from '../engine/derived.ts';
+import { fogHas } from '../../shared/fog.ts';
+import { ActorKind } from '../../shared/protocol.ts';
+import { hasLineOfSight, playerLineClear } from '../../shared/sight.ts';
 import { computeVision } from '../../shared/vision.ts';
 import type { CombatMods } from '../engine/derived.ts';
 import type { World } from '../world/world.ts';
@@ -32,7 +35,10 @@ import type { LightSource, Vision } from '../../shared/vision.ts';
 export type Eye = TileXY & { readonly combat?: { readonly mods?: CombatMods } };
 
 /** What `eye` sees in `world`, and how far from it any of that can be. */
-export function visionOf(world: World, eye: Eye): Vision & { readonly reach: number } {
+export function visionOf(
+  world: World,
+  eye: Eye,
+): Vision & { readonly sight: number; readonly reach: number } {
   const sight = sightRadiusOf(eye);
   const lite = liteRadiusOf(eye);
   const lights: LightSource[] = [];
@@ -44,5 +50,30 @@ export function visionOf(world: World, eye: Eye): Vision & { readonly reach: num
   const vision = computeVision(world.level, eye, { sight, lite }, world.lit, lights);
   // THE SQUARE A FRAME MUST CUT: a carried light reaches past sight, and other
   // lights only show what sight already reaches (`computeVision`).
-  return { ...vision, reach: Math.max(sight, lite) };
+  return { ...vision, sight, reach: Math.max(sight, lite) };
+}
+
+/** A body that may be drawing a line. Its `kind` decides which rule it gets. */
+export type LineActor = Eye & { readonly id: string; readonly kind?: ActorKind };
+
+/**
+ * IS THE LINE FROM THIS BODY TO THIS TILE CLEAR for a shot or a talent?
+ *
+ * A player's is upstream's player line (`playerLineClear`): what they see now,
+ * and what this level remembers for them (`World.memoryOf`). Anybody else's is
+ * plain line of sight.
+ */
+export function lineOfSightFor(world: World, actor: LineActor, to: TileXY): boolean {
+  if (actor.kind !== ActorKind.Player) return hasLineOfSight(world.level, actor, to);
+  const vision = visionOf(world, actor);
+  const memory = world.memoryOf(actor.id);
+  const w = world.level.w;
+  return playerLineClear(
+    world.level,
+    actor,
+    to,
+    vision.sight,
+    (x, y) => fogHas(vision.seen, w, x, y),
+    (x, y) => fogHas(memory, w, x, y),
+  );
 }

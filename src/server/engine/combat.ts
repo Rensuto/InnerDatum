@@ -262,6 +262,11 @@ export type CombatActor = {
 /** Just enough world for the legality checks. `World` satisfies it. */
 export type CombatWorld = {
   readonly level: LevelView;
+  /**
+   * The line a body is allowed, when the world can say (`World.lineClearFor`).
+   * Absent, as in a fixture, the plain line of sight.
+   */
+  lineClearFor?(actor: CombatActor, to: { readonly x: number; readonly y: number }): boolean;
 };
 
 /** Why a swing never happened. Never a miss — a miss is `ok: true, hit: false`. */
@@ -404,7 +409,9 @@ export function canAttack(
 
   // Melee needs no sight check — you are standing on them. Anything with reach
   // does, or it shoots through the wall it is standing behind.
-  if (combatDistance(attacker, target) > 1 && !hasLineOfSight(world.level, attacker, target)) {
+  const clear =
+    world.lineClearFor?.(attacker, target) ?? hasLineOfSight(world.level, attacker, target);
+  if (combatDistance(attacker, target) > 1 && !clear) {
     return AttackRefusal.NoLineOfSight;
   }
 

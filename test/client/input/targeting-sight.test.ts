@@ -6,6 +6,7 @@ import { TargetAdvice, createTargeting } from '../../../src/client/input/targeti
 import { hasLineOfSight } from '../../../src/shared/sight.ts';
 import { TalentShape, TileCode } from '../../../src/shared/protocol.ts';
 import type { LevelView, LoadoutTalent } from '../../../src/shared/protocol.ts';
+import type { VisionView } from '../../../src/client/vision.ts';
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════
@@ -78,12 +79,13 @@ function adviceThrough(
   view: LevelView,
   from: { x: number; y: number },
   to: { x: number; y: number },
+  vision: VisionView | null = null,
 ) {
   const targeting = createTargeting({
     onChange: () => {},
     onCommit: () => {},
   });
-  targeting.begin(bolt(20), { level: view, origin: from, occupied: [to] });
+  targeting.begin(bolt(20), { level: view, origin: from, occupied: [to], vision });
   targeting.hover(to);
   return targeting.advice();
 }
@@ -158,6 +160,30 @@ describe('the aim preview and the server agree about what blocks an eye', () => 
 // ---------------------------------------------------------------------------
 // The guard that replaced the comparison
 // ---------------------------------------------------------------------------
+
+describe('the aim preview draws the player line, in the dark', () => {
+  const from = { x: 2, y: 4 };
+  const to = { x: 8, y: 4 };
+  const standingOnly = (x: number, y: number): boolean => x === from.x && y === from.y;
+
+  it('refuses a tile the player cannot see, down ground they have never walked', () => {
+    const vision: VisionView = { sight: 10, seen: standingOnly, remembered: () => false };
+    expect(adviceThrough(level(), from, to, vision)).toBe(TargetAdvice.NoLos);
+  });
+
+  it('allows it down ground they remember', () => {
+    const vision: VisionView = {
+      sight: 10,
+      seen: standingOnly,
+      remembered: (x, y) => y === from.y && x > from.x && x < to.x,
+    };
+    expect(adviceThrough(level(), from, to, vision)).not.toBe(TargetAdvice.NoLos);
+  });
+
+  it('draws the plain line before any vision frame has arrived', () => {
+    expect(adviceThrough(level(), from, to)).not.toBe(TargetAdvice.NoLos);
+  });
+});
 
 describe('there is exactly one line-of-sight trace', () => {
   it('no module defines its own', () => {

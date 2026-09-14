@@ -87,7 +87,6 @@ import type {
 } from './net/gateway.ts';
 import { toDisplayName } from './view/projector.ts';
 import type { TurnState } from './view/projector.ts';
-import { hasLineOfSight } from '../shared/sight.ts';
 import { sightDistance } from '../shared/sight.ts';
 import { fogHas } from '../shared/fog.ts';
 import { visionOf } from './view/eyesight.ts';
@@ -2291,7 +2290,7 @@ export function createTurnEngine(opts: TurnEngineOptions): ReapingTurnEngine {
       // Melee needs no sight check — you are standing on them. The guard mirrors
       // `canAttack`; Bresenham excludes both endpoints, so an adjacent tile is
       // always in sight anyway and the two agree by construction.
-      if (distance > 1 && !hasLineOfSight(world.level, actor, target)) {
+      if (distance > 1 && !world.lineClearFor(actor, target)) {
         return refuseTalent(ErrorCode.NoLos, `${talent.name}: no line of sight to that tile`);
       }
 

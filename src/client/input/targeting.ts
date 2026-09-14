@@ -57,7 +57,8 @@
  */
 
 import { DIR_VECTORS, inBounds } from '../../shared/coords.ts';
-import { hasLineOfSight } from '../../shared/sight.ts';
+import { hasLineOfSight, playerLineClear } from '../../shared/sight.ts';
+import type { VisionView } from '../vision.ts';
 import { blocksSightAt } from '../../shared/level.ts';
 import { TalentShape } from '../../shared/protocol.ts';
 import { MarkerKind } from '../render/canvas.ts';
@@ -111,6 +112,8 @@ export type TargetingWorld = {
    * anyone pressed Enter.
    */
   readonly occupied?: readonly TileXY[];
+  /** What the caster sees and remembers. Absent, the plain line is drawn. */
+  readonly vision?: VisionView | null;
 };
 
 export type TargetingOptions = {
@@ -232,6 +235,8 @@ export function createTargeting(options: TargetingOptions): Targeting {
   let ring: readonly TargetCell[] = [];
   /** `${x},${y}` of every living body. Refreshed whenever the board moves. */
   let occupied = new Set<string>();
+  /** What the caster sees and remembers, for upstream's player line. */
+  let vision: VisionView | null = null;
 
   function close(): void {
     talent = null;
@@ -240,6 +245,7 @@ export function createTargeting(options: TargetingOptions): Targeting {
     cursor = null;
     ring = [];
     occupied = new Set();
+    vision = null;
   }
 
   function tileKey(tile: TileXY): string {
@@ -248,6 +254,17 @@ export function createTargeting(options: TargetingOptions): Targeting {
 
   function setOccupancy(tiles: readonly TileXY[]): void {
     occupied = new Set(tiles.map(tileKey));
+  }
+
+  /**
+   * Would the server let this line through? With a vision frame, upstream's
+   * player line (`playerLineClear`), which the server draws the same way; before
+   * the first frame, the plain line.
+   */
+  function lineClear(lv: LevelView, from: TileXY, to: TileXY): boolean {
+    return vision === null
+      ? hasLineOfSight(lv, from, to)
+      : playerLineClear(lv, from, to, vision.sight, vision.seen, vision.remembered);
   }
 
   /**
@@ -273,7 +290,7 @@ export function createTargeting(options: TargetingOptions): Targeting {
     if (blocksSightAt(level, tile.x, tile.y)) return TargetAdvice.Blocked;
     // Adjacent needs no sight check — you are standing on them. Mirrors the
     // `distance > 1` guard in `canAttack`.
-    if (d > 1 && !hasLineOfSight(level, origin, tile)) return TargetAdvice.NoLos;
+    if (d > 1 && !lineClear(level, origin, tile)) return TargetAdvice.NoLos;
 
     // OCCUPANCY, LAST, and only for the two shapes that care. It is checked
     // after geometry because geometry is what the player can fix by moving; a
@@ -339,7 +356,7 @@ export function createTargeting(options: TargetingOptions): Targeting {
           cells.push({ x, y, marker: MarkerKind.MinRange, shaded: false });
           continue;
         }
-        if (d > 1 && !hasLineOfSight(lv, from, { x, y })) {
+        if (d > 1 && !lineClear(lv, from, { x, y })) {
           // LOS-GREYING: a wash and no marker. An unavailable tile must never be
           // busier than an available one.
           cells.push({ x, y, marker: null, shaded: true });
@@ -387,6 +404,7 @@ export function createTargeting(options: TargetingOptions): Targeting {
     talent = next;
     level = world.level;
     origin = world.origin;
+    vision = world.vision ?? null;
     // Occupancy before the ring and before the opening pick: `pickOpeningCursor`
     // calls `adviseTile`, which consults it, so a stale set would open a
     // `single` cursor on bare floor.
@@ -416,6 +434,7 @@ export function createTargeting(options: TargetingOptions): Targeting {
     const moved = origin === null || origin.x !== world.origin.x || origin.y !== world.origin.y;
     level = world.level;
     origin = world.origin;
+    vision = world.vision ?? null;
     // ALWAYS, not just when the caster moved: bodies shuffle every sweep, and a
     // Fog Step that still shows a landing square somebody has since walked onto
     // is the same lie as a stale ring, one tile smaller.

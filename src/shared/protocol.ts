@@ -7135,6 +7135,11 @@ export type VisionMsg = {
   seen: string;
   /** The same window of this character's memory of the realm. */
   remembered: string;
+  /**
+   * How far this viewer's sight reaches. A client needs it to draw upstream's
+   * player line toward a tile it cannot see (`playerLineClear`).
+   */
+  sight: number;
 };
 
 export type ViewerMsg =

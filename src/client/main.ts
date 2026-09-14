@@ -4361,6 +4361,8 @@ function targetingWorld(): TargetingWorld {
   return {
     level,
     origin: me === undefined ? null : { x: me.x, y: me.y },
+    // What the caster sees and remembers, so the aim draws upstream's player line.
+    vision: visionViewOf(vision, currentRealmId, explored.get(currentRealmId ?? '')),
     // Living hostiles, so the cursor opens on something worth aiming at.
     // M4 SEAM: Mend Wounds wants ALLIES here, and `LoadoutTalent` does not yet
     // say which a talent prefers. Until it does, the opening pick is a

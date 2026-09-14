@@ -26,6 +26,7 @@ function frame(): VisionMsg {
     h: 4,
     seen: fogToBase64(seen),
     remembered: fogToBase64(remembered),
+    sight: 10,
   };
 }
 
@@ -68,6 +69,13 @@ describe('visionViewOf', () => {
     expect(view.remembered(0, 0)).toBe(true);
     expect(view.remembered(11, 21)).toBe(true);
     expect(view.remembered(13, 22)).toBe(false);
+  });
+
+  it('carries the viewer`s sight radius, which the aim preview draws its line with', () => {
+    const memory = new Set<string>();
+    const window = readVisionFrame(frame(), memory);
+    expect(window.sight).toBe(10);
+    expect(visionViewOf(window, 'realm:test', memory)?.sight).toBe(10);
   });
 
   it('says nothing before a window arrives, or for a window of another map', () => {

@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { fogSet } from '../../src/shared/fog.ts';
 
 import { AiProfile, setCooldown, Faction } from '../../src/server/engine/actor.ts';
 import {
@@ -221,6 +222,22 @@ describe('line of sight', () => {
     const s = session(ALL);
     wall(s.world, 12, 10);
     expect(use(s, REVOLVER_SHOT.id, { x: 14, y: 10 })).toBe(ErrorCode.NoLos);
+  });
+
+  it('refuses a player a tile they cannot see, down ground they have never seen', () => {
+    // Upstream's player line (class/Player.lua:709-714): the level is dark and
+    // the caster carries no light, so neither the target nor the lane is seen.
+    const s = session(ALL);
+    s.world.lit.fill(0);
+    expect(use(s, REVOLVER_SHOT.id, { x: 14, y: 10 })).toBe(ErrorCode.NoLos);
+  });
+
+  it('lets the same shot through down ground the player remembers', () => {
+    const s = session(ALL);
+    s.world.lit.fill(0);
+    const memory = s.world.memoryOf('actor_caster');
+    for (let x = 11; x <= 13; x += 1) fogSet(memory, s.world.level.w, x, 10);
+    expect(use(s, REVOLVER_SHOT.id, { x: 14, y: 10 })).toBe('ok');
   });
 
   it('does not let a wall block the tile it is standing on', () => {

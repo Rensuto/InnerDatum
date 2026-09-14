@@ -638,6 +638,23 @@ describe('a bump is now a real swing', () => {
     expect(result.events.some((event) => event.t === 'refunded')).toBe(false);
   });
 
+  it('refuses a player’s shot at a husk down a dark lane, and takes it when lit', () => {
+    for (const lit of [false, true]) {
+      const table = duel(`shot-in-the-dark-${String(lit)}`, { player: { range: 7 } });
+      if (!lit) table.world.lit.fill(0);
+      table.world.turn.engagement = 3;
+      const husk = must(table.world.getActor('m1'), 'm1');
+      husk.x = 25;
+      expect(
+        submitIntent(table.world, table.barrier, 'p1', { kind: 'attack', targetId: 'm1' }),
+      ).toBe(true);
+      const events = pump(table.world, { nowMs: 0, barrier: table.barrier }).events;
+      const refusal = events.find((event) => event.t === 'refunded');
+      const reason = refusal?.t === 'refunded' ? refusal.reason : undefined;
+      expect(reason, `lit: ${String(lit)}`).toBe(lit ? undefined : 'no_los');
+    }
+  });
+
   it('swings at a husk the player cannot see, as upstream bumps whatever is there', () => {
     // `block_move` attacks whatever steps into it and never asks whether it was
     // seen (engine/interface/ActorLife.lua:39-45). The level is dark and the
