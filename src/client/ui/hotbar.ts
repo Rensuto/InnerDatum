@@ -529,6 +529,8 @@ export type HotbarOptions = {
   readonly view: HotbarView;
   /** The bar's outer rect, in logical backbuffer pixels. See `hotbarPanelSize`. */
   readonly rect: PanelRect;
+  /** What its cogwheel set. The default when absent. */
+  readonly style?: HotbarStyle;
 };
 
 export type SlotRect = {
@@ -582,11 +584,66 @@ export const HOTBAR_HEADER_H = 12;
 export const HOTBAR_TOTAL_H = HOTBAR_INSET * 2 + HOTBAR_HEADER_H + SLOT_PX;
 
 /** The narrowest bar: one slot a line. The grip stops here. */
-export const HOTBAR_FLOOR: PanelSize = { w: HOTBAR_INSET * 2 + SLOT_PX, h: HOTBAR_TOTAL_H };
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * HOW THE BAR IS DRAWN — the three things its cogwheel sets.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Asked for: the bar's own settings button, like the case log's, with a setting
+ * to stand it on end along with the others. Upstream's own options for its
+ * hotkey bar are the icon size, "From 32 to 64" (GameOptions.lua:307), and its
+ * box lays icons out row by row or column by column
+ * (engine/HotkeysIconsDisplay.lua:265-278). Those two, and the case log's fade.
+ *
+ * VALUES, NOT STEP INDICES, for `logStyleSchema`'s reason: a stored 48 is still
+ * 48 the day a step is added.
+ */
+export type HotbarStyle = {
+  /** Column by column rather than row by row: upstream's box docked on a side. */
+  readonly vertical: boolean;
+  /** The icon's size in logical pixels. The slot, its gap and its art scale with it. */
+  readonly icon: number;
+  /** Backing opacity, as a percentage. The slots never fade. */
+  readonly opacity: number;
+};
+
+const ICON_STEPS = [ICON_DRAW_PX, 48, 64] as const;
+const ICON_NAMES = ['Normal', 'Large', 'Huge'] as const;
+const FADE_STEPS = [40, 60, 80, 100] as const;
+
+export const DEFAULT_HOTBAR_STYLE: HotbarStyle = {
+  vertical: false,
+  icon: ICON_DRAW_PX,
+  opacity: 100,
+};
+
+/** How much bigger than the drawn-at-32 slot this style's slot is. */
+function scaleOf(style: HotbarStyle): number {
+  return style.icon / ICON_DRAW_PX;
+}
+
+function slotPx(style: HotbarStyle): number {
+  return Math.round(SLOT_PX * scaleOf(style));
+}
+
+function gapPx(style: HotbarStyle): number {
+  return Math.round(SLOT_GAP * scaleOf(style));
+}
+
+/** How long a line of `n` slots is at this style, gaps included. */
+function lineLength(n: number, style: HotbarStyle): number {
+  return n * slotPx(style) + Math.max(0, n - 1) * gapPx(style);
+}
+
+/** The smallest bar at a style: one slot. The grip stops here. */
+export function hotbarFloor(style: HotbarStyle = DEFAULT_HOTBAR_STYLE): PanelSize {
+  const one = HOTBAR_INSET * 2 + slotPx(style);
+  return { w: one, h: one + HOTBAR_HEADER_H };
+}
 
 /** How many slots sit on a line `along` pixels long: at least one, at most all. */
-function perLine(along: number, count: number): number {
-  const fits = Math.floor((along + SLOT_GAP) / (SLOT_PX + SLOT_GAP));
+function perLine(along: number, count: number, style: HotbarStyle): number {
+  const fits = Math.floor((along + gapPx(style)) / (slotPx(style) + gapPx(style)));
   return Math.max(1, Math.min(Math.max(1, count), fits));
 }
 
@@ -596,15 +653,28 @@ function perLine(along: number, count: number): number {
  * narrower than one slot, and the height its lines need. Only the stored WIDTH
  * is read — the height is always the lines'.
  */
-export function hotbarPanelSize(count: number, stored: PanelSize | null, maxW: number): PanelSize {
-  const room = Math.max(0, maxW - HOTBAR_INSET * 2);
-  const asked = stored === null ? room : Math.min(room, stored.w - HOTBAR_INSET * 2);
-  const across = perLine(asked, count);
+export function hotbarPanelSize(
+  count: number,
+  stored: PanelSize | null,
+  maxW: number,
+  style: HotbarStyle = DEFAULT_HOTBAR_STYLE,
+  maxH: number = Number.POSITIVE_INFINITY,
+): PanelSize {
+  // STOOD ON END, THE LENGTH IS THE HEIGHT: the grip's height chooses how many
+  // slots run down a column, as its width chooses how many run along a row.
+  const room = style.vertical
+    ? Math.max(0, maxH - HOTBAR_INSET * 2 - HOTBAR_HEADER_H)
+    : Math.max(0, maxW - HOTBAR_INSET * 2);
+  const given = style.vertical
+    ? (stored?.h ?? 0) - HOTBAR_INSET * 2 - HOTBAR_HEADER_H
+    : (stored?.w ?? 0) - HOTBAR_INSET * 2;
+  const across = perLine(stored === null ? room : Math.min(room, given), count, style);
   const lines = Math.max(1, Math.ceil(count / across));
-  return {
-    w: HOTBAR_INSET * 2 + hotbarRowWidth(across),
-    h: HOTBAR_INSET * 2 + HOTBAR_HEADER_H + hotbarRowWidth(lines),
-  };
+  const long = lineLength(across, style);
+  const wide = lineLength(lines, style);
+  return style.vertical
+    ? { w: HOTBAR_INSET * 2 + wide, h: HOTBAR_INSET * 2 + HOTBAR_HEADER_H + long }
+    : { w: HOTBAR_INSET * 2 + long, h: HOTBAR_INSET * 2 + HOTBAR_HEADER_H + wide };
 }
 
 /** The header strip: inside the frame, over the first line. */
@@ -625,14 +695,23 @@ export function hotbarHeaderRect(rect: PanelRect): PanelRect {
  * arithmetic is the classic way a UI acquires an off-by-four-pixels bug that
  * only shows up on somebody else's window size.
  */
-export function slotRect(rect: PanelRect, index: number, count: number): SlotRect {
-  const across = perLine(rect.w - HOTBAR_INSET * 2, count);
-  const pitch = SLOT_PX + SLOT_GAP;
+export function slotRect(
+  rect: PanelRect,
+  index: number,
+  count: number,
+  style: HotbarStyle = DEFAULT_HOTBAR_STYLE,
+): SlotRect {
+  const across = style.vertical
+    ? perLine(rect.h - HOTBAR_INSET * 2 - HOTBAR_HEADER_H, count, style)
+    : perLine(rect.w - HOTBAR_INSET * 2, count, style);
+  const along = index % across;
+  const line = Math.floor(index / across);
+  const pitch = slotPx(style) + gapPx(style);
   return {
-    x: rect.x + HOTBAR_INSET + (index % across) * pitch,
-    y: rect.y + HOTBAR_INSET + HOTBAR_HEADER_H + Math.floor(index / across) * pitch,
-    w: SLOT_PX,
-    h: SLOT_PX,
+    x: rect.x + HOTBAR_INSET + (style.vertical ? line : along) * pitch,
+    y: rect.y + HOTBAR_INSET + HOTBAR_HEADER_H + (style.vertical ? along : line) * pitch,
+    w: slotPx(style),
+    h: slotPx(style),
   };
 }
 
@@ -654,10 +733,11 @@ export function hotbarSlotAt(
   px: number,
   py: number,
   count: number,
+  style: HotbarStyle = DEFAULT_HOTBAR_STYLE,
 ): number {
   if (rect === null) return -1;
   for (let i = 0; i < count; i += 1) {
-    const r = slotRect(rect, i, count);
+    const r = slotRect(rect, i, count, style);
     if (px >= r.x && px < r.x + r.w && py >= r.y && py < r.y + r.h) return i;
   }
   return -1;
@@ -709,8 +789,9 @@ export function hotbarDropTargetAt(
   px: number,
   py: number,
   count: number,
+  style: HotbarStyle = DEFAULT_HOTBAR_STYLE,
 ): HotbarDrop {
-  const index = hotbarSlotAt(rect, px, py, count);
+  const index = hotbarSlotAt(rect, px, py, count, style);
   if (index < 0) return { kind: HotbarDropKind.Miss };
   /**
    * ═══════════════════════════════════════════════════════════════════════════
@@ -1425,6 +1506,7 @@ function stripFor(view: HotbarView, count: number): StripLine | null {
  */
 export function drawHotbar(options: HotbarOptions): void {
   const { ctx, sprites, view, rect } = options;
+  const style = options.style ?? DEFAULT_HOTBAR_STYLE;
   const count = view.slots.length;
   if (count === 0) return;
 
@@ -1455,21 +1537,30 @@ export function drawHotbar(options: HotbarOptions): void {
 
   // ITS OWN PANEL, in the case log's skin. It was a backing strip the width of
   // the screen with the slots centred in it, which left bare wings at the sides.
+  //
+  // THE FADE IS ON THE FRAME AND NEVER ON THE SLOTS, the case log's rule: a bar
+  // a player can see the map through is one whose buttons they can still read.
+  ctx.globalAlpha = style.opacity / 100;
   drawPanel(ctx, sprites, PanelSkin.Inset, rect);
+  ctx.globalAlpha = 1;
 
+  const scale = scaleOf(style);
   for (let i = 0; i < count; i += 1) {
     const slot = view.slots[i];
     if (slot === undefined) continue;
-    paintSlot(
-      ctx,
-      sprites,
-      slot,
-      i,
-      slotRect(rect, i, count),
-      view.hovered === i,
-      view.armed === i,
-      landsOn(i),
-    );
+    const at = slotRect(rect, i, count, style);
+    if (scale === 1) {
+      paintSlot(ctx, sprites, slot, i, at, view.hovered === i, view.armed === i, landsOn(i));
+      continue;
+    }
+    // A BIGGER ICON IS THE SAME SLOT DRAWN BIGGER, so every frame, caption and
+    // wipe keeps the proportions its painter was written for.
+    ctx.save();
+    ctx.translate(at.x, at.y);
+    ctx.scale(scale, scale);
+    const unit = { x: 0, y: 0, w: SLOT_PX, h: SLOT_PX };
+    paintSlot(ctx, sprites, slot, i, unit, view.hovered === i, view.armed === i, landsOn(i));
+    ctx.restore();
   }
 
   // WHAT THE POINTER IS ON, in the header. Cut to the header's width: a narrow
@@ -1479,7 +1570,8 @@ export function drawHotbar(options: HotbarOptions): void {
     const head = hotbarHeaderRect(rect);
     ctx.font = FONT_NAME;
     ctx.fillStyle = strip.colour;
-    ctx.fillText(fitText(ctx, strip.text, head.w), head.x, head.y + Math.floor(head.h / 2));
+    const room = Math.max(0, head.w - HOTBAR_COG_PX - 4);
+    ctx.fillText(fitText(ctx, strip.text, room), head.x, head.y + Math.floor(head.h / 2));
   }
 
   ctx.restore();
@@ -1509,8 +1601,9 @@ export function hotbarTipAt(
   rect: PanelRect | null,
   px: number,
   py: number,
+  style: HotbarStyle = DEFAULT_HOTBAR_STYLE,
 ): HoverCard | null {
-  const index = hotbarSlotAt(rect, px, py, view.slots.length);
+  const index = hotbarSlotAt(rect, px, py, view.slots.length, style);
   if (index < 0) return null;
   const slot = view.slots[index];
   if (slot === undefined) return null;
@@ -1712,4 +1805,184 @@ function wrapForCard(text: string): readonly string[] {
   if (ctx === null) return [text];
   ctx.font = '10px ui-monospace, Consolas, monospace';
   return wrapText(ctx, text, 240);
+}
+
+// ---------------------------------------------------------------------------
+// THE COGWHEEL AND ITS POPOVER
+// ---------------------------------------------------------------------------
+
+/** The cogwheel's square. It sits in the header, which is one line of text tall. */
+const HOTBAR_COG_PX = 11;
+
+/** The cogwheel, at the right-hand end of the header. */
+export function hotbarCogRect(rect: PanelRect): PanelRect {
+  const head = hotbarHeaderRect(rect);
+  return {
+    x: head.x + head.w - HOTBAR_COG_PX,
+    y: head.y + Math.floor((head.h - HOTBAR_COG_PX) / 2),
+    w: HOTBAR_COG_PX,
+    h: HOTBAR_COG_PX,
+  };
+}
+
+export function hotbarCogAt(rect: PanelRect | null, px: number, py: number): boolean {
+  if (rect === null) return false;
+  const cog = hotbarCogRect(rect);
+  return px >= cog.x && px < cog.x + cog.w && py >= cog.y && py < cog.y + cog.h;
+}
+
+/** The popover's rows, in the order a player reads them. */
+const SETTING_ROWS = [
+  { key: 'vertical', label: 'LAYOUT' },
+  { key: 'icon', label: 'SIZE' },
+  { key: 'opacity', label: 'FADE' },
+] as const;
+
+export type HotbarSettingKey = (typeof SETTING_ROWS)[number]['key'];
+
+const POP_W = 168;
+const POP_ROW_H = 16;
+const POP_BTN = 14;
+const POP_GAP = 3;
+const POP_VALUE_W = 64;
+
+function nearestIndex(steps: readonly number[], value: number): number {
+  let best = 0;
+  steps.forEach((step, i) => {
+    if (Math.abs(step - value) < Math.abs((steps[best] ?? step) - value)) best = i;
+  });
+  return best;
+}
+
+function stepOf(steps: readonly number[], value: number, by: -1 | 1): number {
+  const next = Math.max(0, Math.min(steps.length - 1, nearestIndex(steps, value) + by));
+  return steps[next] ?? value;
+}
+
+/** A stored style from another build, on the nearest of this build's steps. */
+export function snapHotbarStyle(style: HotbarStyle): HotbarStyle {
+  return {
+    vertical: style.vertical,
+    icon: ICON_STEPS[nearestIndex(ICON_STEPS, style.icon)] ?? ICON_DRAW_PX,
+    opacity: FADE_STEPS[nearestIndex(FADE_STEPS, style.opacity)] ?? 100,
+  };
+}
+
+/** One press of a `−` or `+`. Each setting stops at its ends; the layout has two. */
+export function stepHotbarStyle(
+  style: HotbarStyle,
+  key: HotbarSettingKey,
+  by: -1 | 1,
+): HotbarStyle {
+  switch (key) {
+    case 'vertical':
+      return { ...style, vertical: by > 0 };
+    case 'icon':
+      return { ...style, icon: stepOf(ICON_STEPS, style.icon, by) };
+    case 'opacity':
+      return { ...style, opacity: stepOf(FADE_STEPS, style.opacity, by) };
+  }
+}
+
+/** What a row reads: `Horizontal`, `Large`, `60%`. */
+export function hotbarSettingText(style: HotbarStyle, key: HotbarSettingKey): string {
+  switch (key) {
+    case 'vertical':
+      return style.vertical ? 'Vertical' : 'Horizontal';
+    case 'icon':
+      return ICON_NAMES[nearestIndex(ICON_STEPS, style.icon)] ?? `${String(style.icon)}px`;
+    case 'opacity':
+      return `${String(style.opacity)}%`;
+  }
+}
+
+/**
+ * Where the popover opens: above the bar when there is room under the turn HUD,
+ * below it when there is not, and never off the screen.
+ */
+export function hotbarSettingsRect(
+  bar: PanelRect,
+  width: number,
+  height: number,
+  top: number,
+): PanelRect {
+  const h = SETTING_ROWS.length * POP_ROW_H + PANEL_PAD * 2;
+  const x = Math.max(0, Math.min(width - POP_W, bar.x + bar.w - POP_W));
+  const above = bar.y - h;
+  const y = above >= top ? above : Math.max(top, Math.min(height - h, bar.y + bar.h));
+  return { x, y, w: POP_W, h };
+}
+
+export type HotbarSettingButton = {
+  readonly key: HotbarSettingKey;
+  readonly by: -1 | 1;
+  readonly rect: PanelRect;
+};
+
+/** Every `−` and `+`, row by row: the one copy the painter and the press both read. */
+export function hotbarSettingsButtons(pop: PanelRect): HotbarSettingButton[] {
+  const out: HotbarSettingButton[] = [];
+  const minusX = pop.x + pop.w - PANEL_PAD - POP_BTN * 2 - POP_VALUE_W - POP_GAP * 2;
+  const plusX = minusX + POP_BTN + POP_GAP + POP_VALUE_W + POP_GAP;
+  SETTING_ROWS.forEach((row, i) => {
+    const y = pop.y + PANEL_PAD + i * POP_ROW_H + 1;
+    out.push({ key: row.key, by: -1, rect: { x: minusX, y, w: POP_BTN, h: POP_ROW_H - 2 } });
+    out.push({ key: row.key, by: 1, rect: { x: plusX, y, w: POP_BTN, h: POP_ROW_H - 2 } });
+  });
+  return out;
+}
+
+/**
+ * What a press on the open popover means: a step, its own background (swallowed,
+ * so it cannot fall through to the slots under it), or nothing.
+ */
+export function hotbarSettingsHitAt(
+  pop: PanelRect,
+  px: number,
+  py: number,
+): { readonly key: HotbarSettingKey; readonly by: -1 | 1 } | 'inside' | null {
+  for (const btn of hotbarSettingsButtons(pop)) {
+    const r = btn.rect;
+    if (px >= r.x && px < r.x + r.w && py >= r.y && py < r.y + r.h) {
+      return { key: btn.key, by: btn.by };
+    }
+  }
+  const inside = px >= pop.x && px < pop.x + pop.w && py >= pop.y && py < pop.y + pop.h;
+  return inside ? 'inside' : null;
+}
+
+/** The popover, in the case log's popover's skin and grammar. */
+export function drawHotbarSettings(
+  ctx: CanvasRenderingContext2D,
+  sprites: SpriteSource,
+  pop: PanelRect,
+  style: HotbarStyle,
+): void {
+  ctx.save();
+  drawPanel(ctx, sprites, PanelSkin.CaseFile, pop);
+  ctx.font = FONT_CAPTION;
+  ctx.textBaseline = 'middle';
+  const buttons = hotbarSettingsButtons(pop);
+  SETTING_ROWS.forEach((row, i) => {
+    const mid = pop.y + PANEL_PAD + i * POP_ROW_H + POP_ROW_H / 2;
+    ctx.textAlign = 'left';
+    ctx.fillStyle = PALETTE.GREY_HI;
+    ctx.fillText(row.label, pop.x + PANEL_PAD, mid);
+    for (const btn of buttons) {
+      if (btn.key !== row.key) continue;
+      ctx.fillStyle = PALETTE.INK;
+      ctx.fillRect(btn.rect.x, btn.rect.y, btn.rect.w, btn.rect.h);
+      // A STEP THAT CHANGES NOTHING IS DRAWN DEAD, as the case log's are.
+      const dead = stepHotbarStyle(style, btn.key, btn.by)[btn.key] === style[btn.key];
+      ctx.fillStyle = dead ? PALETTE.GREY : PALETTE.GOLD;
+      ctx.textAlign = 'center';
+      ctx.fillText(btn.by < 0 ? '−' : '+', btn.rect.x + btn.rect.w / 2, mid);
+      if (btn.by < 0) {
+        ctx.fillStyle = PALETTE.PARCHMENT;
+        const valueX = btn.rect.x + POP_BTN + POP_GAP + POP_VALUE_W / 2;
+        ctx.fillText(hotbarSettingText(style, row.key), valueX, mid);
+      }
+    }
+  });
+  ctx.restore();
 }

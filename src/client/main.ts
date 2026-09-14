@@ -188,6 +188,7 @@ import { orbsOnMyLine } from '../shared/flight.ts';
 import {
   createCaseLog,
   DEFAULT_LOG_STYLE,
+  drawCog,
   drawLogGrip,
   logDragAt,
   logGripAt,
@@ -249,8 +250,16 @@ import { createCombatBanner, PLAYFIELD_FRAME_MAX_PX } from './ui/combatbanner.ts
 // keeps slot 4 the first item slot in this file as well as in that one.
 import {
   drawHotbar,
-  HOTBAR_FLOOR,
+  drawHotbarSettings,
+  DEFAULT_HOTBAR_STYLE,
+  hotbarCogAt,
+  hotbarCogRect,
+  hotbarFloor,
   hotbarPanelSize,
+  hotbarSettingsHitAt,
+  hotbarSettingsRect,
+  snapHotbarStyle,
+  stepHotbarStyle,
   HOTBAR_ITEM_SLOTS,
   HOTBAR_SLOTS,
   HOTBAR_TALENT_BINDINGS,
@@ -450,7 +459,7 @@ import type { SpriteSource } from './render/assets.ts';
 import type { CaseLog } from './ui/caselog.ts';
 import type { CombatBanner } from './ui/combatbanner.ts';
 import type { ContextMenu, MenuItem } from './ui/contextmenu.ts';
-import type { HotbarSlot, HotbarView } from './ui/hotbar.ts';
+import type { HotbarSlot, HotbarStyle, HotbarView } from './ui/hotbar.ts';
 import type {
   InventoryFocus,
   InventoryHit,
@@ -1450,6 +1459,15 @@ let progress: ProgressMsg | null = null;
 
 /** Hotbar index under the pointer, or -1. Cosmetic; the keyboard is the real input. */
 let hoveredSlot = -1;
+
+/**
+ * HOW THE ACTION BAR IS DRAWN: its cogwheel's layout, icon size and fade. Saved
+ * in the panel layout beside the case log's style. See `HotbarStyle`.
+ */
+let hotbarStyle: HotbarStyle = DEFAULT_HOTBAR_STYLE;
+
+/** Is the action bar's settings popover open? */
+let hotbarSettingsOpen = false;
 
 /**
  * The refusal line. See the header: an action that silently does nothing is the
@@ -3728,16 +3746,27 @@ function unmovedPanelRect(
     case DraggablePanel.Hotbar: {
       const count = hotbarView().slots.length;
       if (count === 0) return null;
-      const size = hotbarPanelSize(count, panelSizes[DraggablePanel.Hotbar], width);
-      // THE LEFT EDGE OF THE WHOLE ROW, centred, whatever width the bar has been
-      // given, so a drag on the right-hand grip does not also slide the bar.
-      const row = hotbarPanelSize(count, null, width);
-      return {
-        x: Math.max(0, Math.floor((width - row.w) / 2)),
-        y: height - size.h,
-        w: size.w,
-        h: size.h,
-      };
+      const room = height - band.top;
+      const stored = panelSizes[DraggablePanel.Hotbar];
+      const size = hotbarPanelSize(count, stored, width, hotbarStyle, room);
+      // THE EDGE THE GRIP DOES NOT MOVE is placed from the whole row, so a drag on
+      // the corner grip resizes the bar without also sliding it.
+      const row = hotbarPanelSize(count, null, width, hotbarStyle, room);
+      // STOOD ON END it goes down the right-hand side: upstream's box turns to
+      // run downward when it is docked against a side (Minimalist.lua:635-646).
+      return hotbarStyle.vertical
+        ? {
+            x: Math.max(0, width - size.w),
+            y: Math.max(band.top, Math.floor((height - row.h) / 2)),
+            w: size.w,
+            h: size.h,
+          }
+        : {
+            x: Math.max(0, Math.floor((width - row.w) / 2)),
+            y: height - size.h,
+            w: size.w,
+            h: size.h,
+          };
     }
     /**
      * ═══════════════════════════════════════════════════════════════════════
@@ -4633,7 +4662,7 @@ function hoverCardAt(
     (layout.sheet === null || sheetRows === null
       ? null
       : charSheetTipAt(layout.sheet, sheetRows, px, py)) ??
-    hotbarTipAt(hotbarView(), layout.hotbar, px, py)
+    hotbarTipAt(hotbarView(), layout.hotbar, px, py, hotbarStyle)
   );
 }
 
@@ -5118,9 +5147,14 @@ const paintHud: HudPainter = (ctx, width, height) => {
   }
 
   if (layout.hotbar !== null) {
-    drawHotbar({ ctx, sprites, view: hotbarView(), rect: layout.hotbar });
-    // THE CASE LOG'S GRIP, the one drawing of that control in the client.
+    drawHotbar({ ctx, sprites, view: hotbarView(), rect: layout.hotbar, style: hotbarStyle });
+    // THE CASE LOG'S GRIP AND COGWHEEL, the one drawing of each in the client.
     drawLogGrip(ctx, layout.hotbar);
+    drawCog(ctx, hotbarCogRect(layout.hotbar), hotbarSettingsOpen);
+    if (hotbarSettingsOpen) {
+      const pop = hotbarSettingsRect(layout.hotbar, width, height, layout.hudTop);
+      drawHotbarSettings(ctx, sprites, pop, hotbarStyle);
+    }
   }
 
   /**
@@ -10490,7 +10524,7 @@ async function boot(): Promise<void> {
     if (point === null) return -1;
     const { hudW: logicalW, hudH: logicalH } = renderer.metrics();
     const bar = hudLayout(logicalW, logicalH).hotbar;
-    return hotbarSlotAt(bar, point.x, point.y, hotbarView().slots.length);
+    return hotbarSlotAt(bar, point.x, point.y, hotbarView().slots.length, hotbarStyle);
   }
 
   /**
@@ -10534,6 +10568,10 @@ async function boot(): Promise<void> {
     if (tokenMenu?.contains(point.x, point.y) === true) return true;
     if (respawnPromptHit(layout.respawn, point.x, point.y)) return true;
     if (inRect(layout.hotbar, point.x, point.y)) return true;
+    if (hotbarSettingsOpen && layout.hotbar !== null) {
+      const pop = hotbarSettingsRect(layout.hotbar, logicalW, logicalH, layout.hudTop);
+      if (inRect(pop, point.x, point.y)) return true;
+    }
     // THE CHARACTER SHEET IS A PANEL LIKE THE OTHER TWO, and it has to be listed
     // here or hovering it drags the targeting cursor across whatever tiles are
     // underneath — and worse, sends an `inspect` per settle for each body it
@@ -11089,7 +11127,7 @@ async function boot(): Promise<void> {
    * a silent fall-through to the log's answers.
    */
   function panelFloor(panel: DraggablePanel): PanelSize {
-    if (panel === DraggablePanel.Hotbar) return HOTBAR_FLOOR;
+    if (panel === DraggablePanel.Hotbar) return hotbarFloor(hotbarStyle);
     return panel === DraggablePanel.Party
       ? { w: PARTY_PANE_COMPACT_W, h: PARTY_PANE_MIN_H }
       : DEFAULT_PANEL_FLOOR;
@@ -11356,6 +11394,7 @@ async function boot(): Promise<void> {
       point.x,
       point.y,
       hotbarView().slots.length,
+      hotbarStyle,
     );
     switch (drop.kind) {
       case HotbarDropKind.Bind:
@@ -11590,6 +11629,23 @@ async function boot(): Promise<void> {
    * noise to the wrong act. The next `settings` frame is the correction, exactly
    * as it is for the other two.
    */
+  /**
+   * ONE STEP ON THE ACTION BAR'S COGWHEEL: drawn at once and saved.
+   *
+   * STANDING IT ON END FORGETS ITS SIZE AND ITS PLACE. A width is not a length:
+   * the whole row, stood on end, would be one slot tall and thirteen wide. And
+   * the offset was measured from the foot of the screen, where a vertical bar
+   * does not live. So it starts again at its orientation's home, whole.
+   */
+  function setHotbarStyle(next: HotbarStyle): void {
+    if (next.vertical !== hotbarStyle.vertical) {
+      panelSizes[DraggablePanel.Hotbar] = null;
+      panelOffsets[DraggablePanel.Hotbar] = NO_OFFSET;
+    }
+    hotbarStyle = next;
+    savePanelLayout();
+  }
+
   function savePanelLayout(): void {
     const offsets: Record<string, { dx: number; dy: number }> = {};
     for (const panel of DRAGGABLE_PANELS) {
@@ -11622,6 +11678,13 @@ async function boot(): Promise<void> {
         logSize: panelSizes[DraggablePanel.Log],
         partySize: panelSizes[DraggablePanel.Party],
         hotbarSize: panelSizes[DraggablePanel.Hotbar],
+        // ONLY ONCE IT DIFFERS FROM THE DEFAULT, the log style's rule below.
+        hotbarStyle:
+          hotbarStyle.vertical !== DEFAULT_HOTBAR_STYLE.vertical ||
+          hotbarStyle.icon !== DEFAULT_HOTBAR_STYLE.icon ||
+          hotbarStyle.opacity !== DEFAULT_HOTBAR_STYLE.opacity
+            ? hotbarStyle
+            : null,
         logStyle: touched ? style : null,
       },
     });
@@ -12143,6 +12206,27 @@ async function boot(): Promise<void> {
     if (point !== null && respawnPromptHit(layout.respawn, point.x, point.y)) {
       event.preventDefault();
       attemptRespawn();
+      return;
+    }
+
+    // ═══ THE ACTION BAR'S SETTINGS, FIRST WHILE THEY ARE OPEN ═══
+    // The popover floats over whatever is under it, the bar's own slots
+    // included, so while it is open its pixels are its own.
+    if (point !== null && layout.hotbar !== null && hotbarSettingsOpen) {
+      const pop = hotbarSettingsRect(layout.hotbar, logicalW, logicalH, layout.hudTop);
+      const hit = hotbarSettingsHitAt(pop, point.x, point.y);
+      if (hit !== null) {
+        event.preventDefault();
+        if (hit !== 'inside') setHotbarStyle(stepHotbarStyle(hotbarStyle, hit.key, hit.by));
+        requestDraw();
+        return;
+      }
+    }
+    // ...THEN ITS COGWHEEL, which opens and closes them.
+    if (point !== null && hotbarCogAt(layout.hotbar, point.x, point.y)) {
+      event.preventDefault();
+      hotbarSettingsOpen = !hotbarSettingsOpen;
+      requestDraw();
       return;
     }
 
@@ -14335,6 +14419,11 @@ function applyServerMessage(msg: ServerMsg): void {
       panelSizes[DraggablePanel.Log] = msg.panels.logSize;
       panelSizes[DraggablePanel.Party] = msg.panels.partySize;
       panelSizes[DraggablePanel.Hotbar] = msg.panels.hotbarSize;
+      // SNAPPED, so a style saved by a build with other steps lands on ours.
+      hotbarStyle =
+        msg.panels.hotbarStyle === null
+          ? DEFAULT_HOTBAR_STYLE
+          : snapHotbarStyle(msg.panels.hotbarStyle);
       /**
        * THE STYLE GOES TO THE WIDGET, which owns it. `caseLog` is created in
        * `boot` and this runs at module scope, so it may be null on the very

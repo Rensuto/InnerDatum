@@ -4026,6 +4026,20 @@ const logStyleSchema = z.strictObject({
 });
 
 /**
+ * HOW THE ACTION BAR IS DRAWN — the three things its cogwheel sets. Values, not
+ * step indices, and bounded wide rather than to the client's steps, for
+ * `logStyleSchema`'s reasons above.
+ */
+const hotbarStyleSchema = z.strictObject({
+  /** Column by column rather than row by row. */
+  vertical: z.boolean(),
+  /** The icon's size in logical pixels. */
+  icon: z.number().int().min(16).max(128),
+  /** Backing opacity as a percentage. The slots never fade. */
+  opacity: z.number().int().min(10).max(100),
+});
+
+/**
  * WHERE THE PANELS ARE, AS THE WIRE CARRIES IT.
  *
  * `logSize` is NULLABLE and null is not zero: it means "the player has never
@@ -4085,6 +4099,8 @@ export const PanelLayoutSchema = z.strictObject({
    * `.default(null)` for the reason `logStyle` gives below.
    */
   hotbarSize: panelSizeSchema.nullable().default(null),
+  /** The action bar's cogwheel. `.default(null)` for the reason `logStyle` gives. */
+  hotbarStyle: hotbarStyleSchema.nullable().default(null),
   /**
    * NULLABLE AND DEFAULTED, and the default is what makes this safe to add.
    *

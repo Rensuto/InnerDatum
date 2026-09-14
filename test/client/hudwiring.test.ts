@@ -1251,10 +1251,10 @@ describe('the action bar is its own panel', () => {
     expect(layout).toContain('unmovedPanelRect(DraggablePanel.Hotbar, width, height, band)');
     expect(layout).toContain('hotbarBand(height, hudTop)');
     expect(CODE).toContain(
-      'drawHotbar({ ctx, sprites, view: hotbarView(), rect: layout.hotbar });',
+      'drawHotbar({ ctx, sprites, view: hotbarView(), rect: layout.hotbar, style: hotbarStyle });',
     );
     expect(CODE).toContain('drawLogGrip(ctx, layout.hotbar);');
-    expect(CODE).toContain('hotbarTipAt(hotbarView(), layout.hotbar, px, py)');
+    expect(CODE).toContain('hotbarTipAt(hotbarView(), layout.hotbar, px, py, hotbarStyle)');
   });
 
   it('takes a press on its grip before its slots, and on anything else after them', () => {
@@ -1282,7 +1282,7 @@ describe('the action bar is its own panel', () => {
   });
 
   it('resizes against its own floor, band and rect', () => {
-    expect(CODE).toContain('if (panel === DraggablePanel.Hotbar) return HOTBAR_FLOOR;');
+    expect(CODE).toContain('if (panel === DraggablePanel.Hotbar) return hotbarFloor(hotbarStyle);');
     expect(CODE).toContain(
       'if (panel === DraggablePanel.Hotbar) return hotbarBand(logicalH, turnHudHeight(turnView()));',
     );
@@ -1295,5 +1295,53 @@ describe('the action bar is its own panel', () => {
   it('saves its size and reads it back', () => {
     expect(CODE).toContain('hotbarSize: panelSizes[DraggablePanel.Hotbar],');
     expect(CODE).toContain('panelSizes[DraggablePanel.Hotbar] = msg.panels.hotbarSize;');
+  });
+});
+
+describe('the action bar’s cogwheel', () => {
+  /**
+   * Asked for: the bar's own settings button, like the case log's, with a setting
+   * to stand it on end along with the others.
+   */
+  it('asks the open popover first, then the cogwheel, then the grip', () => {
+    const down = CODE.slice(at("canvas.addEventListener('mousedown'"));
+    const settings = at('hotbarSettingsHitAt(', down);
+    const cog = at('hotbarCogAt(layout.hotbar, point.x, point.y)', down);
+    const grip = at('logGripAt(layout.hotbar, point.x, point.y)', down);
+    expect(settings).toBeLessThan(cog);
+    expect(cog).toBeLessThan(grip);
+  });
+
+  it('draws the log’s cogwheel on the bar, and the popover while it is open', () => {
+    expect(CODE).toContain('drawCog(ctx, hotbarCogRect(layout.hotbar), hotbarSettingsOpen);');
+    expect(CODE).toContain('drawHotbarSettings(ctx, sprites, pop, hotbarStyle);');
+  });
+
+  it('lays the bar out, hits it and cards it in its style', () => {
+    const unmoved = between('case DraggablePanel.Hotbar: {', 'case DraggablePanel.Party:');
+    expect(unmoved).toContain('hotbarPanelSize(count, stored, width, hotbarStyle, room)');
+    expect(unmoved).toContain('hotbarStyle.vertical');
+    expect(CODE).toContain('hotbarView().slots.length, hotbarStyle);');
+  });
+
+  it('keeps a press on the open popover off the map', () => {
+    expect(
+      between('function overPanel(clientX: number, clientY: number): boolean {', '\n  }'),
+    ).toContain('hotbarSettingsRect(layout.hotbar, logicalW, logicalH, layout.hudTop)');
+    expect(
+      between('function overPanel(clientX: number, clientY: number): boolean {', '\n  }'),
+    ).toContain('if (inRect(pop, point.x, point.y)) return true;');
+  });
+
+  it('forgets the bar’s size and place when it is stood on end, and saves every step', () => {
+    const set = between('function setHotbarStyle(next: HotbarStyle): void {', '\n  }');
+    expect(set).toContain('panelSizes[DraggablePanel.Hotbar] = null;');
+    expect(set).toContain('panelOffsets[DraggablePanel.Hotbar] = NO_OFFSET;');
+    expect(set).toContain('savePanelLayout();');
+  });
+
+  it('saves its style and reads it back, snapped', () => {
+    expect(between('function savePanelLayout(): void {', '\n  }')).toContain('hotbarStyle:');
+    expect(CODE).toContain('snapHotbarStyle(msg.panels.hotbarStyle)');
   });
 });

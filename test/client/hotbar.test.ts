@@ -20,7 +20,6 @@ const FLOOR_W = HUD_MIN_W;
 
 import { DragKind, DraggablePanel } from '../../src/client/ui/drag.ts';
 import {
-  HOTBAR_FLOOR,
   HOTBAR_HEADER_H,
   HOTBAR_INSET,
   HOTBAR_ITEM_SLOTS,
@@ -36,7 +35,16 @@ import {
   hotbarRowWidth,
   hotbarSlotAt,
   hotbarTipAt,
+  DEFAULT_HOTBAR_STYLE,
+  hotbarCogRect,
+  hotbarFloor,
   hotbarPanelSize,
+  hotbarSettingText,
+  hotbarSettingsButtons,
+  hotbarSettingsHitAt,
+  hotbarSettingsRect,
+  snapHotbarStyle,
+  stepHotbarStyle,
   isItemSlotIndex,
   isSlotDisabled,
   itemActionWord,
@@ -47,7 +55,7 @@ import {
 } from '../../src/client/ui/hotbar.ts';
 import { ResourceKind, TalentShape } from '../../src/shared/protocol.ts';
 import type { SpriteSource } from '../../src/client/render/assets.ts';
-import type { HotbarSlot, HotbarView } from '../../src/client/ui/hotbar.ts';
+import type { HotbarSlot, HotbarStyle, HotbarView } from '../../src/client/ui/hotbar.ts';
 import type { PanelRect } from '../../src/client/ui/panel.ts';
 import type { ItemView, LoadoutTalent, Slot } from '../../src/shared/protocol.ts';
 
@@ -240,7 +248,7 @@ describe('geometry', () => {
     // Stated as a relation, so a change to any term moves the bands with it.
     expect(HOTBAR_TOTAL_H).toBe(HOTBAR_INSET * 2 + HOTBAR_HEADER_H + SLOT_PX);
     expect(hotbarPanelSize(HOTBAR_SLOTS, null, 1920).h).toBe(HOTBAR_TOTAL_H);
-    expect(HOTBAR_FLOOR).toEqual({ w: HOTBAR_INSET * 2 + SLOT_PX, h: HOTBAR_TOTAL_H });
+    expect(hotbarFloor()).toEqual({ w: HOTBAR_INSET * 2 + SLOT_PX, h: HOTBAR_TOTAL_H });
   });
 
   it('sizes SLOT_PX for the NINE-SLICE, which is what freed it from 72', () => {
@@ -306,7 +314,7 @@ describe('geometry', () => {
   });
 
   it('is never narrower than one slot, or wider than the screen', () => {
-    expect(hotbarPanelSize(HOTBAR_SLOTS, { w: 1, h: 1 }, 1280).w).toBe(HOTBAR_FLOOR.w);
+    expect(hotbarPanelSize(HOTBAR_SLOTS, { w: 1, h: 1 }, 1280).w).toBe(hotbarFloor().w);
     expect(hotbarPanelSize(HOTBAR_SLOTS, { w: 5000, h: 1 }, 700).w).toBeLessThanOrEqual(700);
   });
 
@@ -823,7 +831,7 @@ describe('a bar narrower than its row', () => {
   }
 
   it('draws every slot, wrapped, and has nothing to apologise for', () => {
-    const texts = paintAt({ w: HOTBAR_FLOOR.w, h: 1 });
+    const texts = paintAt({ w: hotbarFloor().w, h: 1 });
     expect(texts.filter((t) => /^[0-9]$/.test(t))).toEqual(
       Array.from({ length: HOTBAR_TALENT_SLOTS }, (_unused, i) => String(i + 1)),
     );
@@ -1239,5 +1247,189 @@ describe('an item card puts its numbers above its sentence', () => {
   it('is happy with either half missing', () => {
     expect(itemTip({ desc: '' })).toEqual(cardStatLines(ROWS));
     expect(itemTip({ rows: [] })).toEqual([PROSE]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// THE COGWHEEL: LAYOUT, SIZE AND FADE
+// ---------------------------------------------------------------------------
+
+describe('the bar’s cogwheel settings', () => {
+  /**
+   * Asked for: the bar's own settings button, like the case log's, with a setting
+   * to stand it on end along with the others. Upstream offers icon sizes "From
+   * 32 to 64" (GameOptions.lua:307) and lays its box out row by row or column by
+   * column (engine/HotkeysIconsDisplay.lua:265-278).
+   */
+  const VERTICAL: HotbarStyle = { ...DEFAULT_HOTBAR_STYLE, vertical: true };
+  const HUGE: HotbarStyle = { ...DEFAULT_HOTBAR_STYLE, icon: 64 };
+  const rectIn = (
+    style: HotbarStyle,
+    stored: { w: number; h: number } | null = null,
+  ): PanelRect => {
+    const size = hotbarPanelSize(HOTBAR_SLOTS, stored, 1280, style, 480);
+    return { x: 100, y: 20, w: size.w, h: size.h };
+  };
+
+  it('stands the bar on end: its slots run down a column, then across', () => {
+    const tall = HOTBAR_INSET * 2 + HOTBAR_HEADER_H + hotbarRowWidth(5);
+    const rect = rectIn(VERTICAL, { w: 1, h: tall });
+    expect(rect.h).toBe(tall);
+    expect(rect.w).toBe(HOTBAR_INSET * 2 + hotbarRowWidth(Math.ceil(HOTBAR_SLOTS / 5)));
+    const first = slotRect(rect, 0, HOTBAR_SLOTS, VERTICAL);
+    const down = slotRect(rect, 1, HOTBAR_SLOTS, VERTICAL);
+    const across = slotRect(rect, 5, HOTBAR_SLOTS, VERTICAL);
+    expect(down.x).toBe(first.x);
+    expect(down.y).toBeGreaterThan(first.y);
+    expect(across.y).toBe(first.y);
+    expect(across.x).toBeGreaterThan(first.x);
+  });
+
+  it('scales the slot with the icon, up to upstream’s 64', () => {
+    const huge = rectIn(HUGE);
+    expect(slotRect(huge, 0, HOTBAR_SLOTS, HUGE).w).toBe(SLOT_PX * 2);
+    const one = HOTBAR_INSET * 2 + SLOT_PX * 2;
+    expect(hotbarFloor(HUGE)).toEqual({ w: one, h: one + HOTBAR_HEADER_H });
+    expect(hotbarFloor(DEFAULT_HOTBAR_STYLE)).toEqual({
+      w: HOTBAR_INSET * 2 + SLOT_PX,
+      h: HOTBAR_TOTAL_H,
+    });
+  });
+
+  it('round-trips every slot through the hit test at every style, inside the frame', () => {
+    const styles: HotbarStyle[] = [
+      DEFAULT_HOTBAR_STYLE,
+      VERTICAL,
+      HUGE,
+      { vertical: true, icon: 48, opacity: 60 },
+    ];
+    for (const style of styles) {
+      for (const stored of [null, hotbarFloor(style)]) {
+        const rect = rectIn(style, stored);
+        for (let i = 0; i < HOTBAR_SLOTS; i += 1) {
+          const r = slotRect(rect, i, HOTBAR_SLOTS, style);
+          const at = `${JSON.stringify(style)} ${String(i)}`;
+          const cx = r.x + Math.floor(r.w / 2);
+          const cy = r.y + Math.floor(r.h / 2);
+          expect(hotbarSlotAt(rect, cx, cy, HOTBAR_SLOTS, style), at).toBe(i);
+          expect(r.x, at).toBeGreaterThanOrEqual(rect.x + HOTBAR_INSET);
+          expect(r.x + r.w, at).toBeLessThanOrEqual(rect.x + rect.w - HOTBAR_INSET);
+          expect(r.y, at).toBeGreaterThanOrEqual(rect.y + HOTBAR_INSET + HOTBAR_HEADER_H);
+          expect(r.y + r.h, at).toBeLessThanOrEqual(rect.y + rect.h - HOTBAR_INSET);
+        }
+      }
+    }
+  });
+
+  it('steps each setting, and stops at its ends', () => {
+    expect(stepHotbarStyle(DEFAULT_HOTBAR_STYLE, 'vertical', 1).vertical).toBe(true);
+    expect(stepHotbarStyle(VERTICAL, 'vertical', 1).vertical).toBe(true);
+    expect(stepHotbarStyle(VERTICAL, 'vertical', -1).vertical).toBe(false);
+    expect(stepHotbarStyle(DEFAULT_HOTBAR_STYLE, 'icon', -1).icon).toBe(32);
+    expect(stepHotbarStyle(DEFAULT_HOTBAR_STYLE, 'icon', 1).icon).toBe(48);
+    expect(stepHotbarStyle(HUGE, 'icon', 1).icon).toBe(64);
+    expect(stepHotbarStyle(DEFAULT_HOTBAR_STYLE, 'opacity', 1).opacity).toBe(100);
+    expect(stepHotbarStyle(DEFAULT_HOTBAR_STYLE, 'opacity', -1).opacity).toBe(80);
+  });
+
+  it('snaps a style from another build onto the nearest step', () => {
+    expect(snapHotbarStyle({ vertical: true, icon: 50, opacity: 55 })).toEqual({
+      vertical: true,
+      icon: 48,
+      opacity: 60,
+    });
+  });
+
+  it('names each setting as a player reads it', () => {
+    expect(hotbarSettingText(DEFAULT_HOTBAR_STYLE, 'vertical')).toBe('Horizontal');
+    expect(hotbarSettingText(VERTICAL, 'vertical')).toBe('Vertical');
+    expect(hotbarSettingText(DEFAULT_HOTBAR_STYLE, 'icon')).toBe('Normal');
+    expect(hotbarSettingText(HUGE, 'icon')).toBe('Huge');
+    expect(hotbarSettingText({ ...DEFAULT_HOTBAR_STYLE, opacity: 60 }, 'opacity')).toBe('60%');
+  });
+
+  it('presses the button it drew, swallows its own background, and nothing else', () => {
+    const pop = hotbarSettingsRect(rectFor(1280), 1280, 480, 17);
+    const buttons = hotbarSettingsButtons(pop);
+    expect(buttons.map((b) => `${b.key}${String(b.by)}`)).toEqual([
+      'vertical-1',
+      'vertical1',
+      'icon-1',
+      'icon1',
+      'opacity-1',
+      'opacity1',
+    ]);
+    for (const b of buttons) {
+      expect(hotbarSettingsHitAt(pop, b.rect.x + 1, b.rect.y + 1)).toEqual({
+        key: b.key,
+        by: b.by,
+      });
+    }
+    expect(hotbarSettingsHitAt(pop, pop.x + 2, pop.y + 2)).toBe('inside');
+    expect(hotbarSettingsHitAt(pop, pop.x - 1, pop.y)).toBeNull();
+  });
+
+  it('opens above the bar when there is room, below it when not, and on the screen', () => {
+    const bar = rectFor(1280);
+    const above = hotbarSettingsRect(bar, 1280, 480, 17);
+    expect(above.y + above.h).toBeLessThanOrEqual(bar.y);
+    const high = { ...bar, y: 20 };
+    expect(hotbarSettingsRect(high, 1280, 480, 17).y).toBeGreaterThanOrEqual(high.y + high.h);
+    const left = hotbarSettingsRect({ ...bar, x: 0, w: hotbarFloor().w }, 1280, 480, 17);
+    expect(left.x).toBeGreaterThanOrEqual(0);
+    expect(left.x + left.w).toBeLessThanOrEqual(1280);
+  });
+
+  it('puts its cogwheel in the header, clear of every slot', () => {
+    const rect = rectFor(1280);
+    const cog = hotbarCogRect(rect);
+    expect(cog.y + cog.h).toBeLessThanOrEqual(rect.y + HOTBAR_INSET + HOTBAR_HEADER_H);
+    expect(cog.x + cog.w).toBeLessThanOrEqual(rect.x + rect.w - HOTBAR_INSET);
+    expect(hotbarSlotAt(rect, cog.x + 1, cog.y + 1, HOTBAR_SLOTS)).toBe(-1);
+  });
+
+  function events(style: HotbarStyle): string[] {
+    const out: string[] = [];
+    drawHotbar({
+      ctx: new Proxy(
+        {},
+        {
+          get: (_t, prop: string) => {
+            if (prop === 'measureText') return (text: string) => ({ width: text.length * 6 });
+            if (prop === 'canvas') return undefined;
+            return (...args: unknown[]) => {
+              out.push(`${prop}(${args.map(String).join(',')})`);
+            };
+          },
+          set: (_t, prop: string, value: unknown) => {
+            if (prop === 'globalAlpha') out.push(`alpha=${String(value)}`);
+            return true;
+          },
+        },
+      ) as unknown as CanvasRenderingContext2D,
+      sprites: { sprite: () => undefined },
+      view: view(),
+      rect: rectIn(style),
+      style,
+    });
+    return out;
+  }
+
+  it('fades the frame and never the slots', () => {
+    const out = events({ ...DEFAULT_HOTBAR_STYLE, opacity: 40 });
+    expect(out).toContain('alpha=0.4');
+    const firstDigit = out.findIndex((e) => e.startsWith('fillText(1,'));
+    expect(firstDigit).toBeGreaterThan(0);
+    const alphas = out.slice(0, firstDigit).filter((e) => e.startsWith('alpha='));
+    expect(alphas[alphas.length - 1]).toBe('alpha=1');
+  });
+
+  it('draws a bigger slot by scaling the drawing, inside a save and restore', () => {
+    const out = events(HUGE);
+    expect(out.filter((e) => e === 'scale(2,2)').length).toBe(HOTBAR_SLOTS);
+    expect(out.filter((e) => e.startsWith('save(')).length).toBe(
+      out.filter((e) => e.startsWith('restore(')).length,
+    );
+    expect(events(DEFAULT_HOTBAR_STYLE).some((e) => e.startsWith('scale('))).toBe(false);
   });
 });

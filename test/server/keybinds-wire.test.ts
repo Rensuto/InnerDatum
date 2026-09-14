@@ -847,6 +847,7 @@ describe('set_keybinds, over a real socket', () => {
       logSize: { w: 420, h: 180 },
       partySize: null,
       hotbarSize: null,
+      hotbarStyle: null,
       logStyle: null,
     };
     const first = await boot('settings-restart');

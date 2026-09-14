@@ -91,6 +91,7 @@ const FULL = {
     logSize: { w: 420, h: 180 },
     partySize: { w: 240, h: 160 },
     hotbarSize: { w: 300, h: 72 },
+    hotbarStyle: { vertical: true, icon: 48, opacity: 60 },
     logStyle: { font: 13, opacity: 70, spacing: 14 },
   },
   // AND THE TWO THE FIXED GUARD BELOW IMMEDIATELY EXPOSED. Both were declared,

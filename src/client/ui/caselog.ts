@@ -1513,7 +1513,14 @@ export function logCogAt(rect: PanelRect, px: number, py: number): boolean {
  * opens is showing — the same signal the tab strip gives.
  */
 export function drawLogCog(ctx: CanvasRenderingContext2D, rect: PanelRect, open: boolean): void {
-  const cog = logCogRect(rect);
+  drawCog(ctx, logCogRect(rect), open);
+}
+
+/**
+ * A COGWHEEL IN A GIVEN SQUARE, gold while its popover is open. The case log's
+ * and the action bar's are the same control, so they are one drawing.
+ */
+export function drawCog(ctx: CanvasRenderingContext2D, cog: PanelRect, open: boolean): void {
   const cx = cog.x + cog.w / 2;
   const cy = cog.y + cog.h / 2;
   const outer = cog.w / 2;

@@ -281,6 +281,7 @@ describe('what follows a character through a door', () => {
       logSize: { w: 420, h: 180 },
       partySize: null,
       hotbarSize: null,
+      hotbarStyle: null,
       logStyle: null,
     };
     body.zoom = 1;

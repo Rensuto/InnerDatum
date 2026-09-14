@@ -8289,6 +8289,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
         logSize: null,
         partySize: null,
         hotbarSize: null,
+        hotbarStyle: null,
         logStyle: null,
       },
       persisted:
