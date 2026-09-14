@@ -13275,6 +13275,12 @@ function applyServerMessage(msg: ServerMsg): void {
      *
      * Absolute, like `ground` and `projectiles`: the table is REPLACED.
      */
+    case 'vision':
+      // THE SERVER'S OWN SIGHT, per viewer. Not drawn yet: the playfield still
+      // works its sight out for itself, and the step that switches it over is
+      // the one that reads this frame. Handled rather than left out, so this
+      // switch stays total and a new frame cannot slip past it unnoticed.
+      break;
     case 'sites':
       if (msg.realmId === currentRealmId) {
         sites = msg.sites;

@@ -12,7 +12,7 @@ import Fastify from 'fastify';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { DEFAULT_SIGHT_RADIUS, canSee } from '../../src/shared/sight.ts';
-import { REVEAL_RADIUS } from '../../src/shared/fog.ts';
+import { REVEAL_RADIUS, fogBytes, fogFromBase64, fogHas } from '../../src/shared/fog.ts';
 import { projectActors, visibleActorIds } from '../../src/server/view/projector.ts';
 import { createWorld } from '../../src/server/world/world.ts';
 import { createDownedState } from '../../src/server/engine/downed.ts';
@@ -22,6 +22,7 @@ import { createTurnEngine } from '../../src/server/turn-engine.ts';
 import { createRealms } from '../../src/server/world/realms.ts';
 import { AiProfile } from '../../src/server/engine/actor.ts';
 import { WATCHMAN } from '../../src/server/content/classes.ts';
+import { sightRadiusOf } from '../../src/server/engine/derived.ts';
 import { STUNNED } from '../../src/server/content/effects.ts';
 import { DamageType } from '../../src/server/engine/damage.ts';
 import { createEffectState, setEffect } from '../../src/server/engine/effects.ts';
@@ -889,6 +890,70 @@ describe('a monster walking into and out of sight', () => {
       texts(mine).some((t) => blow('something').includes(t)),
       'your teammate`s blow is missing from your log',
     ).toBe(true);
+  });
+
+  it('sends each viewer a window of what the server sees for them, and only when it changes', async () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * THE SERVER'S SIGHT, ON THE WIRE, BIT FOR BIT.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * Every bit of the window must be `canSee` from the body at its own sight
+     * radius; standing still must send nothing more; and a body moved by the
+     * world must be sent the window around where it now stands.
+     */
+    const mine = await hello(server.port);
+    const world = server.realms.overworld.world;
+    const me = world.getActor(mine.actorId);
+    if (me === undefined) throw new Error('no body');
+    const visions = (): Record<string, unknown>[] => mine.frames.filter((f) => f['t'] === 'vision');
+    const check = (frame: Record<string, unknown>, eye: { x: number; y: number }): string[] => {
+      const w = Number(frame['w']);
+      const h = Number(frame['h']);
+      const x0 = Number(frame['x0']);
+      const y0 = Number(frame['y0']);
+      const bits = fogFromBase64(String(frame['seen']), fogBytes(w, h));
+      const radius = sightRadiusOf(me);
+      const wrong: string[] = [];
+      for (let y = 0; y < h; y += 1) {
+        for (let x = 0; x < w; x += 1) {
+          const tile = { x: x0 + x, y: y0 + y };
+          if (fogHas(bits, w, x, y) !== canSee(world.level, eye, tile, radius)) {
+            wrong.push(`${String(tile.x)},${String(tile.y)}`);
+          }
+        }
+      }
+      return wrong;
+    };
+
+    mine.send({ t: 'hold' });
+    await sleep(250);
+    const first = visions().at(-1);
+    expect(first, 'no vision frame came at all').toBeDefined();
+    if (first === undefined) return;
+    expect(check(first, me), 'the window disagrees with the server`s sight').toEqual([]);
+
+    // STANDING STILL: another pump, and nothing new to say.
+    const before = visions().length;
+    mine.send({ t: 'hold' });
+    await sleep(250);
+    expect(visions().length, 'a vision frame was sent for a viewer who did not move').toBe(before);
+
+    // MOVED BY THE WORLD, then pumped: the window follows the body.
+    const { body } = farPair(
+      world,
+      [me],
+      REVEAL_RADIUS + 2,
+      new Set(server.realms.overworld.sites.keys()),
+    );
+    me.x = body.x;
+    me.y = body.y;
+    mine.send({ t: 'hold' });
+    await sleep(250);
+    const moved = visions().at(-1);
+    if (moved === undefined) throw new Error('the vision frames vanished');
+    expect(visions().length, 'no window for where the body was moved').toBeGreaterThan(before);
+    expect(check(moved, me), 'the moved window disagrees with the server`s sight').toEqual([]);
   });
 
   it('and you are always on your own board', async () => {

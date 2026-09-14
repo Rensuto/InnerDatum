@@ -27,7 +27,7 @@
  * fully lit zone. Light will narrow what is remembered, not what is seen.
  */
 
-import { createFog, fogSet } from './fog.ts';
+import { createFog, fogHas, fogSet } from './fog.ts';
 import { tilesInSight } from './sight.ts';
 import type { TileXY } from './coords.ts';
 import type { LevelView } from './protocol.ts';
@@ -68,4 +68,45 @@ export function rememberSeen(remembered: Uint8Array, seen: Uint8Array): boolean 
     }
   }
   return changed;
+}
+
+/** A window cut out of a level-sized bitset: where it sits, and its own bits. */
+export type BitWindow = {
+  readonly x0: number;
+  readonly y0: number;
+  readonly w: number;
+  readonly h: number;
+  /** One bit per tile of the window, row-major from (x0, y0). */
+  readonly bits: Uint8Array;
+};
+
+/**
+ * The square of `bits` within `radius` of (cx, cy), clipped to the level.
+ *
+ * THE VIEWER'S SIGHT NEVER REACHES PAST ITS RADIUS, so a window that size holds
+ * every tile a viewer can see from where they stand, and every tile of memory
+ * that standing there could have changed. The rest of a level's memory is sent
+ * once, whole, when the viewer arrives (`RealmMsg.explored`).
+ */
+export function cutWindow(
+  bits: Uint8Array,
+  levelW: number,
+  levelH: number,
+  cx: number,
+  cy: number,
+  radius: number,
+): BitWindow {
+  const x0 = Math.max(0, cx - radius);
+  const y0 = Math.max(0, cy - radius);
+  const x1 = Math.min(levelW - 1, cx + radius);
+  const y1 = Math.min(levelH - 1, cy + radius);
+  const w = Math.max(0, x1 - x0 + 1);
+  const h = Math.max(0, y1 - y0 + 1);
+  const out = createFog(w, h);
+  for (let y = y0; y <= y1; y += 1) {
+    for (let x = x0; x <= x1; x += 1) {
+      if (fogHas(bits, levelW, x, y)) fogSet(out, w, x - x0, y - y0);
+    }
+  }
+  return { x0, y0, w, h, bits: out };
 }

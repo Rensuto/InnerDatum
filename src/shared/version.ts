@@ -619,6 +619,22 @@
  * ═══════════════════════════════════════════════════════════════════════════
 
 
+ * CONSIDERED AND NOT BUMPED (THE SERVER'S OWN EYES). `VisionMsg` is a new
+ * outbound frame — a window of what the recipient sees and remembers around
+ * them — and PROTOCOL_VERSION STAYS 23.
+ *
+ * ═══ WHY THIS DOES NOT FORCE A BUMP ═══
+ * An addition no client relies on yet. A client built before this drops an
+ * unknown `t` and keeps drawing its own sight, exactly as it did; nothing it
+ * draws becomes false, and nothing it used goes missing. The bump this frame
+ * would need is the day a client stops computing sight for itself and a frame
+ * it cannot read would leave it drawing nothing, and that client ships with it.
+ *
+ * `SCHEMA_VERSION` STAYS 1. Nothing new is saved.
+ *
+ * ═══════════════════════════════════════════════════════════════════════════
+
+
  * 22 -> 23 (TRAPS). `TrapsMsg` is a new outbound frame — every trap THIS
  * VIEWER has found out about — and it is 6 -> 7's argument in its most literal
  * form yet.

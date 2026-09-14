@@ -6776,6 +6776,7 @@ export type ServerMsg =
   | WelcomeMsg
   | RealmMsg
   | SitesMsg
+  | VisionMsg
   | StateMsg
   | MovedMsg
   | JoinedMsg
@@ -7000,6 +7001,41 @@ export type SettingsMsg = {
   persisted: boolean;
 };
 
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * WHAT THIS VIEWER SEES AND REMEMBERS AROUND THEM, BY THE SERVER'S OWN SIGHT.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * The client worked this out for itself: the playfield lit whatever `canSee`
+ * admitted at the DEFAULT radius, blind to the talents and gear that change a
+ * viewer's sight, and the dark was a memory the tab kept and lost on reload.
+ * The server already holds both answers — `computeSeen` at the viewer's own
+ * `sightRadiusOf`, and the memory it keeps per realm — so it sends them.
+ *
+ * ═══ A WINDOW, NOT THE LEVEL ═══
+ * The square within the viewer's sight radius of where they stand, clipped to
+ * the level: every tile they can see is inside it, and every tile of memory
+ * standing there could have changed. The whole memory arrives once, on
+ * `RealmMsg.explored`; a 170x100 region every step would be 2,836 characters
+ * a keypress.
+ *
+ * SENT WHEN IT CHANGED, per viewer, after the pump and on arrival.
+ */
+export type VisionMsg = {
+  v: typeof PROTOCOL_VERSION;
+  t: 'vision';
+  /** Which map this window is of. A frame for a map the client has left is stale. */
+  realmId: string;
+  x0: number;
+  y0: number;
+  w: number;
+  h: number;
+  /** base64 of one bit per tile of the window, row-major from (x0, y0): in sight now. */
+  seen: string;
+  /** The same window of this character's memory of the realm. */
+  remembered: string;
+};
+
 export type ViewerMsg =
   | LoadoutMsg
   // ═══ BOTH FOGGED PER VIEWER SINCE FOV LANDED ═══
@@ -7069,7 +7105,9 @@ export type ViewerMsg =
   // THEY are now standing on. Membership here makes `broadcast(realmMsg)` a
   // compile error rather than a rule to remember. See `RealmMsg`.
   | RealmMsg
-  | SitesMsg;
+  | SitesMsg
+  // ═══ AND WHAT THIS VIEWER SEES, WHICH IS TRUE FOR EXACTLY ONE OF THEM ═══
+  | VisionMsg;
 
 /**
  * Everything the server may say TO EVERYONE.

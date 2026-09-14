@@ -225,7 +225,7 @@ import { loreById, loreIdOfNote } from '../content/lore.ts';
 // adds no runtime cycle.
 import { UNASSIGNED_CLASS } from '../persist/saves.ts';
 import { canSee, knownTile } from '../../shared/sight.ts';
-import { computeSeen, rememberSeen } from '../../shared/vision.ts';
+import { computeSeen, cutWindow, rememberSeen } from '../../shared/vision.ts';
 import { attackBlockedReason, inspectActor } from '../view/inspect.ts';
 import {
   fogEvent,
@@ -621,6 +621,12 @@ type Session = {
    * actually changed.
    */
   lastSitesKey?: string;
+  /**
+   * The last `vision` window this socket was sent, as a comparison key. A viewer
+   * standing still with nothing changing around them is sent nothing. Cleared on
+   * arrival in a realm, because the client drops its window with the map.
+   */
+  lastVisionKey?: string;
   /**
    * The overworld cell this body stepped off when it crossed into a site, and
    * where `leaveRealm` puts it back.
@@ -6074,6 +6080,10 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     rememberWhatPlayersSee(realm);
     // AND THE ROAMERS EACH PLAYER CAN NOW SEE. See `sendSitesIfChanged`.
     sendSitesIfChanged(realm);
+    // AND WHAT EACH OF THEM NOW SEES AND REMEMBERS. See `sendVisionIfChanged`.
+    for (const session of sessions.values()) {
+      if (session.helloDone && session.realmId === realm.id) sendVisionIfChanged(session);
+    }
 
     /**
      * ═══════════════════════════════════════════════════════════════════════
@@ -8113,6 +8123,54 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       explored,
       selfId: actorId,
     });
+    // THE WINDOW FOR THE MAP JUST SENT, at once: the client dropped the last one
+    // with the last map, and the next pump could be minutes away.
+    session.lastVisionKey = undefined;
+    sendVisionIfChanged(session);
+  };
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THIS VIEWER'S WINDOW OF SIGHT AND MEMORY, WHEN IT CHANGED. See `VisionMsg`.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Seen is `computeSeen` from the viewer's own body at their own
+   * `sightRadiusOf`, the rule every other frame is fogged by; remembered is the
+   * memory `rememberWhatPlayersSee` has already written for this pump. Both are
+   * cut to the same square around the body.
+   */
+  const sendVisionIfChanged = (session: Session): void => {
+    const realms = opts.realms;
+    if (realms === undefined || session.realmId === null || session.actorId === null) return;
+    const realm = realms.get(session.realmId);
+    const body = realm?.world.getActor(session.actorId);
+    if (realm === undefined || body === undefined) return;
+    const level = realm.world.level;
+    const radius = sightRadiusOf(body);
+    const seen = cutWindow(
+      computeSeen(level, body, radius),
+      level.w,
+      level.h,
+      body.x,
+      body.y,
+      radius,
+    );
+    const remembered = cutWindow(fogFor(body.id, realm), level.w, level.h, body.x, body.y, radius);
+    const msg = {
+      v: PROTOCOL_VERSION,
+      t: 'vision',
+      realmId: realm.id,
+      x0: seen.x0,
+      y0: seen.y0,
+      w: seen.w,
+      h: seen.h,
+      seen: fogToBase64(seen.bits),
+      remembered: fogToBase64(remembered.bits),
+    } as const;
+    const key = JSON.stringify(msg);
+    if (key === session.lastVisionKey) return;
+    session.lastVisionKey = key;
+    send(session.socket, msg);
   };
 
   /**

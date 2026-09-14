@@ -3,10 +3,10 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { createFog, fogCount, fogHas } from '../../src/shared/fog.ts';
+import { createFog, fogCount, fogHas, fogSet } from '../../src/shared/fog.ts';
 import { TileCode } from '../../src/shared/protocol.ts';
 import { canSee } from '../../src/shared/sight.ts';
-import { computeSeen, rememberSeen } from '../../src/shared/vision.ts';
+import { computeSeen, cutWindow, rememberSeen } from '../../src/shared/vision.ts';
 import type { LevelView } from '../../src/shared/protocol.ts';
 
 /**
@@ -99,5 +99,39 @@ describe('rememberSeen', () => {
 
   it('refuses to fold a bitset from a different-sized level', () => {
     expect(() => rememberSeen(createFog(21, 21), createFog(20, 20))).toThrow(/different levels/);
+  });
+});
+
+describe('cutWindow', () => {
+  it('copies exactly the bits inside the square, placed from its corner', () => {
+    const level = fixture();
+    const seen = computeSeen(level, EYE, RADIUS);
+    const window = cutWindow(seen, level.w, level.h, EYE.x, EYE.y, RADIUS);
+    expect([window.x0, window.y0, window.w, window.h]).toEqual([
+      EYE.x - RADIUS,
+      EYE.y - RADIUS,
+      RADIUS * 2 + 1,
+      RADIUS * 2 + 1,
+    ]);
+    for (let y = 0; y < window.h; y += 1) {
+      for (let x = 0; x < window.w; x += 1) {
+        const lx = window.x0 + x;
+        const ly = window.y0 + y;
+        expect(fogHas(window.bits, window.w, x, y), `tile ${String(lx)},${String(ly)}`).toBe(
+          fogHas(seen, level.w, lx, ly),
+        );
+      }
+    }
+  });
+
+  it('clips at the edge of the level rather than wrapping or reading past it', () => {
+    const bits = createFog(21, 21);
+    fogSet(bits, 21, 0, 0);
+    fogSet(bits, 21, 20, 0);
+    const window = cutWindow(bits, 21, 21, 1, 1, 3);
+    expect([window.x0, window.y0, window.w, window.h]).toEqual([0, 0, 5, 5]);
+    expect(fogHas(window.bits, window.w, 0, 0)).toBe(true);
+    // (20, 0) is outside the square, and a window that wrapped would find it.
+    expect(fogCount(window.bits)).toBe(1);
   });
 });
