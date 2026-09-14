@@ -823,6 +823,74 @@ describe('a monster walking into and out of sight', () => {
     );
   });
 
+  it('writes a teammate`s blow on a monster you cannot see as a blow on something', async () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * THE CASE LOG IS A TRANSCRIPT OF WHAT YOU SAW, AS UPSTREAM'S IS.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * `Game.lua`'s `logVisible` writes a line when either side is visible and
+     * `logMessage` calls an unseen side "something". The Record lane was one
+     * batch for the realm, so the monster a teammate was fighting out of your
+     * sight was named, hit and killed in your log.
+     */
+    const mine = await hello(server.port);
+    const theirs = await hello(server.port);
+    const overworld = server.realms.overworld;
+    const world = overworld.world;
+    const me = world.getActor(mine.actorId);
+    const scout = world.getActor(theirs.actorId);
+    if (me === undefined || scout === undefined) throw new Error('no body');
+    const doors = new Set(overworld.sites.keys());
+    const { body, lurk } = farPair(world, [me], REVEAL_RADIUS + 2, doors);
+    scout.x = body.x;
+    scout.y = body.y;
+    world.addMonster('lurker', {
+      name: 'Index Husk',
+      sprite: 'enemy_index_husk_s',
+      x: lurk.x,
+      y: lurk.y,
+      profile: AiProfile.MeleeChaser,
+      aggroRange: 0,
+    });
+    theirs.send({ t: 'choose_class', classId: WATCHMAN.id });
+    await sleep(200);
+    theirs.send({ t: 'hold' });
+    await sleep(250);
+
+    theirs.send({ t: 'move', dir: 'e' });
+    await sleep(150);
+    mine.send({ t: 'hold' });
+    await sleep(150);
+
+    const texts = (client: Client): string[] =>
+      client.frames
+        .filter((f) => f['t'] === 'log')
+        .flatMap((f) => (Array.isArray(f['lines']) ? (f['lines'] as { text?: unknown }[]) : []))
+        .map((line) => String(line.text));
+    const blow = (target: string): readonly string[] => [
+      `${scout.name} hits ${target}.`,
+      `${scout.name} misses ${target}.`,
+    ];
+    const deadline = Date.now() + FRAME_TIMEOUT_MS;
+    while (!texts(theirs).some((t) => blow('Index Husk').includes(t)) && Date.now() < deadline) {
+      await sleep(10);
+    }
+    expect(
+      texts(theirs).some((t) => blow('Index Husk').includes(t)),
+      'the scout never read their own blow',
+    ).toBe(true);
+    await sleep(150);
+    expect(
+      texts(mine).filter((t) => t.includes('Index Husk')),
+      'a monster you cannot see was named in your log',
+    ).toEqual([]);
+    expect(
+      texts(mine).some((t) => blow('something').includes(t)),
+      'your teammate`s blow is missing from your log',
+    ).toBe(true);
+  });
+
   it('and you are always on your own board', async () => {
     const client = await hello(server.port);
     client.send({ t: 'hold' });
@@ -854,6 +922,19 @@ describe('every player-facing send is fogged', () => {
       calls.filter((call) => !call.includes('eyesOf')),
       'an effects, projectiles or zones frame is built without the recipient`s own eyes',
     ).toEqual([]);
+  });
+
+  it('writes the Case Log record for each viewer, never once for the room', () => {
+    const text = readFileSync(new URL('../../src/server/net/gateway.ts', import.meta.url), 'utf8')
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/\/\/[^\n]*/g, '');
+    const start = text.indexOf('const recordTo = ');
+    expect(start, 'the per-viewer record builder is gone').toBeGreaterThan(-1);
+    const body = text.slice(start, text.indexOf('const broadcastRecord = ', start));
+    expect(body, 'the record is broadcast to the room').not.toMatch(/\bbroadcast\(/);
+    expect(body, 'the record is written without the viewer`s ledger').toContain(
+      'recordFor(event, headlined, see)',
+    );
   });
 
   it('no snapshot reaches a socket unfiltered', () => {

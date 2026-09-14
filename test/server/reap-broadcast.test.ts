@@ -12,7 +12,7 @@ import { createEffectState, registerEffect, setEffect } from '../../src/server/e
 import { wsGateway } from '../../src/server/net/gateway.ts';
 import { createTurnEngine } from '../../src/server/turn-engine.ts';
 import { createWorld } from '../../src/server/world/world.ts';
-import { TileCode } from '../../src/shared/protocol.ts';
+import { ActorKind, TileCode } from '../../src/shared/protocol.ts';
 import { PROTOCOL_VERSION } from '../../src/shared/version.ts';
 import type { CombatSheet } from '../../src/server/engine/combat.ts';
 import type { Actor, World } from '../../src/server/world/world.ts';
@@ -669,10 +669,14 @@ describe('a damage line names its dealer only when nothing above it has', () => 
     const welcome = await client.hello();
     const ren = placeAt(actorOf(String(welcome?.['selfId'])), 10, 10);
     ren.hpRegen = 0;
-    // FAR AWAY AND HARMLESS. The husk must not walk over and swing, or its
-    // `attack` headline is what the damage line hangs off and this test would
-    // be measuring the melee case again under a different name.
-    const bleeder = husk('m_bleeder', 30, 30, HUSK_MAX_HP);
+    // IN SIGHT AND HARMLESS. In sight, because each viewer's log names only
+    // what that viewer can see, and the next test is the bleeder out of sight.
+    // Harmless, because the husk must not walk over and swing, or its `attack`
+    // headline is what the damage line hangs off and this test would be
+    // measuring the melee case again under a different name.
+    const bleeder = husk('m_bleeder', 14, 10, HUSK_MAX_HP);
+    if (bleeder.kind !== ActorKind.Monster) throw new Error('the bleeder is not a monster');
+    bleeder.ai.aggroRange = 0;
     bleeder.maxHp = 400;
     bleeder.hp = 400;
     // The PLAYER is the one bleeding, so the tick lands on a body the viewer
@@ -698,5 +702,34 @@ describe('a damage line names its dealer only when nothing above it has', () => 
       ticks.some((line) => line.includes('damage from Index Husk')),
       `a bleed named nobody: ${ticks.join(' | ')}`,
     ).toBe(true);
+  });
+
+  it('names nobody for a bleeder you cannot see', async () => {
+    // PER-PLAYER SIGHT. The tick still lands on a body the viewer can see, so the
+    // line is written; the bleeder is far out of sight, so it is not named.
+    server = await boot('record-bleed-unseen');
+    const client = await connect(server.port);
+    const welcome = await client.hello();
+    const ren = placeAt(actorOf(String(welcome?.['selfId'])), 10, 10);
+    ren.hpRegen = 0;
+    const bleeder = husk('m_bleeder', 30, 30, HUSK_MAX_HP);
+    bleeder.maxHp = 400;
+    bleeder.hp = 400;
+    setEffect(
+      server.effects,
+      ren,
+      EffectId.Bleeding,
+      20,
+      { power: 5, srcId: 'm_bleeder' },
+      server.world.rng,
+    );
+    client.clear();
+    for (let turn = 0; turn < 4; turn += 1) await client.settle({ t: 'hold' });
+    const ticks = logLines(client).filter((line) => line.includes('damage'));
+    expect(ticks.length, 'the bleed never ticked — the fixture is wrong').toBeGreaterThan(0);
+    expect(
+      ticks.filter((line) => line.includes('Index Husk')),
+      'a bleeder out of sight was named',
+    ).toEqual([]);
   });
 });

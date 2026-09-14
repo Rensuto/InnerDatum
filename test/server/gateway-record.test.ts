@@ -31,8 +31,13 @@ const SOURCE = readFileSync(new URL('../../src/server/net/gateway.ts', import.me
 
 describe('a culprit is named or not mentioned, never invented', () => {
   it('reads the killer through nameOrNull and omits it when absent', () => {
+    // THROUGH THE VIEWER FIRST. Each line is written for one reader, and a
+    // culprit they cannot see is null for them, exactly as an absent one is;
+    // one they can see is read through `nameOrNull`, never through `nameOf`.
+    expect(SOURCE).toContain('nameable(id) ? nameOrNull(id) : null');
+    expect(SOURCE).toContain('see.has(id) || reapedNames.has(id)');
     expect(SOURCE).toContain(
-      'const killer = event.killerId === undefined ? null : nameOrNull(event.killerId);',
+      'const killer = event.killerId === undefined ? null : whoOrNull(event.killerId);',
     );
     expect(SOURCE).toContain("const by = killer === null ? '' : ` by ${killer}`;");
     expect(
@@ -51,14 +56,14 @@ describe('a culprit is named or not mentioned, never invented', () => {
    */
   it('reads the damage dealer through nameOrNull, and only without a headline', () => {
     expect(SOURCE).toContain(
-      'headlined || event.sourceId === undefined ? null : nameOrNull(event.sourceId);',
+      'headlined || event.sourceId === undefined ? null : whoOrNull(event.sourceId);',
     );
     expect(SOURCE).toContain("const from = dealer === null ? '' : ` from ${dealer}`;");
   });
 
   it('keeps the same rule on the downed line, which established it', () => {
     expect(SOURCE).toContain(
-      'const culprit = event.sourceId === undefined ? null : nameOrNull(event.sourceId);',
+      'const culprit = event.sourceId === undefined ? null : whoOrNull(event.sourceId);',
     );
     expect(SOURCE).not.toContain('nameOf(event.sourceId)');
   });

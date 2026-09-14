@@ -603,6 +603,22 @@
  * ═══════════════════════════════════════════════════════════════════════════
 
 
+ * CONSIDERED AND NOT BUMPED (A CASE LOG OF WHAT YOU SAW). The Record lane's
+ * `log` lines for a pump are written per viewer: a line about bodies the
+ * recipient can see none of is not sent, and an unseen side of a line is named
+ * "something". PROTOCOL_VERSION STAYS 23.
+ *
+ * ═══ WHY THIS DOES NOT FORCE A BUMP ═══
+ * `LogLine` keeps its shape, and a client already accepts any line whose `seq`
+ * is above the last one it took, so a viewer skipping numbers another viewer
+ * received is invisible to it. Only the text changes, and only toward saying
+ * less.
+ *
+ * `SCHEMA_VERSION` STAYS 1. Nothing about sight is saved.
+ *
+ * ═══════════════════════════════════════════════════════════════════════════
+
+
  * 22 -> 23 (TRAPS). `TrapsMsg` is a new outbound frame — every trap THIS
  * VIEWER has found out about — and it is 6 -> 7's argument in its most literal
  * form yet.

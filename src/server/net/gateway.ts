@@ -11293,7 +11293,28 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
   const recordFor = (
     event: TurnEvent,
     headlined: boolean,
+    see: ReadonlySet<string>,
   ): { text: string; depth: number; damage?: DamageType }[] => {
+    // ═══ WHAT THIS VIEWER MAY READ, AND WHAT IT CALLS WHAT IT CANNOT SEE ═══
+    // Upstream writes a line when either side of it is visible to the player,
+    // and names an unseen side "something" (`logVisible` and `logMessage`,
+    // `tome/class/Game.lua:1549-1640`). `see` is the recipient's own ledger, the
+    // same set the frames are fogged against. A sentence that OPENS on an unseen
+    // name says "Something"; a name the viewer can see is never re-cased.
+    // A BODY ALREADY BURIED KEEPS ITS NAME. `reapedNames` exists so that an orb
+    // landing after its shooter died still says who fired it, and a dead body
+    // has no position left to give away.
+    const nameable = (id: string): boolean => see.has(id) || reapedNames.has(id);
+    const named = (id: string): string => (nameable(id) ? nameOf(id) : 'something');
+    const opening = (id: string): string => (nameable(id) ? nameOf(id) : 'Something');
+    const whoOrNull = (id: string): string | null => (nameable(id) ? nameOrNull(id) : null);
+    if (event.k === 'attack') {
+      if (!see.has(event.id) && !see.has(event.targetId)) return [];
+    } else if (event.k === 'revived') {
+      if (!see.has(event.id) && !see.has(event.byId)) return [];
+    } else if (!see.has(event.id)) {
+      return [];
+    }
     switch (event.k) {
       case 'move': {
         /**
@@ -11327,8 +11348,8 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
         return [
           {
             text: event.hit
-              ? `${nameOf(event.id)} hits ${nameOf(event.targetId)}.`
-              : `${nameOf(event.id)} misses ${nameOf(event.targetId)}.`,
+              ? `${opening(event.id)} hits ${named(event.targetId)}.`
+              : `${opening(event.id)} misses ${named(event.targetId)}.`,
             depth: 0,
           },
         ];
@@ -11364,13 +11385,12 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
          * purpose: a log that words its damage lines one way and its death
          * lines another reads as two systems.
          */
-        const dealer =
-          headlined || event.sourceId === undefined ? null : nameOrNull(event.sourceId);
+        const dealer = headlined || event.sourceId === undefined ? null : whoOrNull(event.sourceId);
         const from = dealer === null ? '' : ` from ${dealer}`;
         if (healed > 0) {
           return [
             {
-              text: `${nameOf(event.id)} is patched up. ${Math.round(healed)} healed, now ${Math.max(0, Math.ceil(event.hp))}/${event.maxHp}.`,
+              text: `${opening(event.id)} is patched up. ${Math.round(healed)} healed, now ${Math.max(0, Math.ceil(event.hp))}/${event.maxHp}.`,
               depth: 1,
             },
           ];
@@ -11431,7 +11451,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
             text:
               `${Math.round(event.amount)}${event.type === undefined ? '' : ` ${event.type}`}` +
               ` damage${from}${event.crit === true ? ' (critical)' : ''}. ` +
-              `${nameOf(event.id)} ${Math.max(0, Math.ceil(event.hp))}/${event.maxHp}.`,
+              `${opening(event.id)} ${Math.max(0, Math.ceil(event.hp))}/${event.maxHp}.`,
             depth: 1,
             // THE ELEMENT, FOR THE COLOUR ONLY — see `LogLine.damage`. Spread
             // rather than assigned so an absent type stays ABSENT: the heal that
@@ -11468,13 +11488,13 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
          * words its two death sentences differently reads as two systems. The
          * information is the same; the grammar is this file's.
          */
-        const killer = event.killerId === undefined ? null : nameOrNull(event.killerId);
+        const killer = event.killerId === undefined ? null : whoOrNull(event.killerId);
         const by = killer === null ? '' : ` by ${killer}`;
-        return [{ text: `${nameOf(event.id)} is unfiled${by}.`, depth: 1 }];
+        return [{ text: `${opening(event.id)} is unfiled${by}.`, depth: 1 }];
       }
       case 'talent':
         return [
-          { text: `${nameOf(event.id)} uses ${talentName(event.id, event.talentId)}.`, depth: 0 },
+          { text: `${opening(event.id)} uses ${talentName(event.id, event.talentId)}.`, depth: 0 },
           /**
            * ═══════════════════════════════════════════════════════════════════
            * ...AND WHAT IT DID, WHICH THE DAMAGE LINES CANNOT SAY.
@@ -11510,14 +11530,14 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
         return [
           {
             text: scaled
-              ? `${nameOf(event.id)} is ${effect} ${event.turns} turn(s), not ${event.maximum}.`
-              : `${nameOf(event.id)} is ${effect} ${event.turns} turn(s).`,
+              ? `${opening(event.id)} is ${effect} ${event.turns} turn(s), not ${event.maximum}.`
+              : `${opening(event.id)} is ${effect} ${event.turns} turn(s).`,
             depth: 1,
           },
         ];
       }
       case 'effect_expired':
-        return [{ text: `${prettyId(event.effectId)} leaves ${nameOf(event.id)}.`, depth: 1 }];
+        return [{ text: `${prettyId(event.effectId)} leaves ${named(event.id)}.`, depth: 1 }];
       case 'downed': {
         // DEPTH 0 AND ITS OWN LINE. This is the loudest thing that happens in a
         // fight and it starts a five-turn clock; burying it under the blow that
@@ -11591,14 +11611,14 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
          * that knows and will not say. The solo-death case is exactly where the
          * lookup misses — see `nameOrNull`.
          */
-        const culprit = event.sourceId === undefined ? null : nameOrNull(event.sourceId);
+        const culprit = event.sourceId === undefined ? null : whoOrNull(event.sourceId);
         const put = culprit === null ? '' : ` by ${culprit}`;
         return [
           {
             text:
               others > 0
-                ? `${nameOf(event.id)} is DOWN${put} — ${String(event.turns)} turns to reach them.`
-                : `${nameOf(event.id)} is DOWN${put} — ${String(event.turns)} turns, and nobody is coming.`,
+                ? `${opening(event.id)} is DOWN${put} — ${String(event.turns)} turns to reach them.`
+                : `${opening(event.id)} is DOWN${put} — ${String(event.turns)} turns, and nobody is coming.`,
             depth: 0,
           },
         ];
@@ -11606,7 +11626,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       case 'revived':
         return [
           {
-            text: `${nameOf(event.byId)} gets ${nameOf(event.id)} back on their feet. ${event.hp}/${event.maxHp}.`,
+            text: `${opening(event.byId)} gets ${named(event.id)} back on their feet. ${event.hp}/${event.maxHp}.`,
             depth: 0,
           },
         ];
@@ -11641,9 +11661,9 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
             text:
               event.reason === ErasedReason.Wipe
                 ? company > 0
-                  ? `${nameOf(event.id)} is erased — the party is down. The floor resets.`
-                  : `${nameOf(event.id)} is erased — nobody is left standing. The floor resets.`
-                : `${nameOf(event.id)} is erased. Nobody reached them in time.`,
+                  ? `${opening(event.id)} is erased — the party is down. The floor resets.`
+                  : `${opening(event.id)} is erased — nobody is left standing. The floor resets.`
+                : `${opening(event.id)} is erased. Nobody reached them in time.`,
             depth: 0,
           },
         ];
@@ -11659,7 +11679,15 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    * client appends them in order. Silence when nothing happened — an idle pump
    * must not cost a frame.
    */
-  const broadcastRecord = (realm: PumpTarget, result: PumpResult): void => {
+  const recordTo = (session: Session, realm: PumpTarget, result: PumpResult): void => {
+    // WHAT THIS VIEWER HELD BEFORE THE PUMP, OR CAN SEE NOW. Upstream asks the
+    // map at the moment of logging; the ledger alone lags a pump behind, so a
+    // monster that stepped into view and struck in one pump would read as
+    // "something". The ledger still carries a body that died during the pump.
+    const see = new Set([
+      ...session.visible,
+      ...visibleActorIds(realm.world, eyesOf(session, realm.world)),
+    ]);
     const lines: LogLine[] = [];
     const gameTurn = result.turn.gameTurn;
 
@@ -11682,7 +11710,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     const emit = (event: TurnEvent): void => {
       if (event.k === 'attack' || event.k === 'talent') headlined = true;
       else if (event.k !== 'damage') headlined = false;
-      for (const line of recordFor(event, headlined)) {
+      for (const line of recordFor(event, headlined, see)) {
         logSeq += 1;
         lines.push({
           seq: logSeq,
@@ -11868,11 +11896,32 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     }
 
     if (lines.length === 0) return;
-    // TO THIS FLOOR. The Case Log is a transcript of what happened where you are
-    // standing; a party in an instance reading somebody else's fight in the city
-    // would be reading about people they cannot see, in a log whose whole value
-    // is that every line is about the room.
-    broadcast({ v: PROTOCOL_VERSION, t: 'log', lines }, undefined, audienceFor(realm.id));
+    // TO THIS VIEWER. Every line above was written against their own ledger and
+    // numbered as it was written, so the batch counts up past anything they have
+    // been sent before, which is the one thing the client's de-duplication needs.
+    send(session.socket, { v: PROTOCOL_VERSION, t: 'log', lines });
+  };
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE CASE LOG'S RECORD FOR A PUMP — ONE TRANSCRIPT PER VIEWER ON THIS FLOOR.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * To this floor, because the Case Log is a transcript of what happened where
+   * you are standing: a party in an instance reading somebody else's fight in
+   * the city would be reading about people they cannot see.
+   *
+   * AND PER VIEWER, for the same reason one step closer. This was one batch for
+   * the whole realm, so a monster only a teammate could see was named, hit and
+   * killed in your log while it was on nobody's board but theirs. `recordTo`
+   * writes each viewer's lines against that viewer's own ledger — see
+   * `recordFor`.
+   */
+  const broadcastRecord = (realm: PumpTarget, result: PumpResult): void => {
+    for (const session of sessions.values()) {
+      if (!session.helloDone || realmFor(session).id !== realm.id) continue;
+      recordTo(session, realm, result);
+    }
   };
 
   // -------------------------------------------------------------------------
