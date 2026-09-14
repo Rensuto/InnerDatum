@@ -4958,6 +4958,8 @@ const paintHud: HudPainter = (ctx, width, height) => {
         // straight through: the server measured these against this body's own
         // composed sheet and the panel's job is to put them under the pointer.
         progress?.statGains,
+        // AND THE BADGES, so a hover over one names what it takes back.
+        progress?.unspendableStats ?? [],
       );
       if (card !== null) {
         drawHoverCard(ctx, sprites, card, pointerPoint.x, pointerPoint.y, width, height);
@@ -10687,7 +10689,15 @@ async function boot(): Promise<void> {
         const focused = talentIdAt(layout.talents, rowsNow, point.x, point.y, talentScroll);
         // AN ATTRIBUTE CELL IS FOCUSED THE SAME WAY, and clears the talent: the
         // pane describes whichever the pointer reached last.
-        const focusedStat = talentStatAt(layout.talents, rowsNow, point.x, point.y, talentScroll);
+        const focusedStat = talentStatAt(
+          layout.talents,
+          rowsNow,
+          point.x,
+          point.y,
+          talentScroll,
+          // THE SAME BADGES THE PRESS ASKS ABOUT — see `talentStatAt`.
+          progress?.unspendableStats ?? [],
+        );
         if (focusedStat !== null && focusedStat !== talentFocusStat) {
           talentFocusStat = focusedStat;
           talentFocusId = null;

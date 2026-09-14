@@ -34,6 +34,7 @@ import {
   talentPressRefusal,
   statCellLook,
   statCellRects,
+  statCellZone,
   statMinusRect,
   talentMinusRect,
   talentStatAt,
@@ -1423,6 +1424,69 @@ describe('the attribute column', () => {
     expect(onIcon?.kind).toBe(TalentHitKind.Stat);
   });
 
+  it('never lets an attribute’s badge reach another attribute’s hover zone, at any window size', () => {
+    // WHY THE HOVER CAN ASK CELL BY CELL: a badge that overlaps only its own cell
+    // names the same attribute whichever is asked first. Swept rather than
+    // sampled, because the fold and the small icons are what move the badges.
+    const rows = talentPanelRows(view());
+    const intersects = (a: PanelRect, b: PanelRect) =>
+      a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
+    const layouts = new Set<string>();
+    for (let width = 640; width <= 1920; width += 16) {
+      for (let height = 320; height <= 1080; height += 8) {
+        for (const combat of [false, true]) {
+          const rect = rectAt(band(width, height, combat));
+          const g = talentPanelGeometry(rect, rows, NO_SCROLL);
+          if (g.stats === null) continue;
+          const icons = statCellRects(g.stats);
+          layouts.add(
+            `${String(icons[0]?.w)}px ${String(new Set(icons.map((i) => i.x)).size)} col`,
+          );
+          icons.forEach((icon, j) => {
+            const badge = statMinusRect(icon);
+            icons.forEach((other, i) => {
+              if (i !== j && intersects(badge, statCellZone(other))) {
+                throw new Error(
+                  `${String(STAT_ROWS[j]?.key)} badge in ${String(STAT_ROWS[i]?.key)} zone at ${String(width)}x${String(height)}`,
+                );
+              }
+            });
+          });
+        }
+      }
+    }
+    // AND THE SWEEP REACHED ALL THREE LAYOUTS, or it proved nothing about them.
+    expect([...layouts].sort()).toEqual(['16px 2 col', '32px 1 col', '32px 2 col']);
+  });
+
+  it('answers a hover over an attribute’s badge with the attribute the press takes back', () => {
+    // HOVER AND PRESS AGREE on every badge pixel, at both icon sizes. The 32-pixel
+    // badge overhangs its icon's top-left corner, above the cell's own zone.
+    const rows = talentPanelRows(view());
+    const GAINS = { str: [], dex: [], con: [], mag: [], wil: [], cun: [] };
+    for (const size of [band(1280, 720, false), band(640, 320, true)]) {
+      const rect = rectAt(size);
+      const g = talentPanelGeometry(rect, rows, NO_SCROLL);
+      if (g.stats === null) throw new Error('no column');
+      const icons = statCellRects(g.stats);
+      STAT_ROWS.forEach((entry, i) => {
+        const badge = statMinusRect(icons[i] as PanelRect);
+        for (let y = badge.y; y < badge.y + badge.h; y += 1) {
+          for (let x = badge.x; x < badge.x + badge.w; x += 1) {
+            const where = `${entry.key} ${String(x)},${String(y)} at ${JSON.stringify(size)}`;
+            const press = talentPanelHitAt(rect, rows, x, y, NO_SCROLL, null, [entry.key]);
+            expect(press?.kind, where).toBe(TalentHitKind.UnspendStat);
+            expect(talentStatAt(rect, rows, x, y, NO_SCROLL, [entry.key]), where).toBe(entry.key);
+            // AND THE CARD, which asks the same reader on a window with no pane.
+            expect(talentTipAt(rect, rows, x, y, NO_SCROLL, GAINS, [entry.key])?.title, where).toBe(
+              entry.name,
+            );
+          }
+        }
+      });
+    }
+  });
+
   it('draws the 64-pixel art at exactly a half or a quarter, never a fraction', () => {
     /**
      * The HUD draws with smoothing off, so only an exact divisor stays sharp —
@@ -2201,6 +2265,28 @@ describe('the deepen offer', () => {
             expect(hit.talentId).toBe('talent:crude_blow');
             expect(hit.badge).toEqual(minus);
           }
+        }
+      }
+    }
+  });
+
+  it('describes, on hover, the talent a badge takes back — on every pixel the press does', () => {
+    // THE OVERHANG WAS BLIND: a press there took a rank back, and a hover over the
+    // same pixels named nothing, because `cellAt` only answers inside the icon.
+    const rows = talentPanelRows(withTakeBacks());
+    for (const size of BADGE_BANDS) {
+      const rect = rectAt(size);
+      const geometry = talentPanelGeometry(rect, rows, NO_SCROLL);
+      const { placed, row } = stripOf(geometry, 'watch/discipline');
+      const icon = placed.cells[row.talents.findIndex((cell) => cell.canUnlearn)];
+      if (icon === undefined) throw new Error('the take-back cell was not placed');
+      const minus = talentMinusRect(icon);
+      expect(minus.x < icon.x || minus.y < icon.y, 'the fixture has no overhang').toBe(true);
+      for (let y = minus.y; y < minus.y + minus.h; y += 1) {
+        for (let x = minus.x; x < minus.x + minus.w; x += 1) {
+          const where = `${String(x)},${String(y)} at ${JSON.stringify(size)}`;
+          expect(talentIdAt(rect, rows, x, y, NO_SCROLL), where).toBe('talent:crude_blow');
+          expect(talentTipAt(rect, rows, x, y, NO_SCROLL)?.title, where).toMatch(/^Crude Blow\b/);
         }
       }
     }

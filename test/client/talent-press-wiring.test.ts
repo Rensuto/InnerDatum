@@ -238,6 +238,16 @@ describe('the talent panel press wiring', () => {
     );
   });
 
+  it('asks both hover readers about the same badges the press is told of', () => {
+    // A hover that did not know which attributes wear a badge answered nothing
+    // over the badge's overhang, while the press there took a point back.
+    for (const head of ['const focusedStat = talentStatAt(', 'const card = talentTipAt(']) {
+      const from = at(head, CODE);
+      const call = CODE.slice(from, at(');', CODE, from));
+      expect(call, head).toContain('progress?.unspendableStats ?? []');
+    }
+  });
+
   it('hands the panel its message and the clock the fade is measured against', () => {
     // Without these two the refusal is recorded, timed and redrawn for — and
     // never painted, because the painter is the only reader of either.

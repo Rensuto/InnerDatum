@@ -3088,6 +3088,20 @@ export function pressAgainstGuard(
  * talent once categories exist, since index 0 means something different in every
  * one of them.
  */
+/**
+ * THE CELL FOR THIS TALENT ID, wherever it was placed. For a hit that already
+ * names its talent — a take-back badge — whose pixels need not be inside the
+ * icon's own box, which is all `cellAt` can answer for.
+ */
+function cellWithId(rows: readonly TalentRow[], talentId: string): TalentCell | undefined {
+  for (const row of rows) {
+    if (row.kind !== TalentRowKind.Category) continue;
+    const found = row.talents.find((cell) => cell.id === talentId);
+    if (found !== undefined) return found;
+  }
+  return undefined;
+}
+
 function cellAt(
   rows: readonly TalentRow[],
   index: number,
@@ -3144,6 +3158,10 @@ export function talentIdAt(
   ) {
     return null;
   }
+  // A TAKE-BACK BADGE NAMES ITS TALENT, overhang and all. It sticks out past the
+  // icon's corner, where `cellAt` finds no box, and the press there takes a rank
+  // back — so a hover that described nothing was a control with no label.
+  if (hit.kind === TalentHitKind.Unlearn) return hit.talentId;
   return cellAt(rows, hit.index, px, py, rect, scroll)?.id ?? null;
 }
 
@@ -3162,14 +3180,27 @@ export function talentStatAt(
   py: number,
   /** The same offset the painter used — see `talentPanelGeometry`. */
   scroll: number,
+  /**
+   * THE ATTRIBUTES WEARING A TAKE-BACK BADGE, as `talentPanelHitAt` is given
+   * them. The 32-pixel badge overhangs its icon's top-left corner, above the
+   * cell's zone, so without them a hover over the badge answered nothing while
+   * a press there took a point back.
+   */
+  unspendableStats: readonly string[] = [],
 ): StatKey | null {
   const statBox = talentPanelGeometry(rect, rows, scroll).stats;
   if (statBox === null) return null;
   const icons = statCellRects(statBox);
+  const inside = (r: PanelRect): boolean =>
+    px >= r.x && px < r.x + r.w && py >= r.y && py < r.y + r.h;
   for (let i = 0; i < icons.length; i += 1) {
     const icon = icons[i];
     const entry = STAT_ROWS[i];
     if (icon === undefined || entry === undefined) continue;
+    // ITS BADGE, AS THE PRESS ASKS IT. A badge only ever overlaps its own cell's
+    // zone (a test sweeps the window sizes for that), so a pixel on it names
+    // this attribute whichever of the two is asked first.
+    if (unspendableStats.includes(entry.key) && inside(statMinusRect(icon))) return entry.key;
     const zone = statCellZone(icon);
     if (px >= zone.x && px < zone.x + zone.w && py >= zone.y && py < zone.y + zone.h) {
       return entry.key;
@@ -3195,6 +3226,8 @@ export function talentTipAt(
    * at all.
    */
   statGains?: Readonly<Record<string, readonly string[]>>,
+  /** The attributes wearing a take-back badge — see `talentStatAt`. */
+  unspendableStats: readonly string[] = [],
 ): HoverCard | null {
   /**
    * ═══════════════════════════════════════════════════════════════════════════
@@ -3215,7 +3248,8 @@ export function talentTipAt(
    * Willpower. It answers over the WHOLE cell, caption included — upstream's
    * mousezone — so the answer is readable before the pointer is on the control.
    */
-  const stat = statGains === undefined ? null : talentStatAt(rect, rows, px, py, scroll);
+  const stat =
+    statGains === undefined ? null : talentStatAt(rect, rows, px, py, scroll, unspendableStats);
   if (stat !== null && statGains !== undefined) {
     const entry = STAT_ROWS.find((row) => row.key === stat);
     const lines = statGains[stat] ?? [];
@@ -3252,7 +3286,12 @@ export function talentTipAt(
     return null;
   }
 
-  const cell = cellAt(rows, hit.index, px, py, rect, scroll);
+  // See `talentIdAt`: a badge's hit names its talent, and its pixels may be
+  // outside the icon's box.
+  const cell =
+    hit.kind === TalentHitKind.Unlearn
+      ? cellWithId(rows, hit.talentId)
+      : cellAt(rows, hit.index, px, py, rect, scroll);
   if (cell === undefined) return null;
 
   const wrap = talentWrapper();
