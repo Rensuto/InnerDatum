@@ -14,7 +14,14 @@ import {
   createTalentBook,
   PLAYER_RESIST_CAP,
 } from '../../src/server/content/classes.ts';
-import { CITYBORN, INDEXED, ORIGINS } from '../../src/server/content/origins.ts';
+import {
+  CITYBORN,
+  INDEXED,
+  ORIGINS,
+  birthCategoryPoints,
+  classPointBonus,
+  genericPointBonus,
+} from '../../src/server/content/origins.ts';
 import { higherHeal } from '../../src/server/talents/higher_heal.ts';
 import { talentRuntimeFor } from '../../src/server/main.ts';
 import { wsGateway } from '../../src/server/net/gateway.ts';
@@ -31,6 +38,11 @@ import { REAGENT_REGEN_EVERY_TURNS } from '../../src/server/engine/talents.ts';
 import { createTurnEngine } from '../../src/server/turn-engine.ts';
 import { createWorld } from '../../src/server/world/world.ts';
 import { ActorKind, TileCode } from '../../src/shared/protocol.ts';
+import {
+  totalCategoryPointsAtLevel,
+  totalGenericPointsAtLevel,
+  totalPointsAtLevel,
+} from '../../src/shared/progression.ts';
 import { PROTOCOL_VERSION } from '../../src/shared/version.ts';
 import type { PlayerActor } from '../../src/server/engine/actor.ts';
 import type { TalentEngine } from '../../src/server/engine/talents.ts';
@@ -845,6 +857,39 @@ describe('choose_class, accepted', () => {
     // already looking at.
     expect({ x: body.x, y: body.y }).toEqual(where);
     expect(body.name).toBe('Ren');
+  });
+
+  it('hands a brand-new character the points its origin grants at birth', async () => {
+    /**
+     * A FIRST-EVER JOIN HAS NO FILE. `restoreProgression` runs only for a restore,
+     * and the purse code below `choose_class` moves each purse by the DIFFERENCE
+     * the chosen origin makes over the baseline, trusting that the baseline's own
+     * points are already in hand. For a body built from nothing they are not.
+     */
+    server = await boot('choice-fresh-purses');
+    const client = await connect(server.port);
+    const body = bodyOf(await client.hello('ren-handle'));
+    await client.waitFor('class_options');
+
+    client.send({ t: 'choose_class', classId: ALCHEMIST.id });
+    await client.settle();
+    expect(body.classId).toBe(ALCHEMIST.id);
+
+    // THE EXPECTATION IS NOT VACUOUS: the baseline origin really grants points.
+    const owed = {
+      points: totalPointsAtLevel(1, classPointBonus(CITYBORN)),
+      generics: totalGenericPointsAtLevel(1, genericPointBonus(CITYBORN)),
+      categories: totalCategoryPointsAtLevel(1, birthCategoryPoints(CITYBORN)),
+    };
+    expect(owed.points + owed.generics + owed.categories).toBeGreaterThan(0);
+    expect(
+      {
+        points: body.unspentPoints,
+        generics: body.unspentGenerics,
+        categories: body.unspentCategories,
+      },
+      'a new character started without the points its origin grants',
+    ).toEqual(owed);
   });
 
   it('resends the hotbar, the cooldowns and the board', async () => {

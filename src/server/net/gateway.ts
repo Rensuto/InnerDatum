@@ -7292,6 +7292,32 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
   };
 
   /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE PURSES OF A BODY BUILT FROM NOTHING — `restoreProgression`'s totals,
+   * with nothing spent.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `restoreProgression` runs only for a restore, so a first-ever join kept the
+   * zeros `createPlayerActor` starts every purse at. `choose_class` then moves
+   * each purse by the DIFFERENCE its origin makes over the baseline, trusting
+   * that the baseline's own points were already in hand. They were not: a new
+   * Cityborn character started with none of the class, generic and category
+   * points its origin grants at birth.
+   *
+   * THE SAME FOUR TOTALS, READ THE SAME WAY, so a new body and a restored one at
+   * the same level with nothing spent hold the same purses.
+   */
+  const seedFreshPurses = (actor: Parameters<typeof restoreProgression>[0]): void => {
+    // ONLY A PLAYER HAS PURSES. The parameter is the engine's actor union.
+    if (actor.kind !== 'player') return;
+    const origin = originOf(actor.origin);
+    actor.unspentStatPoints = totalStatPointsAtLevel(actor.level);
+    actor.unspentPoints = totalPointsAtLevel(actor.level, classPointBonus(origin));
+    actor.unspentGenerics = totalGenericPointsAtLevel(actor.level, genericPointBonus(origin));
+    actor.unspentCategories = totalCategoryPointsAtLevel(actor.level, birthCategoryPoints(origin));
+  };
+
+  /**
    * ═════════════════════════════════════════════════════════════════════════
    * WHICH CLASS A BODY IS BUILT AS. THE FILE WINS; THE ROTATION IS THE
    * FALLBACK; A DANGLING id SUBSTITUTES AND SAYS SO.
@@ -8890,6 +8916,9 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       // recomputed from that spread, so restoring the level without it would
       // hand the player back every point they had already spent. The two halves
       // are done together, here, after the sheet exists.
+      // A FIRST-EVER JOIN HAS NO FILE, so its purses are seeded from the totals
+      // instead of restored from a ledger. See `seedFreshPurses`.
+      if (restore === null && actor.kind === 'player') seedFreshPurses(actor);
       if (restore !== null) {
         restoreProgression(actor, restore, engine);
 

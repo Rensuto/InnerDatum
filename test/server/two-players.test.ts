@@ -363,7 +363,8 @@ describe('somebody else turns up', () => {
      * THE MOMENT THE CLASS STOPS BEING A COSTUME, AND IT HAD NO TEST.
      * ═══════════════════════════════════════════════════════════════════════
      *
-     * A character starts with four talents at rank 1 and **zero** points, which
+     * A character starts with four talents at rank 1 and no point from a LEVEL
+     * yet (only its origin's birth points, see `seedFreshPurses`), which
      * `pointsForLevel` argues for at length: *"our four loadout talents, already
      * learned at level 1, ARE our birth grant"*, and 11 points against 16
      * purchasable steps is what keeps the panel a choice rather than a checklist.
@@ -400,7 +401,11 @@ describe('somebody else turns up', () => {
     // ONE KILL SHORT OF THE THRESHOLD. Asserted rather than assumed, because a
     // probe that reads a level-up it did not cause is the whole failure mode.
     expect(body.level, 'a fresh body is not level 1').toBe(1);
-    expect(body.unspentPoints, 'a fresh body already had points').toBe(0);
+    // THE PURSES BEFORE THE KILL, so what is measured is the LEVEL's own grant.
+    // A fresh body holds its origin's birth points, and asserting zero here once
+    // pinned the bug that withheld them.
+    const pointsBefore = body.unspentPoints;
+    const statsBefore = body.unspentStatPoints;
     body.xp = 26;
 
     let spot: { x: number; y: number; dir: string } | null = null;
@@ -442,7 +447,7 @@ describe('somebody else turns up', () => {
     expect(after !== undefined && after.kind === ActorKind.Player).toBe(true);
     if (after === undefined || after.kind !== ActorKind.Player) return;
     expect(after.level, 'the kill did not level them').toBe(2);
-    expect(after.unspentPoints, 'the level granted no point').toBe(1);
+    expect(after.unspentPoints, 'the level granted no point').toBe(pointsBefore + 1);
 
     const said = a.lines().slice(before);
     expect(
@@ -490,7 +495,7 @@ describe('somebody else turns up', () => {
      * grant changed and only for the players who got the other number.
      */
     expect(after.unspentStatPoints, 'the level granted no attribute points').toBe(
-      STAT_POINTS_PER_LEVEL,
+      statsBefore + STAT_POINTS_PER_LEVEL,
     );
     expect(
       said.some((text) => text.includes('attribute point')),
