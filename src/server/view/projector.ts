@@ -414,8 +414,9 @@ export function projectProps(world: World): readonly PropView[] | undefined {
  * that character's own tile. This block used to say `playerFOV` unioned every
  * party member onto one `seens` map, and argued a co-op game could tolerate
  * nothing else; the function does no such thing. The gateway builds every board
- * from one viewer's body (`eyesOf`). This still takes a LIST, because the frames
- * still built once per realm — effects, projectiles, zones — pass every player.
+ * from one viewer's body (`eyesOf`), and so does every other frame it sends. This
+ * still takes a LIST, which costs nothing and keeps the rule for several eyes in
+ * one place.
  *
  * ═══ PLAYERS ARE NEVER HIDDEN FROM PLAYERS ═══
  * Upstream's party is always on the map because it is always `game.party`. The

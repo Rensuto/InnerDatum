@@ -1734,18 +1734,16 @@ export type ProjectileView = {
  *
  * An empty array means the sky is clear. Never a patch — see `ProjectileView`.
  *
- * ═══ IT IS A BROADCAST, AND IT IS GATED — THE OLD NOTE HERE SAID NEITHER ═══
+ * ═══ IT IS GATED, AND IT IS PER VIEWER ═══
  * This paragraph used to read *"Fog of war is still level-wide … shipping this
  * to the room leaks nothing that `ActorView` does not already leak. THE DAY
  * PER-PLAYER FOV LANDS, THIS FRAME MOVES INTO `ViewerMsg` IN THE SAME COMMIT"*.
  * Per-player FOV landed. `projectProjectiles` takes eyes and drops any orb no
- * eye can see, and the frame did NOT move — correctly.
+ * eye can see, and the frame did not move then, correctly, while eyes were pooled.
  *
- * It stays a broadcast because eyes are realm-wide and unioned (`eyesIn`), so
- * every viewer computes the same visible set and every copy is byte-identical.
- * The trigger the old note named was the wrong one: what would force
- * `ViewerMsg` is eyes becoming PARTY-scoped, not FOV existing. `ZonesMsg` below
- * carries the same reasoning, said once and correctly.
+ * It stayed a broadcast while eyes were every player's in the realm, which made
+ * every copy byte-identical. Eyes are each viewer's own now (`eyesOf` in the
+ * gateway), so the frame is a `ViewerMsg`, built per recipient.
  */
 export type ProjectilesMsg = {
   v: typeof PROTOCOL_VERSION;
@@ -1819,14 +1817,12 @@ export type ZoneTileView = {
  * player routing around a fire that is no longer there is worse served than one
  * who has to look.
  *
- * ═══ A BROADCAST, AND THE REASON IS `eyesIn` RATHER THAN GOOD MANNERS ═══
- * It is absent from `ViewerMsg`, and that omission IS the declaration —
- * `BroadcastMsg` is `Exclude`-derived. The frame is per-tile FOV-gated, and it
- * can still be broadcast because eyes are realm-wide and unioned, so every
- * viewer in the realm computes the identical set and every copy is byte-
- * identical. THAT IS A PROPERTY OF `eyesIn`, NOT OF THIS FRAME: the day eyes
- * become party-scoped, this moves into `ViewerMsg` in the same commit, and
- * `Exclude` makes that one line here and a compile error at every send site.
+ * ═══ A `ViewerMsg`, AS THIS NOTE SAID IT WOULD BECOME ═══
+ * The frame is per-tile FOV-gated. It was a broadcast while eyes were every
+ * player's in the realm, so every copy was byte-identical, and this note said
+ * that the day that stopped being true it would move into `ViewerMsg` in the
+ * same commit. Eyes are each viewer's own now, and it has: one line in the
+ * union, and a compile error at any send site that still hands it to the room.
  */
 export type ZonesMsg = {
   v: typeof PROTOCOL_VERSION;
@@ -1873,8 +1869,8 @@ export type TerrainPatchView = {
  * `always_remember = true` on both door entities (`basic.lua:224`, `:235`) is
  * upstream making the same call.
  *
- * A BROADCAST, and here that is not a property of `eyesIn` the way `ZonesMsg`'s
- * is — it is unconditional. There is nothing per-viewer in it to begin with.
+ * A BROADCAST, unconditionally, where `ZonesMsg` is per viewer. There is nothing
+ * per-viewer in it to begin with.
  */
 export type TerrainMsg = {
   v: typeof PROTOCOL_VERSION;
@@ -7030,6 +7026,14 @@ export type ViewerMsg =
   | DiedMsg
   | UsedMsg
   | ErasedMsg
+  // ═══ AND THE BADGES, THE SKY AND THE BURNING FLOOR ═══
+  // Each was built once from every player's eyes and sent to the room. Each is
+  // built from the recipient's own eyes now: a badge is a fact about a body, and
+  // an orb or a burning tile is gated on its own tile, so a shared copy would
+  // show the room what one player can see.
+  | EffectsMsg
+  | ProjectilesMsg
+  | ZonesMsg
   // ═══ AND GROUND LOOT, FOR A DIFFERENT REASON THAN THOSE TWO ═══
   // `state` and `sweep` are per viewer because of what a viewer can SEE. This
   // one is per viewer because of what a viewer REMEMBERS: `engine/Object.lua:28-29`

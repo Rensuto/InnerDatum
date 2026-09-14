@@ -573,6 +573,25 @@ type Session = {
    */
   lastTrapsKey?: string;
   /**
+   * The last `effects`, `projectiles` and `zones` frames this socket was sent,
+   * each as its own memo key.
+   *
+   * PER SESSION, for the ground frame's reason: each is built from this viewer's
+   * own eyes (`eyesOf`) — a badge is a fact about a body this viewer can see,
+   * and an orb or a burning tile is gated on its own tile — so a realm-wide memo
+   * would compare one player's frame against another's and suppress a send.
+   *
+   * ═══ THE SKY AND THE FLOOR ARE SEEDED EMPTY, AND ABSENT MEANS EMPTY ═══
+   * An empty sky and a clear floor are what a client already believes before it
+   * is told anything, and `welcome` carries neither list for that reason. So an
+   * absent key reads as `NO_PROJECTILES_KEY` / `NO_ZONES_KEY`, and a session
+   * whose first pump sees nothing in the air sends nothing. Effects are not
+   * seeded: the first badge frame always goes out, as it always did.
+   */
+  lastEffectsKey?: string;
+  lastProjectilesKey?: string;
+  lastZonesKey?: string;
+  /**
    * The overworld cell this body stepped off when it crossed into a site, and
    * where `leaveRealm` puts it back.
    *
@@ -2702,7 +2721,7 @@ function turnKey(state: TurnState, bellArmed: boolean): string {
  * THE SKY IS CLEAR, as the `projectiles` memo spells it.
  *
  * `JSON.stringify([])`, written out as the literal it produces so that the
- * seeded memo below reads as a statement rather than as a call whose result you
+ * seeded memo reads as a statement rather than as a call whose result you
  * have to work out. See `lastProjectilesKey` for why it is seeded at all.
  */
 const NO_PROJECTILES_KEY = '[]';
@@ -2993,39 +3012,9 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
   /** The last `party` frame broadcast per realm, as a key. Same trick as `turnKey`. */
   const lastPartyKeys = new Map<string, string>();
 
-  /** The last `effects` frame broadcast per realm, as a key. */
-  const lastEffectsKeys = new Map<string, string>();
-
-  /**
-   * The last `projectiles` frame broadcast, as a key — and SEEDED WITH THE
-   * EMPTY LIST rather than with null, which the other two memos use.
-   *
-   * That difference is deliberate and it is the whole reason a server that never
-   * fires an orb sends byte-for-byte the frame set it sent before this feature
-   * existed. `null` would make the very first pump of every session compare
-   * `'[]' !== null` and broadcast an empty `projectiles` frame to say nothing at
-   * all. An empty sky is not news: it is what a client already believes before
-   * it is told anything, and `welcome` carries no orb list precisely because
-   * absence is the default rather than a fact that has to be transmitted.
-   *
-   * ═══ A MISSING ROW IS THE SEED, WHICH IS WHY THE READS SAY `?? …` ═══
-   * Per realm the seeding argument gets STRONGER, not weaker: a realm that was
-   * created four seconds ago has never broadcast anything, and its first pump
-   * must not open with an empty `projectiles` frame telling a client something
-   * it already believes. Absent and `'[]'` therefore mean the same thing, and
-   * every read spells that out rather than defaulting the Map.
-   */
-  const lastProjectilesKeys = new Map<string, string>();
-  /** The burning floor, per realm. Seeded empty — see `NO_ZONES_KEY`. */
-  const lastZonesKeys = new Map<string, string>();
   /** Terrain that has changed, per realm. Seeded empty — see `NO_TERRAIN_KEY`. */
   const lastTerrainKeys = new Map<string, string>();
 
-  /**
-   * The last `ground` frame broadcast per realm, as a key — SEEDED WITH THE
-   * EMPTY FLOOR for exactly the reason `lastProjectilesKeys` is seeded with the
-   * empty sky, missing row and all. See `NO_GROUND_KEY`.
-   */
   /** Per realm, like the floor. A shelf is shared, so this is not per socket. */
   const lastShopKeys = new Map<string, string>();
   /**
@@ -3172,30 +3161,37 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
   };
 
   /**
-   * EVERY BADGE IN THE WORLD, when they changed.
+   * EVERY BADGE THIS VIEWER CAN SEE, when they changed — one frame per viewer.
    *
    * Silent when no effect state is wired in: a server with no statuses sends no
    * `effects` frames at all rather than an empty one every pump, which keeps the
    * M3 frame set byte-for-byte unchanged on that path.
+   *
+   * PER VIEWER, from that viewer's own eyes (`eyesOf`). A badge is a fact about a
+   * body (`engine/Actor.lua:30-34`), so a stun on a monster only a teammate can
+   * see names it and roughly places it. This was built once from every player's
+   * eyes and sent to the room.
    */
   const broadcastEffectsIfChanged = (realm: PumpTarget): void => {
     const effects = opts.effects;
     if (effects === undefined) return;
-    // ONE SHARED `EffectState`, PROJECTED PER WORLD. The table is keyed by actor
+    // ONE SHARED `EffectState`, PROJECTED PER VIEWER. The table is keyed by actor
     // id and is deliberately process-wide (a stun follows a body through a door,
     // exactly as the Downed countdown does — world/realms.ts:188-199), and
-    // `projectEffects` filters it against the actors it can see. So each realm's
-    // frame lists that realm's badges and nobody else's.
-    const msg = projectEffects(
-      realm.world,
-      effects,
-      opts.talentEffects,
-      visibleActorIds(realm.world, eyesIn(realm.world)),
-    );
-    const key = JSON.stringify(msg.actors);
-    if (key === lastEffectsKeys.get(realm.id)) return;
-    lastEffectsKeys.set(realm.id, key);
-    broadcast(msg, undefined, audienceFor(realm.id));
+    // `projectEffects` filters it against the actors this viewer can see.
+    for (const session of sessions.values()) {
+      if (!session.helloDone || realmFor(session).id !== realm.id) continue;
+      const msg = projectEffects(
+        realm.world,
+        effects,
+        opts.talentEffects,
+        visibleActorIds(realm.world, eyesOf(session, realm.world)),
+      );
+      const key = JSON.stringify(msg.actors);
+      if (key === session.lastEffectsKey) continue;
+      session.lastEffectsKey = key;
+      send(session.socket, msg);
+    }
   };
 
   /**
@@ -3224,11 +3220,16 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    * `setTimeout` in the turn path.
    */
   const broadcastProjectilesIfChanged = (realm: PumpTarget): void => {
-    const msg = projectProjectiles(realm.world, eyesIn(realm.world));
-    const key = JSON.stringify(msg.projectiles);
-    if (key === (lastProjectilesKeys.get(realm.id) ?? NO_PROJECTILES_KEY)) return;
-    lastProjectilesKeys.set(realm.id, key);
-    broadcast(msg, undefined, audienceFor(realm.id));
+    // ONE FRAME PER VIEWER: each orb is gated on its own tile against that
+    // viewer's eyes, and a shooter that viewer cannot see is not named.
+    for (const session of sessions.values()) {
+      if (!session.helloDone || realmFor(session).id !== realm.id) continue;
+      const msg = projectProjectiles(realm.world, eyesOf(session, realm.world));
+      const key = JSON.stringify(msg.projectiles);
+      if (key === (session.lastProjectilesKey ?? NO_PROJECTILES_KEY)) continue;
+      session.lastProjectilesKey = key;
+      send(session.socket, msg);
+    }
   };
 
   /**
@@ -3251,19 +3252,22 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    * survival event, on a server whose roster has one creature that can fire.
    * See `lastProjectilesKey`.
    *
-   * @param socket the one recipient, or absent to tell the room. The broadcast
-   *   form also updates the memo, so the `broadcastProjectilesIfChanged` a few
-   *   lines later in the same pump correctly sends nothing.
+   * @param only the one recipient, or absent for everybody in the realm. Each
+   *   recipient's memo is written either way, so the
+   *   `broadcastProjectilesIfChanged` a few lines later in the same pump
+   *   correctly sends nothing.
    */
-  const sendProjectilesIfAny = (realm: PumpTarget, socket?: GatewaySocket): void => {
-    const msg = projectProjectiles(realm.world, eyesIn(realm.world));
-    if (msg.projectiles.length === 0) return;
-    if (socket !== undefined) {
-      send(socket, msg);
-      return;
+  const sendProjectilesIfAny = (realm: PumpTarget, only?: Session): void => {
+    const recipients =
+      only === undefined
+        ? [...sessions.values()].filter((s) => s.helloDone && realmFor(s).id === realm.id)
+        : [only];
+    for (const session of recipients) {
+      const msg = projectProjectiles(realm.world, eyesOf(session, realm.world));
+      if (msg.projectiles.length === 0) continue;
+      session.lastProjectilesKey = JSON.stringify(msg.projectiles);
+      send(session.socket, msg);
     }
-    lastProjectilesKeys.set(realm.id, JSON.stringify(msg.projectiles));
-    broadcast(msg, undefined, audienceFor(realm.id));
   };
 
   /**
@@ -3277,20 +3281,23 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    * empty one, or the wash stays on every screen in the realm until something
    * else happens to change the list — which, out of combat, can be minutes.
    *
-   * ═══ IT IS A BROADCAST BECAUSE THE EYES ARE THE REALM'S ═══
-   * `projectZones` gates per tile against `eyesIn`, which is the realm's eyes
-   * unioned — so every viewer computes the same visible set and every copy of
-   * this frame is byte-identical. That is a property of `eyesIn` and NOT of the
-   * frame: the day eyes become party-scoped, `ZonesMsg` moves into `ViewerMsg`
-   * and this function becomes a per-session loop like `broadcastGroundIfChanged`
-   * below it. Its docblock says the same thing from the other side.
+   * ═══ ONE FRAME PER VIEWER, AS THIS NOTE SAID IT WOULD BECOME ═══
+   * `projectZones` gates each tile against the eyes it is handed. Those were
+   * every player's in the realm, which made every copy byte-identical and a
+   * broadcast safe, and this note said that the day eyes stopped being the
+   * realm's, `ZonesMsg` would move into `ViewerMsg` and this would become a
+   * per-session loop like `broadcastGroundIfChanged`. Eyes are each viewer's own
+   * now (`eyesOf`), and it has.
    */
   const broadcastZonesIfChanged = (realm: PumpTarget): void => {
-    const msg = projectZones(realm.world, eyesIn(realm.world));
-    const key = JSON.stringify(msg.tiles);
-    if (key === (lastZonesKeys.get(realm.id) ?? NO_ZONES_KEY)) return;
-    lastZonesKeys.set(realm.id, key);
-    broadcast(msg, undefined, audienceFor(realm.id));
+    for (const session of sessions.values()) {
+      if (!session.helloDone || realmFor(session).id !== realm.id) continue;
+      const msg = projectZones(realm.world, eyesOf(session, realm.world));
+      const key = JSON.stringify(msg.tiles);
+      if (key === (session.lastZonesKey ?? NO_ZONES_KEY)) continue;
+      session.lastZonesKey = key;
+      send(session.socket, msg);
+    }
   };
 
   /**
@@ -3316,19 +3323,21 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    * and the two are not in tension: the broadcast exists to report a CHANGE (and
    * emptying is a change), this exists to seed a client that knows nothing.
    *
-   * @param socket the one recipient, or absent to tell the room. The broadcast
-   *   form also updates the memo, so a `broadcastZonesIfChanged` later in the
-   *   same pump correctly sends nothing.
+   * @param only the one recipient, or absent for everybody in the realm. Each
+   *   recipient's memo is written either way, so a `broadcastZonesIfChanged`
+   *   later in the same pump correctly sends nothing.
    */
-  const sendZonesIfAny = (realm: PumpTarget, socket?: GatewaySocket): void => {
-    const msg = projectZones(realm.world, eyesIn(realm.world));
-    if (msg.tiles.length === 0) return;
-    if (socket !== undefined) {
-      send(socket, msg);
-      return;
+  const sendZonesIfAny = (realm: PumpTarget, only?: Session): void => {
+    const recipients =
+      only === undefined
+        ? [...sessions.values()].filter((s) => s.helloDone && realmFor(s).id === realm.id)
+        : [only];
+    for (const session of recipients) {
+      const msg = projectZones(realm.world, eyesOf(session, realm.world));
+      if (msg.tiles.length === 0) continue;
+      session.lastZonesKey = JSON.stringify(msg.tiles);
+      send(session.socket, msg);
     }
-    lastZonesKeys.set(realm.id, JSON.stringify(msg.tiles));
-    broadcast(msg, undefined, audienceFor(realm.id));
   };
 
   /**
@@ -5806,15 +5815,6 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     const body = session.actorId === null ? undefined : world.getActor(session.actorId);
     return body === undefined ? [] : [body];
   };
-
-  /**
-   * EVERY PLAYER'S EYES IN A REALM, for the three frames still built once per
-   * realm and broadcast: effects, projectiles and zones. Each of those is built
-   * per viewer in a later step. Nothing else may use this — `fov.test.ts`
-   * scrapes the gateway to hold that.
-   */
-  const eyesIn = (world: World): TileXY[] =>
-    world.allActors().filter((actor) => actor.kind === ActorKind.Player);
 
   /**
    * ═══════════════════════════════════════════════════════════════════════════
@@ -9203,10 +9203,14 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     // time. A reconnecting player must see the Downed timer immediately; it is
     // the thing they came back for.
     if (opts.effects !== undefined) {
-      send(
-        session.socket,
-        projectEffects(world, opts.effects, undefined, visibleActorIds(world, eyesIn(world))),
+      const badges = projectEffects(
+        world,
+        opts.effects,
+        undefined,
+        visibleActorIds(world, eyesOf(session, world)),
       );
+      session.lastEffectsKey = JSON.stringify(badges.actors);
+      send(session.socket, badges);
     }
     send(session.socket, projectParty(world, opts.downed, speakingNow(Date.now())));
 
@@ -9218,10 +9222,10 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     // a clear sky with a shot still coming at them. `welcome` cannot carry it
     // either: that frame is the level and the actors, and an orb is neither.
     // Silent when nothing is in the air — see `sendProjectilesIfAny`.
-    sendProjectilesIfAny(realmFor(session), session.socket);
+    sendProjectilesIfAny(realmFor(session), session);
     // AND WHAT IS BURNING. Unicast for the same reason the sky is: this socket
     // has seen nothing, and the room already knows.
-    sendZonesIfAny(realmFor(session), session.socket);
+    sendZonesIfAny(realmFor(session), session);
     sendTerrainIfAny(realmFor(session), session.socket);
 
     // THE FLOOR, unicast, and for a longer-lived version of the reason directly
@@ -9721,9 +9725,6 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     clearBell(realmId);
     lastTurnKeys.delete(realmId);
     lastPartyKeys.delete(realmId);
-    lastEffectsKeys.delete(realmId);
-    lastProjectilesKeys.delete(realmId);
-    lastZonesKeys.delete(realmId);
     lastTerrainKeys.delete(realmId);
     lastShopKeys.delete(realmId);
     clearedRealms.delete(realmId);
@@ -10087,7 +10088,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
      * broadcast said the same thing. Unseen loot is a pickup you missed; unseen
      * fire is damage every turn on a tile you have no reason to leave.
      */
-    sendZonesIfAny(realmFor(session), session.socket);
+    sendZonesIfAny(realmFor(session), session);
     sendTerrainIfAny(realmFor(session), session.socket);
     announceArrival(session, to, to.name);
     announceJoined(to.world.getActor(actorId) ?? placed, session.connId, audienceFor(to.id));
@@ -10398,7 +10399,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     sendTrapsIfAny(realmFor(session), session);
     // AND THE FIRE ON IT. The other half of the crossing — see the note on the
     // matching call in the outbound direction.
-    sendZonesIfAny(realmFor(session), session.socket);
+    sendZonesIfAny(realmFor(session), session);
     sendTerrainIfAny(realmFor(session), session.socket);
     // AND THE ROOM SAYS WHAT IT IS. The one movement worth narrating — see
     // `announceArrival`, and `recordFor`'s `move` case for why a step is not.

@@ -231,8 +231,8 @@ describe('viewer-private frames cannot be broadcast', () => {
       'joined',
       'left',
       'log',
-      'effects',
-      'projectiles',
+      // `effects` AND `projectiles` LEFT TOO, when each viewer got their own eyes:
+      // a badge and an orb are gated on what the recipient can see.
       'party',
       'pinged',
       // `ground` JOINED THE BROADCASTABLE SET AT v10 and `inventory` did not.
@@ -362,18 +362,19 @@ describe('the M4 frames at the trust boundary', () => {
     expect(parseClientMsg({ v: V, t: 'respawn', x: 3, y: 2 }).ok).toBe(false);
   });
 
-  it('keeps the four M4 panel frames broadcastable', () => {
-    // The Case Log, the badge rows, the party and a ping are all true for the
-    // WHOLE party — MVP ships shared party FOV (game-design.md § 12) — so none
-    // of them belongs in `ViewerMsg`. These four assignments are what stop
-    // somebody quietly making the log viewer-private and halving the reason the
-    // Margin lane exists.
+  it('keeps three of the four M4 panel frames broadcastable', () => {
+    // The Case Log, the party and a ping are true for the WHOLE party, so none
+    // of them belongs in `ViewerMsg`; these assignments stop somebody quietly
+    // making the log viewer-private and halving the reason the Margin lane
+    // exists. The badge rows LEFT: a badge is a fact about a body, and each
+    // viewer now sees only the bodies their own eyes can, so `effects` is typed
+    // as a `ViewerMsg` below.
     const log: BroadcastMsg = {
       v: V,
       t: 'log',
       lines: [{ seq: 1, lane: LogLane.Margin, gameTurn: 214, text: 'get to me', speaker: 'Dalt' }],
     };
-    const effects: BroadcastMsg = {
+    const effects: ViewerMsg = {
       v: V,
       t: 'effects',
       actors: [
@@ -569,8 +570,8 @@ describe('the inspect pair at the trust boundary', () => {
       'joined',
       'left',
       'log',
-      'effects',
-      'projectiles',
+      // `effects` AND `projectiles` LEFT TOO, when each viewer got their own eyes:
+      // a badge and an orb are gated on what the recipient can see.
       'party',
       'pinged',
       // `ground` JOINED THE BROADCASTABLE SET AT v10 and `inventory` did not.

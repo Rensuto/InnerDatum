@@ -22,6 +22,11 @@ import { createTurnEngine } from '../../src/server/turn-engine.ts';
 import { createRealms } from '../../src/server/world/realms.ts';
 import { AiProfile } from '../../src/server/engine/actor.ts';
 import { WATCHMAN } from '../../src/server/content/classes.ts';
+import { STUNNED } from '../../src/server/content/effects.ts';
+import { DamageType } from '../../src/server/engine/damage.ts';
+import { createEffectState, setEffect } from '../../src/server/engine/effects.ts';
+import { createRng } from '../../src/shared/rng.ts';
+import type { EffectState } from '../../src/server/engine/effects.ts';
 import { canWalk } from '../../src/shared/level.ts';
 import { TileCode } from '../../src/shared/protocol.ts';
 import { PROTOCOL_VERSION } from '../../src/shared/version.ts';
@@ -228,10 +233,10 @@ describe('the projected board', () => {
     expect(projectActors(world, [{ x: 1, y: 1 }]).map((a) => a.id)).toContain('p2');
   });
 
-  it('unions a list of eyes, which only the frames still built per realm hand it', () => {
-    // The board is built from ONE viewer's body now (`eyesOf` in the gateway),
+  it('unions a list of eyes, though the gateway hands it only one', () => {
+    // Every frame is built from ONE viewer's body now (`eyesOf` in the gateway),
     // and the wire tests below hold that. This is the projector's own rule for a
-    // list, which effects, projectiles and zones still pass.
+    // list of eyes, kept in one place.
     const { world, far } = peopled();
     const alone = projectActors(world, [{ x: 1, y: 1 }]).map((a) => a.id);
     const scouted = projectActors(world, [
@@ -269,6 +274,7 @@ describe('the projected board', () => {
 
 type Harness = { port: number; realms: Realms; close: () => Promise<void> };
 let server: Harness;
+let effects: EffectState;
 const openSockets: WebSocket[] = [];
 
 beforeEach(async () => {
@@ -278,6 +284,7 @@ beforeEach(async () => {
     seed: 'fov-wire',
     engineFor: (world) => createTurnEngine({ world, downed, parties }),
   });
+  effects = createEffectState([STUNNED]);
   const app = Fastify({ logger: false });
   await app.register(wsGateway, {
     world: realms.overworld.world,
@@ -285,6 +292,7 @@ beforeEach(async () => {
     realms,
     parties,
     downed,
+    effects,
   });
   await app.listen({ host: '127.0.0.1', port: 0 });
   const address = app.server.address();
@@ -677,6 +685,88 @@ describe('a monster walking into and out of sight', () => {
     expect(mine.frames.some(stepped), 'a teammate`s step far away never reached you').toBe(true);
   });
 
+  it('does not show you a badge on a monster only your teammate can see', async () => {
+    /**
+     * A BADGE IS A FACT ABOUT A BODY (`engine/Actor.lua:30-34`). The `effects`
+     * frame was built from every player's eyes and sent to the room, so a stun on
+     * a monster only your teammate could see named that monster on your client.
+     */
+    const mine = await hello(server.port);
+    const theirs = await hello(server.port);
+    const overworld = server.realms.overworld;
+    const world = overworld.world;
+    const me = world.getActor(mine.actorId);
+    const scout = world.getActor(theirs.actorId);
+    if (me === undefined || scout === undefined) throw new Error('no body');
+    const doors = new Set(overworld.sites.keys());
+    const { body, lurk } = farPair(world, [me], REVEAL_RADIUS + 2, doors);
+    scout.x = body.x;
+    scout.y = body.y;
+    const lurker = world.addMonster('lurker', {
+      name: 'Index Husk',
+      sprite: 'enemy_index_husk_s',
+      x: lurk.x,
+      y: lurk.y,
+      profile: AiProfile.MeleeChaser,
+      aggroRange: 0,
+    });
+    setEffect(effects, lurker, STUNNED.id, 50, {}, createRng('fov-badge'));
+
+    theirs.send({ t: 'hold' });
+    await sleep(250);
+    mine.send({ t: 'hold' });
+    await sleep(250);
+
+    const badged = (client: Client): boolean => {
+      const last = [...client.frames].reverse().find((f) => f['t'] === 'effects');
+      const rows = last?.['actors'];
+      return (
+        Array.isArray(rows) && (rows as { id?: unknown }[]).some((row) => row.id === lurker.id)
+      );
+    };
+    expect(badged(theirs), 'the scout standing beside it was not shown its badge').toBe(true);
+    expect(badged(mine), 'a badge on a monster only your teammate can see reached you').toBe(false);
+  });
+
+  it('does not show you fire only your teammate can see', async () => {
+    const mine = await hello(server.port);
+    const theirs = await hello(server.port);
+    const overworld = server.realms.overworld;
+    const world = overworld.world;
+    const me = world.getActor(mine.actorId);
+    const scout = world.getActor(theirs.actorId);
+    if (me === undefined || scout === undefined) throw new Error('no body');
+    const doors = new Set(overworld.sites.keys());
+    const { body, lurk } = farPair(world, [me], REVEAL_RADIUS + 2, doors);
+    scout.x = body.x;
+    scout.y = body.y;
+    world.addZone({
+      srcId: theirs.actorId,
+      tiles: [lurk],
+      type: DamageType.Physical,
+      damage: 1,
+      turns: 50,
+      selfFire: false,
+      friendlyFire: false,
+    });
+
+    theirs.send({ t: 'hold' });
+    await sleep(250);
+    mine.send({ t: 'hold' });
+    await sleep(250);
+
+    const burning = (client: Client): boolean => {
+      const last = [...client.frames].reverse().find((f) => f['t'] === 'zones');
+      const rows = last?.['tiles'];
+      return (
+        Array.isArray(rows) &&
+        (rows as { x?: unknown; y?: unknown }[]).some((row) => row.x === lurk.x && row.y === lurk.y)
+      );
+    };
+    expect(burning(theirs), 'the scout standing beside it was not shown the fire').toBe(true);
+    expect(burning(mine), 'fire only your teammate can see reached you').toBe(false);
+  });
+
   it('and you are always on your own board', async () => {
     const client = await hello(server.port);
     client.send({ t: 'hold' });
@@ -690,21 +780,23 @@ describe('a monster walking into and out of sight', () => {
 // ---------------------------------------------------------------------------
 
 describe('every player-facing send is fogged', () => {
-  it('builds no board and no floor from every player in the realm', () => {
-    // `eyesIn` pools every player's eyes, and only the three frames still built
-    // once per realm may use it. A board or a floor built from it would show a
-    // player what only a teammate can see.
+  it('pools no player`s eyes into anything a player is sent', () => {
+    // Every frame is built from the recipient's own body (`eyesOf`). The pooled
+    // eyes are gone; this keeps them gone, and holds the three frames that were
+    // the last to use them — effects, projectiles, zones — to `eyesOf`.
     const text = readFileSync(new URL('../../src/server/net/gateway.ts', import.meta.url), 'utf8')
       .replace(/\/\*[\s\S]*?\*\//g, '')
       .replace(/\/\/[^\n]*/g, '');
-    const uses = [...text.matchAll(/eyesIn\(/g)].map((m) =>
-      text.slice(Math.max(0, m.index - 160), m.index + 40),
+    expect(text, 'the pooled eyes are back').not.toMatch(/\beyesIn\b/);
+    const calls = [...text.matchAll(/project(?:Effects|Projectiles|Zones)\(/g)].map((m) =>
+      text.slice(m.index, m.index + 220),
     );
-    expect(uses.length, 'nothing pools eyes any more, so delete `eyesIn`').toBeGreaterThan(0);
-    const strays = uses.filter((window) => !/project(?:Effects|Projectiles|Zones)\(/.test(window));
+    expect(calls.length, 'no effects, projectiles or zones frame is built at all').toBeGreaterThan(
+      2,
+    );
     expect(
-      strays,
-      'the pooled eyes feed something other than effects, projectiles or zones',
+      calls.filter((call) => !call.includes('eyesOf')),
+      'an effects, projectiles or zones frame is built without the recipient`s own eyes',
     ).toEqual([]);
   });
 

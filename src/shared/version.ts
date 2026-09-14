@@ -541,6 +541,25 @@
  * ═══════════════════════════════════════════════════════════════════════════
 
 
+ * CONSIDERED AND NOT BUMPED (ONLY THE BADGES AND THE FIRE YOU CAN SEE).
+ * `effects`, `projectiles` and `zones` are built per viewer, from each viewer's
+ * own eyes, rather than once for the realm, and PROTOCOL_VERSION STAYS 23.
+ *
+ * The change: a badge on a monster only a teammate can see, an orb over ground
+ * only they can see, and fire burning where only they can see it no longer
+ * reach you.
+ *
+ * ═══ WHY THIS DOES NOT FORCE A BUMP ═══
+ * All three frames are absolute snapshots and keep their shapes; each copy just
+ * lists fewer rows. A client built before this replaces its list with whatever
+ * the frame says, so it draws the smaller, true set, and an orb whose shooter
+ * it cannot see arrives with no shooter named, as it already did.
+ *
+ * `SCHEMA_VERSION` STAYS 1. Nothing about sight is saved.
+ *
+ * ═══════════════════════════════════════════════════════════════════════════
+
+
  * 22 -> 23 (TRAPS). `TrapsMsg` is a new outbound frame — every trap THIS
  * VIEWER has found out about — and it is 6 -> 7's argument in its most literal
  * form yet.
