@@ -846,6 +846,7 @@ describe('set_keybinds, over a real socket', () => {
       offsets: { talents: { dx: 40, dy: -12 } },
       logSize: { w: 420, h: 180 },
       partySize: null,
+      hotbarSize: null,
       logStyle: null,
     };
     const first = await boot('settings-restart');

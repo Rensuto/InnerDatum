@@ -559,6 +559,7 @@ describe('the offset store', () => {
      * one thing only while the log was the only member with either.
      */
     expect([...DRAGGABLE_PANELS].sort()).toEqual([
+      'hotbar',
       'inventory',
       'log',
       'menu',
@@ -567,6 +568,7 @@ describe('the offset store', () => {
       'talents',
     ]);
     expect(Object.keys(createPanelOffsets()).sort()).toEqual([
+      'hotbar',
       'inventory',
       'log',
       'menu',

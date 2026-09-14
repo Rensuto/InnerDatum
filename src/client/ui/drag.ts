@@ -141,6 +141,11 @@ export const DraggablePanel = {
    * constants.
    */
   Party: 'party',
+  /**
+   * THE ACTION BAR, which moves by any part of it that is not a slot and resizes
+   * from its corner grip. Its size is its WIDTH alone: see `hotbarPanelSize`.
+   */
+  Hotbar: 'hotbar',
 } as const;
 export type DraggablePanel = (typeof DraggablePanel)[keyof typeof DraggablePanel];
 
@@ -158,6 +163,7 @@ export const DRAGGABLE_PANELS: readonly DraggablePanel[] = [
   DraggablePanel.Menu,
   DraggablePanel.Log,
   DraggablePanel.Party,
+  DraggablePanel.Hotbar,
 ] as const;
 
 /**

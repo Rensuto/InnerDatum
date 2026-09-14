@@ -280,6 +280,7 @@ describe('what follows a character through a door', () => {
       offsets: { talents: { dx: 40, dy: -12 } },
       logSize: { w: 420, h: 180 },
       partySize: null,
+      hotbarSize: null,
       logStyle: null,
     };
     body.zoom = 1;

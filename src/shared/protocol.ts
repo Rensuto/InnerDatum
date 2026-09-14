@@ -4061,15 +4061,30 @@ export const PanelLayoutSchema = z.strictObject({
    * size", it is every panel on every screen jumping back to its computed
    * position.
    *
-   * A THIRD resizable panel is where the record becomes worth the migration, and
-   * that is the moment to do it — with both fields read for one release so
-   * nobody's layout is lost.
+   * A THIRD resizable panel was where the record was expected to pay for its
+   * migration. The action bar is that panel, and `hotbarSize` says why it is a
+   * field as well.
    *
    * `.default(null)` for `logStyle`'s reason, stated at length below: this
    * schema validates what comes back OUT of a character file, and every save
    * written before today has no `partySize` at all.
    */
   partySize: panelSizeSchema.nullable().default(null),
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * AND THE ACTION BAR'S, the third panel with a grip.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Only the width is read: the grip chooses how many slots sit on a line and the
+   * height follows (`hotbarPanelSize`). Null is "never resized", the whole row on
+   * one line.
+   *
+   * A THIRD NAMED FIELD, NOT THE RECORD. Moving `logSize` and `partySize` into a
+   * record means reading both shapes for a release so nobody's layout is lost,
+   * and that migration is its own change rather than a rider on a new panel.
+   * `.default(null)` for the reason `logStyle` gives below.
+   */
+  hotbarSize: panelSizeSchema.nullable().default(null),
   /**
    * NULLABLE AND DEFAULTED, and the default is what makes this safe to add.
    *

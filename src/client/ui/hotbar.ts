@@ -130,14 +130,14 @@
  */
 
 import { cardStatLines, wrapText } from './panel.ts';
-import type { HoverCard } from './panel.ts';
+import type { HoverCard, PanelRect } from './panel.ts';
 import { TALENTS_PER_CLASS_MAX } from '../../shared/progression.ts';
 import { PALETTE } from '../render/canvas.ts';
 import { SLOT_ORDER } from '../../shared/protocol.ts';
 import { DragKind } from './drag.ts';
-import { PanelSkin, drawPanel } from './panel.ts';
+import { PANEL_PAD, PanelSkin, drawPanel } from './panel.ts';
 import { resourceLabel } from './resource.ts';
-import type { DragSubject } from './drag.ts';
+import type { DragSubject, PanelSize } from './drag.ts';
 import type { LoadoutTalent, ResourceKind, Slot } from '../../shared/protocol.ts';
 import type { SpriteSource } from '../render/assets.ts';
 
@@ -185,53 +185,11 @@ const ICON_DRAW_PX = 32;
 
 const SLOT_GAP = 4;
 /**
- * Breathing room above and below the row, inside the backing strip.
- *
- * WAS 4, NOW 2 — half of the six logical pixels the player asked for back
- * ("the action bar at the bottom should be slightly smaller"). It is padding and
- * nothing measures against it, so it is free in a way `SLOT_PX` is not.
- */
-const SLOT_PAD = 2;
-/**
  * How far the icon sits inside the frame. `(44 - 32) / 2` — stated as the
  * arithmetic so it follows the two constants rather than being a third number
  * that has to be kept in step with them.
  */
 const ICON_INSET = Math.floor((SLOT_PX - ICON_DRAW_PX) / 2);
-
-/**
- * Vertical bite the hotbar's BUTTON ROW takes out of the bottom of the viewport.
- *
- * It OVERLAYS the world rather than shrinking the camera, the same way the party
- * strip overlays the top. The cost is real — 76 of 480 logical pixels, about two
- * and a half tile rows — and it is accepted rather than worked around, because
- * the alternative is drawing 72x72 art at some fractional scale, which is
- * precisely the resampling the whole backbuffer exists to prevent. The camera
- * centres on the player, so the tile that matters most is never underneath it.
- */
-export const HOTBAR_H = SLOT_PX + SLOT_PAD * 2;
-
-/**
- * The one-line strip under the row.
- *
- * It carries the hovered or armed slot's caption — and, when the row does not
- * fit the viewport, the REFUSAL sentence that says so. WAS 14, NOW 12: a 10px
- * glyph needs twelve, and the other two were the second half of the shrink.
- */
-export const HOTBAR_LABEL_H = 12;
-
-/**
- * Everything the hotbar occupies, so main.ts can stack the resource pips and the
- * notice line above it without either guessing the other's height. Exported for
- * exactly that: two files agreeing on a layout by arithmetic rather than by two
- * hard-coded numbers that drift the first time a slot changes size.
- *
- * DERIVED, NEVER TYPED OUT. `panelBand` (main.ts:534-541) subtracts this from the
- * viewport height, so the six pixels the shrink returned reach all four
- * draggable panels with no edit anywhere else — and would reach them wrongly if
- * anybody wrote 88 down a second time.
- */
-export const HOTBAR_TOTAL_H = HOTBAR_H + HOTBAR_LABEL_H;
 
 /**
  * Slots 0-3: the class talents, on keys 1-4.
@@ -254,9 +212,9 @@ export const HOTBAR_TOTAL_H = HOTBAR_H + HOTBAR_LABEL_H;
  *   six talents + four items = 476px   a third of the floor left bare
  *   nine talents + four items = 620px  the row the floor actually holds
  *
- * Ten would be 668 and would fit a 768-wide device while dropping the item
- * slots at 640 — a bar whose contents depend on the window, which is the one
- * outcome `hotbarVisibleCount` exists to make loud rather than to cause.
+ * Ten would be 668 and would fit a 768-wide device while wrapping the default
+ * bar onto a second line at 640. A bar wraps rather than drop a slot now, but
+ * the whole row on one line at the floor is still what the count is for.
  *
  * ═══ AND NINE IS EXACTLY THE DIGIT ROW ═══
  * Slots 7-9 are bound in input/keymap.ts by CODE (`Digit7`..`Digit9`), the
@@ -569,9 +527,8 @@ export type HotbarOptions = {
   readonly ctx: CanvasRenderingContext2D;
   readonly sprites: SpriteSource;
   readonly view: HotbarView;
-  /** Logical backbuffer size, in world pixels — not device pixels. */
-  readonly width: number;
-  readonly height: number;
+  /** The bar's outer rect, in logical backbuffer pixels. See `hotbarPanelSize`. */
+  readonly rect: PanelRect;
 };
 
 export type SlotRect = {
@@ -591,98 +548,116 @@ export function hotbarRowWidth(count: number): number {
 }
 
 /**
- * How many slots actually get drawn at this width — AND THE REFUSAL IS EXPLICIT.
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE BAR IS A PANEL, AND ITS WIDTH IS THE PLAYER'S.
+ * ═══════════════════════════════════════════════════════════════════════════
  *
- * ═══ THIS REPLACED A SILENT `continue` AND THAT IS THE POINT ═══
- * The painter used to carry `if (rect.x < 0 || rect.x + rect.w > width) continue;`
- * inside its loop: a slot that did not fit was simply not painted, with nothing
- * said anywhere. On a four-talent bar that was almost unreachable and merely
- * untidy. On a thirteen-slot bar it is a DROP TARGET THAT VANISHES WITHOUT A WORD
- * — the player drags an item at the place a slot was, releases over bare map,
- * and nothing happens for a reason nothing on screen states.
+ * Reported: the bar was a strip the width of the screen with the slots centred
+ * in it, which left bare wings at both sides of every window wider than the row.
+ * It is its own panel now, framed like the case log, moved by any part of it
+ * that is not a slot and resized from its corner grip.
  *
- * So the decision is made once, here, for the whole row, and `drawHotbar` says
- * out loud what it did. Thirteen slots need 620 logical pixels; the interface
- * floors at 640 (render/canvas.ts, `HUD_MIN_W`), so the full row fits
- * everywhere this client can render, with 20px of slack. The
- * fallbacks below are therefore for a viewport that should not exist — which is
- * exactly the kind of case that shows up on somebody else's window.
- *
- *   the whole row fits         → every slot
- *   only the talents fit       → the nine talent slots, and the strip says so
- *   not even the talents fit   → nothing, and the strip says that instead
- *
- * Falling back to "the talents" rather than "as many as fit" is deliberate: the
- * talents are the half with KEYS, so they are the half that stays useful when
- * the pointer has nowhere to click.
+ * ═══ A NARROW BAR WRAPS, AS UPSTREAM'S HOTKEY BOX DOES ═══
+ * `HotkeysIconsDisplay` fits as many columns as its box is wide
+ * (engine/HotkeysIconsDisplay.lua:108-109) and starts a new row when one fills
+ * (:265-271). So the grip chooses how many slots sit on a line, and the height
+ * follows. This replaced `hotbarVisibleCount`, which hid the item slots, or the
+ * whole bar, on a window narrower than the row. A wrapped bar hides nothing.
  */
-export function hotbarVisibleCount(count: number, width: number): number {
-  if (count <= 0) return 0;
-  if (hotbarRowWidth(count) <= width) return count;
-  const talents = Math.min(count, HOTBAR_TALENT_SLOTS);
-  if (hotbarRowWidth(talents) <= width) return talents;
-  return 0;
+
+/** The frame around the slots: `panelInner`'s inset, so the skin's border clears them. */
+export const HOTBAR_INSET = PANEL_PAD + 3;
+
+/** The strip over the slots: what the pointer is on, and a handle to move the bar by. */
+export const HOTBAR_HEADER_H = 12;
+
+/**
+ * The bar's height on one line, which main.ts's panel bands leave free at the
+ * foot of the screen so a docked panel is not drawn over it by default.
+ *
+ * DERIVED, NEVER TYPED OUT. `panelBand` subtracts this from the viewport height,
+ * so a change to any term reaches every draggable panel with no edit anywhere
+ * else, and would reach them wrongly if anybody wrote the number down twice.
+ */
+export const HOTBAR_TOTAL_H = HOTBAR_INSET * 2 + HOTBAR_HEADER_H + SLOT_PX;
+
+/** The narrowest bar: one slot a line. The grip stops here. */
+export const HOTBAR_FLOOR: PanelSize = { w: HOTBAR_INSET * 2 + SLOT_PX, h: HOTBAR_TOTAL_H };
+
+/** How many slots sit on a line `along` pixels long: at least one, at most all. */
+function perLine(along: number, count: number): number {
+  const fits = Math.floor((along + SLOT_GAP) / (SLOT_PX + SLOT_GAP));
+  return Math.max(1, Math.min(Math.max(1, count), fits));
 }
 
 /**
- * Where slot `index` sits, given the viewport.
+ * The bar's outer size for `count` slots: the width the player gave it
+ * (`stored`, or the whole row when null), never wider than `maxW` and never
+ * narrower than one slot, and the height its lines need. Only the stored WIDTH
+ * is read — the height is always the lines'.
+ */
+export function hotbarPanelSize(count: number, stored: PanelSize | null, maxW: number): PanelSize {
+  const room = Math.max(0, maxW - HOTBAR_INSET * 2);
+  const asked = stored === null ? room : Math.min(room, stored.w - HOTBAR_INSET * 2);
+  const across = perLine(asked, count);
+  const lines = Math.max(1, Math.ceil(count / across));
+  return {
+    w: HOTBAR_INSET * 2 + hotbarRowWidth(across),
+    h: HOTBAR_INSET * 2 + HOTBAR_HEADER_H + hotbarRowWidth(lines),
+  };
+}
+
+/** The header strip: inside the frame, over the first line. */
+export function hotbarHeaderRect(rect: PanelRect): PanelRect {
+  return {
+    x: rect.x + HOTBAR_INSET,
+    y: rect.y + HOTBAR_INSET,
+    w: Math.max(0, rect.w - HOTBAR_INSET * 2),
+    h: HOTBAR_HEADER_H,
+  };
+}
+
+/**
+ * Where slot `index` sits in a bar drawn at `rect`.
  *
  * ONE function, used by the painter AND by the hit test, so a click can never
  * land on a slot other than the one under the pointer. Two copies of this
  * arithmetic is the classic way a UI acquires an off-by-four-pixels bug that
  * only shows up on somebody else's window size.
- *
- * `count` IS THE NUMBER OF SLOTS BEING DRAWN, not the number that exist — the
- * row is centred on what is visible, so a refused row is still centred rather
- * than hanging off one side. Every caller gets that number from
- * `hotbarVisibleCount`, which is why there is still only one authority.
  */
-export function slotRect(index: number, count: number, width: number, height: number): SlotRect {
-  const x0 = Math.floor((width - hotbarRowWidth(count)) / 2);
+export function slotRect(rect: PanelRect, index: number, count: number): SlotRect {
+  const across = perLine(rect.w - HOTBAR_INSET * 2, count);
+  const pitch = SLOT_PX + SLOT_GAP;
   return {
-    x: x0 + index * (SLOT_PX + SLOT_GAP),
-    y: height - HOTBAR_H + SLOT_PAD,
+    x: rect.x + HOTBAR_INSET + (index % across) * pitch,
+    y: rect.y + HOTBAR_INSET + HOTBAR_HEADER_H + Math.floor(index / across) * pitch,
     w: SLOT_PX,
     h: SLOT_PX,
   };
 }
 
 /**
- * Which slot a logical-backbuffer point is over, or -1.
+ * Which slot a logical-backbuffer point is over, or -1, and -1 with no bar.
  *
  * Takes BACKBUFFER coordinates, not client ones: the caller converts once, using
  * the renderer's metrics, and everything downstream of that conversion works in
  * the one coordinate space the HUD is drawn in.
  *
  * ═══ `count` MUST BE THE SAME NUMBER `drawHotbar` SAW: `view.slots.length` ═══
- * The painter centres the row on the slots it is GIVEN; this centres it on the
- * `count` it is given. Hand them different numbers and they centre the row on
- * different widths, so EVERY hover and click lands on the wrong box, or on
- * nothing — silently, at every viewport, with no line of this file changing.
- *
- * THE CALL SITE IS CORRECT AND THIS PARAGRAPH USED TO SAY IT WAS NOT. It read
- * *"main.ts:5930's `slotUnder` passes `loadout.length` — FOUR — which is
- * correct today only because `hotbarView` returns four slots"*, and the bar has
- * been thirteen slots for a while: `slotUnder` passes `hotbarView().slots.length`
- * now, which is the fix that note asked for. A warning about a bug that was
- * fixed is worse than no warning — it sends the next reader to audit a call
- * site that is right. The RULE is what is load-bearing, so the rule is what
- * this block keeps.
- *
- * It walks `hotbarVisibleCount` and `slotRect`, the same two functions the
- * painter walks, so a slot the painter refused can never be clicked and a slot
- * it drew can never be missed.
+ * The painter draws the slots it is GIVEN and this walks the `count` it is
+ * given. A shorter count cannot reach a slot past its end, which is the safe way
+ * round: a click that lands on nothing is visible, and one that fires the wrong
+ * slot is not.
  */
 export function hotbarSlotAt(
+  rect: PanelRect | null,
   px: number,
   py: number,
   count: number,
-  width: number,
-  height: number,
 ): number {
-  const shown = hotbarVisibleCount(count, width);
-  for (let i = 0; i < shown; i += 1) {
-    const r = slotRect(i, shown, width, height);
+  if (rect === null) return -1;
+  for (let i = 0; i < count; i += 1) {
+    const r = slotRect(rect, i, count);
     if (px >= r.x && px < r.x + r.w && py >= r.y && py < r.y + r.h) return i;
   }
   return -1;
@@ -730,13 +705,12 @@ export type HotbarDrop =
  * disagree with a hover about which box the pointer is in.
  */
 export function hotbarDropTargetAt(
+  rect: PanelRect | null,
   px: number,
   py: number,
   count: number,
-  width: number,
-  height: number,
 ): HotbarDrop {
-  const index = hotbarSlotAt(px, py, count, width, height);
+  const index = hotbarSlotAt(rect, px, py, count);
   if (index < 0) return { kind: HotbarDropKind.Miss };
   /**
    * ═══════════════════════════════════════════════════════════════════════════
@@ -1396,18 +1370,7 @@ export function itemStrip(name: string, action: ItemSlotAction): StripLine {
   }
 }
 
-function stripFor(view: HotbarView, shown: number, count: number): StripLine | null {
-  if (shown < count) {
-    const need = hotbarRowWidth(count);
-    return {
-      text:
-        shown === 0
-          ? `hotbar hidden — the row needs ${need}px and the window is narrower`
-          : `${shown} of ${count} slots — the full row needs ${need}px; the item slots need a wider window`,
-      colour: PALETTE.ORANGE,
-    };
-  }
-
+function stripFor(view: HotbarView, count: number): StripLine | null {
   const focused = view.armed >= 0 ? view.armed : view.hovered;
   /**
    * ═══════════════════════════════════════════════════════════════════════════
@@ -1425,12 +1388,12 @@ function stripFor(view: HotbarView, shown: number, count: number): StripLine | n
    * there.
    */
   if ((view.page ?? 0) > 0) {
-    const slot = focused >= 0 && focused < shown ? view.slots[focused] : undefined;
+    const slot = focused >= 0 && focused < count ? view.slots[focused] : undefined;
     const name =
       slot !== undefined && slot.kind === HotbarSlotKind.Talent ? ` — ${slot.talent.name}` : '';
     return { text: `page 2 (hold Shift)${name}`, colour: PALETTE.VIOLET_HI };
   }
-  if (focused < 0 || focused >= shown) return null;
+  if (focused < 0 || focused >= count) return null;
   const slot = view.slots[focused];
   if (slot === undefined) return null;
 
@@ -1461,11 +1424,10 @@ function stripFor(view: HotbarView, shown: number, count: number): StripLine | n
  * milestones from now as a mysteriously translucent sprite.
  */
 export function drawHotbar(options: HotbarOptions): void {
-  const { ctx, sprites, view, width, height } = options;
+  const { ctx, sprites, view, rect } = options;
   const count = view.slots.length;
   if (count === 0) return;
 
-  const shown = hotbarVisibleCount(count, width);
   /**
    * ═══════════════════════════════════════════════════════════════════════════
    * "IS THIS DRAG ONE THAT COULD LAND ON *THIS* SLOT" — PER SLOT, NOT PER BAR.
@@ -1491,15 +1453,11 @@ export function drawHotbar(options: HotbarOptions): void {
   ctx.textBaseline = 'middle';
   ctx.textAlign = 'left';
 
-  // A backing strip, so the buttons never sit directly on a floor tile and lose
-  // their edges against it. Drawn even when `shown` is 0: the strip is where the
-  // refusal sentence lands, and a sentence over bare floor tiles is unreadable.
-  ctx.fillStyle = PALETTE.PANEL;
-  ctx.fillRect(0, height - HOTBAR_H, width, HOTBAR_H);
-  ctx.fillStyle = PALETTE.SLATE;
-  ctx.fillRect(0, height - HOTBAR_H, width, 1);
+  // ITS OWN PANEL, in the case log's skin. It was a backing strip the width of
+  // the screen with the slots centred in it, which left bare wings at the sides.
+  drawPanel(ctx, sprites, PanelSkin.Inset, rect);
 
-  for (let i = 0; i < shown; i += 1) {
+  for (let i = 0; i < count; i += 1) {
     const slot = view.slots[i];
     if (slot === undefined) continue;
     paintSlot(
@@ -1507,23 +1465,21 @@ export function drawHotbar(options: HotbarOptions): void {
       sprites,
       slot,
       i,
-      slotRect(i, shown, width, height),
+      slotRect(rect, i, count),
       view.hovered === i,
       view.armed === i,
       landsOn(i),
     );
   }
 
-  const strip = stripFor(view, shown, count);
+  // WHAT THE POINTER IS ON, in the header. Cut to the header's width: a narrow
+  // bar is one its player chose, and the hover card says the whole sentence.
+  const strip = stripFor(view, count);
   if (strip !== null) {
+    const head = hotbarHeaderRect(rect);
     ctx.font = FONT_NAME;
-    ctx.textAlign = 'left';
-    ctx.textBaseline = 'middle';
     ctx.fillStyle = strip.colour;
-    // Centred in the label strip by arithmetic, so trimming HOTBAR_LABEL_H moves
-    // the text with it rather than leaving it clipped against the row above.
-    const y = height - HOTBAR_H - Math.floor(HOTBAR_LABEL_H / 2);
-    ctx.fillText(fitText(ctx, strip.text, width - 8), 4, y);
+    ctx.fillText(fitText(ctx, strip.text, head.w), head.x, head.y + Math.floor(head.h / 2));
   }
 
   ctx.restore();
@@ -1550,12 +1506,11 @@ export function drawHotbar(options: HotbarOptions): void {
  */
 export function hotbarTipAt(
   view: HotbarView,
+  rect: PanelRect | null,
   px: number,
   py: number,
-  width: number,
-  height: number,
 ): HoverCard | null {
-  const index = hotbarSlotAt(px, py, view.slots.length, width, height);
+  const index = hotbarSlotAt(rect, px, py, view.slots.length);
   if (index < 0) return null;
   const slot = view.slots[index];
   if (slot === undefined) return null;

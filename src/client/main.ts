@@ -249,6 +249,8 @@ import { createCombatBanner, PLAYFIELD_FRAME_MAX_PX } from './ui/combatbanner.ts
 // keeps slot 4 the first item slot in this file as well as in that one.
 import {
   drawHotbar,
+  HOTBAR_FLOOR,
+  hotbarPanelSize,
   HOTBAR_ITEM_SLOTS,
   HOTBAR_SLOTS,
   HOTBAR_TALENT_BINDINGS,
@@ -783,6 +785,11 @@ function logBand(height: number, hudTop: number): { top: number; bottom: number 
  */
 function quietLogBand(height: number): { top: number; bottom: number } {
   return logBand(height, TURN_BAR_H);
+}
+
+/** The action bar may go anywhere under the turn HUD, down to the screen's foot. */
+function hotbarBand(height: number, hudTop: number): { top: number; bottom: number } {
+  return { top: hudTop, bottom: height };
 }
 
 function panelBand(height: number, hudTop: number): { top: number; bottom: number } {
@@ -1562,6 +1569,7 @@ const panelSizes: Record<DraggablePanel, PanelSize | null> = {
   [DraggablePanel.Menu]: null,
   [DraggablePanel.Log]: null,
   [DraggablePanel.Party]: null,
+  [DraggablePanel.Hotbar]: null,
 };
 
 /**
@@ -3470,6 +3478,8 @@ type HudLayout = {
   readonly party: PartyPaneView | null;
   readonly pane: PartyPaneLayout | null;
   readonly log: PanelRect | null;
+  /** The action bar. Null before the loadout arrives. */
+  readonly hotbar: PanelRect | null;
   /** The erased plate, or null when the viewer is on their feet. */
   readonly respawn: PanelRect | null;
   /**
@@ -3715,6 +3725,20 @@ function unmovedPanelRect(
       const y = own.bottom - defaultLogH(own);
       return { x: DOCK_MARGIN, y, w: size.w, h: size.h };
     }
+    case DraggablePanel.Hotbar: {
+      const count = hotbarView().slots.length;
+      if (count === 0) return null;
+      const size = hotbarPanelSize(count, panelSizes[DraggablePanel.Hotbar], width);
+      // THE LEFT EDGE OF THE WHOLE ROW, centred, whatever width the bar has been
+      // given, so a drag on the right-hand grip does not also slide the bar.
+      const row = hotbarPanelSize(count, null, width);
+      return {
+        x: Math.max(0, Math.floor((width - row.w) / 2)),
+        y: height - size.h,
+        w: size.w,
+        h: size.h,
+      };
+    }
     /**
      * ═══════════════════════════════════════════════════════════════════════
      * THE PARTY PANE HAS NO UNMOVED RECT, AND THAT IS THE POINT.
@@ -3786,6 +3810,12 @@ function hudLayout(width: number, height: number): HudLayout {
    * without consulting the height, then caps the height to the room left.
    */
   const log = placed;
+  const hotbar = movePanel(
+    DraggablePanel.Hotbar,
+    unmovedPanelRect(DraggablePanel.Hotbar, width, height, band),
+    hotbarBand(height, hudTop),
+    width,
+  );
   const view = partyView();
   const pane =
     view === null || !partyVisible
@@ -3819,6 +3849,7 @@ function hudLayout(width: number, height: number): HudLayout {
     party: view,
     pane,
     log,
+    hotbar,
     // ═══ AND IT STANDS DOWN WHILE THE ESCAPE MENU IS OPEN ═══
     // Both rects are centred in the SAME band — the plate is 304x48 at
     // `top + (band-48)/3` and the panel is 360x252 at `top + (band-252)/2` — so
@@ -4541,7 +4572,6 @@ function hoverCardAt(
   px: number,
   py: number,
   width: number,
-  height: number,
 ): HoverCard | null {
   return (
     (layout.inventory === null
@@ -4603,7 +4633,7 @@ function hoverCardAt(
     (layout.sheet === null || sheetRows === null
       ? null
       : charSheetTipAt(layout.sheet, sheetRows, px, py)) ??
-    hotbarTipAt(hotbarView(), px, py, width, height)
+    hotbarTipAt(hotbarView(), layout.hotbar, px, py)
   );
 }
 
@@ -4641,16 +4671,10 @@ function talentCardAt(rect: PanelRect, px: number, py: number): HoverCard | null
  * its own. The actor and floor cards open through `noteHoveredActor`, which
  * paints when the hovered tile changes.
  */
-function pointerCardAt(
-  layout: HudLayout,
-  px: number,
-  py: number,
-  width: number,
-  height: number,
-): boolean {
+function pointerCardAt(layout: HudLayout, px: number, py: number, width: number): boolean {
   return (
     (layout.talents !== null && talentCardAt(layout.talents, px, py) !== null) ||
-    hoverCardAt(layout, paintedSheetRows, px, py, width, height) !== null
+    hoverCardAt(layout, paintedSheetRows, px, py, width) !== null
   );
 }
 
@@ -5093,14 +5117,18 @@ const paintHud: HudPainter = (ctx, width, height) => {
     });
   }
 
-  drawHotbar({ ctx, sprites, view: hotbarView(), width, height });
+  if (layout.hotbar !== null) {
+    drawHotbar({ ctx, sprites, view: hotbarView(), rect: layout.hotbar });
+    // THE CASE LOG'S GRIP, the one drawing of that control in the client.
+    drawLogGrip(ctx, layout.hotbar);
+  }
 
   /**
    * THE HOVER CARDS, LAST, OVER EVERYTHING THEY EXPLAIN. See `hoverCardAt`,
    * which the mousemove handler asks too.
    */
   if (pointerPoint !== null) {
-    const card = hoverCardAt(layout, sheetRows, pointerPoint.x, pointerPoint.y, width, height);
+    const card = hoverCardAt(layout, sheetRows, pointerPoint.x, pointerPoint.y, width);
     if (card !== null) {
       drawHoverCard(ctx, sprites, card, pointerPoint.x, pointerPoint.y, width, height);
       pointerCardDrawn = true;
@@ -10461,7 +10489,8 @@ async function boot(): Promise<void> {
     const point = renderer.backbufferPoint(event.clientX, event.clientY);
     if (point === null) return -1;
     const { hudW: logicalW, hudH: logicalH } = renderer.metrics();
-    return hotbarSlotAt(point.x, point.y, hotbarView().slots.length, logicalW, logicalH);
+    const bar = hudLayout(logicalW, logicalH).hotbar;
+    return hotbarSlotAt(bar, point.x, point.y, hotbarView().slots.length);
   }
 
   /**
@@ -10504,6 +10533,7 @@ async function boot(): Promise<void> {
     if (point.y < layout.hudTop) return true;
     if (tokenMenu?.contains(point.x, point.y) === true) return true;
     if (respawnPromptHit(layout.respawn, point.x, point.y)) return true;
+    if (inRect(layout.hotbar, point.x, point.y)) return true;
     // THE CHARACTER SHEET IS A PANEL LIKE THE OTHER TWO, and it has to be listed
     // here or hovering it drags the targeting cursor across whatever tiles are
     // underneath — and worse, sends an `inspect` per settle for each body it
@@ -10587,7 +10617,7 @@ async function boot(): Promise<void> {
       const { hudW: logicalW, hudH: logicalH } = renderer.metrics();
       const layout = hudLayout(logicalW, logicalH);
       // ...AND ONE THAT WOULD OPEN HERE OPENS NOW, not on the next server frame.
-      if (!pointerCardDrawn && pointerCardAt(layout, point.x, point.y, logicalW, logicalH)) {
+      if (!pointerCardDrawn && pointerCardAt(layout, point.x, point.y, logicalW)) {
         requestDraw();
       }
       const over = respawnPromptHit(layout.respawn, point.x, point.y);
@@ -11059,6 +11089,7 @@ async function boot(): Promise<void> {
    * a silent fall-through to the log's answers.
    */
   function panelFloor(panel: DraggablePanel): PanelSize {
+    if (panel === DraggablePanel.Hotbar) return HOTBAR_FLOOR;
     return panel === DraggablePanel.Party
       ? { w: PARTY_PANE_COMPACT_W, h: PARTY_PANE_MIN_H }
       : DEFAULT_PANEL_FLOOR;
@@ -11070,6 +11101,7 @@ async function boot(): Promise<void> {
   ): { top: number; bottom: number } {
     // THE PANE IS A TOP-LEFT DOCK and lives in the ordinary panel band; the log
     // has its own, deliberately independent of the combat card strip.
+    if (panel === DraggablePanel.Hotbar) return hotbarBand(logicalH, turnHudHeight(turnView()));
     return panel === DraggablePanel.Party
       ? panelBand(logicalH, turnHudHeight(turnView()))
       : quietLogBand(logicalH);
@@ -11090,6 +11122,7 @@ async function boot(): Promise<void> {
   function panelLiveRect(panel: DraggablePanel): PanelRect | null {
     const { hudW: logicalW, hudH: logicalH } = renderer.metrics();
     const layout = hudLayout(logicalW, logicalH);
+    if (panel === DraggablePanel.Hotbar) return layout.hotbar;
     return panel === DraggablePanel.Party ? (layout.pane?.rect ?? null) : layout.log;
   }
 
@@ -11110,7 +11143,13 @@ async function boot(): Promise<void> {
       // IT NO LONGER DRIVES THE SIZING. `nextSize` is absolute now (see its
       // note), so this survives for `cancelDrag` alone — Escape mid-resize puts
       // back what was on screen when the grab happened.
-      sizeAtGrab: subject.kind === DragKind.Resize ? liveLogSize() : null,
+      // THE BAR'S STORED SIZE, which Escape puts back. `liveLogSize` is the log's.
+      sizeAtGrab:
+        subject.kind !== DragKind.Resize
+          ? null
+          : subject.panel === DraggablePanel.Hotbar
+            ? panelSizes[DraggablePanel.Hotbar]
+            : liveLogSize(),
       /**
        * ═══════════════════════════════════════════════════════════════════════
        * WHAT AN ABSOLUTE RESIZE NEEDS: the origin, and the grab's place in the grip.
@@ -11313,11 +11352,10 @@ async function boot(): Promise<void> {
 
     const { hudW: logicalW, hudH: logicalH } = renderer.metrics();
     const drop = hotbarDropTargetAt(
+      hudLayout(logicalW, logicalH).hotbar,
       point.x,
       point.y,
       hotbarView().slots.length,
-      logicalW,
-      logicalH,
     );
     switch (drop.kind) {
       case HotbarDropKind.Bind:
@@ -11494,7 +11532,16 @@ async function boot(): Promise<void> {
        * wrote the smaller number down permanently.
        */
       const held = panelSizes[subject.panel];
-      if (held !== null) {
+      if (held !== null && subject.panel === DraggablePanel.Hotbar) {
+        // THE BAR'S OWN BAND AND FLOOR: it may be one slot wide, and the log's
+        // floor would stop the grip at three.
+        panelSizes[subject.panel] = sizeIntoBand(
+          held,
+          panelResizeBand(subject.panel, logicalH),
+          logicalW,
+          panelFloor(subject.panel),
+        );
+      } else if (held !== null) {
         panelSizes[subject.panel] = sizeIntoBand(held, quietLogBand(logicalH), logicalW);
       }
       savePanelLayout();
@@ -11514,7 +11561,11 @@ async function boot(): Promise<void> {
       // THE LOG SETTLES IN ITS OWN BAND, for `hudLayout`'s reason: settling
       // against a shorter band than the one it is drawn in would jump the box
       // upward the moment the button came up.
-      subject.panel === DraggablePanel.Log ? logBand(logicalH, turnHudHeight(turnView())) : band,
+      subject.panel === DraggablePanel.Log
+        ? logBand(logicalH, turnHudHeight(turnView()))
+        : subject.panel === DraggablePanel.Hotbar
+          ? hotbarBand(logicalH, turnHudHeight(turnView()))
+          : band,
       logicalW,
     );
     savePanelLayout();
@@ -11570,6 +11621,7 @@ async function boot(): Promise<void> {
         offsets,
         logSize: panelSizes[DraggablePanel.Log],
         partySize: panelSizes[DraggablePanel.Party],
+        hotbarSize: panelSizes[DraggablePanel.Hotbar],
         logStyle: touched ? style : null,
       },
     });
@@ -12094,10 +12146,27 @@ async function boot(): Promise<void> {
       return;
     }
 
+    // ═══ THE ACTION BAR'S GRIP, ASKED BEFORE ITS SLOTS ═══
+    // The grip's corner reaches a few pixels into the last slot of a full line,
+    // and a press there means "resize", which no slot can mean.
+    if (point !== null && layout.hotbar !== null && logGripAt(layout.hotbar, point.x, point.y)) {
+      event.preventDefault();
+      beginDrag({ kind: DragKind.Resize, panel: DraggablePanel.Hotbar }, point.x, point.y, null);
+      return;
+    }
+
     const slot = slotUnder(event);
     if (slot >= 0) {
       event.preventDefault();
       activateSlot(slot);
+      return;
+    }
+
+    // ...AND ANYWHERE ELSE ON THE BAR MOVES IT: the header, the frame, the gaps.
+    // A press on the bar that is not a slot must never reach the map beneath it.
+    if (point !== null && inRect(layout.hotbar, point.x, point.y)) {
+      event.preventDefault();
+      beginDrag({ kind: DragKind.Panel, panel: DraggablePanel.Hotbar }, point.x, point.y, null);
       return;
     }
 
@@ -14265,6 +14334,7 @@ function applyServerMessage(msg: ServerMsg): void {
       }
       panelSizes[DraggablePanel.Log] = msg.panels.logSize;
       panelSizes[DraggablePanel.Party] = msg.panels.partySize;
+      panelSizes[DraggablePanel.Hotbar] = msg.panels.hotbarSize;
       /**
        * THE STYLE GOES TO THE WIDGET, which owns it. `caseLog` is created in
        * `boot` and this runs at module scope, so it may be null on the very

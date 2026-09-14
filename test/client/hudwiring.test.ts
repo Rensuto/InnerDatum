@@ -1215,18 +1215,16 @@ describe('a card follows the pointer between paints', () => {
     );
     const anchor = at('pointerPoint = point;', move);
     expect(at('if (pointerCardDrawn) requestDraw();', move)).toBeGreaterThan(anchor);
-    expect(at('pointerCardAt(layout, point.x, point.y, logicalW, logicalH)', move)).toBeGreaterThan(
-      anchor,
-    );
+    expect(at('pointerCardAt(layout, point.x, point.y, logicalW)', move)).toBeGreaterThan(anchor);
   });
 
   it('asks the same functions the paint draws from', () => {
     expect(paint()).toContain(
-      'hoverCardAt(layout, sheetRows, pointerPoint.x, pointerPoint.y, width, height)',
+      'hoverCardAt(layout, sheetRows, pointerPoint.x, pointerPoint.y, width)',
     );
     expect(paint()).toContain('talentCardAt(layout.talents, pointerPoint.x, pointerPoint.y)');
     const ask = between('function pointerCardAt(', '\n}\n');
-    expect(ask).toContain('hoverCardAt(layout, paintedSheetRows, px, py, width, height)');
+    expect(ask).toContain('hoverCardAt(layout, paintedSheetRows, px, py, width)');
     expect(ask).toContain('talentCardAt(layout.talents, px, py)');
     expect(paint()).toContain('paintedSheetRows = sheetRows;');
   });
@@ -1235,5 +1233,67 @@ describe('a card follows the pointer between paints', () => {
     expect(
       between("canvas.addEventListener('mouseleave', () => {", 'if (hoveredSlot === -1) return;'),
     ).toContain('if (pointerCardDrawn) requestDraw();');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// THE ACTION BAR IS A PANEL
+// ---------------------------------------------------------------------------
+
+describe('the action bar is its own panel', () => {
+  /**
+   * REPORTED: the bar was a strip the width of the screen with bare wings at its
+   * sides. It is a panel that moves, resizes from its grip and remembers both.
+   * main.ts's closure is unreachable from test/, so the wiring is read as source.
+   */
+  it('is laid out through the same path every panel takes', () => {
+    const layout = between('function hudLayout(width: number, height: number): HudLayout {', '\n}');
+    expect(layout).toContain('unmovedPanelRect(DraggablePanel.Hotbar, width, height, band)');
+    expect(layout).toContain('hotbarBand(height, hudTop)');
+    expect(CODE).toContain(
+      'drawHotbar({ ctx, sprites, view: hotbarView(), rect: layout.hotbar });',
+    );
+    expect(CODE).toContain('drawLogGrip(ctx, layout.hotbar);');
+    expect(CODE).toContain('hotbarTipAt(hotbarView(), layout.hotbar, px, py)');
+  });
+
+  it('takes a press on its grip before its slots, and on anything else after them', () => {
+    const down = CODE.slice(at("canvas.addEventListener('mousedown'"));
+    const grip = at(
+      'if (point !== null && layout.hotbar !== null && logGripAt(layout.hotbar, point.x, point.y)) {',
+      down,
+    );
+    const slot = at('const slot = slotUnder(event);', down);
+    const move = at(
+      'beginDrag({ kind: DragKind.Panel, panel: DraggablePanel.Hotbar }, point.x, point.y, null);',
+      down,
+    );
+    expect(grip).toBeLessThan(slot);
+    expect(move).toBeGreaterThan(slot);
+    expect(down).toContain(
+      'beginDrag({ kind: DragKind.Resize, panel: DraggablePanel.Hotbar }, point.x, point.y, null);',
+    );
+  });
+
+  it('keeps a press on the bar off the map', () => {
+    expect(
+      between('function overPanel(clientX: number, clientY: number): boolean {', '\n  }'),
+    ).toContain('if (inRect(layout.hotbar, point.x, point.y)) return true;');
+  });
+
+  it('resizes against its own floor, band and rect', () => {
+    expect(CODE).toContain('if (panel === DraggablePanel.Hotbar) return HOTBAR_FLOOR;');
+    expect(CODE).toContain(
+      'if (panel === DraggablePanel.Hotbar) return hotbarBand(logicalH, turnHudHeight(turnView()));',
+    );
+    expect(CODE).toContain('if (panel === DraggablePanel.Hotbar) return layout.hotbar;');
+    expect(between('function settlePanel(subject: DragSubject): void {', '\n  }')).toContain(
+      'if (held !== null && subject.panel === DraggablePanel.Hotbar) {',
+    );
+  });
+
+  it('saves its size and reads it back', () => {
+    expect(CODE).toContain('hotbarSize: panelSizes[DraggablePanel.Hotbar],');
+    expect(CODE).toContain('panelSizes[DraggablePanel.Hotbar] = msg.panels.hotbarSize;');
   });
 });

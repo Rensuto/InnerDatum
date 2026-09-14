@@ -20,9 +20,10 @@ const FLOOR_W = HUD_MIN_W;
 
 import { DragKind, DraggablePanel } from '../../src/client/ui/drag.ts';
 import {
-  HOTBAR_H,
+  HOTBAR_FLOOR,
+  HOTBAR_HEADER_H,
+  HOTBAR_INSET,
   HOTBAR_ITEM_SLOTS,
-  HOTBAR_LABEL_H,
   HOTBAR_SLOTS,
   HOTBAR_TALENT_SLOTS,
   HOTBAR_TOTAL_H,
@@ -35,7 +36,7 @@ import {
   hotbarRowWidth,
   hotbarSlotAt,
   hotbarTipAt,
-  hotbarVisibleCount,
+  hotbarPanelSize,
   isItemSlotIndex,
   isSlotDisabled,
   itemActionWord,
@@ -47,6 +48,7 @@ import {
 import { ResourceKind, TalentShape } from '../../src/shared/protocol.ts';
 import type { SpriteSource } from '../../src/client/render/assets.ts';
 import type { HotbarSlot, HotbarView } from '../../src/client/ui/hotbar.ts';
+import type { PanelRect } from '../../src/client/ui/panel.ts';
 import type { ItemView, LoadoutTalent, Slot } from '../../src/shared/protocol.ts';
 
 /**
@@ -213,23 +215,32 @@ const CONTENT_PREFIXES = ['item_', 'icon_active_'];
 /** Widths a real client renders at. 640 is the FLOOR (render/canvas.ts:344). */
 const WIDTHS = [640, 800, 1280, 1920];
 
+/**
+ * The bar where main.ts puts it by default on a `width`-wide, 480-tall screen:
+ * the whole row's left edge, centred, at the foot. `stored` is a grip's size.
+ */
+function rectFor(width: number, stored: { w: number; h: number } | null = null): PanelRect {
+  const size = hotbarPanelSize(HOTBAR_SLOTS, stored, width);
+  const row = hotbarPanelSize(HOTBAR_SLOTS, null, width);
+  return { x: Math.max(0, Math.floor((width - row.w) / 2)), y: 480 - size.h, w: size.w, h: size.h };
+}
+
+/** A bar given exactly the width of `across` slots a line. */
+function rectAcross(across: number): PanelRect {
+  return rectFor(1280, { w: HOTBAR_INSET * 2 + hotbarRowWidth(across), h: 1 });
+}
+
 // ---------------------------------------------------------------------------
 // GEOMETRY
 // ---------------------------------------------------------------------------
 
 describe('geometry', () => {
-  it('is 48 tall with a 60-pixel total, and the total is DERIVED', () => {
-    // The two numbers main.ts:534-541 subtracts from the viewport to get
-    // panelBand. 76/88 before the nine-slice rebuild; the 28 pixels went
-    // straight to the four draggable panels with no edit in main.ts, which only
-    // works while the total stays derived.
-    expect(HOTBAR_H).toBe(48);
-    expect(HOTBAR_LABEL_H).toBe(12);
-    expect(HOTBAR_TOTAL_H).toBe(60);
-    expect(HOTBAR_TOTAL_H).toBe(HOTBAR_H + HOTBAR_LABEL_H);
-    // Pad is 2 either side of the slot. Stated as a relation so a change to
-    // SLOT_PX cannot leave HOTBAR_H behind.
-    expect(HOTBAR_H).toBe(SLOT_PX + 4);
+  it('is one line of slots in its frame, and the total is DERIVED', () => {
+    // The height main.ts's panel bands leave free at the foot of the screen.
+    // Stated as a relation, so a change to any term moves the bands with it.
+    expect(HOTBAR_TOTAL_H).toBe(HOTBAR_INSET * 2 + HOTBAR_HEADER_H + SLOT_PX);
+    expect(hotbarPanelSize(HOTBAR_SLOTS, null, 1920).h).toBe(HOTBAR_TOTAL_H);
+    expect(HOTBAR_FLOOR).toEqual({ w: HOTBAR_INSET * 2 + SLOT_PX, h: HOTBAR_TOTAL_H });
   });
 
   it('sizes SLOT_PX for the NINE-SLICE, which is what freed it from 72', () => {
@@ -261,71 +272,72 @@ describe('geometry', () => {
     expect(SLOT_PX).toBe(44);
   });
 
-  it('fits every slot on the narrowest backbuffer this client can render', () => {
+  it('fits every slot on one line on the narrowest backbuffer this client can render', () => {
     // 13*44 + 12*4 = 620 against the 640 floor render/canvas.ts pins as
-    // `HUD_MIN_W`. Twenty pixels of slack — down from 164 when
-    // the bar was ten, and the reason the talent half stopped at NINE rather
-    // than ten: fourteen slots is 668 and the floor stops holding them.
-    //
-    // THE SECOND ASSERTION IS THE INVARIANT and the first is its arithmetic.
-    // A bar that does not fit the floor does not merely look cramped — the
-    // fallback drops the four item slots, which are drop targets, and a drop
-    // target that is absent on small windows is the failure `hotbarVisibleCount`
-    // was written to make loud.
+    // `HUD_MIN_W`, and the frame's two insets make it 636. That is why the talent
+    // half stopped at NINE: one more slot and the default bar wraps on the floor.
     expect(hotbarRowWidth(HOTBAR_SLOTS)).toBe(620);
-    expect(hotbarRowWidth(HOTBAR_SLOTS)).toBeLessThanOrEqual(FLOOR_W);
-    expect(hotbarVisibleCount(HOTBAR_SLOTS, FLOOR_W)).toBe(HOTBAR_SLOTS);
-    // And one more slot would NOT fit, which is what pins the count at nine.
-    expect(hotbarRowWidth(HOTBAR_SLOTS + 1)).toBeGreaterThan(FLOOR_W);
-
-    const first = slotRect(0, HOTBAR_SLOTS, FLOOR_W, 480);
-    const last = slotRect(HOTBAR_SLOTS - 1, HOTBAR_SLOTS, FLOOR_W, 480);
-    expect(first.x).toBeGreaterThanOrEqual(0);
-    expect(last.x + last.w).toBeLessThanOrEqual(FLOOR_W);
+    const floor = hotbarPanelSize(HOTBAR_SLOTS, null, FLOOR_W);
+    expect(floor.w).toBeLessThanOrEqual(FLOOR_W);
+    expect(floor.h, 'the default bar wrapped on the floor').toBe(HOTBAR_TOTAL_H);
+    expect(hotbarPanelSize(HOTBAR_SLOTS + 1, null, FLOOR_W).h).toBeGreaterThan(HOTBAR_TOTAL_H);
   });
 
-  it('round-trips every slot centre through the hit test at every viewport', () => {
-    for (const width of WIDTHS) {
-      const height = 480;
+  it('wraps a narrower bar onto more lines rather than hiding a slot', () => {
+    // REPORTED: the bar was a strip the width of the screen with bare wings at
+    // its sides. It is a panel whose width is the player's, and a narrow one
+    // wraps as upstream's hotkey box does (engine/HotkeysIconsDisplay.lua:265-271).
+    for (let across = 1; across <= HOTBAR_SLOTS; across += 1) {
+      const rect = rectAcross(across);
+      const lines = Math.ceil(HOTBAR_SLOTS / across);
+      expect(rect.w, String(across)).toBe(HOTBAR_INSET * 2 + hotbarRowWidth(across));
+      expect(rect.h, String(across)).toBe(
+        HOTBAR_INSET * 2 + HOTBAR_HEADER_H + hotbarRowWidth(lines),
+      );
       for (let i = 0; i < HOTBAR_SLOTS; i += 1) {
-        const r = slotRect(i, HOTBAR_SLOTS, width, height);
-        const cx = r.x + Math.floor(r.w / 2);
-        const cy = r.y + Math.floor(r.h / 2);
-        expect(hotbarSlotAt(cx, cy, HOTBAR_SLOTS, width, height), `centre @${String(width)}`).toBe(
-          i,
-        );
-        // The corners too: a half-open box is where an off-by-one hides.
-        expect(hotbarSlotAt(r.x, r.y, HOTBAR_SLOTS, width, height)).toBe(i);
-        expect(hotbarSlotAt(r.x + r.w - 1, r.y + r.h - 1, HOTBAR_SLOTS, width, height)).toBe(i);
+        const r = slotRect(rect, i, HOTBAR_SLOTS);
+        const at = `${String(across)}:${String(i)}`;
+        expect(r.x, at).toBeGreaterThanOrEqual(rect.x + HOTBAR_INSET);
+        expect(r.x + r.w, at).toBeLessThanOrEqual(rect.x + rect.w - HOTBAR_INSET);
+        expect(r.y, at).toBeGreaterThanOrEqual(rect.y + HOTBAR_INSET + HOTBAR_HEADER_H);
+        expect(r.y + r.h, at).toBeLessThanOrEqual(rect.y + rect.h - HOTBAR_INSET);
       }
-      // Above the row is the map, not the bar.
-      const row = slotRect(0, HOTBAR_SLOTS, width, height);
-      expect(hotbarSlotAt(row.x, row.y - 1, HOTBAR_SLOTS, width, height)).toBe(-1);
-      expect(hotbarSlotAt(0, row.y, HOTBAR_SLOTS, width, height)).toBe(-1);
     }
   });
 
-  it('is centred on the count it is GIVEN — the one-word mistake the wiring pass can make', () => {
-    // ═══ THIS IS A HAZARD NOTE WITH AN ASSERTION ON IT ═══
-    // main.ts:5930's `slotUnder` passes `loadout.length` — FOUR — and that is
-    // right today only because `hotbarView` returns four slots. Return eight
-    // from one and four from the other and the row is centred on 604 pixels by
-    // the painter and on 300 by the hit test: every hover and click lands
-    // somewhere else, at every viewport, with no line of ui/hotbar.ts having
-    // changed. Both numbers are the caller's, so this is the only place the
-    // mismatch can be made to fail loudly.
-    const r = slotRect(6, HOTBAR_SLOTS, 1280, 480);
-    const cx = r.x + Math.floor(r.w / 2);
-    const cy = r.y + Math.floor(r.h / 2);
-    expect(hotbarSlotAt(cx, cy, HOTBAR_SLOTS, 1280, 480)).toBe(6);
-    // ═══ THE SAME POINT, ASKED WITH THE STALE TALENT COUNT: A DIFFERENT SLOT ═══
-    // It used to answer -1 — off the bar entirely — because six slots of eight
-    // did not reach that far. With ten slots and six talents it answers a real
-    // but WRONG index, which is the worse failure of the two and the one this
-    // note is about: a click that lands on nothing is visible, and a click that
-    // fires the wrong talent is not. The assertion is therefore "not 6" rather
-    // than any particular number.
-    expect(hotbarSlotAt(cx, cy, HOTBAR_TALENT_SLOTS, 1280, 480)).not.toBe(6);
+  it('is never narrower than one slot, or wider than the screen', () => {
+    expect(hotbarPanelSize(HOTBAR_SLOTS, { w: 1, h: 1 }, 1280).w).toBe(HOTBAR_FLOOR.w);
+    expect(hotbarPanelSize(HOTBAR_SLOTS, { w: 5000, h: 1 }, 700).w).toBeLessThanOrEqual(700);
+  });
+
+  it('round-trips every slot centre through the hit test at every shape', () => {
+    for (const across of [1, 2, 5, HOTBAR_SLOTS]) {
+      const rect = rectAcross(across);
+      for (let i = 0; i < HOTBAR_SLOTS; i += 1) {
+        const r = slotRect(rect, i, HOTBAR_SLOTS);
+        const cx = r.x + Math.floor(r.w / 2);
+        const cy = r.y + Math.floor(r.h / 2);
+        const at = `${String(across)}:${String(i)}`;
+        expect(hotbarSlotAt(rect, cx, cy, HOTBAR_SLOTS), at).toBe(i);
+        // The corners too: a half-open box is where an off-by-one hides.
+        expect(hotbarSlotAt(rect, r.x, r.y, HOTBAR_SLOTS), at).toBe(i);
+        expect(hotbarSlotAt(rect, r.x + r.w - 1, r.y + r.h - 1, HOTBAR_SLOTS), at).toBe(i);
+      }
+      // The header and the frame are the bar, not a slot.
+      const head = { x: rect.x + HOTBAR_INSET + 1, y: rect.y + HOTBAR_INSET + 1 };
+      expect(hotbarSlotAt(rect, head.x, head.y, HOTBAR_SLOTS)).toBe(-1);
+      expect(hotbarSlotAt(rect, rect.x + 1, rect.y + rect.h - 2, HOTBAR_SLOTS)).toBe(-1);
+    }
+    expect(hotbarSlotAt(null, 10, 10, HOTBAR_SLOTS)).toBe(-1);
+  });
+
+  it('does not answer for a slot past the count it is given', () => {
+    // Both numbers are the caller's. A stale, shorter count must not reach a slot
+    // it does not know about: that press would fire whatever sits there.
+    const rect = rectFor(1280);
+    const r = slotRect(rect, HOTBAR_TALENT_SLOTS + 1, HOTBAR_SLOTS);
+    expect(hotbarSlotAt(rect, r.x + 2, r.y + 2, HOTBAR_SLOTS)).toBe(HOTBAR_TALENT_SLOTS + 1);
+    expect(hotbarSlotAt(rect, r.x + 2, r.y + 2, HOTBAR_TALENT_SLOTS)).toBe(-1);
   });
 
   it('splits the row four and four, and says which half an index is in', () => {
@@ -442,18 +454,17 @@ describe('itemSlotAction', () => {
 // ---------------------------------------------------------------------------
 
 describe('hotbarDropTargetAt', () => {
-  const W = 1280;
-  const H = 480;
+  const RECT = rectFor(1280);
 
   function centreOf(index: number): { x: number; y: number } {
-    const r = slotRect(index, HOTBAR_SLOTS, W, H);
+    const r = slotRect(RECT, index, HOTBAR_SLOTS);
     return { x: r.x + Math.floor(r.w / 2), y: r.y + Math.floor(r.h / 2) };
   }
 
   it('answers BIND with the index for the four item slots', () => {
     for (let i = HOTBAR_TALENT_SLOTS; i < HOTBAR_SLOTS; i += 1) {
       const p = centreOf(i);
-      expect(hotbarDropTargetAt(p.x, p.y, HOTBAR_SLOTS, W, H)).toEqual({
+      expect(hotbarDropTargetAt(RECT, p.x, p.y, HOTBAR_SLOTS)).toEqual({
         kind: HotbarDropKind.Bind,
         index: i,
       });
@@ -467,7 +478,7 @@ describe('hotbarDropTargetAt', () => {
     // index is what lets the sentence name the slot.
     for (let i = 0; i < HOTBAR_TALENT_SLOTS; i += 1) {
       const p = centreOf(i);
-      expect(hotbarDropTargetAt(p.x, p.y, HOTBAR_SLOTS, W, H)).toEqual({
+      expect(hotbarDropTargetAt(RECT, p.x, p.y, HOTBAR_SLOTS)).toEqual({
         kind: HotbarDropKind.Talent,
         index: i,
       });
@@ -475,21 +486,22 @@ describe('hotbarDropTargetAt', () => {
   });
 
   it('answers MISS off the bar, so whatever is underneath still gets the release', () => {
-    const r = slotRect(0, HOTBAR_SLOTS, W, H);
-    expect(hotbarDropTargetAt(0, r.y, HOTBAR_SLOTS, W, H)).toEqual({ kind: HotbarDropKind.Miss });
-    expect(hotbarDropTargetAt(r.x, r.y - 1, HOTBAR_SLOTS, W, H)).toEqual({
+    const r = slotRect(RECT, 0, HOTBAR_SLOTS);
+    expect(hotbarDropTargetAt(RECT, 0, r.y, HOTBAR_SLOTS)).toEqual({ kind: HotbarDropKind.Miss });
+    expect(hotbarDropTargetAt(RECT, r.x, r.y - 1, HOTBAR_SLOTS)).toEqual({
       kind: HotbarDropKind.Miss,
     });
   });
 
   it('reads the SAME geometry as the hover test at every viewport', () => {
     for (const width of WIDTHS) {
+      const rect = rectFor(width);
       for (let i = 0; i < HOTBAR_SLOTS; i += 1) {
-        const r = slotRect(i, HOTBAR_SLOTS, width, H);
+        const r = slotRect(rect, i, HOTBAR_SLOTS);
         const x = r.x + 1;
         const y = r.y + 1;
-        const drop = hotbarDropTargetAt(x, y, HOTBAR_SLOTS, width, H);
-        const hover = hotbarSlotAt(x, y, HOTBAR_SLOTS, width, H);
+        const drop = hotbarDropTargetAt(rect, x, y, HOTBAR_SLOTS);
+        const hover = hotbarSlotAt(rect, x, y, HOTBAR_SLOTS);
         expect(drop.kind === HotbarDropKind.Miss ? -1 : drop.index).toBe(hover);
       }
     }
@@ -585,8 +597,7 @@ describe('drawing', () => {
       ctx: recorder(calls, texts),
       sprites: (sprites ?? art)(asked),
       view: v,
-      width,
-      height: 480,
+      rect: rectFor(width),
     });
     /**
      * HOW MANY STROKES THE PAINTER MADE.
@@ -785,9 +796,8 @@ describe('drawing', () => {
 // THE REFUSAL — a slot that will not fit is announced, never dropped in silence
 // ---------------------------------------------------------------------------
 
-describe('a row that does not fit', () => {
-  function paintAt(width: number) {
-    const calls: string[] = [];
+describe('a bar narrower than its row', () => {
+  function paintAt(stored: { w: number; h: number } | null): string[] {
     const texts: string[] = [];
     drawHotbar({
       ctx: new Proxy(
@@ -795,12 +805,40 @@ describe('a row that does not fit', () => {
         {
           get: (_t, prop: string) => {
             if (prop === 'measureText') return (text: string) => ({ width: text.length * 6 });
-            // fillText only — see the recorder above on why the outline pass is
-            // deliberately not counted.
             if (prop === 'fillText')
               return (text: string) => {
                 texts.push(text);
               };
+            if (prop === 'canvas') return undefined;
+            return () => undefined;
+          },
+          set: () => true,
+        },
+      ) as unknown as CanvasRenderingContext2D,
+      sprites: { sprite: () => undefined },
+      view: view(),
+      rect: rectFor(1280, stored),
+    });
+    return texts;
+  }
+
+  it('draws every slot, wrapped, and has nothing to apologise for', () => {
+    const texts = paintAt({ w: HOTBAR_FLOOR.w, h: 1 });
+    expect(texts.filter((t) => /^[0-9]$/.test(t))).toEqual(
+      Array.from({ length: HOTBAR_TALENT_SLOTS }, (_unused, i) => String(i + 1)),
+    );
+    expect(texts.filter((t) => t === 'ITEM').length).toBe(HOTBAR_ITEM_SLOTS);
+    // The strip used to say `9 of 13 slots` or `hotbar hidden` here. Nothing is hidden.
+    expect(texts.some((t) => t.includes('slots —') || t.includes('hidden'))).toBe(false);
+  });
+
+  it('draws nothing at all before the loadout arrives', () => {
+    const calls: string[] = [];
+    drawHotbar({
+      ctx: new Proxy(
+        {},
+        {
+          get: (_t, prop: string) => {
             if (prop === 'canvas') return undefined;
             return (...args: unknown[]) => {
               calls.push(`${prop}(${String(args.length)})`);
@@ -810,81 +848,9 @@ describe('a row that does not fit', () => {
         },
       ) as unknown as CanvasRenderingContext2D,
       sprites: { sprite: () => undefined },
-      view: view(),
-      width,
-      height: 480,
+      view: { slots: [], hovered: -1, armed: -1 },
+      rect: rectFor(1280),
     });
-    return { calls, texts };
-  }
-
-  it('drops to the TALENT slots — the half with keys — and says so in the strip', () => {
-    // STATED AS ARITHMETIC ON THE REAL CONSTANTS, which is what let this test
-    // survive the bar going eight -> ten -> thirteen slots without a number
-    // moving: thirteen slots are 620 wide and the nine talents are 428, so the
-    // band that shows only the talents runs 428..619.
-    expect(hotbarVisibleCount(HOTBAR_SLOTS, hotbarRowWidth(HOTBAR_SLOTS) - 1)).toBe(
-      HOTBAR_TALENT_SLOTS,
-    );
-
-    const { texts } = paintAt(hotbarRowWidth(HOTBAR_SLOTS) - 1);
-    // Every talent digit is still drawn; the item captions are gone. DERIVED,
-    // so raising the talent half does not need this list retyped.
-    expect(texts.filter((t) => /^[0-9]$/.test(t))).toEqual(
-      Array.from({ length: HOTBAR_TALENT_SLOTS }, (_unused, i) => String(i + 1)),
-    );
-    expect(texts).not.toContain('ITEM');
-    // AND THE SENTENCE. The old painter had a bare `continue` here: four drop
-    // targets simply were not painted and nothing anywhere said why.
-    expect(
-      texts.some((t) =>
-        t.includes(`${String(HOTBAR_TALENT_SLOTS)} of ${String(HOTBAR_SLOTS)} slots`),
-      ),
-    ).toBe(true);
-    // The refusal names the width it needs, whatever that width currently is.
-    expect(texts.some((t) => t.includes(`${String(hotbarRowWidth(HOTBAR_SLOTS))}px`))).toBe(true);
-  });
-
-  it('hides the bar entirely rather than half-drawing it, and still explains itself', () => {
-    expect(hotbarVisibleCount(HOTBAR_SLOTS, hotbarRowWidth(HOTBAR_TALENT_SLOTS) - 1)).toBe(0);
-    const { texts } = paintAt(hotbarRowWidth(HOTBAR_TALENT_SLOTS) - 1);
-    expect(texts.filter((t) => /^[0-9]$/.test(t))).toEqual([]);
-    expect(texts.some((t) => t.includes('hotbar hidden'))).toBe(true);
-  });
-
-  it('keeps the hit test and the painter agreeing about a refused row', () => {
-    // THE PROPERTY THAT MATTERS: a slot the painter refused must not be
-    // clickable, and a slot it drew must be. Both read hotbarVisibleCount.
-    const width = hotbarRowWidth(HOTBAR_SLOTS) - 1;
-    for (let i = 0; i < HOTBAR_SLOTS; i += 1) {
-      const r = slotRect(i, HOTBAR_TALENT_SLOTS, width, 480);
-      const hit = hotbarSlotAt(r.x + 1, r.y + 1, HOTBAR_SLOTS, width, 480);
-      expect(hit).toBe(i < HOTBAR_TALENT_SLOTS ? i : -1);
-    }
-  });
-
-  it('draws nothing at all before the loadout arrives', () => {
-    const { calls } = (() => {
-      const c: string[] = [];
-      drawHotbar({
-        ctx: new Proxy(
-          {},
-          {
-            get: (_t, prop: string) => {
-              if (prop === 'canvas') return undefined;
-              return (...args: unknown[]) => {
-                c.push(`${prop}(${String(args.length)})`);
-              };
-            },
-            set: () => true,
-          },
-        ) as unknown as CanvasRenderingContext2D,
-        sprites: { sprite: () => undefined },
-        view: { slots: [], hovered: -1, armed: -1 },
-        width: 1280,
-        height: 480,
-      });
-      return { calls: c };
-    })();
     expect(calls).toEqual([]);
   });
 });
@@ -901,14 +867,13 @@ describe('a row that does not fit', () => {
  */
 describe('hotbarTipAt', () => {
   const W = 640;
-  const H = 320;
 
   const barView = (): HotbarView => ({ slots: barSlots(), hovered: -1, armed: -1 });
 
   it('names the talent under the pointer and what it costs', () => {
     const view = barView();
-    const rect = slotRect(0, view.slots.length, W, H);
-    const card = hotbarTipAt(view, rect.x + 2, rect.y + 2, W, H);
+    const rect = slotRect(rectFor(W), 0, view.slots.length);
+    const card = hotbarTipAt(view, rectFor(W), rect.x + 2, rect.y + 2);
     expect(card).not.toBeNull();
     expect(card?.title.length).toBeGreaterThan(0);
     // A LABELLED ROW IN `lines`, not a clause in `meta`: `meta` carries what
@@ -933,14 +898,13 @@ describe('hotbarTipAt', () => {
         cost: { ap: 10, mp: 0, resource: 2 },
       }),
     });
-    const rect = slotRect(0, slots.length, W, H);
+    const rect = slotRect(rectFor(W), 0, slots.length);
     const tipFor = (pool: ResourceKind): string => {
       const card = hotbarTipAt(
         { slots, hovered: -1, armed: -1, pool },
+        rectFor(W),
         rect.x + 2,
         rect.y + 2,
-        W,
-        H,
       );
       return (card?.lines ?? []).join('\n');
     };
@@ -958,8 +922,8 @@ describe('hotbarTipAt', () => {
     // was reachable only by reading the prose -- which is why 46 talents had
     // taken to restating their own costs in a sentence.
     const view = barView();
-    const rect = slotRect(0, view.slots.length, W, H);
-    const card = hotbarTipAt(view, rect.x + 2, rect.y + 2, W, H);
+    const rect = slotRect(rectFor(W), 0, view.slots.length);
+    const card = hotbarTipAt(view, rectFor(W), rect.x + 2, rect.y + 2);
     expect((card?.lines ?? []).join('\n')).toContain('Cooldown:');
     // `cooling - Nt` is STATE and belongs to `meta`, which a ready talent
     // leaves empty. The two must not be confusable.
@@ -979,14 +943,14 @@ describe('hotbarTipAt', () => {
       ...base,
       slots: [{ ...first, cooldown: 3, affordable: false }, ...base.slots.slice(1)],
     };
-    const rect = slotRect(0, cooling.slots.length, W, H);
-    const card = hotbarTipAt(cooling, rect.x + 2, rect.y + 2, W, H);
+    const rect = slotRect(rectFor(W), 0, cooling.slots.length);
+    const card = hotbarTipAt(cooling, rectFor(W), rect.x + 2, rect.y + 2);
     expect(card?.meta ?? '').toContain('cooling');
     expect(card?.meta ?? '').toContain('not affordable');
   });
 
   it('says nothing off the bar', () => {
-    expect(hotbarTipAt(barView(), 2, 2, W, H)).toBeNull();
+    expect(hotbarTipAt(barView(), rectFor(W), 2, 2)).toBeNull();
   });
 
   /**
@@ -1011,8 +975,8 @@ describe('hotbarTipAt', () => {
     const withFacts: HotbarView = { slots: barSlots([bound]), hovered: -1, armed: -1 };
     const index = withFacts.slots.findIndex((slot) => slot.kind === HotbarSlotKind.Item);
     expect(index, 'the fixture bar has no bound item').toBeGreaterThanOrEqual(0);
-    const rect = slotRect(index, withFacts.slots.length, W, H);
-    const card = hotbarTipAt(withFacts, rect.x + 2, rect.y + 2, W, H);
+    const rect = slotRect(rectFor(W), index, withFacts.slots.length);
+    const card = hotbarTipAt(withFacts, rectFor(W), rect.x + 2, rect.y + 2);
     expect(card, 'the bound item produced no card').not.toBeNull();
     expect(card?.lines.join(' ')).toContain('Restores 24 hit points.');
     expect(card?.lines.join(' ')).toContain('Armour');
@@ -1039,7 +1003,6 @@ describe('a stance that is up says so', () => {
    */
 
   const W = 1280;
-  const H = 480;
 
   const withSustain = (sustained: boolean | undefined): HotbarView => ({
     slots: barSlots().map((slot, i) =>
@@ -1079,7 +1042,7 @@ describe('a stance that is up says so', () => {
           ? { id, image: { id } as unknown as HTMLImageElement, w: 48, h: 48 }
           : undefined,
     };
-    drawHotbar({ ctx, sprites, view: v, width: W, height: H });
+    drawHotbar({ ctx, sprites, view: v, rect: rectFor(W) });
     return filled;
   }
 
@@ -1113,16 +1076,16 @@ describe('a stance that is up says so', () => {
   });
 
   it('tells the pointer which way the key goes', () => {
-    const rect = slotRect(0, withSustain(true).slots.length, W, H);
-    const up = hotbarTipAt(withSustain(true), rect.x + 2, rect.y + 2, W, H);
-    const down = hotbarTipAt(withSustain(false), rect.x + 2, rect.y + 2, W, H);
+    const rect = slotRect(rectFor(W), 0, withSustain(true).slots.length);
+    const up = hotbarTipAt(withSustain(true), rectFor(W), rect.x + 2, rect.y + 2);
+    const down = hotbarTipAt(withSustain(false), rectFor(W), rect.x + 2, rect.y + 2);
     expect(up?.meta ?? '').toContain('UP');
     expect(down?.meta ?? '').toContain('press to raise');
   });
 
   it('says nothing about stances on a talent that is not one', () => {
-    const rect = slotRect(0, withSustain(undefined).slots.length, W, H);
-    const card = hotbarTipAt(withSustain(undefined), rect.x + 2, rect.y + 2, W, H);
+    const rect = slotRect(rectFor(W), 0, withSustain(undefined).slots.length);
+    const card = hotbarTipAt(withSustain(undefined), rectFor(W), rect.x + 2, rect.y + 2);
     expect(card?.meta ?? '').not.toContain('press to raise');
     expect(card?.meta ?? '').not.toContain('UP');
     // ...and it still says the ordinary things.
@@ -1156,7 +1119,6 @@ describe('a consumable on the bar is drunk, not worn', () => {
    */
   const DRAUGHT = 'item_draught';
   const W = 640;
-  const H = 320;
 
   const withDraught = (action: ItemSlotAction): HotbarView => ({
     slots: [
@@ -1178,8 +1140,8 @@ describe('a consumable on the bar is drunk, not worn', () => {
 
   it('offers to use it under the pointer, and does not offer to equip it', () => {
     const view = withDraught(ItemSlotAction.Use);
-    const rect = slotRect(0, view.slots.length, W, H);
-    const card = hotbarTipAt(view, rect.x + 2, rect.y + 2, W, H);
+    const rect = slotRect(rectFor(W), 0, view.slots.length);
+    const card = hotbarTipAt(view, rectFor(W), rect.x + 2, rect.y + 2);
     expect(card, 'no hover card over a consumable slot').not.toBeNull();
     const said = `${card?.title ?? ''} ${card?.meta ?? ''} ${(card?.lines ?? []).join(' ')}`;
     expect(said).toMatch(/use/i);
@@ -1239,7 +1201,6 @@ describe('a consumable on the bar is drunk, not worn', () => {
  */
 describe('an item card puts its numbers above its sentence', () => {
   const W = 640;
-  const H = 320;
   const ROWS = [
     { label: 'Armour', value: '9' },
     { label: 'Defence', value: '21' },
@@ -1257,8 +1218,8 @@ describe('an item card puts its numbers above its sentence', () => {
       ...over,
     });
     const view: HotbarView = { slots, hovered: -1, armed: -1 };
-    const rect = slotRect(0, slots.length, W, H);
-    return hotbarTipAt(view, rect.x + 2, rect.y + 2, W, H)?.lines ?? [];
+    const rect = slotRect(rectFor(W), 0, slots.length);
+    return hotbarTipAt(view, rectFor(W), rect.x + 2, rect.y + 2)?.lines ?? [];
   }
 
   it('draws every stat before the prose line', () => {
