@@ -99,43 +99,23 @@ describe('tilesInSight — the torch, not the map', () => {
 });
 
 describe('the wiring, as source', () => {
-  it('main.ts builds its memory from the shared sweep, not a second disc', () => {
-    const at = MAIN.indexOf('function witnessAround(');
-    expect(at, 'witnessAround was renamed — this guard is now blind').toBeGreaterThan(-1);
-    const body = MAIN.slice(at, MAIN.indexOf('\n}', at));
-    expect(body, 'witnessAround stopped delegating — a second visibility rule').toContain(
-      'tilesInSight(',
-    );
-    // AND NOT THE GENEROUS ONE. `REVEAL_RADIUS` here would silently restore the
-    // through-walls behaviour the first test above is about.
-    expect(body).not.toContain('REVEAL_RADIUS');
+  it('main.ts fills its memory from the server windows, not a sweep or a disc of its own', () => {
+    expect(MAIN, 'the client still sweeps its own sight').not.toContain('function witnessAround(');
+    expect(MAIN, 'the client still reveals its own disc').not.toContain('function revealAround(');
+    const at = MAIN.indexOf("case 'vision':");
+    expect(at, 'nothing reads the vision frame').toBeGreaterThan(-1);
+    expect(MAIN.slice(at, at + 500)).toContain('readVisionFrame(');
   });
 
-  it('re-sweeps when the MAP changes under a body that did not move', () => {
-    /**
-     * ═══ THE MEMO IS KEYED ON POSITION AND A DOOR IS NOT A POSITION ═══
-     * Opening a door from where you stand reveals a room. Without the terrain
-     * term the player watches a lit doorway with a black room behind it until
-     * they take a step — and doors have been in the game for four commits.
-     */
-    const at = MAIN.indexOf('function witnessAround(');
-    const body = MAIN.slice(at, MAIN.indexOf('\n}', at));
-    expect(body, 'the sight memo ignores terrain changes').toContain('terrainEpoch');
-
-    // AND SOMETHING ACTUALLY MOVES IT. A key that reads a counter nobody
-    // increments is a key on position with extra steps.
-    expect(MAIN, 'nothing ever advances terrainEpoch').toContain('terrainEpoch += 1;');
-    const bump = MAIN.indexOf('terrainEpoch += 1;');
-    const terrainCase = MAIN.lastIndexOf("case 'terrain': {", bump);
-    expect(terrainCase, 'the bump is not inside the terrain frame handler').toBeGreaterThan(-1);
-    expect(MAIN.indexOf("case 'ground':", terrainCase)).toBeGreaterThan(bump);
+  it('drops a window for a map it has already left', () => {
+    const at = MAIN.indexOf("case 'vision':");
+    expect(MAIN.slice(at, at + 500)).toContain('if (msg.realmId !== currentRealmId) break;');
   });
 
-  it('hands the set to the renderer, or the whole memory is unread', () => {
-    // THE JOIN. Every assertion above is true of a set nothing draws from.
+  it('hands the view to the renderer, or the whole memory is unread', () => {
     const at = MAIN.indexOf('function scene(): Scene {');
     expect(at, 'scene was renamed — this guard is now blind').toBeGreaterThan(-1);
-    expect(MAIN.slice(at, MAIN.indexOf('\n}', at))).toContain('witnessed: witnessedNow()');
+    expect(MAIN.slice(at, MAIN.indexOf('\n}', at))).toContain('vision: visionViewOf(');
   });
 
   it('the renderer blacks out a tile that is in neither state', () => {
@@ -144,9 +124,7 @@ describe('the wiring, as source', () => {
     expect(body, 'the paintLight window swallowed a neighbour').not.toContain(
       'paintsWorldTopology',
     );
-    expect(body).toContain('witnessed.has(');
-    // AND NULL FALLS BACK rather than blacking the screen: "say nothing" and
-    // "nothing has been seen" differ by every tile on the floor.
-    expect(body).toContain('witnessed !== null');
+    expect(body).toContain('!lit && !vision.remembered(');
+    expect(body).toContain('vision === null');
   });
 });

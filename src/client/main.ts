@@ -368,8 +368,8 @@ import {
   partyMarks,
 } from './ui/mapview.ts';
 import { drawTurnCards, owedCount, selfCard } from './ui/turncards.ts';
-import { REVEAL_RADIUS as SHARED_REVEAL_RADIUS } from '../shared/fog.ts';
-import { tilesInSight } from '../shared/sight.ts';
+import { readVisionFrame, visionViewOf } from './vision.ts';
+import type { VisionWindow } from './vision.ts';
 import { TileLoot, verbsFor } from './ui/verbs.ts';
 import {
   ActorKind,
@@ -1313,13 +1313,6 @@ let worldMapOpen = false;
 const explored = new Map<string, Set<string>>();
 
 /**
- * How far a body reveals. Shared with the server, which is not a nicety: the
- * server's copy is what persists and the client's is what draws, and two radii
- * would make a map that changed shape when you reloaded.
- */
-const REVEAL_RADIUS = SHARED_REVEAL_RADIUS;
-
-/**
  * Read one bit out of the base64 the server sent.
  *
  * Decoded lazily, a bit at a time, rather than materialised into a byte array:
@@ -1344,97 +1337,10 @@ function fogBitSet(b64: string, bit: number): boolean {
 const B64_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
 
 /**
- * ═══════════════════════════════════════════════════════════════════════════
- * WHAT THIS VIEWER HAS ACTUALLY *SEEN* — the second memory, and it is not the
- * first one.
- * ═══════════════════════════════════════════════════════════════════════════
- *
- * `explored` above is a DISC at `REVEAL_RADIUS` with no line of sight, and
- * `fog.ts` defends that in one line: *"Generous: this is a map, not a torch."*
- * Correct for the thing it draws — a map you filled in as you walked — and
- * useless for the playfield, where it would uncover whole rooms through their
- * walls the moment you stood near the outside of one.
- *
- * So this is the torch. `canSee` at `DEFAULT_SIGHT_RADIUS`: the same rule
- * `projectActors` filters bodies with, so a tile is remembered exactly when a
- * body standing on it would have been visible.
- *
- * ═══ SESSION-ONLY, AND THE SERVER NOW KEEPS THE DURABLE COPY ═══
- * Nothing here is sent or saved. `gateway.ts`'s `revealFor` remembers every
- * realm by the same sight rule, and the `realm` frame seeds `explored` above
- * from it — but not this set, so after a reload the playfield starts dark
- * while the minimap remembers. Reading the server's memory here instead is the
- * step that retires this set. The playfield light pass is skipped entirely on
- * the overworld (`paintLight` says why).
- *
- * Making it authoritative is `docs/tome-port.md`'s *"per-player FOV for correct
- * fog-of-war netcode"*: the server holds the bitset now, and the leak closes
- * when each player is sent only what they themselves can see. Until then this
- * is a drawing convenience on top of what the server already sent, exactly as
- * `explored` says it is.
+ * The latest window of sight the server sent for the map on screen, or null
+ * before one arrives. See `client/vision.ts`.
  */
-const witnessed = new Map<string, Set<string>>();
-
-/**
- * The memo key — realm, tile, and the terrain generation.
- *
- * THE TERRAIN TERM IS NOT DECORATION. Standing still and opening a door reveals
- * a room, and a memo on position alone would refuse to look: the player would
- * watch a lit doorway with a black room behind it until they stepped. Doors
- * shipped three commits ago and this is the second reader that has to know a
- * map can change under it.
- */
-let witnessedAt: string | null = null;
-let terrainEpoch = 0;
-
-function witnessAround(realmId: string, lvl: LevelView, at: TileXY): ReadonlySet<string> {
-  let mine = witnessed.get(realmId);
-  if (mine === undefined) {
-    mine = new Set<string>();
-    witnessed.set(realmId, mine);
-  }
-  const key = `${realmId}:${String(at.x)},${String(at.y)}:${String(terrainEpoch)}`;
-  if (key === witnessedAt) return mine;
-  witnessedAt = key;
-  // THE SWEEP IS `shared/sight.ts`'S, not a copy of it. A viewer that decided
-  // what it had seen by a different test than `projectActors` filters bodies by
-  // would draw a monster the server sent standing on ground it had hidden.
-  for (const tile of tilesInSight(lvl, at)) mine.add(`${String(tile.x)},${String(tile.y)}`);
-  return mine;
-}
-
-/** The set the renderer draws from, or null when there is nobody to see with. */
-function witnessedNow(): ReadonlySet<string> | null {
-  if (level === null || currentRealmId === null || selfId === null) return null;
-  const me = actors.get(selfId);
-  if (me === undefined) return null;
-  return witnessAround(currentRealmId, level, { x: Math.trunc(me.x), y: Math.trunc(me.y) });
-}
-
-/** Mark everything within reach of the viewer as seen, and answer the set. */
-function revealAround(
-  realmId: string,
-  level: LevelView,
-  at: { x: number; y: number },
-): Set<string> {
-  let seen = explored.get(realmId);
-  if (seen === undefined) {
-    seen = new Set<string>();
-    explored.set(realmId, seen);
-  }
-  for (let dy = -REVEAL_RADIUS; dy <= REVEAL_RADIUS; dy += 1) {
-    for (let dx = -REVEAL_RADIUS; dx <= REVEAL_RADIUS; dx += 1) {
-      // A circle rather than the square the loop walks, so the edge of what you
-      // have explored looks like a place someone stood rather than a stamp.
-      if (dx * dx + dy * dy > REVEAL_RADIUS * REVEAL_RADIUS) continue;
-      const x = at.x + dx;
-      const y = at.y + dy;
-      if (x < 0 || y < 0 || x >= level.w || y >= level.h) continue;
-      seen.add(`${x},${y}`);
-    }
-  }
-  return seen;
-}
+let vision: VisionWindow | null = null;
 let connection = 'connecting';
 let lastError: string | null = null;
 
@@ -4734,13 +4640,9 @@ const paintHud: HudPainter = (ctx, width, height) => {
    */
   if (!(worldMapOpen && overworldLevel !== null) && level !== null && currentRealmId !== null) {
     const me = selfId === null ? undefined : actors.get(selfId);
-    // REVEAL FIRST, THEN PAINT. The cell you are standing on has to be part of
-    // what you have seen by the time the same frame draws it, or the player is
-    // permanently at the edge of their own fog.
-    const seen =
-      me === undefined
-        ? new Set<string>()
-        : revealAround(currentRealmId, level, { x: me.x, y: me.y });
+    // THE SERVER'S MEMORY OF THIS MAP: the `realm` frame's `explored`, and every
+    // window's `remembered` bits since. See `client/vision.ts`.
+    const seen = explored.get(currentRealmId) ?? new Set<string>();
     paintMap({
       ctx,
       level,
@@ -5685,7 +5587,7 @@ function scene(): Scene {
     // WHAT THIS VIEWER HAS SEEN OF THIS FLOOR. Null before there is a body to
     // see with, which `paintLight` reads as "say nothing" rather than "nothing
     // has been seen" — the two would differ by a black screen.
-    witnessed: witnessedNow(),
+    vision: visionViewOf(vision, currentRealmId, explored.get(currentRealmId ?? '')),
     sites,
     targeting: targeting?.cells(),
     cursor: targeting?.cursor() ?? null,
@@ -13207,6 +13109,8 @@ function applyServerMessage(msg: ServerMsg): void {
       // to send one is the same absence. Both mean "draw nothing".
       props = msg.props ?? [];
       currentRealmId = msg.realmId;
+      // THE LAST WINDOW WAS OF THE LAST MAP; this map's arrives right behind it.
+      vision = null;
       if (msg.kind === 'overworld') {
         overworldLevel = msg.level;
         overworldSites = msg.sites;
@@ -13275,12 +13179,15 @@ function applyServerMessage(msg: ServerMsg): void {
      *
      * Absolute, like `ground` and `projectiles`: the table is REPLACED.
      */
-    case 'vision':
-      // THE SERVER'S OWN SIGHT, per viewer. Not drawn yet: the playfield still
-      // works its sight out for itself, and the step that switches it over is
-      // the one that reads this frame. Handled rather than left out, so this
-      // switch stays total and a new frame cannot slip past it unnoticed.
+    case 'vision': {
+      // THE SERVER'S SIGHT AND MEMORY AROUND THIS VIEWER. A window for a map the
+      // client has already left is stale, exactly as a `sites` frame would be.
+      if (msg.realmId !== currentRealmId) break;
+      const memory = explored.get(msg.realmId) ?? new Set<string>();
+      explored.set(msg.realmId, memory);
+      vision = readVisionFrame(msg, memory);
       break;
+    }
     case 'sites':
       if (msg.realmId === currentRealmId) {
         sites = msg.sites;
@@ -13973,10 +13880,6 @@ function applyServerMessage(msg: ServerMsg): void {
           level.tiles[patch.y * level.w + patch.x] = patch.code;
         }
       }
-      // AND THE SIGHT MEMO IS STALE NOW. A door that opened from a body that
-      // did not move reveals a room, and `witnessAround`'s memo is keyed on
-      // position — without this the room stays black until the player steps.
-      terrainEpoch += 1;
       break;
     }
     case 'ground':

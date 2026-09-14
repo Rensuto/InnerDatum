@@ -112,16 +112,18 @@ describe('paintLight — the painter, as source', () => {
   it('refuses to light anything when there is no body to see from', () => {
     // Dimming from the CAMERA instead would light whatever it happened to be
     // centred on, which is not a claim anything can make.
-    expect(paintLightBody()).toContain('if (eye === null) return;');
+    expect(paintLightBody()).toContain(
+      'if (eye === null || vision === null || vision === undefined) return;',
+    );
   });
 
-  it('leaves the overworld alone, which is upstream’s own first branch', () => {
+  it('lights the overworld like anywhere else, as this port ruled', () => {
     // `playerFOV` opens `if game.zone.wilderness then` with a different radius
     // and a different curve. We model neither.
-    expect(paintLightBody()).toContain("realmKind === 'overworld'");
+    expect(paintLightBody()).not.toContain("realmKind === 'overworld'");
   });
 
-  it('asks the shared sight rule rather than re-deriving one', () => {
+  it('draws the sight the server sent rather than working one out', () => {
     /**
      * A SECOND OPINION ABOUT VISIBILITY IS THE FAILURE MODE HERE. `canSee` is
      * what `projectActors` filters bodies with, so a renderer that answered the
@@ -129,7 +131,8 @@ describe('paintLight — the painter, as source', () => {
      * see standing on ground it had decided you cannot.
      */
     const body = paintLightBody();
-    expect(body).toContain('canSee(');
+    expect(body, 'the painter works its own sight out again').not.toContain('canSee(');
+    expect(body).toContain('vision.seen(');
     expect(body).toContain('fovBrightness(');
     expect(body, 'the out-of-sight arm stopped using the ported constant').toContain(
       'OBSCURE_WASH_ALPHA',

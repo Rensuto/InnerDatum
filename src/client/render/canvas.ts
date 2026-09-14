@@ -80,13 +80,8 @@
 
 import { inBounds } from '../../shared/coords.ts';
 import { tileAt } from '../../shared/level.ts';
-import {
-  DEFAULT_SIGHT_RADIUS,
-  MAP_OBSCURE_BRIGHTNESS,
-  canSee,
-  fovBrightness,
-  sightDistance,
-} from '../../shared/sight.ts';
+import { MAP_OBSCURE_BRIGHTNESS, fovBrightness, sightDistance } from '../../shared/sight.ts';
+import type { VisionView } from '../vision.ts';
 import { ActorRank, TileCode, isWalkable } from '../../shared/protocol.ts';
 import type { ZoneTileView } from '../../shared/protocol.ts';
 import type { TrapView } from '../../shared/protocol.ts';
@@ -371,21 +366,12 @@ export type Scene = {
    */
   readonly realmKind: string | null;
   /**
-   * ═══════════════════════════════════════════════════════════════════════════
-   * WHICH TILES OF THIS FLOOR THE VIEWER HAS EVER SEEN — upstream's `remembers`.
-   * ═══════════════════════════════════════════════════════════════════════════
-   *
-   * Keyed `"x,y"`, LOS-gated at sight radius, built by `main.ts#witnessAround`.
-   * It is deliberately NOT the `explored` set the minimap draws: that one is a
-   * disc with no line of sight, which `fog.ts` defends as *"a map, not a
-   * torch"* — right for a map and useless here, where it would uncover rooms
-   * through their walls.
-   *
-   * NULL IS "SAY NOTHING", NOT "NOTHING HAS BEEN SEEN". Before a body exists to
-   * see with, the two differ by a black screen — so null falls back to the
-   * two-state rendering this pass shipped with and the third state waits.
+   * WHAT THE VIEWER SEES AND REMEMBERS, as the server's own sight sent it
+   * (`VisionMsg`, read by `client/vision.ts`), or null before the first window
+   * arrives. Null draws no light at all: "not told yet" is not "nothing seen",
+   * and the two differ by a black screen.
    */
-  readonly witnessed?: ReadonlySet<string> | null;
+  readonly vision?: VisionView | null;
   /**
    * Places on THIS map you can walk into, drawn as markers over the terrain.
    *
@@ -2751,27 +2737,20 @@ export function createRenderer(options: RendererOptions): Renderer {
    */
   function paintLight(
     level: LevelView,
-    realmKind: string | null,
     eye: TileXY | null,
-    witnessed: ReadonlySet<string> | null | undefined,
+    vision: VisionView | null | undefined,
     camX: number,
     camY: number,
   ): void {
     // NOBODY TO SEE FROM — before `welcome`, or a viewer with no body on this
     // floor. Dimming from the camera instead would light whatever the camera
-    // happened to be centred on, which is not a claim anything can make.
-    if (eye === null) return;
-    /**
-     * ═══ THE OVERWORLD IS NOT DIMMED, AND UPSTREAM AGREES IT IS A DIFFERENT
-     *     QUESTION ═══
-     * `playerFOV`'s very first branch is `if game.zone.wilderness then` — a
-     * separate FOV at `wilderness_see_radius` with its own `wild_fovdist` curve
-     * (`max((5 - d) / 1.4, 0.6)`, which is far steeper). We model neither the
-     * radius nor the curve, and inventing a see-radius for our region map is a
-     * design decision rather than a port. So the overworld keeps drawing flat
-     * and this says nothing about it.
-     */
-    if (realmKind === 'overworld') return;
+    // happened to be centred on, which is not a claim anything can make. And
+    // NOTHING TOLD YET: before the first window, "not told" is not "nothing
+    // seen", and the two differ by a black screen.
+    if (eye === null || vision === null || vision === undefined) return;
+    // THE OVERWORLD IS LIT AND REMEMBERED LIKE ANYWHERE ELSE, as this port
+    // ruled. ToME's wilderness has its own see-radius and its own curve; the
+    // region map here is walked at tile scale, so it takes the ordinary radius.
 
     const minTx = Math.max(0, Math.floor(camX / TILE_PX));
     const minTy = Math.max(0, Math.floor(camY / TILE_PX));
@@ -2783,18 +2762,10 @@ export function createRenderer(options: RendererOptions): Renderer {
     for (let ty = minTy; ty <= maxTy; ty += 1) {
       for (let tx = minTx; tx <= maxTx; tx += 1) {
         const at = { x: tx, y: ty };
-        /**
-         * `DEFAULT_SIGHT_RADIUS`, AND IT IS THE ONE DIVERGENCE IN THIS PASS.
-         * `sightRadiusOf` adds `mods.sight`, which a talent grants (Overseer of
-         * Nations) and a rare ego carries (`egos.ts`' Keen-Sighted, +1 at level
-         * 14). Neither number is on the wire — `egos.ts` says why sight is not
-         * a stat there: *"it is how much of the board the SERVER sends you"*.
-         *
-         * The visible cost is one ring of tiles: a body with the bonus sees a
-         * token at eleven standing on ground drawn as obscured. The fix is a
-         * viewer-stat field and this is the only line that would read it.
-         */
-        const lit = canSee(level, eye, at, DEFAULT_SIGHT_RADIUS);
+        // THE SERVER'S SIGHT, at this viewer's own radius. This was `canSee` at
+        // the default radius, blind to the talent and the ego that widen a
+        // viewer's sight; the server has always known both.
+        const lit = vision.seen(tx, ty);
         /**
          * ═══════════════════════════════════════════════════════════════════
          * THE THIRD STATE. NEVER SEEN DRAWS NOTHING AT ALL.
@@ -2809,12 +2780,9 @@ export function createRenderer(options: RendererOptions): Renderer {
          * ═══ THE TILE IS STILL ON THE WIRE, AND THIS DOES NOT FIX THAT ═══
          * `projectLevel` sends the whole map; this hides it. A client that
          * wanted the floor plan still has it, exactly as it did before. Closing
-         * that is the netcode half — see `Scene.witnessed`.
+         * that is the netcode half — see `Scene.vision`.
          */
-        const unseen =
-          witnessed !== null &&
-          witnessed !== undefined &&
-          !witnessed.has(`${String(tx)},${String(ty)}`);
+        const unseen = !lit && !vision.remembered(tx, ty);
         const alpha = unseen
           ? 1
           : lit
@@ -3494,9 +3462,8 @@ export function createRenderer(options: RendererOptions): Renderer {
       // See `paintLight` for why the markers are above it rather than under.
       paintLight(
         level,
-        scene.realmKind,
         self === undefined ? null : { x: Math.trunc(self.x), y: Math.trunc(self.y) },
-        scene.witnessed,
+        scene.vision,
         camX,
         camY,
       );
