@@ -4859,16 +4859,23 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     // See `withUnlearnable`. A realm table with no entry for this id is a
     // fixture world with no delve to be standing in, and counts as quiet.
     const kind = opts.realms?.get(target.id)?.kind;
-    const marked =
-      viewer.kind === 'player'
-        ? withUnlearnable(talents, viewer, kind === undefined || isShared(kind))
-        : talents;
+    const quiet = kind === undefined || isShared(kind);
+    const marked = viewer.kind === 'player' ? withUnlearnable(talents, viewer, quiet) : talents;
+    // AND THE PASSIVES, BY THE SAME RULE. A point spent on a passive goes into
+    // the same ledger as one spent on an active (`handleSpendPoint` searches
+    // both), and upstream's `isUnlearnable` asks every talent alike
+    // (LevelupDialog.lua:343-360). Left unmarked, a passive rank bought by
+    // mistake had no badge, while still taking a slot in the window like any
+    // other spend.
+    const passives = engine.passivesOf?.(actorId) ?? [];
+    const markedPassives =
+      viewer.kind === 'player' ? withUnlearnable(passives, viewer, quiet) : passives;
     send(
       session.socket,
       projectLoadout(
         viewer,
         marked,
-        engine.passivesOf?.(actorId) ?? [],
+        markedPassives,
         // AND WHAT THERE IS LEFT TO BUY. Re-read on every loadout frame rather
         // than cached, because the list SHRINKS as points are spent — a cached
         // one would go on offering a discipline the character already owns.
@@ -13751,7 +13758,13 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       return;
     }
 
-    const talent = realm.engine.loadoutOf?.(actorId)?.find((t) => t.id === msg.talentId);
+    // THE SAME BOOK THE SPEND SEARCHES: the hotbar's talents AND the passives.
+    // `loadoutOf` alone is the hotbar, which deliberately excludes passives, so a
+    // passive rank the spend had just bought was "not in your book" here.
+    const talent = [
+      ...(realm.engine.loadoutOf?.(actorId) ?? []),
+      ...(realm.engine.passivesOf?.(actorId) ?? []),
+    ].find((t) => t.id === msg.talentId);
     if (talent === undefined) {
       sendError(session.socket, ErrorCode.BadMessage, 'that talent is not in your book');
       return;

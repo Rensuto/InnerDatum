@@ -1324,6 +1324,8 @@ describe('a mis-clicked point can be taken back, for a little while', () => {
    */
   const CRUDE = 'talent:crude_blow';
   const SHIN = 'talent:shin_crack';
+  // A WATCHMAN PASSIVE (`watch/authority`). `loadoutOf` never lists it.
+  const KNOWN_FACE = 'talent:known_face';
 
   async function watchmanWithPoints(seed: string, points = 6) {
     server = await boot(seed);
@@ -1427,6 +1429,53 @@ describe('a mis-clicked point can be taken back, for a little while', () => {
     // AND NOT ON EVERYTHING ELSE. An always-true flag would satisfy the
     // assertion above while telling the player they can refund their career.
     expect(rows.filter((t) => t.unlearnable === true).map((t) => t.id)).toEqual([CRUDE]);
+  });
+
+  it('takes back a point spent on a passive, as it takes back an active', async () => {
+    /**
+     * THE SPEND REACHED PASSIVES AND THE TAKE-BACK DID NOT. `spend_point` looks
+     * a talent up in the hotbar AND the passives and writes the spend into the
+     * ledger either way; `unlearn` looked in the hotbar alone and answered a
+     * passive with "that talent is not in your book" — for the rank it had just
+     * sold. Upstream's `isUnlearnable` has no such distinction
+     * (LevelupDialog.lua:343-360): a talent is a talent.
+     */
+    const { ren, body } = await watchmanWithPoints('unlearn-passive');
+    const start = server.talents.sheetOf(body.id)?.points.get(KNOWN_FACE);
+    expect(start, 'the Watchman sheet has no Known Face to spend on').toBeDefined();
+    const before = body.unspentPoints;
+
+    ren.send({ t: 'spend_point', talentId: KNOWN_FACE });
+    await ren.settle();
+    expect(
+      server.talents.sheetOf(body.id)?.points.get(KNOWN_FACE),
+      'the spend itself was refused, so nothing below tests the take-back',
+    ).toBe((start ?? 0) + 1);
+    expect(body.unspentPoints).toBe(before - 1);
+    ren.clear();
+
+    ren.send({ t: 'unlearn', talentId: KNOWN_FACE });
+    await ren.settle();
+
+    expect(ren.last('error'), 'the take-back was refused').toBeUndefined();
+    expect(server.talents.sheetOf(body.id)?.points.get(KNOWN_FACE)).toBe(start);
+    expect(body.unspentPoints, 'the point did not come back').toBe(before);
+  });
+
+  it('marks the passive rank just bought as open, and nothing else', async () => {
+    // THE READOUT HALF, for passives. The panel draws its badge off this flag and
+    // has no other way to know — see 'tells the panel which ranks are open'.
+    const { ren } = await watchmanWithPoints('unlearn-passive-flag');
+    ren.send({ t: 'spend_point', talentId: KNOWN_FACE });
+    await ren.settle();
+
+    const loadout = ren.last('loadout');
+    const passives = (loadout?.['passives'] ?? []) as { id: string; unlearnable?: boolean }[];
+    expect(passives.length).toBeGreaterThan(1);
+    expect(passives.filter((t) => t.unlearnable === true).map((t) => t.id)).toEqual([KNOWN_FACE]);
+    // AND THE BADGE DID NOT LAND ON AN ACTIVE instead.
+    const talents = (loadout?.['talents'] ?? []) as { id: string; unlearnable?: boolean }[];
+    expect(talents.filter((t) => t.unlearnable === true)).toEqual([]);
   });
 });
 
