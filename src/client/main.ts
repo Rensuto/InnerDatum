@@ -308,6 +308,8 @@ import { resourceLabel } from './ui/resource.ts';
 import {
   TalentHitKind,
   talentMessageWake,
+  talentPanelHeadingAt,
+  headingPressRefusal,
   confirmTooSoon,
   statPressRefusal,
   talentPressRefusal,
@@ -1510,6 +1512,8 @@ let passives: readonly LoadoutTalent[] = [];
 let unlockable: readonly UnlockableTree[] = [];
 /** Tree ids this body knows and could still deepen — `LoadoutMsg.deepenable`. */
 let deepenable: readonly string[] = [];
+/** Tree ids this body has already deepened — `LoadoutMsg.deepened`. */
+let deepened: readonly string[] = [];
 let cooldowns: Readonly<Record<string, number>> = {};
 let resource: ResourceView | null = null;
 
@@ -4029,6 +4033,7 @@ function talentPanelView(): {
   progress: ProgressMsg | null;
   unlockable: readonly UnlockableTree[];
   deepenable: readonly string[];
+  deepened: readonly string[];
   categories: number;
   pool?: ResourceKind;
 } {
@@ -4038,6 +4043,7 @@ function talentPanelView(): {
     progress,
     unlockable,
     deepenable,
+    deepened,
     /**
      * READ OFF `progress` RATHER THAN HELD SEPARATELY, because that frame is the
      * one the server re-sends whenever a purse moves — a second copy here would
@@ -12480,6 +12486,27 @@ async function boot(): Promise<void> {
         pressTalentPlus(deepenTree);
         return;
       }
+      // ═══ A HEADING THAT CANNOT DEEPEN SAYS WHY — LevelupDialog.lua:417-426 ═══
+      // Asked after the offer, so a tree the server offers is never refused here,
+      // and before the hit test, which has nothing to say about a heading.
+      const heading = talentPanelHeadingAt(
+        layout.talents,
+        talentPanelRows(talentPanelView()),
+        point.x,
+        point.y,
+        talentScroll,
+      );
+      if (heading !== null) {
+        const refusal = headingPressRefusal({
+          deepened: deepened.includes(heading),
+          category: progress?.unspentCategories ?? 0,
+        });
+        if (refusal !== null) {
+          event.preventDefault();
+          sayOnTalentPanel(refusal);
+          return;
+        }
+      }
       const hit = talentPanelHitAt(
         layout.talents,
         talentPanelRows(talentPanelView()),
@@ -13454,6 +13481,8 @@ function applyServerMessage(msg: ServerMsg): void {
       // ABSENT MEANS NONE — an older server, or a body that has deepened
       // everything it knows. Both read as "offer nothing".
       deepenable = msg.deepenable ?? [];
+      // ABSENT MEANS NONE, on the same terms.
+      deepened = msg.deepened ?? [];
       // ═══ AND THIS FRAME IS THE CLASS CHOOSER'S ONLY ACKNOWLEDGEMENT ═══
       //
       // There deliberately is no "you are a Watchman now" frame. On a successful

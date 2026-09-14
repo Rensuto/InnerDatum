@@ -1563,6 +1563,20 @@ describe('the loadout projection loses no field', () => {
     expect(projected.sustained).toBe(full.sustained);
   });
 
+  it('carries the trees already deepened, and no field at all when there are none', () => {
+    // `LoadoutMsg.deepened` lets the panel tell "only once" from "no points".
+    const frame = projectLoadout({ id: 'a' } as never, [], [], [], [], ['watch/discipline']);
+    expect(frame.deepened).toEqual(['watch/discipline']);
+    expect(Object.keys(projectLoadout({ id: 'a' } as never, []))).not.toContain('deepened');
+    // AND THE GATEWAY HANDS IT THE BODY'S OWN LIST. A source guard: every gateway
+    // test injects its own engine, and this is read off the body, not the engine.
+    const gateway = readFileSync(
+      new URL('../../src/server/net/gateway.ts', import.meta.url),
+      'utf8',
+    );
+    expect(gateway).toContain("viewer.kind === 'player' ? (viewer.deepenedTrees ?? []) : [],");
+  });
+
   it('emits no passives array for a class that has none', () => {
     // `LoadoutMsg.passives` is optional, so a class without any must produce the
     // frame it always produced rather than one carrying a new empty field.

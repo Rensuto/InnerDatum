@@ -984,6 +984,8 @@ export function projectLoadout(
    * `LoadoutMsg.deepenable` for why this one does not carry its talents.
    */
   deepenable: readonly string[] = [],
+  /** Tree ids this body has already deepened — see `LoadoutMsg.deepened`. */
+  deepened: readonly string[] = [],
 ): LoadoutMsg {
   return {
     v: PROTOCOL_VERSION,
@@ -994,6 +996,8 @@ export function projectLoadout(
     ...(unlockable.length === 0 ? {} : { unlockable }),
     // ABSENT WHEN THERE IS NOTHING LEFT TO DEEPEN, on the same terms.
     ...(deepenable.length === 0 ? {} : { deepenable }),
+    // AND WHAT IS ALREADY DEEPENED, on the same terms.
+    ...(deepened.length === 0 ? {} : { deepened }),
     // ABSENT WHEN THERE ARE NONE, never an empty array: `LoadoutMsg.passives` is
     // optional, and a class with no passives must produce the frame it always
     // produced rather than one with a new empty field in it.

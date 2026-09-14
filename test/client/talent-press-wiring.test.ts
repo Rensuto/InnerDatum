@@ -248,6 +248,24 @@ describe('the talent panel press wiring', () => {
     }
   });
 
+  it('answers a heading that cannot deepen, after the offer and before the hit test', () => {
+    // LevelupDialog.lua:417-426. The offer first, so an offered tree is never
+    // refused; the refusal asked with this body's own deepened list and purse.
+    const mousedown = CODE.slice(at("canvas.addEventListener('mousedown'", CODE));
+    const offer = at('talentPanelDeepenAt(', mousedown);
+    const asked = at('talentPanelHeadingAt(', mousedown);
+    const hit = at('talentPanelHitAt(', mousedown, asked);
+    expect(offer).toBeLessThan(asked);
+    expect(asked).toBeLessThan(hit);
+    const branch = mousedown.slice(asked, hit);
+    expect(branch).toContain('deepened: deepened.includes(heading),');
+    expect(branch).toContain('category: progress?.unspentCategories ?? 0,');
+    expect(branch).toContain('sayOnTalentPanel(refusal);');
+    expect(branch).toContain('return;');
+    // AND THE LIST COMES OFF THE LOADOUT FRAME.
+    expect(CODE).toContain('deepened = msg.deepened ?? [];');
+  });
+
   it('hands the panel its message and the clock the fade is measured against', () => {
     // Without these two the refusal is recorded, timed and redrawn for — and
     // never painted, because the painter is the only reader of either.

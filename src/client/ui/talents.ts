@@ -886,6 +886,8 @@ export type TalentPanelView = {
    * INTO the header it belongs to rather than as a second copy of the tree.
    */
   readonly deepenable?: readonly string[];
+  /** Tree ids this character has already deepened — `LoadoutMsg.deepened`. */
+  readonly deepened?: readonly string[];
   /**
    * Category points in hand. They arrive at the levels `CATEGORY_POINT_LEVELS`
    * names — three of them in a career, which is what makes buying one a choice.
@@ -1554,6 +1556,35 @@ export function talentPressRefusal(
   }
   if (cell.level >= cell.maxLevel) {
     return { text: 'You already fully know this talent!', tone: TalentMessageTone.Warning };
+  }
+  return null;
+}
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * WHY A PRESS ON A TREE HEADING BUYS NOTHING — `LevelupDialog.lua:417-426`.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `learnType(+)` in its order: a type already improved is refused first, with
+ * "You can only improve a category mastery once!", and only then an empty purse.
+ * Null means the press is not refused for either reason; a heading the server
+ * does offer never reaches this, because main.ts asks the offer first.
+ *
+ * NOT PORTED: upstream's third refusal, the minimum-level popup (:428-431). No
+ * tree in this build has a minimum level to refuse on.
+ */
+export function headingPressRefusal(input: {
+  readonly deepened: boolean;
+  readonly category: number;
+}): TalentRefusal | null {
+  if (input.deepened) {
+    return {
+      text: 'You can only improve a category mastery once!',
+      tone: TalentMessageTone.Warning,
+    };
+  }
+  if (input.category <= 0) {
+    return { text: 'You have no category points left!', tone: TalentMessageTone.Error };
   }
   return null;
 }
@@ -2717,13 +2748,12 @@ export function talentPanelDeepenAt(
   return talentDeepenAt({ x: px, y: py }, talentPanelGeometry(rect, rows, scroll));
 }
 
-export function talentDeepenAt(
+export function talentHeadingAt(
   point: { readonly x: number; readonly y: number },
   geometry: TalentPanelGeometry,
 ): string | null {
   for (const placed of geometry.placed) {
     if (placed.row.kind !== TalentRowKind.Category) continue;
-    if (!placed.row.deepen) continue;
     const head = categoryHeadRect(placed.rect);
     // CLIPPED AWAY IS NOT PRESSABLE, the rule `talentHitAt` applies to icons.
     if (!cellOnScreen(head, geometry.grid.viewport)) continue;
@@ -2770,6 +2800,37 @@ export function talentDeepenAt(
     }
   }
   return null;
+}
+
+/**
+ * THE DEEPEN OFFER UNDER A POINT: the heading there, if the server offers it.
+ * `talentHeadingAt` owns where a heading answers — clip, badge and all — so the
+ * offer and the refusal (`headingPressRefusal`) can never disagree about which
+ * pixels are a heading.
+ */
+export function talentDeepenAt(
+  point: { readonly x: number; readonly y: number },
+  geometry: TalentPanelGeometry,
+): string | null {
+  const tree = talentHeadingAt(point, geometry);
+  if (tree === null) return null;
+  const placed = geometry.placed.find(
+    (candidate) => candidate.row.kind === TalentRowKind.Category && candidate.row.tree === tree,
+  );
+  return placed !== undefined && placed.row.kind === TalentRowKind.Category && placed.row.deepen
+    ? tree
+    : null;
+}
+
+/** `talentHeadingAt` over the panel's own geometry, as `talentPanelDeepenAt` is. */
+export function talentPanelHeadingAt(
+  rect: PanelRect,
+  rows: readonly TalentRow[],
+  px: number,
+  py: number,
+  scroll: number,
+): string | null {
+  return talentHeadingAt({ x: px, y: py }, talentPanelGeometry(rect, rows, scroll));
 }
 
 /**

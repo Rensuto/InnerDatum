@@ -5421,6 +5421,21 @@ export type LoadoutMsg = {
    * draws the panel it always drew.
    */
   deepenable?: readonly string[];
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE TREES THIS CHARACTER HAS ALREADY DEEPENED — tree ids.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `deepenable` says what a category point could buy; it cannot say why a tree
+   * is missing from it. Upstream's `learnType(+)` has two refusals and they mean
+   * different things (LevelupDialog.lua:420-426): "You can only improve a
+   * category mastery once!" for a tree already improved, and "You have no
+   * category points left!" otherwise. "Not deepenable" is not "deepened" — an
+   * unowned locked tree is absent too — so the panel is told which is which.
+   *
+   * OPTIONAL AND ADDITIVE, like `deepenable`: absent means none.
+   */
+  deepened?: readonly string[];
 };
 
 /**

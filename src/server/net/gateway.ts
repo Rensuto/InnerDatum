@@ -4883,6 +4883,9 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
         // AND WHAT COULD BE DEEPENED, re-read for the same reason: the list
         // shrinks by one every time a point is spent on a tree already known.
         engine.deepenableOf?.(actorId) ?? [],
+        // AND WHAT IS ALREADY DEEPENED, read off the body — the panel needs it to
+        // tell "only once" from "no points". See `LoadoutMsg.deepened`.
+        viewer.kind === 'player' ? (viewer.deepenedTrees ?? []) : [],
       ),
     );
   };

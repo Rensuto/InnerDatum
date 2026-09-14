@@ -43,6 +43,9 @@ import {
   categoryHeadRect,
   talentDeepenAt,
   talentPanelDeepenAt,
+  talentHeadingAt,
+  talentPanelHeadingAt,
+  headingPressRefusal,
   takeBackStillOffered,
   TAKE_BACK_GUARD_MARGIN,
   TAKE_BACK_GUARD_MS,
@@ -2290,6 +2293,82 @@ describe('the deepen offer', () => {
         }
       }
     }
+  });
+
+  it('answers a press on any heading, offered or not, and gives badge pixels up', () => {
+    // THE HEADING READER is where a heading answers; the deepen reader is that
+    // plus "the server offers it". A tree with no offer still has a heading.
+    let badgesSeen = 0;
+    const rows = talentPanelRows(
+      deepenable({
+        deepenable: ['watch/discipline'],
+        loadout: [
+          talent({ id: 'talent:crude_blow', name: 'Crude Blow', unlearnable: true, ...DISCIPLINE }),
+          talent({ id: 'talent:ward_rush', name: 'Ward Rush', ...DISCIPLINE }),
+          talent({
+            id: 'talent:iron_curtain',
+            name: 'Iron Curtain',
+            unlearnable: true,
+            ...THE_LINE,
+          }),
+          talent({ id: 'talent:lockdown', name: 'Lockdown', ...THE_LINE }),
+        ],
+      }),
+    );
+    for (const size of BADGE_BANDS) {
+      const rect = rectAt(size);
+      const geometry = talentPanelGeometry(rect, rows, NO_SCROLL);
+      const offered = stripOf(geometry, 'watch/discipline');
+      const plain = stripOf(geometry, 'watch/the-line');
+      const head = categoryHeadRect(plain.placed.rect);
+      const x = head.x + head.w - 3;
+      const y = head.y + 1;
+      expect(talentHeadingAt({ x, y }, geometry), 'an unoffered heading').toBe('watch/the-line');
+      expect(talentDeepenAt({ x, y }, geometry), 'offered where it is not').toBeNull();
+      const own = categoryHeadRect(offered.placed.rect);
+      expect(talentDeepenAt({ x: own.x + own.w - 3, y: own.y + 1 }, geometry)).toBe(
+        'watch/discipline',
+      );
+      // AND A DRAWN BADGE'S PIXELS ARE NEVER A HEADING, offered or not. A badge is
+      // drawn only over an icon wholly on screen; over a clipped one there is no
+      // badge, and those pixels are the heading's.
+      const icon = plain.placed.cells[plain.row.talents.findIndex((cell) => cell.canUnlearn)];
+      if (icon === undefined) throw new Error('no take-back cell on the unoffered tree');
+      const minus = talentMinusRect(icon);
+      const vp = geometry.grid.viewport;
+      const drawn =
+        icon.x >= vp.x &&
+        icon.y >= vp.y &&
+        icon.x + icon.w <= vp.x + vp.w &&
+        icon.y + icon.h <= vp.y + vp.h;
+      const onBadge = talentPanelHeadingAt(rect, rows, minus.x + 1, minus.y, NO_SCROLL);
+      if (drawn) {
+        badgesSeen += 1;
+        expect(
+          onBadge,
+          `a drawn badge answered as its heading at ${JSON.stringify(size)}`,
+        ).toBeNull();
+      }
+    }
+    // THE BADGE CASE WAS REACHED, or the assertion above proved nothing.
+    expect(badgesSeen).toBeGreaterThan(0);
+  });
+
+  it('refuses a heading press in learnType’s order: once, then points', () => {
+    // `LevelupDialog.lua:420-426`. A tree already deepened says so even with an
+    // empty purse — the rule that binds is the one the player cannot fix.
+    expect(headingPressRefusal({ deepened: true, category: 0 })).toEqual({
+      text: 'You can only improve a category mastery once!',
+      tone: TalentMessageTone.Warning,
+    });
+    expect(headingPressRefusal({ deepened: true, category: 2 })?.tone).toBe(
+      TalentMessageTone.Warning,
+    );
+    expect(headingPressRefusal({ deepened: false, category: 0 })).toEqual({
+      text: 'You have no category points left!',
+      tone: TalentMessageTone.Error,
+    });
+    expect(headingPressRefusal({ deepened: false, category: 1 })).toBeNull();
   });
 
   it('still offers the deepen beside a badge, and above a talent without one', () => {
