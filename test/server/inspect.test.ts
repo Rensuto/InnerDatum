@@ -640,6 +640,8 @@ const SELF_SHEET_LABELS = [
   // CharacterSheet.lua:731, under its `Vision:` heading. `CombatMods.sight` was
   // folded, spent by FOV and granted by a shipped talent while reaching no screen.
   'Vision range',
+  // CharacterSheet.lua:725-727, under the same `Vision:` heading.
+  'Light radius',
   'Accuracy',
   'Damage',
   'APR',

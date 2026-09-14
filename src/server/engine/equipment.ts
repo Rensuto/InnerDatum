@@ -165,6 +165,8 @@ const WIELDER_MOD_KEYS: readonly (keyof AdditiveMods)[] = Object.freeze([
   'healMod',
   // TILES, and additive for the same reason: two sources of vision stack.
   'sight',
+  // TILES of carried light, additive for the same reason. See `liteRadiusOf`.
+  'lite',
   'genericCrit',
   'criticalPower',
   'damRange',

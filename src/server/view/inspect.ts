@@ -76,6 +76,7 @@ import {
   combatSpellpower,
   healingFactor,
   ignoreDirectCrits,
+  liteRadiusOf,
   sightRadiusOf,
   stat,
 } from '../engine/derived.ts';
@@ -653,14 +654,18 @@ function pushSelfSheet(
    * your sight moved no number anywhere and read as a no-op. A grep for the
    * concept across `src/client/` returned nothing at all.
    *
-   * `lite` (light radius) and `infravision` are upstream's other two vision
-   * rows and are NOT ported: this game has no light system and no second FOV
-   * pass. Named rather than dropped, exactly as `overseer_of_nations.ts` names
-   * the two thirds of itself that are missing.
+   * `lite` is the next row, upstream's `Light radius` under the same heading
+   * (CharacterSheet.lua:725-727). `infravision`, the third vision row, is not
+   * ported: there is no pass that reads it yet.
    */
   rows.push({
     label: 'Vision range',
     value: whole(sightRadiusOf({ combat: c })),
+    group: InspectGroup.General,
+  });
+  rows.push({
+    label: 'Light radius',
+    value: whole(liteRadiusOf({ combat: c })),
     group: InspectGroup.General,
   });
 

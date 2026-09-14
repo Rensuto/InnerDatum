@@ -177,6 +177,16 @@ export type CombatMods = {
    */
   readonly sight?: number;
   /**
+   * `lite` — how far the light this body carries reaches, in tiles. Upstream's
+   * module starts every actor at 0 (tome/class/Actor.lua:182), and a lantern adds
+   * its `wielder.lite`: the brass lantern is 2 (data/general/objects/lites.lua:30-42).
+   *
+   * A BONUS ON ZERO, as `sight` is a bonus on ten, so the fold stays additive. It
+   * may go below zero: upstream's stealth takes a thousand off it
+   * (data/talents/cunning/stealth.lua:91), which is how a body carries darkness.
+   */
+  readonly lite?: number;
+  /**
    * `healing_factor` — a FRACTION added to the heal multiplier, not a percent.
    * `0.1` is a tenth more healing received. See `healingFactor`, which reads it.
    */
@@ -1099,4 +1109,16 @@ export function sightRadiusOf(body: {
   // wide: at radius 1 the Euclidean test admits the four orthogonal neighbours.
   if (body.combat?.flags?.blind === true) return 1;
   return Math.max(1, DEFAULT_SIGHT_RADIUS + (body.combat?.mods?.sight ?? 0));
+}
+
+/**
+ * HOW FAR THIS BODY'S OWN LIGHT REACHES, in tiles: upstream's `self.lite`.
+ *
+ * NOT FLOORED, unlike `sightRadiusOf`. Upstream's light pass reads the raw value
+ * and treats anything at or below zero as lighting the body's own tile only
+ * (Player.lua:651-653), so a negative radius is a real state and clamping it here
+ * would lose it.
+ */
+export function liteRadiusOf(body: { readonly combat?: { readonly mods?: CombatMods } }): number {
+  return body.combat?.mods?.lite ?? 0;
 }
