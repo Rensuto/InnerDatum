@@ -11,12 +11,13 @@ import { readFileSync } from 'node:fs';
 
 import {
   CLASSES,
+  canDeepenTree,
   sheetAfterPurchase,
   sheetForBody,
   sheetForClass,
   treesForClass,
 } from '../../src/server/content/classes.ts';
-import { INDEXED } from '../../src/server/content/origins.ts';
+import { CITYBORN, INDEXED, UNFILED } from '../../src/server/content/origins.ts';
 import { INSCRIPTIONS } from '../../src/server/content/inscriptions.ts';
 import { higherHeal } from '../../src/server/talents/higher_heal.ts';
 import { TALENT_TREES } from '../../src/server/content/talent-trees.ts';
@@ -352,6 +353,85 @@ describe('treesForClass — "known" is not the same question as "unlocked"', () 
     if (locked === undefined) return;
     expect(treesForClass(definition).has(locked.id)).toBe(false);
     expect(treesForClass(definition, [locked.id]).has(locked.id)).toBe(true);
+  });
+});
+
+describe('an origin`s tree is known, and deepens like any other — LevelupDialog.lua:417-443', () => {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * NO CATEGORY POINT COULD EVER DEEPEN A RACIAL TREE.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Upstream's levelup list offers every talent type the actor knows that is not
+   * hidden (:490), and `learnType` improves any of them once — racial types
+   * included. Ours counted the class's own trees and bought ones, so `race/higher`
+   * was never offered and a crafted `unlock_tree` for it was refused.
+   */
+  it('counts the origin`s own tree as known, and the baseline origin adds none', () => {
+    const definition = anyClass();
+    expect(treesForClass(definition).has('race/higher')).toBe(false);
+    expect(treesForClass(definition, [], INDEXED).has('race/higher')).toBe(true);
+    expect([...treesForClass(definition, [], CITYBORN)]).toEqual([...treesForClass(definition)]);
+  });
+
+  it('lets a category point deepen it, exactly once', () => {
+    const definition = anyClass();
+    expect(canDeepenTree(definition, { origin: INDEXED.id }, 'race/higher')).toBe(true);
+    expect(
+      canDeepenTree(
+        definition,
+        { origin: INDEXED.id, deepenedTrees: ['race/higher'] },
+        'race/higher',
+      ),
+      'deepened twice',
+    ).toBe(false);
+    expect(canDeepenTree(definition, {}, 'race/higher'), 'a tree this body does not know').toBe(
+      false,
+    );
+  });
+
+  it('never deepens a tree the levelup list hides — and the Unfiled know one', () => {
+    const definition = anyClass();
+    const body = { origin: UNFILED.id };
+    // THE PRECONDITION THAT MAKES THIS A LIVE RULE: the Unfiled's runes put
+    // `generic/inscriptions` among the trees they know.
+    expect(treesForClass(definition, [], UNFILED).has('generic/inscriptions')).toBe(true);
+    expect(canDeepenTree(definition, body, 'generic/inscriptions')).toBe(false);
+    expect(canDeepenTree(definition, body, 'race/unfiled')).toBe(true);
+    for (const tree of TALENT_TREES.filter((candidate) => candidate.hidden === true)) {
+      expect(canDeepenTree(definition, body, tree.id), tree.id).toBe(false);
+    }
+  });
+
+  it('makes the origin`s talent stronger once its tree is deepened', () => {
+    const definition = anyClass();
+    const before = sheetForBody(definition, { origin: INDEXED.id });
+    const after = sheetForBody(definition, { origin: INDEXED.id, deepenedTrees: ['race/higher'] });
+    expect(talentLevelOf(before, higherHeal)).toBeCloseTo(1, 10);
+    expect(talentLevelOf(after, higherHeal)).toBeCloseTo(1 + MASTERY_STEP, 10);
+  });
+
+  it('is the rule both the offer and the spend read', () => {
+    // SOURCE GUARDS, for `attachClass`' reason: `deepenTree` is a closure inside
+    // `buildServer`, and the offer is built inside the talent book.
+    const code = (url: URL) =>
+      readFileSync(url, 'utf8')
+        .split('\n')
+        .filter((line) => !/^\s*(\/\/|\*|\/\*)/.test(line))
+        .join('\n');
+    const body = (source: string, head: string) => {
+      const from = source.indexOf(head);
+      expect(from, head).toBeGreaterThanOrEqual(0);
+      return source.slice(from, source.indexOf('\n    },', from));
+    };
+    const classes = code(new URL('../../src/server/content/classes.ts', import.meta.url));
+    expect(body(classes, 'deepenableOf: (actor: Actor)')).toContain(
+      'canDeepenTree(definition, body, id)',
+    );
+    const main = code(new URL('../../src/server/main.ts', import.meta.url));
+    expect(body(main, 'deepenTree: (actorId: string, treeId: string)')).toContain(
+      'canDeepenTree(definition, body, treeId)',
+    );
   });
 });
 

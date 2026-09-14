@@ -79,7 +79,12 @@
  * is the only layer allowed to see both.
  */
 
-import { MASTERY_STEP, isGenericTree, spentFromSpread } from '../../shared/progression.ts';
+import {
+  MASTERY_DEEPEN_LIMIT,
+  MASTERY_STEP,
+  isGenericTree,
+  spentFromSpread,
+} from '../../shared/progression.ts';
 import { braced } from '../talents/braced.ts';
 import { deadOnYourFeet } from '../talents/dead_on_your_feet.ts';
 import { longNights } from '../talents/long_nights.ts';
@@ -951,7 +956,7 @@ export function createContentTalentEngine(): TalentEngine {
  */
 /**
  * ═══════════════════════════════════════════════════════════════════════════
- * EVERY TREE THIS BODY KNOWS — its class's own, plus the ones it has bought.
+ * EVERY TREE THIS BODY KNOWS — its class's own, the ones it bought, its origin's.
  * ═══════════════════════════════════════════════════════════════════════════
  *
  * `knowTalentType` upstream (ActorTalents.lua). Needed because "known" and
@@ -969,6 +974,13 @@ export function createContentTalentEngine(): TalentEngine {
 export function treesForClass(
   definition: ClassDef,
   unlocked: readonly string[] = [],
+  /**
+   * AND THE ORIGIN'S. An origin grants its talents' trees exactly as a class does,
+   * and upstream's levelup list offers every type the actor knows (:490) —
+   * racial ones included. ABSENT MEANS NONE, so every caller that predates
+   * origins keeps the set it had.
+   */
+  origin?: OriginDef,
 ): ReadonlySet<string> {
   const trees = new Set<string>();
   for (const talent of [
@@ -977,10 +989,37 @@ export function treesForClass(
     ...definition.birthTalents,
     ...GENERIC_PASSIVES,
     ...unlockedTalents(unlocked),
+    ...(origin === undefined ? [] : originTalents(origin)),
   ]) {
     trees.add(talent.tree);
   }
   return trees;
+}
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * MAY A CATEGORY POINT DEEPEN THIS TREE? — LevelupDialog.lua:417-443.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `learnType(+)` improves any talent type the actor knows, once:
+ *   - KNOWN — the class's own, a bought discipline, or the ORIGIN's. Ours counted
+ *     only the first two, so no category point could ever deepen a racial tree.
+ *   - NOT HIDDEN — upstream's list skips `tt.hide` (:490), so a hidden type is
+ *     never offered. The Unfiled know one: their runes sit in
+ *     `generic/inscriptions`.
+ *   - NOT ALREADY DEEPENED — "You can only improve a category mastery once!"
+ *     (:420-422), as `MASTERY_DEEPEN_LIMIT`.
+ *
+ * THE ONE RULE THE OFFER AND THE SPEND BOTH READ: `deepenableOf` builds the list
+ * the panel draws from it, and `deepenTree` in main.ts charges by it. Two copies
+ * are how a panel ends up offering what the server refuses.
+ */
+export function canDeepenTree(definition: ClassDef, body: PurchasedTrees, treeId: string): boolean {
+  if (treeById(treeId)?.hidden === true) return false;
+  const known = treesForClass(definition, body.unlockedTrees ?? [], originOf(body.origin));
+  if (!known.has(treeId)) return false;
+  const deepened = (body.deepenedTrees ?? []).filter((id) => id === treeId).length;
+  return deepened < MASTERY_DEEPEN_LIMIT;
 }
 
 function unlockedTalents(unlocked: readonly string[]): readonly Talent[] {
@@ -2068,9 +2107,14 @@ export function createTalentBook(
       if (!('classId' in actor) || typeof actor.classId !== 'string') return [];
       const definition = classById(actor.classId);
       if (definition === undefined) return [];
-      const unlocked = 'unlockedTrees' in actor ? (actor.unlockedTrees ?? []) : [];
-      const deepened = new Set('deepenedTrees' in actor ? (actor.deepenedTrees ?? []) : []);
-      return [...treesForClass(definition, unlocked)].filter((id) => !deepened.has(id));
+      const body: PurchasedTrees = {
+        unlockedTrees: 'unlockedTrees' in actor ? actor.unlockedTrees : undefined,
+        deepenedTrees: 'deepenedTrees' in actor ? actor.deepenedTrees : undefined,
+        origin: 'origin' in actor ? actor.origin : undefined,
+      };
+      // THE SPEND'S OWN RULE — see `canDeepenTree`.
+      const known = treesForClass(definition, body.unlockedTrees ?? [], originOf(body.origin));
+      return [...known].filter((id) => canDeepenTree(definition, body, id));
     },
 
     resourceOf: (actor: Actor): ResourceView | undefined => {

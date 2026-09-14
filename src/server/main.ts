@@ -24,7 +24,7 @@ import fastifyStatic from '@fastify/static';
 import Fastify from 'fastify';
 import { startOps } from './ops/routes.ts';
 
-import { MASTERY_DEEPEN_LIMIT, TALENT_MAX_LEVEL } from '../shared/progression.ts';
+import { TALENT_MAX_LEVEL } from '../shared/progression.ts';
 import { checkTier, tierRefusalText } from '../shared/tiers.ts';
 import { treeById } from './content/talent-trees.ts';
 import type { ClassDef } from './content/classes.ts';
@@ -36,8 +36,8 @@ import {
   createTalentBook,
   sheetForBody,
   spendByPurse,
+  canDeepenTree,
   sheetAfterPurchase,
-  treesForClass,
 } from './content/classes.ts';
 import { originLifeDelta, originOf } from './content/origins.ts';
 import { seedTestEncounter } from './content/encounter.ts';
@@ -1863,13 +1863,12 @@ export function buildServer() {
       if (definition === undefined) return false;
       if (treeById(treeId) === undefined) return false;
 
-      // KNOWN, which is not the same question as UNLOCKED. A class's own trees
-      // were never bought and are the commonest thing to want to deepen.
-      if (!treesForClass(definition, body.unlockedTrees ?? []).has(treeId)) return false;
+      // KNOWN (the class's own, bought, or the origin's), NOT HIDDEN, and NOT YET
+      // DEEPENED — :422's "You can only improve a category mastery once!". The one
+      // rule the panel's offer reads too: see `canDeepenTree`.
+      if (!canDeepenTree(definition, body, treeId)) return false;
 
       const deepened = body.deepenedTrees ?? [];
-      // :422 — "You can only improve a category mastery once!"
-      if (deepened.filter((id) => id === treeId).length >= MASTERY_DEEPEN_LIMIT) return false;
 
       const next = [...deepened, treeId];
       body.deepenedTrees = next;
