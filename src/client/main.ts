@@ -1359,19 +1359,19 @@ const B64_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz012345
  * `projectActors` filters bodies with, so a tile is remembered exactly when a
  * body standing on it would have been visible.
  *
- * ═══ SESSION-ONLY, AND THAT MATCHES WHAT LOCAL FOG ALREADY DOES ═══
- * Nothing here is sent or saved. It looks like a gap and is not: `gateway.ts`'s
- * `revealFor` returns false for every realm that is not an Overworld, and
- * `exploredElsewhere` persists SHARED OVERWORLDS ONLY — so a delve's and a
- * town's explored map are already forgotten on reload. The playfield light pass
- * is skipped entirely on the overworld (`paintLight` says why), so the only
- * maps this memory covers are exactly the ones whose fog was never persisted.
+ * ═══ SESSION-ONLY, AND THE SERVER NOW KEEPS THE DURABLE COPY ═══
+ * Nothing here is sent or saved. `gateway.ts`'s `revealFor` remembers every
+ * realm by the same sight rule, and the `realm` frame seeds `explored` above
+ * from it — but not this set, so after a reload the playfield starts dark
+ * while the minimap remembers. Reading the server's memory here instead is the
+ * step that retires this set. The playfield light pass is skipped entirely on
+ * the overworld (`paintLight` says why).
  *
- * Making it durable is the same piece of work as making it AUTHORITATIVE, which
- * is `docs/tome-port.md`'s *"per-player FOV for correct fog-of-war netcode"*:
- * the server would hold the bitset, the leak would close, and the save would
- * carry it. Until then this is a drawing convenience on top of what the server
- * already sent, exactly as `explored` says it is.
+ * Making it authoritative is `docs/tome-port.md`'s *"per-player FOV for correct
+ * fog-of-war netcode"*: the server holds the bitset now, and the leak closes
+ * when each player is sent only what they themselves can see. Until then this
+ * is a drawing convenience on top of what the server already sent, exactly as
+ * `explored` says it is.
  */
 const witnessed = new Map<string, Set<string>>();
 

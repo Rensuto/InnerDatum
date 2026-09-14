@@ -478,6 +478,30 @@
  * ═══════════════════════════════════════════════════════════════════════════
 
 
+ * CONSIDERED AND NOT BUMPED (WHAT YOU SAW IN THERE). `RealmMsg.explored` is
+ * sent for every kind of realm rather than only an overworld, and
+ * PROTOCOL_VERSION STAYS 23.
+ *
+ * The change: a delve or a town kept no memory on the server, so the only
+ * record of what a player had seen there was the client's, and it died with the
+ * tab. The server now remembers every realm by sight, and the `realm` frame
+ * carries that memory wherever the character has one.
+ *
+ * ═══ WHY THIS DOES NOT FORCE A BUMP ═══
+ * The field already exists and the client already reads it for any realm: the
+ * `realm` handler merges whatever `explored` it is given into that realm's map,
+ * whatever the realm's kind, and never replaces what the session revealed. So a
+ * client built before this, meeting the field on a town's frame, shows ground it
+ * saw before a reload — which is the whole change — and nothing it draws
+ * becomes false. The shape is untouched, nothing new is required, and no frame
+ * an old client relies on goes missing.
+ *
+ * `SCHEMA_VERSION` STAYS 1. Nothing new is saved: only an overworld's memory is
+ * written to the character file, exactly as before.
+ *
+ * ═══════════════════════════════════════════════════════════════════════════
+
+
  * 22 -> 23 (TRAPS). `TrapsMsg` is a new outbound frame — every trap THIS
  * VIEWER has found out about — and it is 6 -> 7's argument in its most literal
  * form yet.

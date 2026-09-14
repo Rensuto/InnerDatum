@@ -193,7 +193,7 @@ describe('the three hidden sites have to be found', () => {
      * assertion that fails if the reveal is wired to nothing.
      *
      * The timing matters as much as the fact: `sendSites` is otherwise re-sent
-     * only when a roamer moves, so without the counter in `handleMove` the
+     * only when a roamer moves, so without the recount after the pump the
      * marker would appear several turns later, attached to nothing the player
      * did. The whole feeling is walking over a rise and finding something.
      */

@@ -259,14 +259,16 @@ export function tilesInSight(
  * coat you walked past; you do not remember where a husk was standing.
  *
  * ═══ TWO TERMS, AND THE SIGHT ONE IS ALMOST ALWAYS SUBSUMED ═══
- *   REMEMBERED is the character's own persisted fog bitset, revealed at
- *     `REVEAL_RADIUS` (12) as they walk.
- *   SEEN is `canSee` at `DEFAULT_SIGHT_RADIUS` (10).
+ *   REMEMBERED is the character's own fog bitset for this realm. On an
+ *     overworld it is a disc at `REVEAL_RADIUS` (12) around every tile they
+ *     stood on; everywhere else it is what they saw, at their own sight radius.
+ *   SEEN is `canSee` at `DEFAULT_SIGHT_RADIUS` (10), from each of `eyes`.
  *
- * SIGHT IS INSIDE REVEAL, so once a character has taken one step, everything
- * they can see is already remembered and the second term adds nothing. It is
- * kept because upstream ORs the two (`engine/Object.lua:28-29`) and because "before
- * the first step" is a real state — not because it is load-bearing.
+ * THE SERVER REMEMBERS BEFORE IT ASKS. Every pump writes each player's sight
+ * into their memory before any frame is built, so for the viewer's own eyes the
+ * second term adds nothing. It adds what OTHER eyes in `eyes` can see, it covers
+ * the moment before the first pump, and it is kept because upstream ORs the two
+ * (`engine/Object.lua:28-29`).
  *
  * ═══ AND THIS PARAGRAPH USED TO SAY THE OPPOSITE ═══
  * It read *"THOSE RADII DISAGREE BY EIGHT TILES"* and flagged a divergence from

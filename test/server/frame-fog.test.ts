@@ -255,9 +255,9 @@ describe('the ground frame', () => {
   });
 
   it('shows a pile you can see but have not walked to', () => {
-    // `REVEAL_RADIUS` is 12 and `DEFAULT_SIGHT_RADIUS` is 20, so the two terms are not
-    // redundant: there are eight tiles' worth of ground you can see and have
-    // never revealed. Upstream has one radius and no such gap.
+    // The predicate is handed in, so this is the projector's half alone: a tile
+    // the rule calls known shows its pile. Which tiles the rule calls known is
+    // `knownTile`, below.
     const world = floors();
     const seenOnly = (x: number, y: number) => x === 9 && y === 1;
     expect(tilesOf(world, seenOnly)).toEqual(['9,1']);

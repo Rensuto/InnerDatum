@@ -195,7 +195,7 @@ import { Faction, StandingOrder, incMoney, isHostile, isMonster } from '../engin
  * player wearing a coat that changes no number — Trap 1, arriving through the
  * one door the type system cannot close.
  */
-import { combatArmor, stat as statValue } from '../engine/derived.ts';
+import { combatArmor, sightRadiusOf, stat as statValue } from '../engine/derived.ts';
 import { boughtSheet, recomposeCombat, restoreOnReentry } from '../engine/effects.ts';
 /**
  * WHICH PARTY A BODY BELONGS TO — asked in exactly one place, at exactly one
@@ -225,6 +225,7 @@ import { loreById, loreIdOfNote } from '../content/lore.ts';
 // adds no runtime cycle.
 import { UNASSIGNED_CLASS } from '../persist/saves.ts';
 import { knownTile } from '../../shared/sight.ts';
+import { computeSeen, rememberSeen } from '../../shared/vision.ts';
 import { attackBlockedReason, inspectActor } from '../view/inspect.ts';
 import {
   fogEvent,
@@ -3986,9 +3987,11 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    * rebuilt every time it crosses a realm (`crossInto` makes a new one) and the
    * map must not be rebuilt with it. Keyed by actor id, which is what survives.
    *
-   * ONLY THE OVERWORLD. Instanced realms mint an id per opening, so their fog
-   * could never be matched again, and a 24x24 arena is not somewhere anybody
-   * explores. See `CharacterFile.explored`.
+   * EVERY REALM KEEPS ONE, AND ONLY AN OVERWORLD'S IS SAVED. A delve or a town
+   * remembers by sight, as upstream's map does (`revealFor`), for as long as
+   * the process runs. Instanced realms mint an id per opening, so a saved copy
+   * could never be matched again, and a closed one's memory is dropped with the
+   * rest of its memos (`forgetRealmMemos`). See `CharacterFile.explored`.
    */
   /**
    * ═════════════════════════════════════════════════════════════════════════
@@ -4060,16 +4063,80 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     fog.get(actorId)?.has(realmId) === true;
 
   /**
-   * Reveal around a body, and answer whether anything was newly seen.
+   * ═══════════════════════════════════════════════════════════════════════════
+   * REMEMBER WHAT THIS BODY CAN SEE, AND ANSWER WHETHER ANYTHING WAS NEW.
+   * ═══════════════════════════════════════════════════════════════════════════
    *
-   * The caller uses that to decide whether to mark the save dirty: a party
-   * standing still in a town must not write a file on every pump, and standing
-   * still is what a party does most.
+   * Upstream's map marks every grid the player's sight reaches as remembered, in
+   * every zone (`engine/Map.lua:649-687`). This answered false for everything
+   * that was not an Overworld, so a delve or a town kept no memory at all: loot
+   * you had walked past dropped off the floor frame the moment it left sight,
+   * and a reconnect inside a delve arrived with nothing on the map.
+   *
+   * ═══ BY SIGHT, EXCEPT ON AN OVERWORLD ═══
+   * Everywhere else the memory is `computeSeen` at the body's own
+   * `sightRadiusOf`, so a wall stops it exactly where it stops the eye. An
+   * overworld keeps its disc at `REVEAL_RADIUS` for now, because the client
+   * reveals the same disc locally and the two must agree after a reload. The
+   * client reading the server's sight is the step that changes both together.
+   *
+   * The answer lets the caller skip work: a party standing still must not write
+   * a file on every pump, and standing still is what a party does most.
    */
-  const revealFor = (realm: Realm, actorId: string, x: number, y: number): boolean => {
-    if (realm.kind !== RealmKind.Overworld) return false;
+  const revealFor = (realm: Realm, actorId: string, body: Actor): boolean => {
     const level = realm.world.level;
-    return revealDisc(fogFor(actorId, realm), level.w, level.h, x, y);
+    const memory = fogFor(actorId, realm);
+    if (realm.kind === RealmKind.Overworld) {
+      return revealDisc(memory, level.w, level.h, body.x, body.y);
+    }
+    return rememberSeen(memory, computeSeen(level, body, sightRadiusOf(body)));
+  };
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * AFTER EVERY PUMP, EVERY PLAYER IN THE REALM REMEMBERS WHAT THEY CAN SEE.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * This ran only in `handleMove`, for the body that stepped. A body moved by
+   * anything else never remembered where it ended up: knocked back by a blow,
+   * put back on a spawn by a floor reset, or carried into a realm through a
+   * door. The pump is the one place all of those resolve, so the memory is
+   * written there, for every player the pump could have moved.
+   *
+   * AFTER THE PUMP, NEVER BEFORE IT. The tile a body stands on is only decided
+   * when its intent RESOLVES (a move accepted by `submitMove` can still be
+   * refunded — see `PumpResult.refusals`), and remembering around a refunded
+   * move would give away ground nobody walked.
+   *
+   * ═══ WHAT RIDES ON A NEW MEMORY, WHICH IS STILL ONLY AN OVERWORLD'S ═══
+   * Only an overworld's memory is saved (`prefsFields`, `exploredElsewhere`), so
+   * only it queues a save; a party pacing a delve would otherwise ask for writes
+   * that record nothing. And hidden markers are recounted where they always
+   * were, on an overworld: `sendSites` is otherwise re-sent only when a roamer
+   * moves, and a marker that appeared a few turns after the step that found it
+   * would be attached to nothing the player did. Counted rather than diffed —
+   * the visible-hidden count answers exactly "is there more to show than last
+   * time" without a second copy of what was sent.
+   */
+  const rememberWhatPlayersSee = (realm: PumpTarget): void => {
+    const full = opts.realms?.get(realm.id);
+    if (full === undefined) return;
+    let remembered = false;
+    for (const body of full.world.allActors()) {
+      if (body.kind !== ActorKind.Player) continue;
+      if (!revealFor(full, body.id, body)) continue;
+      remembered = true;
+      if (full.kind !== RealmKind.Overworld) continue;
+      const conn = connByActor.get(body.id);
+      const session = conn === undefined ? undefined : sessions.get(conn);
+      if (session === undefined) continue;
+      const shown = hiddenVisible(full, body.id);
+      if (shown !== session.hiddenSeen) {
+        session.hiddenSeen = shown;
+        sendSites(session);
+      }
+    }
+    if (remembered && full.kind === RealmKind.Overworld) queueSave('explored');
   };
 
   /**
@@ -5693,10 +5760,11 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    * `engine/Object.lua:28-29` — `display_on_seen = true` AND `display_on_remember =
    * true`, the same pair `engine/Grid.lua:30-32` gives terrain. A coat you walked past
    * stays on your map; a husk you walked past does not (`engine/Actor.lua:30-34` is
-   * remember-FALSE). The rule itself is `knownTile` in `world/sight.ts`, which
-   * carries the argument for both terms — briefly: sight (10) sits inside
-   * reveal (12), so after one step the seen term is subsumed and is kept
-   * because upstream ORs the two, not because it is load-bearing.
+   * remember-FALSE). The rule itself is `knownTile` in `shared/sight.ts`, which
+   * carries the argument for both terms — briefly: every pump writes what each
+   * player sees into their own memory first (`rememberWhatPlayersSee`), so the
+   * seen term only adds what somebody else in the realm can see. That is the
+   * party's pooled sight, and it goes when each player is given their own.
    */
   const knownTilesFor = (
     session: Session,
@@ -5951,6 +6019,10 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     if (result.status === 'budget') {
       app.log.warn({ gameTurn: result.turn.gameTurn }, 'pump exhausted its tick budget');
     }
+
+    // MEMORY FIRST, before any frame this pump sends, so every frame below is
+    // built against what each player has now seen. See `rememberWhatPlayersSee`.
+    rememberWhatPlayersSee(realm);
 
     for (const event of result.playerEvents) {
       // Null means "this kind has no immediate-lane wrapper" — see
@@ -7893,15 +7965,18 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
      */
     // ONE BUILDER, shared with the `sites` frame — see `markersFor`.
     /**
-     * THE FOG, ONLY WITH THE MAP IT BELONGS TO. 2,836 characters for the whole
-     * region, sent once on arrival — after which the client keeps revealing
-     * locally at the same radius, so neither has to send anything per step.
-     * The server's copy is the one that persists.
+     * THE MEMORY, ONLY WITH THE MAP IT BELONGS TO. 2,836 characters for the
+     * whole region, sent once on arrival — after which the client keeps
+     * revealing locally, so neither has to send anything per step.
+     *
+     * FOR EVERY KIND OF REALM, now that every realm keeps one (`revealFor`). A
+     * delve or a town you had already looked round arrives with what you saw on
+     * the map, which matters most on a reconnect: the client's own memory died
+     * with the tab and the server's did not. A realm this character has never
+     * stood in has nothing to send, so a fresh instance still arrives
+     * unexplored. Only an overworld's copy persists.
      */
-    const explored =
-      realm.kind === RealmKind.Overworld && fogSeen(actorId, realm.id)
-        ? fogToBase64(fogFor(actorId, realm))
-        : undefined;
+    const explored = fogSeen(actorId, realm.id) ? fogToBase64(fogFor(actorId, realm)) : undefined;
 
     send(session.socket, {
       v: PROTOCOL_VERSION,
@@ -9348,43 +9423,13 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     // would open an instance for somebody who never took the step. And the
     // `moved` frame has to reach the client first, or the map it is about is
     // already gone.
-    /**
-     * REVEAL FIRST, and after the pump rather than before it — the tile a body
-     * is standing on is only decided when the intent RESOLVES, and revealing
-     * around a move that was refunded would give away country nobody walked.
-     */
+    // THE GROUND AROUND THE STEP IS ALREADY REMEMBERED, inside the pump — see
+    // `rememberWhatPlayersSee`. What is left here is naming the region.
     const walker = session.actorId;
     if (walker !== null && session.realmId !== null) {
       const here = opts.realms?.get(session.realmId);
       const body = here?.world.getActor(walker);
       if (here !== undefined && body !== undefined) {
-        // Only queue a save when something was NEWLY seen. A party pacing the
-        // same street would otherwise ask for a write on every step, and the
-        // debounce would coalesce them into a file that says nothing new.
-        if (revealFor(here, walker, body.x, body.y)) {
-          queueSave('explored');
-          /**
-           * ═══════════════════════════════════════════════════════════════════
-           * AND DID THAT STEP UNCOVER SOMETHING NOBODY TOLD THEM ABOUT?
-           * ═══════════════════════════════════════════════════════════════════
-           *
-           * `sendSites` is otherwise only re-sent when a roamer moves, which is
-           * every few pumps — so a hidden marker would appear a handful of turns
-           * after the step that found it, attached to nothing the player did.
-           * The whole feeling of the feature is in the timing: you walk over a
-           * rise and something you have never seen is on your map.
-           *
-           * COUNTED RATHER THAN DIFFED. Recomputing the visible-hidden count is
-           * three comparisons on a sixteen-row table, and it answers exactly the
-           * question — "is there more to show than last time" — without a second
-           * copy of what was already sent.
-           */
-          const shown = hiddenVisible(here, walker);
-          if (shown !== session.hiddenSeen) {
-            session.hiddenSeen = shown;
-            sendSites(session);
-          }
-        }
         noteRegion(session, here, body.x, body.y);
       }
     }
@@ -9654,6 +9699,10 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     lastShopKeys.delete(realmId);
     clearedRealms.delete(realmId);
     residentCounts.delete(realmId);
+    // AND EVERY CHARACTER'S MEMORY OF IT. Only an instance is ever closed, its id
+    // is never minted twice and its memory is never saved, so a closed one's
+    // bitsets could never be read again and would only accumulate.
+    for (const byRealm of fog.values()) byRealm.delete(realmId);
   };
 
   const reaps = new Map<string, NodeJS.Timeout>();
@@ -12614,11 +12663,11 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
      * then it is on your map.
      *
      * ═══ ON THE OVERWORLD'S FOG, NOT THIS REALM'S ═══
-     * The conversation happens INSIDE a town, which is a `Common` realm with no
-     * fog of its own — `revealFor` answers false for anything that is not the
-     * Overworld, by design. So the reveal is aimed at the overworld explicitly,
-     * and the player sees it the moment they step back out, which is also when
-     * it is of any use to them.
+     * The conversation happens INSIDE a town, which is a `Common` realm with a
+     * memory of its own — but the country a rumour names is out on the moor,
+     * and the town's memory is of the town. So the reveal is aimed at the
+     * overworld explicitly, and the player sees it the moment they step back
+     * out, which is also when it is of any use to them.
      *
      * ═══ IT SAYS SO, BECAUSE A SILENT MAP CHANGE IS NOT A GIFT ═══
      * A player who never opens the map between one conversation and the next
