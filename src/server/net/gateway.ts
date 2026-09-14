@@ -8671,7 +8671,65 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       }
     }
 
+    // WHAT THIS ACTOR WAS BOUND TO BEFORE THE OPEN. See the block after it.
+    const boundBeforeOpen = verified === null ? undefined : boundCharacterOf(verified.actorId);
     const restore = await openCharacter(verified, wantedCharacter);
+
+    /**
+     * ═══════════════════════════════════════════════════════════════════════════
+     * A BODY IS ONLY EVER RESUMED INTO A BINDING IT ALREADY HAD.
+     * ═══════════════════════════════════════════════════════════════════════════
+     *
+     * `openCharacter` binds the file it opens to this ACTOR id, and an account has
+     * exactly one. So when the body standing there was UNBOUND — its own open
+     * came back null, which leaves a throwaway the store will not save — and this
+     * open succeeded, a character's file is now bound to a body that never came
+     * from it. `resolveActor` would resume that body and drop `restore`, and the
+     * next save would write the throwaway over the character just picked.
+     *
+     * NOT A FILE THE ROSTER REFUSES: a character marked unplayable (too new,
+     * corrupt) is answered with the roster again and never opened. What gets
+     * here is an open that failed AFTER the roster listed the file as playable —
+     * a read that failed at that moment, or a throw the wrapper swallowed. Rare,
+     * and the cost when it happens is the character the player picked next.
+     *
+     * The swap test above cannot see it: it compares the id asked for with
+     * `boundCharacterOf`, and a throwaway is bound to nothing. Asking the binding
+     * AFTER the open does, without remembering anything new: bound before, the
+     * swap test decided; unbound after, nothing will be written; unbound before
+     * and bound after is exactly the one case that must not resume.
+     *
+     * So the throwaway goes, and `resolveActor` builds the character off its file.
+     * NO `saveNow`: the only file bound now is the one this body must not reach.
+     * NO `closeCharacter`: that binding is the one being honoured. And the grace
+     * is CANCELLED, not forgotten, or its timer recalls the body built next.
+     */
+    if (
+      verified !== null &&
+      boundBeforeOpen === undefined &&
+      boundCharacterOf(verified.actorId) !== undefined
+    ) {
+      const actorId = verified.actorId;
+      const home = homeOf(actorId);
+      if (home.world.getActor(actorId) !== undefined) {
+        cancelGrace(actorId);
+        dropResumeToken(actorId);
+        connByActor.delete(actorId);
+        spokeAtMs.delete(actorId);
+        classChoiceOwed.delete(actorId);
+        try {
+          home.engine.leave(actorId);
+        } catch (err) {
+          app.log.error({ err, actorId }, 'engine.leave threw retiring an unbound body');
+        }
+        home.world.removePlayer(actorId);
+        broadcast({ v: PROTOCOL_VERSION, t: 'left', id: actorId }, undefined, audienceFor(home.id));
+        app.log.info(
+          { actorId },
+          'retired an unbound body rather than resume it into a saved character',
+        );
+      }
+    }
 
     // THE SOCKET MAY HAVE DIED DURING THE READ. Building a body for a connection
     // that is already gone would leave an actor nobody owns, with no close

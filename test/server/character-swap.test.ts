@@ -18,7 +18,7 @@ import { createCharacterBridge, createSaveStore } from '../../src/server/persist
 import { createTurnEngine } from '../../src/server/turn-engine.ts';
 import { createRealms } from '../../src/server/world/realms.ts';
 import { PROTOCOL_VERSION } from '../../src/shared/version.ts';
-import type { IdentityPort } from '../../src/server/net/gateway.ts';
+import type { IdentityPort, PersistPort } from '../../src/server/net/gateway.ts';
 import type { SaveStore } from '../../src/server/persist/saves.ts';
 
 /**
@@ -146,7 +146,10 @@ type Harness = {
 let harness: Harness | undefined;
 let root: string | undefined;
 
-async function start(disconnectGraceMs?: number): Promise<Harness> {
+async function start(
+  disconnectGraceMs?: number,
+  wrap?: (port: PersistPort) => PersistPort,
+): Promise<Harness> {
   root = await mkdtemp(join(tmpdir(), 'inner-datum-swap-'));
   const app = Fastify({ logger: false });
   const talents = createContentTalentEngine();
@@ -179,7 +182,7 @@ async function start(disconnectGraceMs?: number): Promise<Harness> {
     },
     realms,
     sessions: identityPort(),
-    persist: bridge,
+    persist: wrap === undefined ? bridge : wrap(bridge),
     ...(disconnectGraceMs === undefined ? {} : { disconnectGraceMs }),
   });
   await app.listen({ host: '127.0.0.1', port: 0 });
@@ -415,6 +418,110 @@ describe('changing character', () => {
 
     expect(harness.actorCount(), 'the old grace recalled the swapped-to body').toBe(1);
     expect(second.client.all('left'), 'the player was told their own body left').toEqual([]);
+  });
+
+  it('does not resume a body whose open failed into the character picked next', async () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * A THROWAWAY BODY, BOUND TO A HEALTHY CHARACTER, SAVED OVER IT.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * When opening a character comes back null — the read failed after the
+     * roster had listed the file as playable — the player still joins, as a
+     * throwaway the store will not bind or save. Picking another character next
+     * slipped past the swap test in `handleHello`, which compares the id asked
+     * for with `boundCharacterOf`: a throwaway is bound to nothing. So it was
+     * RESUMED, `openCharacter` bound the healthy file to it, the restore was
+     * dropped, and the next save wrote the throwaway over that character.
+     *
+     * THE FAILED OPEN IS SIMULATED at the port, returning exactly what the
+     * bridge returns when it refuses: null, and no binding.
+     */
+    let failNextOpen = false;
+    harness = await start(undefined, (port) => ({
+      ...port,
+      openCharacter: async (ownerId, actorId, characterId) => {
+        if (failNextOpen) {
+          failNextOpen = false;
+          return null;
+        }
+        return (await port.openCharacter?.(ownerId, actorId, characterId)) ?? null;
+      },
+    }));
+    // A BODY WITH NO FILE BEHIND IT may be answered with the class chooser rather
+    // than `welcome`; it is standing in the world either way.
+    const joined = async (client: Client): Promise<string | undefined> => {
+      const deadline = Date.now() + 3000;
+      for (;;) {
+        const hit = ['welcome', 'class_options'].find((type) => client.all(type).length > 0);
+        if (hit !== undefined || Date.now() >= deadline) return hit;
+        await sleep(10);
+      }
+    };
+
+    const first = await createCharacter(harness.port, 0);
+    first.client.close();
+    await sleep(80);
+    const second = await createCharacter(harness.port, 1);
+    // SOMETHING ONLY THE SECOND CHARACTER'S FILE HOLDS, for the end to look for.
+    second.client.send({ t: 'set_zoom', zoom: 1 });
+    await second.client.settle();
+    second.client.close();
+    const firstClass = first.classId;
+    const secondClass = second.classId;
+    const rows = await settled(
+      harness,
+      2,
+      15_000,
+      (list) =>
+        list.some((row) => row.classId === firstClass) &&
+        list.some((row) => row.classId === secondClass),
+    );
+    const unlucky = rows.find((row) => row.classId === firstClass);
+    const kept = rows.find((row) => row.classId === secondClass);
+    if (unlucky === undefined || kept === undefined) {
+      throw new Error('the two characters were not both saved');
+    }
+    expect((await harness.store.loadCharacter(REN, kept.id)).file?.zoom).toBe(1);
+
+    // ═══ THE FIRST CHARACTER IS PICKED, AND ITS OPEN FAILS ═══
+    failNextOpen = true;
+    const stray = await connect(harness.port);
+    stray.send({ t: 'hello', sessionId: HANDLE, characterId: unlucky.id });
+    // THE THROWAWAY HAS NO ZOOM OF ITS OWN, which is what would show if it were
+    // written over the healthy character.
+    expect(await joined(stray), 'the throwaway never joined').toBeDefined();
+    expect(failNextOpen, 'the open was never attempted').toBe(false);
+    await stray.settle();
+    stray.close();
+    await sleep(80);
+    const before = (await harness.store.loadCharacter(REN, kept.id)).file?.updatedAt;
+
+    // ═══ AND THE HEALTHY ONE IS PICKED, WHILE THE THROWAWAY SITS OUT ITS GRACE ═══
+    const back = await connect(harness.port);
+    back.send({ t: 'hello', sessionId: HANDLE, characterId: kept.id });
+    expect(await joined(back), 'picking the healthy character never joined').toBeDefined();
+    await back.settle();
+    back.close();
+
+    // WAIT FOR THE DISCONNECT'S OWN WRITE, not for a row: the row is already
+    // there, so `settled` alone would read the file before the write it is about.
+    const deadline = Date.now() + 15_000;
+    while (
+      (await harness.store.loadCharacter(REN, kept.id)).file?.updatedAt === before &&
+      Date.now() < deadline
+    ) {
+      await sleep(10);
+    }
+    await harness.store.flush();
+
+    const reopened = (await harness.store.loadCharacter(REN, kept.id)).file;
+    expect(reopened?.updatedAt, 'the disconnect never saved').not.toBe(before);
+    expect(reopened?.classId, 'the throwaway was written over the character picked').toBe(
+      secondClass,
+    );
+    expect(reopened?.zoom, 'the throwaway was written over the character picked').toBe(1);
+    expect(harness.actorCount()).toBe(1);
   });
 
   it('gives a character back unchanged after playing a different one', async () => {
