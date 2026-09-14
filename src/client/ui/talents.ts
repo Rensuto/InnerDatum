@@ -3902,23 +3902,14 @@ function drawDetail(
    * tree a rank-3 talent is a 3.9, and the pane said 3 and printed 3.9's
    * numbers without ever naming the gap.
    *
-   * ═══ IT IS NOT AN EXOTIC CASE HERE ═══
-   * Every class in the game authors a signature tree at 1.3 and a supporting
-   * one at 1.15 (`classes.ts:367-368`), so the two figures differ for MOST
-   * talents rather than for a few. The tree header already prints `(x1.30)`;
-   * this is the multiplication the player was being asked to do themselves.
-   *
-   * ═══ SHOWN ONLY WHERE IT SAYS SOMETHING ═══
-   * Upstream prints it unconditionally. Ours skips an unlearned talent, whose
-   * effective level is a truthful and useless 0.0, and skips a tree at mastery
-   * 1 where the row would restate the rank in a second format. That is a
-   * divergence in PRESENTATION for a screen that has a fixed height and a
-   * "when they do not all fit" concession already; the information is upstream's
-   * exactly.
+   * ═══ PRINTED ALWAYS, AS UPSTREAM PRINTS IT ═══
+   * `getTalentFullDescription` has no condition on that line: a talent at
+   * mastery 1.00 reads 3.0 beside its rank of 3, and one not yet learned reads
+   * 0.0. An earlier version skipped both as a second format of the same number.
+   * The user ruled for upstream's information in Inner Datum's style, and the
+   * line is upstream's, so it is here on every talent.
    */
-  if (cell.level >= 1 && cell.mastery !== 1) {
-    field('Effective level', (cell.level * cell.mastery).toFixed(1));
-  }
+  field('Effective level', (cell.level * cell.mastery).toFixed(1));
 
   if (!cell.passive) {
     field('Cost', `${String(cell.cost.ap)} AP`);

@@ -243,12 +243,9 @@ describe('talentPanelRows builds categories', () => {
       expect(texts, 'the effective level is nowhere on the pane').toContain('3.9');
     });
 
-    /**
-     * AND NOT WHERE IT WOULD ONLY RESTATE THE RANK. A tree at mastery 1 makes
-     * the two figures identical, and a second row saying "3.0" beside "3 → 4" is
-     * a row that only restates the rank.
-     */
-    it('says nothing on a tree with no mastery', () => {
+    it('prints it at mastery 1.00 too, as upstream prints it on every talent', () => {
+      // `Actor.lua:6217` has no condition. "3.0" appears nowhere else in this
+      // fixture, so finding it is finding the row.
       const texts = paintPanel({
         rows: talentPanelRows(
           view({
@@ -258,11 +255,10 @@ describe('talentPanelRows builds categories', () => {
         ),
         focusId: 'a',
       });
-      expect(texts).not.toContain('3.0');
+      expect(texts).toContain('3.0');
     });
 
-    /** NOR ON AN UNLEARNED ONE, whose effective level is a truthful 0.0. */
-    it('says nothing before the talent is learned', () => {
+    it('prints 0.0 before the talent is learned', () => {
       const texts = paintPanel({
         rows: talentPanelRows(
           view({
@@ -272,7 +268,7 @@ describe('talentPanelRows builds categories', () => {
         ),
         focusId: 'a',
       });
-      expect(texts).not.toContain('0.0');
+      expect(texts).toContain('0.0');
     });
   });
 
