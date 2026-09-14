@@ -638,6 +638,26 @@ describe('a bump is now a real swing', () => {
     expect(result.events.some((event) => event.t === 'refunded')).toBe(false);
   });
 
+  it('swings at a husk the player cannot see, as upstream bumps whatever is there', () => {
+    // `block_move` attacks whatever steps into it and never asks whether it was
+    // seen (engine/interface/ActorLife.lua:39-45). The level is dark and the
+    // player carries no light, so the husk beside them is not in their sight.
+    const table = duel('bump-in-the-dark', {
+      player: { mods: { atk: 18, dam: 2000 } },
+    });
+    table.world.lit.fill(0);
+    const husk = must(table.world.getActor('m1'), 'm1');
+    husk.hp = 1;
+    table.world.turn.engagement = 3;
+
+    expect(
+      submitIntent(table.world, table.barrier, 'p1', { kind: IntentKind.Move, dir: 'e' }),
+    ).toBe(true);
+    pump(table.world, { nowMs: 0, barrier: table.barrier });
+
+    expect(husk.alive, 'the step into the dark did not swing').toBe(false);
+  });
+
   it('clears a killed body’s pendingIntent, exactly as the orb path does', () => {
     // engine/actor.ts's old `applyDamage` did this and damage.ts's does not,
     // because damage.ts knows nothing about intents. Until now only the

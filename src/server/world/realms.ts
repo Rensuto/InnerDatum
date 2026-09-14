@@ -1114,6 +1114,44 @@ const HIDDEN_SITES: ReadonlySet<string> = new Set([
   'site:the_weir',
 ]);
 
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * HOW EACH KIND OF PLACE IS LIT — upstream's zone settings, by shape.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * WORKS are rooms and corridors, upstream's `Roomer` levels, and every early
+ * Roomer zone lights its rooms: ruins-kor-pul at 100
+ * (data/zones/ruins-kor-pul/zone.lua:46), blighted-ruins at 100
+ * (data/zones/blighted-ruins/zone.lua:43), murgol-lair at 100
+ * (data/zones/murgol-lair/zone.lua:46), ritch-tunnels at 90
+ * (data/zones/ritch-tunnels/zone.lua:41). 100 is taken.
+ *
+ * CAVES are dark: upstream's Cavern generator (engine/generator/map/Cavern.lua)
+ * lights nothing, so a cave is seen by the light its visitors carry.
+ *
+ * TOWNS are lit everywhere, as upstream's towns are
+ * (data/zones/town-derth/zone.lua:31, data/zones/town-last-hope/zone.lua:31).
+ * RUINS are open ground under the sky, with no upstream analogue, and are lit.
+ *
+ * The Redaction's twins copy their original's definition, lighting included.
+ * The world maps and the breach arena set nothing and stay lit; upstream's
+ * ambush zone is `all_lited` (class/GameState.lua:828).
+ *
+ * A `Record` over every shape, so a new shape cannot arrive without an answer.
+ */
+const SHAPE_LIGHTING: Readonly<Record<SiteShape, SiteLighting | undefined>> = {
+  [SiteShape.Town]: undefined,
+  [SiteShape.Ruin]: undefined,
+  [SiteShape.Cave]: { litRoomChance: 0 },
+  [SiteShape.Works]: { litRoomChance: 100 },
+};
+
+/** `{ lighting }` for a shape that sets one, and nothing for one lit everywhere. */
+function lightingFor(shape: SiteShape): { readonly lighting?: SiteLighting } {
+  const lighting = SHAPE_LIGHTING[shape];
+  return lighting === undefined ? {} : { lighting };
+}
+
 const AUTHORED_SITES: readonly (readonly [string, SiteDef])[] = (
   [
     // ─── open to everybody: no combat, so nothing to coordinate. These are
@@ -1372,6 +1410,8 @@ const AUTHORED_SITES: readonly (readonly [string, SiteDef])[] = (
      * `DELVES` has no entry for a town, so the lookup returns undefined
      * and the field stays absent — the rule is expressed as data.
      */
+    // HOW IT IS LIT, by its shape. See `SHAPE_LIGHTING`.
+    ...lightingFor(shape),
     // THE THREE THAT ARE NOT ON YOUR MAP YET. Data, so a reviewer can see
     // the whole set at a glance rather than reading a predicate.
     ...(HIDDEN_SITES.has(id) ? { hidden: true } : {}),

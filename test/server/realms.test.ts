@@ -150,6 +150,12 @@ function site(id: string): SiteDef {
   return def;
 }
 
+/** A site with any lighting of its own taken off, as every site was before light. */
+function unlit(id: string): SiteDef {
+  const { lighting: _lighting, ...bare } = site(id);
+  return bare;
+}
+
 describe('the overworld', () => {
   it('exists at boot, and is the map every character wakes up on', () => {
     const realms = makeRealms();
@@ -851,7 +857,8 @@ describe('a site’s lighting reaches the level it builds', () => {
    */
   it('lights a site that says nothing everywhere', () => {
     const realms = makeRealms();
-    const mine = realms.open(site('site:hollow_mine'), 'party-lit');
+    // A ruin, which sets no lighting of its own (`SHAPE_LIGHTING`).
+    const mine = realms.open(site('site:watchers_altar'), 'party-lit');
     expect(mine.world.lit.length).toBe(mine.world.level.w * mine.world.level.h);
     expect(mine.world.lit.every((bit) => bit === 1)).toBe(true);
   });
@@ -864,7 +871,9 @@ describe('a site’s lighting reaches the level it builds', () => {
   });
 
   it('moves no draw of the world’s own stream, on a floor with rooms to roll', () => {
-    const lit = makeRealms('light-stream').open(site('site:gearford_ward'), 'party-a');
+    // WITH ITS OWN LIGHT TAKEN OFF: a works now lights its rooms at 100, which
+    // would make both sides of this comparison the same site.
+    const lit = makeRealms('light-stream').open(unlit('site:gearford_ward'), 'party-a');
     const dark = makeRealms('light-stream').open(
       { ...site('site:gearford_ward'), lighting: { litRoomChance: 100 } },
       'party-a',
