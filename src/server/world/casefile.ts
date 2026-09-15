@@ -45,6 +45,10 @@
  * THE DOOR TO THE OTHER MAP CANNOT BE FILED. It is a crossing, not a room —
  * the same reason it carries no danger grade. You do not clear a coastline.
  *
+ * NOR CAN THE BIRTHPLACE. A new character is put there once and leaves by the
+ * only way out (`SiteDef.birthplace`); nobody walks back into it. Counting it
+ * would put a room in every file that a player can never go back and close.
+ *
  * What is left is exactly the set a player would call *destinations*: the rooms
  * that were authored onto a map and have something in them.
  */
@@ -61,7 +65,7 @@ import type { SiteDef } from './realms.ts';
  * caller supplies the second by only ever passing sites out of `SITES`.
  */
 export function isFileable(site: SiteDef): boolean {
-  return site.kind === RealmKind.Inner;
+  return site.kind === RealmKind.Inner && site.birthplace !== true;
 }
 
 /**

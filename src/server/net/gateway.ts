@@ -275,6 +275,7 @@ import {
   OVERWORLD_ID,
   RealmKind,
   SITES,
+  EXIT_SITE_ID,
   STAIRS_DOWN_SITE_ID,
   TIDE_MS,
   floorsOfSite,
@@ -282,6 +283,7 @@ import {
   stairsDownOf,
   zoneOf,
 } from '../world/realms.ts';
+import { UNDERMOST_WAKING } from '../content/undermost.ts';
 import { regionNamedIn } from '../../shared/level.ts';
 import { roamerAt, tickRoamers } from '../world/roamers.ts';
 // `ALDERBROOK_REGIONS` IS DELIBERATELY GONE FROM THIS IMPORT. The realm frame
@@ -684,6 +686,16 @@ type Session = {
    * not.
    */
   exitArmed: boolean;
+  /**
+   * WHETHER THE CHARACTER BEHIND THIS SESSION WAS JUST MADE: the character store
+   * was asked for its file and answered that there is none. Set by `hello`, and
+   * spent by the class choice that sends a new character to the birthplace.
+   *
+   * A STORE HAS TO ANSWER. With no store there is no telling a new character
+   * from an old one, and treating every such socket as new would put a returning
+   * detective back in the cave every time the store was not wired.
+   */
+  freshCharacter: boolean;
   /**
    * WHICH PART OF THE MOOR THIS BODY WAS LAST IN, or null before it has taken a
    * step. Compared against the region of the tile a step LANDED on, so crossing
@@ -7902,6 +7914,20 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     return out;
   };
 
+  /**
+   * A FIRST FLOOR WHOSE THRESHOLD IS NOT A WAY OUT. See `SiteDef.noWayBack`.
+   *
+   * ONE PREDICATE FOR TWO READERS: `leaveRealm` refuses to leave by it and
+   * `markersFor` does not draw it. The marker is meant to ask exactly what
+   * `leaveRealm` asks, and a way out drawn on a door the server refuses is the
+   * one marker worse than none.
+   */
+  const hasNoWayBack = (realm: Realm): boolean =>
+    realm.kind === RealmKind.Inner &&
+    realm.floor === 1 &&
+    realm.siteId !== undefined &&
+    SITES.get(realm.siteId)?.noWayBack === true;
+
   const markersFor = (realm: Realm, actorId?: string): SiteView[] => {
     const authored = [...realm.sites.entries()].flatMap(([cell, siteId]) => {
       // A STAIR DOWN, named as upstream names its DOWN grid
@@ -7909,6 +7935,11 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       if (siteId === STAIRS_DOWN_SITE_ID) {
         const [sx, sy] = cell.split(',');
         return [{ x: Number(sx), y: Number(sy), marker: 'stair', name: 'Next level' }];
+      }
+      // AND THE WAY OUT OF THE ZONE, where upstream puts the exit of its last level.
+      if (siteId === EXIT_SITE_ID) {
+        const [ex, ey] = cell.split(',');
+        return [{ x: Number(ex), y: Number(ey), marker: 'stair', name: 'The way out' }];
       }
       const def = SITES.get(siteId);
       if (def === undefined) return [];
@@ -8002,8 +8033,9 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
      * there is anywhere to go back to rather than what kind of place this is.
      */
     const canLeave =
-      realm.kind !== RealmKind.Overworld ||
-      (actorId !== undefined && enteredFromRealmOf(actorId) !== null);
+      (realm.kind !== RealmKind.Overworld ||
+        (actorId !== undefined && enteredFromRealmOf(actorId) !== null)) &&
+      !hasNoWayBack(realm);
     const exits = canLeave
       ? realm.spawns.map((t) => ({ x: t.x, y: t.y, marker: 'gate', name: 'The way out' }))
       : [];
@@ -9051,6 +9083,8 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     // WHAT THIS ACTOR WAS BOUND TO BEFORE THE OPEN. See the block after it.
     const boundBeforeOpen = verified === null ? undefined : boundCharacterOf(verified.actorId);
     const restore = await openCharacter(verified, wantedCharacter);
+    session.freshCharacter =
+      restore === null && verified !== null && opts.persist?.openCharacter !== undefined;
 
     /**
      * ═══════════════════════════════════════════════════════════════════════════
@@ -10118,7 +10152,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     );
   };
 
-  const leaveRealm = (session: Session): boolean => {
+  const leaveRealm = (session: Session, viaExit = false): boolean => {
     const realms = opts.realms;
     const actorId = session.actorId;
     if (realms === undefined || actorId === null || session.realmId === null) return false;
@@ -10165,16 +10199,23 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     const body = from.world.getActor(actorId);
     if (body === undefined || body.kind !== ActorKind.Player || !body.alive) return false;
 
-    const onThreshold = from.spawns.some((t) => t.x === body.x && t.y === body.y);
-    if (!onThreshold) {
-      // Stepped off the doorstep. From here, standing on it again means leaving.
-      session.exitArmed = true;
-      return false;
+    // ═══ A ZONE'S EXIT IS NOT A THRESHOLD ═══ It is a cell somewhere on the last
+    // floor, stepped onto on purpose, so none of the doorstep rules below apply.
+    if (!viaExit) {
+      const onThreshold = from.spawns.some((t) => t.x === body.x && t.y === body.y);
+      if (!onThreshold) {
+        // Stepped off the doorstep. From here, standing on it again means leaving.
+        session.exitArmed = true;
+        return false;
+      }
+      // On the threshold, but they have not left it since arriving — this is the
+      // shuffle across a six-tile spawn cluster, not a decision to go. See
+      // `Session.exitArmed`.
+      if (!session.exitArmed) return false;
+      // AND ON A FLOOR WITH NO WAY BACK, the threshold is only floor. See
+      // `SiteDef.noWayBack`.
+      if (hasNoWayBack(from)) return false;
     }
-    // On the threshold, but they have not left it since arriving — this is the
-    // shuffle across a six-tile spawn cluster, not a decision to go. See
-    // `Session.exitArmed`.
-    if (!session.exitArmed) return false;
 
     /**
      * BACK THE WAY YOU CAME IN, and `realms.overworld` only as the fallback.
@@ -10191,7 +10232,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     // down (`default_down`, class/Game.lua:1250). The party strength is read only
     // if that floor was reaped and has to be built again.
     const above =
-      from.kind === RealmKind.Inner && from.floor > 1 && from.siteId !== undefined
+      !viaExit && from.kind === RealmKind.Inner && from.floor > 1 && from.siteId !== undefined
         ? SITES.get(from.siteId)
         : undefined;
     const cameFrom =
@@ -10414,6 +10455,13 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     // (data/general/grids/basic.lua:44-52): the party's next floor of this site.
     if (siteId === STAIRS_DOWN_SITE_ID) {
       goDown(session, from);
+      return;
+    }
+
+    // ═══ THE WAY OUT OF THE ZONE ═══ Back to the map the party came in from, by
+    // the same road as a threshold, kill lock included.
+    if (siteId === EXIT_SITE_ID) {
+      leaveRealm(session, true);
       return;
     }
 
@@ -13265,6 +13313,28 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    * costs no energy, queues no intent and draws no RNG. A frame that costs the
    * sender nothing must not be a way to make the server advance the world.
    */
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * A NEW CHARACTER WAKES IN THE BIRTHPLACE.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Upstream moves a new character to its starting zone and shows it the intro
+   * (class/Game.lua:287, :299). The birthplace is whichever site says it is one
+   * (`SiteDef.birthplace`), and the intro is `UNDERMOST_WAKING`.
+   *
+   * @returns true when the character is now standing in the birthplace.
+   */
+  const wakeInTheBirthplace = (session: Session): boolean => {
+    const birthplace = [...SITES.values()].find((site) => site.birthplace === true);
+    const realms = opts.realms;
+    if (birthplace === undefined || realms === undefined) return false;
+    crossInto(session, birthplace, 'woke');
+    const here = session.realmId === null ? undefined : realms.get(session.realmId);
+    if (here === undefined || here.siteId !== birthplace.id) return false;
+    for (const [text, depth] of UNDERMOST_WAKING) sendMargin(session, here, { text, depth });
+    return true;
+  };
+
   const handleChooseClass = (session: Session, msg: ClientChooseClass): void => {
     const realm = realmFor(session);
     const { world, engine } = realm;
@@ -13478,10 +13548,15 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
      * half is not. "Your file is open, 27 rooms" is true in every one of those
      * cases; naming a room is not.
      */
+    // ═══ A NEW CHARACTER WAKES, AND IS NOT YET TOLD ABOUT THE FILE ═══ It has a
+    // cave to climb out of first. See `wakeInTheBirthplace`.
+    const woke = session.freshCharacter && wakeInTheBirthplace(session);
+    session.freshCharacter = false;
+
     {
       const total = fileableCount(SITES);
       const closed = knownFiled(filedFor(actorId), SITES).length;
-      if (total > 0 && closed === 0) {
+      if (!woke && total > 0 && closed === 0) {
         const start = body === undefined ? undefined : firstCase(realm, body.x, body.y, actorId);
         sendMargin(session, realm, {
           text: `Your file is open. ${String(total)} rooms in it, none of them closed.`,
@@ -16529,6 +16604,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       enteredFrom: null,
       enteredFromRealm: null,
       exitArmed: false,
+      freshCharacter: false,
       region: null,
       hiddenSeen: 0,
       helloDone: false,

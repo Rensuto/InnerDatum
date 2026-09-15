@@ -383,6 +383,13 @@ export const DELVES: ReadonlyMap<string, DelveSpec> = new Map<string, DelveSpec>
     'site:drowned_chapel',
     { monsters: [2, 2], roster: DROWNED, litter: [1, 2], levelRange: [1, 1] },
   ],
+  //     NOT ON ANY MAP. Where a new character wakes: upstream's Escape from
+  //     Reknor, `level_range = {1, 5}` and three levels
+  //     (data/zones/reknor-escape/zone.lua:22-24). The gentlest roster, and the
+  //     Drowned Chapel's band exactly: at a third foe the worst roll left a
+  //     level-1 body a quarter of its life, under the margin every character's
+  //     first room has to leave (test/server/first-room.test.ts).
+  ['site:undermost', { monsters: [2, 2], roster: DROWNED, litter: [1, 2], levelRange: [1, 1] }],
   //     19 steps.
   [
     'site:underworks',

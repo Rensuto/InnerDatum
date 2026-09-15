@@ -313,6 +313,9 @@ describe('the overworld', () => {
       if (realm.kind !== RealmKind.Overworld) continue;
       for (const [, siteId] of realm.sites) drawn.add(siteId);
     }
+    // AND WHERE A NEW CHARACTER IS PUT: a birthplace is reached by being born in
+    // it, which is the same property the gateway reads to put them there.
+    for (const site of SITES.values()) if (site.birthplace === true) drawn.add(site.id);
     expect([...drawn].sort()).toEqual([...SITES.keys()].sort());
   });
 });

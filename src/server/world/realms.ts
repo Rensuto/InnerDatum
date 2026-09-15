@@ -59,7 +59,9 @@ import { SiteShape, makeSiteMap } from '../../shared/sitemap.ts';
 import type { SiteLighting } from '../../shared/light.ts';
 import type { Ground } from '../../shared/level.ts';
 import { TileCode } from '../../shared/protocol.ts';
-import { REDACTION_SITE_ID, makeOverworld } from '../../shared/level.ts';
+import { REDACTION_SITE_ID, makeOverworld, parseMap } from '../../shared/level.ts';
+import type { Glyph } from '../../shared/level.ts';
+import { UNDERMOST_LAST_FLOOR } from '../content/undermost.ts';
 import { makeRedaction } from '../../shared/redaction.ts';
 import { ActorKind } from '../../shared/protocol.ts';
 // `DELVES` IS GONE FROM THIS IMPORT, as it went from gateway.ts one commit
@@ -178,6 +180,17 @@ export const OVERWORLD_ID = 'realm:overworld';
  * Upstream's DOWN grid (data/general/grids/basic.lua:44-52).
  */
 export const STAIRS_DOWN_SITE_ID = 'stairs:down';
+
+/**
+ * A way out of a whole zone, to the map the party came in from. Upstream's
+ * Escape from Reknor ends at a grid on its last level that leaves the zone
+ * (data/maps/zones/reknor-escape-last.lua: `endx`, `endy`), rather than at a
+ * stair back up through every level.
+ */
+export const EXIT_SITE_ID = 'exit:out';
+
+/** Where a new character wakes. Not on any map; see `UNDERMOST_SITE`. */
+export const UNDERMOST_SITE_ID = 'site:undermost';
 
 /** How many floors a site has: a delve's own depth, and one for anything else. */
 export function floorsOfSite(siteId: string): number {
@@ -647,7 +660,19 @@ export type SiteDef = {
    * with an address. The ambush is the one site that is not a PLACE at all — it
    * is a fight that happens where you were — so it is the one that reads this.
    */
-  readonly map: (seed: string, ground?: Ground) => AuthoredMap;
+  readonly map: (seed: string, ground?: Ground, floor?: number) => AuthoredMap;
+  /**
+   * THE FIRST FLOOR'S THRESHOLD IS NOT A WAY OUT. Upstream's first level of the
+   * Escape from Reknor replaces its up stair with floor
+   * (data/zones/reknor-escape/zone.lua:67-69): the only way out is forward.
+   */
+  readonly noWayBack?: boolean;
+  /**
+   * WHERE A NEW CHARACTER IS PUT, rather than a place anybody walks to. Upstream
+   * sends a new character straight to its starting zone (class/Game.lua:287).
+   * Read by the gateway when a new character chooses its class.
+   */
+  readonly birthplace?: boolean;
   /**
    * HOW THE SITE IS LIT. Absent is lit everywhere, which is how every site has
    * been drawn so far. See `shared/light.ts`.
@@ -1073,7 +1098,7 @@ export function createRealms(opts: RealmsOptions): Realms {
     // remembered it would be a second answer to "what does this floor look
     // like", and the tiles are already the first.
     // EVERY FLOOR BUT THE LAST HAS A STAIR DOWN.
-    const drawn = site.map(seedFor(opts.seed, id), ground);
+    const drawn = site.map(seedFor(opts.seed, id), ground, floor);
     const builtMap = floor < floorsOfSite(site.id) ? withStairsDown(drawn) : drawn;
     const realm = build(id, RealmKind.Inner, site.name, builtMap, {
       partyId,
@@ -1655,10 +1680,57 @@ const REDACTED_SITES: readonly (readonly [string, SiteDef])[] = [
   ];
 });
 
+/** What the Undermost's last floor is made of: the cave's own two codes. */
+const UNDERMOST_LEGEND: Readonly<Record<string, Glyph>> = {
+  '#': { tile: TileCode.CRAG },
+  '.': { tile: TileCode.SOOT },
+  '@': { tile: TileCode.SOOT, spawn: true },
+  '>': { tile: TileCode.SOOT, site: EXIT_SITE_ID },
+};
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE UNDERMOST — WHERE A NEW CHARACTER WAKES.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Upstream's Escape from Reknor (data/zones/reknor-escape/zone.lua): three
+ * levels (:24), the first with no way back up (:67-69), the last drawn by hand
+ * with the way out at its far end (:72-79) and no random population (:79). Here
+ * the first two are caves and the last is `UNDERMOST_LAST_FLOOR`.
+ *
+ * ON NO MAP. Nothing leads here; a new character is put here.
+ */
+const UNDERMOST_SITE: SiteDef = {
+  id: UNDERMOST_SITE_ID,
+  name: 'The Undermost',
+  kind: RealmKind.Inner,
+  marker: 'stair',
+  noWayBack: true,
+  birthplace: true,
+  lingerMs: INSTANCE_LINGER_MS,
+  ...lightingFor(SiteShape.Cave),
+  map: (seed, _ground, floor = 1) =>
+    floor >= floorsOfSite(UNDERMOST_SITE_ID)
+      ? parseMap(UNDERMOST_LAST_FLOOR, UNDERMOST_LEGEND)
+      : makeSiteMap(seed, SiteShape.Cave, { floor: TileCode.SOOT, wall: TileCode.CRAG }),
+  populate: (
+    world: World,
+    built: AuthoredMap,
+    party: PartyStrength,
+    _lead?: MonsterTemplate,
+    floor = 1,
+  ): void => {
+    const spec = specFor(UNDERMOST_SITE_ID);
+    if (spec === undefined || floor >= floorsOf(spec)) return;
+    populateDelve(world, built, forArea(spec, built), party, floor);
+  },
+};
+
 export const SITES: ReadonlyMap<string, SiteDef> = new Map([
   ...AUTHORED_SITES,
   [REDACTION_SITE_ID, REDACTION] as const,
   ...REDACTED_SITES,
+  [UNDERMOST_SITE_ID, UNDERMOST_SITE] as const,
 ]);
 
 /**

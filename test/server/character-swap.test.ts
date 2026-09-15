@@ -192,7 +192,13 @@ async function start(
   return {
     port: address.port,
     store,
-    actorCount: () => [...realms.overworld.world.allActors()].length,
+    // ONE BODY WHEREVER IT STANDS. A new character wakes in the Undermost rather
+    // than on the overworld, so the bodies are counted across every realm.
+    actorCount: () =>
+      realms
+        .all()
+        .flatMap((realm) => [...realm.world.allActors()])
+        .filter((actor) => actor.kind === 'player').length,
     close: async (): Promise<void> => {
       await app.close();
       await store.close();

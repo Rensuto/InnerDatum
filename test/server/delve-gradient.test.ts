@@ -217,8 +217,11 @@ describe('the map stops lying about which way danger lies', () => {
     // gradient re-key, plus the three hidden sites. All three of those sit in
     // the MIDDLE band on purpose — a secret that is also the hardest room in the
     // game is one you can only survive after you no longer need it.
-    expect(DELVES.size).toBe(11);
-    const words = [...DELVES.values()].map(dangerWord).sort();
+    // ON THE MAP: the birthplace has a spec, but it is where a character is put,
+    // not a room anybody walks to, and it is none of these eleven.
+    const rooms = [...DELVES].filter(([id]) => SITES.get(id)?.birthplace !== true);
+    expect(rooms.length).toBe(11);
+    const words = rooms.map(([, spec]) => dangerWord(spec)).sort();
     expect(words).toEqual([
       'dangerous',
       'dangerous',

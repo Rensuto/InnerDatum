@@ -32,8 +32,10 @@ describe('what can be filed', () => {
     for (const [id, def] of fileable) {
       expect(def.kind, id).toBe(RealmKind.Inner);
     }
-    // AND NOTHING ELSE IS: the towns and the crossing.
+    // AND NOTHING ELSE IS: the towns, the crossing, and the birthplace, which is
+    // a place a party can be hurt in but not one anybody walks back into.
     for (const [id, def] of rest) {
+      if (def.birthplace === true) continue;
       expect(def.kind, id).not.toBe(RealmKind.Inner);
     }
   });
@@ -52,6 +54,17 @@ describe('what can be filed', () => {
       if (def === undefined) continue;
       expect(isFileable(def), townish).toBe(false);
     }
+  });
+
+  it('leaves the birthplace out, because nobody walks back into it', () => {
+    /**
+     * A new character wakes there and leaves by the only way out. Filing it
+     * would put a room in every case file that can never be closed again, keyed
+     * on the same field the gateway reads to put a new character there.
+     */
+    const birthplaces = [...SITES.values()].filter((def) => def.birthplace === true);
+    expect(birthplaces.length, 'no birthplace to leave out').toBeGreaterThan(0);
+    for (const def of birthplaces) expect(isFileable(def), def.id).toBe(false);
   });
 
   it('leaves the crossing out, because you do not clear a coastline', () => {

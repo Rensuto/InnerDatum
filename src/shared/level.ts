@@ -121,7 +121,7 @@ export type AuthoredMap = {
 };
 
 /** The legend entry for one authored character. */
-type Glyph = {
+export type Glyph = {
   readonly tile: TileCode;
   /** True if this character also records a spawn point. */
   readonly spawn?: boolean;
@@ -137,7 +137,10 @@ type Glyph = {
  * column. So does an unknown character: a typo in a 3,072-cell map is otherwise
  * a single silent wall in the middle of a district.
  */
-function parseMap(rows: readonly string[], legend: Readonly<Record<string, Glyph>>): AuthoredMap {
+export function parseMap(
+  rows: readonly string[],
+  legend: Readonly<Record<string, Glyph>>,
+): AuthoredMap {
   const h = rows.length;
   const w = rows[0]?.length ?? 0;
   if (w === 0 || h === 0) {
