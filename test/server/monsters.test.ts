@@ -512,7 +512,7 @@ describe('the adopted ToME entries survive the port', () => {
       ['index_glut', 'Index Glut', 'enemy_index_glut_s'],
       ['index_inspector', 'A Disgraced Inspector', 'enemy_disgraced_inspector_s'],
       ['index_inquisitor', 'A High Inquisitor', 'enemy_high_inquisitor_s'],
-      ['index_watcher', 'The Watcher', 'enemy_index_cairn_s'],
+      ['index_watcher', 'The Watcher', 'enemy_the_watcher'],
     ]);
     expect(INDEX_HUSK.description).toContain('half-erased citizen overwritten by Index pages');
     expect(INDEX_WRAITH.description).toContain('A cited absence given shape');

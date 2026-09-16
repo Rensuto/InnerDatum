@@ -278,6 +278,16 @@ describe('fighting the Watcher', () => {
     expect(boss.maxHp).toBe(
       monsterInit(INDEX_WATCHER, { x: 1, y: 1 }, roomLevel + BOSS_LEVELS_ABOVE_ROOM).maxHp,
     );
+
+    /**
+     * ═══ AND THE BODY IN THE ROOM IS ITS OWN, NOT ONLY THE ONE ITS TEMPLATE NAMES ═══
+     * `bestiary.test.ts` pins `INDEX_WATCHER.sprite`, which is the half a
+     * template can prove. What a player meets is the body `populateDelve`
+     * spawned through `monsterInit`, and a boss special-cased back to the
+     * cairn's sprite on that path passed the whole suite before this line. The
+     * literal, because what is asserted is which art the altar shows.
+     */
+    expect(boss.sprite, 'the altar spawned its boss in another body').toBe('enemy_the_watcher');
   });
 
   it('stuns the player, and the stun wears off', async () => {

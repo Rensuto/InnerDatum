@@ -1391,12 +1391,6 @@ export const ENEMY_ART_COMMISSION: readonly ArtRequest[] = [
  */
 export const BOSS_ART_COMMISSION: readonly ArtRequest[] = [
   large(
-    { id: 'enemy_the_watcher' },
-    "The Watcher's Altar",
-    '',
-    "The Watcher, which today borrows the Index Cairn's sprite: a tall shrouded figure of stacked filing drawers, one great open eye in the top drawer.",
-  ),
-  large(
     { id: 'enemy_undermost_warden' },
     'The intro cave, last floor',
     `${ZONES}/reknor-escape/npcs.lua`,

@@ -2,6 +2,16 @@ import { ROAMER_KINDS } from '../../src/server/world/roamers.ts';
 import { describe, expect, it } from 'vitest';
 
 import {
+  BOSS_ART_COMMISSION,
+  EFFECT_ART_COMMISSION,
+  ENEMY_ART_COMMISSION,
+  ITEM_ART_COMMISSION,
+  PROP_ART_COMMISSION,
+  STATUS_ICON_ART_COMMISSION,
+  TOWNSFOLK_ART_COMMISSION,
+} from '../../content/art-requests.ts';
+
+import {
   INDEX_CAIRN,
   INDEX_EIDOLON,
   INDEX_HUSK,
@@ -126,23 +136,54 @@ describe('the two new creatures are ported, not invented', () => {
     // NOT a player class. Every enemy sprite that ships now has a creature.
     expect(INDEX_INSPECTOR.sprite).toBe('enemy_disgraced_inspector_s');
     expect(INDEX_INQUISITOR.sprite).toBe('enemy_high_inquisitor_s');
+  });
 
+  it('gives the boss a body of its own, and nothing else wears it', () => {
     /**
-     * AND THE BOSS SPENDS NO ART AT ALL, WHICH IS A DIFFERENT STATEMENT.
+     * THE WATCHER WAS DRAWN AS THE CAIRN, AND IS NOT ANY MORE.
      *
-     * `INDEX_WATCHER` RE-USES `enemy_index_cairn_s` rather than asking for a
-     * sprite. That is not a shortcut, it is the fiction: `places.ts` describes
-     * its room as *"the pile has been added to since the country ended"* and
-     * INDEX_CAIRN is *"a stack of citations weathered into the shape of a marker
-     * stone"* — the boss IS that, at the size the sentence implies.
+     * `INDEX_WATCHER` used to re-use `enemy_index_cairn_s`. It now wears
+     * `enemy_the_watcher`, the 96x128 body drawn for it, which the actor pass
+     * in `canvas.ts` anchors bottom-centre so it overflows its cell upward and
+     * sideways. The cairn keeps its own sprite (pinned above), so both halves
+     * are asserted: the boss names its body, and no other template shares it.
+     * The body the altar actually spawns is pinned in `boss-fight.test.ts`.
      *
-     * There is also no boss ring in the manifest: `canvas.ts` maps every
+     * There is still no boss ring in the manifest: `canvas.ts` maps every
      * non-Normal rank to `ui_token_ring_elite`, so it wears the elite's. Stated
      * here rather than left to be noticed, because a reader who assumes a boss
      * looks distinct will go looking for the asset.
      */
-    expect(INDEX_WATCHER.sprite).toBe(INDEX_CAIRN.sprite);
-    expect(MONSTER_TEMPLATES.filter((t) => t.sprite === INDEX_WATCHER.sprite)).toHaveLength(2);
+    expect(INDEX_WATCHER.sprite).toBe('enemy_the_watcher');
+    expect(MONSTER_TEMPLATES.filter((t) => t.sprite === INDEX_WATCHER.sprite)).toHaveLength(1);
+
+    /**
+     * AND A SPRITE A TEMPLATE DRAWS HAS LEFT THE COMMISSION.
+     *
+     * `content/art-requests.ts` is a catalogue of art nobody draws yet, and its
+     * header says an id leaves it when the code that draws it names it. The
+     * commission's own test checks each entry's shape, not whether the code
+     * already draws it, so an entry left behind is caught here. Checked over
+     * every template and all seven lists, so the next creature that gets its own
+     * body cannot leave its entry behind either.
+     */
+    const commissioned = new Set(
+      [
+        TOWNSFOLK_ART_COMMISSION,
+        ENEMY_ART_COMMISSION,
+        BOSS_ART_COMMISSION,
+        EFFECT_ART_COMMISSION,
+        STATUS_ICON_ART_COMMISSION,
+        ITEM_ART_COMMISSION,
+        PROP_ART_COMMISSION,
+      ]
+        .flat()
+        .map((r) => r.id),
+    );
+    expect(
+      MONSTER_TEMPLATES.map((t) => t.sprite).filter((sprite) => commissioned.has(sprite)),
+      'drawn by a template but still commissioned',
+    ).toEqual([]);
   });
 });
 

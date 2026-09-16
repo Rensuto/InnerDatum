@@ -2797,10 +2797,11 @@ export const INDEX_INQUISITOR: MonsterTemplate = Object.freeze({
  * whose whole premise is three to six friends in a voice channel, and the one
  * fight that requires them is a feature, not an oversight.
  *
- * No new art: `enemy_index_cairn_s` draws it, and the elite ring draws around
- * it — `canvas.ts` maps every non-Normal rank to `ui_token_ring_elite`, and
- * there is no boss ring in the manifest. That is the same art-family argument
- * the site markers make, and it is stated here rather than left to be noticed.
+ * `enemy_the_watcher` draws it (96x128, bottom-centred, overflowing its cell
+ * upward and sideways but never down), and the elite ring draws around it —
+ * `canvas.ts` maps every non-Normal rank to `ui_token_ring_elite`, and there is
+ * no boss ring in the manifest. That is the same art-family argument the site
+ * markers make, and it is stated here rather than left to be noticed.
  */
 export const INDEX_WATCHER: MonsterTemplate = Object.freeze({
   /**
@@ -2823,7 +2824,7 @@ export const INDEX_WATCHER: MonsterTemplate = Object.freeze({
   description:
     'The altar, still being added to. Every citation ever filed against this country is in it, ' +
     'and it has had a long time to read them.',
-  sprite: 'enemy_index_cairn_s',
+  sprite: 'enemy_the_watcher',
   rank: ActorRank.Boss,
 
   // OURS — see the derivation above. Upstream's crystals are all 23.

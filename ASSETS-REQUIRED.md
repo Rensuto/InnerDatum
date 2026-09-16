@@ -376,7 +376,7 @@ It holds seven lists:
   crystals, plants, cats, rock-eaters, minotaurs, horrors), each renamed and
   redrawn for Alderbrook, weakest to strongest.
 - **Bosses**: ToME's early uniques, each moved to the delve it now guards,
-  including a dedicated sprite for The Watcher and the intro cave's boss.
+  including the intro cave's boss.
 - **Effects** (`ui_fx_*`): a projectile, a hit and an area tile for each of
   ToME's twelve damage types, plus beams, weapon swings, shots, class
   signatures, heals, shields, teleports, status loops and hazards.
@@ -410,8 +410,9 @@ regenerate each file in place at the same path, then rebuild the manifest.
 | Props 64x64 | 73 | 6 | 0 |
 | Status icons 64x64 | 16 | 3 | 0 |
 
-None of these ids is drawn by the game yet (the commission is a catalogue until its content
-lands), so none of this is visible to a player today. Fix the effect strips first: they are 33
+None of these ids was drawn by the game when this round was logged (the commission is a catalogue
+until its content lands). An id that has since left `content/art-requests.ts` is drawn, so its
+entry below describes art a player sees today. Fix the effect strips first: they are 33
 of the 37 blockers, and the renderer that plays them is the next thing wired.
 
 ### Shared requirements for the effect regenerations
