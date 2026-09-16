@@ -772,10 +772,18 @@ export function createCaseLog(options: CaseLogOptions): CaseLog {
        * always true, so every conversational line would be cut into turns, and
        * the reason it never was is the reason it still must not be: the Margin
        * is people talking, and ruling it by the clock implies they speak on it.
+       *
+       * COUNTED TO THE COLUMN IT IS DRAWN IN, which is the band less the stamp
+       * gutter. Every row is drawn at `rect.x + stampW`, rules included, and
+       * this was still `rect.w` after the timestamp column moved them there —
+       * so each rule hung past the panel's right border by the gutter's width.
+       * That is a number the font sets and the panel never does, which is why
+       * it was reported as happening "no matter what size". The wrap width
+       * below takes the same gutter off for the same reason.
        */
       if (line.lane !== LogLane.Margin && previousTurn !== null && previousTurn !== line.gameTurn) {
         collected.push({
-          text: turnRule(ctx, previousTurn, rect.w),
+          text: turnRule(ctx, previousTurn, rect.w - stampW),
           indent: 0,
           line: null,
           lead: false,

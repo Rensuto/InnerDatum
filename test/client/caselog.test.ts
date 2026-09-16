@@ -22,8 +22,8 @@ import {
   snapStyle,
   stampText,
 } from '../../src/client/ui/caselog.ts';
-import { HEADER_H } from '../../src/client/ui/panel.ts';
-import { PANEL_MIN_H } from '../../src/client/ui/drag.ts';
+import { HEADER_H, panelInner } from '../../src/client/ui/panel.ts';
+import { PANEL_MIN_H, PANEL_MIN_W } from '../../src/client/ui/drag.ts';
 import { DAMAGE_INK, PALETTE } from '../../src/client/render/canvas.ts';
 import { DAMAGE_TYPES, DamageType } from '../../src/shared/damagetype.ts';
 import { LogLane } from '../../src/shared/protocol.ts';
@@ -303,6 +303,141 @@ describe('timestamps', () => {
     const painter = readFileSync('src/client/ui/caselog.ts', 'utf8');
     expect(painter).toContain('rect.w - stampW - indent - boldDebt');
     expect(painter).toContain('const x = rect.x + stampW + row.indent;');
+  });
+});
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE TURN RULE STAYS INSIDE THE PANEL — through `draw`, not the source.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Reported as *"the chat box ui overlaps outside the bounds no matter what
+ * size, you can see the lines on the right extending out"*. The lines were the
+ * `── turn N ───` rules. The timestamp column moved every row right by its own
+ * width and took that width off the text's wrap width — the two strings the
+ * test above pins — but the rule is a THIRD site, and it was still counted to
+ * the whole band. So it hung past the border by the width of the column, which
+ * is a number the font sets and the panel never does. That is why resizing
+ * could not help.
+ *
+ * WHY NEITHER EXISTING SHAPE OF TEST COULD SEE IT. A source-text assertion only
+ * finds the sites somebody thought to list. And a draw through
+ * `canvasstub.ts` measures every string as 0 wide, which makes `turnRule` give
+ * back the heading with no dashes at all — there is nothing left to overhang.
+ *
+ * So this recorder measures a FIXED ADVANCE PER CHARACTER, SCALED BY THE SIZE
+ * IN THE CURRENT `ctx.font` — six at 10px, the convention the other painters'
+ * tests use. The scaling is what makes the cogwheel's font step a real axis
+ * here: it widens the stamp column the way it does live, and the overhang with
+ * it. Rounded to whole pixels so an exact fit is exact and not a float.
+ */
+describe('the turn rule', () => {
+  type Drawn = { readonly text: string; readonly x: number; readonly font: string };
+
+  const advance = (font: string): number => {
+    const px = /(\d+)px/.exec(font)?.[1];
+    return Math.round((px === undefined ? 10 : Number(px)) * 0.6);
+  };
+  const widthOf = (text: string, font: string): number => [...text].length * advance(font);
+
+  function recorder(drawn: Drawn[]) {
+    const state: Record<string, unknown> = { font: '' };
+    return new Proxy(state, {
+      get: (target, prop: string) => {
+        if (prop === 'measureText')
+          return (text: string) => ({ width: widthOf(text, String(target.font)) });
+        if (prop === 'fillText')
+          return (text: string, x: number) => {
+            drawn.push({ text, x, font: String(target.font) });
+          };
+        if (prop in target) return target[prop];
+        return () => undefined;
+      },
+      set: (target, prop: string, value: unknown) => {
+        target[prop] = value;
+        return true;
+      },
+    }) as unknown as CanvasRenderingContext2D;
+  }
+
+  /** The resize floor, a wide panel, and 533 — the width in the report's screenshot. */
+  const WIDTHS = [PANEL_MIN_W, 240, 400, 533, 800] as const;
+  /** The cogwheel's Small, Normal and Big. */
+  const FONTS = [9, 10, 13] as const;
+
+  it('ends at the content edge at every width and every font step, and never past it', () => {
+    /**
+     * EVERY CELL OF THE MATRIX IS CHECKED BEFORE ANYTHING FAILS. The report
+     * was "no matter what size", and a test that stopped at the first width
+     * would say one size is broken. The list it prints is the claim.
+     */
+    const wrong: string[] = [];
+    let rulesDrawn = 0;
+    for (const font of FONTS) {
+      for (const w of WIDTHS) {
+        const it = createCaseLog({ onChange: () => undefined });
+        it.setStyle({ ...DEFAULT_LOG_STYLE, font });
+        // Three turns, so two rules — and a long line, so ordinary rows wrap
+        // and are held to the same border in the same pass.
+        it.append([
+          line({ seq: 1, gameTurn: 9, text: 'you wake in the cave' }),
+          line({ seq: 2, gameTurn: 10, text: 'the rat bites you for 3 physical damage' }),
+          line({
+            seq: 3,
+            gameTurn: 11,
+            text: 'the warden raises a lantern and the light finds every corner of the room at once',
+          }),
+        ]);
+
+        // TALL ENOUGH THAT BOTH RULES ARE ON SCREEN at the Big font on the
+        // narrowest panel, where the long line wraps down most of the band. At
+        // 240 tall the older rule was scrolled off the top rather than drawn.
+        const drawn: Drawn[] = [];
+        const rect = { x: 20, y: 300, w, h: 320 };
+        it.draw({ ctx: recorder(drawn), sprites: { sprite: () => undefined }, rect, gameTurn: 11 });
+
+        const where = `w=${String(w)} font=${String(font)}`;
+        const border = rect.x + rect.w;
+        for (const each of drawn) {
+          const end = each.x + widthOf(each.text, each.font);
+          if (end > border) {
+            wrong.push(
+              `${where}: "${each.text.slice(0, 10)}…" ends at ${String(end)}, border ${String(border)}`,
+            );
+          }
+        }
+
+        const content = panelInner({
+          x: rect.x,
+          y: rect.y + HEADER_H,
+          w: rect.w,
+          h: rect.h - HEADER_H,
+        });
+        const edge = content.x + content.w;
+        const rules = drawn.filter((each) => each.text.startsWith('── turn '));
+        if (rules.length !== 2) wrong.push(`${where}: ${String(rules.length)} rules drawn, not 2`);
+        rulesDrawn += rules.length;
+        for (const rule of rules) {
+          const end = rule.x + widthOf(rule.text, rule.font);
+          // Past the content edge is into the frame, even while still short of
+          // the border.
+          if (end > edge) {
+            wrong.push(`${where}: a rule ends at ${String(end)}, content edge ${String(edge)}`);
+          }
+          // AND IT STILL REACHES IT. `turnRule` floors its dash count, so a rule
+          // counted to the column it is drawn in ends within one dash of the
+          // edge. A "fix" that cut every rule to its heading, or counted to half
+          // the band, would clear both bounds above and fail this one.
+          if (end <= edge - widthOf('─', rule.font)) {
+            wrong.push(
+              `${where}: a rule stops at ${String(end)}, short of the edge ${String(edge)}`,
+            );
+          }
+        }
+      }
+    }
+    expect(rulesDrawn, 'no rule was drawn, so nothing above was tested').toBeGreaterThan(0);
+    expect(wrong).toEqual([]);
   });
 });
 
