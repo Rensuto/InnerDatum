@@ -631,6 +631,22 @@ const NEEDED_ASSET_PREFIXES = [
    * the gateway's landmark literals against this list, so the two cannot drift.
    */
   'prop_cave_way_up',
+  /**
+   * THE THREE TRAP PICTURES `paintTraps` DRAWS, spelled out rather than as
+   * `prop_trap_`. An exact id is its own prefix, as `ui_icon_speaking` above is.
+   *
+   * VERIFIED PRESENT before adding: all three are ids in
+   * `client/public/assets/manifest.placeholders.json` AND PNGs under
+   * `client/public/assets/props/commission/`. The prefix would have matched
+   * fourteen, and nothing draws the other eleven — three of them held back in
+   * `TRAP_SPRITE` until they are redrawn — so loading them would fetch eleven
+   * PNGs per boot for no pixel on screen. These stay in step with `TRAP_SPRITE`
+   * in render/canvas.ts, and `test/client/trap-paint.test.ts` checks the pair —
+   * a miss is the caret, which is a supported state and fails nothing else.
+   */
+  'prop_trap_rune_fire',
+  'prop_trap_alarm_bell',
+  'prop_trap_sliding_rock',
 ] as const;
 
 /**

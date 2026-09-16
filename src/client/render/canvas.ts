@@ -1114,14 +1114,19 @@ const TRAP_INK: Readonly<Record<string, string>> = {
    * `trap_lethargy_rune_01.png` looks nothing like `blast_lightning01.png`. The
    * colour is a tint on a picture that has already said which trap it is.
    *
-   * WE HAVE NO PICTURE. Every trap here is the same caret and the colour is the
-   * whole identity, so carrying both blues across would ship two marks a player
-   * cannot tell apart that do entirely different things — one costs hit points,
-   * the other takes three of your four buttons away for a fight. Copying the
+   * WE HAVE NO PICTURE FOR IT, and on a clone we have none for anything. Three
+   * kinds draw their own art now (`TRAP_SPRITE`), but lethargy was never
+   * commissioned, and `client/public/assets/` is gitignored — so wherever the
+   * art is absent every trap is the same caret and the colour is the whole
+   * identity. Carrying both blues across would ship two marks a player cannot
+   * tell apart that do entirely different things — one costs hit points, the
+   * other takes three of your four buttons away for a fight. Copying the
    * number faithfully would have been unfaithful to what the number is FOR.
    *
-   * Indigo keeps the rune reading as arcane and as not-lightning. It goes back
-   * to upstream's blue on the day these get sprites.
+   * Indigo keeps the rune reading as arcane and as not-lightning. This said it
+   * would go back to upstream's blue on the day these got sprites; that day
+   * came for three of them and did not retire the caret, which is still what a
+   * clone draws for all seven. It stays indigo for as long as the caret exists.
    */
   trap_lethargy: '#5a3fd0',
   /**
@@ -1129,9 +1134,10 @@ const TRAP_INK: Readonly<Record<string, string>> = {
    *
    * `teleport.lua:34` gives the teleport trap `colors.UMBER` — the identical
    * value the intruder alarm carries at `alarm.lua:33`. Upstream can afford two
-   * traps in one colour because each draws its own image; we draw one caret, so
-   * two UMBER marks would be one mark meaning two completely different things
-   * (the room comes for you, versus you leave the room).
+   * traps in one colour because each draws its own image; wherever our art is
+   * missing we draw one caret, so two UMBER marks would be one mark meaning two
+   * completely different things (the room comes for you, versus you leave the
+   * room).
    *
    * Pale cyan for a *"shimmering floor switch"* — upstream's own unidentified
    * name for it, and the only word in this roster that describes a colour.
@@ -1151,6 +1157,51 @@ const TRAP_INK: Readonly<Record<string, string>> = {
 };
 /** What an unrecognised kind draws as — a mark you cannot identify is still a mark. */
 const TRAP_INK_UNKNOWN = '#dc0000';
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * A FOUND TRAP'S PICTURE, WHEN THE ART IS INSTALLED. THE CARET IS THE FALLBACK.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Upstream draws each trap as its `image` — `blast_fire01.png` for the fire
+ * trap (`traps/elemental.lua:64`), `trap_intruder_alarm_01.png` for the alarm
+ * (`alarm.lua:29`) — and the commission redrew them for Alderbrook.
+ * Each id here was matched to its kind by the brief it was commissioned
+ * under, not by its spelling:
+ *
+ *   `trap_fire` is upstream's "fire trap" (`elemental.lua:64`) and wears the
+ *   fire rune; `trap_alarm` is the intruder alarm (`alarm.lua:29`).
+ *
+ *   `trap_rock` is the "sliding rock" (`natural_forest.lua:32`), and so is
+ *   `prop_trap_sliding_rock` — loose rock on a slope. The commission's boulder
+ *   (prop_trap_boulder, left unquoted so `tools/art-needs.mjs` does not count
+ *   this comment as code drawing it) is a different trap, the "giant boulder
+ *   trap" (`complex.lua:33`), which this port does not have.
+ *
+ * `trap_lethargy` IS ABSENT ON PURPOSE. Its rune (`annoy.lua:27`) was never
+ * commissioned, so it keeps the caret — see its note in `TRAP_INK`.
+ *
+ * AND THREE THAT WERE DRAWN ARE HELD BACK: `trap_cold`, `trap_lightning` and
+ * `trap_teleport`. Their pictures exist (prop_trap_rune_ice,
+ * prop_trap_rune_lightning, prop_trap_teleport_glyph — unquoted, so no scanner
+ * reads this comment as code drawing them), and the art review in
+ * ASSETS-REQUIRED.md found each one shows the wrong thing underfoot: a
+ * standing stone and a banner on posts, both of which read as obstacles, and a
+ * green circle a player takes for acid. A trap is the one mark that tells you
+ * what will happen if you step there, and a picture that lies about that is
+ * worse than the caret. They keep it until they are redrawn, and adding their
+ * rows here is the whole change then.
+ *
+ * `main.ts` loads exactly these three ids rather than the `prop_trap_` family:
+ * eleven trap pictures on disk are drawn by nothing, and a prefix would fetch
+ * every one of them. A kind added here and not there is a picture
+ * that never loads, which draws the caret and fails nothing — so
+ * `test/client/trap-paint.test.ts` checks the pair.
+ */
+const TRAP_SPRITE: Readonly<Record<string, string>> = {
+  trap_fire: 'prop_trap_rune_fire',
+  trap_alarm: 'prop_trap_alarm_bell',
+  trap_rock: 'prop_trap_sliding_rock',
+};
 /** The caret's stroke, as a fraction of a tile. Floored at 2px by the painter. */
 const TRAP_MARK_THICK = 0.09;
 
@@ -2968,9 +3019,11 @@ export function createRenderer(options: RendererOptions): Renderer {
    * A TRAP YOU HAVE ALREADY FOUND — a mark on the floor, and nothing subtle.
    * ═══════════════════════════════════════════════════════════════════════════
    *
-   * `display = '^'` on every trap entity upstream (`traps/elemental.lua:24`),
-   * drawn in the trap's own colour over the floor. This is that caret, as four
-   * strokes rather than a glyph: two legs and a peak, inset from the cell edge.
+   * Its own picture when the art is installed (`TRAP_SPRITE`), filling the
+   * cell. Otherwise `display = '^'` on every trap entity upstream
+   * (`traps/elemental.lua:24`), drawn in the trap's own colour over the floor.
+   * This is that caret, as four strokes rather than a glyph: two legs and a
+   * peak, inset from the cell edge.
    *
    * ═══ IT IS LOUD ON PURPOSE, WHICH IS THE OPPOSITE OF THE ZONE WASH ═══
    * `paintZones` is quieter than the out-of-sight shade because a burning tile
@@ -2980,27 +3033,39 @@ export function createRenderer(options: RendererOptions): Renderer {
    * there because somebody already paid hit points to learn it. Drawing that
    * faintly would waste the price they paid.
    *
-   * ═══ NO ART, AND NOT AS A PLACEHOLDER ═══
-   * `blitSprite` paints a loud violet box on a missing id and the whole
-   * `client/public/assets/` tree is gitignored, so a bare clone has no
-   * manifest. Every ground painter in this file refuses sprites for that
-   * reason — see `paintLoot`, `paintProjectiles` and `paintZones` — and a mark
-   * made of `fillRect` draws correctly on a clone with zero PNGs.
+   * ═══ THE PICTURE IS ASKED FOR QUIETLY, AND THE CARET IS THE NO-ART FALLBACK ═══
+   * Through `sprites.sprite()`, which answers undefined on a miss, the way
+   * `paintSites` prefers a landmark — and NEVER through `blitSprite`, which
+   * paints a loud violet box on one. The whole `client/public/assets/` tree is
+   * gitignored, so a bare clone has no manifest, and a found trap there is a
+   * feature working rather than a broken manifest. A miss falls through to the
+   * caret, which is `fillRect` and draws correctly with zero PNGs: it is what
+   * lethargy always gets, and what every kind gets on a clone or before the art
+   * is deployed. `test/client/trap-paint.test.ts` drives both halves.
    */
   function paintTraps(marks: readonly TrapView[], camX: number, camY: number): void {
     if (marks.length === 0) return;
 
     backCtx.save();
     for (const mark of marks) {
-      backCtx.fillStyle = TRAP_INK[mark.kind] ?? TRAP_INK_UNKNOWN;
       const cellX = mark.x * TILE_PX - camX;
       const cellY = mark.y * TILE_PX - camY;
       // AND IT CULLS, like every other ground painter here: without this the
       // whole floor is drawn every frame.
       if (!visible(cellX, cellY)) continue;
 
+      // THE PICTURE, when this kind has one and it is installed. It fills the
+      // cell whatever size it was cut, for the reason `blitCell` gives.
+      const artId = TRAP_SPRITE[mark.kind];
+      const art = artId === undefined ? undefined : sprites.sprite(artId);
+      if (art !== undefined) {
+        backCtx.drawImage(art.image, cellX, cellY, TILE_PX, TILE_PX);
+        continue;
+      }
+
       // The caret, as two arms meeting at a peak. Stepped rather than stroked
       // so it stays crisp at every integer zoom the viewport uses.
+      backCtx.fillStyle = TRAP_INK[mark.kind] ?? TRAP_INK_UNKNOWN;
       const inset = Math.round(TILE_PX * TRAP_MARK_INSET);
       const arm = TILE_PX - inset * 2;
       const thick = Math.max(2, Math.round(TILE_PX * TRAP_MARK_THICK));

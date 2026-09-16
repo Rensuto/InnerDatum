@@ -294,6 +294,13 @@ describe('the fillRect overlays stay art-free', () => {
       // family, verified as a manifest row and a PNG under props/commission/
       // before it was listed. A miss draws the stair marker it replaces.
       'prop_cave_way_up',
+      // THE TRAP PICTURES, as three exact ids and not `prop_trap_`: fourteen trap
+      // PNGs are on disk and nothing draws the other eleven. All three are
+      // manifest rows and files, so these are the first kind; the join to
+      // `paintTraps` is test/client/trap-paint.test.ts's.
+      'prop_trap_rune_fire',
+      'prop_trap_alarm_bell',
+      'prop_trap_sliding_rock',
     ]);
   });
 

@@ -2340,12 +2340,6 @@ export const PROP_ART_COMMISSION: readonly ArtRequest[] = [
     'A taut tripwire between two pins.',
   ),
   cell(
-    { id: 'prop_trap_rune_fire' },
-    'any delve',
-    `${TRAPS}/elemental.lua`,
-    'A chalked fire sigil, faintly glowing orange.',
-  ),
-  cell(
     { id: 'prop_trap_rune_ice' },
     'any delve',
     `${TRAPS}/elemental.lua`,
@@ -2376,12 +2370,6 @@ export const PROP_ART_COMMISSION: readonly ArtRequest[] = [
     'A boulder wedged above a trigger.',
   ),
   cell(
-    { id: 'prop_trap_alarm_bell' },
-    'any delve',
-    `${TRAPS}/alarm.lua`,
-    'An alarm bell on a wire.',
-  ),
-  cell(
     { id: 'prop_trap_teleport_glyph' },
     'any delve',
     `${TRAPS}/teleport.lua`,
@@ -2398,12 +2386,6 @@ export const PROP_ART_COMMISSION: readonly ArtRequest[] = [
     'Blackwood Outskirts',
     `${TRAPS}/natural_forest.lua`,
     'A coil of poison vine hiding a snare.',
-  ),
-  cell(
-    { id: 'prop_trap_sliding_rock' },
-    'Blackwood Outskirts, Cairnfoot',
-    `${TRAPS}/natural_forest.lua`,
-    'Loose rock balanced on a slope.',
   ),
   cell(
     { id: 'prop_trap_time_pocket' },
