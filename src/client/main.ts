@@ -1331,6 +1331,14 @@ let worldMapOpen = false;
 const explored = new Map<string, Set<string>>();
 
 /**
+ * EVERY TILE THIS VIEWER HAS SEEN, PER REALM — upstream's `has_seens`, where
+ * `explored` is its `remembers`. Everything remembered is in it, and so is dark
+ * ground a lantern showed and memory did not keep. Travel and auto-explore read
+ * this and nothing else; the map draws `explored`. See `client/vision.ts`.
+ */
+const hasSeen = new Map<string, Set<string>>();
+
+/**
  * Read one bit out of the base64 the server sent.
  *
  * Decoded lazily, a bit at a time, rather than materialised into a byte array:
@@ -1360,15 +1368,19 @@ const B64_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz012345
  */
 let vision: VisionWindow | null = null;
 
-/** Nothing remembered: the answer before a map has arrived. */
-const NO_MEMORY: ReadonlySet<string> = new Set<string>();
+/** Nothing seen: the answer before a map has arrived. */
+const NO_GROUND: ReadonlySet<string> = new Set<string>();
 
 /**
- * What this viewer remembers of the map on screen, keyed `"x,y"`. Every travel
+ * What this viewer has seen of the map on screen, keyed `"x,y"`. Every travel
  * target is checked against it — see `travelTargetAllowed`.
+ *
+ * IT WAS `explored`, what this viewer REMEMBERS, and in a dark cave that is the
+ * walls and none of the floor — so a click on the lit floor beside the body was
+ * refused, and a player on the mouse could not move at all.
  */
-function rememberedHere(): ReadonlySet<string> {
-  return (currentRealmId === null ? undefined : explored.get(currentRealmId)) ?? NO_MEMORY;
+function hasSeenHere(): ReadonlySet<string> {
+  return (currentRealmId === null ? undefined : hasSeen.get(currentRealmId)) ?? NO_GROUND;
 }
 let connection = 'connecting';
 let lastError: string | null = null;
@@ -3010,7 +3022,7 @@ function coveredByPanel(layout: HudLayout, px: number, py: number): boolean {
 function minimapCardAt(px: number, py: number, viewW: number): HoverCard | null {
   const tile = minimapTileAt(px, py, viewW);
   if (tile === null) return null;
-  const walkable = level !== null && travelTargetAllowed(level, tile, rememberedHere());
+  const walkable = level !== null && travelTargetAllowed(level, tile, hasSeenHere());
   return {
     title: `${String(tile.x)},${String(tile.y)}`,
     meta: walkable ? 'click to travel here' : 'you cannot walk there',
@@ -6889,8 +6901,12 @@ async function boot(): Promise<void> {
       h: here.h,
       // THE SAME PREDICATE THE VERB MENU GREYS ITS TRAVEL ROW ON, so
       // "somewhere I can walk" is one question with one answer.
-      passable: (x, y) => travelTargetAllowed(here, { x, y }, rememberedHere()),
-      seen: explored.get(currentRealmId) ?? new Set<string>(),
+      passable: (x, y) => travelTargetAllowed(here, { x, y }, hasSeenHere()),
+      // AND THE SAME SET FOR ITS FRONTIER, as upstream's flood asks `has_seens`
+      // (PlayerExplore.lua:1889). On memory, every dark floor tile borders ground
+      // memory does not hold, so a cave would never be explored and the flood
+      // would send the player back over floor they had already walked.
+      seen: hasSeenHere(),
       items: ground
         .filter((item) => item.cell[0] !== me.x || item.cell[1] !== me.y)
         .map((item) => ({ x: item.cell[0], y: item.cell[1] })),
@@ -8695,7 +8711,7 @@ async function boot(): Promise<void> {
     return {
       kind: 'tile',
       tile,
-      walkable: level !== null && travelTargetAllowed(level, tile, rememberedHere()),
+      walkable: level !== null && travelTargetAllowed(level, tile, hasSeenHere()),
       loot: lootAt(tile),
       pile: pileAt(tile),
     };
@@ -12999,7 +13015,7 @@ async function boot(): Promise<void> {
         // A REFUSAL IN WORDS, not a dead click. Water and walls are on this map
         // and pointing at one is an ordinary thing to do; `travelTargetAllowed`
         // is the same question the verb menu greys its own row on.
-        if (level === null || !travelTargetAllowed(level, mapped, rememberedHere())) {
+        if (level === null || !travelTargetAllowed(level, mapped, hasSeenHere())) {
           showNotice('you cannot walk there');
           return;
         }
@@ -13103,7 +13119,7 @@ async function boot(): Promise<void> {
       tile,
       actors: [...actors.values()],
       level,
-      remembered: rememberedHere(),
+      hasSeen: hasSeenHere(),
     });
     switch (intent.kind) {
       case MouseIntentKind.Bump:
@@ -13373,13 +13389,21 @@ function applyServerMessage(msg: ServerMsg): void {
        */
       if (msg.explored !== undefined) {
         const seen = explored.get(msg.realmId) ?? new Set<string>();
+        // REMEMBERED GROUND STAYS A PLACE TO TRAVEL TO, as it was before dark
+        // ground parted the two sets: the map draws it, so refusing it would be
+        // the same contradiction in the other direction.
+        const everSeen = hasSeen.get(msg.realmId) ?? new Set<string>();
         for (let y = 0; y < msg.level.h; y += 1) {
           for (let x = 0; x < msg.level.w; x += 1) {
             const bit = y * msg.level.w + x;
-            if (fogBitSet(msg.explored, bit)) seen.add(`${x},${y}`);
+            if (fogBitSet(msg.explored, bit)) {
+              seen.add(`${x},${y}`);
+              everSeen.add(`${x},${y}`);
+            }
           }
         }
         explored.set(msg.realmId, seen);
+        hasSeen.set(msg.realmId, everSeen);
       }
       lastError = null;
 
@@ -13426,7 +13450,9 @@ function applyServerMessage(msg: ServerMsg): void {
       if (msg.realmId !== currentRealmId) break;
       const memory = explored.get(msg.realmId) ?? new Set<string>();
       explored.set(msg.realmId, memory);
-      vision = readVisionFrame(msg, memory);
+      const everSeen = hasSeen.get(msg.realmId) ?? new Set<string>();
+      hasSeen.set(msg.realmId, everSeen);
+      vision = readVisionFrame(msg, memory, everSeen);
       break;
     }
     case 'sites':

@@ -39,7 +39,7 @@
  * client already has one implementation of each of those questions and a second
  * would drift: `isHostileBody` and `liveActorAt` in input/travel.ts mirror
  * engine/actor.ts and world.ts respectively. Likewise `walkable` on a tile
- * target is exactly the result of `travelTargetAllowed(level, tile, remembered)` —
+ * target is exactly the result of `travelTargetAllowed(level, tile, hasSeen)` —
  * the ONE named predicate decision (f) put the "has this tile been seen" clause
  * behind, and where that clause now lives. Passing the answer in rather than the
  * level is what keeps the fog-of-war rule in a single place.
@@ -151,7 +151,7 @@ export type VerbTarget =
   | {
       readonly kind: 'tile';
       readonly tile: TileXY;
-      /** `travelTargetAllowed(level, tile, remembered)`: false for a wall, off-grid, or ground never seen. */
+      /** `travelTargetAllowed(level, tile, hasSeen)`: false for a wall, off-grid, or ground never seen. */
       readonly walkable: boolean;
       /**
        * WHAT THIS TILE'S LOOT MEANS TO THE VIEWER (v10). `walkable`'s sibling:

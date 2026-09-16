@@ -17,6 +17,22 @@
  * A window covers only the ground around the body. What was remembered further
  * away arrived on the `realm` frame, and every window's `remembered` bits are
  * added to the same set, so memory only ever grows.
+ *
+ * ═══ AND "HAS SEEN" IS A SECOND SET, BECAUSE UPSTREAM KEEPS TWO ═══
+ * `engine/Map.lua:677-686` (`applyLite`) sets `has_seens` on every grid a light
+ * reaches, and `remembers` only on one that is lit or `always_remember`. The
+ * two were the same set here for as long as every level was lit, and the travel
+ * gate read the memory. Then caves went dark: the lantern showed the floor
+ * round the body, the server kept none of it — correctly — and every click,
+ * minimap click, verb-menu Travel and auto-explore in the Underworks answered
+ * "you have not seen that ground" about ground drawn right there. Upstream's
+ * click-to-move asks `has_seens` (`engine/Astar.lua:128`, passed
+ * `use_has_seen` by `engine/interface/PlayerMouse.lua:71`), so that is what
+ * `hasSeen` is: every tile a window has shown, and everything remembered.
+ *
+ * IT IS THIS SESSION'S, NOT THE SAVE'S. Only memory is on the character file,
+ * so a reload inside a dark cave knows the ground its lantern shows again and
+ * nothing it walked before.
  */
 
 import { fogBytes, fogFromBase64, fogHas } from '../shared/fog.ts';
@@ -44,17 +60,24 @@ export type VisionView = {
 };
 
 /**
- * Decode a window, and add everything it says is remembered to `memory`, keyed
- * `"x,y"` in level coordinates.
+ * Decode a window, add everything it says is remembered to `memory`, and add
+ * everything it says is seen OR remembered to `hasSeen` — both keyed `"x,y"` in
+ * level coordinates.
  */
-export function readVisionFrame(msg: VisionMsg, memory: Set<string>): VisionWindow {
+export function readVisionFrame(
+  msg: VisionMsg,
+  memory: Set<string>,
+  hasSeen: Set<string>,
+): VisionWindow {
   const bytes = fogBytes(msg.w, msg.h);
   const remembered = fogFromBase64(msg.remembered, bytes);
+  const seen = fogFromBase64(msg.seen, bytes);
   for (let y = 0; y < msg.h; y += 1) {
     for (let x = 0; x < msg.w; x += 1) {
-      if (fogHas(remembered, msg.w, x, y)) {
-        memory.add(`${String(msg.x0 + x)},${String(msg.y0 + y)}`);
-      }
+      const kept = fogHas(remembered, msg.w, x, y);
+      const tile = `${String(msg.x0 + x)},${String(msg.y0 + y)}`;
+      if (kept) memory.add(tile);
+      if (kept || fogHas(seen, msg.w, x, y)) hasSeen.add(tile);
     }
   }
   return {
@@ -63,7 +86,7 @@ export function readVisionFrame(msg: VisionMsg, memory: Set<string>): VisionWind
     y0: msg.y0,
     w: msg.w,
     h: msg.h,
-    seen: fogFromBase64(msg.seen, bytes),
+    seen,
     sight: msg.sight,
   };
 }

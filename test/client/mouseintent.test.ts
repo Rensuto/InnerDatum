@@ -98,7 +98,7 @@ function snapshot(
   tile: { x: number; y: number },
   actors: readonly ActorView[] = [],
 ): MouseSnapshot {
-  return { self: SELF, tile, actors, level: OPEN, remembered: everyTile(OPEN) };
+  return { self: SELF, tile, actors, level: OPEN, hasSeen: everyTile(OPEN) };
 }
 
 /**
@@ -174,14 +174,14 @@ describe('mouseIntentAt', () => {
 
   it('says nothing can be clicked before the board arrives', () => {
     const reason = reasonOf(
-      mouseIntentAt({ self: null, tile: SELF, actors: [], level: null, remembered: new Set() }),
+      mouseIntentAt({ self: null, tile: SELF, actors: [], level: null, hasSeen: new Set() }),
     );
     expect(reason.length).toBeGreaterThan(0);
   });
 });
 
 describe('travelTargetAllowed', () => {
-  it('is terrain AND memory: travel ends only on routable ground this viewer remembers', () => {
+  it('is terrain AND sight: travel ends only on routable ground this viewer has seen', () => {
     const seen = everyTile(OPEN);
     expect(travelTargetAllowed(OPEN, { x: 4, y: 3 }, seen)).toBe(true);
     expect(travelTargetAllowed(OPEN, { x: 0, y: 0 }, seen)).toBe(false);
@@ -197,7 +197,7 @@ describe('travelTargetAllowed', () => {
       tile: { x: 6, y: 3 },
       actors: [],
       level: OPEN,
-      remembered: new Set(),
+      hasSeen: new Set(),
     });
     expect(reasonOf(intent)).toBe('you have not seen that ground');
     // ...while a real wall that has been seen still says it is a wall.
@@ -239,7 +239,7 @@ describe('a door is a travel destination', () => {
       tile: { x: 5, y: 3 },
       actors: [],
       level: DOOR_MAP,
-      remembered: everyTile(DOOR_MAP),
+      hasSeen: everyTile(DOOR_MAP),
     });
     // ADJACENT, so this is the step case rather than the travel case — either
     // way it is a MOVE, and the claim is that it is not `None('that is a wall')`.

@@ -689,7 +689,7 @@ describe('the minimap is wired to something', () => {
     expect(body).toContain('beginTravel(mapped, false)');
     // AND IT REFUSES IN WORDS on ground you cannot walk on, rather than being a
     // dead click on the water that is drawn right there on the map.
-    expect(body).toContain('travelTargetAllowed(level, mapped, rememberedHere())');
+    expect(body).toContain('travelTargetAllowed(level, mapped, hasSeenHere())');
   });
 
   it('sits after the panel guard and before shift-click and targeting', () => {
@@ -796,7 +796,7 @@ describe('auto-explore walks through the travel system', () => {
     // explorer and not two.
     const start = at('function exploreLeg(): void {');
     const arm = CODE.slice(start, CODE.indexOf('function beginTravel(', start));
-    expect(arm).toContain('travelTargetAllowed(here, { x, y }, rememberedHere())');
+    expect(arm).toContain('travelTargetAllowed(here, { x, y }, hasSeenHere())');
   });
 
   it('is CONTINUOUS: the arrival asks for the next frontier', () => {
@@ -1347,28 +1347,43 @@ describe('the action bar’s cogwheel', () => {
 });
 
 // ---------------------------------------------------------------------------
-// TRAVEL ENDS ONLY ON REMEMBERED GROUND
+// TRAVEL ENDS ONLY ON SEEN GROUND
 // ---------------------------------------------------------------------------
 
-describe('travel ends only on ground this viewer remembers', () => {
+describe('travel ends only on ground this viewer has seen', () => {
   /**
-   * `travelTargetAllowed` takes the memory as an argument, so the rule is tested
-   * as a rule in mouseintent.test.ts. What only this file can see is that main.ts
-   * hands it the server's memory of the map on screen, at every travel target.
+   * `travelTargetAllowed` takes the set as an argument, so the rule is tested as
+   * a rule in mouseintent.test.ts, and the frames that fill the set are replayed
+   * in test/server/dark-delve-travel.test.ts. What only this file can see is that
+   * main.ts fills it from every frame and hands it to every travel target.
+   *
+   * IT WAS MEMORY (`explored`), and in a dark cave memory is the walls: every
+   * click on the lantern-lit floor was refused and a mouse player could not move.
    */
-  it('reads the server’s memory of this map', () => {
-    expect(between('function rememberedHere(): ReadonlySet<string> {', '\n}')).toContain(
-      'explored.get(currentRealmId)',
+  it('reads what this viewer has seen of this map, not what it remembers', () => {
+    expect(between('function hasSeenHere(): ReadonlySet<string> {', '\n}')).toContain(
+      'hasSeen.get(currentRealmId)',
     );
   });
 
-  it('asks it for the click, the minimap and the verb menu', () => {
-    expect(CODE).toContain('remembered: rememberedHere(),');
+  it('fills it from the realm frame’s memory and from every vision window', () => {
+    const realm = between('if (msg.explored !== undefined) {', 'lastError = null;');
+    expect(realm).toContain('everSeen.add(');
+    expect(realm).toContain('hasSeen.set(msg.realmId, everSeen);');
+    expect(between("case 'vision': {", "case 'sites':")).toContain(
+      'readVisionFrame(msg, memory, everSeen)',
+    );
+  });
+
+  it('asks it for the click, the minimap, the verb menu and auto-explore', () => {
+    expect(CODE).toContain('hasSeen: hasSeenHere(),');
     expect(CODE).toContain(
-      'const walkable = level !== null && travelTargetAllowed(level, tile, rememberedHere());',
+      'const walkable = level !== null && travelTargetAllowed(level, tile, hasSeenHere());',
     );
     expect(CODE).toContain(
-      'walkable: level !== null && travelTargetAllowed(level, tile, rememberedHere()),',
+      'walkable: level !== null && travelTargetAllowed(level, tile, hasSeenHere()),',
     );
+    const explore = between('function exploreLeg(): void {', 'function beginTravel(');
+    expect(explore).toContain('seen: hasSeenHere(),');
   });
 });

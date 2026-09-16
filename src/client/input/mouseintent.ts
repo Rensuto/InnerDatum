@@ -86,14 +86,15 @@ export type MouseSnapshot = {
   readonly actors: readonly ActorView[];
   readonly level: LevelView | null;
   /**
-   * The tiles this viewer remembers on this map, keyed `"x,y"` — the server's
-   * memory, as `client/vision.ts` keeps it. Travel may only end on one.
+   * The tiles this viewer has seen on this map, keyed `"x,y"` — every tile the
+   * server's windows showed, and all it remembers, as `client/vision.ts` keeps
+   * them. Travel may only end on one.
    */
-  readonly remembered: ReadonlySet<string>;
+  readonly hasSeen: ReadonlySet<string>;
 };
 
 /**
- * MAY TRAVEL END HERE? On ground this viewer remembers, that `canRoute` admits.
+ * MAY TRAVEL END HERE? On ground this viewer has seen, that `canRoute` admits.
  *
  * ═══════════════════════════════════════════════════════════════════════════
  * IT WAS `canWalk`, AND A DOOR IS WHY IT IS NOT ANY MORE
@@ -125,7 +126,17 @@ export type MouseSnapshot = {
  * drawn from the other. There is one memory now, the server's, and every
  * surface draws it: the playfield, the minimap and the region map.
  *
- * So travel may end only on a tile this viewer remembers, as this port ruled.
+ * So travel may end only on a tile this viewer has seen, as this port ruled.
+ *
+ * ═══ SEEN, NOT REMEMBERED — AND A DARK CAVE IS WHERE THE TWO PART ═══
+ * This read "remembers", and while every level was lit that was the same set.
+ * It is not in the dark: a lantern SHOWS the floor round the body and memory
+ * keeps only the lit or `alwaysRemembered` part of it (`shared/vision.ts`, after
+ * upstream's `applyLite`), which in a cave is the walls. So every click on the
+ * floor a player could see, the tile beside them included, was "you have not
+ * seen that ground", and a player on the mouse could not move in a delve at
+ * all. Upstream's `use_has_seen` asks `has_seens`, which every light sets, and
+ * `hasSeen` is that set. What is DRAWN is still memory.
  *
  * ═══ UPSTREAM DOES NOT REFUSE; IT ASSUMES ═══
  * ToME's click-to-move paths with `use_has_seen` (PlayerMouse.lua:71), and its
@@ -135,16 +146,15 @@ export type MouseSnapshot = {
  * way through the dark would say what is in it. Refusing the destination keeps
  * the dark dark.
  * Every caller shares it: the click, the minimap click and hover, the verb menu
- * and auto-explore. Explore is not starved by it: its flood walks remembered
- * ground and heads for the edge of it, which is a remembered tile beside an
- * unseen one.
+ * and auto-explore. Explore is not starved by it: its flood walks seen ground
+ * and heads for the edge of it, which is a seen tile beside an unseen one.
  */
 export function travelTargetAllowed(
   level: LevelView,
   tile: TileXY,
-  remembered: ReadonlySet<string>,
+  hasSeen: ReadonlySet<string>,
 ): boolean {
-  return canRoute(level, tile.x, tile.y) && remembered.has(`${String(tile.x)},${String(tile.y)}`);
+  return canRoute(level, tile.x, tile.y) && hasSeen.has(`${String(tile.x)},${String(tile.y)}`);
 }
 
 function none(reason: string): MouseIntent {
@@ -184,7 +194,7 @@ export function mouseIntentAt(snapshot: MouseSnapshot): MouseIntent {
   if (!canRoute(level, tile.x, tile.y)) return none('that is a wall');
   // A DIFFERENT SENTENCE, because it is a different reason: the ground may be
   // open, and nothing on this client says so.
-  if (!travelTargetAllowed(level, tile, snapshot.remembered)) {
+  if (!travelTargetAllowed(level, tile, snapshot.hasSeen)) {
     return none('you have not seen that ground');
   }
   return { kind: MouseIntentKind.Travel, to: tile, stopShort: occupant !== undefined };

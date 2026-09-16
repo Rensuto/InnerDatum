@@ -33,22 +33,37 @@ function frame(): VisionMsg {
 describe('readVisionFrame', () => {
   it('adds the remembered bits to memory at their level tiles, and nothing else', () => {
     const memory = new Set<string>();
-    readVisionFrame(frame(), memory);
+    readVisionFrame(frame(), memory, new Set<string>());
     expect([...memory].sort()).toEqual(['11,21', '12,22']);
   });
 
   it('keeps what memory already held, so memory only grows', () => {
     const memory = new Set<string>(['0,0']);
-    readVisionFrame(frame(), memory);
+    readVisionFrame(frame(), memory, new Set<string>());
     expect(memory.has('0,0')).toBe(true);
     expect(memory.size).toBe(3);
+  });
+
+  it('adds every seen AND every remembered bit to has-seen, and keeps what it held', () => {
+    // The frame's two sets are disjoint on purpose: a seen tile it does not
+    // remember is dark ground in a lantern, and a remembered one it does not see
+    // is ground behind the body. Upstream's `has_seens` holds both.
+    const hasSeen = new Set<string>(['0,0']);
+    const memory = new Set<string>();
+    readVisionFrame(frame(), memory, hasSeen);
+    expect([...hasSeen].sort()).toEqual(['0,0', '10,20', '11,21', '12,22', '14,23']);
+    expect([...memory].sort(), 'seen ground was remembered').toEqual(['11,21', '12,22']);
   });
 });
 
 describe('visionViewOf', () => {
   it('answers seen at level coordinates, and only inside the window', () => {
     const memory = new Set<string>();
-    const view = visionViewOf(readVisionFrame(frame(), memory), 'realm:test', memory);
+    const view = visionViewOf(
+      readVisionFrame(frame(), memory, new Set<string>()),
+      'realm:test',
+      memory,
+    );
     if (view === null) throw new Error('no view for the map on screen');
     expect(view.seen(10, 20)).toBe(true);
     expect(view.seen(14, 23)).toBe(true);
@@ -64,7 +79,11 @@ describe('visionViewOf', () => {
 
   it('remembers whatever memory holds, inside the window or not', () => {
     const memory = new Set<string>(['0,0']);
-    const view = visionViewOf(readVisionFrame(frame(), memory), 'realm:test', memory);
+    const view = visionViewOf(
+      readVisionFrame(frame(), memory, new Set<string>()),
+      'realm:test',
+      memory,
+    );
     if (view === null) throw new Error('no view for the map on screen');
     expect(view.remembered(0, 0)).toBe(true);
     expect(view.remembered(11, 21)).toBe(true);
@@ -73,7 +92,7 @@ describe('visionViewOf', () => {
 
   it('carries the viewer`s sight radius, which the aim preview draws its line with', () => {
     const memory = new Set<string>();
-    const window = readVisionFrame(frame(), memory);
+    const window = readVisionFrame(frame(), memory, new Set<string>());
     expect(window.sight).toBe(10);
     expect(visionViewOf(window, 'realm:test', memory)?.sight).toBe(10);
   });
@@ -81,6 +100,8 @@ describe('visionViewOf', () => {
   it('says nothing before a window arrives, or for a window of another map', () => {
     const memory = new Set<string>();
     expect(visionViewOf(null, 'realm:test', memory)).toBeNull();
-    expect(visionViewOf(readVisionFrame(frame(), memory), 'realm:other', memory)).toBeNull();
+    expect(
+      visionViewOf(readVisionFrame(frame(), memory, new Set<string>()), 'realm:other', memory),
+    ).toBeNull();
   });
 });
