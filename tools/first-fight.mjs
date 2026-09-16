@@ -69,6 +69,7 @@ import {
 } from '../src/server/content/classes.ts';
 import { talentRuntimeFor } from '../src/server/main.ts';
 import { canRoute, canWalk, Ground } from '../src/shared/level.ts';
+import { ErasedReason } from '../src/shared/protocol.ts';
 import { firstStep } from './walk.mjs';
 import { classStrikes, firingSpot, takeShot } from './fightlib.mjs';
 
@@ -191,6 +192,7 @@ function fight(cls, seed) {
 
   let turns = 0;
   let worst = 1;
+  let wiped = false;
   for (; turns < TURN_CAP; turns += 1) {
     const foes = arena.world.allActors().filter((a) => a.kind === 'monster' && a.alive);
     if (foes.length === 0 || !p.alive || isDowned(downed, 'p1')) break;
@@ -225,9 +227,10 @@ function fight(cls, seed) {
           console.log(`  [diag] ${cls.name} ${id}: ${JSON.stringify(shot)}`);
         }
       },
-      // THE LEVEL, so the band can ask about walls. Without it `takeShot` counted
-      // a foe behind a wall as a shot and this driver never backed off.
-      arena.world.level,
+      // THE WORLD, so the band asks the engine's own question about the line:
+      // walls, and in the dark whether this body can see that far at all.
+      // See `lineFor` in fightlib.mjs.
+      arena.world,
     );
     const gap = near.d;
     const nearest = attacks[attacks.length - 1] ?? null;
@@ -261,9 +264,7 @@ function fight(cls, seed) {
        */
       const spot = away
         ? null
-        : firingSpot(attacks, p, foes, arena.world.level, (x, y) =>
-            canWalk(arena.world.level, x, y),
-          );
+        : firingSpot(attacks, p, foes, arena.world, (x, y) => canWalk(arena.world.level, x, y));
       const goal =
         spot !== null
           ? spot
@@ -276,12 +277,22 @@ function fight(cls, seed) {
         firstStep((x, y) => canRoute(arena.world.level, x, y), { x: p.x, y: p.y }, goal) ?? 'e';
       arena.engine.submitMove('p1', dir);
     }
-    arena.engine.pump();
+    const pumped = arena.engine.pump();
+    // A WIPE, READ OFF THE PUMP, as delve-run.mjs reads it. A lone body that
+    // falls is restored inside the same pump that erased it, so the check at
+    // the top of this loop never sees it down; and a wipe puts the room's own
+    // monsters back under the same ids, so nothing about the room says so
+    // either. The fight carried on, and a later clear was reported as a win.
+    const events = [...(pumped?.playerEvents ?? []), ...(pumped?.sweep ?? [])];
+    if (events.some((ev) => ev.k === 'erased' && ev.reason === ErasedReason.Wipe)) {
+      wiped = true;
+      break;
+    }
     worst = Math.min(worst, p.hp / p.maxHp);
   }
 
   const left = arena.world.allActors().filter((a) => a.kind === 'monster' && a.alive).length;
-  const down = !p.alive || isDowned(downed, 'p1');
+  const down = wiped || !p.alive || isDowned(downed, 'p1');
   return {
     outcome: down ? 'down' : left === 0 ? 'win' : 'stall',
     roster,

@@ -125,7 +125,8 @@ export function rangedAttacks(cls, known) {
  * start disagreeing about what "in range" means. This file exists because a rule
  * written down twice is how this codebase gets bitten.
  */
-function reachable(attack, self, foes, level) {
+function reachable(attack, self, foes, ground) {
+  const lineClear = lineFor(ground);
   return (
     foes
       .map((f) => ({ f, d: sightDistance(self, f) }))
@@ -133,9 +134,38 @@ function reachable(attack, self, foes, level) {
       // `< minRange` then line of sight, and LoS only beyond distance 1 — the
       // engine skips the bresenham walk for a neighbour and so does this.
       .filter((c) => c.d <= attack.range && c.d >= attack.minRange)
-      .filter((c) => level === undefined || c.d <= 1 || hasLineOfSight(level, self, c.f))
+      .filter((c) => lineClear === null || c.d <= 1 || lineClear(self, c.f))
       .sort((a, b) => a.d - b.d)[0]
   );
+}
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * WHOSE LINE A SHOT IS CHECKED ALONG — THE ENGINE'S, WHEN THE WORLD IS TO HAND.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `checkTargeting` asks `world.lineClearFor(actor, target)` and falls back to
+ * plain line of sight only when a world has no such question. For a player that
+ * is upstream's player line (server/view/eyesight.ts): what they see now and
+ * what the level remembers for them. This file asked plain line of sight, and
+ * in a lit room the two agree.
+ *
+ * IN THE DARK THEY DO NOT. On the Undermost's last floor the Inspector's
+ * Sniper's Mark was refused `no_los` at six and seven tiles — past the lantern,
+ * on ground the body could not see — while this band called both a shot. So
+ * `takeShot` fired nothing, `firingSpot` said "you are standing on the spot",
+ * and the driver stepped back and forth for the rest of the fight: 0 wins in
+ * 12, charged to the class and not to this file.
+ *
+ * `ground` is a World (in-process probes, which have one and must pass it) or a
+ * bare level view (the socket probes, which only ever hold the level a frame
+ * carried, and whose server refuses in words anyway). A World is recognised by
+ * the question itself, `lineClearFor`, rather than by a flag.
+ */
+function lineFor(ground) {
+  if (ground === undefined) return null;
+  if (typeof ground.lineClearFor === 'function') return (from, to) => ground.lineClearFor(from, to);
+  return (from, to) => hasLineOfSight(ground, from, to);
 }
 
 /**
@@ -224,7 +254,12 @@ export function firingSpot(attacks, self, foes, level, walkable, radius = 6) {
       if (!walkable(spot.x, spot.y)) continue;
       // Somebody standing there is not a place you can stand.
       if (foes.some((f) => f.x === spot.x && f.y === spot.y)) continue;
-      if (!attacks.some((attack) => reachable(attack, spot, foes, level) !== undefined)) continue;
+      // THE BODY, MOVED THERE. A player's line is theirs — it reads their own
+      // sight and memory by id — so the candidate carries the body's identity
+      // and only its tile changes.
+      const standing = { ...self, x: spot.x, y: spot.y };
+      if (!attacks.some((attack) => reachable(attack, standing, foes, level) !== undefined))
+        continue;
       const steps = Math.max(Math.abs(dx), Math.abs(dy));
       if (best === null || steps < best.steps) best = { spot, steps };
     }

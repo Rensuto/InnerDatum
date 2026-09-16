@@ -371,10 +371,11 @@ function run(site, size, seed) {
             refusals.set(String(shot?.code), (refusals.get(String(shot?.code)) ?? 0) + 1);
           }
         },
-        // THE LEVEL, so the band can ask about WALLS. Without it a foe behind
-        // one counts as a shot and this driver paces between two tiles — the
-        // stall `first-fight.mjs` was measured doing for 200 iterations.
-        realm.world.level,
+        // THE WORLD, so the band asks the engine's own question about the
+        // line: WALLS, and in a dark delve whether this body can see that far.
+        // Without walls a foe behind one counted as a shot and this driver paced
+        // between two tiles. See `lineFor` in fightlib.mjs.
+        realm.world,
       );
       if (fired) {
         lastVerb.set(b.id, 'shot');
@@ -435,9 +436,7 @@ function run(site, size, seed) {
         ? { x: held.x, y: held.y }
         : away
           ? null
-          : firingSpot(attacks, b, living, realm.world.level, (x, y) =>
-              canWalk(realm.world.level, x, y),
-            );
+          : firingSpot(attacks, b, living, realm.world, (x, y) => canWalk(realm.world.level, x, y));
       const goal =
         spot !== null
           ? spot
