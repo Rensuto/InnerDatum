@@ -153,7 +153,6 @@ import type { MonsterTemplate } from '../content/monsters.ts';
 import type { Combatant, PrimaryStats } from '../engine/derived.ts';
 import { STANDING_LEVEL, specForActorId } from '../content/townsfolk.ts';
 import { healActor } from '../engine/damage.ts';
-import type { TalentEffect } from '../engine/talents.ts';
 import type { ClientUse, TopicId } from '../../shared/protocol.ts';
 import type { DamageType } from '../../shared/damagetype.ts';
 import { buyPrice, sellPrice, stockLevelFor } from '../content/shops.ts';
@@ -350,7 +349,7 @@ import type { ClassDef } from '../content/classes.ts';
 import type { Slot } from '../content/items.ts';
 import type { EngineActor, PlayerActor } from '../engine/actor.ts';
 import type { PartyState } from '../engine/party.ts';
-import type { AwayMember, PartyOffer, TurnState } from '../view/projector.ts';
+import type { AwayMember, PartyOffer, TalentBadgeSource, TurnState } from '../view/projector.ts';
 import type { Realm, Realms, SiteDef } from '../world/realms.ts';
 import type { Actor, PlayerOverlay, World } from '../world/world.ts';
 
@@ -2446,11 +2445,14 @@ export type WsGatewayOptions = {
    * the projector needs to read one table and must not be handed something it
    * could cast a talent with.
    *
+   * THE PROJECTOR'S OWN TYPE, not a copy of it. The copy here read `turns`
+   * only, and the Guarded badge needs `otherId` too — it is drawn on the ally
+   * the Watchman's effect names, not on the Watchman (projector.ts
+   * `BadgeBearer`).
+   *
    * Absent → the badge row is byte-for-byte what it was.
    */
-  readonly talentEffects?: {
-    effectOn(actorId: string, kind: TalentEffect): { readonly turns: number } | undefined;
-  };
+  readonly talentEffects?: TalentBadgeSource;
   /**
    * The survival table (engine/downed.ts). Absent → nobody is ever Downed, and
    * the party panel says so honestly rather than inventing a timer.

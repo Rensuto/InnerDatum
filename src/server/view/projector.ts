@@ -1440,12 +1440,60 @@ function toClassOptionView(definition: ClassDef): ClassOptionView {
  * the AI retargets on its own, and a badge that outlived either would be a
  * confident lie about what a monster is about to do.
  */
-type TalentBadgeSource = {
-  effectOn(actorId: string, kind: TalentEffect): { readonly turns: number } | undefined;
+/**
+ * WHAT THE PROJECTOR MAY READ OF THE TALENT ENGINE: one lookup, and `otherId`
+ * with it, because the Guarded badge is drawn on the body an effect NAMES rather
+ * than the body that holds it (see `BadgeBearer`). EXPORTED so the gateway's
+ * option is this type and not a second structural copy of it — the copy is what
+ * would silently narrow `otherId` back off.
+ */
+export type TalentBadgeSource = {
+  effectOn(
+    actorId: string,
+    kind: TalentEffect,
+  ): { readonly turns: number; readonly otherId: string } | undefined;
 };
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * WHICH BODY A TALENT EFFECT'S BADGE IS DRAWN ON.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * The talent table stores every effect under ONE actor and names a second in
+ * `otherId` (engine/talents.ts `TalentEffectInstance`), and which of the two the
+ * effect is ABOUT differs by kind:
+ *
+ *   Holder — the badge is on the actor the effect is stored under. Marked is
+ *            "held by the TARGET", so the pip is over the thing to hit.
+ *   Named  — the badge is on the actor the effect NAMES. Guarding is "held by
+ *            the GUARDIAN" and names the ally being guarded, and iron_curtain.ts
+ *            installs it that way (`addEffect(self.id, { otherId: ally.id })`).
+ *
+ * GUARDED WAS READ AS A HOLDER EFFECT, and so it sat on the Watchman. The row
+ * was always documented as "on the ALLY being covered", and the test meant to
+ * hold that installed the guard p1 -> p1 — a fixture on which holder and ally
+ * are the same body, so it passed under both rules and pinned neither.
+ *
+ * ═══ UPSTREAM BADGES THE COVERED BODY ═══
+ * Iron Curtain's ally guard has no single ToME source (its header cites Taunt
+ * and Shield Wall for shape; neither covers anyone else). The closest upstream
+ * pair is Stone Link (`gifts/dwarven-nature.lua:330-348`): the caster carries
+ * STONE_LINK_SOURCE, and every friend in the radius is given its OWN
+ * STONE_LINK, "protected by %s" (`timed_effects/physical.lua:3560-3603`). The
+ * tooltip lists every temporary effect on the body it is on
+ * (`tome/class/Actor.lua:2018-2035`), so the ally's own list says it is covered.
+ * The caster's half has no counterpart here — there is no `Guarding` badge and
+ * no art for one — and adding it is a ruling, not a fix.
+ */
+const BadgeBearer = {
+  Holder: 'holder',
+  Named: 'named',
+} as const;
+type BadgeBearer = (typeof BadgeBearer)[keyof typeof BadgeBearer];
 
 const TALENT_BADGES: readonly {
   readonly kind: TalentEffect;
+  readonly bearer: BadgeBearer;
   readonly id: string;
   readonly name: string;
   readonly icon: string;
@@ -1453,6 +1501,7 @@ const TALENT_BADGES: readonly {
 }[] = [
   {
     kind: TalentEffect.Marked,
+    bearer: BadgeBearer.Holder,
     id: 'effect:marked',
     name: 'Marked',
     icon: 'icon_status_marked',
@@ -1463,13 +1512,54 @@ const TALENT_BADGES: readonly {
   },
   {
     kind: TalentEffect.Guarding,
+    bearer: BadgeBearer.Named,
     id: 'effect:guarded',
     name: 'Guarded',
     icon: 'icon_status_guarded',
-    // The Watchman's Iron Curtain, on the ALLY being covered. Good for them.
+    // The Watchman's Iron Curtain, on the ALLY being covered — the body the
+    // effect NAMES, not the Watchman who holds it. Good for them.
     harmful: false,
   },
 ];
+
+/**
+ * THE TURNS LEFT ON EVERY NAMED-BEARER BADGE, keyed by kind and then by the
+ * body it is drawn on. Built once per frame, so the per-actor loop below is a
+ * lookup rather than a second walk of the world for every body.
+ *
+ * THE HOLDER MUST BE ALIVE. `resolveGuardCounter` (engine/talents.ts) skips a
+ * guardian who is not, and a Downed Watchman is `alive === false` (downed.ts
+ * `goDown`), so the ally he raised the curtain over is not covered while he is
+ * down, however many turns his `Guarding` still has on it. Before the badge
+ * moved to the ally this fell out of the loop's own `alive` skip; here it has
+ * to be said.
+ *
+ * THE HOLDER NEED NOT BE SEEN. The badge is a fact about the body it is drawn
+ * on, and that body is gated on `seen` in the loop like every other badge.
+ *
+ * TWO CURTAINS OVER ONE ALLY ARE ONE BADGE with the longer of the two: the row
+ * answers "is this body guarded, and for how long", and the shorter curtain
+ * lapsing changes neither answer.
+ */
+function namedBearerTurns(
+  world: World,
+  talents: TalentBadgeSource,
+): ReadonlyMap<TalentEffect, ReadonlyMap<string, number>> {
+  const byKind = new Map<TalentEffect, Map<string, number>>();
+  for (const row of TALENT_BADGES) {
+    if (row.bearer !== BadgeBearer.Named) continue;
+    const turnsOn = new Map<string, number>();
+    for (const holder of world.allActors()) {
+      if (!holder.alive) continue;
+      const held = talents.effectOn(holder.id, row.kind);
+      if (held === undefined) continue;
+      const already = turnsOn.get(held.otherId);
+      if (already === undefined || held.turns > already) turnsOn.set(held.otherId, held.turns);
+    }
+    byKind.set(row.kind, turnsOn);
+  }
+  return byKind;
+}
 
 export function projectEffects(
   world: World,
@@ -1492,6 +1582,7 @@ export function projectEffects(
   seen?: ReadonlySet<string>,
 ): EffectsMsg {
   const actors: ActorEffects[] = [];
+  const named = talents === undefined ? undefined : namedBearerTurns(world, talents);
 
   for (const actor of world.allActors()) {
     if (!actor.alive) continue;
@@ -1501,15 +1592,18 @@ export function projectEffects(
     const badges: EffectView[] = [];
 
     for (const row of TALENT_BADGES) {
-      const held = talents?.effectOn(actor.id, row.kind);
-      if (held === undefined) continue;
+      const turns =
+        row.bearer === BadgeBearer.Holder
+          ? talents?.effectOn(actor.id, row.kind)?.turns
+          : named?.get(row.kind)?.get(actor.id);
+      if (turns === undefined) continue;
       badges.push({
         id: row.id,
         name: row.name,
         icon: row.icon,
         // Clamped for the reason the status badges are: a negative number on a
         // HUD is a bug report.
-        turns: Math.max(0, held.turns),
+        turns: Math.max(0, turns),
         harmful: row.harmful,
       });
     }
