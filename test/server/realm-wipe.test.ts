@@ -1,0 +1,185 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 Dalton Barraclough
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * A PARTY THAT WIPES IN A DELVE STANDS BACK UP IN THAT DELVE.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `resetFloor` reaps every monster and calls the engine's `reseedFloor`, which
+ * defaulted to `seedTestEncounter`: three hand-placed Alderbrook monsters at the
+ * test map's coordinates. No realm engine passed anything else, so a wipe in any
+ * delve brought back whichever of those three landed on walkable ground, and
+ * never the floor's own population — on a boss floor, never the boss.
+ *
+ * THE ENGINES HERE ARE BUILT THE WAY `main.ts` BUILDS THEM: `createTurnEngine`
+ * with no `reseedFloor` of its own. What puts the floor back is whatever the
+ * realm handed its world (`World.reseedFloor`), which is the join under test.
+ */
+
+import { describe, expect, it } from 'vitest';
+
+import { createDownedState, goDown } from '../../src/server/engine/downed.ts';
+import { createTurnEngine } from '../../src/server/turn-engine.ts';
+import {
+  ENCOUNTER_SITE,
+  RealmKind,
+  SITES,
+  createRealms,
+  floorsOfSite,
+} from '../../src/server/world/realms.ts';
+import { Ground } from '../../src/shared/level.ts';
+import type { DownedState } from '../../src/server/engine/downed.ts';
+import type { Realm, Realms } from '../../src/server/world/realms.ts';
+import type { Actor } from '../../src/server/world/world.ts';
+
+type Rig = { readonly realms: Realms; readonly downed: DownedState };
+
+function rig(seed: string): Rig {
+  const downed = createDownedState();
+  return {
+    downed,
+    realms: createRealms({
+      seed,
+      engineFor: (world) => createTurnEngine({ world, downed, now: () => 0 }),
+    }),
+  };
+}
+
+function monstersOf(realm: Realm): Actor[] {
+  return realm.world.allActors().filter((a) => a.kind === 'monster');
+}
+
+/** The part of a monster's id its realm did not add. */
+function bareId(realm: Realm, actor: Actor): string {
+  return actor.id.slice(realm.id.length + 1);
+}
+
+type Floor = {
+  readonly monsters: readonly string[];
+  readonly ground: number;
+  readonly traps: number;
+  readonly props: number;
+};
+
+function snapshot(realm: Realm): Floor {
+  return {
+    monsters: monstersOf(realm)
+      .map((a) => bareId(realm, a))
+      .toSorted(),
+    ground: realm.world.groundItems().length,
+    traps: realm.world.traps().length,
+    props: realm.world.props().length,
+  };
+}
+
+/** One body walks in and goes down alone, which is a party wipe. */
+function wipe(realm: Realm, downed: DownedState): void {
+  const body = realm.world.addPlayer('p1', 'Ren');
+  body.hpRegen = 0;
+  body.hp = 0;
+  body.alive = false;
+  goDown(downed, body, realm.world.turn.clock.gameTurn);
+  realm.engine.pump();
+  const back = realm.world.getActor('p1');
+  // THE PRECONDITION, so a pump that did not wipe cannot pass every check below
+  // by never having reset anything.
+  expect(back?.alive, `${realm.id}: the wipe did not restore the body`).toBe(true);
+}
+
+const DELVE_FLOORS = [...SITES.values()]
+  .filter((site) => site.kind === RealmKind.Inner && site.populate !== undefined)
+  .flatMap((site) => {
+    const last = floorsOfSite(site.id);
+    return [...new Set([1, last])].map((floor) => ({ site, floor }));
+  });
+
+describe('a party wipe puts the floor back as itself', () => {
+  it('covers every delve that builds a population, first floor and last', () => {
+    // A SWEEP IS ONLY AS GOOD AS WHAT IT SWEEPS. Three `populate` bodies call
+    // `populateDelve` (authored delves, their redacted twins, the Undermost),
+    // and each forwards the scope on its own.
+    expect(DELVE_FLOORS.length).toBeGreaterThan(20);
+    expect(DELVE_FLOORS.some(({ site }) => site.id.startsWith('site:redaction:'))).toBe(true);
+    expect(DELVE_FLOORS.some(({ site }) => site.birthplace === true)).toBe(true);
+  });
+
+  it.each(DELVE_FLOORS.map(({ site, floor }) => [site.id, floor] as const))(
+    '%s floor %i: its own hostiles, and nothing else rolled again',
+    (siteId, floor) => {
+      const { realms, downed } = rig(`realm-wipe:${siteId}:${String(floor)}`);
+      const site = SITES.get(siteId);
+      if (site === undefined) throw new Error(`no such site: ${siteId}`);
+      const realm = realms.open(
+        site,
+        'party-a',
+        { level: 1, size: 1 },
+        undefined,
+        undefined,
+        floor,
+      );
+      const before = snapshot(realm);
+
+      wipe(realm, downed);
+      const after = snapshot(realm);
+
+      // THE FLOOR'S OWN NAMES. `populateDelve` mints `delve_<n>` and
+      // `delve_boss`; the test encounter mints `mon_<template>`.
+      for (const id of after.monsters) expect(id, siteId).toMatch(/^delve_(\d+|boss)$/);
+      // A POPULATED FLOOR COMES BACK POPULATED, AND AN EMPTY ONE STAYS EMPTY.
+      expect(after.monsters.length > 0, `${siteId} floor ${String(floor)}`).toBe(
+        before.monsters.length > 0,
+      );
+      // AND THE BOSS WITH IT.
+      expect(after.monsters.includes('delve_boss'), siteId).toBe(
+        before.monsters.includes('delve_boss'),
+      );
+
+      // NOTHING THAT IS THE FLOOR RATHER THAN ON IT. `resetFloor` took the items
+      // and left the traps and props; putting hostiles back must not re-roll
+      // the litter onto the floor or lay a second set of either.
+      expect(after.ground, `${siteId}: litter rolled again`).toBe(0);
+      expect(after.traps, `${siteId}: traps laid again`).toBe(before.traps);
+      expect(after.props, `${siteId}: props laid again`).toBe(before.props);
+    },
+  );
+
+  it('puts a boss floor`s dressing down once, so the props check above has something to catch', () => {
+    const bossFloors = DELVE_FLOORS.filter(({ site, floor }) => {
+      const { realms } = rig(`realm-wipe-boss:${site.id}`);
+      const realm = realms.open(
+        site,
+        'party-a',
+        { level: 1, size: 1 },
+        undefined,
+        undefined,
+        floor,
+      );
+      return snapshot(realm).props > 0;
+    });
+    expect(bossFloors.length).toBeGreaterThan(0);
+  });
+
+  it('puts an ambush back as the same ambush', () => {
+    const { realms, downed } = rig('realm-wipe:ambush');
+    const realm = realms.open(ENCOUNTER_SITE, 'party-a', { level: 1, size: 1 }, Ground.Upland);
+    const before = snapshot(realm);
+    expect(before.monsters.length).toBeGreaterThan(0);
+
+    wipe(realm, downed);
+
+    expect(snapshot(realm).monsters).toEqual(before.monsters);
+  });
+
+  it('leaves a world with nothing to put back on the engine`s own default', () => {
+    // THE OVERWORLD AND THE TOWNS HAND THEIR WORLD NOTHING: no hostiles live
+    // there, and a fixture built with `createWorld(seed)` keeps the default it
+    // has always had.
+    const { realms } = rig('realm-wipe:overworld');
+    expect(realms.overworld.world.reseedFloor).toBeUndefined();
+    for (const site of SITES.values()) {
+      if (site.kind === RealmKind.Inner) continue;
+      expect(realms.open(site, 'party-a').world.reseedFloor, site.id).toBeUndefined();
+    }
+  });
+});

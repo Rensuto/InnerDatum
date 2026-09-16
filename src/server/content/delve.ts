@@ -947,6 +947,25 @@ export function forArea(spec: DelveSpec, map: AuthoredMap): DelveSpec {
   };
 }
 
+/**
+ * WHAT A CALL TO `populateDelve` PUTS DOWN.
+ *
+ * `Everything` builds a floor: its roster, its boss and the boss's dressing,
+ * the litter, the lore note and the traps.
+ *
+ * `Hostiles` is what a party wipe puts back (`World.reseedFloor`): the roster
+ * and the boss, rolled again, and nothing else. `resetFloor` has already taken
+ * every item off the floor so that losing is not a consolation prize, and it
+ * leaves the traps and the props where they are because they are the floor.
+ * Re-running the rest would hand the loot back and lay a second set of traps and
+ * a second ring of props over the first.
+ */
+export const PopulationScope = {
+  Everything: 'everything',
+  Hostiles: 'hostiles',
+} as const;
+export type PopulationScope = (typeof PopulationScope)[keyof typeof PopulationScope];
+
 export function populateDelve(
   world: World,
   map: AuthoredMap,
@@ -954,6 +973,8 @@ export function populateDelve(
   party: PartyStrength = LONE_BEGINNER,
   /** Which floor this is, from 1. Upstream's `level.level`. */
   floor = 1,
+  /** A whole floor, or only what a party wipe puts back. See `PopulationScope`. */
+  scope: PopulationScope = PopulationScope.Everything,
 ): number {
   const door = map.spawns[0] ?? { x: Math.floor(map.view.w / 2), y: Math.floor(map.view.h / 2) };
   const candidates = roomFor(world, door);
@@ -1194,6 +1215,10 @@ export function populateDelve(
        * delve in the game. Forking LAST, after every other placement, also means
        * no earlier change can move the state this child derives from.
        */
+      // A WIPE PUTS THE BOSS BACK AND NOT ITS ROOM. The props are the floor and
+      // `resetFloor` leaves them standing; a second pass would ring the boss
+      // twice. Everything after this is the floor too. See `PopulationScope`.
+      if (scope === PopulationScope.Hostiles) return placed;
       const dressing = world.rng.fork('delve.dressing');
       const taken = new Set<string>([`${String(far.x)},${String(far.y)}`]);
       for (const propId of PROP_IDS) {
@@ -1218,6 +1243,11 @@ export function populateDelve(
       }
     }
   }
+
+  // ─── WHAT A WIPE PUTS BACK ENDS HERE ───
+  // Everything below is the floor rather than what stands on it: the litter,
+  // the lore note and the traps. See `PopulationScope`.
+  if (scope === PopulationScope.Hostiles) return placed;
 
   // ─── AND SOMETHING ON THE FLOOR ───
   // Rolled off the loot stream through the ordinary generator, so litter is the

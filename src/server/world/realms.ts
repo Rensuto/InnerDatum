@@ -70,6 +70,7 @@ import { ActorKind } from '../../shared/protocol.ts';
 // import disappearing is the proof there is no reader left asking the narrower
 // question.
 import {
+  PopulationScope,
   delveLevel,
   floorsOf,
   forArea,
@@ -679,7 +680,9 @@ export type SiteDef = {
    */
   readonly lighting?: SiteLighting;
   /**
-   * Seeds the population. Called once, after the world exists.
+   * Seeds the population. Called once, after the world exists — and again with
+   * `PopulationScope.Hostiles` every time a party wipes on the floor, through
+   * `World.reseedFloor`, which is how a floor comes back as itself.
    *
    * MUST BE ABSENT ON A `Common` SITE. Enforced at construction rather than
    * documented, because the failure is silent: a town with one monster in it
@@ -692,6 +695,8 @@ export type SiteDef = {
     party: PartyStrength,
     lead?: MonsterTemplate,
     floor?: number,
+    /** A whole floor, or only what a party wipe puts back. */
+    scope?: PopulationScope,
   ) => void;
 
   /**
@@ -880,13 +885,15 @@ export function createRealms(opts: RealmsOptions): Realms {
       readonly lingerMs?: number;
       readonly lighting?: SiteLighting;
       readonly floor?: number;
+      /** How the floor is put back after a party wipe. See `World.reseedFloor`. */
+      readonly reseedFloor?: (world: World) => void;
     },
   ): Realm => {
     // THE REALM'S OWN ID, THREADED IN. Everything minted inside this world
     // prefixes with it, so two parties in the same delve stop sharing
     // monster ids — and therefore stop sharing the process-wide status,
     // Downed and talent tables that key off them. See `World.id`.
-    const world = createWorld(seedFor(opts.seed, id), map, id, extra.lighting);
+    const world = createWorld(seedFor(opts.seed, id), map, id, extra.lighting, extra.reseedFloor);
     const engine = opts.engineFor(world);
     const realm: Realm = {
       id,
@@ -1106,6 +1113,12 @@ export function createRealms(opts: RealmsOptions): Realms {
       floor,
       lingerMs: site.lingerMs,
       ...(site.lighting === undefined ? {} : { lighting: site.lighting }),
+      // THE SAME CALL AS THE LINE BELOW, SCOPED TO HOSTILES: the same site, map,
+      // party, lead and floor, so a wipe puts back this floor's own population
+      // rather than the engine's default test encounter. See `World.reseedFloor`.
+      reseedFloor: (world: World): void => {
+        site.populate?.(world, builtMap, party, lead, floor, PopulationScope.Hostiles);
+      },
     });
     site.populate?.(realm.world, builtMap, party, lead, floor);
     /**
@@ -1549,9 +1562,12 @@ const AUTHORED_SITES: readonly (readonly [string, SiteDef])[] = (
             party: PartyStrength,
             _lead?: MonsterTemplate,
             floor = 1,
+            scope?: PopulationScope,
           ): void => {
             const spec = specFor(id);
-            if (spec !== undefined) populateDelve(world, built, forArea(spec, built), party, floor);
+            if (spec !== undefined) {
+              populateDelve(world, built, forArea(spec, built), party, floor, scope);
+            }
           },
         }
       : {}),
@@ -1671,9 +1687,12 @@ const REDACTED_SITES: readonly (readonly [string, SiteDef])[] = [
           party: PartyStrength,
           _lead?: MonsterTemplate,
           floor = 1,
+          scope?: PopulationScope,
         ): void => {
           const spec = redactedSpec(originalId);
-          if (spec !== undefined) populateDelve(world, built, forArea(spec, built), party, floor);
+          if (spec !== undefined) {
+            populateDelve(world, built, forArea(spec, built), party, floor, scope);
+          }
         },
       },
     ] as const,
@@ -1719,10 +1738,11 @@ const UNDERMOST_SITE: SiteDef = {
     party: PartyStrength,
     _lead?: MonsterTemplate,
     floor = 1,
+    scope?: PopulationScope,
   ): void => {
     const spec = specFor(UNDERMOST_SITE_ID);
     if (spec === undefined || floor >= floorsOf(spec)) return;
-    populateDelve(world, built, forArea(spec, built), party, floor);
+    populateDelve(world, built, forArea(spec, built), party, floor, scope);
   },
 };
 

@@ -308,7 +308,9 @@ export type TurnEngineOptions = {
    */
   readonly log?: TurnLogger;
   /**
-   * PUT THE FLOOR'S MONSTERS BACK. Defaults to `seedTestEncounter`.
+   * PUT THE FLOOR'S MONSTERS BACK. Defaults to the world's own
+   * (`World.reseedFloor`, which a realm sets to re-run whatever built it), and
+   * to `seedTestEncounter` for a world that has none.
    *
    * A SEAM RATHER THAN A HARD-WIRED CALL, for the reason M5 is about to make
    * obvious: today "the floor" is three hand-placed monsters in
@@ -1741,7 +1743,7 @@ export function createTurnEngine(opts: TurnEngineOptions): ReapingTurnEngine {
   let owedTurn = false;
   const talents = opts.talents ?? EMPTY_TALENT_BOOK;
   const log = opts.log ?? SILENT_LOGGER;
-  const reseedFloor = opts.reseedFloor ?? seedTestEncounter;
+  const reseedFloor = opts.reseedFloor ?? world.reseedFloor ?? seedTestEncounter;
 
   /**
    * THE GAME TURN EACH PARTY LAST WIPED ON. The churn alarm, and nothing else.

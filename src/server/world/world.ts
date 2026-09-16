@@ -324,6 +324,28 @@ export type World = {
    */
   readonly id: string;
   /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * HOW THIS FLOOR IS PUT BACK WHEN A PARTY WIPES ON IT.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `resetFloor` reaps every monster and then calls the turn engine's
+   * `reseedFloor`, which defaulted to `seedTestEncounter` — three hand-placed
+   * Alderbrook monsters at the test map's coordinates. No realm engine passed
+   * one, so a party that wiped in ANY delve stood back up among whichever of
+   * those three landed on walkable ground, and the floor's own population never
+   * came back. On a floor with a boss that deleted the boss.
+   *
+   * A REALM SETS THIS, because only the realm knows what built its floor: the
+   * site, the map, the party it was built for and which floor it is
+   * (`realms.ts#open`). The engine reads it when no `reseedFloor` is passed, so
+   * every engine built over a realm's world gets it — production's, and every
+   * test's and probe's — rather than only the ones that remember to forward it.
+   *
+   * ABSENT on a world with nothing to put back: the overworld, a town, and
+   * every fixture built with `createWorld(seed)`.
+   */
+  readonly reseedFloor?: (world: World) => void;
+  /**
    * The authoritative level. Mutable in type because M4 digs doors into it; in
    * M1 and M2 nothing writes to it after construction.
    */
@@ -796,6 +818,8 @@ export function createWorld(
   id = '',
   /** How its site is lit. Absent is lit everywhere. See `shared/light.ts`. */
   lighting?: SiteLighting,
+  /** How its floor is put back after a party wipe. See `World.reseedFloor`. */
+  reseedFloor?: (world: World) => void,
 ): World {
   const authored = map ?? makeTestMap();
   const level = authored.view;
@@ -1445,6 +1469,7 @@ export function createWorld(
 
   const world: World = {
     id,
+    ...(reseedFloor === undefined ? {} : { reseedFloor }),
     level,
     lit,
     memoryOf,
