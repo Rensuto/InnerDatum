@@ -256,3 +256,7 @@ deploy/Caddyfile
 # Committed once by accident when worldgen.py was imported rather than run.
 __pycache__/
 *.pyc
+
+# Git worktrees checked out by agent tooling. Whole copies of this repository,
+# never content of it.
+.claude/

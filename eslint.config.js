@@ -244,6 +244,12 @@ export default tseslint.config(
       'logs/**',
       'reference/**',
       'content/**',
+      // Git worktrees that agent tooling checks out under .claude/, each a whole
+      // copy of this repository, and docs/, which is gitignored local planning.
+      // Neither is this project's source. Fifteen worktrees there ran the lint
+      // step of `npm run check` out of memory and stopped a deploy.
+      '.claude/**',
+      'docs/**',
       '**/*.d.ts',
     ],
   },
