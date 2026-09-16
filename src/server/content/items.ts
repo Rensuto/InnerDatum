@@ -783,33 +783,30 @@ export type ItemUse = {
  */
 /**
  * ═══════════════════════════════════════════════════════════════════════════
- * THE ICONS AN ITEM MAY NAME. 22 of them are the `items/` set; the 23rd is not.
+ * THE ICONS AN ITEM MAY NAME, AND EVERY ONE OF THEM IS AN ITEM PICTURE NOW.
  * ═══════════════════════════════════════════════════════════════════════════
  *
- * `icon_active_alchemic_vial` IS AN ABILITY ICON, AND THAT IS DELIBERATE.
+ * ═══ THE DRAUGHT WORE A TALENT'S ICON UNTIL ITS OWN VIAL WAS DRAWN ═══
+ * The Draught of Mending shipped as `icon_active_alchemic_vial`, the icon of the
+ * Alchemist's vial talent, and this note called that deliberate. It was a fair
+ * stopgap: the rule this list enforces is that the sprite RESOLVES, not that the
+ * id begins with `item_`, and the ability icon resolved and was already loaded
+ * for the hotbar. Art is not committed to this repository, so the alternative
+ * was naming a file nobody had drawn.
  *
- * The rule this list enforces is *"the sprite resolves, or the player sees a
- * violet box on every frame for the rest of the session"* — not *"the id begins
- * with `item_`"*. The vial satisfies it on both counts that matter:
+ * The standing commission (content/art-requests.ts) asked for the item's own
+ * picture, and `item_infusion_vial` was delivered to `items/commission/` at
+ * 64x64. The draught wears it; the talent keeps `icon_active_alchemic_vial`
+ * (talents/alchemic_vial.ts). `item_` is already in `NEEDED_ASSET_PREFIXES`
+ * (client/main.ts), so the client loads it with every other item icon, and a
+ * bare clone draws the item's initials in its place (one letter in the bag, two
+ * on the hotbar), as it does for every item.
  *
- *   IT EXISTS. `docs/assets-needed.md:290` names the exact file
- *     (`assets/ui/icons/abilities/active/icon_active_alchemic_vial.png`) and
- *     `docs/art-pipeline.md:322` shows it resolved in a manifest. Both are
- *     committed; the working tree is explicitly NOT the cross-check.
- *   IT LOADS. `icon_active_` is in `NEEDED_ASSET_PREFIXES` (client/main.ts), so
- *     the family is fetched for the hotbar already and the bag costs nothing.
- *
- * WHY NOT DRAW A NEW ONE: art is not committed to this repository and cannot be
- * added from here. Declaring `item_draught_mending.png` as required would put a
- * violet box in front of the people playing tonight in exchange for a filename.
- * The vial is the picture a draught should have anyway — the Alchemist's own
- * talent uses it — and a bought vial looking like a mixed one is a join rather
- * than a collision.
- *
- * THE DUPLICATE-ICON RULE IS NOT RELAXED, which is why there is one draught and
- * not a ladder of three: a second consumable would have to share this picture,
- * and two items that are the same image on a shop shelf is a player squinting at
- * a tooltip to tell their healing apart.
+ * THE DUPLICATE-ICON RULE WAS NEVER RELAXED, which is why there is still one
+ * draught and not a ladder of three: `validateItems` refuses two items sharing
+ * a picture, because two identical images on a shop shelf leave a player
+ * squinting at a tooltip to tell their healing apart. A second draught needs a
+ * second vial drawn first.
  */
 /**
  * WHAT THE BRASS RING'S CUT IS WORTH PER TURN.
@@ -824,13 +821,13 @@ export type ItemUse = {
 const RING_BLEED = 2;
 
 export const KNOWN_ICON_IDS: readonly string[] = Object.freeze([
-  'icon_active_alchemic_vial',
   'item_archivists_mantle',
   'item_bailiffs_hook',
   'item_bailiffs_maul',
   'item_coroners_apron',
   'item_evidence_belt',
   'item_handlers_gloves',
+  'item_infusion_vial',
   'item_inquisitors_breeches',
   'item_inquisitors_cipher',
   'item_inquisitors_cowl',
@@ -1242,14 +1239,18 @@ const GENERIC_ITEMS: readonly Item[] = [
  */
 const DRAUGHTS: readonly Item[] = Object.freeze([
   /**
-   * ONE, AND NOT A LADDER OF THREE, BECAUSE THERE IS ONE VIAL ON DISK.
+   * ONE, AND NOT A LADDER OF THREE, BECAUSE THERE IS ONE DRAUGHT VIAL DRAWN.
    *
    * A lesser and a greater draught is the obvious shape and it is the wrong one
-   * to build today: both would carry `icon_active_alchemic_vial`, and two items
-   * that are the same picture on a shop shelf is a player squinting at a tooltip
-   * to tell their healing apart. `assets.test.ts` says the same thing as a rule
-   * — every item has its own icon — and a rule relaxed for a convenience is a
-   * rule that stops meaning anything.
+   * to build today: both would carry `item_infusion_vial`, and two items that
+   * are the same picture on a shop shelf is a player squinting at a tooltip to
+   * tell their healing apart. `validateItems` says the same thing as a rule —
+   * every item has its own icon — and a rule relaxed for a convenience is a rule
+   * that stops meaning anything.
+   *
+   * (This read `icon_active_alchemic_vial` while the draught borrowed the vial
+   * talent's icon; see the note above `KNOWN_ICON_IDS`. The argument did not
+   * change with the picture.)
    *
    * The tier ladder arrives with the second vial. Until then the shop's job is
    * to make this one reliably buyable, which is what a themed shelf is for.
@@ -1258,7 +1259,7 @@ const DRAUGHTS: readonly Item[] = Object.freeze([
     id: 'item_draught_mending',
     name: 'Draught of Mending',
     // NO SLOT: it is drunk, not worn. See `Item.slot`.
-    icon: 'icon_active_alchemic_vial',
+    icon: 'item_infusion_vial',
     // UNCOMMON, matching upstream's rarity 15 against a common's 3-6. A party
     // that can buy one every visit has no decision to make about drinking it.
     tier: 'uncommon',

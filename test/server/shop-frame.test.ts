@@ -71,6 +71,34 @@ describe('projectShop', () => {
     }
   });
 
+  it('hands the apothecary’s draught to the wire wearing its own vial', () => {
+    /**
+     * THE JOIN, FROM THE REAL SHELF. The row above compares each icon with
+     * `resolveItem`'s, which stays true whatever the catalogue names — so it
+     * could not tell the Draught of Mending wearing its own picture from the
+     * draught still borrowing the Alchemist's talent icon. This drives
+     * Ashwick's shelf the way the gateway does (`catchUpShop`, then
+     * `projectShop` over the stock ids) and pins the id the client will look
+     * up. `items.test.ts` pins the catalogue; this pins what reaches a player.
+     */
+    const ashwick = createRealms({
+      seed: 'frame-vial',
+      engineFor: (world) => createTurnEngine({ world }),
+    })
+      .all()
+      .find((realm) => realm.siteId === 'site:ashwick_row');
+    if (ashwick === undefined) throw new Error('no Ashwick realm');
+    catchUpShop(ashwick, 1);
+    const stock = ashwick.shop?.stock.map((slot) => slot.id) ?? [];
+
+    const msg = projectShop(ashwick.name, stock, 1);
+    expect(msg.stock.length, 'the apothecary put nothing out').toBeGreaterThan(0);
+    for (const row of msg.stock) {
+      expect(row.itemId).toBe('item_draught_mending');
+      expect(row.icon).toBe('item_infusion_vial');
+    }
+  });
+
   it('keeps the shop’s own order — two identical coats are two rows', () => {
     // `shop_buy` names an id and the handler takes the FIRST match by index, so
     // the wire order and the shelf order have to be the same order or the

@@ -2168,12 +2168,6 @@ export const ITEM_ART_COMMISSION: readonly ArtRequest[] = [
   ),
   cell({ id: 'item_torque' }, 'any', `${OBJECTS}/torques.lua`, 'A twisted metal torque.'),
   cell(
-    { id: 'item_infusion_vial' },
-    'any',
-    `${OBJECTS}/scrolls.lua`,
-    'A corked vial of glowing infusion.',
-  ),
-  cell(
     { id: 'item_rune_slip' },
     'any',
     `${OBJECTS}/scrolls.lua`,

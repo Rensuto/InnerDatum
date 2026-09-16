@@ -266,6 +266,18 @@ describe('a player can buy healing and drink it', () => {
     expect(row, 'the draught is not in the inventory frame at all').toBeDefined();
     expect(row?.['slot'], 'a draught with a slot would be sent to `equip`').toBeUndefined();
     /**
+     * …AND IT WEARS ITS OWN VIAL IN THE BAG, NOT ONLY ON THE SHELF. The shelf row
+     * and the bag row are copied from the catalogue by two different functions
+     * (`projectShop` and `toItemView`), and shop-frame.test.ts pins only the
+     * first. This row is also the hotbar's picture: binding the draught to a slot
+     * copies `icon` off the carried row (main.ts `bindItemSlot`). Before the
+     * standing commission drew `item_infusion_vial`, the draught borrowed the
+     * Alchemist's talent icon.
+     */
+    expect(row?.['icon'], 'the bag shows some other picture for the draught').toBe(
+      'item_infusion_vial',
+    );
+    /**
      * …AND THE ABSENCE HAS TO MEAN SOMETHING. A frame where NOTHING carried a
      * slot would pass the assertion above while proving only that the projector
      * is broken, so this reads the same frame for a row that must have one.

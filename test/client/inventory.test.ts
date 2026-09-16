@@ -2522,7 +2522,7 @@ describe('a consumable is a thing you can read', () => {
   const DRAUGHT = {
     itemId: 'item_draught_mending',
     name: 'Draught of Mending',
-    icon: 'icon_active_alchemic_vial',
+    icon: 'item_infusion_vial',
     tier: ItemTier.Uncommon,
     desc: 'Ashwick work. Whatever is written on you, this argues with it.',
     compare: [],

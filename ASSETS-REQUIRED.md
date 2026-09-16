@@ -410,10 +410,10 @@ regenerate each file in place at the same path, then rebuild the manifest.
 | Props 64x64 | 73 | 6 | 0 |
 | Status icons 64x64 | 16 | 3 | 0 |
 
-None of these ids was drawn by the game when this round was logged (the commission is a catalogue
-until its content lands). An id that has since left `content/art-requests.ts` is drawn, so its
-entry below describes art a player sees today. Fix the effect strips first: they are 33
-of the 37 blockers, and the renderer that plays them is the next thing wired.
+An id is drawn by the game only once the content that uses it lands, and it leaves
+`content/art-requests.ts` in the same commit. So a fault below is visible to a player only if its
+id is no longer in that file; the rest are a catalogue nobody sees yet. Fix the effect strips
+first: they are 33 of the 37 blockers, and the renderer that plays them is the next thing wired.
 
 ### Shared requirements for the effect regenerations
 

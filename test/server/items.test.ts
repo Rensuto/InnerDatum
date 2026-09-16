@@ -14,6 +14,15 @@ import {
   validateItems,
 } from '../../src/server/content/items.ts';
 import { EFFECT_IDS, EffectId } from '../../src/server/content/effects.ts';
+import {
+  BOSS_ART_COMMISSION,
+  EFFECT_ART_COMMISSION,
+  ENEMY_ART_COMMISSION,
+  ITEM_ART_COMMISSION,
+  PROP_ART_COMMISSION,
+  STATUS_ICON_ART_COMMISSION,
+  TOWNSFOLK_ART_COMMISSION,
+} from '../../content/art-requests.ts';
 import { SLOT_ORDER as WIRE_SLOT_ORDER } from '../../src/shared/protocol.ts';
 import type { Item } from '../../src/server/content/items.ts';
 
@@ -45,11 +54,10 @@ import type { Item } from '../../src/server/content/items.ts';
  * client's screen, on every frame, for the rest of the session.
  */
 const MANIFEST_ITEM_ICONS: readonly string[] = [
-  // THE 23RD, AND IT IS AN ABILITY ICON. See the long note on `KNOWN_ICON_IDS`:
-  // the rule is that the sprite RESOLVES, and this one is named in
-  // docs/assets-needed.md:290 and docs/art-pipeline.md:322 and is loaded by the
-  // `icon_active_` prefix the hotbar already pulls.
-  'icon_active_alchemic_vial',
+  // ═══ THE DRAUGHT'S OWN VIAL, FROM THE STANDING COMMISSION ═══
+  // This was `icon_active_alchemic_vial`, the Alchemist's talent icon, which the
+  // draught borrowed until `items/commission/item_infusion_vial.png` was drawn.
+  'item_infusion_vial',
   // ═══ THE ELEVEN COMMISSIONS, DELIVERED ═══
   // Weapons, belt, gloves, apron, the rest — authored ahead of their art under
   // `PENDING_ICON_IDS`, drawn in one pass to `items/equipment/` (64x64), and
@@ -147,8 +155,8 @@ describe('the item catalogue', () => {
     // oversight — see FORBIDDEN_IDS above; it draws the MONEY pile instead
     // (content/money.ts), which is the system that finally wanted it.
     //
-    // The 23rd ITEM is the draught, whose icon is the ability vial rather than
-    // an `item_*` file at all.
+    // The 23rd ITEM is the draught. It wore the ability vial, not an `item_*`
+    // file at all, until the standing commission drew `item_infusion_vial`.
     //
     // ═══ AND THREE WEAPONS, THE FIRST ITEMS TO SHIP AHEAD OF THEIR ART ═══
     // `PENDING_ICON_IDS` is why they can: the renderer draws a LETTER for a
@@ -212,6 +220,29 @@ describe('the item catalogue', () => {
     // anybody moving it, which is how a commission stays open forever.
     const shipped = new Set(MANIFEST_ITEM_ICONS);
     expect(PENDING_ICON_IDS.filter((id) => shipped.has(id))).toEqual([]);
+
+    // AND NOTHING SHIPPED IS STILL ON THE STANDING COMMISSION. An id leaves
+    // content/art-requests.ts when its art lands and an item names it (that
+    // file's header) — the same hand-off as the disjointness above, one list
+    // further out. Pending ids are left alone: an item authored ahead of its art
+    // may name a picture that is still owed.
+    const commissioned = new Set(
+      [
+        TOWNSFOLK_ART_COMMISSION,
+        ENEMY_ART_COMMISSION,
+        BOSS_ART_COMMISSION,
+        EFFECT_ART_COMMISSION,
+        STATUS_ICON_ART_COMMISSION,
+        ITEM_ART_COMMISSION,
+        PROP_ART_COMMISSION,
+      ]
+        .flat()
+        .map((request) => request.id),
+    );
+    expect(
+      MANIFEST_ITEM_ICONS.filter((id) => commissioned.has(id)),
+      'drawn and worn, but still commissioned',
+    ).toEqual([]);
   });
 
   it('references neither the iron ingot nor any of the four aliased weapon ids', () => {
