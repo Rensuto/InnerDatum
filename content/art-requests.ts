@@ -2328,12 +2328,6 @@ export const PROP_ART_COMMISSION: readonly ArtRequest[] = [
     'The same box, open and empty.',
   ),
   cell(
-    { id: 'prop_cave_way_up' },
-    'The intro cave',
-    `${ZONES}/reknor-escape/zone.lua`,
-    'A rough stair cut up through the rock toward daylight.',
-  ),
-  cell(
     { id: 'prop_trap_pressure_plate' },
     'any delve',
     `${TRAPS}/elemental.lua`,

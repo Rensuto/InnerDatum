@@ -615,6 +615,22 @@ const NEEDED_ASSET_PREFIXES = [
    * so `isNeeded` never resolves one.
    */
   'prop_eldritch_',
+  /**
+   * THE WAY OUT OF THE UNDERMOST — the cave's own stair, sent as the exit's
+   * `SiteView.landmark` on that one floor (server/net/gateway.ts `markersFor`).
+   *
+   * VERIFIED PRESENT before adding, as the families above were: an id in
+   * `client/public/assets/manifest.placeholders.json` AND a 64x64 PNG at
+   * `client/public/assets/props/commission/prop_cave_way_up.png`.
+   *
+   * ONE EXACT ID, as `ui_icon_speaking` is, NOT A `prop_cave_` FAMILY: it is the
+   * only such id in the manifest, and this array lists what was verified rather
+   * than whatever lands under the same stem next. A miss costs nothing:
+   * `paintSites` prefers the landmark through `sprites.sprite()` and draws the
+   * stair marker without it. test/client/assets.test.ts pins this entry AND reads
+   * the gateway's landmark literals against this list, so the two cannot drift.
+   */
+  'prop_cave_way_up',
 ] as const;
 
 /**

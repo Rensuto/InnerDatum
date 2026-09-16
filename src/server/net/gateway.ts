@@ -277,6 +277,7 @@ import {
   EXIT_SITE_ID,
   STAIRS_DOWN_SITE_ID,
   TIDE_MS,
+  UNDERMOST_SITE_ID,
   floorsOfSite,
   isShared,
   stairsDownOf,
@@ -7941,7 +7942,31 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       // AND THE WAY OUT OF THE ZONE, where upstream puts the exit of its last level.
       if (siteId === EXIT_SITE_ID) {
         const [ex, ey] = cell.split(',');
-        return [{ x: Number(ex), y: Number(ey), marker: 'stair', name: 'The way out' }];
+        return [
+          {
+            x: Number(ex),
+            y: Number(ey),
+            marker: 'stair',
+            name: 'The way out',
+            /**
+             * THE CAVE'S OWN STAIR, on the Undermost's last floor and nowhere
+             * else. A landmark is a preference the client falls back from
+             * (`paintSites`), so `marker` stays: a clone with no art, or a host
+             * the picture has not reached, still draws the stair family marker.
+             *
+             * KEYED ON THE SITE, NOT ON `exit:out`. Upstream's way out of the
+             * Escape from Reknor is that zone's own grid on the stair base
+             * (data/zones/reknor-escape/grids.lua:22, IRON_COUNCIL with
+             * `base = "DOWN"` and a name of its own), not a look every zone's
+             * exit shares. The Undermost is the only map that places an exit
+             * today, so the next zone to hand-draw a last level keeps the plain
+             * stair until it has a picture of its own — pinned from both sides
+             * in test/server/undermost.test.ts, since one map use alone cannot
+             * tell this guard from no guard.
+             */
+            ...(realm.siteId === UNDERMOST_SITE_ID ? { landmark: 'prop_cave_way_up' } : {}),
+          },
+        ];
       }
       const def = SITES.get(siteId);
       if (def === undefined) return [];

@@ -37,6 +37,8 @@ import type { TileXY } from '../../src/shared/coords.ts';
  * premise is waking deep in a cave and climbing to the surface.
  */
 const FRAME_TIMEOUT_MS = 4_000;
+/** A cave-shaped delve of several floors that is not the Undermost. */
+const UNDERWORKS = 'site:underworks';
 
 function makeRealms(seed = 'undermost'): Realms {
   const downed = createDownedState();
@@ -312,14 +314,119 @@ describe('the Undermost, over the wire', () => {
     const marker = (map?.['sites'] as Record<string, unknown>[] | undefined)?.find(
       (m) => m['x'] === exit.x && m['y'] === exit.y,
     );
+    // AND IT IS THE CAVE'S OWN STAIR, not the generic one: the landmark is a
+    // preference the client falls back from, so `marker` stays beside it.
     expect(marker, 'the way out is not on the map').toMatchObject({
       marker: 'stair',
       name: 'The way out',
+      landmark: 'prop_cave_way_up',
     });
+    // AND ON THE EXIT ALONE. This floor's arrival thresholds are also named "The
+    // way out" (`markersFor`'s `exits`, a `gate`), but on any floor after the
+    // first `leaveRealm` takes them to the previous floor, not to daylight. The
+    // case above finds the exit's marker and stops, so the cave stair painted on
+    // a threshold as well would pass it. Where it is drawn, not merely that it is.
+    const sites = (map?.['sites'] as Record<string, unknown>[] | undefined) ?? [];
+    expect(
+      sites.some(
+        (m) => m['marker'] === 'gate' && last.spawns.some((s) => s.x === m['x'] && s.y === m['y']),
+      ),
+      'the last floor draws no threshold, so the check below has nothing to refuse',
+    ).toBe(true);
+    expect(
+      sites
+        .filter((m) => m['landmark'] === 'prop_cave_way_up')
+        .map((m) => ({ x: m['x'], y: m['y'] })),
+      'the cave stair is drawn somewhere other than the way out',
+    ).toEqual([{ x: exit.x, y: exit.y }]);
     await stepOnto(client, exit);
     expect(realmOf(client).id, 'the exit did not lead out').toBe(overworld.id);
     const home = overworld.world.getActor(client.actorId);
     expect({ x: home?.x, y: home?.y }, 'did not come out where they went in').toEqual(door);
+  });
+
+  /**
+   * THE CAVE STAIR IS THE UNDERMOST'S, NOT EVERY ZONE'S.
+   *
+   * `exit:out` has exactly one map use today (the Undermost's last floor), so the
+   * case above cannot tell "the Undermost's way out wears the cave stair" from
+   * "every way out does": delete the site guard in `markersFor` and it still
+   * passes. This is the other half: a way out on a floor of some OTHER zone
+   * keeps the stair family marker and carries no landmark.
+   *
+   * THE UNDERWORKS, BECAUSE IT IS A CAVE TOO — `SiteShape.Cave` in soot and crag,
+   * what the Undermost's generated floors are made of (world/realms.ts). And ON
+   * ITS LAST FLOOR, where upstream puts an exit and where the Undermost's is. So
+   * a guard reading "a cave", "the last floor" or "an inner realm" instead of
+   * "the Undermost" fails here as well as a guard deleted outright.
+   *
+   * THE FLOOR IS PREPARED BEFORE THE PARTY ARRIVES, through the same idempotent
+   * `open` the stair calls, keyed on the party the gateway itself minted at the
+   * door. So the exit is on the map in the `realm` frame the last stair sends,
+   * and nothing here reaches past the wire to read a marker.
+   */
+  it('draws any other zone`s way out as the plain stair, with no cave landmark', async () => {
+    const client = await join();
+    const overworld = harness.realms.overworld;
+    const door = [...overworld.sites].find(([, id]) => id === UNDERWORKS);
+    if (door === undefined) throw new Error('no door to the Underworks');
+    const [dx, dy] = door[0].split(',').map(Number);
+    if (dx === undefined || dy === undefined) throw new Error('a bad door cell');
+    await stepOnto(client, { x: dx, y: dy });
+
+    const first = realmOf(client);
+    expect(first.siteId, 'never went in').toBe(UNDERWORKS);
+    const floors = floorsOfSite(UNDERWORKS);
+    expect(floors, 'a one-floor delve has no stair to arrive by').toBeGreaterThan(1);
+    const underworks = SITES.get(UNDERWORKS);
+    if (underworks === undefined || first.partyId === undefined) {
+      throw new Error('no Underworks, or a floor with no party');
+    }
+    const last = harness.realms.open(
+      underworks,
+      first.partyId,
+      undefined,
+      undefined,
+      undefined,
+      floors,
+    );
+    // ANY OPEN CELL that is neither a threshold nor already a site.
+    const exit = ((): TileXY => {
+      const level = last.world.level;
+      for (let y = 0; y < level.h; y += 1) {
+        for (let x = 0; x < level.w; x += 1) {
+          if (!canWalk(level, x, y) || last.sites.has(`${String(x)},${String(y)}`)) continue;
+          if (last.spawns.some((t) => t.x === x && t.y === y)) continue;
+          return { x, y };
+        }
+      }
+      throw new Error('no open ground on the last floor');
+    })();
+    (last.sites as Map<string, string>).set(`${String(exit.x)},${String(exit.y)}`, EXIT_SITE_ID);
+
+    for (let floor = 1; floor < floors; floor += 1) {
+      const here = realmOf(client);
+      expect(here.floor).toBe(floor);
+      clear(here);
+      const stairs = stairsDownOf(here);
+      if (stairs === null) throw new Error(`floor ${String(floor)} has no stair`);
+      await stepOnto(client, stairs);
+    }
+    expect(realmOf(client).id, 'the stairs did not lead to the prepared floor').toBe(last.id);
+
+    const map = [...client.frames]
+      .reverse()
+      .find((f) => (f['t'] === 'sites' || f['t'] === 'realm') && Array.isArray(f['sites']));
+    const marker = (map?.['sites'] as Record<string, unknown>[] | undefined)?.find(
+      (m) => m['x'] === exit.x && m['y'] === exit.y,
+    );
+    expect(marker, 'the way out is not on the map').toMatchObject({
+      marker: 'stair',
+      name: 'The way out',
+    });
+    expect(marker, 'another zone`s way out wears the Undermost`s cave stair').not.toHaveProperty(
+      'landmark',
+    );
   });
 });
 

@@ -290,7 +290,35 @@ describe('the fillRect overlays stay art-free', () => {
       // placed today and the other three wait for the machinery their own
       // metadata asks for (see src/shared/props.ts).
       'prop_eldritch_',
+      // THE WAY OUT OF THE UNDERMOST. One exact id rather than a `prop_cave_`
+      // family, verified as a manifest row and a PNG under props/commission/
+      // before it was listed. A miss draws the stair marker it replaces.
+      'prop_cave_way_up',
     ]);
+  });
+
+  it('loads every landmark the gateway names by literal', () => {
+    /**
+     * THE JOIN THE PIN ABOVE CANNOT SEE. The server sends `SiteView.landmark` as
+     * an id and `paintSites` asks the sprite source for it, so a landmark the
+     * load filter does not admit misses on EVERY machine, art installed or not,
+     * and quietly draws the stair marker it was meant to replace. The pin above
+     * holds main.ts's half and test/server/undermost.test.ts holds the wire's;
+     * a rename that moves one of them with its own test passes both. So read the
+     * gateway's literals and ask main.ts's list about each.
+     */
+    const gatewaySrc = codeOf('src/server/net/gateway.ts');
+    const block = /const NEEDED_ASSET_PREFIXES = \[([\s\S]*?)\] as const;/.exec(mainSrc);
+    const prefixes = [...(block?.[1] ?? '').matchAll(/'([^']+)'/g)].map((m) => m[1] ?? '');
+    const landmarks = [...gatewaySrc.matchAll(/landmark:\s*'([^']+)'/g)].map((m) => m[1] ?? '');
+    // THE CONTROL: a scan that finds nothing passes the filter below forever.
+    expect(landmarks, 'the gateway names no landmark literal — this join is blind').toContain(
+      'prop_cave_way_up',
+    );
+    expect(
+      landmarks.filter((id) => !prefixes.some((prefix) => id.startsWith(prefix))),
+      'these landmarks are filtered out before loading and draw the family marker instead',
+    ).toEqual([]);
   });
 
   it('keeps MarkerKind at the five members that have manifest art', () => {
