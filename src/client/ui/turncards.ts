@@ -173,6 +173,28 @@ import { HP_LOW } from '../../shared/vitals.ts';
  * than by the detail.
  */
 const PORTRAIT_PX = 32;
+/**
+ * How far a portrait may be REDUCED to fit its box. `blitReduced` defaults to 2,
+ * a cap written for faces.
+ *
+ * ═══ 4, BECAUSE A LARGE BODY IS 96x128 ═══
+ * The hostile card wears a monster's MAP sprite, and the husk, the husk elite,
+ * the eidolon and the glut are 96x128. Their half is 48x64, taller than the
+ * card, so under the default all four were refused and the card printed "TF"
+ * in the middle of the fight they were the reason for. Their quarter is 24x32:
+ * the same pixels a 48x64 body gets at a half, drawn in the same place.
+ *
+ * ═══ AND IT CANNOT QUARTER A FACE ═══
+ * `blitReduced` takes the SMALLEST factor that fits, so a higher cap only turns
+ * a refusal into a draw and never shrinks anything that fitted before. Every
+ * portrait box `drawCard` makes is 32x32 (wide) or 40x32 (compact), so a 64x64
+ * class icon always fits at a half and the 16px smudge the default guards
+ * against cannot happen on this strip. A per-sprite check that held faces at 2
+ * would be a rule no reachable box exercises, so there is none; the paint tests
+ * pin the layout instead, and a card narrowed below 32 fails there rather than
+ * smudging a face.
+ */
+const PORTRAIT_MAX_REDUCTION = 4;
 /** Authored size of every `ui_icon_turn_*`. */
 const CHIP_PX = 24;
 const CARD_BORDER = 2;
@@ -437,14 +459,14 @@ function initialsOf(name: string): string {
 /**
  * A face, or two letters.
  *
- * NEVER SCALED. A player's portrait is authored at 64x64 and lands 1:1; the
- * aggregate wears the SPRITE of the most dangerous living hostile, which is
- * 24x32 or 48x64 and is therefore bottom-centred inside the box exactly as
- * render/canvas.ts anchors a body on a tile — the feet are what say which thing
- * this is. When the card has been squeezed narrower than the art, the SOURCE
- * rectangle is cropped symmetrically instead: nearest-neighbour downscaling
- * throws away every other pixel of a pixel-art face, which is precisely the
- * resampling the backbuffer exists to prevent.
+ * SHRUNK BY A WHOLE FACTOR, NEVER CROPPED — `blitReduced`, capped at
+ * `PORTRAIT_MAX_REDUCTION`. A player's portrait is a 64x64 class icon and lands
+ * at a half. The aggregate wears the SPRITE of the most dangerous living
+ * hostile, 48x64 or, for a large body, 96x128, and lands at 24x32 either way,
+ * bottom-centred inside the box exactly as render/canvas.ts anchors a body on a
+ * tile — the feet are what say which thing this is. (This paragraph said the
+ * portrait was never scaled and was cropped when the card got narrow. Both
+ * stopped being true when `blitReduced` replaced the crop.)
  *
  * THE FALLBACK IS INITIALS, NOT A BLANK. Half the `icon_character_the_*` family
  * is uncut today (art-pipeline: watchman, inspector and the generic detective
@@ -494,7 +516,14 @@ function blitPortrait(
   // Best effort, and never the only signal: an engine without canvas filters
   // silently ignores this and the ink wash below still dims the card.
   if (tone.desaturate) ctx.filter = 'grayscale(1)';
-  const drew = blitReduced(ctx, sprites, card.portrait, box, BlitAnchor.Bottom);
+  const drew = blitReduced(
+    ctx,
+    sprites,
+    card.portrait,
+    box,
+    BlitAnchor.Bottom,
+    PORTRAIT_MAX_REDUCTION,
+  );
   ctx.restore();
   if (!drew) initials();
 }

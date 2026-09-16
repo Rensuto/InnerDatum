@@ -72,8 +72,18 @@ import type { TurnView } from '../../src/client/ui/turncards.ts';
 // Fixtures
 // ---------------------------------------------------------------------------
 
-/** Three detectives and a husk, so the strip has a hostile side to put last. */
-function room(): { readonly world: World; readonly cast: readonly Actor[] } {
+const HUSK = { name: 'Index Husk', sprite: 'enemy_index_husk_s' } as const;
+
+/**
+ * Three detectives and a husk, so the strip has a hostile side to put last.
+ *
+ * `hostile` swaps the husk's body for another one, which is how the portrait
+ * tests put a 48x64 body in the same seat as the 96x128 husk.
+ */
+function room(hostile: { readonly name: string; readonly sprite: string } = HUSK): {
+  readonly world: World;
+  readonly cast: readonly Actor[];
+} {
   const world = createWorld('turncards');
   const cast = [
     world.addPlayer('actor_a', 'Dalt'),
@@ -81,8 +91,8 @@ function room(): { readonly world: World; readonly cast: readonly Actor[] } {
     world.addPlayer('actor_c', 'Mo'),
   ];
   world.addMonster('mon_a', {
-    name: 'Index Husk',
-    sprite: 'enemy_index_husk_s',
+    name: hostile.name,
+    sprite: hostile.sprite,
     x: 8,
     y: 2,
     profile: AiProfile.MeleeChaser,
@@ -732,5 +742,199 @@ describe('the card wearing your own face', () => {
     const texts = paintedTexts(view(frame, null, BUDGET));
     expect(texts).toContain('DONE');
     expect(texts.filter((t) => /\d+AP \d+MP/.test(t))).toHaveLength(0);
+  });
+});
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ *        A LARGE HOSTILE KEEPS ITS FACE, AND A PLAYER'S FACE STAYS A FACE
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * The hostile card wears a monster's MAP sprite, and four of the Index's bodies
+ * — the husk, the husk elite, the eidolon and the glut — are 96x128. Halving
+ * that gives 48x64, which is taller than any card, so the card refused the
+ * sprite and printed "TF" for the very thing the party was fighting. The cap
+ * that fixes it must not reach a player's 64x64 face, so both halves are here.
+ *
+ * THE SIZES ARE WRITTEN OUT, not read from disk. The PNGs are not in the
+ * repository and a clone must still pass; these are the manifest's sizes for
+ * the ids named, so a card is fed exactly what a deployment feeds it.
+ */
+type SpriteSourceArg = Parameters<typeof drawTurnCards>[0]['sprites'];
+
+/** Each image is tagged with its id, so a recorded `drawImage` says what it drew. */
+function sized(sizes: Readonly<Record<string, readonly [number, number]>>): SpriteSourceArg {
+  return {
+    sprite: (id: string) => {
+      const size = sizes[id];
+      if (size === undefined) return undefined;
+      return { id, image: { id } as unknown as HTMLImageElement, w: size[0], h: size[1] };
+    },
+  };
+}
+
+/** The destination rectangle of every blit of `id`, as `[x, y, w, h]`. */
+function blitsOf(ops: readonly PaintOp[], id: string): readonly (readonly unknown[])[] {
+  return ops.flatMap((op) =>
+    op.kind === 'drawImage' && (op.args[0] as { readonly id?: unknown }).id === id
+      ? [op.args.slice(1)]
+      : [],
+  );
+}
+
+function paint(v: TurnView, sprites: SpriteSourceArg, width: number): readonly PaintOp[] {
+  const ops: PaintOp[] = [];
+  drawTurnCards({ ctx: recorder(ops), sprites, view: v, width, y: 0 });
+  return ops;
+}
+
+function textsOf(ops: readonly PaintOp[]): readonly string[] {
+  return ops.flatMap((op) => (op.kind === 'fillText' ? [String(op.args[0])] : []));
+}
+
+/**
+ * THE HOSTILE CARD'S PORTRAIT BOX, in both forms the strip has, on a strip of
+ * four cards (three detectives, then the side). Its top is band padding 3 +
+ * caret 4 + border 2 = 9, and it is 32 tall in both forms: the card is the
+ * 32px portrait plus its border.
+ *
+ *   WIDE at 960: every card is the 168 maximum, so the side's card starts at
+ *   3 + 3 x 171 = 516 and its box at 518, 32 wide.
+ *   COMPACT at 200: (194 - 9) / 4 = 46 is short of the 124 a name column
+ *   needs, so every card is the 44 floor; the side's starts at 3 + 3 x 47 =
+ *   144 and its box at 146, 40 wide (the whole interior).
+ */
+const FORMS = [
+  { form: 'wide', width: 960, box: { x: 518, y: 9, w: 32, h: 32 } },
+  { form: 'compact', width: 200, box: { x: 146, y: 9, w: 40, h: 32 } },
+] as const;
+
+/** The manifest's sizes. A 48x64 body is the ordinary case; 96x128 is the large one. */
+const BODIES = [
+  { name: 'Index Husk', sprite: 'enemy_index_husk_s', w: 96, h: 128 },
+  { name: 'Index Wraith', sprite: 'enemy_index_wraith_s', w: 48, h: 64 },
+] as const;
+
+/** The three detectives' class icons, which `projectTurn` picks from their sprites. */
+const FACES = [
+  'icon_character_the_watchman',
+  'icon_character_the_inspector',
+  'icon_character_the_alchemist',
+] as const;
+
+describe('a portrait lands at a whole fraction of its art, on both forms of the card', () => {
+  const cases = FORMS.flatMap((form) => BODIES.map((body) => ({ ...form, body })));
+
+  it.each(cases)(
+    'draws a $body.w x $body.h hostile at 24x32 on the $form card, and no letters',
+    ({ width, box, body }) => {
+      const { world, cast } = room(body);
+      const sam = cast[1];
+      if (sam === undefined) throw new Error('no cast');
+      const frame = frameFor(world, sam, barrier({ engagement: 3, whoseTurn: ['actor_b'] }));
+      const side = frame.actors.at(-1);
+      expect(side?.kind).toBe(TurnActorKind.Monsters);
+      expect(side?.portrait).toBe(body.sprite);
+
+      const ops = paint(view(frame), sized({ [body.sprite]: [body.w, body.h] }), width);
+
+      // A QUARTER OF 96x128 IS THE SAME 24x32 A 48x64 BODY GETS AT A HALF, so both
+      // rows expect one rectangle: centred across the box, on its floor. (The
+      // floor and the middle are the same row here — a 32-tall body in a 32-tall
+      // box has no slack — so this pins where it lands, not which anchor put it
+      // there.)
+      expect(blitsOf(ops, body.sprite)).toEqual([
+        [box.x + (box.w - 24) / 2, box.y + box.h - 32, 24, 32],
+      ]);
+      // THE LETTERS ARE THE REFUSAL, and they are only absent because the body
+      // drew. The same frame with no art at all must still print them, or the
+      // assertion below it could never fail.
+      expect(textsOf(paint(view(frame), NO_SPRITES, width))).toContain('TF');
+      expect(textsOf(ops)).not.toContain('TF');
+    },
+  );
+
+  it.each(FORMS)(
+    'halves every 64x64 face on the $form card and never quarters one',
+    ({ width }) => {
+      /**
+       * ═══ WHY THE CAP OF 4 CANNOT SMUDGE A FACE ═══
+       * `blitReduced` takes the smallest factor that fits, and every portrait box
+       * this layout makes is at least 32 square, so a 64x64 icon always fits at a
+       * half and the 4 is never reached. That is a property of the LAYOUT, not of
+       * the cap. These two rows pin the faces on the strip this file already
+       * paints; the sweep below is what fails if a narrower card ever makes it
+       * untrue on any other, rather than a 16px face quietly shipping.
+       */
+      const { world, cast } = room();
+      const sam = cast[1];
+      if (sam === undefined) throw new Error('no cast');
+      const frame = frameFor(world, sam, barrier({ engagement: 3, whoseTurn: ['actor_b'] }));
+      expect(frame.actors.map((card) => card.portrait)).toEqual([...FACES, HUSK.sprite]);
+
+      const sizes = Object.fromEntries(FACES.map((id) => [id, [64, 64] as const]));
+      const ops = paint(view(frame), sized(sizes), width);
+
+      for (const id of FACES) {
+        expect(
+          blitsOf(ops, id).map((rect) => rect.slice(2)),
+          id,
+        ).toEqual([[32, 32]]);
+      }
+    },
+  );
+
+  it('halves every face on every strip the layout can make, one to six detectives', () => {
+    /**
+     * ═══ TWO STRIPS ARE NOT EVERY STRIP ═══
+     * The rows above paint four cards at 960 and at 200. A card floor that gave
+     * way only when the strip is crowded — six detectives in a narrow window —
+     * leaves both of those untouched and quarters every face on a full party,
+     * and it passed all of them. So this paints every party size up to the cap,
+     * plus the side, at every width up to 1200: seven cards at the 168 maximum
+     * with six gaps and the band's padding, past which nothing moves.
+     *
+     * TWO HALVES, BECAUSE A NARROWED BOX FAILS TWO WAYS. Under this cap a face
+     * lands at 16x16; under a cap of 2 it is refused and the card prints letters
+     * instead. So every strip must draw at least one face (the first card is
+     * always a player, and at least one card is always drawn), and every face it
+     * draws must be 32x32.
+     */
+    const wrong: string[] = [];
+    for (let players = 1; players <= 6; players += 1) {
+      const world = createWorld('turncards');
+      const cast = Array.from({ length: players }, (_, i) =>
+        world.addPlayer(`actor_${String(i)}`, `P${String(i)}`),
+      );
+      world.addMonster('mon_a', { ...HUSK, x: 8, y: 2, profile: AiProfile.MeleeChaser });
+      const viewer = cast[0];
+      if (viewer === undefined) throw new Error('no cast');
+      const frame = frameFor(
+        world,
+        viewer,
+        barrier({ engagement: 3, whoseTurn: cast.map((actor) => actor.id) }),
+      );
+      expect(frame.actors).toHaveLength(players + 1);
+
+      const faces = new Set(
+        frame.actors.flatMap((card) =>
+          card.kind === TurnActorKind.Player && card.portrait !== undefined ? [card.portrait] : [],
+        ),
+      );
+      const sprites = sized(Object.fromEntries([...faces].map((id) => [id, [64, 64] as const])));
+      const v = view(frame);
+
+      for (let width = 1; width <= 1200; width += 1) {
+        const drawn = paint(v, sprites, width).flatMap((op) =>
+          op.kind === 'drawImage' && faces.has(String((op.args[0] as { readonly id?: unknown }).id))
+            ? [op.args.slice(3)]
+            : [],
+        );
+        if (drawn.length === 0 || drawn.some(([w, h]) => w !== 32 || h !== 32)) {
+          wrong.push(`${String(players)} detectives at ${String(width)}: ${JSON.stringify(drawn)}`);
+        }
+      }
+    }
+    expect(wrong).toEqual([]);
   });
 });
