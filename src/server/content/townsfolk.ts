@@ -73,19 +73,28 @@ export type TownsfolkSpec = {
   /**
    * An asset KEY, never a path.
    *
-   * ═══ A STAND-IN, AND IT IS RECORDED AS ONE ═══
-   * `chr_npc_bent_watchman_s` is the only authored, unused sprite under the
-   * `chr_npc_` prefix the client already loads. Its ID names a hostile from
-   * game-design.md's sample log, which this is not — but the alternative was a
-   * new id, and an id with no PNG behind it resolves to the loud violet
-   * missing-asset box on every clone, for a feature that otherwise works.
+   * ═══ HER OWN FACE, NAMED FOR HER ═══
+   * Every person in this table wears a 48x64 `chr_npc_<name>_s` drawn for that
+   * person by the standing commission (`content/art-requests.ts`), under the
+   * `chr_npc_` prefix the client already loads. The id is the person, not the
+   * trade: nobody else wears it, and test/server/townsfolk.test.ts pins who
+   * wears which, written out, so two faces cannot quietly change places.
    *
-   * `chr_player_cipher_clerk_s` would read better and is NOT free: `world.ts`
-   * has it in `PLAYER_SPRITES`, so a party member can be wearing it, and a
-   * shopkeeper who looks like a player is worse than one in the wrong coat.
+   * ═══ WAS ONE STAND-IN FOR ALL TEN ═══
+   * Every one of them wore `chr_npc_bent_watchman_s`, the only authored, unused
+   * sprite under that prefix, whose id names a hostile from game-design.md's
+   * sample log. This note asked for a single shared `chr_npc_counter_keeper_s`
+   * to replace it; the commission drew a face per person instead, and neither
+   * of the two is anybody's face now.
    *
-   * THE ART ASK, stated so it is findable: one 24x32 `chr_npc_counter_keeper_s`.
-   * Swapping this field is the whole of the change when it exists.
+   * ═══ NEVER A PLAYER'S SPRITE ═══
+   * `world.ts` keeps `PLAYER_SPRITES`, so a party member can be wearing any id
+   * in it, and a shopkeeper who looks like a player is worse than one in the
+   * wrong coat.
+   *
+   * A FACE LEAVES THE COMMISSION IN THE CHANGE THAT NAMES IT HERE. That is
+   * `art-requests.ts`'s own header rule, and the same test file holds these
+   * ten to it: a face worn here and still on order fails there.
    */
   readonly sprite: string;
   /** Said the first time somebody walks into her, per realm. */
@@ -246,7 +255,7 @@ export const TOWNSFOLK: ReadonlyMap<string, readonly TownsfolkSpec[]> = new Map<
       {
         id: 'merrow',
         name: 'Merrow Stitch',
-        sprite: 'chr_npc_bent_watchman_s',
+        sprite: 'chr_npc_merrow_stitch_s',
         greetFirst: 'Merrow Stitch. I mend what the Index unpicks.',
         greetAgain: 'Still here. So is the counter.',
         greetFiled: 'Your coat has been somewhere. I can tell from here.',
@@ -281,7 +290,7 @@ export const TOWNSFOLK: ReadonlyMap<string, readonly TownsfolkSpec[]> = new Map<
       {
         id: 'vane',
         name: 'Pinnock Vane',
-        sprite: 'chr_npc_bent_watchman_s',
+        sprite: 'chr_npc_pinnock_vane_s',
         greetFirst: 'Vane. I carry what Merrow sells, and it is heavy.',
         greetAgain: 'Still carrying. Still heavy.',
         greetFiled: 'You come back with them closed. Good for trade.',
@@ -317,7 +326,7 @@ export const TOWNSFOLK: ReadonlyMap<string, readonly TownsfolkSpec[]> = new Map<
       {
         id: 'reeve',
         name: 'Reeve Ashcombe',
-        sprite: 'chr_npc_bent_watchman_s',
+        sprite: 'chr_npc_reeve_ashcombe_s',
         greetFirst: 'Ashcombe. I keep the gate and the gate keeps me.',
         greetAgain: 'Gate is still here. So am I.',
         greetFiled: 'You file. That is rarer here than you would think.',
@@ -393,15 +402,15 @@ export const TOWNSFOLK: ReadonlyMap<string, readonly TownsfolkSpec[]> = new Map<
        * back — which is also why hers is the line that tells a newcomer the
        * chapel is survivable rather than merely near.
        *
-       * SAME SPRITE AS EVERYONE ELSE. All five townsfolk share
-       * `chr_npc_bent_watchman_s` and the art ask for more is stated above and
-       * still open; a sixth person does not make that worse and waiting for art
-       * would mean shipping nothing.
+       * HER OWN FACE. She shipped wearing the one stand-in every townsfolk
+       * shared, because waiting for art would have meant shipping nothing. Every
+       * named townsfolk now wears a 48x64 `chr_npc_<name>_s` drawn for that
+       * person; see the note on `TownsfolkSpec.sprite`.
        */
       {
         id: 'bell',
         name: 'Halloway Bell',
-        sprite: 'chr_npc_bent_watchman_s',
+        sprite: 'chr_npc_halloway_bell_s',
         greetFirst: 'Bell. I came back, which is the whole of my trade.',
         greetAgain: 'Still back. Still here.',
         greetFiled: 'You came back as well. That is the trade we share.',
@@ -480,7 +489,7 @@ export const TOWNSFOLK: ReadonlyMap<string, readonly TownsfolkSpec[]> = new Map<
       {
         id: 'sexton',
         name: 'Sexton Pell',
-        sprite: 'chr_npc_bent_watchman_s',
+        sprite: 'chr_npc_sexton_pell_s',
         greetFirst: 'Pell. I dig, and lately I do not dig much.',
         greetAgain: 'Nothing new in the ground today.',
         greetFiled: 'One less name I have to cut. Keep it that way.',
@@ -509,7 +518,7 @@ export const TOWNSFOLK: ReadonlyMap<string, readonly TownsfolkSpec[]> = new Map<
       {
         id: 'colley',
         name: 'Wren Colley',
-        sprite: 'chr_npc_bent_watchman_s',
+        sprite: 'chr_npc_wren_colley_s',
         greetFirst: 'Colley. I write the names. Pell does the digging.',
         greetAgain: 'Names still coming. Slowly, lately.',
         greetFiled: 'You give me places to name. Nobody else does.',
@@ -538,7 +547,7 @@ export const TOWNSFOLK: ReadonlyMap<string, readonly TownsfolkSpec[]> = new Map<
       {
         id: 'carrow',
         name: 'Carrow Ninefold',
-        sprite: 'chr_npc_bent_watchman_s',
+        sprite: 'chr_npc_carrow_ninefold_s',
         greetFirst: 'Ninefold. I walk it all and I write none of it.',
         greetAgain: 'Still walking. Still not writing.',
         greetFiled: 'You have been where I only walked past. Tell me.',
@@ -573,7 +582,7 @@ export const TOWNSFOLK: ReadonlyMap<string, readonly TownsfolkSpec[]> = new Map<
       {
         id: 'ash',
         name: 'Mabbot Ash',
-        sprite: 'chr_npc_bent_watchman_s',
+        sprite: 'chr_npc_mabbot_ash_s',
         greetFirst: 'Ash. I was going further. I got as far as here.',
         greetAgain: 'Still here. Still meant to go.',
         greetFiled: 'You got further than here. I never did.',
@@ -602,7 +611,7 @@ export const TOWNSFOLK: ReadonlyMap<string, readonly TownsfolkSpec[]> = new Map<
       {
         id: 'thessaly',
         name: 'Thessaly Vaunt',
-        sprite: 'chr_npc_bent_watchman_s',
+        sprite: 'chr_npc_thessaly_vaunt_s',
         greetFirst: 'Vaunt. I mix what the Index has not read yet.',
         greetAgain: 'Still mixing. Mind the fumes.',
         greetFiled: 'You have used what I mix. It shows on you.',
@@ -632,7 +641,7 @@ export const TOWNSFOLK: ReadonlyMap<string, readonly TownsfolkSpec[]> = new Map<
       {
         id: 'quill',
         name: 'Ivo Quill',
-        sprite: 'chr_npc_bent_watchman_s',
+        sprite: 'chr_npc_ivo_quill_s',
         greetFirst: 'Quill. I test what Vaunt mixes. I am still here.',
         greetAgain: 'Still upright. Mostly.',
         greetFiled: 'You test it out there. I only test it in here.',

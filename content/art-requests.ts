@@ -134,70 +134,11 @@ const ZONES = 'data/zones';
 
 /**
  * ═══ THE PEOPLE OF ALDERBROOK ═══
- * The ten named townsfolk all wear one stand-in today (`chr_npc_counter_keeper_s`);
- * each gets a face. The rest fill streets, shops and camps.
+ * The ten named townsfolk wear their own faces now
+ * (`src/server/content/townsfolk.ts`), so they have left this list. What is
+ * left fills streets, shops and camps with people nobody has authored yet.
  */
 export const TOWNSFOLK_ART_COMMISSION: readonly ArtRequest[] = [
-  actor(
-    { id: 'chr_npc_merrow_stitch_s' },
-    'Threadneedle Row',
-    '',
-    'Merrow Stitch, a mender in a patched waistcoat: tape measure round the neck, needles along one lapel, a spool of black thread.',
-  ),
-  actor(
-    { id: 'chr_npc_pinnock_vane_s' },
-    'Threadneedle Row',
-    '',
-    'Pinnock Vane, a broad porter bent under a strapped bundle of cloth bolts, cap pushed back, sleeves rolled.',
-  ),
-  actor(
-    { id: 'chr_npc_reeve_ashcombe_s' },
-    'Alderbrook',
-    `${ZONES}/town-last-hope/npcs.lua`,
-    'Reeve Ashcombe, the gatekeeper: long greatcoat, a ring of iron keys, a lantern on a pole, weathered and unsmiling.',
-  ),
-  actor(
-    { id: 'chr_npc_halloway_bell_s' },
-    'Alderbrook',
-    '',
-    'Halloway Bell, a delver who came back: scorched field coat, one bandaged hand, a satchel of salvage.',
-  ),
-  actor(
-    { id: 'chr_npc_sexton_pell_s' },
-    "Saint's Rest",
-    '',
-    'Sexton Pell, gravedigger: spade over the shoulder, mud to the knees, oilcloth hat dripping.',
-  ),
-  actor(
-    { id: 'chr_npc_wren_colley_s' },
-    "Saint's Rest",
-    '',
-    'Wren Colley, registrar of burials: a thin clerk hugging a ledger, ink-stained cuffs, pencil behind the ear.',
-  ),
-  actor(
-    { id: 'chr_npc_carrow_ninefold_s' },
-    "A Wayfarers' Camp",
-    '',
-    'Carrow Ninefold, a long-legged walker in a waxed cape with a staff and a map case, boots grey with dust.',
-  ),
-  actor(
-    { id: 'chr_npc_mabbot_ash_s' },
-    "A Wayfarers' Camp",
-    '',
-    'Mabbot Ash, a heavyset stranded traveller with a rug round the shoulders and a battered trunk at the feet.',
-  ),
-  actor(
-    { id: 'chr_npc_thessaly_vaunt_s' },
-    'Ashwick Alchemy Row',
-    '',
-    'Thessaly Vaunt, a tall alchemist in a stained leather apron, smoked goggles pushed up, a faintly glowing flask.',
-  ),
-  actor(
-    { id: 'chr_npc_ivo_quill_s' },
-    'Ashwick Alchemy Row',
-    '',
-    'Ivo Quill, a young tester with singed eyebrows, salve on one cheek, a notebook and a pair of tongs.',
-  ),
   actor(
     { id: 'chr_npc_city_watch_s' },
     'Alderbrook streets',

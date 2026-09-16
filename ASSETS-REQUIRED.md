@@ -367,9 +367,9 @@ the ToME entry it stands in for, and a one-line brief.
 
 It holds seven lists:
 
-- **Townsfolk**: a face for each of the ten named townsfolk, who all share
-  `chr_npc_counter_keeper_s` today, and the watch, clerks, shopkeepers, clergy
-  and camp folk who fill the towns.
+- **Townsfolk**: the watch, clerks, shopkeepers, clergy and camp folk who fill
+  the towns. The ten named townsfolk already wear their own faces and have left
+  the list.
 - **Enemies**: ToME's bestiary families (rodents, worm masses, molds, oozes,
   snakes, wolves, bears, spiders, ants, swarms, skeletons, ghouls, ghosts,
   wights, vampires, liches, bone giants, gangs, thieves, brutes, automata,

@@ -12,10 +12,12 @@ import {
 import { STARTING_MONEY } from '../../src/server/engine/actor.ts';
 import { createRng } from '../../src/shared/rng.ts';
 
+import { TOWNSFOLK_ART_COMMISSION } from '../../content/art-requests.ts';
 import {
   LINE_MAX,
   TOWNSFOLK,
   isTownsfolkId,
+  specForActorId,
   townsfolkFor,
 } from '../../src/server/content/townsfolk.ts';
 import { Faction, isMonster } from '../../src/server/engine/actor.ts';
@@ -218,6 +220,124 @@ describe('somebody lives here', () => {
     // not state on `TurnState` — engagement above zero is what `isBlocking`
     // reads and what puts a stranger's town into turn-by-turn.
     expect(realm.world.turn.engagement).toBe(0);
+  });
+});
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * TEN PEOPLE, TEN FACES. THEY ALL WORE ONE STAND-IN BEFORE THIS.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Every townsfolk wore `chr_npc_bent_watchman_s`: the only authored, unused
+ * sprite under the `chr_npc_` prefix the client loads, and an id named for a
+ * hostile. The standing commission (`content/art-requests.ts`) drew each of
+ * them a 48x64 `chr_npc_<name>_s`, and what follows keeps those faces on the
+ * right people, on the bodies a town actually stands up, and off the order book.
+ */
+describe('everybody wears their own face', () => {
+  const worn = (): string[] => [...TOWNSFOLK.values()].flat().map((spec) => spec.sprite);
+
+  it('pins who wears which face, written out', () => {
+    /**
+     * LITERAL, AS `monsters.test.ts` PINS ITS IDENTITIES, and for its reason: a
+     * table built from the specs would still pass if Merrow and Vane swapped
+     * faces, because the swap moves both sides of the comparison at once. So
+     * would the distinctness test below — ten different faces on the wrong ten
+     * people are still ten different faces.
+     *
+     * ═══ AN ELEVENTH PERSON FAILS THIS, AND THAT IS NOT THE HEADCOUNT TRAP ═══
+     * The first test in this file warns against pinning the size of the
+     * content. This pins something else: which picture a named person wears.
+     * Somebody new needs a face drawn for her, or an entry in the commission
+     * asking for one, and this table is where that is decided rather than
+     * defaulted to a neighbour's.
+     */
+    expect(
+      [...TOWNSFOLK].flatMap(([siteId, specs]) =>
+        specs.map((spec) => [siteId, spec.id, spec.name, spec.sprite]),
+      ),
+    ).toEqual([
+      ['site:threadneedle_row', 'merrow', 'Merrow Stitch', 'chr_npc_merrow_stitch_s'],
+      ['site:threadneedle_row', 'vane', 'Pinnock Vane', 'chr_npc_pinnock_vane_s'],
+      ['site:alderbrook', 'reeve', 'Reeve Ashcombe', 'chr_npc_reeve_ashcombe_s'],
+      ['site:alderbrook', 'bell', 'Halloway Bell', 'chr_npc_halloway_bell_s'],
+      ['site:saints_rest', 'sexton', 'Sexton Pell', 'chr_npc_sexton_pell_s'],
+      ['site:saints_rest', 'colley', 'Wren Colley', 'chr_npc_wren_colley_s'],
+      ['site:wayfarers_camp', 'carrow', 'Carrow Ninefold', 'chr_npc_carrow_ninefold_s'],
+      ['site:wayfarers_camp', 'ash', 'Mabbot Ash', 'chr_npc_mabbot_ash_s'],
+      ['site:ashwick_row', 'thessaly', 'Thessaly Vaunt', 'chr_npc_thessaly_vaunt_s'],
+      ['site:ashwick_row', 'quill', 'Ivo Quill', 'chr_npc_ivo_quill_s'],
+    ]);
+  });
+
+  it("gives no two people one face, and nobody the old stand-in or a player's", () => {
+    const faces = worn();
+    expect(
+      faces.filter((id, i) => faces.indexOf(id) !== i),
+      'two people wear one face',
+    ).toEqual([]);
+    // NEVER A PLAYER'S SPRITE, the rule `TownsfolkSpec.sprite` states: every id
+    // in `world.ts#PLAYER_SPRITES` is a `chr_player_*`, and a party member can be
+    // wearing any of them. The literal table above holds only these ten, and a
+    // row edited to match passes it; this is the rule that row is held to.
+    expect(
+      faces.filter((id) => !/^chr_npc_[a-z0-9_]+_s$/.test(id)),
+      'a face that is not a chr_npc_<name>_s',
+    ).toEqual([]);
+    // BOTH RETIRED IDS BY NAME. `bent_watchman` is the one every person wore;
+    // `counter_keeper` is the single shared figure the old note asked for in
+    // its place. Neither is anybody's face, so a person put back in either has
+    // lost hers.
+    for (const standIn of ['chr_npc_bent_watchman_s', 'chr_npc_counter_keeper_s']) {
+      expect(faces, `somebody wears ${standIn} again`).not.toContain(standIn);
+    }
+  });
+
+  it('takes a face off the commission once somebody wears it', () => {
+    /**
+     * `art-requests.ts`'s header: *"An id leaves this file when its art lands
+     * and the code that draws it names it."* The commission's own tests
+     * (test/shared/art-requests.test.ts) only look inside the commission, so a
+     * face both worn here and still on order passes every one of them, and the
+     * artist is asked for a picture the game already draws.
+     */
+    const ordered = new Set(TOWNSFOLK_ART_COMMISSION.map((request) => request.id));
+    expect(
+      worn().filter((id) => ordered.has(id)),
+      'worn in town but still on order',
+    ).toEqual([]);
+  });
+
+  it('puts the face on the body the town stands up', () => {
+    /**
+     * ═══ THE JOIN, WHICH THE THREE ABOVE NEVER REACH ═══
+     * They read tables and never a body. The picture a player sees is the
+     * `sprite` on the actor `placeTownsfolk` hands to `world.addMonster`, so a
+     * constant written there would pass all three while every town wore one
+     * face again. This builds the realms the way the server does and reads the
+     * bodies.
+     *
+     * THE REEVE BY LITERAL ID AND LITERAL FACE, so the id placement mints and
+     * the picture on that body are checked with nothing read from the spec;
+     * EVERYBODY AGAINST THEIR OWN SPEC, so a constant that happened to be the
+     * Reeve's face still fails on the other nine.
+     */
+    const built = realms('faces');
+    const alderbrook = built.all().find((realm) => realm.siteId === 'site:alderbrook');
+    expect(alderbrook, 'the boot loop never built Alderbrook').toBeDefined();
+    if (alderbrook === undefined) return;
+    const reeve = alderbrook.world.getActor(`${alderbrook.world.id}:town:reeve`);
+    expect(reeve?.sprite).toBe('chr_npc_reeve_ashcombe_s');
+
+    const bodies = built
+      .all()
+      .filter((realm) => realm.kind === RealmKind.Common)
+      .flatMap((realm) => folkIn(realm));
+    expect(bodies.map((body) => [specForActorId(body.id)?.name, body.sprite])).toEqual(
+      bodies.map((body) => [specForActorId(body.id)?.name, specForActorId(body.id)?.sprite]),
+    );
+    // NOT VACUOUS: every authored person was stood up and compared.
+    expect(bodies).toHaveLength(worn().length);
   });
 });
 

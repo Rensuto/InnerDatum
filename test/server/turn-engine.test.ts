@@ -740,7 +740,7 @@ describe('pump reports the intents it refunded', () => {
      */
     const blocker = world.addMonster('actor_blocker', {
       name: 'Merrow Stitch',
-      sprite: 'chr_npc_bent_watchman_s',
+      sprite: 'chr_npc_merrow_stitch_s',
       x: 11,
       y: 10,
       profile: AiProfile.MeleeChaser,
