@@ -42,6 +42,14 @@ describe('reachable — upstream`s A* as a yes or no', () => {
     expect(passable(TileCode.DOOR)).toBe(true);
   });
 
+  it('routes through a rock door too, which is a door by `door_opened`', () => {
+    // data/zones/infinite-dungeon/grids.lua:45: GRASS_ROCK has `door_opened`,
+    // so `couldpass` lets the route through it exactly as through DOOR.
+    const g = { w: 3, h: 1, tiles: [TileCode.FLOOR, TileCode.ROCK_DOOR, TileCode.FLOOR] };
+    expect(reachable(g, { x: 0, y: 0 }, { x: 2, y: 0 })).toBe(true);
+    expect(passable(TileCode.ROCK_DOOR)).toBe(true);
+  });
+
   it('refuses a wall between, and a target that is itself a wall', () => {
     expect(reachable(grid(['.#.']), { x: 0, y: 0 }, { x: 2, y: 0 })).toBe(false);
     // Adjacent, and still refused: the target must be passable.

@@ -660,6 +660,46 @@
  * ═══════════════════════════════════════════════════════════════════════════
 
 
+ * 24 -> 25 (THEMED TERRAIN). Twenty-two terrain codes, `TileCode` 34 to 55:
+ * the dungeon's water, lava, void, crystal, slime, sand, burnt and gloomy grid
+ * families, the harmless `_FAKE` twins of the water and lava floors, and
+ * `ROCK_DOOR`.
+ *
+ * 21 -> 22 IS THE PRECEDENT, AND THIS IS ITS WORST CASE. A v24 client's
+ * `tileAt` collapses every one of these codes to `WALL`. Eleven of them are
+ * walkable floor, so a themed level draws as solid rock from edge to edge with
+ * the party standing inside it, and `blocksSightAt` fogs everything past the
+ * first tile. Where 21 -> 22 lost a doorway, this loses the whole floor.
+ *
+ * ═══ AND IT IS WORSE THAN A PICTURE ═══
+ * Travel and explore route on `canRoute`, which reads through the same
+ * `tileAt`, so that client cannot plan a step anywhere on such a level. And the
+ * codes carry mechanics the old client cannot name: POND_WATER drowns and
+ * LAVA_FLOOR burns, while the FAKE floors beside them do neither. A client that
+ * draws all of them as the same wall cannot show a player which is which.
+ *
+ * `ResourceMsg` MAY GAIN AN OPTIONAL `air` UNDER THIS NUMBER, with no bump of
+ * its own: an older client ignores the key and shows no air bar, and nothing it
+ * draws becomes false. Were the field REQUIRED, it would need its own argument.
+ *
+ * CONSIDERED AND NOT ADDED, each of which would have forced this bump alone:
+ *
+ *   NO NEW FRAME AND NO NEW `ErrorCode`. A rock door opens through the
+ *   `TerrainMsg` every shipped client already applies, carrying the map's floor
+ *   as its code where a door carries `DOOR_OPEN`.
+ *
+ *   NO EXISTING CODE CHANGED MEANING. `WALKABLE`, `SOLID_BUT_CLEAR`,
+ *   `BLOCKS_SIGHT` and `HAUNTS` each gain members and lose none, so every tile
+ *   that was walkable still is and every wall still blocks.
+ *
+ * `SCHEMA_VERSION` STAYS 1, considered separately rather than carried along. No
+ * save file has ever held a tile: terrain is generated from the realm seed. Air,
+ * when a body has it, is transient state that refills on load, so it adds no
+ * saved field either.
+ *
+ * ═══════════════════════════════════════════════════════════════════════════
+
+
  * 23 -> 24 (A LIGHT SOURCE). `Slot` gains `lite`, so the `unequip` intent's
  * enum and `InventoryMsg.equipped` both gain a member.
  *
@@ -1047,7 +1087,7 @@
  * path rather than read from disk. When that changes it will be an OPTIONAL
  * field and docs/data-schemas.md:48-49 applies unchanged.
  */
-export const PROTOCOL_VERSION = 24;
+export const PROTOCOL_VERSION = 25;
 
 /**
  * Bumped whenever a persisted save file's shape changes. Every bump needs a

@@ -65,6 +65,7 @@ import type { Noise2 } from '../noise.ts';
 import { PathHeuristic, findPath } from '../path.ts';
 import { TileCode } from '../protocol.ts';
 import type { Rng } from '../rng.ts';
+import { AIR_LEVEL } from '../terrain.ts';
 import { VAULTS_BY_SHAPE } from '../vaults.ts';
 import { passable } from './connectivity.ts';
 import type { GenMap, PlacedRoom, Spot } from './genmap.ts';
@@ -133,9 +134,27 @@ export type ForestData = RoomerData & {
    * The codes whose upstream grid carries `air_level` — the only terrain the
    * road's A* refuses (`engine/generator/map/Forest.lua:394-400`). ToME's
    * `DEEP_WATER` does (`data/general/grids/water.lua:136-140`), trees do not.
+   *
+   * ABSENT IS EVERY CODE IN `AIR_LEVEL` (`shared/terrain.ts`), THE BUBBLE TOO.
+   * The probe is `checkEntity(x, y, Map.TERRAIN, "air_level")`
+   * (`engine/generator/map/Forest.lua:395`), which hands back the number
+   * itself, and a Lua number is true whatever its sign: the +15 bubble stops a
+   * road exactly as the -5 seabed does. Not `level < 0`.
+   *
+   * A WALL'S AIR IS NOT IN IT, because `terrain.ts` does not port one. Upstream's
+   * road refuses a WATER_WALL (`data/general/grids/water.lua:50`) and this one
+   * routes through it. No Forest table draws a wall that carries air.
+   *
+   * A table whose ponds are still a pre-themed code names that code instead, as
+   * the Trollmire's DEEPWATER does.
    */
   readonly airLevel?: readonly TileCode[];
 };
+
+/** `airLevel` when a table names none: every code upstream gives an `air_level`. */
+const AIR_LEVEL_CODES: readonly TileCode[] = Object.keys(AIR_LEVEL).map(
+  (code) => Number(code) as TileCode,
+);
 
 /** `ForestData` once `Forest:init` and `RoomsLoader.init` have written their defaults. */
 export type ForestSettings = ForestData & {
@@ -564,7 +583,7 @@ export function makeRoad(
   terrain: string,
 ): void {
   const { map } = gen;
-  const airLevel = new Set<number>(gen.data.airLevel ?? []);
+  const airLevel = new Set<number>(gen.data.airLevel ?? AIR_LEVEL_CODES);
   const open = (x: number, y: number): boolean => {
     if (!map.isBound(x, y)) return false;
     const code = map.get(x, y);

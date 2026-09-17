@@ -32,6 +32,7 @@ import { createNoise2 } from '../../../src/shared/noise.ts';
 import { TileCode, isWalkable } from '../../../src/shared/protocol.ts';
 import { createRng, rngFromState } from '../../../src/shared/rng.ts';
 import type { Rng } from '../../../src/shared/rng.ts';
+import { AIR_LEVEL } from '../../../src/shared/terrain.ts';
 
 /** No `up`/`down` keys: a stair marks its cell `exit` and leaves the terrain as rolled. */
 const PLAIN: GridKeys = {
@@ -1040,6 +1041,28 @@ describe('makeRoad', () => {
     ]);
     for (const y of [0, 1, 2, 4, 5, 6]) {
       for (let x = 0; x < 12; x += 1) expect(gen.map.get(x, y)).toBe(TileCode.GREEN);
+    }
+  });
+
+  it('refuses every air_level code when the table names none, the +15 bubble as much as the -5 seabed', () => {
+    // `checkEntity(x, y, Map.TERRAIN, "air_level")` (engine/generator/map/Forest.lua:395)
+    // is the number itself, and any Lua number is true.
+    const codes = Object.keys(AIR_LEVEL).map((k) => Number(k) as TileCode);
+    expect(codes).toEqual(
+      expect.arrayContaining([
+        TileCode.POND_WATER,
+        TileCode.WATER_FLOOR,
+        TileCode.WATER_FLOOR_BUBBLE,
+      ]),
+    );
+    expect(AIR_LEVEL[TileCode.WATER_FLOOR_BUBBLE]?.level).toBeGreaterThan(0);
+    for (const code of codes) {
+      const gen = strip(`default air ${String(code)}`);
+      expect(gen.data.airLevel).toBeUndefined();
+      for (let y = 0; y <= 5; y += 1) gen.map.set(5, y, code);
+      makeRoad(gen, 0, 0, 11, 0, 'road');
+      for (let y = 0; y <= 5; y += 1) expect(gen.map.get(5, y), String(code)).toBe(code);
+      expect(gen.map.get(5, 6), String(code)).toBe(TileCode.YARD);
     }
   });
 });

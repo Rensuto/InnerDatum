@@ -98,15 +98,17 @@
  */
 
 import { tileIndex } from '../../shared/coords.ts';
-import { ActorKind, TileCode } from '../../shared/protocol.ts';
-import type { LevelView } from '../../shared/protocol.ts';
+import { ActorKind } from '../../shared/protocol.ts';
+import { isClosedDoorCode } from '../../shared/terrain.ts';
+import type { LevelView, TileCode } from '../../shared/protocol.ts';
 import type { EngineActor } from './actor.ts';
 
 /**
  * One tile of terrain that is no longer what the generator made it.
  *
- * `code` rather than a boolean, even though the only mutation in the game today
- * is `DOOR -> DOOR_OPEN`. The client applies these by assignment into its own
+ * `code` rather than a boolean, and that already paid: the mutations in the game
+ * are `DOOR -> DOOR_OPEN` and `ROCK_DOOR -> the map's floor`, two different
+ * codes through the one frame. The client applies these by assignment into its own
  * tile array, and a boolean would make the frame a door frame — after which the
  * second kind of terrain change (a dug wall, a collapsed floor) needs a second
  * frame rather than a second value.
@@ -128,9 +130,14 @@ export type TerrainChange = {
   readonly was: TileCode;
 };
 
-/** Is this tile a door that is currently shut? Off-grid answers false. */
+/**
+ * Is this tile a door that is currently shut? Off-grid answers false. Either
+ * kind: a `DOOR`, or a `ROCK_DOOR` that opens into the map's floor
+ * (`shared/terrain.ts` `isClosedDoorCode`).
+ */
 export function isClosedDoor(level: LevelView, x: number, y: number): boolean {
-  return tileAtRaw(level, x, y) === TileCode.DOOR;
+  const code = tileAtRaw(level, x, y);
+  return code !== undefined && isClosedDoorCode(code);
 }
 
 /**

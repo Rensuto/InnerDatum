@@ -34,6 +34,24 @@ export const MINIMAP_MAX_W = 200;
 export const MINIMAP_MAX_H = 130;
 
 /**
+ * ═══ WATER AND LAVA ARE WHAT UPSTREAM PAINTS AS WATER AND LAVA, v25 ═══
+ * A grid's own `special_minimap` wins; otherwise it is wall if it blocks a move
+ * and floor if it does not (tome/class/Grid.lua:128-134, engine/Grid.lua:42-46).
+ * Only two of the themed codes carry one: deep water inherits BLUE from
+ * `WATER_BASE` (data/general/grids/water.lua:128), and molten lava is RED
+ * (data/general/grids/lava.lua:64). The seabed, the coral wall, the bubble, lava
+ * floors and lava walls have none, so the Weir reads as rooms and corridors, not
+ * as one blue rectangle. OUTERSPACE blocks a move and draws as wall; VOID is
+ * walkable and draws as ground.
+ */
+const MINI_WATER: ReadonlySet<number> = new Set<number>([
+  TileCode.WATER,
+  TileCode.DEEPWATER,
+  TileCode.POND_WATER,
+]);
+const MINI_LAVA: ReadonlySet<number> = new Set<number>([TileCode.MOLTEN_LAVA]);
+
+/**
  * Four bands, chosen to survive being one pixel wide.
  *
  * Water is separated from wall because on a world map the coast is most of what
@@ -42,7 +60,8 @@ export const MINIMAP_MAX_H = 130;
  * is the only distinction a minimap owes the player.
  */
 function miniFill(code: TileCode): string {
-  if (code === TileCode.WATER || code === TileCode.DEEPWATER) return '#141d33';
+  if (MINI_WATER.has(code)) return '#141d33';
+  if (MINI_LAVA.has(code)) return '#4a1a10';
   if (code === TileCode.ERASED) return '#0c0a14';
   /**
    * ═══════════════════════════════════════════════════════════════════════════
@@ -67,7 +86,8 @@ function miniFill(code: TileCode): string {
    * (`tileFill`, ported from `basic.lua:220`): findable at one pixel, and the
    * closed one louder, because a shut door is a thing you are looking FOR.
    */
-  if (code === TileCode.DOOR) return '#8a6134';
+  // A rock door is a shut door too (`door_opened`), and is looked for the same way.
+  if (code === TileCode.DOOR || code === TileCode.ROCK_DOOR) return '#8a6134';
   if (code === TileCode.DOOR_OPEN) return '#4a3d2e';
   if (isWalkable(code)) {
     /**

@@ -2121,6 +2121,58 @@ function tileFill(code: TileCode): string {
       return '#7a5730';
     case TileCode.DOOR_OPEN:
       return '#42372f';
+
+    /**
+     * ─── themed terrain, v25 ───
+     *
+     * Flat colours until the art lands, on the file's rule: walkable is light,
+     * blocking is dark. A real grid and its FAKE twin share a colour, as they
+     * will share a picture — the difference is a mechanic, not a look. The rock
+     * door is stone-grey rather than amber: upstream draws it as a boulder
+     * (`color=colors.GREY`), not as a door.
+     */
+    case TileCode.POND_WATER:
+      return '#2f4e63';
+    case TileCode.WATER_FLOOR:
+    case TileCode.WATER_FLOOR_FAKE:
+      return '#3a5566';
+    case TileCode.WATER_FLOOR_BUBBLE:
+      return '#4f7384';
+    case TileCode.WATER_WALL:
+      return '#162230';
+    case TileCode.LAVA_FLOOR:
+    case TileCode.LAVA_FLOOR_FAKE:
+      return '#6b3a2a';
+    case TileCode.LAVA_WALL:
+      return '#2a1a1a';
+    case TileCode.MOLTEN_LAVA:
+      return '#5a1e10';
+    case TileCode.OUTERSPACE:
+      return '#0a0814';
+    case TileCode.FLOATING_ROCKS:
+      return '#4a4452';
+    case TileCode.VOID:
+      return '#443e5e';
+    case TileCode.SPACETIME_RIFT:
+      return '#3a3418';
+    case TileCode.CRYSTAL_FLOOR:
+      return '#4d5a6e';
+    case TileCode.CRYSTAL_WALL:
+      return '#1e2a3a';
+    case TileCode.SLIME_FLOOR:
+      return '#46583a';
+    case TileCode.SLIME_WALL:
+      return '#1c2a18';
+    case TileCode.SANDWALL:
+      return '#3a3222';
+    case TileCode.BURNT_TREE:
+      return '#1f1a18';
+    case TileCode.UNDERGROUND_FLOOR:
+      return '#3e3848';
+    case TileCode.UNDERGROUND_TREE:
+      return '#241a2e';
+    case TileCode.ROCK_DOOR:
+      return '#6a6258';
   }
 }
 

@@ -154,7 +154,8 @@
 
 import { bresenham } from '../../shared/coords.ts';
 import { ENERGY_TO_ACT, canAct, spendForAction } from '../../shared/energy.ts';
-import { canWalk } from '../../shared/level.ts';
+import { tileAt } from '../../shared/level.ts';
+import { passesProjectile } from '../../shared/terrain.ts';
 import { DamageType, applyDamage } from './damage.ts';
 import type { OnHitStatus } from './actor.ts';
 import type { TileXY } from '../../shared/coords.ts';
@@ -551,10 +552,10 @@ const PASSES: Block = { block: false, hit: true, hitRadius: true };
  * moves with it.
  *
  * NOT PORTED, and each is a system rather than a line: `requires_knowledge` (no
- * remembered-map layer yet), `pass_terrain` / `pass_projectile` (no terrain
- * carries the flag), `friendlyblock` / `actorblock` (ToME's default for a bolt
- * is that ANY body blocks, and that is what we want — an ally standing in the
- * line eats the orb, which is a rule players can see and use).
+ * remembered-map layer yet), `pass_terrain` (a targeting flag no attack here
+ * sets: nothing shoots through walls), `friendlyblock` / `actorblock` (ToME's
+ * default for a bolt is that ANY body blocks, and that is what we want — an ally
+ * standing in the line eats the orb, which is a rule players can see and use).
  */
 function blockPath(proj: Projectile, world: ProjectileWorld, tile: TileXY): Block {
   // Target.lua:443-444 — off the map. `true, false, false`: no move.
@@ -568,9 +569,18 @@ function blockPath(proj: Projectile, world: ProjectileWorld, tile: TileXY): Bloc
     return { block: true, hit: false, hitRadius: false };
   }
 
-  // Target.lua:459-468 — terrain. `true, true, false`: it MOVES ONTO the wall
+  // Target.lua:458-468 — terrain. `true, true, false`: it MOVES ONTO the wall
   // and stops there, and `hitRadius` false is the anti-leak rule.
-  if (!canWalk(world.level, tile.x, tile.y)) {
+  //
+  // THE TEST IS `block_move` AND NOT `pass_projectile`, which is not the same
+  // as "a body cannot stand here". Molten lava and the void are solid to a body
+  // and open to a bolt (data/general/grids/lava.lua:65-66,
+  // data/general/grids/void.lua:37-38), so an orb flies over both. This asked
+  // `canWalk` until those codes existed, and the scheduler's gate asks for a
+  // line of SIGHT, which both are: a shot the gate allowed across a lava moat
+  // would have landed on the lava as a wall. `tileAt` fails closed, so an
+  // unknown code still stops it.
+  if (!passesProjectile(tileAt(world.level, tile.x, tile.y))) {
     return { block: true, hit: true, hitRadius: false };
   }
 
@@ -626,7 +636,11 @@ function projectDoMove(proj: Projectile, world: ProjectileWorld): Move {
     }
     return {
       to: next,
-      stop: canWalk(world.level, next.x, next.y) ? ProjectileStop.Actor : ProjectileStop.Wall,
+      // `blockPath`'s own terrain question, so a body is the only other reason
+      // a tile that passes a projectile can have stopped one.
+      stop: passesProjectile(tileAt(world.level, next.x, next.y))
+        ? ProjectileStop.Actor
+        : ProjectileStop.Wall,
       // THE VALUE FROM `block_path`, NOT `stop === null`. A wall is false and a
       // body is true (Target.lua:466 vs :501) — see `Projectile.radiusAt`.
       hitRadius: blocked.hitRadius,

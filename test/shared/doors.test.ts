@@ -1,10 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
-import { blocksSightAt, canWalk } from '../../src/shared/level.ts';
+import { blocksSightAt, canRoute, canWalk } from '../../src/shared/level.ts';
 import { SiteShape, makeSiteMap } from '../../src/shared/sitemap.ts';
 import { ALL_VAULTS } from '../../src/shared/vaults.ts';
 import {
   TileCode,
+  alwaysRemembered,
   blocksSight,
   isKnownTile,
   isSafeGround,
@@ -225,5 +226,48 @@ describe('doors reach a generated floor', () => {
       const map = makeSiteMap(`town-${String(i)}`, SiteShape.Town);
       expect(doorsIn(map.view.tiles), 'a vault door appeared in a town').toBe(0);
     }
+  });
+});
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE ROCK DOOR — `data/zones/infinite-dungeon/grids.lua:36-48` and its kin.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * ```lua
+ * newEntity{ define_as = "GRASS_ROCK", name = "huge loose rock",
+ *   always_remember = true, block_sight = true,
+ *   is_door = true, door_opened = "GRASS", dig = "GRASS" }
+ * ```
+ *
+ * A door in every respect a predicate reads, except what it opens into — which
+ * is the server's half and `test/server/doors.test.ts`'s. This block pins the
+ * terrain half, and pins it through `tileAt` for the same reason the block
+ * above does.
+ */
+describe('a rock door is a shut door to every terrain predicate', () => {
+  const levelWith = (code: TileCode): LevelView => ({
+    w: 3,
+    h: 1,
+    tiles: [TileCode.FLOOR, code, TileCode.FLOOR],
+  });
+
+  it('is solid, opaque and remembered, like DOOR', () => {
+    const level = levelWith(TileCode.ROCK_DOOR);
+    expect(canWalk(level, 1, 0), 'a shut rock door let a body stand in it').toBe(false);
+    expect(blocksSightAt(level, 1, 0), 'you could see through a rock').toBe(true);
+    expect(alwaysRemembered(TileCode.ROCK_DOOR)).toBe(true);
+  });
+
+  it('lets a route through, as `couldpass` does for any `door_opened` (tome/class/Grid.lua:89-92)', () => {
+    /**
+     * THE PAIR IS THE TEST. A plan through a rock door and a plan through a
+     * wall must differ, or a Tower floor whose rooms open on rocks reads as
+     * sealed to every router: the client's travel, auto-explore, and the
+     * door-opening monster's A*.
+     */
+    expect(canRoute(levelWith(TileCode.ROCK_DOOR), 1, 0), 'a route refused a rock door').toBe(true);
+    expect(canRoute(levelWith(TileCode.DOOR), 1, 0)).toBe(true);
+    expect(canRoute(levelWith(TileCode.WALL), 1, 0), 'a route went through rock').toBe(false);
   });
 });

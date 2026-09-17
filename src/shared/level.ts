@@ -21,6 +21,7 @@
 
 import { inBounds, tileIndex } from './coords.ts';
 import { TileCode, blocksSight, isWalkable, isKnownTile } from './protocol.ts';
+import { isClosedDoorCode } from './terrain.ts';
 import type { TileXY } from './coords.ts';
 import type { SiteLighting } from './light.ts';
 import type { LevelView } from './protocol.ts';
@@ -153,6 +154,20 @@ export type AuthoredMap = {
    * street grid, and neither has country in it to name.
    */
   readonly regions?: readonly Region[];
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * WHAT A ROCK DOOR ON THIS MAP OPENS INTO.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `ROCK_DOOR` is upstream's "huge loose rock", and its `door_opened` is the
+   * zone's own floor: GRASS_ROCK opens into GRASS, CAVE_ROCK into CAVEFLOOR
+   * (data/zones/infinite-dungeon/grids.lua:45, :111). One code serves every
+   * such rock, so the floor it becomes is a fact about the MAP, and this is it.
+   * See `shared/terrain.ts` `openedFormOf`.
+   *
+   * Absent is FLOOR, which `createWorld` supplies. A plain `DOOR` ignores it.
+   */
+  readonly rockFloor?: TileCode;
 };
 
 /** The legend entry for one authored character. */
@@ -413,9 +428,13 @@ export function blocksSightAt(level: LevelView, x: number, y: number): boolean {
  * with the walker standing in an open doorway. `travelTargetAllowed` therefore
  * asks this function too, and auto-explore aims straight at doorways because
  * they are the exact tiles where seen ground meets unseen.
+ *
+ * ═══ EVERY DOOR, NOT ONLY `DOOR` ═══
+ * The arm keys on `door_opened`, and a rock door has one, so a route passes a
+ * `ROCK_DOOR` exactly as it passes a `DOOR`. `isClosedDoorCode` is that test.
  */
 export function canRoute(level: LevelView, x: number, y: number): boolean {
-  return canWalk(level, x, y) || tileAt(level, x, y) === TileCode.DOOR;
+  return canWalk(level, x, y) || isClosedDoorCode(tileAt(level, x, y));
 }
 
 export function canWalk(level: LevelView, x: number, y: number): boolean {

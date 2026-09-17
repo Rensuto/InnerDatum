@@ -12,8 +12,9 @@ import {
   turnsToImpact,
 } from '../../src/server/engine/projectile.ts';
 import { pump, submitIntent } from '../../src/server/engine/scheduler.ts';
-import { createWorld } from '../../src/server/world/world.ts';
-import { TileCode } from '../../src/shared/protocol.ts';
+import { MoveBlock, createWorld } from '../../src/server/world/world.ts';
+import { Dir } from '../../src/shared/coords.ts';
+import { TileCode, isWalkable } from '../../src/shared/protocol.ts';
 import {
   ActResult,
   ENERGY_TO_ACT,
@@ -914,5 +915,168 @@ describe('armour and the orb', () => {
     const onBare = shotAt(bare);
     expect(onBare, 'the fixture never landed a hit').toBeGreaterThan(0);
     expect(shotAt(plated), 'armour reduced a projector hit').toBe(onBare);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// TERRAIN — what stops an orb is not what stops a body
+// ---------------------------------------------------------------------------
+
+/** Put one code on one tile of an arena. */
+function paint(scene: Arena, at: TileXY, code: TileCode): void {
+  scene.world.level.tiles[at.y * scene.world.level.w + at.x] = code;
+}
+
+describe('terrain — an orb stops on `block_move` without `pass_projectile`', () => {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * engine/Target.lua:458-468. SOLID TO A BODY IS NOT SOLID TO A BOLT.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Molten lava and the void are `does_block_move` AND `pass_projectile`
+   * (data/general/grids/lava.lua:65-66, data/general/grids/void.lua:37-38).
+   * Nobody walks across them and every bolt flies over them. Every other solid
+   * code stops the orb ON the tile, exactly as a wall does.
+   *
+   * THE FIXTURE GUARD IS THE POINT OF EACH CASE. A tile a body could stand on
+   * would pass this test under `canWalk`, and then the test is about walking.
+   */
+  it.each([
+    ['MOLTEN_LAVA', TileCode.MOLTEN_LAVA],
+    ['OUTERSPACE', TileCode.OUTERSPACE],
+  ] as const)('flies over %s and lands on the body beyond it', (_name, code) => {
+    expect(isWalkable(code), 'the fixture tile is one a body can stand on').toBe(false);
+
+    const victim = body('victim', 6, 1);
+    const scene = arena(CORRIDOR, [victim]);
+    paint(scene, { x: 3, y: 1 }, code);
+    paint(scene, { x: 4, y: 1 }, code);
+    const shot = orb({ from: { x: 1, y: 1 }, to: { x: 6, y: 1 }, dam: 12 });
+
+    const flight = fly(shot, scene.world);
+
+    expect(flight.steps.map((s) => s.at.x)).toEqual([2, 3, 4, 5, 6]);
+    expect(flight.outcome?.stop).toBe(ProjectileStop.Actor);
+    expect(flight.outcome?.impact?.targetId).toBe('victim');
+    expect(victim.hp).toBe(88);
+  });
+
+  /**
+   * LAVA_WALL and SPACETIME_RIFT are upstream's plain `does_block_move`
+   * (lava.lua:51, void.lua:50). The DOOR is solid to a projection because
+   * `block_path` asks with no `couldpass` (tome/class/Grid.lua:89).
+   *
+   * WATER IS THE CASE THAT TELLS THIS RULE APART FROM SIGHT. The canal is clear
+   * to an eye and solid here, and it names no `pass_projectile`, so the orb
+   * stops on it although a line of sight crosses it.
+   */
+  it.each([
+    ['LAVA_WALL', TileCode.LAVA_WALL],
+    ['SPACETIME_RIFT', TileCode.SPACETIME_RIFT],
+    ['DOOR', TileCode.DOOR],
+    ['WATER', TileCode.WATER],
+  ] as const)('stops ON %s, as it stops on a wall', (_name, code) => {
+    const behind = body('behind', 6, 1);
+    const scene = arena(CORRIDOR, [behind]);
+    paint(scene, { x: 3, y: 1 }, code);
+    const shot = orb({ from: { x: 1, y: 1 }, to: { x: 6, y: 1 } });
+
+    const flight = fly(shot, scene.world);
+
+    expect(flight.outcome?.stop).toBe(ProjectileStop.Wall);
+    expect(flight.outcome?.at).toEqual({ x: 3, y: 1 });
+    expect(flight.outcome?.impact).toBeNull();
+    expect(behind.hp).toBe(100);
+    // Target.lua:466 — terrain answers `hit_radius` false, so the anchor steps back.
+    expect(shot.radiusAt).toEqual({ x: 2, y: 1 });
+  });
+
+  it('calls a body over the void a BODY stop, never a wall', () => {
+    // Nobody here can stand on OUTERSPACE; upstream's `pass_void` bodies can
+    // (tome/class/Grid.lua:96-100), so this places one by hand. The stop label
+    // must ask `blockPath`'s terrain question. Asked as "can a body walk here",
+    // the orb striking that body would be reported as striking a wall.
+    const floater = body('floater', 4, 1);
+    const scene = arena(CORRIDOR, [floater]);
+    paint(scene, { x: 4, y: 1 }, TileCode.OUTERSPACE);
+    const shot = orb({ from: { x: 1, y: 1 }, to: { x: 6, y: 1 }, dam: 12 });
+
+    const flight = fly(shot, scene.world);
+
+    expect(flight.outcome?.stop).toBe(ProjectileStop.Actor);
+    expect(flight.outcome?.impact?.targetId).toBe('floater');
+    expect(floater.hp).toBe(88);
+    expect(shot.radiusAt).toEqual({ x: 4, y: 1 });
+  });
+
+  it.each([
+    ['MOLTEN_LAVA', TileCode.MOLTEN_LAVA],
+    ['OUTERSPACE', TileCode.OUTERSPACE],
+  ] as const)('refuses a body a step onto %s, the tile the orb crosses', (name, code) => {
+    const lane = 2;
+    const world = createWorld(`pass-projectile-walk-${name}`);
+    world.level.tiles.fill(TileCode.WALL);
+    for (let x = 1; x < 8; x += 1) world.level.tiles[lane * world.level.w + x] = TileCode.FLOOR;
+    world.level.tiles[lane * world.level.w + 3] = code;
+    const ren = world.addPlayer('p1', 'Ren');
+    ren.x = 2;
+    ren.y = lane;
+
+    expect(world.tryMove('p1', Dir.E)).toEqual({ ok: false, reason: MoveBlock.Terrain });
+    expect({ x: ren.x, y: ren.y }).toEqual({ x: 2, y: lane });
+    // The control: the same body on the same lane does move, onto floor.
+    expect(world.tryMove('p1', Dir.W)).toEqual({ ok: true, x: 1, y: lane });
+  });
+
+  it('a wraith across a lava moat hits the body on the far bank', () => {
+    // THE JOIN. The scheduler lets a shot go on a line of SIGHT
+    // (engine/combat.ts `canAttack`), and molten lava is clear. The flight then
+    // decides where the orb stops. Were the two questions different, the gate
+    // would fire across the moat and every orb would land on the lava.
+    const table = session('orb-moat', 1, 0);
+    const player = table.world.getActor('p1');
+    if (player === undefined) throw new Error('fixture: p1 missing');
+    player.maxHp = 10_000;
+    player.hp = 10_000;
+    player.x = 3;
+    player.y = 17;
+
+    // Every open tile in column 5 becomes molten lava: no body crosses it, so
+    // every blow that lands came over it.
+    const { level } = table.world;
+    let moat = 0;
+    for (let y = 0; y < level.h; y += 1) {
+      const i = y * level.w + 5;
+      if (isWalkable(level.tiles[i] ?? TileCode.WALL)) {
+        level.tiles[i] = TileCode.MOLTEN_LAVA;
+        moat += 1;
+      }
+    }
+    expect(moat, 'the moat painted nothing').toBeGreaterThan(0);
+
+    table.world.addMonster('w1', {
+      name: 'Index Wraith',
+      sprite: WRAITH_SPRITE,
+      x: 8,
+      y: 17,
+      profile: AiProfile.RangedKiter,
+      attackRange: 6,
+      preferredRange: 4,
+      minRange: 2,
+      projSpeed: 2,
+    });
+
+    const fired: SweepStep[] = [];
+    let nowMs = 0;
+    let result = table.advance(nowMs);
+    for (let turn = 0; turn < 12; turn += 1) {
+      for (const step of sweepSteps(result.events)) if (step.t === 'fired') fired.push(step);
+      nowMs += 1_000;
+      result = table.commit('p1', HOLD_INTENT, nowMs);
+    }
+
+    expect(fired.length, 'the wraith never fired').toBeGreaterThan(0);
+    expect(table.world.getActor('w1')?.x, 'the wraith crossed the moat').toBeGreaterThan(5);
+    expect(player.hp).toBeLessThan(10_000);
   });
 });

@@ -31,7 +31,8 @@
 
 import type { TileXY } from '../coords.ts';
 import type { AuthoredMap } from '../level.ts';
-import { TileCode, isWalkable } from '../protocol.ts';
+import { isWalkable } from '../protocol.ts';
+import { isClosedDoorCode } from '../terrain.ts';
 import { adjacentCoords } from './dirs.ts';
 
 /** Anything with a row-major tile grid: a `GenMap` or a `LevelView`. */
@@ -41,9 +42,14 @@ export type TileGrid = {
   readonly tiles: ArrayLike<number>;
 };
 
-/** May a door-opening route pass this code? Unknown and nil codes may not. */
+/**
+ * May a door-opening route pass this code? Unknown and nil codes may not. Any
+ * shut door may, a rock door included: `Grid:block_move`'s arm keys on
+ * `door_opened` (`tome/class/Grid.lua:89-92`), and `shared/terrain.ts` says
+ * which codes have one.
+ */
 export function passable(code: number): boolean {
-  return code === TileCode.DOOR || isWalkable(code);
+  return isClosedDoorCode(code) || isWalkable(code);
 }
 
 /**

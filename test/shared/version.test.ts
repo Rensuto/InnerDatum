@@ -155,10 +155,18 @@ describe('shared constants', () => {
     // v23 client handed a worn lantern has no place on its doll for it and no
     // `unequip` that can name its slot, so it would carry a thing it can neither
     // see nor take off.
-    expect(PROTOCOL_VERSION).toBe(24);
+    //
+    // v25 ADDS TWENTY-TWO TERRAIN CODES, and it is 21 -> 22's argument with the
+    // whole floor at stake instead of a doorway. A v24 client's `tileAt` turns
+    // every one into `WALL`, and eleven of them are walkable: a drowned level,
+    // a lava field or a crystal cave draws as solid rock with the party inside
+    // it, fogged past the first tile, with no route the client can plan. The
+    // water that drowns and the lava that burns would be indistinguishable from
+    // their harmless twins, because both would be rock.
+    expect(PROTOCOL_VERSION).toBe(25);
   });
 
-  it('keeps the 23 -> 24 changelog entry beside the constant, and non-empty', () => {
+  it('keeps the 24 -> 25 changelog entry beside the constant, and non-empty', () => {
     // THE PROSE IS THE DELIVERABLE HERE, NOT DECORATION. Every bump in this file
     // is argued above the constant, and the argument is the only thing that
     // tells the next person whether their change forces a bump or is an addition
@@ -186,16 +194,21 @@ describe('shared constants', () => {
     // touched — a guard that proves the discipline held LAST TIME is not a
     // guard. It moves with the constant now, and the assertions below name this
     // entry's own frame.
-    const afterHeading = source.split('23 -> 24 (A LIGHT SOURCE)')[1] ?? '';
-    // The entry ends where the constant it explains begins.
-    const entry = afterHeading.split('export const PROTOCOL_VERSION')[0] ?? '';
+    const afterHeading = source.split('24 -> 25 (THEMED TERRAIN)')[1] ?? '';
+    // The entry ends where the one before it begins. Entries are written newest
+    // first ABOVE the constant, so cutting at the constant would read every
+    // older entry too, and an assertion could pass on somebody else's prose.
+    const entry = afterHeading.split('23 -> 24 (A LIGHT SOURCE)')[0] ?? '';
 
     expect(afterHeading).not.toBe('');
+    expect(entry.length, 'the entry runs on into the constant').toBeLessThan(afterHeading.length);
     expect(entry.trim().length).toBeGreaterThan(200);
-    // It must name the frame that FORCES the bump, not merely list what was
+    // It must name the thing that FORCES the bump, not merely list what was
     // added — an entry that only enumerates additions is an entry arguing for
-    // NOT bumping.
-    expect(entry).toContain('`unequip`');
+    // NOT bumping. Here that is the codes, and the resource field that rides
+    // the same number must be argued for too.
+    expect(entry).toContain('`TileCode`');
+    expect(entry).toContain('`ResourceMsg`');
     // And it must say what it deliberately did NOT do to the save file, because
     // the reflex when a protocol moves is to move both numbers.
     expect(entry).toContain('SCHEMA_VERSION');

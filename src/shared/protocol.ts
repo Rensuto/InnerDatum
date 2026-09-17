@@ -398,6 +398,94 @@ export const TileCode = {
    * its explored mask.
    */
   DOOR_OPEN: 33,
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THEMED TERRAIN, v25 — A CODE CARRIES ITS MECHANICS.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Twenty-two codes for the dungeon grid families upstream themes its zones
+   * with. Each one takes its walk, sight and memory answers from the grid it
+   * names, cited on the line. Where two grids differ only in whether they hurt
+   * (a `_FAKE` grid in `data/zones/infinite-dungeon/grids.lua`), they are two
+   * codes here too, so every rule stays a pure function of the code.
+   *
+   * What a code DOES beyond walk and sight — air, `on_stand`, `pass_projectile`
+   * and which door opens into what — lives in `shared/terrain.ts`.
+   *
+   * ═══ UPSTREAM'S NAMES, EXCEPT WHERE ONE WOULD BE A TRAP ═══
+   * `POND_WATER` is upstream's `DEEP_WATER`: `DEEPWATER` (20) is already the
+   * solid overworld sea, and one underscore apart is a mistake waiting to
+   * happen. `MOLTEN_LAVA` is upstream's bare `LAVA`, which reads as the family
+   * rather than the grid. `ROCK_DOOR` stands for the whole `*_ROCK` family.
+   */
+  /**
+   * Walkable water that drowns. `DEEP_WATER`, data/general/grids/water.lua:136-140,
+   * remembered through its base WATER_BASE (data/general/grids/water.lua:127);
+   * also DEEP_OCEAN_WATER (data/general/grids/water.lua:146-150).
+   */
+  POND_WATER: 34,
+  /** The seabed. data/general/grids/water.lua:24-31: floor, `air_level = -5`, water. */
+  WATER_FLOOR: 35,
+  /** The seabed with no air rule. data/zones/infinite-dungeon/grids.lua:262-268. */
+  WATER_FLOOR_FAKE: 36,
+  /** An air bubble, `air_level = 15`. data/general/grids/water.lua:98-116. */
+  WATER_FLOOR_BUBBLE: 37,
+  /**
+   * Coral. data/general/grids/water.lua:34-52 and its FAKE twin at
+   * data/zones/infinite-dungeon/grids.lua:271-287; one code serves both, since a
+   * wall's air is never read here (see `shared/terrain.ts`).
+   */
+  WATER_WALL: 38,
+  /** Burns whoever stands on it. data/general/grids/lava.lua:24-43. */
+  LAVA_FLOOR: 39,
+  /** Lava that does not burn. data/zones/infinite-dungeon/grids.lua:345-353. */
+  LAVA_FLOOR_FAKE: 40,
+  /** data/general/grids/lava.lua:45-56, FAKE at data/zones/infinite-dungeon/grids.lua:356-367. */
+  LAVA_WALL: 41,
+  /**
+   * Upstream's `LAVA`, data/general/grids/lava.lua:59-70: `does_block_move` and
+   * `pass_projectile`, and no `block_sight`. Solid, transparent, and a bolt
+   * flies over it.
+   */
+  MOLTEN_LAVA: 42,
+  /** The void between floating rocks. data/general/grids/void.lua:30-42. Solid, clear, remembered. */
+  OUTERSPACE: 43,
+  /** data/general/grids/void.lua:59-79. The floor paired with OUTERSPACE. */
+  FLOATING_ROCKS: 44,
+  /** data/general/grids/void.lua:22-28. A walkable floor. */
+  VOID: 45,
+  /**
+   * `SPACETIME_RIFT2`, data/zones/infinite-dungeon/grids.lua:245-256, which
+   * carries `block_sight`. The see-through rift at
+   * data/general/grids/void.lua:44-53 is not ported: every rift here is opaque.
+   */
+  SPACETIME_RIFT: 46,
+  /** data/general/grids/crystal.lua:36-43. */
+  CRYSTAL_FLOOR: 47,
+  /** data/general/grids/crystal.lua:20-34. */
+  CRYSTAL_WALL: 48,
+  /** data/general/grids/slime.lua:23-30. */
+  SLIME_FLOOR: 49,
+  /** data/general/grids/slime.lua:33-46. */
+  SLIME_WALL: 50,
+  /**
+   * data/general/grids/sand.lua:42-95. The unstable tunnel it leaves when dug
+   * is not ported: nothing digs.
+   */
+  SANDWALL: 51,
+  /** data/general/grids/burntland.lua:20-32. Paired with CHARRED. */
+  BURNT_TREE: 52,
+  /** data/general/grids/underground_gloomy.lua:20-27. */
+  UNDERGROUND_FLOOR: 53,
+  /** data/general/grids/underground_gloomy.lua:62-74. */
+  UNDERGROUND_TREE: 54,
+  /**
+   * "huge loose rock": GRASS_ROCK and its kin,
+   * data/zones/infinite-dungeon/grids.lua:36-166 and :203-229. A door whose
+   * `door_opened` is the zone's FLOOR, not an open door, so it opens into the
+   * map's `rockFloor` (`shared/level.ts`) rather than into `DOOR_OPEN`.
+   */
+  ROCK_DOOR: 55,
 } as const;
 export type TileCode = (typeof TileCode)[keyof typeof TileCode];
 
@@ -432,6 +520,20 @@ const WALKABLE: ReadonlySet<number> = new Set<number>([
    * there" from acquiring a second answer that depends on who is asking.
    */
   TileCode.DOOR_OPEN,
+  // Themed floors, v25: none of their grids declares `does_block_move`. The
+  // water that drowns and the lava that burns are walkable upstream; what they
+  // do to you is `shared/terrain.ts`'s question, not this one.
+  TileCode.POND_WATER,
+  TileCode.WATER_FLOOR,
+  TileCode.WATER_FLOOR_FAKE,
+  TileCode.WATER_FLOOR_BUBBLE,
+  TileCode.LAVA_FLOOR,
+  TileCode.LAVA_FLOOR_FAKE,
+  TileCode.FLOATING_ROCKS,
+  TileCode.VOID,
+  TileCode.CRYSTAL_FLOOR,
+  TileCode.SLIME_FLOOR,
+  TileCode.UNDERGROUND_FLOOR,
 ]);
 
 /**
@@ -446,6 +548,10 @@ const SOLID_BUT_CLEAR: ReadonlySet<number> = new Set<number>([
   TileCode.WATER,
   TileCode.DEEPWATER,
   TileCode.FROZEN_WATER,
+  // `does_block_move` with no `block_sight`: molten lava
+  // (data/general/grids/lava.lua:59-70) and the void (data/general/grids/void.lua:30-42).
+  TileCode.MOLTEN_LAVA,
+  TileCode.OUTERSPACE,
 ]);
 
 /**
@@ -475,6 +581,18 @@ const BLOCKS_SIGHT: ReadonlySet<number> = new Set<number>([
    * line and the one in `WALKABLE`.
    */
   TileCode.DOOR,
+  // Themed walls and the rock door, v25: each grid sets `block_sight = true`.
+  // Listed although the default below would close them anyway, so a reader
+  // sees the answer stated rather than inherited.
+  TileCode.WATER_WALL,
+  TileCode.LAVA_WALL,
+  TileCode.SPACETIME_RIFT,
+  TileCode.CRYSTAL_WALL,
+  TileCode.SLIME_WALL,
+  TileCode.SANDWALL,
+  TileCode.BURNT_TREE,
+  TileCode.UNDERGROUND_TREE,
+  TileCode.ROCK_DOOR,
 ]);
 
 /**
@@ -522,6 +640,23 @@ const HAUNTS: ReadonlySet<number> = new Set<number>([
    */
   TileCode.SNOWFIELD,
   TileCode.CHARRED,
+  /**
+   * EVERY THEMED FLOOR IS WILD GROUND, v25. None of them is a road, and left
+   * off they would be `isSafeGround`: the minimap would paint dungeon water and
+   * lava in the safe-road colour (`client/ui/mapview.ts`), promising nothing
+   * waits on the one ground most likely to kill you.
+   */
+  TileCode.POND_WATER,
+  TileCode.WATER_FLOOR,
+  TileCode.WATER_FLOOR_FAKE,
+  TileCode.WATER_FLOOR_BUBBLE,
+  TileCode.LAVA_FLOOR,
+  TileCode.LAVA_FLOOR_FAKE,
+  TileCode.FLOATING_ROCKS,
+  TileCode.VOID,
+  TileCode.CRYSTAL_FLOOR,
+  TileCode.SLIME_FLOOR,
+  TileCode.UNDERGROUND_FLOOR,
 ]);
 
 export function isHaunt(code: number): boolean {
@@ -616,8 +751,14 @@ export function blocksSight(code: number): boolean {
  *              (data/general/grids/forest.lua:23), rocky ground
  *              (data/general/grids/mountain.lua:22), sand
  *              (data/general/grids/sand.lua:23), burnt ground
- *              (data/general/grids/burntland.lua:56) and deep water
- *              (data/general/grids/water.lua:136).
+ *              (data/general/grids/burntland.lua:56) and the canal and sea.
+ *
+ * THE CANAL AND THE SEA ARE A KNOWN DIVERGENCE, not a port. This list used to
+ * cite deep water (data/general/grids/water.lua:136) as forgotten, and it is
+ * not: DEEP_WATER inherits `always_remember` from WATER_BASE
+ * (data/general/grids/water.lua:127). WATER and DEEPWATER are the overworld's
+ * solid water and keep `false`; POND_WATER, the dungeon's walkable deep water,
+ * takes the grid's real answer.
  *
  * Each code takes the answer of the grid it stands in for. RAIL and BRIDGE have
  * no grid upstream; they are laid ways, so they follow the roads.
@@ -660,6 +801,33 @@ const ALWAYS_REMEMBER: Readonly<Record<TileCode, boolean>> = {
   [TileCode.FROZEN_WATER]: true,
   [TileCode.DOOR]: true,
   [TileCode.DOOR_OPEN]: true,
+  // Themed terrain, v25. Each answer is the grid's own `always_remember`, at the
+  // line cited on the code in `TileCode` above: every wall and the rock door
+  // keep it, the floors do not, and of the two solid see-through codes only
+  // OUTERSPACE does (data/general/grids/void.lua:36; molten lava never sets it).
+  // POND_WATER inherits it from WATER_BASE (data/general/grids/water.lua:127).
+  [TileCode.POND_WATER]: true,
+  [TileCode.WATER_FLOOR]: false,
+  [TileCode.WATER_FLOOR_FAKE]: false,
+  [TileCode.WATER_FLOOR_BUBBLE]: false,
+  [TileCode.WATER_WALL]: true,
+  [TileCode.LAVA_FLOOR]: false,
+  [TileCode.LAVA_FLOOR_FAKE]: false,
+  [TileCode.LAVA_WALL]: true,
+  [TileCode.MOLTEN_LAVA]: false,
+  [TileCode.OUTERSPACE]: true,
+  [TileCode.FLOATING_ROCKS]: false,
+  [TileCode.VOID]: false,
+  [TileCode.SPACETIME_RIFT]: true,
+  [TileCode.CRYSTAL_FLOOR]: false,
+  [TileCode.CRYSTAL_WALL]: true,
+  [TileCode.SLIME_FLOOR]: false,
+  [TileCode.SLIME_WALL]: true,
+  [TileCode.SANDWALL]: true,
+  [TileCode.BURNT_TREE]: true,
+  [TileCode.UNDERGROUND_FLOOR]: false,
+  [TileCode.UNDERGROUND_TREE]: true,
+  [TileCode.ROCK_DOOR]: true,
 };
 
 /** Is this terrain remembered wherever it is seen, lit or not? See `ALWAYS_REMEMBER`. */

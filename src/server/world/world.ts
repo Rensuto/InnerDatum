@@ -47,7 +47,7 @@
 import { step, tileIndex } from '../../shared/coords.ts';
 import { createTurnClock } from '../../shared/energy.ts';
 import { canWalk, makeTestMap } from '../../shared/level.ts';
-import { ActorKind, TileCode } from '../../shared/protocol.ts';
+import { ActorKind, TileCode, isWalkable } from '../../shared/protocol.ts';
 import { createRng } from '../../shared/rng.ts';
 import { createFog } from '../../shared/fog.ts';
 import { lineOfSightFor } from '../view/eyesight.ts';
@@ -70,6 +70,7 @@ import type { LevelView } from '../../shared/protocol.ts';
 import type { Rng } from '../../shared/rng.ts';
 import type { EngineActor, MonsterInit, PlayerInit } from '../engine/actor.ts';
 import type { Projectile, ProjectileInit } from '../engine/projectile.ts';
+import { isClosedDoorCode, openedFormOf } from '../../shared/terrain.ts';
 
 /**
  * An actor as the SERVER holds it — deliberately not an `ActorView`.
@@ -824,6 +825,13 @@ export function createWorld(
   const authored = map ?? makeTestMap();
   const level = authored.view;
   const spawns = authored.spawns;
+  // What a `ROCK_DOOR` on this map opens into. See `AuthoredMap.rockFloor`.
+  const rockFloor = authored.rockFloor ?? TileCode.FLOOR;
+  // A door that opened into rock would shut the way it was meant to open, and a
+  // client walking through it would wait for a step that never comes.
+  if (!isWalkable(rockFloor)) {
+    throw new Error(`createWorld: a rock door cannot open into code ${String(rockFloor)}`);
+  }
   const actors = new Map<string, Actor>();
   /**
    * ORBS IN FLIGHT. Deliberately not in `actors` — see the block comment on
@@ -1409,13 +1417,12 @@ export function createWorld(
    */
   const openDoor = (x: number, y: number): boolean => {
     if (!isClosedDoor(level, x, y)) return false;
-    level.tiles[tileIndex(x, y, level.w)] = TileCode.DOOR_OPEN;
-    terrainDelta.set(`${String(x)},${String(y)}`, {
-      x,
-      y,
-      code: TileCode.DOOR_OPEN,
-      was: TileCode.DOOR,
-    });
+    const was = level.tiles[tileIndex(x, y, level.w)] ?? TileCode.WALL;
+    if (!isClosedDoorCode(was)) return false;
+    // `door_opened`: DOOR_OPEN for a door, the map's floor for a rock door.
+    const code = openedFormOf(was, rockFloor);
+    level.tiles[tileIndex(x, y, level.w)] = code;
+    terrainDelta.set(`${String(x)},${String(y)}`, { x, y, code, was });
     return true;
   };
 

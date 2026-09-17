@@ -7,6 +7,7 @@ import { setEffect } from '../../src/server/engine/effects.ts';
 import { canOpenDoors, isClosedDoor } from '../../src/server/engine/doors.ts';
 import { createTurnEngine } from '../../src/server/turn-engine.ts';
 import { createWorld } from '../../src/server/world/world.ts';
+import { makeTestMap } from '../../src/shared/level.ts';
 import { TileCode } from '../../src/shared/protocol.ts';
 import type { Actor, World } from '../../src/server/world/world.ts';
 
@@ -528,6 +529,100 @@ describe('restoreTerrain — a wipe must not pay', () => {
     expect(world.terrainChanges()).toEqual([
       { x: 3, y: LANE_Y, code: TileCode.DOOR_OPEN, was: TileCode.DOOR },
     ]);
+  });
+});
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * A ROCK DOOR OPENS INTO THE FLOOR — `data/zones/infinite-dungeon/grids.lua:45`.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * ```lua
+ * newEntity{ define_as = "GRASS_ROCK", ..., is_door = true, door_opened = "GRASS" }
+ * ```
+ *
+ * `Grid.lua:63` writes `door_opened` into the map, and for every `*_ROCK` that
+ * is the zone's floor rather than an open door. One code serves all of them,
+ * so the floor comes from the map: `AuthoredMap.rockFloor`.
+ *
+ * EVERY ASSERTION USES A FLOOR THAT IS NOT `FLOOR`, except the one about the
+ * default. A build that ignored `rockFloor` and always wrote FLOOR would pass a
+ * FLOOR-floored fixture and be wrong on every themed level.
+ */
+describe('a rock door', () => {
+  const rockWorld = (seed: string): World => {
+    const world = createWorld(seed, { ...makeTestMap(), rockFloor: TileCode.CRYSTAL_FLOOR });
+    world.level.tiles.fill(TileCode.FLOOR);
+    world.level.tiles[LANE_Y * world.level.w + 3] = TileCode.ROCK_DOOR;
+    world.level.tiles[LANE_Y * world.level.w + 5] = TileCode.DOOR;
+    return world;
+  };
+
+  it('opens into the map`s rockFloor, and records what it was', () => {
+    const world = rockWorld('rock-open');
+    expect(isClosedDoor(world.level, 3, LANE_Y), 'a rock door is not a shut door').toBe(true);
+
+    expect(world.openDoor(3, LANE_Y)).toBe(true);
+
+    expect(
+      world.level.tiles[LANE_Y * world.level.w + 3],
+      'the rock opened into the wrong floor',
+    ).toBe(TileCode.CRYSTAL_FLOOR);
+    expect(isClosedDoor(world.level, 3, LANE_Y)).toBe(false);
+    expect(world.terrainChanges()).toEqual([
+      { x: 3, y: LANE_Y, code: TileCode.CRYSTAL_FLOOR, was: TileCode.ROCK_DOOR },
+    ]);
+  });
+
+  it('leaves a plain DOOR opening into DOOR_OPEN on the same map', () => {
+    const world = rockWorld('rock-and-door');
+    expect(world.openDoor(5, LANE_Y)).toBe(true);
+    expect(world.level.tiles[LANE_Y * world.level.w + 5]).toBe(TileCode.DOOR_OPEN);
+  });
+
+  it('opens into FLOOR on a map that names no rockFloor', () => {
+    const world = createWorld('rock-default');
+    world.level.tiles.fill(TileCode.WALL);
+    world.level.tiles[LANE_Y * world.level.w + 3] = TileCode.ROCK_DOOR;
+    expect(world.openDoor(3, LANE_Y)).toBe(true);
+    expect(world.level.tiles[LANE_Y * world.level.w + 3]).toBe(TileCode.FLOOR);
+  });
+
+  it('refuses a map whose rock door would open into something nobody can stand on', () => {
+    for (const rockFloor of [TileCode.WALL, TileCode.MOLTEN_LAVA, TileCode.WATER_WALL]) {
+      expect(
+        () => createWorld('rock-solid', { ...makeTestMap(), rockFloor }),
+        String(rockFloor),
+      ).toThrow(/rock door cannot open/);
+    }
+    expect(() =>
+      createWorld('rock-ok', { ...makeTestMap(), rockFloor: TileCode.VOID }),
+    ).not.toThrow();
+  });
+
+  it('is shut again by restoreTerrain', () => {
+    const world = rockWorld('rock-reset');
+    expect(world.openDoor(3, LANE_Y)).toBe(true);
+
+    world.restoreTerrain();
+
+    expect(world.level.tiles[LANE_Y * world.level.w + 3]).toBe(TileCode.ROCK_DOOR);
+    expect(world.terrainChanges()).toEqual([
+      { x: 3, y: LANE_Y, code: TileCode.ROCK_DOOR, was: TileCode.ROCK_DOOR },
+    ]);
+  });
+
+  it('is opened by a player walking into it, who does not step through', () => {
+    // The move pipeline's door branch, reached with the second kind of door.
+    const table = scene('rock-walk', { ahead: TileCode.ROCK_DOOR });
+
+    expect(table.engine.submitMove('p1', 'e').ok).toBe(true);
+    table.engine.pump();
+
+    expect(table.world.level.tiles[LANE_Y * table.world.level.w + 3], 'the rock did not move').toBe(
+      TileCode.FLOOR,
+    );
+    expect(table.actor('p1').x, 'the body walked through the rock it just moved').toBe(2);
   });
 });
 
