@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
 import { BSP_MAX_DEPTH, partition } from '../../src/shared/bsp.ts';
+import { range } from '../../src/shared/mapgen/lua.ts';
 import { createRng } from '../../src/shared/rng.ts';
-import type { BspNode } from '../../src/shared/bsp.ts';
+import type { BspNode, BspRange } from '../../src/shared/bsp.ts';
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════
@@ -145,5 +146,58 @@ describe('the partition tiles its rectangle exactly', () => {
 
   it('has a default depth cap of eight, as `max_depth or 8` says', () => {
     expect(BSP_MAX_DEPTH).toBe(8);
+  });
+});
+
+describe('the cut is drawn by the range the caller hands in', () => {
+  it('spends no draw on a cut with one position through the C core`s range, and one by default', () => {
+    /**
+     * `rng.range(8, 16 - 8)` is `rand_div(1)`, which returns before it touches
+     * the generator (C core: `rng_range`, src/core_lua.c, T-Engine4 tag
+     * tome-1.6.0). 16 wide against a minimum of 8 can only be cut at 8, and 7
+     * tall against 5 cannot be cut at all, so there is no coin either: the
+     * whole tree is that one cut. Turned a quarter, the same for the height.
+     */
+    const draws = (w: number, h: number, cut?: BspRange): number => {
+      const rng = createRng('one-cut');
+      const tree = partition(w, h, w > h ? 8 : 5, w > h ? 5 : 8, rng, 'bsp', BSP_MAX_DEPTH, cut);
+      expect(tree.leaves.map((l) => [l.x, l.y, l.w, l.h])).toEqual(
+        w > h
+          ? [
+              [0, 0, 8, 7],
+              [8, 0, 8, 7],
+            ]
+          : [
+              [0, 0, 7, 8],
+              [0, 8, 7, 8],
+            ],
+      );
+      return rng.getState().count;
+    };
+    expect(draws(16, 7, range)).toBe(0);
+    expect(draws(7, 16, range)).toBe(0);
+    // The default is the draw `partition` has always made.
+    expect(draws(16, 7)).toBe(1);
+    expect(draws(7, 16)).toBe(1);
+  });
+
+  it('asks that range for every cut, with the node`s label and bounds, and cuts where it answers', () => {
+    // A range that always answers its lower bound cuts every piece at the minimum.
+    const asked: [string, number, number][] = [];
+    const lowest: BspRange = (_rng, label, lo, hi) => {
+      asked.push([label, lo, hi]);
+      return lo;
+    };
+    const tree = partition(30, 6, 8, 5, createRng('lowest'), 'bsp', BSP_MAX_DEPTH, lowest);
+    // 30 is cut at 8; the 22 left is cut at 8; the 14 left is under 16 and stays.
+    expect(tree.leaves.map((l) => [l.x, l.w])).toEqual([
+      [0, 8],
+      [8, 8],
+      [16, 14],
+    ]);
+    expect(asked).toEqual([
+      ['bsp.cut.0', 8, 22],
+      ['bsp.cut.2', 8, 14],
+    ]);
   });
 });

@@ -34,18 +34,29 @@
  */
 
 import type { TileXY } from '../coords.ts';
-import type { AuthoredMap, TileRect } from '../level.ts';
+import type { AuthoredMap, LitRoom } from '../level.ts';
 import { TileCode } from '../protocol.ts';
 import { createRng } from '../rng.ts';
+import type { Rng } from '../rng.ts';
 import { VAULTS_BY_SHAPE } from '../vaults.ts';
+import { createBuilding, generate as generateBuilding } from './building.ts';
+import type { BuildingData } from './building.ts';
 import { createCavern, generate as generateCavern } from './cavern.ts';
 import type { CavernData } from './cavern.ts';
 import { reachable } from './connectivity.ts';
+import { createForest, generate as generateForest } from './forest.ts';
+import type { ForestData } from './forest.ts';
 import { NIL_TERRAIN, createGenMap } from './genmap.ts';
 import type { GenMap, GridKeys, Spot } from './genmap.ts';
 import { truthy } from './lua.ts';
+import { createMaze, generate as generateMaze } from './maze.ts';
+import type { MazeData } from './maze.ts';
+import { createOctopus, generate as generateOctopus } from './octopus.ts';
+import type { OctopusMapSpec } from './octopus.ts';
 import { createRoomer, generate } from './roomer.ts';
 import type { RoomerData } from './rooms-loader.ts';
+import { createTown, generate as generateTown } from './town.ts';
+import type { TownMapSpec } from './town.ts';
 
 /** `_max_level_generation_count` (`engine/Zone.lua:1021`). */
 export const MAX_LEVEL_GENERATION_COUNT = 50;
@@ -56,8 +67,24 @@ export type RoomerMapSpec = { readonly class: 'Roomer' } & RoomerData;
 /** A `generator.map` table naming `engine.generator.map.Cavern`. */
 export type CavernMapSpec = { readonly class: 'Cavern' } & CavernData;
 
+/** A `generator.map` table naming `engine.generator.map.Forest`. */
+export type ForestMapSpec = { readonly class: 'Forest' } & ForestData;
+
+/** A `generator.map` table naming `engine.generator.map.Maze`. */
+export type MazeMapSpec = { readonly class: 'Maze' } & MazeData;
+
+/** A `generator.map` table naming `engine.generator.map.Building`. */
+export type BuildingMapSpec = { readonly class: 'Building' } & BuildingData;
+
 /** A zone's `generator.map` table, for every generator class ported so far. */
-export type MapGeneratorSpec = RoomerMapSpec | CavernMapSpec;
+export type MapGeneratorSpec =
+  | RoomerMapSpec
+  | CavernMapSpec
+  | ForestMapSpec
+  | TownMapSpec
+  | BuildingMapSpec
+  | MazeMapSpec
+  | OctopusMapSpec;
 
 /** The part of a zone table a level is built from. */
 export type LevelSpec<M extends MapGeneratorSpec = MapGeneratorSpec> = {
@@ -116,6 +143,78 @@ function connectivityFailure(
   return null;
 }
 
+/** What one generator run hands `newLevel`: upstream's `ux, uy, dx, dy, spots`, or nothing. */
+type GeneratorRun = {
+  readonly result: {
+    readonly up: TileXY | null;
+    readonly down: TileXY | null;
+    readonly spots: readonly Spot[];
+  } | null;
+  /** What a roll lights that `map.rooms` does not hold. See `toAuthoredMap`. */
+  readonly lit: readonly LitRoom[];
+};
+
+/**
+ * `self:getGenerator("map", level, level_data.generator.map)` then
+ * `generator:generate(lev, old_lev)` (`engine/Zone.lua:1053-1055`): the class
+ * the table names, made afresh for this attempt.
+ */
+function runGenerator(
+  spec: MapGeneratorSpec,
+  map: GenMap,
+  rng: Rng,
+  zone: { readonly maxLevel: number },
+  level: { forceRecreate: string | null },
+  lev: number,
+  oldLev: number,
+): GeneratorRun {
+  switch (spec.class) {
+    case 'Roomer':
+      return { result: generate(createRoomer(map, spec, rng, zone, level), lev, oldLev), lit: [] };
+    case 'Cavern':
+      return {
+        result: generateCavern(createCavern(map, spec, rng, zone, level), lev, oldLev),
+        lit: [],
+      };
+    case 'Forest':
+      return {
+        result: generateForest(createForest(map, spec, rng, zone, level), lev, oldLev),
+        lit: [],
+      };
+    case 'Town':
+      return {
+        result: generateTown(createTown(map, spec, rng, zone, level), lev, oldLev),
+        lit: [],
+      };
+    case 'Maze':
+      return {
+        result: generateMaze(createMaze(map, spec, rng, zone, level), lev, oldLev),
+        lit: [],
+      };
+    case 'Octopus':
+      return {
+        result: generateOctopus(createOctopus(map, spec, rng, zone, level), lev, oldLev),
+        lit: [],
+      };
+    case 'Building': {
+      const gen = createBuilding(map, spec, rng, zone, level);
+      const result = generateBuilding(gen, lev, oldLev);
+      // A BUILDING IS LIT ON ITS OWN ROLL, and it is not a room: `building`
+      // rolls `lite_room_chance or 70` and lights the floor it wrote, inside
+      // its walls (`engine/generator/map/Building.lua:104`, `:114-116`) — and
+      // only that floor, so a vault inside one stays dark.
+      const lit = gen.buildings.map((b) => ({
+        x0: b.x1 + 1,
+        y0: b.y1 + 1,
+        x1: b.x2 - 1,
+        y1: b.y2 - 1,
+        cells: b.floored,
+      }));
+      return { result, lit };
+    }
+  }
+}
+
 /**
  * `Zone:newLevel(level_data, lev, old_lev)` (`engine/Zone.lua:1023-1166`), for
  * the map alone.
@@ -132,15 +231,10 @@ export function newLevel(
     const level = { forceRecreate: null as string | null };
     const zone = { maxLevel: opts.maxLevel };
     const oldLevel = opts.oldLevel ?? opts.level - 1;
-    // `require(class).new(zone, map, level, data)` then `generate(lev, old_lev)`
-    // (`engine/Zone.lua:1053-1055`).
-    const result =
-      spec.map.class === 'Cavern'
-        ? generateCavern(createCavern(map, spec.map, rng, zone, level), opts.level, oldLevel)
-        : generate(createRoomer(map, spec.map, rng, zone, level), opts.level, oldLevel);
+    const { result, lit } = runGenerator(spec.map, map, rng, zone, level, opts.level, oldLevel);
     const up = result?.up ?? null;
     const down = result?.down ?? null;
-    last = toAuthoredMap(map, up, down, spec.map.grid);
+    last = toAuthoredMap(map, up, down, spec.map.grid, lit);
     if (result === null || level.forceRecreate !== null) continue;
     if (connectivityFailure(spec, map, up, down, result.spots) !== null) continue;
     return { map: last, attempts: attempt, failed: false };
@@ -211,7 +305,10 @@ function nilTerrainCode(keys: GridKeys): number {
  *   the floor has one.
  * - `rooms` is the rectangle, walls included, of every placed room a lit roll
  *   lights — all but a lesser vault, whose generator never reads it
- *   (`rooms/lesser_vault.lua:90`).
+ *   (`rooms/lesser_vault.lua:90`) — then `lit`, what a generator lights on a
+ *   roll of its own outside the room pool (a Building's buildings, cell by
+ *   cell). `shared/light.ts` rolls each one again, on the world's stream, at
+ *   the same chance.
  * - `vaults` is every placed room that holds something, in placement order, at
  *   its drawing: a lesser vault's apron is not part of it.
  * - Nil terrain becomes the wall key's code.
@@ -221,14 +318,18 @@ export function toAuthoredMap(
   up: TileXY | null,
   down: TileXY | null,
   keys: GridKeys,
+  lit: readonly LitRoom[] = [],
 ): AuthoredMap {
   const nil = nilTerrainCode(keys);
   const tiles: number[] = Array.from(map.tiles, (code) => (code === NIL_TERRAIN ? nil : code));
-  const rooms: TileRect[] = map.rooms.flatMap((r) =>
-    r.room.ignoresLite === true
-      ? []
-      : [{ x0: r.x, y0: r.y, x1: r.x + r.room.w - 1, y1: r.y + r.room.h - 1 }],
-  );
+  const rooms: LitRoom[] = [
+    ...map.rooms.flatMap((r) =>
+      r.room.ignoresLite === true
+        ? []
+        : [{ x0: r.x, y0: r.y, x1: r.x + r.room.w - 1, y1: r.y + r.room.h - 1 }],
+    ),
+    ...lit,
+  ];
   const vaults = map.rooms.flatMap((r) =>
     r.room.vault === undefined
       ? []

@@ -49,6 +49,16 @@ export type TileRect = {
   readonly y1: number;
 };
 
+/** What one light roll lights: a room's rectangle, or only some cells of it. */
+export type LitRoom = TileRect & {
+  /**
+   * The cells, row-major, a winning roll lights, when that is not the whole
+   * rectangle: a Building's building lights the floor it wrote and nothing
+   * else (engine/generator/map/Building.lua:114-116).
+   */
+  readonly cells?: readonly number[];
+};
+
 export type AuthoredMap = {
   readonly view: LevelView;
   /** Where the server places joining bodies, in row-major order. */
@@ -94,7 +104,7 @@ export type AuthoredMap = {
    * light: upstream lights a room whole on a roll
    * (engine/generator/map/RoomsLoader.lua:625, :652). See `shared/light.ts`.
    */
-  readonly rooms?: readonly TileRect[];
+  readonly rooms?: readonly LitRoom[];
   readonly vaults?: readonly {
     readonly id: string;
     readonly at: TileXY;

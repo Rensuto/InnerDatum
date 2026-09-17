@@ -43,6 +43,23 @@ describe('the light a level makes on its own', () => {
     expect(outside, 'no tile outside every room to check').toBeGreaterThan(0);
   });
 
+  it('lights only a room`s cells when it names them, on the same one roll', () => {
+    // engine/generator/map/Building.lua:114-116: a building lights the floor it
+    // wrote, not its whole rectangle.
+    const small = { w: 6, h: 5 };
+    const room = { x0: 1, y0: 1, x1: 4, y1: 3, cells: [7, 9, 14] };
+    const lit = lightLevel(small, [room], { litRoomChance: 100 }, createRng('cells'));
+    expect([...lit].flatMap((bit, i) => (bit === 1 ? [i] : []))).toEqual([7, 9, 14]);
+    // One draw for the room, however many cells it names.
+    const a = createRng('draws');
+    lightLevel(small, [room], { litRoomChance: 50 }, a);
+    const b = createRng('draws');
+    lightLevel(small, [{ x0: 1, y0: 1, x1: 4, y1: 3 }], { litRoomChance: 50 }, b);
+    expect(a.nextU32('probe')).toBe(b.nextU32('probe'));
+    const dark = lightLevel(small, [room], { litRoomChance: 0 }, createRng('cells'));
+    expect(dark.every((bit) => bit === 0)).toBe(true);
+  });
+
   it('lights nothing when no room can win its roll', () => {
     const lit = lightLevel(size, rooms, { litRoomChance: 0 }, createRng('a'));
     expect(lit.every((bit) => bit === 0)).toBe(true);

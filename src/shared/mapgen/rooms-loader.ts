@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Dalton Barraclough
-// Ported from t-engine4 game/engines/default/engine/generator/map/RoomsLoader.lua:28-53, :377-424, :560-929
+// Ported from t-engine4 game/engines/default/engine/generator/map/RoomsLoader.lua:28-53, :377-424, :427-488, :560-929
 //   and game/modules/tome/data/rooms/random_room.lua:28-34, rooms/simple.lua:20-37,
-//   rooms/money_vault.lua:20-48, rooms/pit.lua:20-65, rooms/lesser_vault.lua:39-125
+//   rooms/money_vault.lua:20-48, rooms/pit.lua:20-65, rooms/lesser_vault.lua:39-125,
+//   rooms/forest_clearing.lua:20-126, rooms/rocky_snowy_trees.lua:20-44
 // T-Engine4 (C) 2009-2018 Nicolas Casalini "DarkGod" -- https://te4.org/license
 
 /**
@@ -36,11 +37,17 @@
  * - `lesser_vault` stamps OUR drawn rooms (`shared/vaults.ts`) where upstream
  *   loads Static vault maps, each laid in the ring of floor upstream's own
  *   walk-through vaults draw; the room function around them is upstream's.
- * - TMX rooms, zone-local `!room` files, `roomFrom`/`roomParse` and `makePod`
- *   have no content that needs them yet and are not ported.
+ * - A `forest_clearing` that rolls a pit spawns no actors; it records itself as
+ *   a vault, as `pit` does, and makes every draw that decides it is one.
+ * - TMX rooms, zone-local `!room` files and `roomFrom`/`roomParse` have no
+ *   content that needs them yet and are not ported.
+ * - A pod's id is a number, where upstream's is the string `"podroom"..id`;
+ *   see `podRoomId` for why that is the same tunnel.
  */
 
 import type { TileXY } from '../coords.ts';
+import { DEFAULT_HURST, DEFAULT_LACUNARITY, createNoise1 } from '../noise.ts';
+import type { Noise1 } from '../noise.ts';
 import { TileCode } from '../protocol.ts';
 import type { Rng } from '../rng.ts';
 import { VaultTurn, turnVault } from '../vault.ts';
@@ -56,8 +63,18 @@ import {
 } from './dirs.ts';
 import type { KeypadDir } from './dirs.ts';
 import type { GenMap, GridKeys, PlacedRoom } from './genmap.ts';
+import { fovDistance, line } from './geom.ts';
+import {
+  HEIGHTMAP_MAX,
+  HEIGHTMAP_MIN,
+  createHeightmap,
+  generate as generateHeightmap,
+  heightAt,
+} from './heightmap.ts';
+import type { Heightmap } from './heightmap.ts';
 import { bound, normal, percent, range, table, truthy } from './lua.ts';
 import { ASCII_ROOMS, RANDOM_ROOM_LIST } from './rooms.ts';
+import { tableSort } from './sort.ts';
 
 /**
  * What a placed room contributes to `AuthoredMap.vaults`: a room that "holds
@@ -141,6 +158,31 @@ export type ForceTunnel = {
 };
 
 /**
+ * An actor filter as a zone's `rooms_config` writes one (`{type="insect", subtype="ant"}`).
+ * Room functions only DRAW one, with `rng.table`; which actors it names is
+ * population, and population is `populateDelve`'s.
+ *
+ * A field can be a FUNCTION: the infinite dungeon's clearings filter with
+ * `special=function(e) ... end` (`data/zones/infinite-dungeon/zone.lua:128`,
+ * `:151`), so a predicate is a value this type holds too.
+ */
+export type ActorFilter = Readonly<
+  Record<string, string | number | boolean | ((entity: unknown) => boolean)>
+>;
+
+/** A zone's `rooms_config`: per-room settings the room functions read. */
+export type RoomsConfig = {
+  /**
+   * `rooms_config.forest_clearing` (`zones/old-forest/zone.lua:48`): the percent
+   * chance a clearing is a pit, and the filters one is drawn from.
+   */
+  readonly forestClearing?: {
+    readonly pitChance: number;
+    readonly filters: readonly ActorFilter[];
+  };
+};
+
+/**
  * A zone's `generator.map` table for Roomer, field for field. Absent numbers
  * take the defaults `Roomer:init` writes (`engine/generator/map/Roomer.lua:31-34`).
  */
@@ -170,7 +212,9 @@ export type RoomerData = {
   readonly randomRoomsList?: readonly string[];
   /** Vault ids from `shared/vaults.ts`. Default: every drawn room. */
   readonly lesserVaultsList?: readonly string[];
-  /** `'.'`, `'#'`, `door`, `up`, `down`, `'+'`, `'='`. */
+  /** `rooms_config`. Absent, a `forest_clearing` never rolls for a pit. */
+  readonly roomsConfig?: RoomsConfig;
+  /** `'.'`, `'#'`, `door`, `up`, `down`, `'+'`, `'='`, and `'T'` for `rocky_snowy_trees`. */
   readonly grid: GridKeys;
 };
 
@@ -706,6 +750,196 @@ export function placeDoors(gen: RoomsGen, chance: number): void {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// PODS — an irregular room, drawn outward from its centre
+// ═══════════════════════════════════════════════════════════════════════════
+
+/** The `core.noise` method a pod's outline is sampled with: `data.noise`. */
+export type PodNoise = 'fbm_perlin' | 'perlin' | 'simplex' | 'fbm_simplex';
+
+/**
+ * What `makePod` reads from its `data` argument. Octopus passes ITSELF
+ * (`engine/generator/map/Octopus.lua:56`), so these are the generator's own
+ * fields, as `Octopus:init` defaults them (`engine/generator/map/Octopus.lua:34-43`).
+ */
+export type PodData = {
+  /** Handed to `core.noise.new`, which ignores it. `null` is nil. */
+  readonly hurst: number | null;
+  /** `null` is nil, which `core.noise.new` reads as libtcod's 2. */
+  readonly lacunarity: number | null;
+  readonly noise: PodNoise;
+  /** How fast the outline wanders as the lines go round. */
+  readonly zoom: number;
+  /** Read only by an `fbm_` method. */
+  readonly octave: number;
+  /** The fraction of the radius every line reaches, whatever the noise says. */
+  readonly baseBreakpoint: number;
+};
+
+/**
+ * A pod's id in `room_map.rooms`.
+ *
+ * ═══ UPSTREAM'S IS A STRING, AND THAT MAKES IT A DIFFERENT TUNNEL ═══
+ * `makePod` returns `id = "podroom"..room_id`
+ * (`engine/generator/map/RoomsLoader.lua:487`). Nothing reads it but a tunnel:
+ * Roomer's edge stairs dig to a room under the ROOM's id
+ * (`engine/generator/map/Roomer.lua:104`, `:137`), and a tunnel waits fifteen
+ * tries before crossing a cell marked with its own id
+ * (`engine/generator/map/RoomsLoader.lua:884`). The Octopus arm to pod 3 marks
+ * its cells `3` (`engine/generator/map/Octopus.lua:72`); a stair tunnelling to
+ * that pod carries `"podroom3"`, which is not `3`, so it crosses the arm's trail
+ * at once.
+ *
+ * Ids here are numbers, so the pod's is its room id NEGATED. No room or tunnel
+ * id upstream's generators make is below 1, so a negated one equals none of
+ * them — and two stairs digging to the same pod still share one, as the two
+ * `"podroom3"` strings do. (Room id 0 would negate to 0; nothing passes it.)
+ */
+export function podRoomId(roomId: number): number {
+  return -roomId;
+}
+
+/** `noise[data.noise](noise, x, data.octave)`: only an `fbm_` method takes the octave. */
+function podSampler(noise: Noise1, method: PodNoise, octave: number): (x: number) => number {
+  switch (method) {
+    case 'fbm_perlin':
+      return (v) => noise.fbmPerlin(v, octave);
+    case 'perlin':
+      return (v) => noise.perlin(v);
+    case 'simplex':
+      return (v) => noise.simplex(v);
+    case 'fbm_simplex':
+      return (v) => noise.fbmSimplex(v, octave);
+  }
+}
+
+/**
+ * `RoomsLoader:makePod(x, y, radius, room_id, data, floor, wall)`
+ * (`engine/generator/map/RoomsLoader.lua:427-488`): "an irregular shaped room".
+ *
+ *   1. the centre becomes `floor` and belongs to the room
+ *   2. a FRESH 1D noise line (`core.noise.new(1, data.hurst, data.lacunarity)`)
+ *   3. round the square of side `2 * radius`, a straight line from the centre
+ *      to each perimeter point — top edge left to right, right edge top to
+ *      bottom, bottom edge left to right, left edge top to bottom — painting
+ *      floor until the cell's distance reaches that line's `breakdist`, which is
+ *      `base_breakpoint` of the radius plus the rest of it scaled by the noise
+ *   4. the spur prune: a cell of the square with EXACTLY ONE of its four sides
+ *      in the room becomes `wall` and leaves the room
+ *
+ * It returns the room entry and PLACES NOTHING in `room_map.rooms` — the caller
+ * does that. It draws no lit roll, hangs no door and sets no `can_open`, so a
+ * tunnel walks through a pod without carving it (`tunnel`'s table above).
+ *
+ * ═══ THE RADIUS IS A FLOAT, AND EVERY LOOP STEPS OVER IT ═══
+ * Octopus passes `rng.float(...) * (w/2 + h/2) / 2`, and Lua's numeric `for`
+ * runs `-radius + x, -radius + x + 1, ...` while `<= radius + x` — so the
+ * perimeter points are NOT CELLS. Each reaches `line.new`, which truncates them
+ * toward zero (`mapgen/geom.ts`): a point at -0.4 above the top row aims at row
+ * 0, not row -1.
+ *
+ * AND SO THE PRUNE IS A NO-OP, unless the radius is whole. It looks each side up
+ * as `room_map[i-1][j]`; a Lua table holds its rows and cells at integer keys
+ * only, so at `i = 17.3` every lookup is nil, no side counts, and nothing is
+ * walled. A whole radius puts every point on a cell and the prune runs. Kept.
+ *
+ * ═══ THE PRUNE READS WHAT IT HAS ALREADY WRITTEN ═══
+ * It walks x outer, y inner, and a cell walled early no longer counts as a side
+ * for the cells after it. It compares only against THIS room's id, so a cell of
+ * another pod — or plain rock — whose one room-side is this pod is walled too,
+ * and each wall written is a `resolve`, which draws for a table key.
+ *
+ * ═══ `idx` IS THE FIRST ONE ═══
+ * The closure counts with the `idx` declared above it (`:435`); the second
+ * `local idx = 0` (`:454`) is a new variable nothing reads. So the noise is
+ * sampled at `zoom * idx / (radius * 4)` with `idx` running on across all four
+ * sides, and the outline is continuous all the way round.
+ *
+ * `x` and `y` are cells: upstream writes the centre with them unrounded, and a
+ * centre off the map indexes a nil row and errors — `map.cell` throws here.
+ */
+export function makePod(
+  gen: Pick<RoomsGen, 'map' | 'rng'>,
+  x: number,
+  y: number,
+  radius: number,
+  roomId: number,
+  data: PodData,
+  floor = '.',
+  wall = '#',
+): PlacedRoom {
+  const { map, rng } = gen;
+  map.set(x, y, map.resolve(floor));
+  map.cell(x, y).room = roomId;
+
+  const noise = createNoise1(
+    rng,
+    'mapgen.pod.noise',
+    data.hurst ?? DEFAULT_HURST,
+    data.lacunarity ?? DEFAULT_LACUNARITY,
+  );
+  const sample = podSampler(noise, data.noise, data.octave);
+
+  let idx = 0;
+  const quadrant = (i: number, j: number): void => {
+    const n = (sample((data.zoom * idx) / (radius * 4)) + 1) / 2;
+    const breakdist = data.baseBreakpoint * radius + (1 - data.baseBreakpoint) * radius * n;
+    idx += 1;
+    // `line.new(lowest.x, lowest.y, i, j)`: the start is never yielded.
+    for (const c of line(x, y, i, j)) {
+      if (fovDistance(x, y, c.x, c.y) >= breakdist) break;
+      // Off the map: no write and NO RESOLVE, so a table key draws nothing.
+      if (map.isBound(c.x, c.y)) {
+        map.set(c.x, c.y, map.resolve(floor));
+        map.cell(c.x, c.y).room = roomId;
+      }
+    }
+  };
+  for (let i = -radius + x; i <= radius + x; i += 1) quadrant(i, -radius + y);
+  for (let i = -radius + y; i <= radius + y; i += 1) quadrant(radius + x, i);
+  for (let i = -radius + x; i <= radius + x; i += 1) quadrant(i, radius + y);
+  for (let i = -radius + y; i <= radius + y; i += 1) quadrant(-radius + x, i);
+
+  /** `room_map[a] and room_map[a][b] and room_map[a][b].room == room_id`. */
+  const inRoom = (a: number, b: number): boolean =>
+    Number.isInteger(a) &&
+    Number.isInteger(b) &&
+    map.isBound(a, b) &&
+    map.cell(a, b).room === roomId;
+  for (let i = -radius + x; i <= radius + x; i += 1) {
+    for (let j = -radius + y; j <= radius + y; j += 1) {
+      if (!map.isBound(i, j)) continue;
+      // Upstream also computes the four corners, g1 g3 g7 g9, and reads none.
+      const sides =
+        Number(inRoom(i, j + 1)) +
+        Number(inRoom(i - 1, j)) +
+        Number(inRoom(i + 1, j)) +
+        Number(inRoom(i, j - 1));
+      // Its four `elseif` branches are the four ways to have exactly one side,
+      // and all four do the same thing. At a fractional `i` or `j` every lookup
+      // misses, so the cell written is a cell — short of a coordinate within
+      // rounding of a whole number, where upstream's write indexes nil and
+      // errors, and `map.cell` throws.
+      if (sides === 1) {
+        map.set(i, j, map.resolve(wall));
+        map.cell(i, j).room = null;
+      }
+    }
+  }
+
+  return {
+    id: podRoomId(roomId),
+    x,
+    y,
+    cx: x,
+    cy: y,
+    // `room = {}`: no size, no name, no flags. Upstream's has no name at all;
+    // this one carries the id string for a reader of a map dump. `ignoresLite`
+    // because nothing rolls a light for a pod, so `toAuthoredMap` lists none.
+    room: { name: `podroom${String(roomId)}`, w: 0, h: 0, rows: [], ignoresLite: true },
+  };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // ROOM FUNCTIONS — modules/tome/data/rooms/*.lua that return a function
 // ═══════════════════════════════════════════════════════════════════════════
 
@@ -987,6 +1221,224 @@ function lesser_vault(gen: RoomsGen, id: number): Room | RoomFailure | null {
 }
 
 /**
+ * The heightmap both organic rooms start from (`rooms/forest_clearing.lua:27`,
+ * `rooms/rocky_snowy_trees.lua:27`): roughness 2, every corner at the top and
+ * the middle forced to the bottom — a bowl, deepest in the centre.
+ */
+function roomHeightmap(gen: RoomsGen, w: number, h: number, label: string): Heightmap {
+  const hm = createHeightmap(w, h, 2, {
+    middle: HEIGHTMAP_MIN,
+    upLeft: HEIGHTMAP_MAX,
+    downLeft: HEIGHTMAP_MAX,
+    upRight: HEIGHTMAP_MAX,
+    downRight: HEIGHTMAP_MAX,
+  });
+  generateHeightmap(hm, gen.rng, label);
+  return hm;
+}
+
+/**
+ * How many times `forest_clearing` rebuilds its heightmap before it keeps what
+ * it has.
+ *
+ * UPSTREAM RECURSES WITHOUT LIMIT (`rooms/forest_clearing.lua:81`, `:95`). It
+ * stops because the forced-low centre is nearly always open and nearly always
+ * has an open neighbour. Past this many builds — which no measured seed comes
+ * near — the last build is materialised as it stands, even if its largest
+ * group is a single cell or there is none.
+ */
+export const CLEARING_REBUILDS = 1000;
+
+/** What `make_hmap` settled on: the open cells kept, and whether it is a pit. */
+export type Clearing = {
+  /** `dmap`, column `i-1` row `j-1`, row-major: 1 where the clearing is open. */
+  readonly open: Uint8Array;
+  readonly pit: boolean;
+};
+
+/**
+ * `make_hmap`, the search half (`rooms/forest_clearing.lua:25-96`): a heightmap,
+ * the pit roll, then an 8-way flood fill that keeps only the largest open group.
+ * With no group, or a largest group under two cells, ALL OF IT is done again —
+ * heightmap draws and pit roll included. The painting half is the room's
+ * generator, below.
+ *
+ * MEASURED, THE REBUILD NEVER HAPPENS: 200,000 heightmaps over every size, no
+ * build without a group, none whose largest group is one cell, and no tie for
+ * largest (a sixth have more than one group). The forced-low centre is always
+ * open and always has open neighbours. So `heightmap` is a parameter: a test
+ * hands in the maps the real one never makes, to see the rebuild happen.
+ */
+export function make_hmap(
+  gen: RoomsGen,
+  w: number,
+  h: number,
+  heightmap: (gen: RoomsGen, w: number, h: number) => Heightmap = (g, hw, hh) =>
+    roomHeightmap(g, hw, hh, 'mapgen.forest_clearing.hmap'),
+): Clearing {
+  const { rng } = gen;
+  const cut = (HEIGHTMAP_MAX * 5) / 6;
+  const index = (i: number, j: number): number => (j - 1) * w + (i - 1);
+
+  for (let build = 1; ; build += 1) {
+    const hm = heightmap(gen, w, h);
+
+    // `rooms_config and rooms_config.forest_clearing and rng.percent(...)`: no
+    // config, no draw. A hit draws a filter, and an empty filter list is no pit.
+    const config = gen.data.roomsConfig?.forestClearing;
+    let pit = false;
+    if (config !== undefined && percent(rng, 'mapgen.forest_clearing.pit', config.pitChance)) {
+      pit = table(rng, 'mapgen.forest_clearing.pit.filter', config.filters) !== null;
+    }
+
+    // `opens[i][j]` is the cell's 1-based slot in `list`; 0 is nil.
+    const open = new Uint8Array(w * h);
+    const opens = new Int32Array(w * h);
+    const list: ({ readonly x: number; readonly y: number } | null)[] = [];
+    for (let i = 1; i <= w; i += 1) {
+      for (let j = 1; j <= h; j += 1) {
+        if (heightAt(hm, i, j) < cut) {
+          open[index(i, j)] = 1;
+          opens[index(i, j)] = list.length + 1;
+          list.push({ x: i, y: j });
+        }
+      }
+    }
+
+    /** `floodFill` (`rooms/forest_clearing.lua:48-70`): a FIFO queue, eight pushes per cell. */
+    const floodFill = (x: number, y: number): TileXY[] => {
+      const q: TileXY[] = [{ x, y }];
+      const closed: TileXY[] = [];
+      for (let head = 0; head < q.length; head += 1) {
+        const n = q[head];
+        if (n === undefined) break;
+        const inside = n.x >= 1 && n.x <= w && n.y >= 1 && n.y <= h;
+        const slot = inside ? (opens[index(n.x, n.y)] ?? 0) : 0;
+        if (slot === 0) continue;
+        closed.push(n);
+        list[slot - 1] = null;
+        opens[index(n.x, n.y)] = 0;
+        q.push(
+          { x: n.x - 1, y: n.y },
+          { x: n.x, y: n.y + 1 },
+          { x: n.x + 1, y: n.y },
+          { x: n.x, y: n.y - 1 },
+          { x: n.x + 1, y: n.y - 1 },
+          { x: n.x + 1, y: n.y + 1 },
+          { x: n.x - 1, y: n.y - 1 },
+          { x: n.x - 1, y: n.y + 1 },
+        );
+      }
+      return closed;
+    };
+
+    // `while next(list)`: `list` was built by appending, so LuaJIT holds every
+    // slot in the table's array part and `next` returns the lowest slot still
+    // set — a forward scan (C core: `lj_tab_next`, src/luajit2/src/lj_tab.c).
+    const groups: TileXY[][] = [];
+    for (const l of list) {
+      if (l !== null) groups.push(floodFill(l.x, l.y));
+    }
+
+    // Smallest first, so the largest is last; ties fall where Lua's unstable
+    // sort leaves them. An empty list sorts to nothing, and the sort draws nothing.
+    tableSort(groups, (a, b) => a.length < b.length);
+    const largest = groups[groups.length - 1];
+    if ((largest !== undefined && largest.length >= 2) || build >= CLEARING_REBUILDS) {
+      for (const g of groups.slice(0, -1)) {
+        for (const c of g) open[index(c.x, c.y)] = 0;
+      }
+      return { open, pit };
+    }
+  }
+}
+
+/** A room table whose fields its generator may still fill in. */
+type OpenRoom = { -readonly [K in keyof GeneratedRoom]: GeneratedRoom[K] };
+
+/**
+ * `forest_clearing` (`rooms/forest_clearing.lua:22-126`): a 6..10 by 6..10
+ * patch of heightmap, width drawn first, whose low ground is open and whose
+ * high ground is `'#'`.
+ *
+ * ═══ ITS WALLS ARE PLAIN ROCK TO A TUNNEL ═══
+ * Only open cells get `room = id`; a wall cell's room map is untouched
+ * (`can_open = true` is commented out at `:102`), so a tunnel aiming at the
+ * centre CARVES through the trees around it rather than walking round them.
+ *
+ * ═══ THE PIT ═══
+ * With `rooms_config.forest_clearing`, each build rolls its `pit_chance` and a
+ * hit draws a filter. Upstream then makes a vaulted actor on every open cell.
+ * DIVERGENCE: no actor is made, and none of `makeEntity`'s draws; the clearing
+ * is recorded as a vault (`room:forest_clearing`), exactly as `pit` is, so
+ * `populateDelve` guards it.
+ *
+ * Returns nothing, so tunnels aim at the rectangle's centre — which is the
+ * heightmap's forced-low middle.
+ */
+function forest_clearing(gen: RoomsGen, id: number): Room {
+  const w = range(gen.rng, 'mapgen.forest_clearing.w', 6, 10);
+  const h = range(gen.rng, 'mapgen.forest_clearing.h', 6, 10);
+  const room: OpenRoom = {
+    name: `forest_clearing${String(w)}x${String(h)}`,
+    w,
+    h,
+    generator: (x, y) => {
+      const { map } = gen;
+      const clearing = make_hmap(gen, w, h);
+      for (let i = 1; i <= w; i += 1) {
+        for (let j = 1; j <= h; j += 1) {
+          if (clearing.open[(j - 1) * w + (i - 1)] !== 1) {
+            map.set(i - 1 + x, j - 1 + y, map.resolve('#'));
+          } else {
+            map.cell(i - 1 + x, j - 1 + y).room = id;
+            map.set(i - 1 + x, j - 1 + y, map.resolve('.'));
+          }
+        }
+      }
+      if (clearing.pit) room.vault = { id: 'room:forest_clearing', turn: VaultTurn.None, w, h };
+      return null;
+    },
+  };
+  return room;
+}
+
+/**
+ * `rocky_snowy_trees` (`rooms/rocky_snowy_trees.lua:22-44`): a 5..12 by 5..12
+ * heightmap cut in three — at or above 5.4/6 of the range `'#'`, at or above
+ * 4.3/6 `'T'`, and the rest open ground that belongs to the room. Neither `'#'` nor `'T'`
+ * is flagged, so tunnels carve through both. No retries, no flood fill: a
+ * pocket of open ground may be cut off.
+ */
+function rocky_snowy_trees(gen: RoomsGen, id: number): Room {
+  const w = range(gen.rng, 'mapgen.rocky_snowy_trees.w', 5, 12);
+  const h = range(gen.rng, 'mapgen.rocky_snowy_trees.h', 5, 12);
+  return {
+    name: `rocky_snowy_trees${String(w)}x${String(h)}`,
+    w,
+    h,
+    generator: (x, y) => {
+      const { map } = gen;
+      const hm = roomHeightmap(gen, w, h, 'mapgen.rocky_snowy_trees.hmap');
+      for (let i = 1; i <= w; i += 1) {
+        for (let j = 1; j <= h; j += 1) {
+          const v = heightAt(hm, i, j);
+          if (v >= (HEIGHTMAP_MAX * 5.4) / 6) {
+            map.set(i - 1 + x, j - 1 + y, map.resolve('#'));
+          } else if (v >= (HEIGHTMAP_MAX * 4.3) / 6) {
+            map.set(i - 1 + x, j - 1 + y, map.resolve('T'));
+          } else {
+            map.cell(i - 1 + x, j - 1 + y).room = id;
+            map.set(i - 1 + x, j - 1 + y, map.resolve('.'));
+          }
+        }
+      }
+      return null;
+    },
+  };
+}
+
+/**
  * The room files that are functions, by the name a zone lists them under. A Map
  * rather than an object literal, so `loadRoom('toString')` is an unknown file
  * and not a method of Object.prototype.
@@ -997,4 +1449,6 @@ const ROOM_FUNCTIONS: ReadonlyMap<string, RoomFn> = new Map<string, RoomFn>([
   ['money_vault', money_vault],
   ['pit', pit],
   ['lesser_vault', lesser_vault],
+  ['forest_clearing', forest_clearing],
+  ['rocky_snowy_trees', rocky_snowy_trees],
 ]);

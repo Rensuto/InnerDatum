@@ -16,8 +16,13 @@ import {
   newLevel,
   toAuthoredMap,
 } from '../../../src/shared/mapgen/level.ts';
-import type { LevelSpec } from '../../../src/shared/mapgen/level.ts';
+import type { LevelSpec, RoomerMapSpec } from '../../../src/shared/mapgen/level.ts';
 import { createRoomer, generate } from '../../../src/shared/mapgen/roomer.ts';
+import {
+  BUILDING_INFINITE_DUNGEON,
+  createBuilding,
+  generate as generateBuilding,
+} from '../../../src/shared/mapgen/building.ts';
 import { TileCode, isWalkable } from '../../../src/shared/protocol.ts';
 import { createRng } from '../../../src/shared/rng.ts';
 
@@ -29,7 +34,7 @@ const OPTS = { level: 1, maxLevel: 3 } as const;
  * room about half the time and in two unjoined rooms otherwise, so the
  * up-to-down check has something to refuse on nearly every seed.
  */
-const ISLANDS: LevelSpec = {
+const ISLANDS: LevelSpec<RoomerMapSpec> = {
   width: 30,
   height: 30,
   map: { ...ROOMER_RUINS_KOR_PUL.map, nbRooms: 2, rooms: ['simple'], noTunnels: true },
@@ -324,5 +329,87 @@ describe('toAuthoredMap', () => {
     ]);
     expect(out.sites.size).toBe(0);
     expect('down' in toAuthoredMap(map, null, null, keys)).toBe(false);
+    // `lit` rectangles follow the rooms, whatever they are.
+    const lit = [{ x0: 2, y0: 2, x1: 3, y1: 3 }];
+    expect(toAuthoredMap(map, null, null, keys, lit).rooms).toEqual([
+      { x0: 1, y0: 1, x1: 3, y1: 2 },
+      { x0: 4, y0: 2, x1: 6, y1: 4 },
+      ...lit,
+    ]);
+  });
+});
+
+describe('newLevel on a Building table', () => {
+  it('hands the level`s light the floor every building wrote, after the rooms, and no vault cell', () => {
+    // `Building:building` lights the floor it writes inside a building's walls on
+    // `lite_room_chance` (engine/generator/map/Building.lua:104, :114-116): inside
+    // the rectangle one cell in from the leaf's edge, never a `special` cell.
+    // Rebuilt here from the attempt that certified, straight from the generator.
+    const table: LevelSpec = {
+      ...BUILDING_INFINITE_DUNGEON,
+      map: {
+        ...BUILDING_INFINITE_DUNGEON.map,
+        nbRooms: 1,
+        rooms: ['lesser_vault'],
+        maxBlockW: 12,
+        maxBlockH: 12,
+      },
+    };
+    let buildings = 0;
+    let vaultInside = 0;
+    for (let s = 0; s < 6; s += 1) {
+      const seed = `building-light:${String(s)}`;
+      const level = newLevel(table, seed, OPTS);
+      expect(level.failed, seed).toBe(false);
+      const rng = createRng(`${seed}#${String(level.attempts)}`);
+      const map = createGenMap(table.width, table.height, table.map.grid, rng);
+      if (table.map.class !== 'Building') throw new Error('not a Building table');
+      const gen = createBuilding(
+        map,
+        table.map,
+        rng,
+        { maxLevel: OPTS.maxLevel },
+        { forceRecreate: null },
+      );
+      generateBuilding(gen, OPTS.level, OPTS.level - 1);
+      const rooms = map.rooms.flatMap((r) =>
+        r.room.ignoresLite === true
+          ? []
+          : [{ x0: r.x, y0: r.y, x1: r.x + r.room.w - 1, y1: r.y + r.room.h - 1 }],
+      );
+      const insides = gen.buildings.map((b) => ({
+        x0: b.x1 + 1,
+        y0: b.y1 + 1,
+        x1: b.x2 - 1,
+        y1: b.y2 - 1,
+        cells: b.floored,
+      }));
+      buildings += insides.length;
+      expect(level.map.rooms, seed).toEqual([...rooms, ...insides]);
+      // A vault the BSP cut buildings over keeps its cells out of every one.
+      const vaultCells = new Set<number>();
+      for (const r of map.rooms) {
+        for (let y = r.y; y < r.y + r.room.h; y += 1) {
+          for (let x = r.x; x < r.x + r.room.w; x += 1) {
+            if (map.cell(x, y).special === true) vaultCells.add(y * map.w + x);
+          }
+        }
+      }
+      for (const inside of insides) {
+        const inRect = (at: number): boolean => {
+          const x = at % map.w;
+          const y = (at - x) / map.w;
+          return x >= inside.x0 && x <= inside.x1 && y >= inside.y0 && y <= inside.y1;
+        };
+        for (const at of vaultCells) if (inRect(at)) vaultInside += 1;
+        for (const at of inside.cells) {
+          expect(inRect(at), seed).toBe(true);
+          expect(vaultCells.has(at), `${seed}: a vault cell lit with its building`).toBe(false);
+        }
+      }
+    }
+    expect(buildings).toBeGreaterThan(20);
+    // The vaults must stand inside buildings for the last check to mean anything.
+    expect(vaultInside).toBeGreaterThan(0);
   });
 });

@@ -19,6 +19,8 @@
  *   A room generator rolls `lite_room_chance` per room, 25 unless the zone says
  *   otherwise (engine/generator/map/Roomer.lua:34), and on a hit lights the whole
  *   room, walls and all (engine/generator/map/RoomsLoader.lua:625, :652).
+ *   A Building rolls per building and lights only the floor it wrote
+ *   (engine/generator/map/Building.lua:104, :114-116): a room with `cells`.
  *   Nothing else a generator digs is lit this way.
  *
  * ═══ UNSET IS ALL LIT ═══
@@ -29,7 +31,7 @@
  * The room roll draws from a stream forked for it, never from the generator's:
  * one more draw on the map's stream would move every wall of every existing seed.
  */
-import type { TileRect } from './level.ts';
+import type { LitRoom } from './level.ts';
 import type { Rng } from './rng.ts';
 
 /** How a site is lit. See the header. */
@@ -43,7 +45,7 @@ export type SiteLighting = {
 /** 1 where a tile is lit and 0 where it is dark, row by row. */
 export function lightLevel(
   size: { readonly w: number; readonly h: number },
-  rooms: readonly TileRect[],
+  rooms: readonly LitRoom[],
   lighting: SiteLighting | undefined,
   rng: Rng,
 ): Uint8Array {
@@ -56,6 +58,10 @@ export function lightLevel(
   for (const room of rooms) {
     // A roll of 1 to 100 at or under the chance, as upstream's `rng.percent` is.
     if (rng.int('site.light.room', 1, 100) > chance) continue;
+    if (room.cells !== undefined) {
+      for (const at of room.cells) if (at >= 0 && at < lit.length) lit[at] = 1;
+      continue;
+    }
     for (let y = Math.max(0, room.y0); y <= Math.min(size.h - 1, room.y1); y += 1) {
       for (let x = Math.max(0, room.x0); x <= Math.min(size.w - 1, room.x1); x += 1) {
         lit[y * size.w + x] = 1;

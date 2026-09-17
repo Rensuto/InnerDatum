@@ -6,7 +6,9 @@
 //   rng_chance, rng_float, rng_normal, rng_normal_float and randnor_table in
 //   src/core_lua.c, rand_div and genrand_real in src/SFMT.c and src/SFMT.h, and
 //   rng.table, rng.tableRemove and rng.tableSampleIterator in game/loader/pre-init.lua
-//   (all at T-Engine4 tag tome-1.6.0, commit 0d95bc38; unchanged through tome-1.7.6)
+//   (all at T-Engine4 tag tome-1.6.0, commit 0d95bc38; unchanged through tome-1.7.6);
+//   and math_random in src/luajit2/src/lib_math.c, LuaJIT's own generator, which
+//   game/loader/pre-init.lua seeds from the clock (T-Engine4 tag tome-1.6.0)
 // T-Engine4 (C) 2009-2018 Nicolas Casalini "DarkGod" -- https://te4.org/license
 
 /**
@@ -389,4 +391,29 @@ export function bound(v: number, min: number, max: number): number {
  */
 export function mod(a: number, b: number): number {
   return a - Math.floor(a / b) * b;
+}
+
+/**
+ * `math.random(m, n)` (C core: `math_random` in src/luajit2/src/lib_math.c,
+ * T-Engine4 tag tome-1.6.0) — NOT the engine's `rng`. The Infinite Dungeon's
+ * layout tables mix the two (`data/zones/infinite-dungeon/zone.lua:156`, `:146`,
+ * `:134`), and they are different machines:
+ *
+ * - LuaJIT'S OWN GENERATOR, a Tausworthe TW223 stream separate from the SFMT
+ *   behind `rng.*`, which game/loader/pre-init.lua seeds with
+ *   `math.randomseed(os.time())`. Upstream's numbers therefore depend on the
+ *   wall clock at launch, and no seed reproduces them.
+ * - ONE DRAW EVERY CALL, `math.random(3, 3)` included: the step runs before
+ *   the arguments are read, unlike `rand_div`'s early return.
+ * - `floor(d * (n - m + 1)) + m` for a `d` in `[0, 1)`, and NOTHING ELSE: the
+ *   bounds are doubles, never truncated and never swapped. `math.random(0, 2.5)`
+ *   is 0..3, and reversed bounds run through the same formula.
+ *
+ * THE RULE HERE: the draw comes from the level's labelled `Rng` — the only
+ * generator `src/shared/` has — as one `nextFloat`, which is in `[0, 1)` like
+ * `d`, so the count and the formula are LuaJIT's and the stream is ours. Only
+ * the two-argument form is ported; no ported table calls the other two.
+ */
+export function mathRandom(rng: Rng, label: string, m: number, n: number): number {
+  return Math.floor(rng.nextFloat(label) * (n - m + 1)) + m;
 }

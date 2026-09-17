@@ -57,8 +57,11 @@ export type RoomCell = {
   room: number | false | null;
   /** THREE STATES — see the file note. */
   canOpen: boolean | null;
-  /** `true` for vault and pit cells, `'exit'` under a stair. */
-  special: true | 'exit' | false | null;
+  /**
+   * `true` for vault and pit cells, `'exit'` under a stair, `'pond'` under a
+   * Forest pond (`engine/generator/map/Forest.lua:131`).
+   */
+  special: true | 'exit' | 'pond' | false | null;
   /** The id of the room whose clearance ring this is. Placement only. */
   border: number | null;
   /** The id of the tunnel that marked the cell. */

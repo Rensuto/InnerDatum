@@ -88,6 +88,29 @@ export type BspTree = {
 };
 
 /**
+ * How `partition` draws a cut's position: upstream's `rng.range(self.min_h,
+ * store.h - self.min_h)` (`engine/BSP.lua:61`, `:70`).
+ *
+ * ═══ A CUT WITH ONE LEGAL POSITION IS WHERE THE TWO ANSWERS PART ═══
+ * A piece exactly twice the minimum can only be cut down the middle, and the C
+ * behind `rng.range` spends NO draw on it: `rand_div(1)` returns 0 before it
+ * touches the generator (C core: `rng_range` in src/core_lua.c, T-Engine4 tag
+ * tome-1.6.0). `rng.int` spends one. The cut lands in the same place either
+ * way; every draw after it does not.
+ *
+ * The default is `rng.int`, the draw this function has always made and the one
+ * its tests were written against. A level generator ported against the C core
+ * passes `range` from `mapgen/lua.ts` (`mapgen/town.ts` does), so its tree
+ * spends exactly the draws upstream's does. The coin needs no such choice:
+ * `rng.int(1, 100) <= 50` and `rng.percent(50)` are one draw on the same
+ * bound, and agree on every value it can take.
+ */
+export type BspRange = (rng: Rng, label: string, lo: number, hi: number) => number;
+
+/** `rng.int`: one draw for every cut, a cut of one position included. */
+const intRange: BspRange = (rng, label, lo, hi) => rng.int(label, lo, hi);
+
+/**
  * Cut `w` x `h` into rooms no smaller than `minW` x `minH`.
  *
  * ═══ THE DRAW ORDER IS THE PORT AND IT IS DEPTH-FIRST ═══
@@ -99,6 +122,8 @@ export type BspTree = {
  *
  * Every draw carries the node's own id, so a label appears once per tree and a
  * reader can follow one node's decisions through a log.
+ *
+ * `range` draws each cut's position; see `BspRange` for when to pass one.
  */
 export function partition(
   w: number,
@@ -108,6 +133,7 @@ export function partition(
   rng: Rng,
   label: string,
   maxDepth: number = BSP_MAX_DEPTH,
+  range: BspRange = intRange,
 ): BspTree {
   const leaves: BspNode[] = [];
   let nextId = 1;
@@ -149,7 +175,7 @@ export function partition(
 
     if (splitVert) {
       // A VERTICAL cut line divides the HEIGHT: a top child and a bottom one.
-      const s = rng.int(`${label}.cut.${String(id)}`, minH, nh - minH);
+      const s = range(rng, `${label}.cut.${String(id)}`, minH, nh - minH);
       const a = cut(x, y, nw, s, depth + 1, nextId++);
       const b = cut(x, y + s, nw, nh - s, depth + 1, nextId++);
       return { id, depth, x, y, w: nw, h: nh, children: [a, b] };
@@ -157,7 +183,7 @@ export function partition(
 
     if (splitHor) {
       // A HORIZONTAL cut line divides the WIDTH: a left child and a right one.
-      const s = rng.int(`${label}.cut.${String(id)}`, minW, nw - minW);
+      const s = range(rng, `${label}.cut.${String(id)}`, minW, nw - minW);
       const a = cut(x, y, s, nh, depth + 1, nextId++);
       const b = cut(x + s, y, nw - s, nh, depth + 1, nextId++);
       return { id, depth, x, y, w: nw, h: nh, children: [a, b] };
