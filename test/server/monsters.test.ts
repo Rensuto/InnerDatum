@@ -519,12 +519,11 @@ describe('the adopted ToME entries survive the port', () => {
       ['index_inspector', 'A Disgraced Inspector', 'enemy_disgraced_inspector_s'],
       ['index_inquisitor', 'A High Inquisitor', 'enemy_high_inquisitor_s'],
       ['index_watcher', 'The Watcher', 'enemy_the_watcher'],
-      // BORROWED BODIES, pinned as borrowed: nothing on disk draws any of the
-      // three, so each wears a body that already draws. See the region header
-      // above `INDEX_RIBBON`.
-      ['index_ribbon', 'Index Ribbon', 'enemy_index_husk_s'],
-      ['index_inkwell', 'Index Inkwell', 'enemy_index_husk_elite_s'],
-      ['index_strongbox', 'Index Strongbox', 'enemy_index_glut_s'],
+      // THEIR OWN BODIES, which replaced the husk's, the Overwritten Husk's and
+      // the Glut's they shipped in. See the region header above `INDEX_RIBBON`.
+      ['index_ribbon', 'Index Ribbon', 'enemy_index_ribbon_s'],
+      ['index_inkwell', 'Index Inkwell', 'enemy_index_inkwell_s'],
+      ['index_strongbox', 'Index Strongbox', 'enemy_index_strongbox_s'],
     ]);
     expect(INDEX_HUSK.description).toContain('half-erased citizen overwritten by Index pages');
     expect(INDEX_WRAITH.description).toContain('A cited absence given shape');

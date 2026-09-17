@@ -2,6 +2,13 @@ import { readFileSync } from 'node:fs';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { loadManifest } from '../../src/client/render/assets.ts';
+import { LOCAL_TILE_SPRITES, localDoorSpriteId } from '../../src/client/render/canvas.ts';
+import { ENCOUNTER_SITE, RealmKind, SITES, floorsOfSite } from '../../src/server/world/realms.ts';
+import { Ground } from '../../src/shared/level.ts';
+import type { AuthoredMap } from '../../src/shared/level.ts';
+import { ID_GRID_SETS } from '../../src/shared/mapgen/gridsets.ts';
+import { TileCode } from '../../src/shared/protocol.ts';
+import { isClosedDoorCode, openedFormOf } from '../../src/shared/terrain.ts';
 import type { MockInstance } from 'vitest';
 
 /**
@@ -730,34 +737,74 @@ describe('local material art is a different scale namespace', () => {
   });
 
   it('covers every material currently emitted in common or inner maps', () => {
+    /**
+     * A RULE OVER THE GENERATORS, NOT A LIST OF CODES. This was twenty-two codes
+     * written out by hand, and the Weir's water, the Glass Archive's crystal,
+     * Cairnfoot's growth and Blackwood's ponds went live without joining it: four
+     * delves drew flat colour while this passed. So the codes are read off what
+     * the maps are built from: every floor of every common or inner site, an
+     * ambush on every ground, the Tower's grid sets, and what each door opens into.
+     */
+    const emitted = emittedLocalCodes();
+    const name = new Map<number, string>(Object.entries(TileCode).map(([k, v]) => [v, k]));
+
+    // THE CONTROL: a walk that reached no town, no zone's own grids, no grid set
+    // and no opened door checks too little to mean anything.
     for (const code of [
-      'CIVIC',
-      'COBBLE',
-      'CRAG',
-      'DOOR',
-      'DOOR_OPEN',
-      'ERASED',
-      'GREEN',
-      'HEATH',
-      'HILLS',
-      'MIRE',
-      'MOUNTAIN',
-      'PAVING',
-      'BRIDGE',
-      'PLAINS',
-      'SHORE',
-      'SOOT',
-      'TERRACE',
-      'TOWN_WALL',
-      'TREES',
-      'WATER',
-      'WORKS',
-      'YARD',
+      TileCode.PAVING,
+      TileCode.CRYSTAL_WALL,
+      TileCode.WATER_FLOOR_BUBBLE,
+      TileCode.LAVA_FLOOR_FAKE,
+      TileCode.ROCK_DOOR,
+      TileCode.DOOR_OPEN,
     ]) {
-      expect(table, `${code} has no local-scale sprite`).toContain(`TileCode.${code}`);
+      expect(emitted.has(code), `the walk never reached ${String(name.get(code))}`).toBe(true);
     }
+
+    // A door is drawn by its overlay over the ground either side; every other
+    // code needs a material family of its own.
+    const drawn = (code: TileCode): boolean =>
+      LOCAL_TILE_SPRITES[code] !== undefined ||
+      localDoorSpriteId({ w: 1, h: 1, tiles: [code] }, code, 0, 0) !== null;
+    const undrawn = [...emitted].filter((code) => !drawn(code)).map((code) => name.get(code));
+    expect(undrawn, 'emitted in a common or inner map with no local-scale sprite').toEqual([]);
   });
 });
+
+/**
+ * Every code a common or inner map is built from. `site.map` is exactly what
+ * `createRealms` calls, so a site that changes its generator changes this set.
+ * Seeded, so the answer is the same on every run.
+ */
+function emittedLocalCodes(): ReadonlySet<TileCode> {
+  const codes = new Set<TileCode>();
+  const addMap = (map: AuthoredMap): void => {
+    for (const code of map.view.tiles as readonly TileCode[]) {
+      codes.add(code);
+      // What a door on this map becomes, as `World` opens it (world.ts reads
+      // `rockFloor ?? FLOOR` the same way).
+      if (isClosedDoorCode(code)) codes.add(openedFormOf(code, map.rockFloor ?? TileCode.FLOOR));
+    }
+  };
+  for (const [id, site] of SITES) {
+    if (site.kind === RealmKind.Overworld) continue;
+    for (let floor = 1; floor <= floorsOfSite(id); floor += 1) {
+      addMap(site.map(`assets-test:${id}:${String(floor)}`, undefined, floor));
+    }
+  }
+  for (const ground of Object.values(Ground)) {
+    addMap(ENCOUNTER_SITE.map(`assets-test:encounter:${ground}`, ground));
+  }
+  // THE TOWER'S SETS (shared/mapgen/infinite.ts writes a level's floor, wall
+  // and door from one), which no site places yet.
+  for (const set of ID_GRID_SETS) {
+    codes.add(set.floor);
+    for (const wall of [set.wall].flat()) codes.add(wall);
+    codes.add(set.door);
+    if (isClosedDoorCode(set.door)) codes.add(openedFormOf(set.door, set.floor));
+  }
+  return codes;
+}
 
 describe('local city walls have adjacency-driven vertical faces', () => {
   const source = readFileSync(

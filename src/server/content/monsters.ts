@@ -3054,14 +3054,12 @@ export const INDEX_WATCHER: MonsterTemplate = Object.freeze({
  * creature is `Elite` here only when it BEHAVES as one (`validateTemplate`), which
  * is why the losgoroth and the troll are `Normal` and the snow cat is not.
  *
- * ═══ NO ART OF THEIR OWN, SO THEY WEAR BODIES THAT ALREADY DRAW ═══
- * Nothing on disk depicts any of the three, and a sprite id with no manifest row
- * paints `canvas.ts`'s violet missing-asset box on every client. The Watcher
- * shipped the same way, in the cairn's body, until its own was drawn. Each wears
- * the body whose creature fights most like it, and the three stay distinct from
- * each other. Their own ids are `enemy_index_ribbon_s`, `enemy_index_inkwell_s`
- * and `enemy_index_strongbox_s`, and replacing a body is this field and nothing
- * else.
+ * ═══ EACH WEARS ITS OWN BODY ═══
+ * They shipped in borrowed ones (the husk, the Overwritten Husk and the Glut),
+ * as the Watcher shipped in the cairn's until its own was drawn. Their own are
+ * 96x128 large creatures, bottom-centred like the Watcher's, drawn from the
+ * animal's silhouette in void rather than from the clerical names:
+ * `enemy_index_ribbon_s`, `enemy_index_inkwell_s` and `enemy_index_strongbox_s`.
  */
 
 /**
@@ -3079,9 +3077,8 @@ export const INDEX_RIBBON: MonsterTemplate = Object.freeze({
   description:
     'A typewriter ribbon the weir has been holding back, grown long and black in the dark water. ' +
     'It comes at you the way a line of type crosses a page, and it does not stop at the margin.',
-  // NO ART OF ITS OWN — see the region header. The husk's body: the plain chaser
-  // wears the plain chaser's.
-  sprite: 'enemy_index_husk_s',
+  // Its own body: an eel of void coiling up out of black water. See the region header.
+  sprite: 'enemy_index_ribbon_s',
   // `rank = 1` (aquatic_critter.lua:36). See the region header.
   rank: ActorRank.Normal,
   // `can_breath={water=1}` (aquatic_critter.lua:38).
@@ -3164,10 +3161,9 @@ export const INDEX_INKWELL: MonsterTemplate = Object.freeze({
   description:
     'An inkwell that went under and kept spilling. What came out of it reaches every way at once, ' +
     'and whatever it takes hold of stays where it was put.',
-  // NO ART OF ITS OWN — see the region header. The Overwritten Husk's body, whose
-  // trailing strips read as reach, and whose own creature is the other melee body
-  // that disables on the blow.
-  sprite: 'enemy_index_husk_elite_s',
+  // Its own body: a squid-shaped spill of void reaching every way at once. See the
+  // region header.
+  sprite: 'enemy_index_inkwell_s',
   // `rank = 1` (aquatic_critter.lua:36). See the region header.
   rank: ActorRank.Normal,
   // `can_breath={water=1}` (aquatic_critter.lua:38).
@@ -3229,9 +3225,8 @@ export const INDEX_STRONGBOX: MonsterTemplate = Object.freeze({
   description:
     'A deed box that sank with the ledgers still locked inside and came back up walking. ' +
     'Blows ring off the lid.',
-  // NO ART OF ITS OWN — see the region header. The Glut's body: the other thing
-  // in the bestiary that a blow sinks into, built like a filing cabinet.
-  sprite: 'enemy_index_glut_s',
+  // Its own body: a dragon turtle under a riveted iron shell. See the region header.
+  sprite: 'enemy_index_strongbox_s',
   // `rank = 2` (aquatic_critter.lua:72) — `Normal`, which IS upstream's rank 2.
   rank: ActorRank.Normal,
   // `can_breath={water=1}` (aquatic_critter.lua:38), from the base.

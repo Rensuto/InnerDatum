@@ -1948,6 +1948,17 @@ const LOCAL_DOOR_SPRITES = {
     ns: 'tile_local_door_open_ns',
     ew: 'tile_local_door_open_ew',
   },
+  /**
+   * A BOULDER HAS NO FACING. Upstream's "huge loose rock" is the zone's floor
+   * with one rock laid over it (`add_mos`,
+   * data/zones/infinite-dungeon/grids.lua:36-47), whichever way its wall runs,
+   * so both keys name the one overlay. The ground beneath still continues along
+   * the passage, as it does under a closed door.
+   */
+  [TileCode.ROCK_DOOR]: {
+    ns: 'tile_local_rock_door',
+    ew: 'tile_local_rock_door',
+  },
 } as const;
 
 type LocalDoorOrientation = 'ns' | 'ew';
@@ -1957,7 +1968,9 @@ type LocalDoorOrientation = 'ns' | 'ew';
  * closed `DOOR` fails the first test (it is not in `WALKABLE`); an open one is
  * walkable, and its own picture is a doorway, never a floor. Upstream types both
  * as `type = "wall"` (tome/data/general/grids/basic.lua:218-238), which is the
- * answer the orientation rule below reads too.
+ * answer the orientation rule below reads too. A `ROCK_DOOR` fails the first test
+ * as a shut door does, so a boulder is wall to the door beside it and never the
+ * ground under one.
  */
 function isDoorGround(code: TileCode): boolean {
   return isWalkable(code) && code !== TileCode.DOOR_OPEN;
@@ -2001,7 +2014,8 @@ function localDoorGroundPair(
  * form is floor; these overlays keep that ground visible and only draw the
  * jamb, threshold and leaf. The neighboring walkable pair tells us whether the
  * opening runs north-south or east-west, so a divider never borrows a doorway
- * painted for the perpendicular wall.
+ * painted for the perpendicular wall. A rock door takes the same path with one
+ * picture for both, so its floor continues under the boulder the same way.
  */
 export function localDoorSpriteId(
   level: LevelView,
@@ -2010,11 +2024,9 @@ export function localDoorSpriteId(
   ty: number,
 ): string | null {
   const sprites =
-    code === TileCode.DOOR
-      ? LOCAL_DOOR_SPRITES[TileCode.DOOR]
-      : code === TileCode.DOOR_OPEN
-        ? LOCAL_DOOR_SPRITES[TileCode.DOOR_OPEN]
-        : undefined;
+    code === TileCode.DOOR || code === TileCode.DOOR_OPEN || code === TileCode.ROCK_DOOR
+      ? LOCAL_DOOR_SPRITES[code]
+      : undefined;
   if (sprites === undefined) return null;
   return sprites[localDoorOrientation(level, tx, ty)];
 }
@@ -2260,6 +2272,271 @@ export const LOCAL_TILE_SPRITES: TerrainSpriteTable = {
     'tile_local_crag_g',
     'tile_local_crag_h',
   ],
+  /**
+   * THE COLD NORTH AND THE BURNT SCAR, AT PLAYER SCALE. `snowfield`, `charred`
+   * and `frozen_water` are cut from the terrain lane's own ground masters rather
+   * than painted for this table. `COLD_FOREST` is its own canopy material, never
+   * the overworld's `tile_ow_cold_forest*` clusters.
+   */
+  [TileCode.SNOWFIELD]: [
+    'tile_local_snowfield',
+    'tile_local_snowfield_b',
+    'tile_local_snowfield_c',
+    'tile_local_snowfield_d',
+    'tile_local_snowfield_e',
+    'tile_local_snowfield_f',
+    'tile_local_snowfield_g',
+    'tile_local_snowfield_h',
+  ],
+  [TileCode.CHARRED]: [
+    'tile_local_charred',
+    'tile_local_charred_b',
+    'tile_local_charred_c',
+    'tile_local_charred_d',
+    'tile_local_charred_e',
+    'tile_local_charred_f',
+    'tile_local_charred_g',
+    'tile_local_charred_h',
+  ],
+  [TileCode.COLD_FOREST]: [
+    'tile_local_cold_forest',
+    'tile_local_cold_forest_b',
+    'tile_local_cold_forest_c',
+    'tile_local_cold_forest_d',
+    'tile_local_cold_forest_e',
+    'tile_local_cold_forest_f',
+    'tile_local_cold_forest_g',
+    'tile_local_cold_forest_h',
+  ],
+  [TileCode.FROZEN_WATER]: [
+    'tile_local_frozen_water',
+    'tile_local_frozen_water_b',
+    'tile_local_frozen_water_c',
+    'tile_local_frozen_water_d',
+    'tile_local_frozen_water_e',
+    'tile_local_frozen_water_f',
+    'tile_local_frozen_water_g',
+    'tile_local_frozen_water_h',
+  ],
+  /**
+   * ─── themed terrain, v25 ───
+   *
+   * A `_FAKE` grid shares its real grid's picture, as upstream shares the
+   * image: the difference is a mechanic (`shared/terrain.ts`), not a look. So
+   * WATER_FLOOR_FAKE and LAVA_FLOOR_FAKE repeat their twin's ids. `ROCK_DOOR` is
+   * not a material and is not here: it is an overlay on the ground either side
+   * of it (`LOCAL_DOOR_SPRITES`).
+   */
+  [TileCode.POND_WATER]: [
+    'tile_local_pond_water',
+    'tile_local_pond_water_b',
+    'tile_local_pond_water_c',
+    'tile_local_pond_water_d',
+    'tile_local_pond_water_e',
+    'tile_local_pond_water_f',
+    'tile_local_pond_water_g',
+    'tile_local_pond_water_h',
+  ],
+  [TileCode.WATER_FLOOR]: [
+    'tile_local_water_floor',
+    'tile_local_water_floor_b',
+    'tile_local_water_floor_c',
+    'tile_local_water_floor_d',
+    'tile_local_water_floor_e',
+    'tile_local_water_floor_f',
+    'tile_local_water_floor_g',
+    'tile_local_water_floor_h',
+  ],
+  [TileCode.WATER_FLOOR_FAKE]: [
+    'tile_local_water_floor',
+    'tile_local_water_floor_b',
+    'tile_local_water_floor_c',
+    'tile_local_water_floor_d',
+    'tile_local_water_floor_e',
+    'tile_local_water_floor_f',
+    'tile_local_water_floor_g',
+    'tile_local_water_floor_h',
+  ],
+  [TileCode.WATER_FLOOR_BUBBLE]: [
+    'tile_local_water_floor_bubble',
+    'tile_local_water_floor_bubble_b',
+    'tile_local_water_floor_bubble_c',
+    'tile_local_water_floor_bubble_d',
+    'tile_local_water_floor_bubble_e',
+    'tile_local_water_floor_bubble_f',
+    'tile_local_water_floor_bubble_g',
+    'tile_local_water_floor_bubble_h',
+  ],
+  [TileCode.WATER_WALL]: [
+    'tile_local_water_wall',
+    'tile_local_water_wall_b',
+    'tile_local_water_wall_c',
+    'tile_local_water_wall_d',
+    'tile_local_water_wall_e',
+    'tile_local_water_wall_f',
+    'tile_local_water_wall_g',
+    'tile_local_water_wall_h',
+  ],
+  [TileCode.LAVA_FLOOR]: [
+    'tile_local_lava_floor',
+    'tile_local_lava_floor_b',
+    'tile_local_lava_floor_c',
+    'tile_local_lava_floor_d',
+    'tile_local_lava_floor_e',
+    'tile_local_lava_floor_f',
+    'tile_local_lava_floor_g',
+    'tile_local_lava_floor_h',
+  ],
+  [TileCode.LAVA_FLOOR_FAKE]: [
+    'tile_local_lava_floor',
+    'tile_local_lava_floor_b',
+    'tile_local_lava_floor_c',
+    'tile_local_lava_floor_d',
+    'tile_local_lava_floor_e',
+    'tile_local_lava_floor_f',
+    'tile_local_lava_floor_g',
+    'tile_local_lava_floor_h',
+  ],
+  [TileCode.LAVA_WALL]: [
+    'tile_local_lava_wall',
+    'tile_local_lava_wall_b',
+    'tile_local_lava_wall_c',
+    'tile_local_lava_wall_d',
+    'tile_local_lava_wall_e',
+    'tile_local_lava_wall_f',
+    'tile_local_lava_wall_g',
+    'tile_local_lava_wall_h',
+  ],
+  [TileCode.MOLTEN_LAVA]: [
+    'tile_local_molten_lava',
+    'tile_local_molten_lava_b',
+    'tile_local_molten_lava_c',
+    'tile_local_molten_lava_d',
+    'tile_local_molten_lava_e',
+    'tile_local_molten_lava_f',
+    'tile_local_molten_lava_g',
+    'tile_local_molten_lava_h',
+  ],
+  [TileCode.OUTERSPACE]: [
+    'tile_local_outerspace',
+    'tile_local_outerspace_b',
+    'tile_local_outerspace_c',
+    'tile_local_outerspace_d',
+    'tile_local_outerspace_e',
+    'tile_local_outerspace_f',
+    'tile_local_outerspace_g',
+    'tile_local_outerspace_h',
+  ],
+  [TileCode.FLOATING_ROCKS]: [
+    'tile_local_floating_rocks',
+    'tile_local_floating_rocks_b',
+    'tile_local_floating_rocks_c',
+    'tile_local_floating_rocks_d',
+    'tile_local_floating_rocks_e',
+    'tile_local_floating_rocks_f',
+    'tile_local_floating_rocks_g',
+    'tile_local_floating_rocks_h',
+  ],
+  [TileCode.VOID]: [
+    'tile_local_void',
+    'tile_local_void_b',
+    'tile_local_void_c',
+    'tile_local_void_d',
+    'tile_local_void_e',
+    'tile_local_void_f',
+    'tile_local_void_g',
+    'tile_local_void_h',
+  ],
+  [TileCode.SPACETIME_RIFT]: [
+    'tile_local_spacetime_rift',
+    'tile_local_spacetime_rift_b',
+    'tile_local_spacetime_rift_c',
+    'tile_local_spacetime_rift_d',
+    'tile_local_spacetime_rift_e',
+    'tile_local_spacetime_rift_f',
+    'tile_local_spacetime_rift_g',
+    'tile_local_spacetime_rift_h',
+  ],
+  [TileCode.CRYSTAL_FLOOR]: [
+    'tile_local_crystal_floor',
+    'tile_local_crystal_floor_b',
+    'tile_local_crystal_floor_c',
+    'tile_local_crystal_floor_d',
+    'tile_local_crystal_floor_e',
+    'tile_local_crystal_floor_f',
+    'tile_local_crystal_floor_g',
+    'tile_local_crystal_floor_h',
+  ],
+  [TileCode.CRYSTAL_WALL]: [
+    'tile_local_crystal_wall',
+    'tile_local_crystal_wall_b',
+    'tile_local_crystal_wall_c',
+    'tile_local_crystal_wall_d',
+    'tile_local_crystal_wall_e',
+    'tile_local_crystal_wall_f',
+    'tile_local_crystal_wall_g',
+    'tile_local_crystal_wall_h',
+  ],
+  [TileCode.SLIME_FLOOR]: [
+    'tile_local_slime_floor',
+    'tile_local_slime_floor_b',
+    'tile_local_slime_floor_c',
+    'tile_local_slime_floor_d',
+    'tile_local_slime_floor_e',
+    'tile_local_slime_floor_f',
+    'tile_local_slime_floor_g',
+    'tile_local_slime_floor_h',
+  ],
+  [TileCode.SLIME_WALL]: [
+    'tile_local_slime_wall',
+    'tile_local_slime_wall_b',
+    'tile_local_slime_wall_c',
+    'tile_local_slime_wall_d',
+    'tile_local_slime_wall_e',
+    'tile_local_slime_wall_f',
+    'tile_local_slime_wall_g',
+    'tile_local_slime_wall_h',
+  ],
+  [TileCode.SANDWALL]: [
+    'tile_local_sandwall',
+    'tile_local_sandwall_b',
+    'tile_local_sandwall_c',
+    'tile_local_sandwall_d',
+    'tile_local_sandwall_e',
+    'tile_local_sandwall_f',
+    'tile_local_sandwall_g',
+    'tile_local_sandwall_h',
+  ],
+  [TileCode.BURNT_TREE]: [
+    'tile_local_burnt_tree',
+    'tile_local_burnt_tree_b',
+    'tile_local_burnt_tree_c',
+    'tile_local_burnt_tree_d',
+    'tile_local_burnt_tree_e',
+    'tile_local_burnt_tree_f',
+    'tile_local_burnt_tree_g',
+    'tile_local_burnt_tree_h',
+  ],
+  [TileCode.UNDERGROUND_FLOOR]: [
+    'tile_local_underground_floor',
+    'tile_local_underground_floor_b',
+    'tile_local_underground_floor_c',
+    'tile_local_underground_floor_d',
+    'tile_local_underground_floor_e',
+    'tile_local_underground_floor_f',
+    'tile_local_underground_floor_g',
+    'tile_local_underground_floor_h',
+  ],
+  [TileCode.UNDERGROUND_TREE]: [
+    'tile_local_underground_tree',
+    'tile_local_underground_tree_b',
+    'tile_local_underground_tree_c',
+    'tile_local_underground_tree_d',
+    'tile_local_underground_tree_e',
+    'tile_local_underground_tree_f',
+    'tile_local_underground_tree_g',
+    'tile_local_underground_tree_h',
+  ],
 };
 
 /**
@@ -2474,8 +2751,8 @@ function tileFill(code: TileCode): string {
     /**
      * ─── themed terrain, v25 ───
      *
-     * Flat colours until the art lands, on the file's rule: walkable is light,
-     * blocking is dark. A real grid and its FAKE twin share a colour, as they
+     * Flat colours for a client without the art (`LOCAL_TILE_SPRITES` draws
+     * them where it is), on the file's rule: walkable is light, blocking is dark. A real grid and its FAKE twin share a colour, as they
      * will share a picture — the difference is a mechanic, not a look. The rock
      * door is stone-grey rather than amber: upstream draws it as a boulder
      * (`color=colors.GREY`), not as a door.

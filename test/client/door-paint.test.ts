@@ -81,7 +81,9 @@ function doorLayers(level: LevelView): { halves: string[]; doors: string[] } {
     halves: cell
       .filter((b) => (b.dw === half && b.dh === TILE_PX) || (b.dw === TILE_PX && b.dh === half))
       .map(idOf),
-    doors: cell.map(idOf).filter((id) => /^tile_local_door_(?:closed|open)_(?:ns|ew)$/.test(id)),
+    doors: cell
+      .map(idOf)
+      .filter((id) => /^tile_local_(?:door_(?:closed|open)_(?:ns|ew)|rock_door)$/.test(id)),
   };
 }
 
@@ -125,6 +127,40 @@ describe('a local door draws over ground, facing its wall', () => {
     // the ground there is the paving to the south, twice.
     const { WALL } = TileCode;
     const along = doorLayers(doorAmong(DOOR, [DOOR_OPEN, PAVING, WALL, WALL]));
+    expect(along.doors).toEqual(['tile_local_door_closed_ns']);
+    expect(along.halves.map((id) => id.replace(/_[b-h]$/, ''))).toEqual([
+      'tile_local_paving',
+      'tile_local_paving',
+    ]);
+  });
+
+  it('lays a rock door over the ground either side of it, whichever way its wall runs', () => {
+    // Upstream's "huge loose rock" is the zone floor with one rock over it
+    // (data/zones/infinite-dungeon/grids.lua:36-47). One picture for both
+    // facings, and the ground under it is the passage's, as under a shut door.
+    const { WALL, ROCK_DOOR, PAVING, COBBLE } = TileCode;
+    const walledNorthSouth = doorLayers(doorAmong(ROCK_DOOR, [WALL, WALL, PAVING, COBBLE]));
+    expect(walledNorthSouth.doors).toEqual(['tile_local_rock_door']);
+    expect(walledNorthSouth.halves.map((id) => id.replace(/_[b-h]$/, ''))).toEqual([
+      'tile_local_paving',
+      'tile_local_cobble',
+    ]);
+    const walledWestEast = doorLayers(doorAmong(ROCK_DOOR, [PAVING, COBBLE, WALL, WALL]));
+    expect(walledWestEast.doors).toEqual(['tile_local_rock_door']);
+    expect(walledWestEast.halves.map((id) => id.replace(/_[b-h]$/, ''))).toEqual([
+      'tile_local_paving',
+      'tile_local_cobble',
+    ]);
+  });
+
+  it('counts a rock door as wall beside a door, and never as its ground', () => {
+    const { WALL, DOOR, ROCK_DOOR, FLOOR, PAVING } = TileCode;
+    // Walled north (the boulder) and south: the door in a north-south wall.
+    const boxed = doorLayers(doorAmong(DOOR, [ROCK_DOOR, WALL, FLOOR, FLOOR]));
+    expect(boxed.doors).toEqual(['tile_local_door_closed_ew']);
+    // Along the passage, the boulder to the north is not ground: the paving to
+    // the south is, twice.
+    const along = doorLayers(doorAmong(DOOR, [ROCK_DOOR, PAVING, WALL, WALL]));
     expect(along.doors).toEqual(['tile_local_door_closed_ns']);
     expect(along.halves.map((id) => id.replace(/_[b-h]$/, ''))).toEqual([
       'tile_local_paving',
