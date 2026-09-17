@@ -1035,9 +1035,9 @@ export function populateDelve(
    * land wholly inside ground this function was about to throw away, and
    * `inRoom` came back empty for 206 of 400 caves and 151 of 400 works. Nobody
    * reading these three causes would have suspected it, because none of them
-   * was ever the reason. The cave and ruin placer now honours the same
-   * clearance (`shared/sitemap.ts`), and the solid-wall case above is what
-   * remains for them.
+   * was ever the reason. The ruin placer now honours the same clearance
+   * (`shared/sitemap.ts`), and the solid-wall case above is what remains for
+   * it. A cave is ToME's Cavern now and lays no room at all.
    *
    * ═══ A WORKS HAS SEVERAL, AND THE DRAWN ONES COME FIRST ═══
    * A works is ToME's Roomer, which can lay a money vault and more than one
@@ -1049,8 +1049,8 @@ export function populateDelve(
    * Measured over 300 works: 145 had a drawn room and 40 more than one, and
    * picking `vaults[0]` alone guarded a money vault on 23 of the 145. 8 floors
    * with a room have none offering a candidate, and fall through as above. A
-   * cave or a ruin has at most one room, so for them this is the room it always
-   * was.
+   * ruin has at most one room, so for it this is the room it always was; a cave
+   * has none.
    */
   const insideOf = (room: NonNullable<AuthoredMap['vaults']>[number]): TileXY[] =>
     candidates.filter(

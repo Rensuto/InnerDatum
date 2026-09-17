@@ -25,8 +25,8 @@
  * ═══════════════════════════════════════════════════════════════════════════
  * CONNECTIVITY IS PROVEN, NOT HOPED FOR
  * ═══════════════════════════════════════════════════════════════════════════
- * The town, the cave and the ruin finish by carving from the spawn to anything
- * they stranded, so "can the player reach the far side" is a property of the
+ * The town and the ruin finish by carving from the spawn to anything they
+ * stranded, so "can the player reach the far side" is a property of the
  * algorithm. A sealed pocket in a hand-authored map is a bug somebody notices;
  * in a generated one it is a bug that appears one run in fifty and cannot be
  * reproduced from a description.
@@ -38,6 +38,10 @@
  * as it can in ToME, and since nobody here can dig one out, its ground is made
  * rock (see `works`).
  *
+ * THE CAVE IS UPSTREAM'S TOO, and needs neither. It is ToME's Cavern, which keeps
+ * only the biggest eight-connected region of its noise and makes the rest rock,
+ * so every open cell is one region before a stair is placed (see `cave`).
+ *
  * PURE, and seeded from shared/rng.ts with labelled draws, so a floor is
  * reproducible from the realm that opened it.
  */
@@ -46,8 +50,8 @@ import { tileIndex } from './coords.ts';
 import { createRng } from './rng.ts';
 import { TileCode } from './protocol.ts';
 import { passable, reachableSet } from './mapgen/connectivity.ts';
-import { ROOMER_RUINS_KOR_PUL, keepTrying } from './mapgen/level.ts';
-import type { LevelSpec } from './mapgen/level.ts';
+import { CAVERN_ORC_BREEDING_PIT, ROOMER_RUINS_KOR_PUL, keepTrying } from './mapgen/level.ts';
+import type { CavernMapSpec, LevelSpec } from './mapgen/level.ts';
 import { placeVault, stampVault } from './vault.ts';
 import type { VaultShape } from './vault.ts';
 import { VAULTS_BY_SHAPE } from './vaults.ts';
@@ -65,7 +69,7 @@ import type { AuthoredMap } from './level.ts';
 export const SiteShape = {
   /** An open plaza with building blocks in it. Towns, markets, settlements. */
   Town: 'town',
-  /** Winding galleries. Mines, the Underworks, anything dug. */
+  /** Caverns, as ToME's Cavern digs them. Mines, the Underworks, anything dug. */
   Cave: 'cave',
   /** Mostly open, with broken fragments of wall. Chapels, altars, wreckage. */
   Ruin: 'ruin',
@@ -110,8 +114,8 @@ export const DOOR_CLEARANCE = 8;
  * levels are 50 by 50 (data/zones/ruins-kor-pul/zone.lua:30) and so are its
  * smaller towns (data/zones/town-zigur/zone.lua:27). Trollmire's forest is 65 by
  * 40. So a site is 50 by 50 now, whatever its shape, and the generators below
- * scale with it: a cave carves the same fraction and a town lays more blocks. A
- * works is Kor'Pul's own 50 by 50 table (`mapgen/level.ts`).
+ * scale with it: a ruin lays more fragments and a town more blocks. A works is
+ * Kor'Pul's own 50 by 50 table and a cave the orc breeding pits' (`mapgen/level.ts`).
  */
 const W = 50;
 const H = 50;
@@ -173,45 +177,6 @@ function town(g: Grid, rng: Rng): TileXY {
 }
 
 /**
- * A CAVE: a walk that wanders and is pulled back, the same shape the ambush
- * arena uses and for the same reason — a walk opens only cells it stood on, so
- * one connected region is a property of the algorithm.
- */
-function cave(g: Grid, rng: Rng): TileXY {
-  const start: TileXY = { x: Math.floor(W / 2), y: Math.floor(H / 2) };
-  let x = start.x;
-  let y = start.y;
-  const target = Math.floor((W - 2) * (H - 2) * 0.38);
-  let open = 0;
-  const steps: readonly (readonly [number, number])[] = [
-    [1, 0],
-    [-1, 0],
-    [0, 1],
-    [0, -1],
-  ];
-  for (let i = 0; i < W * H * 30 && open < target; i += 1) {
-    // Pulled back to the middle periodically, or the walk drifts into one
-    // corner and hollows it out — the exact failure the arena had.
-    if (i % 90 === 0) {
-      x = start.x;
-      y = start.y;
-    }
-    const step = steps[rng.int('site.cave.step', 0, steps.length - 1)];
-    if (step === undefined) continue;
-    const nx = x + step[0];
-    const ny = y + step[1];
-    if (nx < MARGIN || ny < MARGIN || nx >= W - MARGIN || ny >= H - MARGIN) continue;
-    x = nx;
-    y = ny;
-    if (at(g, x, y) !== TileCode.FLOOR) {
-      put(g, x, y, TileCode.FLOOR);
-      open += 1;
-    }
-  }
-  return start;
-}
-
-/**
  * A RUIN: open ground with fragments of wall standing in it.
  *
  * Fragments rather than rooms — short runs, one cell thick, at right angles.
@@ -233,6 +198,56 @@ function ruin(g: Grid, rng: Rng): TileXY {
     }
   }
   return { x: 2, y: Math.floor(H / 2) };
+}
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * CAVE: A CAVERN LEVEL, DUG THE WAY THE ORC BREEDING PITS ARE.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `mapgen/level.ts` holds the zone table and `mapgen/cavern.ts` the generator:
+ * simplex noise at zoom 23 decides rock from floor, only the biggest region of
+ * floor survives — and it must hold 900 cells, or the noise is rolled again —
+ * and both stairs go on random open cells (`engine/generator/map/Cavern.lua:44-246`).
+ *
+ * ═══ IT REPLACED A RANDOM WALK ═══
+ * That cave was a walk from the centre, pulled back every 90 steps until 38% of
+ * the inside was open, with one of four drawn rooms stamped in and a corridor
+ * dug to anything the stamp cut off, and the arrival always the centre. ToME's
+ * caves are none of that: close-grained noise, pillars and pockets, the arrival
+ * anywhere, and no room in them at all: `nb_rooms` defaults to 0
+ * (`engine/generator/map/Cavern.lua:112`) and no ToME level built by Cavern
+ * places one. So a cave rolls no drawn room now (`shared/vaults.ts`).
+ *
+ * ═══ THE PALETTE IS THE ZONE'S GRID KEYS ═══
+ * `floor` and `wall` are the palette's; both stairs and the `door` key are its
+ * floor, as the breeding pits' own door is their floor
+ * (`data/zones/orc-breeding-pit/zone.lua:39-43`). A key that names one code
+ * draws nothing, so a painted cave is the plain cave in other codes.
+ *
+ * ═══ NO SEALING PASS, BECAUSE NOTHING IS SEALED ═══
+ * A works makes rock of what its up stair cannot reach. A cave has nothing to
+ * make rock: every region but one is walled in before the stairs are placed,
+ * and the stairs stand in that one — reached eight ways, which is how a body
+ * walks. With no rooms and no doors, that is every walkable cell.
+ */
+function cave(seed: string, palette: SitePalette): AuthoredMap {
+  const table = CAVERN_ORC_BREEDING_PIT;
+  const spec: LevelSpec<CavernMapSpec> = {
+    ...table,
+    map: {
+      ...table.map,
+      grid: {
+        ...table.map.grid,
+        floor: palette.floor,
+        wall: palette.wall,
+        up: palette.floor,
+        down: palette.floor,
+        door: palette.floor,
+      },
+    },
+  };
+  return keepTrying(spec, seed, { level: 1, maxLevel: 1 }).map;
 }
 
 /**
@@ -572,9 +587,11 @@ export function makeSiteMap(
   shape: SiteShape,
   palette: SitePalette = DEFAULT_SITE_PALETTE,
 ): AuthoredMap {
-  // A WORKS IS ITS OWN LEVEL, with its own seeds per attempt — see `works`.
-  // Nothing below runs for it: no shared vault roll, no `connect`, no repaint.
+  // A WORKS AND A CAVE ARE EACH ITS OWN LEVEL, with its own seeds per attempt —
+  // see `works` and `cave`. Nothing below runs for them: no shared vault roll,
+  // no `connect`, no repaint.
   if (shape === SiteShape.Works) return works(seed, palette);
+  if (shape === SiteShape.Cave) return cave(seed, palette);
 
   const rng = createRng(seed);
   const g = blank();
@@ -582,12 +599,7 @@ export function makeSiteMap(
   /** The cells a stamped room holds, which no repair corridor writes. See `dig`. */
   const held = new Uint8Array(W * H);
 
-  const spawn =
-    shape === SiteShape.Town
-      ? town(g, rng)
-      : shape === SiteShape.Cave
-        ? cave(g, rng)
-        : ruin(g, rng);
+  const spawn = shape === SiteShape.Town ? town(g, rng) : ruin(g, rng);
 
   /**
    * ═══════════════════════════════════════════════════════════════════════════
@@ -741,7 +753,7 @@ export function makeSiteMap(
 
   return {
     vaults: placed,
-    // Only a room generator records rooms, and none of these three is one.
+    // Only a room generator records rooms, and neither of these two is one.
     rooms: [],
     view: { w: W, h: H, tiles: g },
     spawns: [spawn],

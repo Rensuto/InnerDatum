@@ -21,7 +21,8 @@ import {
   stairsDownOf,
 } from '../../src/server/world/realms.ts';
 import { canWalk } from '../../src/shared/level.ts';
-import { ActorKind, LogLane } from '../../src/shared/protocol.ts';
+import { ActorKind, LogLane, TileCode } from '../../src/shared/protocol.ts';
+import { SiteShape, makeSiteMap } from '../../src/shared/sitemap.ts';
 import { PROTOCOL_VERSION } from '../../src/shared/version.ts';
 import type { Realm, Realms } from '../../src/server/world/realms.ts';
 import type { TileXY } from '../../src/shared/coords.ts';
@@ -91,6 +92,31 @@ describe('the Undermost, as a zone', () => {
       if (exit === null) throw new Error('no exit on the last floor');
       expect(canWalk(realm.world.level, exit.x, exit.y), 'the exit is not ground').toBe(true);
       expect(realm.spawns.length, 'the last floor has no arrival').toBeGreaterThan(0);
+    }
+  });
+
+  /**
+   * ═══ THE FIRST TWO FLOORS ARE CAVES: DUG AS TOME DIGS ONE, AND DARK ═══
+   * A cave is ToME's Cavern (`shared/mapgen/cavern.ts`): one region of noise,
+   * no rooms, nothing lit. Nothing else here said so — the counts above hold
+   * just as well for a ruin, and a lit floor passes every one of them.
+   */
+  it('digs the first two floors as caves in soot and crag, and lights none of it', () => {
+    for (const floor of [1, 2]) {
+      const seed = `undermost-cave:${String(floor)}`;
+      expect(undermost().map(seed, undefined, floor), `floor ${String(floor)}`).toEqual(
+        makeSiteMap(seed, SiteShape.Cave, { floor: TileCode.SOOT, wall: TileCode.CRAG }),
+      );
+      const realm = makeRealms().open(undermost(), 'p', undefined, undefined, undefined, floor);
+      const { tiles } = realm.world.level;
+      expect(new Set(tiles), `floor ${String(floor)}`).toEqual(
+        new Set([TileCode.SOOT, TileCode.CRAG]),
+      );
+      expect(tiles.filter((c) => c === TileCode.SOOT).length).toBeGreaterThanOrEqual(900);
+      expect(
+        realm.world.lit.some((v) => v > 0),
+        `floor ${String(floor)} is lit`,
+      ).toBe(false);
     }
   });
 

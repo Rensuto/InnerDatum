@@ -1027,19 +1027,19 @@ export function createWorld(
      *
      * A full cluster means a lot of people arrived at once, and the honest
      * answer to that is "stand behind them", not "be somewhere else entirely".
-     * `nearestFreeTile` rings outward from a requested tile in row-major order
-     * with no draw at all, so this is deterministic and reproducible in the same
-     * way the cluster walk above is — and it puts the eleventh arrival one step
-     * further out rather than a hundred tiles away.
+     * `nearestReachableFreeTile` walks outward from a requested tile with no draw
+     * at all, so this is deterministic and reproducible in the same way the
+     * cluster walk above is — and it puts the eleventh arrival one step further
+     * out rather than a hundred tiles away.
      *
-     * FROM `spawns[0]`, the first authored tile, so the ring is anchored to the
+     * FROM `spawns[0]`, the first authored tile, so the search is anchored to the
      * gate even if every tile of the cluster is occupied. A level with no
      * authored spawn at all falls straight through to the draw below, which is
      * the behaviour it has always had.
      */
     const anchor = spawns[0];
     if (anchor !== undefined) {
-      const near = nearestFreeTile(anchor.x, anchor.y);
+      const near = nearestReachableFreeTile(anchor);
       if (near !== undefined) return near;
     }
 
@@ -1074,6 +1074,58 @@ export function createWorld(
           // a smaller radius.
           if (Math.abs(dx) !== radius && Math.abs(dy) !== radius) continue;
           if (isFree(x + dx, y + dy)) return { x: x + dx, y: y + dy };
+        }
+      }
+    }
+    return undefined;
+  };
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE CLOSEST FREE TILE A BODY CAN WALK TO, FOR SOMEBODY JOINING A PARTY.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * The ring search above measures distance through the rock. On the moor that
+   * never mattered; in a delve it does. MEASURED on the cave floors, which are
+   * ToME's Cavern now (winding tunnels, walls one cell thick): with a party of
+   * six, about one cave floor in twenty seated somebody more than ten WALKING
+   * steps from the arrival — two cells away through the wall, ninety-five
+   * steps round — and about one works floor in fourteen did too. A party that
+   * arrives together has to be able to see and reach itself.
+   *
+   * UPSTREAM ASKS THE SAME QUESTION. ToME seats a party member with
+   * `util.findFreeGrid(x, y, 20, true, {[Map.ACTOR]=true})`
+   * (`tome/class/Game.lua:1259`, `tome/class/Party.lua:500`), and that `true` is
+   * `block`: the candidates are the cells `core.fov.circle_grids` can SEE from
+   * the arrival (`engine/utils.lua:2370-2400`), so a cell behind a wall is never
+   * one. Walking distance is the same rule for a body that moves eight ways and
+   * cuts corners (`tryMove`), and needs no line of sight computed.
+   *
+   * A breadth-first walk over walkable ground, eight ways, row-major neighbours
+   * so the answer is a pure function of the map, through tiles other bodies
+   * stand on (a party is a queue, not a wall), out to `SPAWN_SEARCH_RADIUS`
+   * steps. `addMonster` keeps the ring search: an encounter's authored tile
+   * names a place, not an arrival.
+   */
+  const nearestReachableFreeTile = (from: TileXY): TileXY | undefined => {
+    if (isFree(from.x, from.y)) return { x: from.x, y: from.y };
+    const steps = new Map<string, number>([[`${String(from.x)},${String(from.y)}`, 0]]);
+    const queue: TileXY[] = [{ x: from.x, y: from.y }];
+    for (let head = 0; head < queue.length; head += 1) {
+      const at = queue[head];
+      if (at === undefined) break;
+      const d = steps.get(`${String(at.x)},${String(at.y)}`) ?? 0;
+      if (d >= SPAWN_SEARCH_RADIUS) continue;
+      for (let dy = -1; dy <= 1; dy += 1) {
+        for (let dx = -1; dx <= 1; dx += 1) {
+          const x = at.x + dx;
+          const y = at.y + dy;
+          const key = `${String(x)},${String(y)}`;
+          if (steps.has(key)) continue;
+          if (!canWalk(level, x, y)) continue;
+          if (isFree(x, y)) return { x, y };
+          steps.set(key, d + 1);
+          queue.push({ x, y });
         }
       }
     }

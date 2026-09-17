@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
-import { ROOMER_RUINS_KOR_PUL, keepTrying, newLevel } from '../../src/shared/mapgen/level.ts';
+import {
+  CAVERN_ORC_BREEDING_PIT,
+  ROOMER_RUINS_KOR_PUL,
+  keepTrying,
+  newLevel,
+} from '../../src/shared/mapgen/level.ts';
 import type { AuthoredMap } from '../../src/shared/level.ts';
 import type { TileXY } from '../../src/shared/coords.ts';
 import {
@@ -58,10 +63,11 @@ function walkableSet(tiles: readonly number[]): Set<number> {
 
 /**
  * The shapes that finish by carving from the threshold to anything stranded, and
- * so owe it every floor tile. A works is ToME's Roomer, which repairs nothing and
- * is held to upstream's rules instead — see its own tests below.
+ * so owe it every floor tile. A works is ToME's Roomer and a cave ToME's Cavern;
+ * neither repairs anything, and each is held to upstream's rules instead — see
+ * their own tests below.
  */
-const CARVED = SHAPES.filter((shape) => shape !== SiteShape.Works);
+const CARVED = SHAPES.filter((shape) => shape !== SiteShape.Works && shape !== SiteShape.Cave);
 
 /**
  * Every index a body can get to from `from`, as upstream's level check asks it:
@@ -1127,6 +1133,127 @@ describe('a works is rooms and corridors', () => {
         }
       }
     }
+  });
+});
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * A CAVE IS A CAVERN LEVEL — `engine/generator/map/Cavern.lua`, as the orc pits.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * It used to be a random walk from the centre with a drawn room stamped in and a
+ * corridor dug to whatever the stamp cut off. It is now the level ToME digs for
+ * its orc breeding pits (`data/zones/orc-breeding-pit/zone.lua:34-43`): noise at
+ * zoom 23, the biggest region of it kept, and nothing else. `mapgen/cavern.test.ts`
+ * pins the generator; these pin the site that is built from it.
+ */
+describe('a cave is a Cavern level', () => {
+  const SEEDS = Array.from({ length: 40 }, (_, i) => `cave-${String(i)}`);
+
+  it("is the orc breeding pits' Cavern level, built in the site's own grid keys", () => {
+    /**
+     * THE JOIN: the one line that hands a site's palette to `mapgen/`. `floor`
+     * and `wall` are the palette, and the stairs and the zone's `door` are its
+     * floor — so a painted cave holds exactly its two codes.
+     */
+    const palette = { floor: TileCode.SOOT, wall: TileCode.CRAG };
+    const table = CAVERN_ORC_BREEDING_PIT;
+    for (const seed of SEEDS.slice(0, 10)) {
+      const map = makeSiteMap(seed, SiteShape.Cave, palette);
+      const level = keepTrying(
+        {
+          ...table,
+          map: {
+            ...table.map,
+            grid: {
+              floor: palette.floor,
+              wall: palette.wall,
+              up: palette.floor,
+              down: palette.floor,
+              door: palette.floor,
+            },
+          },
+        },
+        seed,
+        { level: 1, maxLevel: 1 },
+      );
+      expect(map).toEqual(level.map);
+      expect(new Set(map.view.tiles), `${seed}: a code the palette did not name`).toEqual(
+        new Set<number>([palette.floor, palette.wall]),
+      );
+    }
+  });
+
+  it('leaves every floor tile reachable from the threshold, eight ways, as a body walks', () => {
+    /**
+     * EIGHT NEIGHBOURS, NOT FOUR. Cavern keeps the biggest EIGHT-connected region
+     * (`engine/generator/map/Cavern.lua:63-85`), and a body here steps diagonally
+     * between two walls (`World.tryMove`'s corner rule), so two chambers that
+     * touch only at a corner are one cave. The carved shapes above are held to
+     * four because their repair corridor digs four ways.
+     */
+    let diagonalOnly = 0;
+    for (const seed of SEEDS) {
+      const map = makeSiteMap(seed, SiteShape.Cave);
+      const { w, tiles } = map.view;
+      const up = map.spawns[0];
+      const { down } = map;
+      if (up === undefined || down === undefined) throw new Error(`${seed}: a stair is missing`);
+      expect(isWalkable(tiles[up.y * w + up.x] ?? TileCode.WALL), `${seed}: up`).toBe(true);
+      expect(isWalkable(tiles[down.y * w + down.x] ?? TileCode.WALL), `${seed}: down`).toBe(true);
+
+      const reached = reach8(map, up);
+      const walkable = walkableSet(tiles);
+      const stranded = [...walkable].filter((i) => !reached.has(i));
+      expect(stranded.length, `${seed}: floor cut off from the threshold`).toBe(0);
+
+      // How many of these a four-way flood would have called broken.
+      const four = new Set<number>([up.y * w + up.x]);
+      const stack = [up.y * w + up.x];
+      for (let at = stack.pop(); at !== undefined; at = stack.pop()) {
+        const x = at % w;
+        for (const n of [at - 1, at + 1, at - w, at + w]) {
+          if (n < 0 || n >= tiles.length || four.has(n)) continue;
+          if (Math.abs((n % w) - x) > 1 || !isWalkable(tiles[n] ?? TileCode.WALL)) continue;
+          four.add(n);
+          stack.push(n);
+        }
+      }
+      if (four.size < walkable.size) diagonalOnly += 1;
+    }
+    expect(diagonalOnly, 'no cave needed a diagonal step, so four ways was tested').toBeGreaterThan(
+      10,
+    );
+  });
+
+  it('keeps at least min_floor cells of floor, and digs no room into it', () => {
+    /**
+     * `min_floor = 900` (`data/zones/orc-breeding-pit/zone.lua:38`): the biggest
+     * region must hold that many or the noise is rolled again, and nothing else
+     * stays open. And `nb_rooms` is Cavern's default of 0
+     * (`engine/generator/map/Cavern.lua:112`), so no room, drawn or lit, and a
+     * cave is as dark as upstream's.
+     */
+    for (const seed of SEEDS) {
+      const map = makeSiteMap(seed, SiteShape.Cave);
+      const open = map.view.tiles.filter((code) => isWalkable(code)).length;
+      expect(open, `${seed}: less floor than min_floor`).toBeGreaterThanOrEqual(900);
+      expect(map.vaults, `${seed}: a cave rolled a room`).toEqual([]);
+      expect(map.rooms, `${seed}: a cave recorded a room`).toEqual([]);
+    }
+    expect(VAULTS_BY_SHAPE[SiteShape.Cave]).toEqual([]);
+  });
+
+  it('lands the arrival wherever the generator put the up stair, not always the centre', () => {
+    // `makeStairsInside` rolls both stairs on random open cells
+    // (`engine/generator/map/Cavern.lua:220-246`). The old cave arrived at 25,25.
+    const arrivals = new Set(
+      SEEDS.map((seed) => {
+        const up = makeSiteMap(seed, SiteShape.Cave).spawns[0];
+        return `${String(up?.x)},${String(up?.y)}`;
+      }),
+    );
+    expect(arrivals.size).toBeGreaterThan(30);
   });
 });
 

@@ -3,16 +3,16 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { ENCOUNTER_SITE, SITES } from '../../src/server/world/realms.ts';
+import { ENCOUNTER_SITE, SITES, UNDERMOST_SITE_ID } from '../../src/server/world/realms.ts';
 import { createWorld } from '../../src/server/world/world.ts';
 import { REDACTION_SITE_ID } from '../../src/shared/level.ts';
 
 /** How many of a site's tiles its own light reaches, built as a realm builds it. */
-function litCount(id: string): { readonly lit: number; readonly of: number } {
+function litCount(id: string, floor = 1): { readonly lit: number; readonly of: number } {
   const def = SITES.get(id);
   if (def === undefined) throw new Error(`no site ${id}`);
   const seed = `lighting:${id}`;
-  const world = createWorld(seed, def.map(seed), id, def.lighting);
+  const world = createWorld(seed, def.map(seed, undefined, floor), id, def.lighting);
   let lit = 0;
   for (const tile of world.lit) lit += tile;
   return { lit, of: world.lit.length };
@@ -38,6 +38,12 @@ describe('how each place is lit', () => {
 
   it('lights nothing in a cave', () => {
     for (const id of CAVES) expect(litCount(id).lit, id).toBe(0);
+  });
+
+  it('lights nothing on the Undermost`s cave floors, where every character wakes', () => {
+    for (const floor of [1, 2]) {
+      expect(litCount(UNDERMOST_SITE_ID, floor).lit, `floor ${String(floor)}`).toBe(0);
+    }
   });
 
   it('lights the rooms of a works and leaves the ground outside them dark', () => {

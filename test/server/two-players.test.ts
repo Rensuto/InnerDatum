@@ -1686,6 +1686,45 @@ describe('the moor hears when somebody does not come back', () => {
     expect(inside?.kind, 'the diver never got in').toBe(RealmKind.Inner);
 
     /**
+     * ═══ BESIDE THE NEAREST RESIDENT, BECAUSE A CAVE DOES NOT COME TO YOU ═══
+     * Blackwood is a cave, and a cave is ToME's Cavern now: winding noise, the
+     * arrival anywhere, the nearest resident a median twelve steps away round a
+     * corner. Standing on the threshold, nothing ever saw the diver and the room
+     * never killed anyone. So the diver is put next to the resident nearest by
+     * WALKING, which is where a player who went looking would be; the death is
+     * still the room's own blows.
+     */
+    if (inside === undefined) throw new Error('no room');
+    const diverBody = inside.world.getActor(diverId);
+    if (diverBody === undefined) throw new Error('no diver body');
+    const residents = new Map<string, unknown>(
+      inside.world
+        .allActors()
+        .filter((a) => a.kind === ActorKind.Monster && a.alive)
+        .map((a) => [`${String(a.x)},${String(a.y)}`, a] as const),
+    );
+    const seen = new Set<string>([`${String(diverBody.x)},${String(diverBody.y)}`]);
+    const queue = [{ x: diverBody.x, y: diverBody.y }];
+    let beside: { x: number; y: number } | undefined;
+    for (let head = 0; head < queue.length && beside === undefined; head += 1) {
+      const at = queue[head];
+      if (at === undefined) break;
+      for (let dy = -1; dy <= 1 && beside === undefined; dy += 1) {
+        for (let dx = -1; dx <= 1 && beside === undefined; dx += 1) {
+          const cell = `${String(at.x + dx)},${String(at.y + dy)}`;
+          if (seen.has(cell)) continue;
+          seen.add(cell);
+          if (residents.has(cell)) beside = at;
+          else if (canWalk(inside.world.level, at.x + dx, at.y + dy)) {
+            queue.push({ x: at.x + dx, y: at.y + dy });
+          }
+        }
+      }
+    }
+    expect(beside, 'nobody in the room to die to').toBeDefined();
+    if (beside !== undefined) expect(inside.world.placeAt(diverId, beside)).toBe(true);
+
+    /**
      * LET THE ROOM DO IT. Writing `hp = 0` directly does not raise a wipe — the
      * engine restores on its own pass and the body comes back at 0.5 — so the
      * death has to arrive the way a death arrives: Blackwood is `grim`, the

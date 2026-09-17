@@ -181,9 +181,16 @@ const CLERKS_BOX = defineVault('vault:clerks_box', ['##+##', '#   #', '#####'], 
  * around it reads as a bug instead. So the list is per shape, and `Town` has
  * none: a town is already all buildings, and a vault there would be a building
  * among buildings, which is noise with extra steps.
+ *
+ * ═══ AND A CAVE HAS NONE, BECAUSE TOME'S CAVES HAVE NONE ═══
+ * A cave is ToME's Cavern now (`shared/sitemap.ts`), whose `nb_rooms` defaults
+ * to 0 (`engine/generator/map/Cavern.lua:112`), and no ToME level Cavern builds
+ * places a room. Its list was the shaft, the partition, the gallery and the
+ * sump. The sump is in no other list, so no floor lays it until a shape takes it
+ * again; `ALL_VAULTS` still carries it, and its tests still hold it to the format.
  */
 export const VAULTS_BY_SHAPE: Readonly<Record<string, readonly Vault[]>> = {
-  cave: [SEALED_SHAFT, HALF_PARTITION, COLLAPSED_GALLERY, SUMP],
+  cave: [],
   ruin: [HALF_PARTITION, FILING_CHAMBER, COLLAPSED_GALLERY, CLERKS_BOX],
   works: [FILING_CHAMBER, HALF_PARTITION, SEALED_SHAFT, SHELVING_RUN, CLERKS_BOX],
   town: [],

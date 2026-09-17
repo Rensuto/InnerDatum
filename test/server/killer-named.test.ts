@@ -276,6 +276,116 @@ describe('a death in a room that resets', () => {
       }
       await sleep(600);
 
+      /**
+       * ═══════════════════════════════════════════════════════════════════════
+       * AND INTO THE ROOM, UNTIL SOMETHING IN IT HAS NOTICED.
+       * ═══════════════════════════════════════════════════════════════════════
+       *
+       * Standing still on the threshold used to be enough, because the cave was
+       * a random walk from the centre: open, close-set, every resident within a
+       * few steps and in sight of the door. It is ToME's Cavern now — winding
+       * noise, the arrival anywhere, the nearest resident a median twelve steps
+       * off and round a corner. MEASURED on this file's Blackwood: nothing ever
+       * came, and the test read "never died" while standing in an empty tunnel.
+       *
+       * So the diver walks the cave the way a player would look for a fight: to
+       * the far end of the ground it can see on its map, then to the far end
+       * from there, and it stops the moment a blow lands either way. It reads
+       * nothing the client does not have — the map from the `realm` frame, its
+       * position from `moved` — so it is indifferent to the layout. Stairs and
+       * the way out are never stepped on: this file measures a death in THIS
+       * room, and a staircase would change which room that is.
+       */
+      const fought = (): boolean =>
+        lines.some((l) => /(hits|misses) Player|Player \d+ (hits|misses)|is DOWN|erased/.test(l));
+      const inner = realm();
+      if (inner?.['kind'] === 'inner') {
+        const room = level();
+        const arrivedAt = frames.lastIndexOf(inner);
+        const inRoom = (): { x: number; y: number } => {
+          let at = { x: -1, y: -1 };
+          frames.slice(arrivedAt).forEach((f) => {
+            if (f['t'] === 'realm' || f['t'] === 'state') {
+              const mine = ((f['actors'] ?? []) as { id: string; x: number; y: number }[]).find(
+                (a) => a.id === selfId,
+              );
+              if (mine !== undefined) at = { x: mine.x, y: mine.y };
+            }
+            if (f['t'] === 'moved' && f['id'] === selfId) {
+              at = { x: f['x'] as number, y: f['y'] as number };
+            }
+          });
+          return at;
+        };
+        const entrance = inRoom();
+        const stairs = new Set(
+          ((inner['sites'] ?? []) as { x: number; y: number }[]).map(
+            (s) => `${String(s.x)},${String(s.y)}`,
+          ),
+        );
+        stairs.add(`${String(entrance.x)},${String(entrance.y)}`);
+        const ground = (x: number, y: number): boolean =>
+          x >= 0 &&
+          y >= 0 &&
+          x < room.w &&
+          y < room.h &&
+          canWalk(room, x, y) &&
+          !stairs.has(`${String(x)},${String(y)}`);
+        /** The open cell furthest from `from` by walking, eight ways. */
+        const farthest = (from: { x: number; y: number }): { x: number; y: number } => {
+          const seen = new Set([`${String(from.x)},${String(from.y)}`]);
+          const queue = [from];
+          for (let head = 0; head < queue.length; head += 1) {
+            const at = queue[head] ?? from;
+            for (let dy = -1; dy <= 1; dy += 1) {
+              for (let dx = -1; dx <= 1; dx += 1) {
+                const nx = at.x + dx;
+                const ny = at.y + dy;
+                if (seen.has(`${String(nx)},${String(ny)}`) || !ground(nx, ny)) continue;
+                seen.add(`${String(nx)},${String(ny)}`);
+                queue.push({ x: nx, y: ny });
+              }
+            }
+          }
+          return queue[queue.length - 1] ?? from;
+        };
+
+        let goal = farthest(entrance);
+        let route = findPath(entrance, goal, ground, { maxNodes: 400_000 });
+        let step = 0;
+        let legs = 1;
+        for (let guard = 0; guard < 500 && !fought(); guard += 1) {
+          const at = inRoom();
+          if (at.x === goal.x && at.y === goal.y) {
+            if (legs >= 6) break;
+            legs += 1;
+            goal = farthest(at);
+            route = findPath(at, goal, ground, { maxNodes: 400_000 });
+            step = 0;
+            continue;
+          }
+          const want = route?.[step];
+          if (want === undefined) break;
+          if (at.x === want.x && at.y === want.y) {
+            step += 1;
+            continue;
+          }
+          if (Math.abs(want.x - at.x) > 1 || Math.abs(want.y - at.y) > 1) {
+            route = findPath(at, goal, ground, { maxNodes: 400_000 });
+            step = 0;
+            continue;
+          }
+          const dx = Math.sign(want.x - at.x);
+          const dy = Math.sign(want.y - at.y);
+          send({
+            t: 'move',
+            dir: `${dy < 0 ? 'n' : dy > 0 ? 's' : ''}${dx < 0 ? 'w' : dx > 0 ? 'e' : ''}`,
+          });
+          await sleep(60);
+        }
+        expect(fought(), 'walked the whole room and nothing in it ever fought').toBe(true);
+      }
+
       // STAND STILL AND LET IT HAPPEN. `hold` is a real action and spends the
       // turn, so the room gets to act; a died-of-nothing setup would not.
       //

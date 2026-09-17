@@ -4,7 +4,7 @@ import { AiProfile } from '../../src/server/engine/actor.ts';
 import { MoveBlock, createWorld } from '../../src/server/world/world.ts';
 import { DIR_ORDER, dirVector } from '../../src/shared/coords.ts';
 import { TEST_LEVEL_SPAWNS, canWalk, makeOverworld } from '../../src/shared/level.ts';
-import { ActorKind } from '../../src/shared/protocol.ts';
+import { ActorKind, TileCode } from '../../src/shared/protocol.ts';
 import { createRng } from '../../src/shared/rng.ts';
 import type { Dir, TileXY } from '../../src/shared/coords.ts';
 import type { PlayerActor } from '../../src/server/engine/actor.ts';
@@ -143,6 +143,55 @@ describe('the overworld gate seats a whole party, not one person', () => {
     // the braces. A party should be seated by the AUTHORED cluster.
     const overworld = makeOverworld();
     expect(overworld.spawns.length).toBeGreaterThanOrEqual(A_FULL_CHANNEL);
+  });
+});
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * A PARTY ARRIVING IN A DELVE STANDS WHERE IT CAN REACH ITSELF.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * A delve authors one spawn, its up stair, so every arrival after the first is
+ * seated by the overflow search. That search used to ring outward through the
+ * rock, and on a cave floor — ToME's Cavern, walls one cell thick — it put the
+ * third of a party two cells from the stair and ninety-five steps round.
+ *
+ * THE FIXTURE IS THE SMALLEST MAP THAT SHOWS IT: a dead-end corridor running
+ * down from the stair, and one sealed cell two rows above it, behind a wall.
+ * The ring reaches that cell (radius 2, first row) before the corridor's third
+ * cell (radius 2, last row); a walk never reaches it at all.
+ */
+describe('world.addPlayer, past the authored spawns', () => {
+  const ROWS = [
+    '#######',
+    '#######',
+    '###.###',
+    '#######',
+    '###.###',
+    '###.###',
+    '###.###',
+    '###.###',
+    '#######',
+  ];
+  const map = {
+    view: {
+      w: 7,
+      h: ROWS.length,
+      tiles: ROWS.join('')
+        .split('')
+        .map((c) => (c === '.' ? TileCode.FLOOR : TileCode.WALL)),
+    },
+    spawns: [{ x: 3, y: 4 }],
+    sites: new Map<string, string>(),
+  };
+
+  it('seats each arrival on the nearest free tile BY WALKING, never through a wall', () => {
+    const world = createWorld('party-in-a-tunnel', map);
+    const seats = ['a', 'b', 'c', 'd'].map((id) => {
+      const actor = world.addPlayer(id, id);
+      return `${String(actor.x)},${String(actor.y)}`;
+    });
+    expect(seats).toEqual(['3,4', '3,5', '3,6', '3,7']);
   });
 });
 

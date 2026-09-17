@@ -9,10 +9,12 @@ import { wsGateway } from '../../src/server/net/gateway.ts';
 import { createTurnEngine } from '../../src/server/turn-engine.ts';
 import { SITES, createRealms, floorsOfSite, stairsDownOf } from '../../src/server/world/realms.ts';
 import { fileableCount, isFileable } from '../../src/server/world/casefile.ts';
+import { DIR_ORDER, DIR_VECTORS, dirFromVector } from '../../src/shared/coords.ts';
+import type { Dir } from '../../src/shared/coords.ts';
 import { canWalk } from '../../src/shared/level.ts';
 import { ActorKind } from '../../src/shared/protocol.ts';
 import { PROTOCOL_VERSION } from '../../src/shared/version.ts';
-import type { Realms } from '../../src/server/world/realms.ts';
+import type { Realm, Realms } from '../../src/server/world/realms.ts';
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════
@@ -149,6 +151,33 @@ async function hello(port: number): Promise<Client> {
   }
 }
 
+/**
+ * A cell a body can stand on next to `cell`, and the step from it back onto
+ * `cell`.
+ *
+ * ALL EIGHT NEIGHBOURS, NOT FOUR. A cave is ToME's Cavern now, whose floor is
+ * one region joined EIGHT ways (`shared/mapgen/cavern.ts`): a stair can have
+ * rock on all four sides and open ground only across a corner, and a body walks
+ * there diagonally. The first version tried the four sides and stepped west,
+ * which on the Blackwood floor this file builds was rock, so the player pressed
+ * against a wall on the way out and "never got back out". A site cell is skipped
+ * too: stepping onto a stair is the thing being arranged, not the way round it.
+ */
+function stepOff(
+  realm: Realm,
+  cell: { readonly x: number; readonly y: number },
+): { readonly x: number; readonly y: number; readonly off: Dir; readonly back: Dir } {
+  for (const off of DIR_ORDER) {
+    const v = DIR_VECTORS[off];
+    const x = cell.x + v.dx;
+    const y = cell.y + v.dy;
+    if (!canWalk(realm.world.level, x, y) || realm.sites.has(`${String(x)},${String(y)}`)) continue;
+    const back = dirFromVector(-v.dx, -v.dy);
+    if (back !== undefined) return { x, y, off, back };
+  }
+  throw new Error(`no open ground beside ${String(cell.x)},${String(cell.y)}`);
+}
+
 /** Walk onto the first fileable site's cell, which opens it. */
 async function enterADelve(realms: Realms, client: Client, toTheBottom = true): Promise<string> {
   const door = [...realms.overworld.sites].find(([, siteId]) => {
@@ -176,16 +205,10 @@ async function enterADelve(realms: Realms, client: Client, toTheBottom = true): 
     }
     const walker = realm.world.getActor(client.actorId);
     if (walker === undefined) throw new Error('no body');
-    const beside = [
-      { dx: -1, dy: 0, dir: 'e' },
-      { dx: 1, dy: 0, dir: 'w' },
-      { dx: 0, dy: -1, dir: 's' },
-      { dx: 0, dy: 1, dir: 'n' },
-    ].find((s) => canWalk(realm.world.level, stairs.x + s.dx, stairs.y + s.dy));
-    if (beside === undefined) throw new Error('a stair with no open ground beside it');
-    walker.x = stairs.x + beside.dx;
-    walker.y = stairs.y + beside.dy;
-    client.send({ t: 'move', dir: beside.dir });
+    const beside = stepOff(realm, stairs);
+    walker.x = beside.x;
+    walker.y = beside.y;
+    client.send({ t: 'move', dir: beside.back });
     await sleep(250);
   }
   return door[1];
@@ -326,12 +349,14 @@ describe('closing a case', () => {
       const exit = inside?.spawns[0];
       if (exit === undefined) throw new Error('the delve has no way out');
       const body = inside?.world.getActor(client.actorId);
-      if (body === undefined) throw new Error('no body');
+      if (inside === undefined || body === undefined) throw new Error('no body');
       body.x = exit.x;
       body.y = exit.y;
-      client.send({ t: 'move', dir: 'w' });
+      // OFF AND BACK ON, by whichever neighbour is open — see `stepOff`.
+      const { off, back } = stepOff(inside, exit);
+      client.send({ t: 'move', dir: off });
       await sleep(150);
-      client.send({ t: 'move', dir: 'e' });
+      client.send({ t: 'move', dir: back });
       await sleep(300);
     }
     expect(server.realms.realmOf(client.actorId)?.id, 'never got back out').toBe(
