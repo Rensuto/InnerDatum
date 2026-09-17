@@ -580,6 +580,142 @@ export function talentRuntimeFor(
   };
 }
 
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE THREE TALENT-LEDGER SEAMS, LIFTED OUT OF `buildServer` SO A TEST CAN
+ * REACH THE ONES PRODUCTION USES.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * These were three closures inside `wrapForGateway`, which is itself a closure
+ * inside `buildServer` — so nothing outside this file could obtain them, and
+ * every socket test in the tree hand-copied them into its own harness instead.
+ * `talentSpendOf` had ZERO callers outside production: the purse the restore
+ * path rebuilds from it was covered only by a source grep
+ * (`point-purses.test.ts`, "the wiring, which no unit test can drive").
+ *
+ * That is not an academic gap. A harness that omits `talentSpendOf` gets a
+ * `restoreProgression` which leaves `unspentGenerics` untouched — so a test
+ * written to prove the generic purse survives a reconnect would have been
+ * asserting against a body whose purse the production code never rebuilt.
+ *
+ * NOTHING BUT THE TALENT ENGINE IS CAPTURED, which is why these three could
+ * move and `attachClass` could not: that one needs the realm registry, the
+ * fallback world and `refreshPassives`. `test/helpers/attach-class.ts` is its
+ * stand-in and goes through the same `sheetForBody` production does.
+ */
+export function talentLedgerSeams(talentEngine: TalentEngine): TalentLedgerSeams {
+  return {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * WHAT THIS BODY HAS SPENT, SPLIT BY PURSE — the accurate ledger.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * `spend_point` draws from `unspentGenerics` for a `generic/` tree and from
+     * `unspentPoints` for everything else, and the restore path summed the WHOLE
+     * spread against the class budget — so every rank bought with a generic
+     * point was charged to the class purse on the next load, and the generic
+     * purse itself was never reconstructed at all.
+     *
+     * ═══ HERE, BECAUSE THIS IS WHERE ALL THREE INPUTS MEET ═══
+     * The partition needs the talent registry (for each id's tree), the class
+     * definition (for which ids were granted at birth) and `isGenericTree`.
+     * `persist/saves.ts` has none of them and says so — *"this layer cannot
+     * import the talent registry … Giving the points back is the restore path's
+     * job, and it has the registry to do it with"* — and the gateway has only
+     * the seam. This file has all three.
+     *
+     * ═══ THE BIRTH GRANT DOES NOT SPLIT FOUR-AND-NOTHING ═══
+     * One of the four (`talent:issued_kit`) sits in a generic tree, so the
+     * class partition is owed three free ranks and the generic partition one.
+     * Counted from the class definition rather than assumed, so a content
+     * change that moves a birth talent between trees stays correct.
+     */
+    talentSpendOf: (actorId: string): { class: number; generic: number } | undefined => {
+      const sheet = talentEngine.sheetOf(actorId);
+      if (sheet === undefined) return undefined;
+      // THE SHEET'S OWN `classId`, not the body's: `createTalentSheet` stamps it,
+      // so the class is reachable from the one object already in hand.
+      return spendByPurse(
+        sheet,
+        classById(sheet.classId),
+        (id) => talentEngine.registry.get(id)?.tree,
+      );
+    },
+
+    talentPointsOf: (actorId: string): Readonly<Record<string, number>> | undefined => {
+      const sheet = talentEngine.sheetOf(actorId);
+      if (sheet === undefined) return undefined;
+      // A PLAIN OBJECT, NEVER THE LIVE MAP. Two reasons and both bite: a Map
+      // serialises as `{}` through `JSON.stringify` — silently, which would
+      // write every character back at rank 1 — and the snapshot must be frozen
+      // in time, because the save layer holds it by reference across a debounce
+      // while the sheet goes on changing.
+      const out: Record<string, number> = {};
+      for (const [id, raw] of sheet.points) out[id] = raw;
+      return out;
+    },
+
+    applyTalentPoints: (
+      actorId: string,
+      points: Readonly<Record<string, number>>,
+    ): readonly string[] | undefined => {
+      const sheet = talentEngine.sheetOf(actorId);
+      if (sheet === undefined) return undefined;
+
+      const dropped: string[] = [];
+      for (const [talentId, raw] of Object.entries(points)) {
+        // ═══ AN ID THIS SHEET DOES NOT HAVE IS REPORTED, NEVER SEEDED ═══
+        // Two ways to get here and the caller cannot tell them apart, which is
+        // fine because the answer is the same: a talent this build DELETED
+        // (docs/data-schemas.md § 1's refundPool case — "friends' saves must
+        // outlive your content edits"), or a talent belonging to a class this
+        // character no longer is. Either way the points did not land, so the
+        // gateway's ledger does not count them as spent and hands them back.
+        if (!sheet.points.has(talentId)) {
+          dropped.push(talentId);
+          continue;
+        }
+        if (!Number.isFinite(raw)) {
+          dropped.push(talentId);
+          continue;
+        }
+        /**
+         * CLAMPED RATHER THAN REFUSED. A hand-edited `"crude_blow": 9999` is a
+         * file problem, not a reason somebody cannot play tonight — the same
+         * repair-never-reject doctrine `parseCharacterFile` applies upstream.
+         *
+         * ═══ THE FLOOR IS 0, AND IT WAS 1 FOR ONE COMMIT TOO LONG ═══
+         * 1 was correct while a class was born knowing all eighteen of its
+         * talents: rank 0 could not occur, so a 0 in a save file could only be
+         * corruption and rounding it up was the repair. Birth grants made 0 the
+         * ordinary state of most of a sheet — and this line, unchanged, would
+         * have re-granted every unlearned talent at rank 1 on the next
+         * reconnect. Silently, to everyone, undoing the entire change for
+         * anybody who had ever saved and come back.
+         *
+         * A constant whose domain moved under it, which is [M-010] exactly.
+         */
+        sheet.points.set(talentId, Math.max(0, Math.min(TALENT_MAX_LEVEL, Math.floor(raw))));
+      }
+      return dropped;
+    },
+  };
+}
+
+/**
+ * What `talentLedgerSeams` answers — the gateway's three optional talent-point
+ * methods, stated structurally rather than imported from `net/**`, because the
+ * dependency arrow runs `main → net` and never back.
+ */
+export type TalentLedgerSeams = {
+  talentSpendOf(actorId: string): { class: number; generic: number } | undefined;
+  talentPointsOf(actorId: string): Readonly<Record<string, number>> | undefined;
+  applyTalentPoints(
+    actorId: string,
+    points: Readonly<Record<string, number>>,
+  ): readonly string[] | undefined;
+};
+
 export function buildServer() {
   const app = Fastify({
     logger: {
@@ -1917,100 +2053,7 @@ export function buildServer() {
       return answer;
     },
 
-    /**
-     * ═══════════════════════════════════════════════════════════════════════
-     * WHAT THIS BODY HAS SPENT, SPLIT BY PURSE — the accurate ledger.
-     * ═══════════════════════════════════════════════════════════════════════
-     *
-     * `spend_point` draws from `unspentGenerics` for a `generic/` tree and from
-     * `unspentPoints` for everything else, and the restore path summed the WHOLE
-     * spread against the class budget — so every rank bought with a generic
-     * point was charged to the class purse on the next load, and the generic
-     * purse itself was never reconstructed at all.
-     *
-     * ═══ HERE, BECAUSE THIS IS WHERE ALL THREE INPUTS MEET ═══
-     * The partition needs the talent registry (for each id's tree), the class
-     * definition (for which ids were granted at birth) and `isGenericTree`.
-     * `persist/saves.ts` has none of them and says so — *"this layer cannot
-     * import the talent registry … Giving the points back is the restore path's
-     * job, and it has the registry to do it with"* — and the gateway has only
-     * the seam. This file has all three.
-     *
-     * ═══ THE BIRTH GRANT DOES NOT SPLIT FOUR-AND-NOTHING ═══
-     * One of the four (`talent:issued_kit`) sits in a generic tree, so the
-     * class partition is owed three free ranks and the generic partition one.
-     * Counted from the class definition rather than assumed, so a content
-     * change that moves a birth talent between trees stays correct.
-     */
-    talentSpendOf: (actorId: string): { class: number; generic: number } | undefined => {
-      const sheet = talentEngine.sheetOf(actorId);
-      if (sheet === undefined) return undefined;
-      // THE SHEET'S OWN `classId`, not the body's: `createTalentSheet` stamps it,
-      // so the class is reachable from the one object already in hand.
-      return spendByPurse(
-        sheet,
-        classById(sheet.classId),
-        (id) => talentEngine.registry.get(id)?.tree,
-      );
-    },
-
-    talentPointsOf: (actorId: string): Readonly<Record<string, number>> | undefined => {
-      const sheet = talentEngine.sheetOf(actorId);
-      if (sheet === undefined) return undefined;
-      // A PLAIN OBJECT, NEVER THE LIVE MAP. Two reasons and both bite: a Map
-      // serialises as `{}` through `JSON.stringify` — silently, which would
-      // write every character back at rank 1 — and the snapshot must be frozen
-      // in time, because the save layer holds it by reference across a debounce
-      // while the sheet goes on changing.
-      const out: Record<string, number> = {};
-      for (const [id, raw] of sheet.points) out[id] = raw;
-      return out;
-    },
-
-    applyTalentPoints: (
-      actorId: string,
-      points: Readonly<Record<string, number>>,
-    ): readonly string[] | undefined => {
-      const sheet = talentEngine.sheetOf(actorId);
-      if (sheet === undefined) return undefined;
-
-      const dropped: string[] = [];
-      for (const [talentId, raw] of Object.entries(points)) {
-        // ═══ AN ID THIS SHEET DOES NOT HAVE IS REPORTED, NEVER SEEDED ═══
-        // Two ways to get here and the caller cannot tell them apart, which is
-        // fine because the answer is the same: a talent this build DELETED
-        // (docs/data-schemas.md § 1's refundPool case — "friends' saves must
-        // outlive your content edits"), or a talent belonging to a class this
-        // character no longer is. Either way the points did not land, so the
-        // gateway's ledger does not count them as spent and hands them back.
-        if (!sheet.points.has(talentId)) {
-          dropped.push(talentId);
-          continue;
-        }
-        if (!Number.isFinite(raw)) {
-          dropped.push(talentId);
-          continue;
-        }
-        /**
-         * CLAMPED RATHER THAN REFUSED. A hand-edited `"crude_blow": 9999` is a
-         * file problem, not a reason somebody cannot play tonight — the same
-         * repair-never-reject doctrine `parseCharacterFile` applies upstream.
-         *
-         * ═══ THE FLOOR IS 0, AND IT WAS 1 FOR ONE COMMIT TOO LONG ═══
-         * 1 was correct while a class was born knowing all eighteen of its
-         * talents: rank 0 could not occur, so a 0 in a save file could only be
-         * corruption and rounding it up was the repair. Birth grants made 0 the
-         * ordinary state of most of a sheet — and this line, unchanged, would
-         * have re-granted every unlearned talent at rank 1 on the next
-         * reconnect. Silently, to everyone, undoing the entire change for
-         * anybody who had ever saved and come back.
-         *
-         * A constant whose domain moved under it, which is [M-010] exactly.
-         */
-        sheet.points.set(talentId, Math.max(0, Math.min(TALENT_MAX_LEVEL, Math.floor(raw))));
-      }
-      return dropped;
-    },
+    ...talentLedgerSeams(talentEngine),
   });
 
   /**

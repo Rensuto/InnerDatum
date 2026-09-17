@@ -4532,9 +4532,24 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
          * the shape every file already on disk has, which is what lets
          * `SCHEMA_VERSION` stay put.
          */
-        ...(actor.lastLearnt.class.length === 0 && actor.lastLearnt.generic.length === 0
+        // ═══ ALL THREE LEDGERS, AND `stat` WAS MISSING FROM BOTH LINES ═══
+        // `CharacterFile.lastLearnt`, `parseLastLearnt`, `CharacterSnapshot`,
+        // `Binding` and `restoreProgression` all carry the attribute window;
+        // this was the one place that dropped it, so `unspend_stat` was a
+        // take-back that ended at the next reconnect. The emptiness test has to
+        // name it too, or a character who has spent ONLY attribute points still
+        // writes no key.
+        ...(actor.lastLearnt.class.length === 0 &&
+        actor.lastLearnt.generic.length === 0 &&
+        actor.lastLearnt.stat.length === 0
           ? {}
-          : { lastLearnt: { class: actor.lastLearnt.class, generic: actor.lastLearnt.generic } }),
+          : {
+              lastLearnt: {
+                class: actor.lastLearnt.class,
+                generic: actor.lastLearnt.generic,
+                stat: actor.lastLearnt.stat,
+              },
+            }),
         // ═══ AND THE BAG AND THE DOLL, UNDER THE SAME PROVISIONAL-CLASS RULE ═══
         // Read straight off the body, for the reason engine/actor.ts gives at
         // both fields: this pass cannot reach an equipment engine any more than
@@ -7550,34 +7565,12 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
      * because it was the last thing in the function; it is not any more.
      */
     /**
-     * THE BOUGHT DISCIPLINES, AND THEY GO ON FIRST.
+     * THE TWO PURCHASE LISTS ARE NOT RESTORED HERE, AND THAT IS THE FIX.
      *
-     * `applyTalentPoints` below writes a saved spread onto the sheet, and it
-     * refuses an id the sheet does not have — so a discipline restored AFTER
-     * the ranks would come back empty, with every point spent in it reported as
-     * dropped and refunded. The list has to be on the body before the sheet is
-     * built from it, which is what `restoreProgression`'s caller order gives.
+     * They are `restorePurchasedTrees`'s now, which `handleHello` calls BEFORE
+     * `engine.attachClass`. This function runs AFTER it, which is a beat too
+     * late for anything the talent sheet is built from.
      */
-    if (restore.unlockedTrees !== undefined && restore.unlockedTrees.length > 0) {
-      actor.unlockedTrees = [...restore.unlockedTrees];
-      app.log.info(
-        { actorId: actor.id, trees: actor.unlockedTrees.length },
-        'restored a character’s bought disciplines',
-      );
-    }
-    /**
-     * AND THE DEEPENED ONES, BEFORE THE SHEET IS BUILT, for the reason above
-     * exactly: `sheetForClass` reads this list to compute the mastery map, so a
-     * restore that landed after the rebuild would put the float back on an
-     * object nothing consults again until the next unlock.
-     */
-    if (restore.deepenedTrees !== undefined && restore.deepenedTrees.length > 0) {
-      actor.deepenedTrees = [...restore.deepenedTrees];
-      app.log.info(
-        { actorId: actor.id, trees: actor.deepenedTrees.length },
-        'restored a character’s deepened disciplines',
-      );
-    }
     /**
      * AND WHAT THEY HAVE READ. No ordering constraint, unlike the two above:
      * nothing is DERIVED from this list — no sheet is rebuilt from it — so it
@@ -7651,6 +7644,62 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     // THE SHEET TOO, or the lantern is worn and moves no number. `restoreLoadout`
     // says the same thing about gear arriving from a file.
     recomposeCombat(actor, opts.effects ?? null, resolveItem);
+  };
+
+  /**
+   * ══════════════════════════════════════════════════════════════════════════
+   * WHAT A CATEGORY POINT BOUGHT, ONTO THE BODY, BEFORE THE SHEET IS BUILT.
+   * ══════════════════════════════════════════════════════════════════════════
+   *
+   * CALLED FROM `handleHello`, IMMEDIATELY BEFORE `engine.attachClass`, AND
+   * NOWHERE ELSE — which is the whole of the fix. These two lines used to sit
+   * inside `restoreKeybinds`, under a comment claiming *"the list has to be on
+   * the body before the sheet is built from it, which is what
+   * `restoreProgression`'s caller order gives"*. It gives the opposite:
+   * `handleHello` calls `attachClass` FIRST and `restoreProgression` after it,
+   * so every rebuilt body had its sheet assembled from lists that were still
+   * `undefined`.
+   *
+   * ═══ WHAT THAT COST, MEASURED OVER A REAL SOCKET ═══
+   * A level-10 Watchman who had spent both category points — one buying
+   * `generic/leverage`, one deepening `watch/discipline` — and two generic
+   * points inside the bought tree, reconnected to a sheet of 33 talents instead
+   * of 39, with `talent:overreach` and its two ranks gone and
+   * `watch/discipline` mastery back at 1.15 from 1.35. The file still said
+   * `unlockedTrees: ["generic/leverage"]` and `deepenedTrees:
+   * ["watch/discipline"]`, so `unspentCategories` stayed 0 — the scarcest
+   * currency in the game, spent, with nothing to show for it — and the next
+   * autosave wrote the spread back without the ranks, which made it permanent.
+   *
+   * ═══ BEFORE `attachClass`, NOT A SECOND REBUILD AFTER IT ═══
+   * `attachClass` ends in an unconditional `sheets.set`, so rebuilding
+   * afterwards would be two sheets for one body and a second answer to "what
+   * does this character know". `sheetForBody` already reads both lists off the
+   * body (src/server/main.ts) — it simply had nothing to read.
+   */
+  const restorePurchasedTrees = (actor: Actor, restore: CharacterRestore): void => {
+    // Only a player buys a discipline. Narrowed for `restoreProgression`'s reason.
+    if (actor.kind !== 'player') return;
+    if (restore.unlockedTrees !== undefined && restore.unlockedTrees.length > 0) {
+      actor.unlockedTrees = [...restore.unlockedTrees];
+      app.log.info(
+        { actorId: actor.id, trees: actor.unlockedTrees.length },
+        'restored a character’s bought disciplines',
+      );
+    }
+    /**
+     * AND THE DEEPENED ONES, for the same reason and in the same breath:
+     * `sheetForClass` reads this list to compute the mastery map, so a restore
+     * that lands after the sheet is built puts the float on an object nothing
+     * consults again until the next unlock.
+     */
+    if (restore.deepenedTrees !== undefined && restore.deepenedTrees.length > 0) {
+      actor.deepenedTrees = [...restore.deepenedTrees];
+      app.log.info(
+        { actorId: actor.id, trees: actor.deepenedTrees.length },
+        'restored a character’s deepened disciplines',
+      );
+    }
   };
 
   /**
@@ -9963,6 +10012,16 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       // because the body is where it will still be tomorrow: `snapshotPlayers`
       // writes the same field to the save file, so the sheet and the file can
       // never be attached from two different answers to "what class is this".
+      // ═══ WHAT A CATEGORY POINT BOUGHT GOES ON FIRST, OR IT IS LOST ═══
+      // `attachClass` builds the sheet through `sheetForBody`, which reads
+      // `unlockedTrees` and `deepenedTrees` OFF THE BODY — and this body was
+      // built by `addPlayer` moments ago with neither. Restoring them below,
+      // inside `restoreProgression`, is a beat too late: the sheet is already
+      // set, the bought discipline's talents are not in it, `applyTalentPoints`
+      // then drops every rank spent in it as an id "this body no longer has",
+      // and the next autosave writes that loss to disk. See
+      // `restorePurchasedTrees`.
+      if (restore !== null) restorePurchasedTrees(actor, restore);
       if (actor.kind === 'player' && actor.classId !== undefined) {
         engine.attachClass?.(actor.id, actor.classId);
       }
@@ -10541,6 +10600,31 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     to.level = from.level;
     to.xp = from.xp;
     to.unspentPoints = from.unspentPoints;
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * THE PURSE OF COIN, AND IT IS THE SEVENTH FIELD THIS LIST HAS FORGOTTEN.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * `createPlayerActor` starts every body at `STARTING_MONEY` (15), so a
+     * crossing did not zero the purse — it RESET it to the birth grant, which is
+     * worse, because a body holding 15 gold looks like a body that has simply
+     * not earned any yet. MEASURED over the real socket: 250 in the city, 15 in
+     * the town beyond the door, and `snapshotRealm` writes `money` on EVERY
+     * save UNCONDITIONALLY (it is not one of the "absent means cannot say"
+     * fields), so the 15 was on disk within the debounce. The gold was gone for
+     * good, silently, from walking through a door.
+     */
+    to.money = from.money;
+    /**
+     * AND WHAT THEY HAVE READ, which fails in the same shape and one step
+     * later. `knownLore` IS an "absent means cannot say" field, so the crossing
+     * alone leaves the file intact — but the BODY comes out of the door
+     * remembering nothing, `learnLore` tests `!(body.knownLore ?? []).includes`
+     * and so re-announces a note this character read hours ago, and the push
+     * that follows writes `[that one]` over the whole list. Measured: a file
+     * holding two notes, one note read in the delve, and the file holds one.
+     */
+    if (from.knownLore !== undefined) to.knownLore = [...from.knownLore];
     /**
      * ═══════════════════════════════════════════════════════════════════════
      * THE OTHER TWO PURSES AND BOTH PURCHASE LISTS — a door emptied all four.
