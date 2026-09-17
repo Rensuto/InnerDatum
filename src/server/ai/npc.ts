@@ -4,6 +4,9 @@
 //             :68-104 (flee_simple, INCLUDING the hard sides at :84-90),
 //             :135-152 (move_astar), :153-181 (move_blocked_astar),
 //             :199-247 (move_complex), :251-268 (target_simple)
+//             and game/modules/tome/data/resources.lua:48-61 (the air resource's AI),
+//             game/modules/tome/class/interface/ActorAI.lua:669-690 (aiGridDamage),
+//             :699-704 (aiGridHazard), :726-801 (aiFindSafeGrid)
 // T-Engine4 (C) 2009-2018 Nicolas Casalini "DarkGod" — https://te4.org/license
 
 /**
@@ -74,19 +77,26 @@
  *     whoever happens to sit earlier in a hash table. The elite's isolation
  *     scan re-sorts that list without ever consulting the stream.
  *   - Every random draw goes through the world's seeded PCG32 with a LABEL.
- *     There are exactly four, all ported: the 90% target-keep at
+ *     Four are ported from the engine's AI files: the 90% target-keep at
  *     ai/simple.lua:253, the two coin flips that order the flanking sidesteps at
  *     ai/simple.lua:79 and :85, and the 1-in-`talent_in` fire roll at
  *     ai/talented.lua:122. The fourth is CONDITIONAL on the creature declaring a
  *     `talentIn` at all, so a monster that does not (every melee creature in the
  *     roster) consumes the stream exactly as it did before that draw existed.
+ *     A fifth, `ai.air.seek` (tome/data/resources.lua:58), is conditional the
+ *     same way: only a body losing air to the ground it stands on takes it, so a
+ *     world without deep water draws exactly what it drew before.
  *
  * SYNCHRONOUS — src/server/ai/** carries the engine's six anti-async selectors
  * and the bans on `Date.now`/`Math.random`.
  */
 
 import { DIR_ORDER, DIR_VECTORS } from '../../shared/coords.ts';
-import { findPath } from '../../shared/path.ts';
+import { circleGrids, fovDistance } from '../../shared/mapgen/geom.ts';
+import { percent } from '../../shared/mapgen/lua.ts';
+import { findPath, findPathAvoiding } from '../../shared/path.ts';
+import { isWalkable } from '../../shared/protocol.ts';
+import { airOf, breathes, isHazardFor } from '../../shared/terrain.ts';
 import { AiProfile, HOLD_INTENT, IntentKind, countAdjacentKin } from '../engine/actor.ts';
 import { combatDistance, rangeRefusal } from '../engine/combat.ts';
 import type { Dir, TileXY } from '../../shared/coords.ts';
@@ -164,6 +174,35 @@ export type AiCtx = {
    * monster in the game is.
    */
   readonly castable?: (self: MonsterActor, target: EngineActor) => readonly MonsterCast[];
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   *   THE TERRAIN CODE UNDER A TILE — `shared/level.ts` `tileAt`, WALL off the grid.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * What the AI needs to know about hazards. Water that drowns this body and
+   * ground that burns it are rules about the CODE and the BODY
+   * (`shared/terrain.ts`), so the context hands over the code and this file asks
+   * the rule with `self` in hand. That keeps the question per body without a
+   * per-body context: `aiCtxFor`'s common case still allocates nothing.
+   *
+   * OPTIONAL, like `castable`, so a hand-drawn fixture reads as a creature that
+   * knows no terrain rules: no hazard detour and no air trigger.
+   */
+  readonly terrainAt?: (x: number, y: number) => number;
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   *   `aiGridDamage`'S DAMAGE HALF — tome/class/interface/ActorAI.lua:681-686.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * What standing on this tile for a turn would do to this body, after its
+   * resistance: `(maxdam + mindam) / 2 * (100 - resist - affinity) / 100`. The
+   * numbers are the floor's resolved lava roll, which belongs to the burn
+   * itself, not to the AI. So it is asked, not computed here.
+   *
+   * ABSENT READS AS ZERO, which is a fixture's answer: `makeAiCtx` (scheduler.ts)
+   * always supplies it from `World.burnRange`.
+   */
+  readonly gridDamage?: (self: MonsterActor, x: number, y: number) => number;
 };
 
 /**
@@ -227,6 +266,11 @@ export const CAST_CHANCE = 40;
 export const CLOSE_IN_CHANCE = 100;
 
 export function decideNpcAction(self: MonsterActor, ctx: AiCtx): Intent {
+  // DROWNING OUTRANKS THE FIGHT. See `seekAir`: above the target refresh, so a
+  // turn spent heading for air draws nothing the fight would have drawn.
+  const air = seekAir(self, ctx);
+  if (air !== undefined) return air;
+
   const target = acquireTarget(self, ctx);
   if (target === undefined) {
     // Nothing to be blocked BY. Losing the target has to clear both counters, or
@@ -837,6 +881,262 @@ function canRetreat(
 }
 
 // ---------------------------------------------------------------------------
+// Air and hazards: tome/data/resources.lua:48-61 and tome/class/interface/ActorAI.lua:669-801
+// ---------------------------------------------------------------------------
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * IT IS DROWNING, SO IT GOES FOR AIR — tome/data/resources.lua:48-61.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * ```lua
+ * if actor.air >= actor.max_air then return end
+ * local dam, air = actor:aiGridDamage()
+ * local air_rate = air + actor.air_regen
+ * if air_rate <= 0 then
+ *   local air_time = (actor.min_air - actor.air)/math.min(-1, air_rate)
+ *   if actor.ai_target.actor then
+ *     if air_time > 20 then return else air_time = air_time*10 end
+ *   end
+ *   if actor.ai_state.safe_grid or rng.percent(100 - 100*air_time/(air_time + 50)) then
+ *     return {ai="move_safe_grid", name = "move to air"}
+ * ```
+ *
+ * `air_time` is the turns of breath left at this rate: a body at 40 air losing
+ * 2 a turn has 20. Out of combat that is a 71% chance to leave; in combat the
+ * number is multiplied by ten before the roll, so the same body only tries 20%
+ * of the time, and one with more than 20 turns left does not try at all. It is
+ * a creature that would rather keep fighting until it has to stop.
+ *
+ * ═══ ONE DRAW, `ai.air.seek`, AND ONLY WHILE THE GROUND TAKES AIR ═══
+ * A full body, a body on dry ground, a `no_breath` body and one that breathes
+ * the water never reach the roll: `aiGridDamage`'s air is 0 for all of them, and
+ * regen 3 makes the rate positive. So a world with no water spends no draw here
+ * and every seed stays the same. At 0 air `air_time` is 0 and the roll is
+ * `percent(100)`, which is certain and still draws, as the C does.
+ *
+ * ═══ ABOVE THE TARGET REFRESH, AND "IN COMBAT" IS THE TARGET IT KEPT ═══
+ * `ai_target.actor` is the target from the last turn at the moment this reads
+ * it, and `ai.targetId` is ours. Running first means a turn spent heading for
+ * air never takes `ai.target.keep` or `ai.cast`, and a turn that does not head
+ * for air takes them exactly as it did.
+ *
+ * ═══ NOT PORTED: `ai_state.safe_grid`, AND `move_safe_grid` ITSELF ═══
+ * Upstream skips the roll while `safe_grid` is set ("100% if already seeking
+ * air"). Nothing in the reference tree sets or clears `safe_grid`, and nothing
+ * in it defines the `move_safe_grid` AI both lines hand off to: they are in a
+ * part of ToME the clone does not hold. Nothing here can say when upstream
+ * clears it, so every turn rolls again. The chance still climbs
+ * as the air falls, and at 0 it is certain.
+ *
+ * So the move is one step along the path `aiFindSafeGrid` found. When the search
+ * finds nothing better than where the body stands, or kin stands on the first
+ * step, the turn goes to the fight instead. The draw has already been taken.
+ *
+ * ═══ WHERE IT RUNS IS OURS, AND CANNOT BE CHECKED ═══
+ * The formula is upstream's; the call site is not. Nothing in the reference
+ * tree calls `aiResourceAction` (ActorAI.lua:601), which is what hands a
+ * resource to this trigger: its callers are the ToME AI scripts the clone does
+ * not hold. Running first on every turn, ahead of the target refresh, is this
+ * port's choice.
+ */
+function seekAir(self: MonsterActor, ctx: AiCtx): Intent | undefined {
+  const terrainAt = ctx.terrainAt;
+  if (terrainAt === undefined) return undefined;
+  if (self.air >= self.maxAir) return undefined;
+
+  const airRate = aiGridDamage(self, self.x, self.y, terrainAt, ctx).air + self.airRegen;
+  if (airRate > 0) return undefined;
+
+  // `min_air` is the resource's floor, 0 (engines/default/engine/interface/ActorResource.lua:61).
+  let airTime = (0 - self.air) / Math.min(-1, airRate);
+  const inCombat = self.ai.targetId !== null;
+  if (inCombat) {
+    if (airTime > 20) return undefined;
+    airTime *= 10;
+  }
+  if (!percent(ctx.rng, 'ai.air.seek', 100 - (100 * airTime) / (airTime + 50))) return undefined;
+
+  const grid = aiFindSafeGrid(self, ctx, terrainAt, inCombat);
+  const next = grid.path[0];
+  if (next === undefined) return undefined;
+  return intentForStep(self, next, ctx, grid, 0);
+}
+
+/**
+ * The tiles THIS body should route around: `isHazardFor`, asked with `self`.
+ * Undefined when the context knows no terrain, which is a fixture's answer.
+ */
+function hazardsFor(self: MonsterActor, ctx: AiCtx): PassableFn | undefined {
+  const terrainAt = ctx.terrainAt;
+  if (terrainAt === undefined) return undefined;
+  return (x, y) => isHazardFor(terrainAt(x, y), self);
+}
+
+/**
+ * `aiGridDamage` — tome/class/interface/ActorAI.lua:669-690. What a turn on this
+ * tile costs this body: damage, and air as a NEGATIVE number (the grid's
+ * `air_level`), 0 for ground it can breathe on.
+ *
+ * ```lua
+ * if not self:attr("no_breath") then
+ *   local air_level, air_condition = g:check("air_level", gx, gy), g:check("air_condition", gx, gy)
+ *   if air_level and air_level < 0 and (not air_condition or not self.can_breath[air_condition] or self.can_breath[air_condition] <= 0) then
+ *     air = air_level
+ * ```
+ *
+ * `< 0`, so the bubble's +15 counts as no air cost. That matches the Lua here,
+ * though `actBase` still calls the bubble suffocating (D5-6). The damage half is
+ * `AiCtx.gridDamage`'s.
+ */
+function aiGridDamage(
+  self: MonsterActor,
+  x: number,
+  y: number,
+  terrainAt: (x: number, y: number) => number,
+  ctx: AiCtx,
+): { readonly dam: number; readonly air: number } {
+  let air = 0;
+  if (self.noBreath !== true) {
+    const grid = airOf(terrainAt(x, y));
+    if (grid !== undefined && grid.level < 0 && !breathes(self, grid)) air = grid.level;
+  }
+  return { dam: ctx.gridDamage?.(self, x, y) ?? 0, air };
+}
+
+/**
+ * `aiGridHazard` — tome/class/interface/ActorAI.lua:699-704. Lower is safer, and
+ * 0 or less is safe.
+ *
+ * ```lua
+ * local val = math.max(0.1, dam_wt or 1)*dam*100/(self.life-self.die_at) - math.max(0.1,( air_wt or 1))*air*100/(self.air + 1)
+ * ```
+ *
+ * Both weights are left at their default of 1, as `aiFindSafeGrid`'s only
+ * caller leaves them. `life - die_at` is `hp`: nothing here dies below zero.
+ * The air term grows as the lungs empty: at 10 air a tile of deep water scores
+ * 45, and at 0 it scores 500.
+ */
+function aiGridHazard(
+  self: MonsterActor,
+  x: number,
+  y: number,
+  terrainAt: (x: number, y: number) => number,
+  ctx: AiCtx,
+): number {
+  const { dam, air } = aiGridDamage(self, x, y, terrainAt, ctx);
+  return (dam * 100) / self.hp - (air * 100) / (self.air + 1);
+}
+
+/** `aiFindSafeGrid`'s `radius or 10`, the only radius its caller passes. */
+const SAFE_GRID_RADIUS = 10;
+
+/** Where `aiFindSafeGrid` would go, its value, and the route. `path` is empty for "stay". */
+type SafeGrid = {
+  readonly x: number;
+  readonly y: number;
+  readonly val: number;
+  readonly path: readonly TileXY[];
+};
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE NEAREST GROUND THAT HURTS LESS — tome/class/interface/ActorAI.lua:726-801.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Every tile within 10 that a body could move onto is scored as
+ * `hazard + path length * dist_weight (+ want_closer * distance to the target)`,
+ * and the lowest score wins if it beats standing still.
+ *
+ * - :732's early answer for a start that is already safe is not here. The one
+ *   caller asks only while the ground takes this body's air, and such a tile
+ *   always scores above 0 unless standing on it also heals, which nothing does.
+ *   Every other tile then has to beat that score, as it does upstream.
+ * - `dist_weight` IS 1 IN COMBAT AND 0.1 OUT OF IT (:734), times the move cost,
+ *   so a creature with nobody to fight will walk ten times further for air.
+ * - `want_closer` IS 0.5 IN COMBAT (:740): among grids equally safe, the one
+ *   nearer its target, so it comes up for air on the side it was fighting.
+ * - A TILE IS SCORED ON THE STRAIGHT DISTANCE FIRST (:772-777), and only one
+ *   that could beat the best so far pays for A* (:778). Its real score uses
+ *   the path's length (:780-782), and only a STRICT improvement replaces the
+ *   best (:783), so the first grid found at a value keeps it.
+ * - `canMove(lx, ly)` (:771) is `engine/Actor.lua:302-309` without
+ *   `terrain_only`: terrain that blocks a body, a shut door included, and any
+ *   body standing there. The route is `isPassable`, the same A* the chase uses
+ *   (:746, :778), so a door-opener's route may cross a door.
+ *
+ * ═══ WHAT IS NOT UPSTREAM'S, EACH ON PURPOSE ═══
+ * - THE CIRCLE DOES NOT SHADOWCAST. Upstream's `calc_circle` takes a block
+ *   function (:755-768) that hides tiles behind a wall or behind a tile that
+ *   could not beat the best. `circleGrids` has no block function (see its note
+ *   in `shared/mapgen/geom.ts`), so every tile in the disc is scored, and one
+ *   that is reachable but hidden behind a wall can win here where upstream would
+ *   not look.
+ * - THE ORDER IS NEAREST FIRST, then by row and column, where upstream's is the
+ *   FOV scan's. It only decides a tie, and it makes the first safe tile cheap to
+ *   find, so later tiles are ruled out on distance before any A*.
+ * - WHERE THE TARGET IS. `aiSeeTargetPos` guesses with a random spread when the
+ *   target is out of sight (engine/interface/ActorAI.lua:218-275). Ours is the
+ *   target itself when this body can see it and `ai.lastSeen` when it cannot,
+ *   which is the stand-in `pursueLastSeen` already uses, and it draws nothing.
+ * - MOVE COST. `combatMovementSpeed() / global_speed`, and movement speed is not
+ *   ported, so it is `1 / globalSpeed`. `never_move` is not asked: a pinned
+ *   body's move is refused at resolution like any other.
+ */
+function aiFindSafeGrid(
+  self: MonsterActor,
+  ctx: AiCtx,
+  terrainAt: (x: number, y: number) => number,
+  inCombat: boolean,
+): SafeGrid {
+  const hazard = aiGridHazard(self, self.x, self.y, terrainAt, ctx);
+  const moveCost = 1 / self.globalSpeed;
+  const distWeight = (inCombat ? 1 : 0.1) * moveCost;
+  const aim = inCombat ? targetPosition(self, ctx) : undefined;
+  const wantCloser = aim === undefined ? 0 : 0.5;
+  const closerAt = (x: number, y: number): number =>
+    aim === undefined ? 0 : wantCloser * fovDistance(aim.x, aim.y, x, y);
+
+  let best: SafeGrid = {
+    x: self.x,
+    y: self.y,
+    val: hazard + Math.max(0, closerAt(self.x, self.y)),
+    path: [],
+  };
+
+  const cells = circleGrids(self.x, self.y, SAFE_GRID_RADIUS, () => true)
+    .filter((cell) => cell.x !== self.x || cell.y !== self.y)
+    .map((cell) => ({ cell, straight: fovDistance(self.x, self.y, cell.x, cell.y) }))
+    .sort((a, b) => a.straight - b.straight || a.cell.y - b.cell.y || a.cell.x - b.cell.x);
+
+  for (const { cell, straight } of cells) {
+    if (!isWalkable(terrainAt(cell.x, cell.y))) continue;
+    if (ctx.actorAt(cell.x, cell.y) !== undefined) continue;
+    const cellHazard = aiGridHazard(self, cell.x, cell.y, terrainAt, ctx);
+    const closer = closerAt(cell.x, cell.y);
+    if (cellHazard + Math.max(0, straight * distWeight + closer) > best.val) continue;
+
+    const path = findPath({ x: self.x, y: self.y }, cell, ctx.isPassable);
+    if (path === null) continue;
+    const val = cellHazard + Math.max(0, path.length * distWeight + closer);
+    if (val < best.val) best = { x: cell.x, y: cell.y, val, path };
+  }
+  return best;
+}
+
+/**
+ * Where this body believes its target is: in sight, where it stands; out of
+ * sight, where it was last seen. Undefined when it holds neither.
+ */
+function targetPosition(self: MonsterActor, ctx: AiCtx): TileXY | undefined {
+  const id = self.ai.targetId;
+  if (id === null) return undefined;
+  const seen = ctx.visibleEnemies(self).find((actor) => actor.id === id);
+  if (seen !== undefined) return { x: seen.x, y: seen.y };
+  return self.ai.lastSeen ?? undefined;
+}
+
+// ---------------------------------------------------------------------------
 // Shared movement
 // ---------------------------------------------------------------------------
 
@@ -886,9 +1186,34 @@ function approach(
   const route = opts.route ?? ctx.isPassable;
   const keepAway = opts.keepAway ?? 0;
 
-  const path = findPath({ x: self.x, y: self.y }, { x: target.x, y: target.y }, route, {
-    allowBlockedTarget: true,
-  });
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * AROUND THE POND IF THERE IS A WAY AROUND, THROUGH IT IF THERE IS NOT.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Upstream's monster A* has no hazard term at all: it plans straight through
+   * deep water, and only the air AI (`seekAir`) gets it out again. Upstream's
+   * answer to the path itself is a WEIGHTED search, with hazards as extra cost
+   * (`tome/class/interface/PlayerExplore.lua:1948-1971`, "slow terrain will be
+   * avoided if at all possible"), and `findPath` has no costs. So this is the
+   * two-search stand-in the player's mouse walk already uses
+   * (`findPathAvoiding`): refuse every tile that would hurt THIS body, and fall
+   * back to the plain route only when that finds nothing.
+   *
+   * THE GOAL IS EXEMPT (`allowBlockedTarget`), so a detective standing in the
+   * water is still reached, from the dry side where there is one. The tile the
+   * monster stands on is never asked, so one already in the water can leave it.
+   *
+   * On a floor with nothing to avoid, `findPathAvoiding` runs one search with
+   * the same answers as before, so the route and the draws are unchanged.
+   */
+  const avoid = hazardsFor(self, ctx);
+  const from = { x: self.x, y: self.y };
+  const goal = { x: target.x, y: target.y };
+  const path =
+    avoid === undefined
+      ? findPath(from, goal, route, { allowBlockedTarget: true })
+      : findPathAvoiding(from, goal, route, avoid, { allowBlockedTarget: true });
 
   const next = path?.[0];
   if (next !== undefined) {

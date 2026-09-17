@@ -11,7 +11,10 @@
 //   game/modules/tome/data/zones/maze/zone.lua:133-189 (site:outer_index),
 //   game/modules/tome/data/zones/scintillating-caves/zone.lua:20-73 (site:glass_archive),
 //   game/modules/tome/data/zones/infinite-dungeon/zone.lua:23-259 (site:gearford_ward),
-//   game/modules/tome/data/zones/trollmire/zone.lua:151-242 (site:blackwood_outskirts)
+//   game/modules/tome/data/zones/trollmire/zone.lua:151-242 (site:blackwood_outskirts),
+//   with the grids they name: game/modules/tome/data/general/grids/underground_gloomy.lua:20-74,
+//   game/modules/tome/data/general/grids/crystal.lua:20-44,
+//   game/modules/tome/data/general/grids/water.lua:24-116 and :136-140
 // T-Engine4 (C) 2009-2018 Nicolas Casalini "DarkGod" -- https://te4.org/license
 
 /**
@@ -54,14 +57,20 @@
  * ═══ THE GRIDS ARE THE SITE'S PALETTE ═══
  * Every key a zone names is here, as the code the site draws it in: its floor
  * grids are the palette's floor, its wall grids the palette's wall, a door is
- * DOOR and a stair is the floor a stair marker stands on. ToME's own terrain
- * that has no code yet stands in as:
+ * DOOR and a stair is the floor a stair marker stands on. Where the zone's own
+ * floor and wall have codes, the palette IS those codes — Cairnfoot's is
+ * UNDERGROUND_FLOOR and UNDERGROUND_TREE, the Glass Archive's CRYSTAL_FLOOR and
+ * CRYSTAL_WALL, the Weir's WATER_FLOOR and WATER_WALL — and the site's row
+ * names the same two (`server/world/realms.ts` refuses one that does not). A
+ * grid that is neither the floor nor the wall and has a code of its own is that
+ * code in any palette: TREE is TREES, WATER_FLOOR_BUBBLE the bubble, DEEP_WATER
+ * POND_WATER. ToME's own terrain that has no code yet stands in as:
  *
- *   GRASS, FLOWER, CREEP, WATER_FLOOR, CRYSTAL_FLOOR, WORMHOLE  -> palette floor
- *   TREE                                                        -> TREES
- *   UNDERGROUND_TREE, OLD_WALL, CAVEWALL, CRYSTAL_WALLn, WATER_WALL -> palette wall
- *   WATER_DOOR                                                  -> DOOR
- *   GRASS_ROAD_DIRT                                             -> palette floor
+ *   GRASS, FLOWER, UNDERGROUND_CREEP, WORMHOLE, OLD_FLOOR,
+ *   CAVEFLOOR, UNDERGROUND_FLOOR (breeding pits)         -> palette floor
+ *   OLD_WALL, CAVEWALL, UNDERGROUND_TREE (breeding pits) -> palette wall
+ *   WATER_DOOR                                          -> DOOR
+ *   GRASS_ROAD_DIRT                                     -> palette floor
  *
  * A KEY STAYS THE SHAPE UPSTREAM GAVE IT, because the shape is the draw. A
  * table of eleven grids draws once every resolve whatever the eleven are, and a
@@ -71,10 +80,13 @@
  * it no longer draws: a substitution changes what a cell looks like, never how
  * many numbers building it spent.
  *
- * WATER, LAVA AND THE REST ARE NOT GUESSED AT. The Lake of Nur is underwater
- * and the Trollmire has ponds of deep water a body can drown in; neither exists
- * here yet (terrain themes are a later phase), so the lake is dry stone and the
- * ponds are not dug — see each zone.
+ * ═══ REAL WATER WHERE UPSTREAM'S IS REAL ═══
+ * A water grid is the code that carries its air (`shared/terrain.ts`), never
+ * its harmless `_FAKE` twin, wherever the zone draws the real grid: the Lake of
+ * Nur's second level is WATER_FLOOR a body drowns in, with a bubble in every
+ * eleven resolves and the underwater aura on everybody (`ZoneLevel.effects`),
+ * and the Trollmire digs its ponds of POND_WATER again. The water door is the
+ * one grid that loses its air: see the Weir.
  *
  * ═══ `forceLastStair` ON EVERY TABLE ═══
  * Upstream's `max_level` decides which level has no way down. Here the realm
@@ -141,13 +153,22 @@ export type ZoneLevel = {
    * `keepTrying` round, with a stream of that round's own.
    */
   readonly alter?: (palette: SitePalette, rng: Rng, lev: number) => LevelSpec;
+  /**
+   * `levels[n].effects`: the zone-wide auras the level lays on every body in it,
+   * as the server's effect ids (`AuthoredMap.zoneEffects`). Absent is none.
+   */
+  readonly effects?: readonly string[];
 };
 
 /** A site's zone. */
 export type ZoneDef = {
   /** The zone's own `name`. */
   readonly name: string;
-  /** The site's floor and wall (`server/world/realms.ts`), which every key is drawn in. */
+  /**
+   * The site's floor and wall (`server/world/realms.ts`), which every floor and
+   * wall key is drawn in: the zone's own primary floor and wall where those have
+   * codes, and the site's stand-ins where they do not.
+   */
   readonly palette: SitePalette;
   /** Floor n is entry n - 1; past the end, the last entry. */
   readonly floors: readonly ZoneLevel[];
@@ -332,8 +353,12 @@ const BARROW_END: ZoneDef = {
 
 /**
  * `data/zones/heart-gloom/zone.lua:39-73`: `OCTOPUS_HEART_GLOOM`
- * (`mapgen/octopus.ts`). `'#'` stays twelve entries — one TREE, eleven
- * UNDERGROUND_TREE — and `'.'` eight, seven UNDERGROUND_FLOOR and a creep.
+ * (`mapgen/octopus.ts`). `'#'` stays twelve entries — one TREE, which is TREES,
+ * and eleven UNDERGROUND_TREE, the palette's wall — and `'.'` eight: seven
+ * UNDERGROUND_FLOOR, the palette's floor, and an UNDERGROUND_CREEP, which is the
+ * floor too (`data/general/grids/underground_gloomy.lua:35-44`). The creep is a
+ * picture and a `grow = "TREE"`, and nothing here grows. The ladders stand on
+ * the floor, and `door` IS the floor (`:72`), so no door is ever hung.
  */
 function heartGloom(p: SitePalette): LevelSpec {
   return {
@@ -351,10 +376,14 @@ function heartGloom(p: SitePalette): LevelSpec {
   };
 }
 
-/** All lit (`:34`); `max_level` 3 (`:27`); level 1 changes only the up ladder's grid. */
+/**
+ * All lit (`:34`); `max_level` 3 (`:27`); level 1 changes only the up ladder's
+ * grid. Drawn in the gloom's own codes (`data/general/grids/underground_gloomy.lua:20-74`),
+ * which carry no air and no `on_stand`: identity, not mechanics.
+ */
 const CAIRNFOOT: ZoneDef = {
   name: 'Heart of the Gloom',
-  palette: { floor: TileCode.HEATH, wall: TileCode.CRAG },
+  palette: { floor: TileCode.UNDERGROUND_FLOOR, wall: TileCode.UNDERGROUND_TREE },
   floors: [
     { zone: 'heart-gloom', level: 1, maxLevel: 3, lighting: 'all_lited', table: heartGloom },
     { zone: 'heart-gloom', level: 2, maxLevel: 3, lighting: 'all_lited', table: heartGloom },
@@ -368,12 +397,28 @@ const CAIRNFOOT: ZoneDef = {
 
 /**
  * `data/zones/lake-nur/zone.lua:40-51`: 50x50, ten `random_room`s and nothing
- * else, NO room lit, and a floor that is a table of eleven — ten WATER_FLOOR and
- * a bubble — so every floor resolve draws.
+ * else, NO room lit, and a floor that is a table of eleven — ten WATER_FLOOR, the
+ * palette's floor, and a WATER_FLOOR_BUBBLE — so every floor resolve draws, and
+ * one in eleven lands on the bubble.
  *
- * DRY: level 2 is `underwater` with the underwater aura (`:86-94`), which needs
- * breath this port does not have yet. The water floor is the palette's floor,
- * the water wall its wall, the water door a door.
+ * WET. WATER_FLOOR takes 5 air a turn from anybody who does not breathe water,
+ * the bubble gives 15 until its charges run out, and the up and down stairs
+ * (WATER_UP and WATER_DOWN, `data/general/grids/water.lua:198-220`, both
+ * `air_level -5`) are markers on the water floor, so the arrival is underwater
+ * too. See `shared/terrain.ts` and `server/engine/onstand.ts`.
+ *
+ * ONE GRID LOSES ITS AIR: WATER_DOOR, and the open door it becomes, carry
+ * `air_level -5` (`data/general/grids/water.lua:68-91`), and both are DOOR and
+ * DOOR_OPEN here, which carry none. A body standing in an open doorway breathes.
+ * WATER_WALL's air is a wall's, and not ported (`shared/terrain.ts`).
+ *
+ * AND THAT DOORWAY IS THE ONLY CURE ON THE LEVEL. Upstream every walkable grid
+ * here has an `air_level`, the bubble's included, so once SUFFOCATING starts it
+ * cannot end on this floor (D5-6: `is_suffocating` holds on any air level,
+ * tome/class/Actor.lua:584-590). Here an open doorway ends it on the first base
+ * turn stood in, and refills the lungs 3 a turn, which makes the Weir easier to
+ * survive than the Lake of Nur is. Known and kept until the Weir gets a water
+ * door of its own.
  */
 function lakeNur(p: SitePalette): LevelSpec {
   return {
@@ -386,7 +431,7 @@ function lakeNur(p: SitePalette): LevelSpec {
       liteRoomChance: 0,
       forceLastStair: true,
       grid: {
-        '.': repeat(p.floor, 11),
+        '.': [...repeat(p.floor, 10), TileCode.WATER_FLOOR_BUBBLE],
         '#': p.wall,
         up: p.floor,
         down: p.floor,
@@ -397,18 +442,37 @@ function lakeNur(p: SitePalette): LevelSpec {
 }
 
 /**
- * Level 2 for every floor, as the design chose it. Level 1 is a static map
- * (`:67-85`). Level 3 (`:95-118`) is the same Roomer with its grids swapped by
- * layout and a Sher'Tul fortress for its way down — which could be a stair
- * marker, as Barrow End's lake is — and is not built here only because it was
- * not chosen. Not lit: `all_lited` is commented out (`:32`) and only level 1
- * sets it (`:68`). `max_level` 3 (`:27`).
+ * `EFF_ZONE_AURA_UNDERWATER` (`data/timed_effects/other.lua:2899-2916`) as the
+ * server names it (`EffectId.ZoneAuraUnderwater`, `server/content/effects.ts`),
+ * which `shared/` may not import.
+ */
+const ZONE_AURA_UNDERWATER = 'effect:zone_aura_underwater';
+
+/**
+ * Level 2 for every floor, as the design chose it: `underwater`, with the
+ * underwater aura on every body (`levels[2]`, `:86-94`). `underwater = true`
+ * itself only picks a shader (`tome/class/Player.lua:488`) and is not carried. The
+ * level's actor filter, `special_rarity = "water_rarity"` (`:91`), is the
+ * population's business (`server/content/delve.ts`), and is not ported.
+ *
+ * Level 1 is a static map (`:67-85`). Level 3 (`:95-118`) is the same Roomer with
+ * its grids swapped by layout and a Sher'Tul fortress for its way down — which
+ * could be a stair marker, as Barrow End's lake is — and is not built here only
+ * because it was not chosen. Not lit: `all_lited` is commented out (`:32`) and
+ * only level 1 sets it (`:68`). `max_level` 3 (`:27`).
  */
 const THE_WEIR: ZoneDef = {
   name: 'Lake of Nur',
-  palette: { floor: TileCode.SHORE, wall: TileCode.WORKS },
+  palette: { floor: TileCode.WATER_FLOOR, wall: TileCode.WATER_WALL },
   floors: [
-    { zone: 'lake-nur', level: 2, maxLevel: 3, lighting: { litRoomChance: 0 }, table: lakeNur },
+    {
+      zone: 'lake-nur',
+      level: 2,
+      maxLevel: 3,
+      lighting: { litRoomChance: 0 },
+      table: lakeNur,
+      effects: [ZONE_AURA_UNDERWATER],
+    },
   ],
 };
 
@@ -608,8 +672,10 @@ const OUTER_INDEX: ZoneDef = {
 /**
  * `data/zones/scintillating-caves/zone.lua:30`, `:39-50`, the TWISTED layout:
  * 30x30, five rooms of `random_room` with a 5-weighted money vault, a fifth of
- * them lit. `'#'` is a table of twenty crystal walls and `door` is the crystal
- * FLOOR — a door the tunnels hang is floor.
+ * them lit. `'.'` is CRYSTAL_FLOOR, the palette's floor. `'#'` is a table of
+ * twenty crystal walls, CRYSTAL_WALL to CRYSTAL_WALL20 (`data/general/grids/crystal.lua:20-34`),
+ * all the palette's wall and still twenty entries for the draw, and `door` is
+ * the crystal FLOOR — a door the tunnels hang is floor.
  */
 function scintillatingCavesTwisted(p: SitePalette): LevelSpec {
   return {
@@ -628,11 +694,13 @@ function scintillatingCavesTwisted(p: SitePalette): LevelSpec {
 
 /**
  * All lit (`:34`); `max_level` 5 (`:27`); level 1 changes only the up ladder's
- * grid (`:66-73`), so every floor is the same table.
+ * grid (`:66-73`), so every floor is the same table. Drawn in the crystal codes,
+ * which carry no air and no `on_stand` (`data/general/grids/crystal.lua:20-44`):
+ * identity, not mechanics.
  */
 const GLASS_ARCHIVE: ZoneDef = {
   name: 'Scintillating Caves',
-  palette: { floor: TileCode.PAVING, wall: TileCode.CIVIC },
+  palette: { floor: TileCode.CRYSTAL_FLOOR, wall: TileCode.CRYSTAL_WALL },
   floors: [1, 2, 3, 4].map((level) => ({
     zone: 'scintillating-caves TWISTED',
     level,
@@ -730,21 +798,38 @@ function trollmireFloor(p: SitePalette): (rng: Rng) => TileCode {
  * `FOREST_TROLLMIRE` (`mapgen/forest.ts`) — 65x40, left edge to right, zoom 4,
  * a road from stair to stair, a lit lesser vault on a quarter of levels.
  *
- * NO PONDS. `do_ponds` (`:184-188`) digs DEEP_WATER, which a ToME body wades
- * and drowns in; this port's deep water is a wall, so a pond would cut the wood
- * where upstream's only endangers it. The ponds, and their draws, come back
- * with walkable water.
+ * THE PONDS ARE DUG, AND ARE DEEP. `do_ponds` (`:184-188`) cuts up to two
+ * ponds of DEEP_WATER, which a ToME body wades and drowns in
+ * (`data/general/grids/water.lua:136-140`): POND_WATER, in every palette. Each
+ * pond entry keeps its own fraction, so the ponds spend upstream's draws.
+ * `FOREST_TROLLMIRE`'s own DEEPWATER is the overworld's solid sea, the stand-in
+ * it was written with before walkable water existed, and is not what this
+ * zone draws.
+ *
+ * THE ROAD GOES ROUND THEM. Upstream's road refuses any cell whose terrain has
+ * an `air_level` (`engine/generator/map/Forest.lua:395`), so `airLevel` is left
+ * off and `makeRoad` refuses every code `shared/terrain.ts` gives air —
+ * `FOREST_TROLLMIRE`'s `[DEEPWATER]` would refuse the sea and walk the road
+ * through the pond.
  *
  * THE ROAD IS LAID AND NOT DRAWN: GRASS_ROAD_DIRT has no code here, so the
  * route it cuts through the trees is the palette's floor.
  */
 function trollmire(p: SitePalette): LevelSpec {
-  const { doPonds: _ponds, airLevel: _air, ...map } = FOREST_TROLLMIRE.map;
+  const { doPonds, airLevel: _air, ...map } = FOREST_TROLLMIRE.map;
   const floor = trollmireFloor(p);
   return {
     ...FOREST_TROLLMIRE,
     map: {
       ...map,
+      ...(doPonds === undefined
+        ? {}
+        : {
+            doPonds: {
+              ...doPonds,
+              pond: doPonds.pond.map(([frac]) => [frac, TileCode.POND_WATER] as const),
+            },
+          }),
       grid: {
         floor,
         wall: TileCode.TREES,
@@ -869,7 +954,8 @@ function refuseMostlySealed(map: AuthoredMap): string | null {
  * mostly-sealed map refused (`MAX_SEALED_SHARE`), and sealed where its up stair
  * cannot reach. The map carries its own `lighting`:
  * a Watcher's Altar floor underground is not lit the way one above ground is,
- * and a Gearford floor is lit on the chance it rolled.
+ * and a Gearford floor is lit on the chance it rolled. And its level's auras,
+ * as `zoneEffects`, where the level names any: the Weir's underwater.
  *
  * THROWS for a site with no zone, and for a floor below 1.
  */
@@ -891,5 +977,6 @@ export function zoneLevel(
   return {
     ...sealUnreachable(built.map, p.wall),
     lighting: siteLighting(level.lighting, built.spec),
+    ...(level.effects === undefined ? {} : { zoneEffects: level.effects }),
   };
 }

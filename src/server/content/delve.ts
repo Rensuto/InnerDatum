@@ -5,6 +5,7 @@
 //              populated once, at generation, from its own roster and its own density)
 //   t-engine4 game/modules/tome/data/zones/*/zone.lua (`generator.actor.nb_npc` — a per-zone
 //              population band rather than one global number)
+//   t-engine4 game/modules/tome/class/Grid.lua:102-109 (a body is never put where it cannot breathe)
 // T-Engine4 (C) 2009-2018 Nicolas Casalini "DarkGod" — https://te4.org/license
 
 /**
@@ -67,7 +68,9 @@ import {
 import { ActorRank } from '../../shared/protocol.ts';
 import { REDACTION_SITE_ID } from '../../shared/level.ts';
 import { embellish } from './encounter.ts';
-import { canWalk } from '../../shared/level.ts';
+import { canWalk, tileAt } from '../../shared/level.ts';
+import { airOf, breathes } from '../../shared/terrain.ts';
+import type { Breather } from '../../shared/terrain.ts';
 import { reachableSet } from '../../shared/mapgen/connectivity.ts';
 import { LORE, noteIdFor } from './lore.ts';
 import { PROP_IDS } from '../../shared/props.ts';
@@ -227,7 +230,8 @@ const DEEP: readonly MonsterTemplate[] = [INDEX_WRAITH, INDEX_HUSK_ELITE, INDEX_
  *
  * ═══ THE CAIRN GOES IN THE EASIEST ROOM ON PURPOSE ═══
  * It is the creature that is only dangerous across water it cannot be reached
- * over, and a delve has no water — so in the Drowned Chapel it is a weak
+ * over, and no delve has that water: the Weir's seabed and Blackwood's ponds
+ * are walked through — so in the Drowned Chapel it is a weak
  * shooter you walk up to and kill in three turns. THAT IS THE POINT. The chapel
  * is seventeen steps from town and the first marker most players will ever walk
  * to; meeting the thing somewhere it is harmless is how you learn what it does
@@ -444,11 +448,11 @@ export const DELVES: ReadonlyMap<string, DelveSpec> = new Map<string, DelveSpec>
   //     fen was written for ("only dangerous across water it cannot be reached
   //     over").
   //
-  //     STATED PLAINLY, BECAUSE IT WOULD BE EASY TO OVERSELL: a delve has no
-  //     water, so the cairn in here is the same weak shooter the Drowned Chapel
-  //     teaches you on. This is a change of BESTIARY, not of difficulty — the
-  //     room now belongs to its own name and stops being The Underworks with a
-  //     different floor colour.
+  //     STATED PLAINLY, BECAUSE IT WOULD BE EASY TO OVERSELL: no delve has
+  //     water a body cannot walk into, so the cairn in here is the same weak
+  //     shooter the Drowned Chapel teaches you on. This is a change of BESTIARY,
+  //     not of difficulty — the room now belongs to its own name and stops
+  //     being The Underworks with a different floor colour.
   ['site:cairnfoot', { monsters: [4, 6], roster: DROWNED, litter: [3, 4], levelRange: [6, 6] }],
   //     47 steps, in the clearing inside the southern wood — so it draws on the
   //     wood's own roster, which is the same rule Blackwood follows.
@@ -648,6 +652,40 @@ function roomFor(world: World, map: AuthoredMap, door: TileXY): TileXY[] {
     }
   }
   return out;
+}
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * AND NEVER WHERE THE BODY WOULD DROWN — tome/class/Grid.lua:102-109.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * ```lua
+ * -- Huge hack, if we are an actor without position this means we are not yet put on the map
+ * -- If so make sure we can only go where we can breathe
+ * if e.__is_actor and not e.x and not e:attr("no_breath") then
+ *   local air_level, air_condition = self:check("air_level"), self:check("air_condition")
+ *   if air_level and (not air_condition or not e.can_breath[air_condition] or e.can_breath[air_condition] <= 0) then
+ *     return true
+ * ```
+ *
+ * A body that is not on the map yet treats every grid with an `air_level` as a
+ * wall, unless it has `no_breath` or breathes that air. The check is only that
+ * `air_level` is set, not that it is negative, so a bubble refuses too: it names
+ * no condition, and nobody breathes a grid with no condition.
+ *
+ * ═══ `roomFor`'S LIST, TRIMMED PER BODY, AND NO DRAW MOVES ═══
+ * `roomFor` answers for the room, and the room is also what the litter, the
+ * props and the note stand in. `delve.offset` and the stride are still taken
+ * over that whole list; only the index lands in this body's share of it. On a
+ * floor with no air grids every body's share is the whole room, in the same
+ * order, so every floor generated before water existed is laid out as it was.
+ */
+function breathableFor(world: World, room: readonly TileXY[], body: Breather): readonly TileXY[] {
+  if (body.noBreath === true) return room;
+  return room.filter((tile) => {
+    const air = airOf(tileAt(world.level, tile.x, tile.y));
+    return air === undefined || breathes(body, air);
+  });
 }
 
 /**
@@ -1119,11 +1157,18 @@ export function populateDelve(
      * AND IT IS THE ONE DELIBERATE EXCEPTION TO THE SPREAD above. The stride
      * exists so bodies do not clump; this puts one body somewhere specific for
      * a reason, and one is the whole of it.
+     *
+     * BOTH LISTS ARE THIS BODY'S SHARE (`breathableFor`). A guarded room that is
+     * all water to it hands the guard to the floor; a floor that is all water to
+     * it places nobody, as upstream's placer gives up on a body with nowhere to
+     * stand.
      */
+    const guarded = breathableFor(world, inRoom, template);
+    const room = breathableFor(world, candidates, template);
     const at =
-      i === 0 && inRoom.length > 0
-        ? inRoom[(offset + i * stride) % inRoom.length]
-        : candidates[(offset + i * stride) % candidates.length];
+      i === 0 && guarded.length > 0
+        ? guarded[(offset + i * stride) % guarded.length]
+        : room[(offset + i * stride) % room.length];
     if (at === undefined) continue;
 
     // Qualified by realm — `delve_0` was the same string in every party's copy
@@ -1192,9 +1237,11 @@ export function populateDelve(
   // Reknor's last level is a static map with its boss in it
   // (data/zones/reknor-escape/zone.lua:72-82).
   if (spec.boss !== undefined && floor >= floorsOf(spec)) {
-    let far = candidates[0];
+    // THE FAR END OF THE GROUND IT CAN BREATHE ON (`breathableFor`).
+    const bossRoom = breathableFor(world, candidates, spec.boss);
+    let far = bossRoom[0];
     let best = -1;
-    for (const cell of candidates) {
+    for (const cell of bossRoom) {
       const away = Math.max(Math.abs(cell.x - door.x), Math.abs(cell.y - door.y));
       if (away > best) {
         best = away;

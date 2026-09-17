@@ -55,6 +55,8 @@
 
 import { arenaGround, makeArena } from '../../shared/arena.ts';
 import { ShopShelf } from '../content/shops.ts';
+import { applyZoneEffectsIn } from './zone-effects.ts';
+import type { EffectState } from '../engine/effects.ts';
 import { SiteShape, makeSiteMap } from '../../shared/sitemap.ts';
 import type { SitePalette } from '../../shared/sitemap.ts';
 import { ZONES, siteLighting, zoneFloor, zoneLevel } from '../../shared/mapgen/zones.ts';
@@ -483,6 +485,12 @@ export type Realm = {
   /** The named country on this map, empty for anything that has none. */
   readonly regions: readonly Region[];
   /**
+   * `level.data.effects` — the auras every body here wears, off the map
+   * (`AuthoredMap.zoneEffects`). Empty for anywhere that has none, which is
+   * everywhere a zone table has not named one. See `world/zone-effects.ts`.
+   */
+  readonly zoneEffects: readonly string[];
+  /**
    * The party this instance belongs to, for `Inner` realms. Undefined on the
    * overworld, which belongs to everybody.
    *
@@ -808,6 +816,12 @@ export type RealmsOptions = {
    * deliberately broken one.
    */
   readonly sites?: ReadonlyMap<string, SiteDef>;
+  /**
+   * THE STATUS TABLE, so a floor's population wears the floor's auras
+   * (`Realm.zoneEffects`) from the moment it stands up, and again after a wipe
+   * re-seeds it. Absent is a registry with no status system, and no auras.
+   */
+  readonly effects?: EffectState;
 };
 
 /**
@@ -913,6 +927,7 @@ export function createRealms(opts: RealmsOptions): Realms {
       // about the authored map, and a realm is where the rest of the server
       // reaches them. See `AuthoredMap.regions`.
       regions: map.regions ?? [],
+      zoneEffects: map.zoneEffects ?? [],
       roamers: new Map<string, Roamer>(),
       // IN `build` AND NOT IN THE BOOT LOOP. There are TWO call sites — the
       // eager pass that opens every shared realm at startup, and `open`, which
@@ -1127,9 +1142,14 @@ export function createRealms(opts: RealmsOptions): Realms {
       // rather than the engine's default test encounter. See `World.reseedFloor`.
       reseedFloor: (world: World): void => {
         site.populate?.(world, builtMap, party, lead, floor, PopulationScope.Hostiles);
+        // A RE-MINTED BODY IS A BODY ADDED TO THE LEVEL (tome/class/Actor.lua:7263-7267).
+        applyZoneEffectsIn(world, builtMap.zoneEffects ?? [], opts.effects);
       },
     });
     site.populate?.(realm.world, builtMap, party, lead, floor);
+    // AND THE LEVEL'S AURAS ON ALL OF IT, before anybody can walk in and meet it
+    // bare (tome/class/Game.lua:1329-1335).
+    applyZoneEffectsIn(realm.world, realm.zoneEffects, opts.effects);
     /**
      * AND WHAT LEVEL THAT POPULATION WAS BUILT AT, for whoever has to SAY it —
      * the level feeling on arrival (shared/zone.ts) is the only reader today.
@@ -1409,8 +1429,8 @@ const AUTHORED_SITES: readonly (readonly [string, SiteDef])[] = (
       RealmKind.Inner,
       'city',
       SiteShape.Works,
-      TileCode.PAVING,
-      TileCode.CIVIC,
+      TileCode.CRYSTAL_FLOOR,
+      TileCode.CRYSTAL_WALL,
     ],
     [
       'site:watchers_altar',
@@ -1485,8 +1505,8 @@ const AUTHORED_SITES: readonly (readonly [string, SiteDef])[] = (
       RealmKind.Inner,
       'stair',
       SiteShape.Cave,
-      TileCode.HEATH,
-      TileCode.CRAG,
+      TileCode.UNDERGROUND_FLOOR,
+      TileCode.UNDERGROUND_TREE,
     ],
     [
       'site:barrow_end',
@@ -1503,8 +1523,8 @@ const AUTHORED_SITES: readonly (readonly [string, SiteDef])[] = (
       RealmKind.Inner,
       'archive',
       SiteShape.Works,
-      TileCode.SHORE,
-      TileCode.WORKS,
+      TileCode.WATER_FLOOR,
+      TileCode.WATER_WALL,
     ],
   ] as const
 ).map(([id, name, kind, marker, shape, floor, wall]): [string, SiteDef] => [

@@ -104,7 +104,7 @@ import {
 } from './downed.ts';
 import { membersOf, partyIdOf } from './party.ts';
 import { combatAPR } from './derived.ts';
-import { applyDamage } from './damage.ts';
+import { applyDamage, combatGetAffinity, combatGetResist } from './damage.ts';
 import { teleportRandom } from './talents.ts';
 import { canOpenDoors } from './doors.ts';
 import { trapSentence, trapTakes } from './traps.ts';
@@ -5533,6 +5533,24 @@ function makeAiCtx(
     actorAt: (x, y) => world.actorAt(x, y),
     visibleEnemies: (self) => visibleEnemies(self, world, actors),
     rng: world.rng,
+    // THE GROUND, BY CODE, READ AT THE MOMENT OF ASKING — so a bubble spent or a
+    // door opened earlier in this pump is the tile it is now. The per-body half
+    // (who drowns, who burns) is `shared/terrain.ts`, asked in ai/npc.ts with the
+    // body in hand, which is what keeps `aiCtxFor`'s common case allocation-free.
+    terrainAt: (x, y) => tileAt(world.level, x, y),
+    // AND WHAT THE GROUND WOULD DO TO IT: the floor's own resolved lava roll, after
+    // this body's resistance and affinity (ActorAI.lua:681-686). `faction` is not
+    // read — no grid here has one — and `invulnerable` is not ported.
+    gridDamage: (self, x, y) => {
+      const code = tileAt(world.level, x, y);
+      const burn = burnOf(code);
+      const range = burn === undefined ? undefined : world.burnRange(code);
+      if (burn === undefined || range === undefined) return 0;
+      const profile = self.combat?.profile ?? {};
+      const kept =
+        100 - combatGetResist(profile, burn.type) - combatGetAffinity(profile, burn.type);
+      return (((range.max + range.min) / 2) * kept) / 100;
+    },
     // FORWARDED WITHOUT A DEFAULT. `castable` is optional on both sides, so a
     // resolution that cannot answer and a build with no resolution at all
     // produce the identical empty list rather than two different silences.

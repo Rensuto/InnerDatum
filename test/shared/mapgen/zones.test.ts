@@ -22,6 +22,7 @@ import {
 } from '../../../src/shared/mapgen/zones.ts';
 import type { ZoneDef } from '../../../src/shared/mapgen/zones.ts';
 import { TileCode, isWalkable } from '../../../src/shared/protocol.ts';
+import { ON_STAND, airOf } from '../../../src/shared/terrain.ts';
 import { createRng } from '../../../src/shared/rng.ts';
 import type { Rng } from '../../../src/shared/rng.ts';
 
@@ -49,6 +50,7 @@ function pinned(def: ZoneDef): unknown {
       maxLevel: l.maxLevel,
       lighting: l.lighting,
       rolled: l.alter !== undefined,
+      effects: l.effects,
       table: plain(l.table(def.palette)),
     })),
   };
@@ -70,7 +72,9 @@ const WORKS_VAULTS = [
 
 const { SHORE, TERRACE, SOOT, CRAG, GREEN, TREES, HEATH, WORKS, PLAINS, MOUNTAIN, PAVING } =
   TileCode;
-const { ERASED, CIVIC, DOOR } = TileCode;
+const { ERASED, DOOR } = TileCode;
+const { UNDERGROUND_FLOOR, UNDERGROUND_TREE, CRYSTAL_FLOOR, CRYSTAL_WALL } = TileCode;
+const { WATER_FLOOR, WATER_FLOOR_BUBBLE, WATER_WALL, POND_WATER } = TileCode;
 
 /** `n` of `code`. */
 function times(code: number, n: number): number[] {
@@ -207,10 +211,11 @@ const EXPECTED: Readonly<Record<string, unknown>> = {
       },
     })),
   },
-  // heart-gloom/zone.lua: max_level :27, 50x50 :30, all_lited :34, Octopus :40-73.
+  // heart-gloom/zone.lua: max_level :27, 50x50 :30, all_lited :34, Octopus :40-73:
+  // '#' TREE and eleven UNDERGROUND_TREE, '.' seven UNDERGROUND_FLOOR and a creep.
   'site:cairnfoot': {
     name: 'Heart of the Gloom',
-    palette: { floor: HEATH, wall: CRAG },
+    palette: { floor: UNDERGROUND_FLOOR, wall: UNDERGROUND_TREE },
     floors: [1, 2, 3].map((level) => ({
       zone: 'heart-gloom',
       level,
@@ -228,21 +233,22 @@ const EXPECTED: Readonly<Record<string, unknown>> = {
           nbRooms: [5, 9],
           forceLastStair: true,
           grid: {
-            '#': [TREES, ...times(CRAG, 11)],
-            '.': times(HEATH, 8),
-            up: HEATH,
-            down: HEATH,
-            door: HEATH,
+            '#': [TREES, ...times(UNDERGROUND_TREE, 11)],
+            '.': times(UNDERGROUND_FLOOR, 8),
+            up: UNDERGROUND_FLOOR,
+            down: UNDERGROUND_FLOOR,
+            door: UNDERGROUND_FLOOR,
           },
         },
       },
     })),
   },
-  // lake-nur/zone.lua: max_level :27, 50x50 :30, all_lited commented :32, Roomer :41-50;
-  // level 1 static :67-85, level 3's grids by layout :95-118.
+  // lake-nur/zone.lua: max_level :27, 50x50 :30, all_lited commented :32, Roomer :41-50
+  // ('.' ten WATER_FLOOR and a WATER_FLOOR_BUBBLE :46, '#' WATER_WALL :47, WATER_DOOR :50);
+  // level 1 static :67-85, level 2 underwater with its aura :86-94, level 3's grids by layout :95-118.
   'site:the_weir': {
     name: 'Lake of Nur',
-    palette: { floor: SHORE, wall: WORKS },
+    palette: { floor: WATER_FLOOR, wall: WATER_WALL },
     floors: [
       {
         zone: 'lake-nur',
@@ -250,6 +256,7 @@ const EXPECTED: Readonly<Record<string, unknown>> = {
         maxLevel: 3,
         lighting: { litRoomChance: 0 },
         rolled: false,
+        effects: ['effect:zone_aura_underwater'],
         table: {
           width: 50,
           height: 50,
@@ -259,7 +266,13 @@ const EXPECTED: Readonly<Record<string, unknown>> = {
             rooms: ['random_room'],
             liteRoomChance: 0,
             forceLastStair: true,
-            grid: { '.': times(SHORE, 11), '#': WORKS, up: SHORE, down: SHORE, door: DOOR },
+            grid: {
+              '.': [...times(WATER_FLOOR, 10), WATER_FLOOR_BUBBLE],
+              '#': WATER_WALL,
+              up: WATER_FLOOR,
+              down: WATER_FLOOR,
+              door: DOOR,
+            },
           },
         },
       },
@@ -380,10 +393,11 @@ const EXPECTED: Readonly<Record<string, unknown>> = {
       },
     ],
   },
-  // scintillating-caves/zone.lua TWISTED: max_level :27, 30x30 :30, all_lited :34, Roomer :40-49.
+  // scintillating-caves/zone.lua TWISTED: max_level :27, 30x30 :30, all_lited :34, Roomer :40-49
+  // ('.' CRYSTAL_FLOOR :45, '#' CRYSTAL_WALL to CRYSTAL_WALL20 :46, door CRYSTAL_FLOOR :49).
   'site:glass_archive': {
     name: 'Scintillating Caves',
-    palette: { floor: PAVING, wall: CIVIC },
+    palette: { floor: CRYSTAL_FLOOR, wall: CRYSTAL_WALL },
     floors: [1, 2, 3, 4].map((level) => ({
       zone: 'scintillating-caves TWISTED',
       level,
@@ -399,7 +413,13 @@ const EXPECTED: Readonly<Record<string, unknown>> = {
           rooms: ['random_room', ['money_vault', 5]],
           liteRoomChance: 20,
           forceLastStair: true,
-          grid: { '.': PAVING, '#': times(CIVIC, 20), up: PAVING, down: PAVING, door: PAVING },
+          grid: {
+            '.': CRYSTAL_FLOOR,
+            '#': times(CRYSTAL_WALL, 20),
+            up: CRYSTAL_FLOOR,
+            down: CRYSTAL_FLOOR,
+            door: CRYSTAL_FLOOR,
+          },
         },
       },
     })),
@@ -438,7 +458,8 @@ const EXPECTED: Readonly<Record<string, unknown>> = {
     })),
   },
   // trollmire/zone.lua DEFAULT: max_level :157, 65x40 :160, all_lited :162, Forest :171-193
-  // (ponds :184-188 not dug); level 3's Prox room :220-228, level 4 static :230-241.
+  // (ponds of DEEP_WATER :184-188, and no `airLevel`: the road refuses every air grid);
+  // level 3's Prox room :220-228, level 4 static :230-241.
   'site:blackwood_outskirts': {
     name: 'Trollmire',
     palette: { floor: HEATH, wall: TREES },
@@ -458,6 +479,14 @@ const EXPECTED: Readonly<Record<string, unknown>> = {
           sqrtPercent: 30,
           noise: 'fbm_perlin',
           addRoad: true,
+          doPonds: {
+            nb: [0, 2],
+            size: { w: 25, h: 25 },
+            pond: [
+              [0.6, POND_WATER],
+              [0.8, POND_WATER],
+            ],
+          },
           nbRooms: [0, 0, 0, 1],
           rooms: ['lesser_vault'],
           lesserVaultsList: RUIN_VAULTS,
@@ -814,5 +843,140 @@ describe('zoneLevel', () => {
       chances.add(rolled.liteRoomChance);
     }
     expect(chances.size).toBeGreaterThan(6);
+  });
+});
+
+/** Whether a code carries a terrain rule of its own: air, or an `on_stand`. */
+function hasTerrainRule(code: number): boolean {
+  return airOf(code) !== undefined || ON_STAND[code as TileCode] !== undefined;
+}
+
+describe('the zones drawn in their own terrain', () => {
+  it('draws the Weir underwater: all its ground water, a bubble in eleven, the stairs wet, the aura on', () => {
+    // lake-nur/zone.lua:46-50 and levels[2] :86-94. Measured 2,493 bubbles in
+    // 27,656 cells of ground over 40 floors: 9.0%, and a resolve draws one in 11.
+    let ground = 0;
+    let bubbles = 0;
+    for (let s = 0; s < 12; s += 1) {
+      const at = `wet:${String(s)}`;
+      const map = zoneLevel('site:the_weir', at, 1);
+      const { w, tiles } = map.view;
+      expect(map.zoneEffects, at).toEqual(['effect:zone_aura_underwater']);
+      for (const code of tiles) {
+        expect([WATER_FLOOR, WATER_FLOOR_BUBBLE, WATER_WALL, DOOR], at).toContain(code);
+        if (!isWalkable(code)) continue;
+        ground += 1;
+        if (code === WATER_FLOOR_BUBBLE) bubbles += 1;
+      }
+      const up = map.spawns[0];
+      const down = map.down;
+      if (up === undefined || down === undefined) throw new Error(`${at}: no stairs`);
+      expect(tiles[up.y * w + up.x], `${at}: the arrival`).toBe(WATER_FLOOR);
+      expect(tiles[down.y * w + down.x], `${at}: the way down`).toBe(WATER_FLOOR);
+      expect(airOf(WATER_FLOOR)?.level, 'the water floor takes air').toBeLessThan(0);
+    }
+    expect(bubbles / ground).toBeGreaterThan(0.07);
+    expect(bubbles / ground).toBeLessThan(0.11);
+  });
+
+  it('lays an aura on the Weir`s floors and on no other zone`s', () => {
+    for (const [site, def] of ZONES) {
+      def.floors.forEach((_level, i) => {
+        const map = zoneLevel(site, 'auras', i + 1);
+        const want = site === 'site:the_weir' ? ['effect:zone_aura_underwater'] : undefined;
+        expect(map.zoneEffects, `${site} floor ${String(i + 1)}`).toEqual(want);
+      });
+    }
+  });
+
+  it('draws water that drowns only where the zone`s own grid does, and nothing that burns', () => {
+    // WATER_FLOOR and the bubble are the Weir's; POND_WATER the Trollmire's
+    // ponds. Every other zone draws no code with air or an `on_stand`.
+    const wet: Readonly<Record<string, readonly number[]>> = {
+      'site:the_weir': [WATER_FLOOR, WATER_FLOOR_BUBBLE],
+      'site:blackwood_outskirts': [POND_WATER],
+    };
+    const seen = new Map<string, Set<number>>();
+    for (const [site, def] of ZONES) {
+      def.floors.forEach((_level, i) => {
+        for (let s = 0; s < 4; s += 1) {
+          for (const code of new Set(zoneLevel(site, `rules:${String(s)}`, i + 1).view.tiles)) {
+            if (!hasTerrainRule(code)) continue;
+            expect(wet[site] ?? [], `${site} draws ${String(code)}`).toContain(code);
+            seen.set(site, (seen.get(site) ?? new Set()).add(code));
+          }
+        }
+      });
+    }
+    expect([...(seen.get('site:the_weir') ?? [])].toSorted()).toEqual(
+      [WATER_FLOOR, WATER_FLOOR_BUBBLE].toSorted(),
+    );
+    expect([...(seen.get('site:blackwood_outskirts') ?? [])]).toEqual([POND_WATER]);
+  });
+
+  it('digs the Trollmire`s ponds in POND_WATER on some floors and not others, never the solid sea', () => {
+    // `nb = {0, 2}` (trollmire/zone.lua:185): measured 380 of 600 floors dug one.
+    let dug = 0;
+    let total = 0;
+    for (let s = 0; s < 15; s += 1) {
+      for (const floor of [1, 2]) {
+        const tiles = zoneLevel('site:blackwood_outskirts', `ponds:${String(s)}`, floor).view.tiles;
+        total += 1;
+        if (tiles.includes(POND_WATER)) dug += 1;
+        expect(tiles).not.toContain(TileCode.DEEPWATER);
+      }
+    }
+    expect(dug).toBeGreaterThan(0);
+    expect(dug).toBeLessThan(total);
+  });
+
+  it('lays the Trollmire`s road round its ponds: it refuses every air grid, not only the sea', () => {
+    // `makeRoad`'s A* refuses a cell whose terrain has an `air_level`
+    // (engine/generator/map/Forest.lua:395). The same table built with a road
+    // that refuses nothing is the same floor wherever no pond was dug, and
+    // another floor on some that dug one: the road went round.
+    const def = ZONES.get('site:blackwood_outskirts');
+    if (def === undefined) throw new Error('no Trollmire zone');
+    const level = zoneFloor(def, 1);
+    const table = level.table(def.palette);
+    const blind = { ...table, map: { ...table.map, airLevel: [] } };
+    const opts = { level: level.level, maxLevel: level.maxLevel };
+    let differs = 0;
+    let ponds = 0;
+    for (let s = 0; s < 40; s += 1) {
+      const seed = `road:${String(s)}`;
+      const own = keepTrying(table, seed, opts).map.view.tiles;
+      const through = keepTrying(blind, seed, opts).map.view.tiles;
+      if (!own.includes(POND_WATER)) {
+        expect(through, seed).toEqual(own);
+        continue;
+      }
+      ponds += 1;
+      if (JSON.stringify(own) !== JSON.stringify(through)) differs += 1;
+    }
+    expect(ponds).toBeGreaterThan(0);
+    expect(differs, 'no road ever went round a pond').toBeGreaterThan(0);
+  });
+
+  it('draws Cairnfoot and the Glass Archive in their own codes, none of which breathes or burns', () => {
+    // heart-gloom/zone.lua:46-72, scintillating-caves/zone.lua:45-49.
+    const own: Readonly<Record<string, readonly number[]>> = {
+      'site:cairnfoot': [UNDERGROUND_FLOOR, UNDERGROUND_TREE, TREES],
+      'site:glass_archive': [CRYSTAL_FLOOR, CRYSTAL_WALL],
+    };
+    for (const [site, codes] of Object.entries(own)) {
+      const def = ZONES.get(site);
+      if (def === undefined) throw new Error(`no zone for ${site}`);
+      def.floors.forEach((_level, i) => {
+        for (let s = 0; s < 3; s += 1) {
+          const drawn = new Set(zoneLevel(site, `own:${String(s)}`, i + 1).view.tiles);
+          for (const code of drawn) {
+            expect(codes, `${site} draws ${String(code)}`).toContain(code);
+            expect(hasTerrainRule(code), `${site} draws a hazard`).toBe(false);
+          }
+          expect(drawn.has(def.palette.floor) && drawn.has(def.palette.wall), site).toBe(true);
+        }
+      });
+    }
   });
 });

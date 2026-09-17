@@ -8,6 +8,7 @@ import {
 } from '../../src/shared/mapgen/level.ts';
 import { ZONES, zoneFloor } from '../../src/shared/mapgen/zones.ts';
 import { REDACTION_SITE_ID } from '../../src/shared/level.ts';
+import { ON_STAND, airOf } from '../../src/shared/terrain.ts';
 import type { AuthoredMap } from '../../src/shared/level.ts';
 import type { TileXY } from '../../src/shared/coords.ts';
 import {
@@ -193,18 +194,24 @@ describe('a palette repaints a floor without moving one wall', () => {
 });
 
 /**
- * How many codes the grid of a site's zone names for its first floor
- * (`shared/mapgen/zones.ts`) — a Redaction twin's being its original's — or 0
- * for a site no zone builds.
+ * The codes the table of a site's zone names for its first floor
+ * (`shared/mapgen/zones.ts`) — a Redaction twin's being its original's — or
+ * none for a site no zone builds: its grid, and the water its ponds are dug in.
  */
-function zoneCodes(id: string): number {
+function zoneNamed(id: string): ReadonlySet<number> {
   const zone = ZONES.get(id.replace(`${REDACTION_SITE_ID}:`, 'site:'));
-  if (zone === undefined) return 0;
-  const { grid } = zoneFloor(zone, 1).table(zone.palette).map;
-  const named = Object.values(grid).flatMap((g) =>
+  if (zone === undefined) return new Set();
+  const { map } = zoneFloor(zone, 1).table(zone.palette);
+  const named = Object.values(map.grid).flatMap((g) =>
     typeof g === 'function' ? [] : typeof g === 'number' ? [g] : g,
   );
-  return new Set(named).size;
+  const ponds = 'doPonds' in map ? (map.doPonds?.pond ?? []).map(([, code]) => code) : [];
+  return new Set([...named, ...ponds]);
+}
+
+/** How many codes `zoneNamed` finds. */
+function zoneCodes(id: string): number {
+  return zoneNamed(id).size;
 }
 
 describe('every shipped site is painted with a legal pair', () => {
@@ -249,15 +256,31 @@ describe('every shipped site is painted with a legal pair', () => {
        * you can stand on, and every other code solid AND opaque. A third code
        * that was walkable, or that you could see through, would still fail.
        */
-      const codes = new Set(site.map(`palette-check-${id}`).view.tiles);
+      const built = site.map(`palette-check-${id}`);
+      const codes = new Set(built.view.tiles);
       expect(codes.size).toBeGreaterThanOrEqual(2);
       // OR AS MANY AS THE SITE'S ZONE NAMES, where that is more: the Rhaloren
       // camp's grass has a TREE in sixteen (rhaloren-camp/zone.lua:118) beside
       // its walls and its doors — still one ground, every other code opaque.
       expect(codes.size).toBeLessThanOrEqual(Math.max(3, zoneCodes(id)));
 
+      // ONE GROUND, THE ONE YOU ARRIVE ON, AND BESIDE IT ONLY WATER THE ZONE DRAWS:
+      // a walkable code the site's zone names that carries air or an `on_stand`
+      // (shared/terrain.ts) is a hazard on that ground, not a second ground —
+      // the Weir's bubble, the Trollmire's ponds. A walkable code nobody named,
+      // or one with no rule of its own, is still a second ground and fails.
       const walkable = [...codes].filter((c) => isWalkable(c));
-      expect(walkable, `${id} has ${String(walkable.length)} kinds of ground`).toHaveLength(1);
+      const arrival = built.spawns[0];
+      const underfoot =
+        arrival === undefined ? undefined : built.view.tiles[arrival.y * built.view.w + arrival.x];
+      const hazards = walkable.filter(
+        (c) =>
+          c !== underfoot &&
+          zoneNamed(id).has(c) &&
+          (airOf(c) !== undefined || ON_STAND[c as TileCode] !== undefined),
+      );
+      const ground = walkable.filter((c) => !hazards.includes(c));
+      expect(ground, `${id} has ${String(ground.length)} kinds of ground`).toHaveLength(1);
       for (const solid of [...codes].filter((c) => !isWalkable(c))) {
         expect(blocksSight(solid), `${id} has a solid code you can see through`).toBe(true);
       }

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Dalton Barraclough
 // Ported from t-engine4 game/engines/default/engine/Astar.lua:43-193
+//   and game/engines/default/engine/interface/PlayerMouse.lua:70-72 (`recheck`)
 // T-Engine4 (C) 2009-2018 Nicolas Casalini "DarkGod" — https://te4.org/license
 
 /**
@@ -433,4 +434,59 @@ function reconstruct(cameFrom: Map<number, number>, start: number, goal: number)
 
   reversed.reverse();
   return reversed;
+}
+
+// ---------------------------------------------------------------------------
+// findPathAvoiding — engine/interface/PlayerMouse.lua:70-72 (`recheck`)
+// ---------------------------------------------------------------------------
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * A ROUTE AROUND WHAT HURTS, AND THE PLAIN ONE WHEN THERE IS NO OTHER.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * ```lua
+ * local path = a:calc(self.x, self.y, tmx, tmy, true, nil, astar_check)
+ * if recheck and not path then path = a:calc(self.x, self.y, tmx, tmy, true, nil, nil) end
+ * ```
+ *
+ * The player's mouse walk asks A* twice: once refusing every tile the body
+ * cannot breathe on (`tome/class/Player.lua:1200-1217`, passed with
+ * `recheck=true` at :1216), and again without that refusal only when the first
+ * found nothing. So a walk goes around a pond when there is a way around, and
+ * through it when there is not. `ai/npc.ts` asks the same pair for a monster.
+ *
+ * `avoid` is only asked of a tile `isPassable` already allows, so it answers
+ * "would this hurt", never "can I walk here".
+ *
+ * ═══ THE GOAL ═══
+ * Upstream's `add_check` refuses the goal too, so clicking a pond tile fails
+ * the first search and takes the plain one. Without `allowBlockedTarget` that
+ * is what happens here: `findPath` asks the predicate about the goal before it
+ * searches. With it, the goal is exempt from BOTH predicates, as
+ * `allowBlockedTarget` says, and the route to it still avoids what it can.
+ *
+ * ═══ THE SECOND SEARCH ONLY RUNS WHEN THE FIRST REFUSED SOMETHING ═══
+ * If `avoid` never turned a passable tile away, the first search saw exactly
+ * the answers the plain one would, so the plain one would return the same null.
+ * Skipping it is not a shortcut with a different result. It keeps an unreachable
+ * target on a level with nothing to avoid at one search, as it was before.
+ */
+export function findPathAvoiding(
+  from: TileXY,
+  to: TileXY,
+  isPassable: PassableFn,
+  avoid: PassableFn,
+  opts: FindPathOpts = {},
+): TileXY[] | null {
+  let refused = false;
+  const around: PassableFn = (x, y) => {
+    if (!isPassable(x, y)) return false;
+    if (!avoid(x, y)) return true;
+    refused = true;
+    return false;
+  };
+  const path = findPath(from, to, around, opts);
+  if (path !== null || !refused) return path;
+  return findPath(from, to, isPassable, opts);
 }

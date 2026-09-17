@@ -164,6 +164,7 @@ import {
   TravelStart,
   createTravel,
   isHostileBody,
+  exploreSlowAt,
   liveActorAt,
 } from './input/travel.ts';
 import { establishDiscordSession } from './net/discord.ts';
@@ -6940,6 +6941,9 @@ async function boot(): Promise<void> {
       // THE SAME PREDICATE THE VERB MENU GREYS ITS TRAVEL ROW ON, so
       // "somewhere I can walk" is one question with one answer.
       passable: (x, y) => travelTargetAllowed(here, { x, y }, hasSeenHere()),
+      // AND THE GROUND TO GO AROUND: upstream's slow ground for the flood
+      // (PlayerExplore.lua:1958-1966), which is not quite the walk's refusal.
+      hazard: (x, y) => exploreSlowAt(here, x, y),
       // AND THE SAME SET FOR ITS FRONTIER, as upstream's flood asks `has_seens`
       // (PlayerExplore.lua:1889). On memory, every dark floor tile borders ground
       // memory does not hold, so a cave would never be explored and the flood

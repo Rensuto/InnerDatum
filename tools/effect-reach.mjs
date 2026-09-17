@@ -15,8 +15,8 @@
  * case — "a resistance to a channel no content produces can only ever be
  * decoration".
  *
- * So: every `EffectId` must be named by something under `src/server` that is not
- * the catalogue itself, or be exempt below.
+ * So: every `EffectId` must be named by something under `src/server` (or, as data
+ * a server reads, `src/shared`) that is not the catalogue itself, or be exempt below.
  *
  * ═══ THE ONE EXEMPTION, AND IT IS NOT A LOOPHOLE ═══
  * A CROSS-TIER effect is reached through a REGISTRY, never by name. Off-balance,
@@ -84,7 +84,13 @@ const crossTier = new Set();
 }
 
 // Only the SERVER can apply a status. The client draws them and must not.
-const files = walk('src/server', []).filter((f) => f !== CATALOGUE);
+//
+// AND `src/shared`, WHICH APPLIES NOTHING BUT CAN NAME WHAT THE SERVER APPLIES.
+// A zone aura is laid on a body because a level's map lists it
+// (`AuthoredMap.zoneEffects`), and a map is built in `shared/` — which may not
+// import the server's `EffectId`, so it names the aura as the quoted id. The
+// server's half (`world/zone-effects.ts`) names no aura at all, by design.
+const files = [...walk('src/server', []), ...walk('src/shared', [])].filter((f) => f !== CATALOGUE);
 const blob = files.map((f) => [f, fs.readFileSync(f, 'utf8')]);
 
 const unreached = [];
@@ -103,8 +109,8 @@ console.log(
 for (const u of unreached) {
   console.log(
     `\nNOTHING APPLIES ${u.id}\n` +
-      `  It has a name, a badge and a description, and no code under src/server\n` +
-      `  names it. Every unit test for it can pass while no body ever gets it.\n` +
+      `  It has a name, a badge and a description, and nothing under src/server or\n` +
+      `  src/shared names it. Every unit test for it can pass while no body ever gets it.\n` +
       `  Wire the thing that applies it, or delete the definition.`,
   );
 }

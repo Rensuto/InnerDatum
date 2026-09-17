@@ -1243,6 +1243,9 @@ describe('the status roster (game-design.md § 12)', () => {
       // THE FIRST ONE THE GROUND GIVES. Nothing casts it; running out of air
       // does — timed_effects/other.lua:2265-2289.
       EffectId.Suffocating,
+      // THE PLACE'S OWN AIR: the zone aura a shipped map names
+      // (timed_effects/other.lua:2899-2916). Nothing casts it; a realm lays it.
+      EffectId.ZoneAuraUnderwater,
     ]);
     expect(MVP_EFFECTS.map((def) => def.icon)).toEqual([
       'icon_status_stunned',
@@ -1270,6 +1273,7 @@ describe('the status roster (game-design.md § 12)', () => {
       'icon_status_damage_shield',
       'icon_status_out_of_phase',
       'icon_status_suffocating',
+      'icon_status_zone_aura_underwater',
     ]);
   });
 
@@ -1322,6 +1326,13 @@ describe('the status roster (game-design.md § 12)', () => {
      */
     for (const def of MVP_EFFECTS) {
       if (def.id === EffectId.Suffocating) {
+        expect(def.decrease, def.id).toBe(0);
+        expect(def.noRemove, def.id).toBe(true);
+        continue;
+      }
+      // AND THE AURAS, which the PLACE holds on you: `decrease = 0, no_remove =
+      // true, zone_wide_effect = true` on every one (timed_effects/other.lua:1910-1914).
+      if (def.zoneWide === true) {
         expect(def.decrease, def.id).toBe(0);
         expect(def.noRemove, def.id).toBe(true);
         continue;
@@ -1418,6 +1429,8 @@ describe('the status roster (game-design.md § 12)', () => {
       // nothing rolls against it: no `applyPower` is ever passed, and a cure by
       // channel that finds it cannot remove it (`noRemove`).
       [EffectId.Suffocating]: SaveChannel.Physical,
+      // `type = "other"` on every aura, and Physical for Suffocating's reason.
+      [EffectId.ZoneAuraUnderwater]: SaveChannel.Physical,
     });
   });
 

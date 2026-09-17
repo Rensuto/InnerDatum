@@ -199,6 +199,7 @@ import {
 import { PanelLayoutSchema } from '../../shared/protocol.ts';
 import type { PanelLayoutView } from '../../shared/protocol.ts';
 import { resolveItem } from '../content/resolve.ts';
+import { effectById } from '../content/effects.ts';
 import { CURRENT_VERSIONS, MigrateOutcome, SchemaKind, migrateDoc } from './migrate.ts';
 import { backupPathFor, errorCode, writeFileAtomic } from './atomic.ts';
 import type { AtomicWarning, AtomicWriteOptions } from './atomic.ts';
@@ -2488,7 +2489,17 @@ export function serialiseCharacter(file: CharacterFile): string {
       special: { kind: file.resources.special.kind, value: file.resources.special.value },
     },
     talentCooldowns: cooldowns,
-    effects: file.effects.map((effect) => ({
+    /**
+     * ═══ NEVER A PLACE'S AURA ═══
+     * An `EffectDef.zoneWide` status belongs to the realm the body was standing
+     * in: the realm lays it and the door takes it off (tome/class/Game.lua:1322).
+     * Written down, it would come back on whatever ground the character woke on
+     * next, where nothing would ever strip it. Dropped HERE, at the one writer
+     * every file passes through, rather than trusted to each producer — the
+     * bridge writes no statuses at all today, and this is the line that still
+     * holds the day one does.
+     */
+    effects: file.effects.filter(isSaveableEffect).map((effect) => ({
       effectId: effect.effectId,
       turnsRemaining: effect.turnsRemaining,
       ...(effect.magnitude === undefined ? {} : { magnitude: effect.magnitude }),
@@ -2498,6 +2509,11 @@ export function serialiseCharacter(file: CharacterFile): string {
     updatedAt: file.updatedAt,
   };
   return `${JSON.stringify(canonical, null, 2)}\n`;
+}
+
+/** Everything but a place's aura — see `serialiseCharacter`'s `effects`. */
+function isSaveableEffect(effect: SavedEffect): boolean {
+  return effectById(effect.effectId)?.zoneWide !== true;
 }
 
 // ---------------------------------------------------------------------------

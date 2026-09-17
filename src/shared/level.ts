@@ -168,6 +168,21 @@ export type AuthoredMap = {
    * Absent is FLOOR, which `createWorld` supplies. A plain `DOOR` ignores it.
    */
   readonly rockFloor?: TileCode;
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE AURAS THIS LEVEL LAYS ON EVERY BODY IN IT — `level.data.effects`.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * The Lake of Nur's second level is `effects = {"EFF_ZONE_AURA_UNDERWATER"}`
+   * (data/zones/lake-nur/zone.lua:86-94): a fact about one LEVEL, which a zone's
+   * `levels[n]` sets, so it rides the map as `lighting` does. The realm keeps
+   * it; the server lays each one on every body there and takes it off at the
+   * door (tome/class/Game.lua:1322-1335).
+   *
+   * EFFECT IDS AS STRINGS, because `shared/` may not name the server's effect
+   * catalogue. An id that is not a zone-wide effect lands nothing. Absent is none.
+   */
+  readonly zoneEffects?: readonly string[];
 };
 
 /** The legend entry for one authored character. */

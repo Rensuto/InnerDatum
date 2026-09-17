@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Dalton Barraclough
 // Ported from t-engine4 game/modules/tome/class/Game.lua:2064-2098 (`RUN_AUTO`)
-// and class/interface/PlayerExplore.lua:1822+ (`autoExplore`).
+// and class/interface/PlayerExplore.lua:1822+ (`autoExplore`),
+// and class/interface/PlayerExplore.lua:1948-1971 (ground that takes air or does damage).
 // T-Engine4 (C) 2009-2018 Nicolas Casalini "DarkGod" -- https://te4.org/license
 
 /**
@@ -98,6 +99,15 @@ export type ExploreView = {
    * reported as a finished floor.
    */
   readonly passable: (x: number, y: number) => boolean;
+  /**
+   * IS THIS UPSTREAM'S "SLOW" GROUND? `main.ts` hands in `exploreSlowAt`
+   * (input/travel.ts): burning ground, a bubble's charges, and water the walker
+   * cannot breathe (PlayerExplore.lua:1958-1966).
+   *
+   * Asked only of a tile `passable` already allows. Optional: absent is a floor
+   * with nothing on it to avoid.
+   */
+  readonly hazard?: (x: number, y: number) => boolean;
   /** Has the viewer seen this cell? `explored` is keyed `"x,y"` per realm. */
   readonly seen: ReadonlySet<string>;
   /** Tiles holding something on the floor. Upstream's "unvisited items". */
@@ -187,58 +197,96 @@ export function exploreTarget(view: ExploreView): ExploreAnswer {
   };
 
   const start = { x: Math.trunc(view.from.x), y: Math.trunc(view.from.y) };
-  const visited = new Set<string>([key(start.x, start.y)]);
-  let ring: TileXY[] = [start];
 
-  while (ring.length > 0) {
-    /**
-     * ONE WHOLE RING AT A TIME, so "nearest" is decided across everything at the
-     * same distance rather than by whichever neighbour happened to be pushed
-     * first. That is what makes the item-beats-frontier tie-break below mean
-     * anything.
-     */
-    const goals: { tile: TileXY; item: boolean }[] = [];
-    const next: TileXY[] = [];
+  /** The nearest goal the flood reaches over `passable`, or undefined when there is none. */
+  const flood = (
+    passable: (x: number, y: number) => boolean,
+  ): { readonly tile: TileXY; readonly item: boolean } | undefined => {
+    const visited = new Set<string>([key(start.x, start.y)]);
+    let ring: TileXY[] = [start];
 
-    for (const at of ring) {
-      const onItem = itemAt.has(key(at.x, at.y));
-      // THE TILE YOU ARE STANDING ON IS NOT A DESTINATION. Without this the
-      // first press on a frontier tile answers "go where you already are", and
-      // travel refuses a zero-length route — which reads as the key being dead.
-      if ((at.x !== start.x || at.y !== start.y) && (onItem || isFrontier(at.x, at.y))) {
-        goals.push({ tile: at, item: onItem });
-      }
+    while (ring.length > 0) {
+      /**
+       * ONE WHOLE RING AT A TIME, so "nearest" is decided across everything at the
+       * same distance rather than by whichever neighbour happened to be pushed
+       * first. That is what makes the item-beats-frontier tie-break below mean
+       * anything.
+       */
+      const goals: { tile: TileXY; item: boolean }[] = [];
+      const next: TileXY[] = [];
 
-      for (let dy = -1; dy <= 1; dy += 1) {
-        for (let dx = -1; dx <= 1; dx += 1) {
-          if (dx === 0 && dy === 0) continue;
-          const nx = at.x + dx;
-          const ny = at.y + dy;
-          if (nx < 0 || ny < 0 || nx >= view.w || ny >= view.h) continue;
-          const k = key(nx, ny);
-          if (visited.has(k)) continue;
-          visited.add(k);
-          if (!view.passable(nx, ny)) continue;
-          next.push({ x: nx, y: ny });
+      for (const at of ring) {
+        const onItem = itemAt.has(key(at.x, at.y));
+        // THE TILE YOU ARE STANDING ON IS NOT A DESTINATION. Without this the
+        // first press on a frontier tile answers "go where you already are", and
+        // travel refuses a zero-length route — which reads as the key being dead.
+        if ((at.x !== start.x || at.y !== start.y) && (onItem || isFrontier(at.x, at.y))) {
+          goals.push({ tile: at, item: onItem });
+        }
+
+        for (let dy = -1; dy <= 1; dy += 1) {
+          for (let dx = -1; dx <= 1; dx += 1) {
+            if (dx === 0 && dy === 0) continue;
+            const nx = at.x + dx;
+            const ny = at.y + dy;
+            if (nx < 0 || ny < 0 || nx >= view.w || ny >= view.h) continue;
+            const k = key(nx, ny);
+            if (visited.has(k)) continue;
+            visited.add(k);
+            if (!passable(nx, ny)) continue;
+            next.push({ x: nx, y: ny });
+          }
         }
       }
-    }
 
-    if (goals.length > 0) {
-      /**
-       * ITEMS WIN A TIE — upstream's greed, at its simplest. At equal distance a
-       * player would rather pick something up than round a corner, and the
-       * corner is still there afterwards.
-       *
-       * AND THE ORDER IS THE FLOOD'S, NOT A SORT. Two goals of the same kind at
-       * the same distance are genuinely equivalent, and sorting them by
-       * coordinate would make the choice look considered when it is arbitrary.
-       */
-      const pick = goals.find((goal) => goal.item) ?? goals[0];
-      if (pick !== undefined) return { go: true, to: pick.tile, item: pick.item };
+      if (goals.length > 0) {
+        /**
+         * ITEMS WIN A TIE — upstream's greed, at its simplest. At equal distance a
+         * player would rather pick something up than round a corner, and the
+         * corner is still there afterwards.
+         *
+         * AND THE ORDER IS THE FLOOD'S, NOT A SORT. Two goals of the same kind at
+         * the same distance are genuinely equivalent, and sorting them by
+         * coordinate would make the choice look considered when it is arbitrary.
+         */
+        const pick = goals.find((goal) => goal.item) ?? goals[0];
+        if (pick !== undefined) return pick;
+      }
+      ring = next;
     }
-    ring = next;
-  }
+    return undefined;
+  };
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * DRY GROUND FIRST, AND THE WATER ONLY WHEN THERE IS NOTHING ELSE.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Upstream's flood adds move cost for ground that takes air (+15), deals
+   * damage (+32) or has any other `on_stand` (+21), and keeps such tiles on a
+   * separate slow list, so that "slow" terrain will be avoided if at all possible
+   * (tome/class/interface/PlayerExplore.lua:1948-1971). This flood has no costs, so
+   * "if at all possible" is two floods. The first treats every hazard as a wall.
+   * The second runs only when the first found nothing AND a hazard is what it
+   * refused.
+   *
+   * NOT THE SAME AS THE WEIGHTS. Upstream would wade one pond tile to reach a
+   * frontier sixteen dry steps nearer; this never wades while any dry goal is
+   * left. On a floor with nothing to avoid, the first flood is the only one.
+   */
+  const hazard = view.hazard;
+  let refused = false;
+  const dry =
+    hazard === undefined
+      ? view.passable
+      : (x: number, y: number): boolean => {
+          if (!view.passable(x, y)) return false;
+          if (!hazard(x, y)) return true;
+          refused = true;
+          return false;
+        };
+  const found = flood(dry) ?? (refused ? flood(view.passable) : undefined);
+  if (found !== undefined) return { go: true, to: found.tile, item: found.item };
 
   /**
    * ═══════════════════════════════════════════════════════════════════════════

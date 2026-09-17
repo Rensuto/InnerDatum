@@ -195,7 +195,13 @@ import { Faction, StandingOrder, incMoney, isHostile, isMonster } from '../engin
  * one door the type system cannot close.
  */
 import { combatArmor, stat as statValue } from '../engine/derived.ts';
-import { boughtSheet, recomposeCombat, restoreOnReentry } from '../engine/effects.ts';
+import {
+  boughtSheet,
+  recomposeCombat,
+  restoreOnReentry,
+  stripZoneEffects,
+} from '../engine/effects.ts';
+import { applyZoneEffectsIn } from '../world/zone-effects.ts';
 /**
  * WHICH PARTY A BODY BELONGS TO — asked in exactly one place, at exactly one
  * moment: the step that walks onto a site cell.
@@ -9470,6 +9476,13 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     // which, with a party standing still deciding what to do, could be a long
     // time. A reconnecting player must see the Downed timer immediately; it is
     // the thing they came back for.
+    // ...AND FIRST, THE AURAS OF WHEREVER THIS BODY IS STANDING, on a body the
+    // file has already been restored onto, since an aura reads the sheet it lands
+    // on (tome/class/Actor.lua:7263-7267). A resumed body already wears them.
+    const standingIn = opts.realms?.realmOf(actor.id);
+    if (standingIn !== undefined) {
+      applyZoneEffectsIn(standingIn.world, standingIn.zoneEffects, opts.effects);
+    }
     if (opts.effects !== undefined) {
       const badges = projectEffects(
         world,
@@ -9930,6 +9943,10 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     // there, and the symptom would be a character losing spent points at a door.
     if (from.spentStats !== undefined) to.spentStats = from.spentStats;
     to.unspentStatPoints = from.unspentStatPoints;
+    // THE ONE THING A DOOR DOES TAKE OFF: the place's auras. The status table is
+    // keyed by id, so they would otherwise walk through with the body
+    // (tome/class/Game.lua:1322). The realm on the far side lays its own.
+    if (opts.effects !== undefined) stripZoneEffects(opts.effects, to, homeOf(to.id).world.rng);
     recomposeCombat(to, opts.effects ?? null, resolveItem);
   };
 
@@ -10305,6 +10322,8 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       definition === undefined ? undefined : overlayFor(definition, originOf(body.origin)),
     );
     carryAcross(body, placed);
+    // AND WHATEVER THIS PLACE LAYS ON A BODY (tome/class/Actor.lua:7263-7267).
+    applyZoneEffectsIn(to.world, to.zoneEffects, opts.effects);
     // BACK WHERE THEY WENT IN, when the tile is still free. `placeAtSpawn` has
     // already put a body somewhere legal, so a taken doorstep costs a step of
     // accuracy rather than an error.
@@ -10672,6 +10691,10 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       definition === undefined ? undefined : overlayFor(definition, originOf(body.origin)),
     );
     carryAcross(body, placed);
+    // AND THE PLACE'S AURAS: on the newcomer, and on anybody here still missing
+    // one, which is how a shared realm's townsfolk come to wear them
+    // (tome/class/Game.lua:1329-1335, tome/class/Actor.lua:7263-7267).
+    applyZoneEffectsIn(to.world, to.zoneEffects, opts.effects);
 
     // THE NEW FLOOR'S SCHEDULER LEARNS ABOUT THEM. `join` clears any stale
     // Standing By in that realm's barrier and `setConnected` puts them in its

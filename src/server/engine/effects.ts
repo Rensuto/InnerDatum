@@ -12,6 +12,8 @@
 //                                                        :191 (no_remove and force)
 //             t-engine4 game/modules/tome/class/interface/Combat.lua:275-293 (checkHitOld)
 //             t-engine4 game/modules/tome/data/timed_effects/physical.lua:133-141 (CUT on_merge)
+//             t-engine4 game/modules/tome/class/Game.lua:1322-1335 (zone_wide_effect off, level effects on)
+//             t-engine4 game/modules/tome/class/Actor.lua:7263-7267 (a later arrival gets them too)
 // T-Engine4 (C) 2009-2018 Nicolas Casalini "DarkGod" — https://te4.org/license
 
 /**
@@ -470,6 +472,24 @@ export type EffectDef = {
    * sit on the body as a badge that does nothing and cannot be laid again.
    */
   readonly typeOther?: true;
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * `e.zone_wide_effect` — THE LEVEL HOLDS THIS ON YOU, NOT A CASTER.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Upstream's `EFF_ZONE_AURA_*` (timed_effects/other.lua:1905-3011). Entering a
+   * level strips every one of these from the bodies on it and lays the level's
+   * own list on all of them (tome/class/Game.lua:1322-1335); a body added later
+   * gets the list as it arrives (tome/class/Actor.lua:7263-7267). See
+   * `applyZoneEffects` and `stripZoneEffects`.
+   *
+   * ALWAYS WITH `noRemove` AND `decrease: 0`, because every aura upstream is
+   * `decrease = 0, no_remove = true`: nothing but leaving takes it off, and the
+   * one removal is `stripZoneEffects`, which passes `force`. It is also never
+   * written to a character file — an aura belongs to the place, and a save that
+   * carried one would lay it over whatever ground the body woke on.
+   */
+  readonly zoneWide?: true;
   /** The 24×24 badge on disk. An asset key, never a path — the client owns the manifest. */
   readonly icon: string;
   /**
@@ -1825,6 +1845,89 @@ export function dispel(
   // COUNTS WHAT WENT, not what matched: a `noRemove` effect matches the filter
   // and stays (ActorTemporaryEffects.lua:191).
   return doomed.filter((effectId) => removeEffect(state, actor, effectId, rng, ctx)).length;
+}
+
+// ---------------------------------------------------------------------------
+// Zone-wide effects — tome/class/Game.lua:1322-1335, tome/class/Actor.lua:7263-7267
+// ---------------------------------------------------------------------------
+
+/** `act:setEffect(effid, 1, {})` — one turn, which `decrease = 0` never spends. */
+export const ZONE_EFFECT_TURNS = 1;
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * LAY A LEVEL'S AURAS ON ONE BODY. Returns the ids that landed.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * ```lua
+ * if self.level.data.effects then
+ *   for uid, act in pairs(self.level.entities) do
+ *     if act.setEffect then for _, effid in ipairs(self.level.data.effects) do
+ *       act:setEffect(effid, 1, {})
+ * ```
+ *
+ * tome/class/Game.lua:1329-1335 for every body on a level being entered, and
+ * tome/class/Actor.lua:7263-7267 for a body added to it afterwards. The same
+ * call on one body, so both are this function over a different list of bodies.
+ *
+ * ═══ ONLY THE MISSING ONES ═══
+ * Upstream re-sets an aura a body already has, and with no `on_merge` that is
+ * remove-then-add (ActorTemporaryEffects.lua:122-130), which lands where it
+ * started: the `activate` terms are read again off a sheet the removal has just
+ * put back. Skipping it is the same state with no churn, and it is what lets the
+ * gateway lay a realm's list on EVERY body whenever one arrives.
+ *
+ * ═══ ONLY AURAS ═══
+ * An id whose definition is not `zoneWide` is skipped. Upstream would set it,
+ * and then nothing would ever take it off: the strip at tome/class/Game.lua:1322
+ * filters on `zone_wide_effect`, so a plain status named by a zone would follow
+ * the body out of it for good.
+ */
+export function applyZoneEffects(
+  state: EffectState,
+  actor: EffectActor,
+  effectIds: readonly string[],
+  rng: Rng,
+  ctx: EffectCtx = NO_CTX,
+): readonly string[] {
+  const landed: string[] = [];
+  for (const effectId of effectIds) {
+    if (state.defs.get(effectId)?.zoneWide !== true) continue;
+    if (hasEffect(state, actor.id, effectId)) continue;
+    const result = setEffect(state, actor, effectId, ZONE_EFFECT_TURNS, {}, rng, ctx);
+    if (result.outcome === SetEffectOutcome.Applied) landed.push(effectId);
+  }
+  return landed;
+}
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * TAKE EVERY AURA OFF ONE BODY. Returns the ids that went.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * ```lua
+ * act:removeEffectsFilter(function(e) return e.zone_wide_effect end, nil, nil, true)
+ * ```
+ *
+ * tome/class/Game.lua:1322, through tome/class/Actor.lua:6590-6599. The fourth
+ * argument is `force`, the only thing `no_remove` answers to
+ * (ActorTemporaryEffects.lua:191), so this is the one door out of an aura.
+ *
+ * SILENT, because no aura upstream has an `on_lose`: leaving a level says
+ * nothing about the air in it.
+ */
+export function stripZoneEffects(
+  state: EffectState,
+  actor: EffectActor,
+  rng: Rng,
+  ctx: EffectCtx = NO_CTX,
+): readonly string[] {
+  const table = state.byActor.get(actor.id);
+  if (table === undefined) return [];
+  const doomed = [...table.keys()].filter(
+    (effectId) => state.defs.get(effectId)?.zoneWide === true,
+  );
+  return doomed.filter((effectId) => removeEffect(state, actor, effectId, rng, ctx, true, true));
 }
 
 /** Every detrimental effect resisted by one channel. The shape a cure takes. */

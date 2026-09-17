@@ -7,6 +7,7 @@
 //             t-engine4 game/modules/tome/data/damage_types.lua:150-153 (stunned ×0.4 outgoing)
 //             t-engine4 game/engines/default/engine/interface/ActorTemporaryEffects.lua:54
 //             t-engine4 game/modules/tome/data/timed_effects/other.lua:2265-2289 (SUFFOCATING)
+//             t-engine4 game/modules/tome/data/timed_effects/other.lua:2899-2916 (ZONE_AURA_UNDERWATER)
 // T-Engine4 (C) 2009-2018 Nicolas Casalini "DarkGod" — https://te4.org/license
 //
 // The badge art (ui/icons/status/icon_status_*.png) is the author's own and is NOT GPL.
@@ -248,6 +249,13 @@ export const EffectId = {
    * itself the turn that body can breathe. timed_effects/other.lua:2265-2289.
    */
   Suffocating: 'effect:suffocating',
+  /**
+   * THE LEVEL'S OWN AIR. Nothing casts it either: a realm whose map names it lays
+   * it on every body in it and takes it off at the door (`world/zone-effects.ts`).
+   * timed_effects/other.lua:2899-2916, the one of upstream's twenty-three auras a
+   * shipped map names (the Weir). `ZONE_AURAS` says where the rest are.
+   */
+  ZoneAuraUnderwater: 'effect:zone_aura_underwater',
 } as const;
 export type EffectId = (typeof EffectId)[keyof typeof EffectId];
 
@@ -2165,6 +2173,122 @@ export const SUFFOCATING: EffectDef = Object.freeze({
   },
 } satisfies EffectDef);
 
+// ---------------------------------------------------------------------------
+// ZONE AURAS — timed_effects/other.lua:2899-2916
+// ---------------------------------------------------------------------------
+
+/** UNDERWATER's `+10` cold and `-10` fire in `inc_damage` (timed_effects/other.lua:2912). */
+const ZONE_AURA_PERCENT = 10;
+/** UNDERWATER's `stun_immune, -0.1` (timed_effects/other.lua:2911), in this port's 0..100. */
+const ZONE_AURA_WEAK_STUN_MALUS = 10;
+
+type ZoneAuraSpec = {
+  readonly id: EffectId;
+  readonly badge: string;
+  /** Upstream's `desc`, verbatim. */
+  readonly displayName: string;
+  /** Upstream's `long_desc`, with every clause this port does not carry taken out. */
+  readonly description: string;
+  readonly icon: string;
+  /** The `effectTemporaryValue` block, as `EffectDef.wielder`. */
+  readonly grants: () => ReturnType<NonNullable<EffectDef['wielder']>>;
+};
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * ONE AURA. EVERY FIELD BUT THE NUMBERS IS THE SAME TWENTY-THREE TIMES UPSTREAM.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * ```lua
+ * newEffect{
+ *   name = "ZONE_AURA_UNDERWATER", desc = "Underwater Zone",
+ *   decrease = 0, no_remove = true,
+ *   type = "other", subtype = { aura=true }, status = "detrimental",
+ *   zone_wide_effect = true, parameters = {},
+ *   activate = function(self, eff)
+ *     self:effectTemporaryValue(eff, "stun_immune", -0.1)
+ *     ...
+ * ```
+ *
+ * ═══ `type = "other"`, WHICH IS PHYSICAL HERE FOR SUFFOCATING'S REASON ═══
+ * Nothing rolls a save against an aura — `setEffect(effid, 1, {})` passes no
+ * `apply_power` — and a cure by channel that finds one cannot remove it
+ * (`noRemove`). `typeOther` keeps the two things upstream's "other" also buys:
+ * blanket status immunity does not refuse it (tome/class/Actor.lua:6956), and
+ * `reduce_detrimental_status_effects_time` does not shorten it (:7048).
+ *
+ * ═══ `subtype = { aura=true }` ═══
+ * Not one of `IMMUNITY_KEYS`, so `canBe` reads a 0% resist, lands it at 100%
+ * and draws nothing — which is what `canBe(nil)` does upstream for a subtype
+ * no `StatusTypes` row names (tome/class/Actor.lua:6974-6975).
+ */
+function zoneAura(spec: ZoneAuraSpec): EffectDef {
+  return Object.freeze({
+    id: spec.id,
+    badge: spec.badge,
+    displayName: spec.displayName,
+    description: spec.description,
+    type: SaveChannel.Physical,
+    // `type = "other"` on every aura (e.g. timed_effects/other.lua:2905).
+    typeOther: true,
+    status: EffectStatus.Detrimental,
+    // No `on_merge`, so a re-set replaces (ActorTemporaryEffects.lua:128).
+    stackMode: StackMode.Refresh,
+    subtypes: ['aura'],
+    decrease: 0,
+    noRemove: true,
+    zoneWide: true,
+    icon: spec.icon,
+    parameters: {},
+    wielder: () => spec.grants(),
+  } satisfies EffectDef);
+}
+
+const PERCENT_TEXT = `${String(ZONE_AURA_PERCENT)}%`;
+
+/**
+ * timed_effects/other.lua:2899-2916. Every term ported. The air it talks about
+ * is the WATER's, not the aura's: `air_level` on the grids and `suffocate` in
+ * `actBase` (engine/actor.ts) — the aura only moves the three numbers.
+ */
+export const ZONE_AURA_UNDERWATER: EffectDef = zoneAura({
+  id: EffectId.ZoneAuraUnderwater,
+  badge: 'Uw',
+  displayName: 'Underwater Zone',
+  description:
+    'Zone-wide effect: Air decreases over time. If you run out of air you will start ' +
+    'losing life. Look for bubbles to recover air. The water also reduces stun resistance ' +
+    `by ${String(ZONE_AURA_WEAK_STUN_MALUS)}% and fire damage is reduced by ${PERCENT_TEXT}, ` +
+    `however cold damage is increased by ${PERCENT_TEXT}.`,
+  icon: 'icon_status_zone_aura_underwater',
+  grants: () => ({
+    immunities: { stun: -ZONE_AURA_WEAK_STUN_MALUS },
+    damage: { [DamageType.Cold]: ZONE_AURA_PERCENT, [DamageType.Fire]: -ZONE_AURA_PERCENT },
+  }),
+});
+
+/**
+ * ═══ ONE, BECAUSE ONE MAP NAMES ONE ═══
+ *
+ * `tools/effect-reach.mjs` refuses a status nothing applies, and an aura is only
+ * applied by a map that lists it. The Lake of Nur's second level lists
+ * UNDERWATER (data/zones/lake-nur/zone.lua:88), and the Weir is that level.
+ *
+ * NINE MORE ARE PORTABLE AND WAIT FOR THE MAP THAT NAMES THEM: FIRE (:1905),
+ * COLD (:1926), LIGHTNING (:1947), DARKNESS (:1989), MIND (:2010), PHYSICAL
+ * (:2094), FEARSCAPE (:2918), OUT_OF_TIME (:2937) and THUNDERSTORM (:2994). The
+ * Infinite Dungeon's aura roll reaches all but Fearscape
+ * (data/zones/infinite-dungeon/zone.lua:353-357); they land with the Tower.
+ *
+ * NOT PORTABLE, THIRTEEN, each for a damage type or a mechanic this game does
+ * not have: ACID (:1968), LIGHT (:2031), ARCANE (:2052), TEMPORAL (:2073),
+ * BLIGHT (:2115) and NATURE (:2136) are an element each; GORBAT, VOR, GRUSHNAK
+ * and RAKSHOR (:2813-2897) are the orc prides' talent grants; SPELLBLAZE (:2956)
+ * reflects teleports; CALDERA (:2974) is a dream-sleep timer; ABASHED (:3013) is
+ * a Phase Door rule. `ZONE_AURA_CHALLENGE` (:3030) is not zone-wide at all.
+ */
+export const ZONE_AURAS: readonly EffectDef[] = Object.freeze([ZONE_AURA_UNDERWATER]);
+
 export const MVP_EFFECTS: readonly EffectDef[] = Object.freeze([
   STUNNED,
   BLEEDING,
@@ -2191,6 +2315,7 @@ export const MVP_EFFECTS: readonly EffectDef[] = Object.freeze([
   DAMAGE_SHIELD,
   OUT_OF_PHASE,
   SUFFOCATING,
+  ...ZONE_AURAS,
 ]);
 
 /** Effect ids, for a content-completeness check and for the client's badge atlas. */
@@ -2253,10 +2378,19 @@ export function validateEffect(def: EffectDef): readonly string[] {
   // remove that removes ITSELF. `EFF_SUFFOCATING` is that shape
   // (timed_effects/other.lua:2272-2279); without both halves it is a status that never ends.
   const leavesByItself = def.noRemove === true && def.onTimeout !== undefined;
-  if (def.decrease < 0 || (def.decrease === 0 && !leavesByItself)) {
+  // AND ONE MORE: an effect nothing may remove that the PLACE takes off. Every
+  // `EFF_ZONE_AURA_*` is `decrease = 0, no_remove = true, zone_wide_effect = true`
+  // (timed_effects/other.lua:1910-1914), and `stripZoneEffects` is its way out.
+  const leavesWithThePlace = def.noRemove === true && def.zoneWide === true;
+  if (def.decrease < 0 || (def.decrease === 0 && !leavesByItself && !leavesWithThePlace)) {
     problems.push(
       `${def.id}: decrease ${def.decrease} never expires (ActorTemporaryEffects.lua:91)`,
     );
+  }
+  // THE CONVERSE. An aura that ticked down would leave a body standing in the
+  // zone, and one a cure could lift would make the place optional.
+  if (def.zoneWide === true && (def.decrease !== 0 || def.noRemove !== true)) {
+    problems.push(`${def.id}: a zone-wide effect must never tick down and must be noRemove`);
   }
   if (def.stackMode === StackMode.Stack && def.onMerge === undefined) {
     problems.push(`${def.id}: stackMode 'stack' without onMerge falls back to duration extension`);

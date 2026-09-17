@@ -2031,6 +2031,8 @@ export function buildServer() {
   const realms = createRealms({
     seed: WORLD_SEED,
     engineFor: (forWorld) => wrapForGateway(engineFor(forWorld)),
+    // THE SAME STATUS TABLE, so a floor's population wears the floor's auras.
+    effects,
   });
 
   app.log.info(

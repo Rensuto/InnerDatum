@@ -87,11 +87,13 @@
  */
 
 import { DIR_ORDER, sameTile, step } from '../../shared/coords.ts';
-import { canRoute, canWalk } from '../../shared/level.ts';
-import { findPath } from '../../shared/path.ts';
+import { canRoute, canWalk, tileAt } from '../../shared/level.ts';
+import { findPathAvoiding } from '../../shared/path.ts';
 import { ActorKind, TurnActorState } from '../../shared/protocol.ts';
+import { ON_STAND, airOf, breathes } from '../../shared/terrain.ts';
 import type { Dir, TileXY } from '../../shared/coords.ts';
 import type { ActorView, LevelView, TurnMsg } from '../../shared/protocol.ts';
+import type { Breather } from '../../shared/terrain.ts';
 
 /**
  * Hard ceiling on A* expansions for one click, DERIVED FROM THE LEVEL.
@@ -143,6 +145,71 @@ function travelMaxNodes(level: LevelView): number {
  * could not know about. So the rule is membership, and there is one sight rule,
  * on the server.
  */
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * WHAT THE WALKER BREATHES: NOTHING BUT AIR, AND NOTHING STOPS IT DROWNING.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * A detective carries neither `can_breath` nor `no_breath`. `createPlayerActor`
+ * sets neither, no item or talent grants either, and `ActorView` does not carry
+ * them, so the empty breather is the true answer for every player today rather
+ * than a guess. The day something grants water breathing to a player, this
+ * has to come from the wire instead. `buildRestView`'s `losing` flag
+ * (`turn-engine.ts`) already reads the real body on the server.
+ */
+const PLAYER_BREATHER: Breather = Object.freeze({});
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * WHERE A CLICKED WALK WILL NOT GO — tome/class/Player.lua:1206-1213, verbatim.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * ```lua
+ * -- Dont go where you cant breath
+ * if not self:attr("no_breath") then
+ *   if air_level then
+ *     if not air_condition or not self.can_breath[air_condition] or ... <= 0 then return false
+ * ```
+ *
+ * ANY `air_level` THE WALKER CANNOT BREATHE, so the air bubble too: its +15
+ * names no condition, and nobody breathes "no condition". That is what keeps a
+ * walk across the Weir from spending the bubbles a player will need on the way
+ * back. And NOT LAVA: the mouse walk asks about breath and known traps, never
+ * about damage. Auto-explore is the one that avoids a burn (`exploreSlowAt`).
+ *
+ * ADVISORY LIKE EVERYTHING ELSE IN THIS FILE. It picks a route, and the
+ * server decides what the ground does to whoever stands on it.
+ */
+export function mouseWalkRefusesAt(level: LevelView, x: number, y: number): boolean {
+  if (PLAYER_BREATHER.noBreath === true) return false;
+  const air = airOf(tileAt(level, x, y));
+  return air !== undefined && !breathes(PLAYER_BREATHER, air);
+}
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * GROUND AUTO-EXPLORE GOES AROUND — tome/class/interface/PlayerExplore.lua:1958-1966.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * ```lua
+ * elseif terrain.mindam or terrain.maxdam then            move_cost + 32
+ * elseif terrain.on_stand and not terrain.on_stand_safe then move_cost + 21
+ * elseif terrain.air_level and terrain.air_level < 0
+ *        and not ((self.can_breath.water or 0) > 0) then   move_cost + 15
+ * ```
+ *
+ * "Slow terrain will be avoided if at all possible" (:1950): burning ground,
+ * anything with an `on_stand` (the bubble's is a charge spent), and water this
+ * walker cannot breathe. Upstream reads `can_breath.water` here and no
+ * `no_breath`, and so does this. `main.ts` hands it to the explore flood.
+ */
+export function exploreSlowAt(level: LevelView, x: number, y: number): boolean {
+  const code = tileAt(level, x, y);
+  if (ON_STAND[code] !== undefined) return true;
+  const air = airOf(code);
+  return air !== undefined && air.level < 0 && !((PLAYER_BREATHER.canBreath?.water ?? 0) > 0);
+}
 
 /** What `begin` did. Three answers, never conflated — see path.ts:303-311. */
 export const TravelStart = {
@@ -578,10 +645,23 @@ export function createTravel(): Travel {
     // that predicate answers "may travel END here" and is documented as the one
     // site for it. This is a different question — "may the plan go through here"
     // — and `shared/level.ts` holds the one definition of it.
-    const route = findPath(from, to, (x, y) => canRoute(level, x, y), {
-      maxNodes: travelMaxNodes(level),
-      allowBlockedTarget: stopShort,
-    });
+    //
+    // ═══ AROUND THE POND, UNLESS THERE IS NO WAY AROUND ═══
+    // Upstream's mouse walk searches twice (engine/interface/PlayerMouse.lua:70-72):
+    // first refusing every tile the walker cannot breathe on
+    // (tome/class/Player.lua:1200-1217), then, only if that finds nothing, the
+    // plain route. `findPathAvoiding` is that pair. Clicking a pond tile makes
+    // the first search fail on the goal itself, so the walk goes the plain way.
+    // A shore reachable only by wading is still reached, and main.ts stops the
+    // walk once the lungs fall below three quarters (`losingBreath`, ui/air.ts),
+    // as tome/class/Player.lua:771-781 does.
+    const route = findPathAvoiding(
+      from,
+      to,
+      (x, y) => canRoute(level, x, y),
+      (x, y) => mouseWalkRefusesAt(level, x, y),
+      { maxNodes: travelMaxNodes(level), allowBlockedTarget: stopShort },
+    );
 
     // `[]` and null are DIFFERENT ANSWERS (path.ts:303-311) and the caller acts
     // on them differently: one is silence, the other is "no route to that tile".
