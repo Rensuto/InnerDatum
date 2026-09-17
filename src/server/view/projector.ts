@@ -254,7 +254,11 @@ export function toDisplayName(raw: string): string {
 export type WorldView = {
   level: LevelView;
   actors: ActorView[];
-  /** The dressing, absent where the floor has none. See `projectProps`. */
+  /**
+   * The dressing THESE EYES CAN SEE, absent where none of it is in sight. Built
+   * from the same seen sets the actor list is — see `projectProps`, which
+   * carries the divergence from upstream that makes it sight-only.
+   */
   props?: readonly PropView[];
 };
 
@@ -379,26 +383,54 @@ export function projectLevel(world: World): LevelView {
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════
- * THE DRESSING ON THIS FLOOR. Beside `projectLevel`, because it is the map.
+ * THE DRESSING THIS VIEWER CAN SEE. LINE OF SIGHT ONLY, AND NO MEMORY.
  * ═══════════════════════════════════════════════════════════════════════════
  *
- * NOT FOG-GATED, and that is a decision rather than an oversight. `projectLevel`
- * sends the WHOLE map and always has — CLAUDE.md states it outright: terrain is
- * remembered by `Grid.lua` and the client owns its explored mask. A prop is part
- * of the floor's picture, so gating it would make dressing the one piece of
- * terrain that pops into existence as you walk, which reads as a rendering bug
- * rather than as fog.
+ * ═══ THIS DOCBLOCK ARGUED THE OPPOSITE, AT LENGTH, AND IT WAS WRONG ═══
+ * It read *"NOT FOG-GATED, and that is a decision rather than an oversight… a
+ * prop is part of the floor's picture"*, reasoning from `projectLevel` sending
+ * the whole map. The reasoning holds for TERRAIN and does not carry to dressing:
+ * a wall drawn from memory is a wall you walked past, while a bookshelf drawn on
+ * never-seen black is the inside of a building you have never been in. MEASURED
+ * on the live server: standing in the street of Alderbrook, a viewer could see
+ * 0 of the town's 43 props by the sight rule and was sent all 43 — every desk,
+ * bed and bookshelf of every interior, painted over solid black.
  *
- * The day dressing becomes something you can INTERACT with, that is the day it
- * stops being terrain and needs the treatment `projectGroundItems` gets — and
- * this note is where that argument starts.
+ * ═══ THE RULE, AND IT IS A DELIBERATE DIVERGENCE FROM UPSTREAM ═══
+ * A prop is shown while its tile is in the viewer's CURRENT vision and is
+ * withdrawn the moment it leaves. `engine/Object.lua:28-29` gives objects
+ * `display_on_remember = true` and we do not take it here. Ruled by the author
+ * on 2026-09-17: *"the props should only be visible if you have actual line of
+ * sight with it."*
  *
- * ABSENT RATHER THAN EMPTY. Every map but a dressed delve has none, and an empty
- * array on every frame is a key the client has to test for nothing — the same
- * choice `statMods` and `birthPoints` make one file over.
+ * ═══ AND `projectGroundItems` KEEPS THE UPSTREAM RULE, DELIBERATELY ═══
+ * Floor loot below is gated on `knownTile` — seen OR remembered — and stays
+ * that way: a coat is a fact about the past you can act on, and forgetting it
+ * would make the game lie about a decision you already took. Scenery is not.
+ * The two predicates are meant to disagree; `PropsMsg` in shared/protocol.ts
+ * carries the whole argument, and the prop cases in test/server/fov.test.ts fail
+ * if this one is changed to `knownTile`.
+ *
+ * ABSENT RATHER THAN EMPTY on the map frame. Same choice `statMods` and
+ * `birthPoints` make one file over — but note that `PropsMsg`, which is how
+ * every LATER change arrives, does send `[]`: there the empty list is the
+ * withdrawal and suppressing it would leave a room furnished behind you.
  */
-export function projectProps(world: World): readonly PropView[] | undefined {
-  const placed = world.props();
+export function projectProps(
+  world: World,
+  /**
+   * Whether this viewer can see that tile RIGHT NOW — `visionOf(world, eye).seen`
+   * through `fogHas`, the same seen set the board is fogged by. NOT `knownTile`:
+   * the memory term is the one thing deliberately left out, and a caller that
+   * passes it has reintroduced the leak this parameter exists to close.
+   *
+   * ABSENT MEANS EVERY TILE, which is the GM console, the ops listener and every
+   * fixture — the same contract `projectGroundItems`' `known` states, so the two
+   * read alike at their call sites.
+   */
+  seen?: (x: number, y: number) => boolean,
+): readonly PropView[] | undefined {
+  const placed = seen === undefined ? world.props() : world.props().filter((p) => seen(p.x, p.y));
   if (placed.length === 0) return undefined;
   return placed.map((prop) => ({ x: prop.x, y: prop.y, sprite: prop.propId }));
 }
@@ -434,9 +466,14 @@ export function projectProps(world: World): readonly PropView[] | undefined {
  * `fov.test.ts` asserts that, by scraping the gateway, so a future unfiltered
  * send is a red test rather than a silent leak.
  */
-export function projectActors(world: World, eyes?: readonly SightEye[]): ActorView[] {
+export function projectActors(
+  world: World,
+  eyes?: readonly SightEye[],
+  /** See `visibleActorIds`. Absent means every player is a teammate, as it always did. */
+  teammate?: (actorId: string) => boolean,
+): ActorView[] {
   if (eyes === undefined) return world.allActors().map(toActorView);
-  const seen = visibleActorIds(world, eyes);
+  const seen = visibleActorIds(world, eyes, teammate);
   return world
     .allActors()
     .filter((actor) => seen.has(actor.id))
@@ -585,13 +622,37 @@ export function visibleActorIds(
    * passes bare tiles still compiles and still sees exactly ten.
    */
   eyes: readonly SightEye[],
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * WHICH PLAYERS COUNT AS THIS VIEWER'S OWN PARTY. The un-fogged set.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * The header's rule is *"teammates are never fogged"*, and for its whole life
+   * this function read that as `kind === Player` — every player, whoever they
+   * were playing with. On a Common realm, which `world/realms.ts` says outright
+   * is *"shared by every party in it"*, that is a leak with a friendly face: a
+   * stranger standing in a shop two streets away was on your board through the
+   * walls, because they were somebody's teammate.
+   *
+   * Upstream cannot help here — ToME has one party and no strangers — so the
+   * rule is ours and it is the one the author gave: a body that is not in YOUR
+   * party is visible only while you can see it, whether it is a husk, a
+   * townsperson or another player. `engine/Actor.lua:30-34` is remember-FALSE
+   * for all three.
+   *
+   * ABSENT MEANS EVERY PLAYER IS A TEAMMATE — exactly today's behaviour, kept
+   * for the GM console, the ops listener, every fixture, and any gateway built
+   * without a party table. The gateway passes `sameParty` against the viewer's
+   * own body.
+   */
+  teammate?: (actorId: string) => boolean,
 ): Set<string> {
   const out = new Set<string>();
   // ONE SEEN SET PER EYE, by the light there is (`visionOf`), worked out once.
   const sights = eyes.map((eye) => visionOf(world, eye).seen);
   for (const actor of world.allActors()) {
-    // See the header: teammates are never fogged.
-    if (actor.kind === ActorKind.Player) {
+    // See the header and `teammate`: your own party is never fogged.
+    if (actor.kind === ActorKind.Player && (teammate === undefined || teammate(actor.id))) {
       out.add(actor.id);
       continue;
     }
@@ -604,11 +665,29 @@ export function visibleActorIds(
  * The full snapshot sent in `welcome`, and the recovery path when the server is
  * unsure what a client knows.
  */
-export function projectWorld(world: World, eyes?: readonly SightEye[]): WorldView {
-  const props = projectProps(world);
+export function projectWorld(
+  world: World,
+  eyes?: readonly SightEye[],
+  /** See `visibleActorIds`. Absent means every player is a teammate, as it always did. */
+  teammate?: (actorId: string) => boolean,
+): WorldView {
+  /**
+   * ═══ THE DRESSING IS FOGGED BY THE SAME EYES THE BODIES ARE ═══
+   * Built here rather than handed in, so the two lists on this frame can never
+   * be gated by different sight. `visionOf` per eye, unioned exactly as
+   * `visibleActorIds` unions — and NOT `knownTile`: props carry no memory. See
+   * `projectProps`.
+   */
+  const sights = eyes?.map((eye) => visionOf(world, eye).seen);
+  const props = projectProps(
+    world,
+    sights === undefined
+      ? undefined
+      : (x, y) => sights.some((seen) => fogHas(seen, world.level.w, x, y)),
+  );
   return {
     level: projectLevel(world),
-    actors: projectActors(world, eyes),
+    actors: projectActors(world, eyes, teammate),
     ...(props === undefined ? {} : { props }),
   };
 }
@@ -637,12 +716,12 @@ export function projectWorld(world: World, eyes?: readonly SightEye[]): WorldVie
 /**
  * WHAT THE HOSTILE SIDE IS CALLED, as a group.
  *
- * The Index files people; these are the ones already filed. It must never be a
+ * The Index takes people; these are the ones already taken. It must never be a
  * creature's name — "Index Husk" on a card beside four detectives says one husk
  * is taking a turn, when what is about to happen is every hostile on the floor
  * moving at once as a single batched sweep.
  */
-const MONSTERS_DISPLAY_NAME = 'The Filed';
+const MONSTERS_DISPLAY_NAME = 'The Taken';
 
 /**
  * Class icon per player sprite family — KEYED OFF THE REAL CLASSES.
@@ -1718,10 +1797,25 @@ export function projectEffects(
  * field. The compiler stopping here and asking whether the client is allowed to
  * know IS the point.
  */
-export function projectProjectiles(world: World, eyes?: readonly SightEye[]): ProjectilesMsg {
+export function projectProjectiles(
+  world: World,
+  eyes?: readonly SightEye[],
+  /**
+   * See `visibleActorIds`. Absent means every player is a teammate, as it always did.
+   *
+   * ═══ THE PARAMETER THE THREADING MISSED ═══
+   * `teammate` was added to `visibleActorIds` and threaded through eight gateway
+   * call sites; this INTERNAL caller was left reading the two-argument form, so
+   * the one place that redacts a shooter still believed every player was on your
+   * side. A stranger's bolt kept its `sourceId` on your wire — the client could
+   * name who was shooting out of a room it cannot see into. Found by mutation
+   * audit, and it is exactly the "parameter added, body untouched" shape.
+   */
+  teammate?: (actorId: string) => boolean,
+): ProjectilesMsg {
   const projectiles: ProjectileView[] = [];
   // Resolved once rather than per orb: `sourceId` is redacted against it below.
-  const seen = eyes === undefined ? undefined : visibleActorIds(world, eyes);
+  const seen = eyes === undefined ? undefined : visibleActorIds(world, eyes, teammate);
   const sights = eyes?.map((eye) => visionOf(world, eye).seen);
 
   for (const proj of world.projectilesInFlight()) {

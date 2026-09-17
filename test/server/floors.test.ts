@@ -395,7 +395,22 @@ describe('the stairs, over the wire', () => {
     clear(first);
     const stairs = stairsDownOf(first);
     if (stairs === null) throw new Error('the first floor has no stair down');
-    // THE STAIR IS ON THE MAP the player is sent, where upstream names it.
+    /**
+     * THE STAIR IS ON THE MAP the player is sent, where upstream names it —
+     * ONCE THAT PLAYER HAS BEEN WITHIN SIGHT OF IT.
+     *
+     * This used to read the frame that arrived with the floor, and it passed
+     * because `markersFor` drew every stair to everybody. It does not any more:
+     * a way on is terrain, `engine/Grid.lua:30-32` remembers terrain, and a
+     * stair painted through rock on never-seen black was half of the report that
+     * rule came from. The absence half is pinned on a hand-built map in
+     * test/server/fov.test.ts, where the geometry is not the mapgen's to change.
+     */
+    const beside = STEPS.map((s) => ({ x: stairs.x + s.dx, y: stairs.y + s.dy })).find(
+      (t) => canWalk(first.world.level, t.x, t.y) && first.world.actorAt(t.x, t.y) === undefined,
+    );
+    if (beside === undefined) throw new Error('the stair has no open ground beside it');
+    await stepOnto(client, beside);
     const map = [...client.frames]
       .reverse()
       .find((f) => (f['t'] === 'sites' || f['t'] === 'realm') && Array.isArray(f['sites']));

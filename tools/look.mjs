@@ -52,6 +52,8 @@ import {
   LOCAL_WALL_FACE_SPRITES,
   TILE_SPRITES,
   localDoorSpriteId,
+  loneTreeGroundCode,
+  loneTreeSpriteId,
   settlementRoofSpriteId,
   tileSpritesForRealm,
   tileVariant,
@@ -682,7 +684,16 @@ for (let y = 0; y < view.h; y += 1) {
     const code = level.tiles[ty * level.w + tx];
     const roofId = realm.kind === 'overworld' ? settlementRoofSpriteId(code, tx, ty) : null;
     const doorId = realm.kind === 'overworld' ? null : localDoorSpriteId(level, code, tx, ty);
-    if (doorId !== null) {
+    // A lone tree is ground plus an overlay, exactly as the browser draws it
+    // (`paintLoneTree`). The decision itself is imported, never restated.
+    const treeId = realm.kind === 'overworld' ? null : loneTreeSpriteId(level, tx, ty);
+    if (treeId !== null) {
+      const ground = terrainSprite(loneTreeGroundCode(level, tx, ty), tx, ty);
+      if (ground.sprite === null) missing.set(ground.id, (missing.get(ground.id) ?? 0) + 1);
+      else blit(canvas, ground.sprite, x * PX, y * PX, PX);
+      if (blit(canvas, spriteOf(treeId), x * PX, y * PX, PX)) painted += 1;
+      else missing.set(treeId, (missing.get(treeId) ?? 0) + 1);
+    } else if (doorId !== null) {
       const orientation = doorId.endsWith('_ns') ? 'ns' : 'ew';
       const firstNeighbor = orientation === 'ns' ? codeAt(tx, ty - 1) : codeAt(tx - 1, ty);
       const secondNeighbor = orientation === 'ns' ? codeAt(tx, ty + 1) : codeAt(tx + 1, ty);

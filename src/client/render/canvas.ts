@@ -2032,6 +2032,124 @@ export function localDoorSpriteId(
 }
 
 /**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * A TREE ON ITS OWN IS A TREE STANDING ON GROUND, NOT A CELL MADE OF WOOD.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `LOCAL_TILE_SPRITES[TREES]` is a CANOPY: one cell of the inside of a wood,
+ * authored to tile against itself. Repeated across a mass it reads as forest,
+ * which is the whole reason it exists. One cell of it on its own does not:
+ * reported with a screenshot of Alderbrook as a *dark square* — a flat patch of
+ * canopy with no trunk, no ground around it, and a four-sided `paintBarrierEdge`
+ * rim boxing it in because TREES is not walkable.
+ *
+ * And lone trees are everywhere, because they are authored that way: the town
+ * plans plant single cells (`server/content/towns.ts`, `plan.trees`), the
+ * Rhaloren camp's `external_floor` deals one TREES in sixteen
+ * (`world/realms.ts`), and the breeding pits deal one TREES among eleven
+ * UNDERGROUND_TREE (`shared/mapgen/zones.ts`, upstream's own table).
+ *
+ * So a lone tree is COMPOSITED exactly as a door is: the ground its neighbours
+ * stand on, then a hard-alpha 64x64 tree laid over it. Same shape of answer as
+ * `paintLocalDoor` and for the same reason — the cell is one OBJECT sitting on
+ * ground, not a material that fills the cell.
+ */
+export const LOCAL_LONE_TREE_SPRITES: readonly string[] = [
+  'tile_local_tree_single',
+  'tile_local_tree_single_b',
+  'tile_local_tree_single_c',
+  'tile_local_tree_single_d',
+  'tile_local_tree_single_e',
+  'tile_local_tree_single_f',
+  'tile_local_tree_single_g',
+  'tile_local_tree_single_h',
+];
+
+/**
+ * The cardinal neighbours that are ON THE MAP, in N, E, S, W order.
+ *
+ * SKIPPED RATHER THAN READ, off the edge. `tileAt` fails closed to WALL
+ * (`shared/level.ts`), which is right for a sight or a walk question and wrong
+ * for both questions below: it would make every tree on the map border lone (a
+ * wall is not a tree) and then hand it a WALL to stand on. A town's boundary
+ * ring is TREES, so that is not a hypothetical.
+ */
+function cardinalCodesOnMap(level: LevelView, tx: number, ty: number): TileCode[] {
+  const out: TileCode[] = [];
+  for (const [dx, dy] of [
+    [0, -1],
+    [1, 0],
+    [0, 1],
+    [-1, 0],
+  ] as const) {
+    if (!inBounds(tx + dx, ty + dy, level.w, level.h)) continue;
+    out.push(tileAt(level, tx + dx, ty + dy));
+  }
+  return out;
+}
+
+/** The code appearing most often, ties by the N, E, S, W scan order. */
+function commonest(codes: readonly TileCode[]): TileCode | null {
+  let best: TileCode | null = null;
+  let bestCount = 0;
+  for (const code of codes) {
+    const count = codes.filter((other) => other === code).length;
+    if (count > bestCount) {
+      best = code;
+      bestCount = count;
+    }
+  }
+  return best;
+}
+
+/**
+ * Is this cell a tree standing alone rather than part of a wood?
+ *
+ * AT MOST ONE TREES NEIGHBOUR — i.e. no TREES on at least three of its four
+ * sides. A cell with two is the end of a line of wood and keeps the canopy: a
+ * hedge drawn as a row of separate trees has gaps in it that a player would
+ * read as a way through, and it is not one.
+ *
+ * STRICTLY `TREES`, never UNDERGROUND_TREE or COLD_FOREST. Those are their own
+ * materials with their own art, and a lone TREES inside a thicket of them is
+ * upstream's own one-in-twelve tree — a single tree standing in the thicket,
+ * which is exactly what this then draws.
+ */
+export function isLoneTree(level: LevelView, tx: number, ty: number): boolean {
+  if (tileAt(level, tx, ty) !== TileCode.TREES) return false;
+  const trees = cardinalCodesOnMap(level, tx, ty).filter((code) => code === TileCode.TREES);
+  return trees.length <= 1;
+}
+
+/**
+ * What a lone tree stands on: the commonest ground among its neighbours, else
+ * the commonest neighbour of any kind.
+ *
+ * `isDoorGround` IS THE GROUND QUESTION, not a door question — walkable and not
+ * an open door, because an open door's picture is a doorway and never a floor.
+ * Mirroring `localDoorGroundPair` here is deliberate: both painters are asking
+ * "which of my neighbours is a piece of ground I can continue under myself".
+ *
+ * The second term is what draws the breeding-pit tree: its neighbours are all
+ * UNDERGROUND_TREE, none of them walkable, and the thicket is the right thing
+ * for it to stand in. The final GREEN is what the town plans surround their
+ * trees with (`shared/mapgen/town.ts`) and is reachable only on a level with no
+ * cardinal neighbours at all.
+ */
+export function loneTreeGroundCode(level: LevelView, tx: number, ty: number): TileCode {
+  const around = cardinalCodesOnMap(level, tx, ty);
+  return commonest(around.filter(isDoorGround)) ?? commonest(around) ?? TileCode.GREEN;
+}
+
+/** The single-tree overlay for this cell, or null where the canopy still wins. */
+export function loneTreeSpriteId(level: LevelView, tx: number, ty: number): string | null {
+  if (!isLoneTree(level, tx, ty)) return null;
+  // The same positional hash every other variant set is dealt by, so one cell
+  // draws the same tree every frame and on every client.
+  return LOCAL_LONE_TREE_SPRITES[tileVariant(tx, ty, LOCAL_LONE_TREE_SPRITES.length)] ?? null;
+}
+
+/**
  * Player-scale terrain for every world material currently used by a Common or
  * Inner realm.
  *
@@ -3303,6 +3421,34 @@ export function createRenderer(options: RendererOptions): Renderer {
   }
 
   /**
+   * Stand a single tree on the ground around it. See `LOCAL_LONE_TREE_SPRITES`.
+   *
+   * FALSE IF EITHER HALF IS MISSING, and that is the door's rule: the art tree
+   * is gitignored, so a bare clone has neither the overlay nor the ground, and
+   * falling through to the canopy (and from there to `tileFill`) is a better
+   * answer than a tree floating over nothing or a bare patch of grass where a
+   * blocking cell is.
+   */
+  function paintLoneTree(
+    level: LevelView,
+    table: TerrainSpriteTable,
+    code: TileCode,
+    tx: number,
+    ty: number,
+    sx: number,
+    sy: number,
+  ): boolean {
+    if (code !== TileCode.TREES) return false;
+    const id = loneTreeSpriteId(level, tx, ty);
+    if (id === null) return false;
+    const tree = sprites.sprite(id);
+    if (tree === undefined) return false;
+    if (!paintTerrain(table, loneTreeGroundCode(level, tx, ty), tx, ty, sx, sy)) return false;
+    backCtx.drawImage(tree.image, sx, sy, TILE_PX, TILE_PX);
+    return true;
+  }
+
+  /**
    * Draw the places you can walk into.
    *
    * FALLS BACK TO A DRAWN MARK, NOT TO A VIOLET BOX. `tile_ow_site_*` may not be
@@ -3636,7 +3782,14 @@ export function createRenderer(options: RendererOptions): Renderer {
         // THE LINE OVER THE GROUND. Only when a terrain sprite actually
         // drew — see `paintTransport`.
         const roofId = paintsWorldTopology ? settlementRoofSpriteId(code, tx, ty) : null;
+        // A LONE TREE IS A LOCAL ANSWER ONLY. At world scale a TREES cell is a
+        // wood on a map, not a tree you walk past, and `TILE_SPRITES` draws it
+        // that way — so this runs under the same `!paintsWorldTopology` guard
+        // the door does, and its rim below is dropped only where it actually
+        // drew.
+        const loneTree = !paintsWorldTopology && paintLoneTree(level, table, code, tx, ty, sx, sy);
         const painted =
+          loneTree ||
           (!paintsWorldTopology && paintLocalDoor(level, table, code, tx, ty, sx, sy)) ||
           paintTerrain(table, code, tx, ty, sx, sy, roofId ?? undefined);
         if (painted) {
@@ -3665,8 +3818,15 @@ export function createRenderer(options: RendererOptions): Renderer {
 
         // The face establishes actual architectural height; the unconditional
         // value rim keeps every other blocking boundary readable.
+        //
+        // EXCEPT ON A CELL THE SINGLE-TREE PICTURE DREW. The rim exists to
+        // outline a MASS — a range, a wood, a coast — and a lone tree is not
+        // one: four sides of INK around it is the black box the screenshot was
+        // complaining about, and the drawn tree says "you do not walk here"
+        // better than a border does. Gated on `loneTree` rather than on
+        // `isLoneTree` so a clone without the art keeps its rim with its canopy.
         paintLocalWallFace(level, realmKind, code, tx, ty, sx, sy);
-        paintBarrierEdge(level, code, tx, ty, sx, sy);
+        if (!loneTree) paintBarrierEdge(level, code, tx, ty, sx, sy);
       }
     }
   }
@@ -3887,6 +4047,22 @@ export function createRenderer(options: RendererOptions): Renderer {
    * In the ground band and before `paintLoot`, so a coat dropped on a sigil
    * reads on top of it. Dressing is the least urgent thing on the screen and
    * must never sit over a body, an orb or a marker.
+   *
+   * ═══ AND IT DOES NOT TEST THE FOG. DO NOT ADD THE TEST. ═══
+   * This list is LINE OF SIGHT ONLY and has NO MEMORY: the server sends a prop
+   * while its tile is in this viewer's current vision and WITHDRAWS it the
+   * moment it leaves (`PropsMsg`, a deliberate divergence from upstream's
+   * `display_on_remember` ruled on 2026-09-17 — floor loot below still follows
+   * the upstream rule, and the two are meant to disagree). So there is nothing
+   * left to gate here, and a `vision.seen` check added to this loop would be a
+   * SECOND copy of the sight rule in the one process that must never hold one.
+   *
+   * It is worth knowing what this pass used to do, because the bug was invisible
+   * from the code: props rode the `realm` frame, every client in the realm held
+   * every prop on the floor, and this loop drew all of them — over alpha-1 black
+   * ground, because it runs above `paintLight`. Measured on the live game:
+   * 0 of Alderbrook's 43 props in sight from the street, 43 on the wire and on
+   * the screen. The fix is the frame, not a belt here.
    */
   function paintProps(props: readonly PropMarker[], camX: number, camY: number): void {
     if (props.length === 0) return;

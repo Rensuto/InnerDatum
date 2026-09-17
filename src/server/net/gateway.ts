@@ -63,6 +63,7 @@ import type { Purse } from '../../shared/respec.ts';
 import type { RestResult } from '../../shared/rest.ts';
 import {
   ActorKind,
+  BeaconKind,
   ErasedReason,
   ErrorCode,
   LogLane,
@@ -229,7 +230,7 @@ import { loreById, loreIdOfNote } from '../content/lore.ts';
 // saves.ts's only reference back to this file is `import type`, so this arrow
 // adds no runtime cycle.
 import { UNASSIGNED_CLASS } from '../persist/saves.ts';
-import { knownTile } from '../../shared/sight.ts';
+import { MINIMAP_REVEAL_RADIUS, knownTile, sightDistance } from '../../shared/sight.ts';
 import { cutWindow, rememberSeen } from '../../shared/vision.ts';
 import { visionOf } from '../view/eyesight.ts';
 import { attackBlockedReason, inspectActor } from '../view/inspect.ts';
@@ -247,6 +248,7 @@ import {
   statGainLines,
   projectParty,
   projectPartyState,
+  projectProps,
   projectShop,
   projectProjectiles,
   projectZones,
@@ -346,6 +348,7 @@ import type {
   LogLine,
   PanelLayoutView,
   PartyAction,
+  BeaconView,
   ResourceView,
   ServerMsg,
   SiteView,
@@ -562,6 +565,24 @@ type Session = {
    */
   visible: Set<string>;
   /**
+   * WHERE THE BODY STOOD WHEN `visible` WAS LAST WRITTEN. Null for a socket
+   * with no body on the map it is looking at.
+   *
+   * The ledger above is only meaningful FROM SOMEWHERE: it answers "what can
+   * this viewer see" as computed at ONE TILE, and the sweep filter reads it a
+   * whole pump later. See `jumpedVisible`, the one reader, and the sweep filter
+   * in `pumpRealm`, which carries the argument.
+   *
+   * ═══ WRITTEN BESIDE EVERY WRITE OF `visible`, AND THAT IS THE INVARIANT ═══
+   * Four places write the ledger — `reconcileSight`, `resyncBoard`, `sendRealm`
+   * and `welcome` — and every one of them calls `anchorLedger` on the next line.
+   * A tile carried over from the map a body has LEFT would be compared against
+   * coordinates from a different world, which is why this is not allowed to lag
+   * behind the set it describes even by one frame. A scrape in
+   * test/server/fov.test.ts keeps the four in step.
+   */
+  visibleAt: TileXY | null;
+  /**
    * The last `ground` frame this socket was sent, as its own memo key.
    *
    * PER SESSION RATHER THAN PER REALM, because since FOV the frame is per
@@ -578,6 +599,23 @@ type Session = {
    * only the first has stepped on. See `TrapsMsg`.
    */
   lastTrapsKey?: string;
+  /**
+   * The last `props` frame this socket was sent, as its own memo key.
+   *
+   * PER SESSION, and one term narrower than the ground frame's reason: dressing
+   * is gated on what this viewer SEES THIS INSTANT (`visionOf`), not on what
+   * they remember, so it moves every time they walk round a corner and no two
+   * viewers in a town are ever owed the same list. A realm-wide memo would
+   * compare one player's room against another's and suppress the send.
+   *
+   * ═══ THE EMPTY FRAME IS THE WITHDRAWAL, SO THE SEED MATTERS ═══
+   * Seeded with `NO_PROPS_KEY` rather than null: a client believes in no
+   * dressing until told otherwise, so a viewer whose first pump sees none sends
+   * nothing. And a viewer who walks OUT of a furnished room moves the key from a
+   * populated list to `'[]'`, which is a change — so `[]` goes out and the
+   * furniture comes off their screen. See `PropsMsg`.
+   */
+  lastPropsKey?: string;
   /**
    * The last `effects`, `projectiles` and `zones` frames this socket was sent,
    * each as its own memo key.
@@ -1164,7 +1202,7 @@ export type PumpResult = {
    * through `TurnEngine.reap` in the one window where it is safe — after the
    * Record lane has narrated the kill and before the resync ships the actor
    * list. Reap any earlier and two readers degrade silently: `hitToWire` ships
-   * `maxHp: 0` and `nameOf` narrates "someone is unfiled".
+   * `maxHp: 0` and `nameOf` narrates "someone is unmade".
    *
    * IT DOES NOT SAVE AN ORB IN FLIGHT, whatever this note used to say. The
    * window is one pump wide and the wraith's shot arrives two or three game
@@ -2813,6 +2851,15 @@ const NO_TERRAIN_KEY = '[]';
 const NO_TRAPS_KEY = '[]';
 
 /**
+ * AND FOR THE DRESSING, which is the sharpest case of the four.
+ *
+ * A zone burns out; a room's furniture leaves sight every time somebody steps
+ * back into the street, several times a minute. So the empty frame here is not
+ * an edge case at all — it is half of what this frame does. See `PropsMsg`.
+ */
+const NO_PROPS_KEY = '[]';
+
+/**
  * AN EMPTY BAG AND AN EMPTY PAPER DOLL, as the per-session memo key spells them.
  *
  * Same seeding argument as `NO_PROJECTILES_KEY`, one level down: the key is
@@ -3231,7 +3278,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
         realm.world,
         effects,
         opts.talentEffects,
-        visibleActorIds(realm.world, eyesOf(session, realm.world)),
+        visibleActorIds(realm.world, eyesOf(session, realm.world), teammateFor(session)),
       );
       const key = JSON.stringify(msg.actors);
       if (key === session.lastEffectsKey) continue;
@@ -3270,7 +3317,11 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     // viewer's eyes, and a shooter that viewer cannot see is not named.
     for (const session of sessions.values()) {
       if (!session.helloDone || realmFor(session).id !== realm.id) continue;
-      const msg = projectProjectiles(realm.world, eyesOf(session, realm.world));
+      const msg = projectProjectiles(
+        realm.world,
+        eyesOf(session, realm.world),
+        teammateFor(session),
+      );
       const key = JSON.stringify(msg.projectiles);
       if (key === (session.lastProjectilesKey ?? NO_PROJECTILES_KEY)) continue;
       session.lastProjectilesKey = key;
@@ -3309,7 +3360,11 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
         ? [...sessions.values()].filter((s) => s.helloDone && realmFor(s).id === realm.id)
         : [only];
     for (const session of recipients) {
-      const msg = projectProjectiles(realm.world, eyesOf(session, realm.world));
+      const msg = projectProjectiles(
+        realm.world,
+        eyesOf(session, realm.world),
+        teammateFor(session),
+      );
       if (msg.projectiles.length === 0) continue;
       session.lastProjectilesKey = JSON.stringify(msg.projectiles);
       send(session.socket, msg);
@@ -3525,6 +3580,45 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       if (key === (session.lastGroundKey ?? NO_GROUND_KEY)) continue;
       session.lastGroundKey = key;
       send(session.socket, msg);
+    }
+  };
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE DRESSING EACH VIEWER CAN SEE — AND THIS IS ALSO THE WITHDRAWAL PATH.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * A line-for-line sibling of `broadcastGroundIfChanged` above with ONE
+   * deliberate difference, and the whole commit is in it: the predicate is
+   * `seenTilesFor`, not `knownTilesFor`. Memory is the term that is left out.
+   * See `projectProps` for the rule and `PropsMsg` for the divergence from
+   * upstream that it is.
+   *
+   * ═══ IT MOVES BECAUSE THE VIEWER MOVED, WHICH IS UNLIKE EVERY FRAME BESIDE IT ═══
+   * The floor, the traps and the burning ground change when the WORLD changes. A
+   * prop never changes at all — it is laid once when the realm is built and is
+   * then as static as the walls — so every send and every withdrawal here is
+   * caused by the recipient walking. That is why it belongs in the pump rather
+   * than being pushed from a verb: there is no verb.
+   *
+   * THE EMPTY LIST IS SENT. `NO_PROPS_KEY` seeds the memo, so a viewer who has
+   * never seen dressing is told nothing; a viewer who walks out of a furnished
+   * room moves from a populated key to `'[]'`, which is a change, and the `[]`
+   * that goes out is what takes the furniture off their screen.
+   */
+  const broadcastPropsIfChanged = (realm: PumpTarget): void => {
+    for (const session of sessions.values()) {
+      if (!session.helloDone || realmFor(session).id !== realm.id) continue;
+      const props = projectProps(realm.world, seenTilesFor(session, realm)) ?? [];
+      const key = JSON.stringify(props);
+      if (key === (session.lastPropsKey ?? NO_PROPS_KEY)) continue;
+      session.lastPropsKey = key;
+      send(session.socket, {
+        v: PROTOCOL_VERSION,
+        t: 'props',
+        realmId: realm.id,
+        props,
+      });
     }
   };
 
@@ -4160,9 +4254,81 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    * The answer lets the caller skip work: a party standing still must not write
    * a file on every pump, and standing still is what a party does most.
    */
+  /**
+   * EVERY CELL ON THIS MAP THAT IS A WAY IN OR A WAY ON — see `revealFor`, which
+   * is why they are listed, and `markersFor`, which is what reads the answer.
+   *
+   * THE SAME TWO SITE IDS AND THE SAME `realm.spawns` the two marker builders
+   * read, so a floor that grows a second stair grows a second remembered cell
+   * with no change here. Authored places are NOT in this list: a town is drawn
+   * on the world map whether or not anybody has stood in it, and its secrecy is
+   * `SiteDef.hidden`'s business.
+   */
+  const wayMarkCells = (realm: Realm): TileXY[] => {
+    const out: TileXY[] = [];
+    for (const [cell, siteId] of realm.sites) {
+      if (siteId !== STAIRS_DOWN_SITE_ID && siteId !== EXIT_SITE_ID) continue;
+      const parts = cell.split(',');
+      out.push({ x: Number(parts[0]), y: Number(parts[1]) });
+    }
+    for (const spawn of realm.spawns) out.push({ x: spawn.x, y: spawn.y });
+    return out;
+  };
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * A STAIR IS ALWAYS REMEMBERED, AND OURS COULD NOT BE — SO IT IS REMEMBERED HERE.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Upstream's stairs are GRIDS carrying `always_remember = true`
+   * (`data/general/grids/basic.lua` DOWN and UP; `engine/Grid.lua:30-32` is the
+   * family rule), so a player who has seen one keeps it on their map for good,
+   * lit or not. Ours are not terrain at all — they are entries in `realm.sites`
+   * standing on ordinary floor — so `computeVision` classifies them by the
+   * GROUND under them, and `ALWAYS_REMEMBER` is false for `FLOOR` and for
+   * `SOOT`. In an unlit cave that means a stair you found with your own lantern
+   * is forgotten the moment you step off it.
+   *
+   * FOUND THE MOMENT the marker layer was gated on `knownTile` at all: the
+   * Undermost's last floor stopped drawing its own threshold two steps after
+   * arriving on it. A way out that blinks off as you walk away is worse than one
+   * drawn through rock, and both are wrong.
+   *
+   * ═══ A LEDGER OF ITS OWN, AND THE TERRAIN MEMORY IS NOT IT ═══
+   * The obvious implementation — set the bit in `fogFor(actorId, realm)` — was
+   * written first and is wrong, and a test said so within the minute:
+   * `darkness.test.ts`'s *"shows the ground its lantern lights, KEEPS NONE OF
+   * IT"* measures that the remembered bitset does not hold dark ground, and the
+   * overworld's own spawn tile is inside the lantern. That bitset is the TERRAIN
+   * memory; the client draws ground from it, and a cave floor drawn as
+   * remembered because there is a stair on it is a lie about the ground told to
+   * fix a fact about a marker. So the fact about the marker lives here.
+   *
+   * IN MEMORY AND NOT PERSISTED, exactly as `filed` and `enteredFrom` are: a
+   * delve is reaped when it empties, and the one map that outlives a restart is
+   * the overworld, whose only way mark is the tile you are standing on.
+   */
+  const waysSeen = new Map<string, Set<string>>();
+  const wayKey = (realmId: string, x: number, y: number): string =>
+    `${realmId}:${String(x)},${String(y)}`;
+  const knowsWay = (actorId: string | undefined, realmId: string, x: number, y: number): boolean =>
+    actorId !== undefined && waysSeen.get(actorId)?.has(wayKey(realmId, x, y)) === true;
+
   const revealFor = (realm: Realm, actorId: string, body: Actor): boolean => {
     const memory = fogFor(actorId, realm);
-    return rememberSeen(memory, visionOf(realm.world, body).remember);
+    const vision = visionOf(realm.world, body);
+    const changed = rememberSeen(memory, vision.remember);
+    // AND THE WAYS IN AND ON THIS CHARACTER CAN SEE FROM HERE — see `waysSeen`.
+    // Deliberately NOT folded into `changed`: that answer drives `queueSave`,
+    // and this ledger is not saved.
+    const w = realm.world.level.w;
+    for (const cell of wayMarkCells(realm)) {
+      if (!fogHas(vision.seen, w, cell.x, cell.y)) continue;
+      const mine = waysSeen.get(actorId) ?? new Set<string>();
+      mine.add(wayKey(realm.id, cell.x, cell.y));
+      waysSeen.set(actorId, mine);
+    }
+    return changed;
   };
 
   /**
@@ -4758,7 +4924,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       scoped,
       bellMs,
       opts.downed,
-      visibleActorIds(world, eyesOf(session, world)),
+      visibleActorIds(world, eyesOf(session, world), teammateFor(session)),
     );
     // ═══ SENT WHEN THIS VIEWER'S FRAME MOVED ═══
     // The barrier terms and the players' hit points, as the per-realm key had
@@ -5890,6 +6056,59 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
 
   /**
    * ═══════════════════════════════════════════════════════════════════════════
+   * WHICH TILES A CHARACTER CAN SEE THIS INSTANT. THE ONE ABOVE, MINUS MEMORY.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * The seen set and nothing else — no `remembered`, no `knownTile`. It is
+   * deliberately NOT a variant of `knownTilesFor` with a flag: the two answer
+   * different questions and the whole point of the props rule is that the second
+   * term is absent, so a boolean parameter would put the leak one argument away.
+   *
+   * A body that is not in this realm, or a session with none, sees NOTHING here
+   * rather than everything: `knownTilesFor` can fall back on a memory, and this
+   * cannot, so the safe answer is the closed one.
+   *
+   * Used for dressing (`broadcastPropsIfChanged`). See `projectProps` for why
+   * that is the rule, and `PropsMsg` for the divergence from upstream it is.
+   */
+  const seenTilesFor = (
+    session: Session,
+    realm: PumpTarget,
+  ): ((x: number, y: number) => boolean) => {
+    const world = realm.world;
+    const eye = eyesOf(session, world).at(0);
+    if (eye === undefined) return () => false;
+    const seen = visionOf(world, eye).seen;
+    return (x, y) => fogHas(seen, world.level.w, x, y);
+  };
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * WHOSE BODIES THIS VIEWER IS NEVER FOGGED FROM — their own party, and only it.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `visibleActorIds` exempted every `ActorKind.Player` for its whole life, which
+   * on a Common realm — *"shared by every party in it"* (`world/realms.ts`) — put
+   * strangers on your board through the walls of Alderbrook. The exemption is the
+   * PARTY, not the kind.
+   *
+   * NO PARTY TABLE MEANS THE OLD RULE, for a gateway built with `{world, engine}`
+   * alone: every player is a teammate, and every fixture that predates parties
+   * behaves exactly as it did. A session with no body of its own is in the same
+   * position and gets the same answer.
+   *
+   * `sameParty` is true for `a === b` — you are in your own party — so the viewer
+   * is never fogged from themselves by this.
+   */
+  const teammateFor = (session: Session): ((actorId: string) => boolean) | undefined => {
+    const parties = opts.parties;
+    const self = session.actorId;
+    if (parties === undefined || self === null) return undefined;
+    return (actorId) => sameParty(parties, self, actorId);
+  };
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
    * ONE VIEWER'S EYES: THEIR OWN BODY, AND NOBODY ELSE'S.
    * ═══════════════════════════════════════════════════════════════════════════
    *
@@ -5916,6 +6135,45 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
   };
 
   /**
+   * PIN THE LEDGER TO THE TILE IT WAS COMPUTED AT — see `Session.visibleAt`.
+   *
+   * Called on the line after every write of `session.visible`, so the pair can
+   * never describe different moments.
+   */
+  const anchorLedger = (session: Session, world: World): void => {
+    const body = session.actorId === null ? undefined : world.getActor(session.actorId);
+    session.visibleAt = body === undefined ? null : { x: body.x, y: body.y };
+  };
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE LEDGER, NARROWED TO NOW, FOR A VIEWER WHO DID NOT WALK HERE.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * The whole argument — which case this fixes, which three it must not touch,
+   * and why it is an intersection rather than a recomputation — is on the sweep
+   * filter in `pumpRealm`, its only caller. This is the arithmetic.
+   *
+   * CHEBYSHEV AND `> 1`, because a diagonal is one step in this game and the
+   * four cases the sweep filter works through are exactly the one-step cases.
+   * A body that did not move at all is `0` and takes the cheap path too, so an
+   * idle realm never pays for a sight sweep it does not need.
+   *
+   * @returns `undefined` when the stale ledger is the right answer, which is
+   *   every pump that is not a teleport — the caller falls back to it, and the
+   *   sweep filter's own note is why that fallback is correct and not lazy.
+   */
+  const jumpedVisible = (session: Session, world: World): Set<string> | undefined => {
+    const from = session.visibleAt;
+    if (from === null || session.actorId === null) return undefined;
+    const body = world.getActor(session.actorId);
+    if (body === undefined) return undefined;
+    if (Math.max(Math.abs(body.x - from.x), Math.abs(body.y - from.y)) <= 1) return undefined;
+    const now = visibleActorIds(world, eyesOf(session, world), teammateFor(session));
+    return new Set([...session.visible].filter((id) => now.has(id)));
+  };
+
+  /**
    * ═══════════════════════════════════════════════════════════════════════════
    * EACH VIEWER'S EYES, AND THE FRAMES THEIR CLIENT IS OWED BECAUSE OF THEM.
    * ═══════════════════════════════════════════════════════════════════════════
@@ -5939,7 +6197,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
 
     for (const session of sessions.values()) {
       if (!session.helloDone || realmFor(session).id !== realmId) continue;
-      const seen = visibleActorIds(world, eyesOf(session, world));
+      const seen = visibleActorIds(world, eyesOf(session, world), teammateFor(session));
 
       // ENTERED SIGHT. `joined` carries the whole `ActorView`, which is exactly
       // what a client that has never held this actor needs — sprite, maxHp and
@@ -5960,6 +6218,9 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
         send(session.socket, { v: PROTOCOL_VERSION, t: 'left', id });
         session.visible.delete(id);
       }
+
+      // AND WHERE IT WAS ALL COMPUTED FROM — see `Session.visibleAt`.
+      anchorLedger(session, world);
     }
   };
 
@@ -5996,18 +6257,57 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     }
   };
 
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * AND `joined` IS NOT A BROADCAST, BECAUSE `ActorView` IS THE WHOLE BODY.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `announceLeft` above carries an ID and nothing else, so a client that never
+   * held it drops it and learns nothing. `joined` carries `toActorView` — name,
+   * sprite, exact tile, hp — and this used to `broadcast` it to the whole realm.
+   *
+   * ═══ IT WAS CORRECT UNTIL THE PARTY BECAME THE EXEMPTION ═══
+   * For its whole life `visibleActorIds` exempted every `ActorKind.Player`, so
+   * every player in the realm was going to hold every other one a tick later
+   * anyway and announcing early cost nothing. `teammateFor` ended that: a
+   * stranger is now fogged like a husk. MEASURED on the live gateway — a player
+   * hiding indoors, 45 tiles and several walls from the spawn, received the full
+   * `ActorView` of a stranger crossing into Alderbrook, and the `visible.add`
+   * below wrote that stranger into the ledger the sweep filter reads from.
+   *
+   * `reconcileSight` corrected the board one frame later, which is why nothing
+   * LOOKED wrong. The data had already reached the browser, and this is the rule
+   * the run exists to enforce: what you cannot see is not sent.
+   *
+   * ═══ WHY IT IS NOT SIMPLY DELETED ═══
+   * All three callers (`hello`, `leaveRealm`, `crossIntoSite`) end in
+   * `pumpAndBroadcast`, whose `reconcileSight` would announce the same body to
+   * the same sessions — so deleting the calls outright is nearly a no-op. Nearly
+   * is the problem: `reconcileSight` runs per REALM, and the hello path pumps
+   * only the realm the joiner is in, so the announce and the pump are not
+   * provably the same audience for every future caller. Keeping the function and
+   * giving it the fog costs one sweep on a rare event and cannot regress.
+   *
+   * ONE AUTHORITY: `visibleActorIds` with this session's own eyes and its own
+   * party predicate — the same call `reconcileSight` makes, so the two can never
+   * disagree about a body. A teammate arriving out of sight is still announced,
+   * because the predicate exempts them exactly as it does there.
+   */
   const announceJoined = (
     actor: Parameters<typeof toActorView>[0],
     exceptConnId?: string,
     realmId?: string,
   ): void => {
-    broadcast(
-      { v: PROTOCOL_VERSION, t: 'joined', actor: toActorView(actor) },
-      exceptConnId,
-      realmId,
-    );
     for (const session of sessions.values()) {
-      if (reachedBy(session, exceptConnId, realmId)) session.visible.add(actor.id);
+      if (!reachedBy(session, exceptConnId, realmId)) continue;
+      const world = realmFor(session).world;
+      const seen = visibleActorIds(world, eyesOf(session, world), teammateFor(session));
+      if (!seen.has(actor.id)) continue;
+      send(session.socket, { v: PROTOCOL_VERSION, t: 'joined', actor: toActorView(actor) });
+      // THE LEDGER MOVES WITH THE FRAME AND ONLY WITH IT — see `Session.visible`.
+      // Writing the id for a viewer that was not sent the body is what made the
+      // sweep filter hand out moves for a stranger it had never announced.
+      session.visible.add(actor.id);
     }
   };
 
@@ -6025,11 +6325,12 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     for (const session of sessions.values()) {
       if (!session.helloDone || realmFor(session).id !== realmId) continue;
       if (session.connId === exceptConnId) continue;
-      const actors = projectActors(world, eyesOf(session, world));
+      const actors = projectActors(world, eyesOf(session, world), teammateFor(session));
       send(session.socket, { v: PROTOCOL_VERSION, t: 'state', actors });
       // THE LEDGER IS THE FRAME'S OWN ID LIST, not a second computation that
       // could disagree with it. See `sendRealm`.
       session.visible = new Set(actors.map((actor) => actor.id));
+      anchorLedger(session, world);
     }
   };
 
@@ -6324,12 +6625,38 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
      * Recomputing visibility here instead would break the second case: the move
      * would arrive for an actor the client has never been told about, which is
      * exactly the frame `client/main.ts:4940` throws away with a warning.
+     *
+     * ═══ AND ALL FOUR OF THEM ASSUME THE VIEWER TOOK AT MOST ONE STEP ═══
+     * `phase_door_rune` (`content/origins.ts`, `range = 10`) puts a player ten
+     * tiles away inside one pump, and `recall` and a forced swap do the same
+     * kind of thing. The ledger then describes what was visible from the tile
+     * they LEFT, and the monsters' moves for that turn go out under it.
+     * MEASURED over 176 relocations: 20 sweep frames carried moves for bodies
+     * 40+ tiles from the viewer's new position — e.g. a move at 59,2 sent to a
+     * viewer standing at 13,4. Under 800 legal one-tile steps it never fired
+     * once, which is why walking never showed it.
+     *
+     * ═══ AN INTERSECTION, NEVER A REPLACEMENT, AND ONLY FOR THE MOVED ═══
+     * `jumpedVisible` keeps ONLY the ids that are in the stale ledger AND
+     * visible from where the viewer now stands. It can therefore only ever
+     * REMOVE an event, never invent one for a body the client does not hold, so
+     * the `unseen -> seen` case above is untouched — it was not in the ledger
+     * and it still is not. The one case it changes is `seen -> unseen`, whose
+     * argument ("you watch it step into the dark") is about a viewer who stayed
+     * put; for one who blinked across the map it is a monster moving in a room
+     * they have left.
+     *
+     * `session.visible` IS NOT WRITTEN. The ledger is what the client HOLDS, and
+     * the client still holds those bodies — `reconcileSight`, four lines from
+     * the end of this function, is still the one thing that says `left` and the
+     * one thing that edits the ledger. This is a filter, not a second authority.
      */
     if (result.sweep.length > 0) {
       for (const session of sessions.values()) {
         if (!session.helloDone || realmFor(session).id !== realm.id) continue;
+        const held = jumpedVisible(session, world) ?? session.visible;
         const events = result.sweep
-          .map((event) => fogEvent(event, session.visible))
+          .map((event) => fogEvent(event, held))
           .filter((event): event is TurnEvent => event !== null);
         // A viewer who saw nothing happen gets no frame at all, rather than an
         // empty one — an idle pump for a player alone in a room is silent, the
@@ -6365,7 +6692,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
      *     Index Husk hits Player 1.
      *     An Index Breach is quiet now.        <- the conclusion...
      *     2 damage. Index Husk 0/25.
-     *     Index Husk is unfiled.               <- ...above its own cause
+     *     Index Husk is unmade.                <- ...above its own cause
      *
      * Read in order, that says the room fell silent while something was still
      * hitting you, and it is deterministic — it reproduced identically on three
@@ -6396,7 +6723,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     //
     //   `broadcastRecord` MUST HAVE RUN. `nameOf` reads the name off the live
     //   body and `hitToWire` read its `maxHp` — reap first and the Case Log
-    //   says "5 damage. someone 0/0." above "someone is unfiled.", which is a
+    //   says "5 damage. someone 0/0." above "someone is unmade.", which is a
     //   log that has lost the only two facts the line was for. Nothing throws;
     //   it simply starts lying.
     //
@@ -6547,6 +6874,12 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     // symptom would be a corpse's drop nobody can see. See
     // `broadcastGroundIfChanged`.
     broadcastGroundIfChanged(realm);
+    // AND THE DRESSING, WHICH IS THE ONE FRAME HERE THE WORLD NEVER MOVES.
+    // Beside the floor because it is the same shape of send, and in the pump
+    // rather than behind a verb because the only thing that changes it is the
+    // recipient WALKING — see `broadcastPropsIfChanged`. This is also the line
+    // that takes a room's furniture back off the screen behind you.
+    broadcastPropsIfChanged(realm);
     // AND WHAT EACH OF THEM HAS FOUND OUT ABOUT IT. Beside the floor rather
     // than beside the terrain, because both are per viewer and for related
     // reasons — see `broadcastTrapsIfChanged`.
@@ -7953,16 +8286,83 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     SITES.get(realm.siteId)?.noWayBack === true;
 
   const markersFor = (realm: Realm, actorId?: string): SiteView[] => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════════
+     * A WAY IN OR A WAY ON IS TERRAIN, AND TERRAIN IS DRAWN ONLY WHERE YOU KNOW IT.
+     * ═══════════════════════════════════════════════════════════════════════════
+     *
+     * REPORTED, and it is the same sentence the props came from: *"i can see
+     * assets, people and props through walls"*. Props and bodies were closed and
+     * this layer was not. `paintSites` (client/render/canvas.ts) runs AFTER
+     * `paintLight`, so a marker is drawn at full brightness over the alpha-1
+     * black of never-seen ground: standing 32,19 in The Underworks, the stair at
+     * 32,14 was painted bright through five tiles of rock, on a tile whose own
+     * `vision` frame said `seen=0 remembered=0`.
+     *
+     * Worse, the two surfaces had begun to contradict each other. `beaconsFor`
+     * gates the same stair on near-OR-known and correctly withheld it; the board
+     * drew it anyway. When one map hides a thing and the other shows it, the
+     * permissive one is the bug.
+     *
+     * ═══ THE RULE IS TERRAIN'S, NOT THE BODIES' ═══
+     * `engine/Grid.lua:30-32` gives a grid `display_on_remember = true`, so a
+     * stair you have walked past stays on the map for good — `knownTile`, seen
+     * OR remembered, the same predicate the floor loot and the minimap's exits
+     * use. That is deliberately NOT the props rule: a prop has no memory, a way
+     * out does, because forgetting where the stairs were is not fog, it is
+     * amnesia.
+     *
+     * ═══ WHAT IS DELIBERATELY NOT GATED ═══
+     * The AUTHORED places — towns, delve doors, the crossings. A world map names
+     * its places, and 13 of the overworld's 14 markers sit on ground nobody has
+     * walked; hiding those turns the map a player plans a trip on into an empty
+     * sheet. Their secrecy already has its own rule and it is per-site
+     * (`SiteDef.hidden` / `mayKnowSite`). Roamers already ask `visionOf`.
+     *
+     * NO VIEWER STILL MEANS EVERY MARKER, as the rest of this function reads an
+     * absent `actorId` — the GM console and every fixture.
+     *
+     * ═══ GATED HERE AND NOT IN THE RENDERER ═══
+     * The client cull would have been the smaller diff and it would have been a
+     * SECOND copy of the fog rule, sitting on the far side of the wire from the
+     * one that decides everything else. Server-side, the tile never leaves the
+     * host: `markersFor` is already per-viewer for `hidden`, for `filed` and for
+     * roamers, so this is the fourth per-viewer term in a function that is
+     * per-viewer anyway.
+     */
+    const viewerBody = actorId === undefined ? undefined : realm.world.getActor(actorId);
+    // ONE SWEEP, SHARED WITH THE ROAMER FILTER BELOW. `visionOf` is a full FOV
+    // pass and this function runs for every viewer after every pump.
+    let sight: { seen: Uint8Array; remembered: Uint8Array } | undefined;
+    const sightOfViewer = (): { seen: Uint8Array; remembered: Uint8Array } | undefined => {
+      if (viewerBody === undefined || actorId === undefined) return undefined;
+      sight ??= {
+        seen: visionOf(realm.world, viewerBody).seen,
+        remembered: fogFor(actorId, realm),
+      };
+      return sight;
+    };
+    const known = (x: number, y: number): boolean => {
+      // SEEN ONCE IS SEEN FOR GOOD, for these cells only — see `waysSeen`.
+      if (knowsWay(actorId, realm.id, x, y)) return true;
+      const s = sightOfViewer();
+      if (s === undefined) return actorId === undefined;
+      return knownTile(realm.world.level, s.seen, s.remembered, x, y);
+    };
+
     const authored = [...realm.sites.entries()].flatMap(([cell, siteId]) => {
       // A STAIR DOWN, named as upstream names its DOWN grid
       // (data/general/grids/basic.lua:47) and drawn as a stair.
       if (siteId === STAIRS_DOWN_SITE_ID) {
         const [sx, sy] = cell.split(',');
+        // ONLY WHERE THIS CHARACTER KNOWS IT — see the header of this function.
+        if (!known(Number(sx), Number(sy))) return [];
         return [{ x: Number(sx), y: Number(sy), marker: 'stair', name: 'Next level' }];
       }
       // AND THE WAY OUT OF THE ZONE, where upstream puts the exit of its last level.
       if (siteId === EXIT_SITE_ID) {
         const [ex, ey] = cell.split(',');
+        if (!known(Number(ex), Number(ey))) return [];
         return [
           {
             x: Number(ex),
@@ -8084,8 +8484,14 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       (realm.kind !== RealmKind.Overworld ||
         (actorId !== undefined && enteredFromRealmOf(actorId) !== null)) &&
       !hasNoWayBack(realm);
+    // AND KNOWN, like the stair above and for the same reason. In practice a
+    // body ARRIVES on one of these tiles, so this holds from the first frame and
+    // holds forever after — the gate it hides is the one on a map you have been
+    // carried onto blind, or a second, remote entrance the day a map grows one.
     const exits = canLeave
-      ? realm.spawns.map((t) => ({ x: t.x, y: t.y, marker: 'gate', name: 'The way out' }))
+      ? realm.spawns.flatMap((t) =>
+          known(t.x, t.y) ? [{ x: t.x, y: t.y, marker: 'gate', name: 'The way out' }] : [],
+        )
       : [];
 
     // A ROAMER IS DRAWN AS A CREATURE, not as a place. `marker` stays only as
@@ -8101,8 +8507,11 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     // sees. No viewer at all still means every marker, as the rest of
     // this function reads an absent `actorId`; a viewer whose body is not in
     // this realm sees none.
-    const viewer = actorId === undefined ? undefined : realm.world.getActor(actorId);
-    const viewerSees = viewer === undefined ? undefined : visionOf(realm.world, viewer).seen;
+    //
+    // ONE SWEEP FOR BOTH READERS — `sightOfViewer` is the same lazy `visionOf`
+    // the stair and gate gates ask, so a map with neither still pays for one
+    // pass and no map pays for two.
+    const viewerSees = sightOfViewer()?.seen;
     const wandering = [...realm.roamers.values()]
       .filter((r) =>
         actorId === undefined
@@ -8121,6 +8530,213 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
   };
 
   /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * ONE MARK PER DOORWAY, NOT ONE PER TILE OF IT.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * MEASURED ON THE RENDERED MINIMAP. Alderbrook's gate is `realm.spawns` of six
+   * tiles (24-26 x 46-47) and four of the five towns ship a 3-wide spawn block,
+   * so the entrance arm emitted six beacons. At the real minimap scale that is
+   * six 6px glyphs on a 3px grid: each glyph's outline ring overpaints its
+   * neighbour's fill, and the composite measured 10x7 px holding 36 orange
+   * pixels — a speckled smear, not a door. Worse, the hollow-vs-solid channel
+   * that tells an entrance from an exit is the first thing to go, so the ONE
+   * thing the player asked for ("easily distinguishable in the minimap") was
+   * destroyed by drawing it six times.
+   *
+   * ONE REPRESENTATIVE PER 8-CONNECTED BLOCK, and it is the member nearest the
+   * block's own centre rather than nearest the viewer: a mark that slid about as
+   * you walked past a 3-tile gate would be a second kind of wrong. Ties break on
+   * the lowest y then the lowest x, so the answer is the same on every pump and
+   * `sitesMemoKey` does not churn.
+   *
+   * EVERY MARK IN IS THE SAME KIND — the two terrain lists are collapsed
+   * separately, so nothing here has to reason about a door and a stair sharing a
+   * tile. BODIES ARE NOT COLLAPSED: two people standing together are two people,
+   * and the crowd outside a shop is information. Only terrain, which is one
+   * thing however many cells the mapgen spent on it.
+   */
+  const oneMarkPerBlock = (marks: readonly BeaconView[]): BeaconView[] => {
+    if (marks.length <= 1) return [...marks];
+    const at = new Map<string, BeaconView>(marks.map((m) => [`${m.x},${m.y}`, m] as const));
+    const taken = new Set<string>();
+    const out: BeaconView[] = [];
+    for (const mark of marks) {
+      const start = `${mark.x},${mark.y}`;
+      if (taken.has(start)) continue;
+      taken.add(start);
+      const block: BeaconView[] = [];
+      const stack: BeaconView[] = [mark];
+      while (stack.length > 0) {
+        const here = stack.pop();
+        if (here === undefined) continue;
+        block.push(here);
+        for (let dy = -1; dy <= 1; dy += 1) {
+          for (let dx = -1; dx <= 1; dx += 1) {
+            if (dx === 0 && dy === 0) continue;
+            const key = `${here.x + dx},${here.y + dy}`;
+            const next = at.get(key);
+            if (next === undefined || taken.has(key)) continue;
+            taken.add(key);
+            stack.push(next);
+          }
+        }
+      }
+      const cx = block.reduce((sum, m) => sum + m.x, 0) / block.length;
+      const cy = block.reduce((sum, m) => sum + m.y, 0) / block.length;
+      const score = (m: BeaconView): number => (m.x - cx) * (m.x - cx) + (m.y - cy) * (m.y - cy);
+      let best = mark;
+      for (const m of block) {
+        const d = score(m) - score(best);
+        if (d < 0 || (d === 0 && (m.y < best.y || (m.y === best.y && m.x < best.x)))) best = m;
+      }
+      out.push(best);
+    }
+    return out;
+  };
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE MINIMAP'S OWN MARKS: A FRIENDLY FACE, THE WAY IN, AND THE WAY ON.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * THE ONE PLACE IN THIS FILE THAT DELIBERATELY SHOWS A VIEWER SOMETHING THEY
+   * CANNOT SEE, and it is a game rule of ours rather than a port — the whole
+   * argument, including what it deliberately refuses, is in `BeaconView`. The
+   * radius is `MINIMAP_REVEAL_RADIUS` (`shared/sight.ts`), which is twice
+   * `DEFAULT_SIGHT_RADIUS` and derived from it.
+   *
+   * ═══ WHAT IT REFUSES, RESTATED HERE BECAUSE THIS IS WHERE IT WOULD BE ADDED ═══
+   * No hostiles, at any distance, ever: `isHostile` is the filter and the fog is
+   * the only way to learn where something that will attack you is standing. No
+   * teammates: `partyMarks` already draws them off the party table, and a second
+   * source for one dot is a second answer. No ids, no names, no sprites — a
+   * position and a kind, so nothing here can be joined against `inspect`.
+   *
+   * ═══ THE TWO GATES ARE DIFFERENT, AND ON PURPOSE ═══
+   * A BODY is a fact about NOW, so a friendly face is marked on proximity alone
+   * and vanishes when they walk away. A STAIR is terrain, and `engine/Grid.lua:30-32`
+   * remembers terrain, so a way out is marked when it is near OR when this
+   * character has personally seen or remembered that tile, however far off it is
+   * now. `knownTilesFor` is the same predicate the floor loot uses.
+   *
+   * ═══ THE WAY OUT ASKS EXACTLY WHAT `leaveRealm` ASKS ═══
+   * `markersFor`'s `canLeave` is reused verbatim rather than restated: a mark
+   * offering a door the server would refuse is the one mark worse than none, and
+   * that rule already has a home three screens up.
+   *
+   * NO VIEWER MEANS NO BEACONS. Unlike `markersFor`, which answers an absent
+   * `actorId` with every marker for the GM console's sake, there is nothing this
+   * can honestly return without a body to measure from.
+   */
+  const beaconsFor = (realm: Realm, actorId?: string): BeaconView[] => {
+    if (actorId === undefined) return [];
+    const world = realm.world;
+    const body = world.getActor(actorId);
+    if (body === undefined) return [];
+
+    const near = (x: number, y: number): boolean =>
+      sightDistance(body, { x, y }) <= MINIMAP_REVEAL_RADIUS;
+    /**
+     * THE SAME MEMORY THE FLOOR LOOT IS DRAWN BY — `knownTile`, seen now OR
+     * remembered. Built from the BODY rather than from a session, because a
+     * beacon is a fact about a CHARACTER: `refreshPartySites` builds these for a
+     * teammate's socket while this map's body belongs to somebody else.
+     *
+     * ═══ LAZY, AND THAT IS NOT PREMATURE ═══
+     * `visionOf` is a full FOV sweep and this function now runs for every viewer
+     * on every map after every pump — the overworld-only early return in
+     * `sendSitesIfChanged` had to go so a town's marks would not freeze at the
+     * doorway. Only the entrance and the exits ask this question, and the
+     * overworld and every town have neither, so the sweep is deferred to the
+     * first tile that actually needs it and never happens on most maps.
+     */
+    let memory: { seen: Uint8Array; remembered: Uint8Array } | undefined;
+    const known = (x: number, y: number): boolean => {
+      // THE SAME SEEN-ONCE LEDGER `markersFor` READS, so the board and the
+      // minimap cannot disagree about whether you have found a stair.
+      if (knowsWay(actorId, realm.id, x, y)) return true;
+      memory ??= { seen: visionOf(world, body).seen, remembered: fogFor(actorId, realm) };
+      return knownTile(world.level, memory.seen, memory.remembered, x, y);
+    };
+
+    /**
+     * SOMEBODY WHO WILL NOT ATTACK YOU, and that is the whole of the test.
+     *
+     * ═══ ONE AUTHORITY, AND IT IS THE FACTION TABLE'S OWN ANSWER ═══
+     * This was written as `!isHostile(a, body) && a.faction === Faction.Townsfolk`
+     * — belt and braces — and a MUTATION MEASUREMENT killed the second term:
+     * deleting either one left every case green, because each alone excludes a
+     * husk. Two guards a test cannot tell apart are one guard and one liability,
+     * and the liability is the narrower one: `Townsfolk` is the only friendly
+     * faction TODAY, so an escort or a summoned ally given a third faction
+     * tomorrow would silently stop being marked with nothing failing.
+     * `isHostile` asks the question the rule is written in — *"friendly or
+     * neutral"* is exactly "not hostile to you" — so it is the term that stays.
+     *
+     * `isMonster` keeps players out: a teammate is already drawn by
+     * `partyMarks` and a stranger is nobody's business.
+     *
+     * ═══ AND A FRIENDLY FACE IN PLAIN SIGHT IS MARKED TOO, DELIBERATELY ═══
+     * Measured on the rendered minimap: a townsperson you can see gets TWO
+     * marks on one cell — the `actors` layer draws them in `NEUTRAL_INK` blue
+     * (`main.ts` sends `neutral: faction === 'townsfolk'`) and the beacon pass
+     * paints cyan over the top. Nothing is lost, because the beacon paints
+     * last, and the result is the one a player can actually use: a friendly
+     * face is ONE colour whether or not you happen to be looking at them.
+     * Skipping the beacon while the tile is in sight would make the mark
+     * flicker as you walked past a shop, which is a worse answer to the same
+     * question. Written down because it is the only place this file allows two
+     * marks on one cell.
+     */
+    const friendly = world
+      .allActors()
+      .filter((a) => isMonster(a) && a.alive && !isHostile(a, body) && near(a.x, a.y))
+      .map((a) => ({ x: a.x, y: a.y, kind: BeaconKind.Friendly }));
+
+    /**
+     * THE WAY ON — a stair down, and a zone's own way out. Read off
+     * `realm.sites` by the same two ids `markersFor` reads them by, so a floor
+     * that grows a second stair grows a second beacon with no change here.
+     */
+    const exits = [...realm.sites.entries()].flatMap(([cell, siteId]) => {
+      if (siteId !== STAIRS_DOWN_SITE_ID && siteId !== EXIT_SITE_ID) return [];
+      const [sx, sy] = cell.split(',');
+      const x = Number(sx);
+      const y = Number(sy);
+      return near(x, y) || known(x, y) ? [{ x, y, kind: BeaconKind.Exit }] : [];
+    });
+
+    /**
+     * AND THE WAY BACK. `realm.spawns` is the tile a body arrives on and the one
+     * `leaveRealm` requires them to stand on, gated by `markersFor`'s own
+     * `canLeave` — a first floor with `noWayBack` has no entrance to mark
+     * because there is nowhere to go back to.
+     */
+    const canLeave =
+      (realm.kind !== RealmKind.Overworld || enteredFromRealmOf(actorId) !== null) &&
+      !hasNoWayBack(realm);
+    const entrances = canLeave
+      ? realm.spawns.flatMap((t) =>
+          near(t.x, t.y) || known(t.x, t.y) ? [{ x: t.x, y: t.y, kind: BeaconKind.Entrance }] : [],
+        )
+      : [];
+
+    // A DOOR IS ONE DOOR, however many tiles wide it is — see `oneMarkPerBlock`.
+    return [...friendly, ...oneMarkPerBlock(entrances), ...oneMarkPerBlock(exits)];
+  };
+
+  /**
+   * ONE KEY FOR BOTH MARKER LISTS, so `sendRealm`'s seed and `sendSites`'
+   * comparison cannot render the same pair of lists differently. An array of the
+   * two rather than a concatenation: a beacon and a site are different shapes,
+   * and a key that flattened them could compare equal across a change that moved
+   * one into the other.
+   */
+  const sitesMemoKey = (sites: readonly SiteView[], beacons: readonly BeaconView[]): string =>
+    JSON.stringify([sites, beacons]);
+
+  /**
    * The markers, without the map.
    *
    * Sent when the roamers move. `realm` would say the same thing and carry
@@ -8132,10 +8748,19 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     const realm = realms.get(session.realmId);
     if (realm === undefined) return;
     const sites = markersFor(realm, session.actorId ?? undefined);
-    const key = JSON.stringify(sites);
+    // AND THE MINIMAP'S OWN MARKS, on the same frame and under the same memo —
+    // see `SitesMsg.beacons` for why they are not a frame of their own.
+    const beacons = beaconsFor(realm, session.actorId ?? undefined);
+    const key = sitesMemoKey(sites, beacons);
     if (onlyIfChanged && key === session.lastSitesKey) return;
     session.lastSitesKey = key;
-    send(session.socket, { v: PROTOCOL_VERSION, t: 'sites', realmId: realm.id, sites });
+    send(session.socket, {
+      v: PROTOCOL_VERSION,
+      t: 'sites',
+      realmId: realm.id,
+      sites,
+      ...(beacons.length === 0 ? {} : { beacons }),
+    });
   };
 
   /**
@@ -8148,7 +8773,20 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    */
   const sendSitesIfChanged = (realm: PumpTarget): void => {
     const full = opts.realms?.get(realm.id);
-    if (full === undefined || full.kind !== RealmKind.Overworld) return;
+    /**
+     * ═══ THE OVERWORLD-ONLY EARLY RETURN IS GONE, AND IT HAD TO GO ═══
+     * This read `full.kind !== RealmKind.Overworld` and returned, because the
+     * only thing on this frame that moved was a roamer and roamers only walk the
+     * moor. Beacons move on every map: a townsperson crosses the square, a
+     * player walks within twenty tiles of a stair. With the early return in
+     * place a town's marks would be built once on arrival and then frozen at the
+     * doorway forever, which is the same freeze this commit exists to fix one
+     * layer up.
+     *
+     * The per-viewer memo is what makes that affordable — a pump in which
+     * nothing on anybody's map moved still sends nothing, it just has to ask.
+     */
+    if (full === undefined) return;
     for (const session of sessions.values()) {
       if (session.helloDone && session.realmId === full.id) sendSites(session, true);
     }
@@ -8213,8 +8851,9 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     // `view.actors` rather than recomputing visibility makes that structural: it
     // is not possible for the frame and the ledger to disagree, because there is
     // only one list.
-    const view = projectWorld(realm.world, eyesOf(session, realm.world));
+    const view = projectWorld(realm.world, eyesOf(session, realm.world), teammateFor(session));
     session.visible = new Set(view.actors.map((actor) => actor.id));
+    anchorLedger(session, realm.world);
     /**
      * THE LANDMARKS, and they are the reason the first overworld had none.
      * `Realm.sites` is `"x,y" -> site id`; the client needs a POSITION, an art
@@ -8223,6 +8862,13 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
      * unexplained icon on a world map is worse than an absent one.
      */
     // ONE BUILDER, shared with the `sites` frame — see `markersFor`.
+    //
+    // BOTH MARKER LISTS ARE BUILT ONCE HERE and used twice: on the frame below,
+    // and by the memo seed at the end of this function. `sendSitesIfChanged`
+    // compares against that seed every pump, so the two must be the same pair of
+    // lists rendered by the same expression — see `sitesMemoKey`.
+    const sites = markersFor(realm, actorId);
+    const beacons = beaconsFor(realm, actorId);
     /**
      * THE MEMORY, ONLY WITH THE MAP IT BELONGS TO. 2,836 characters for the
      * whole region, sent once on arrival — after which the client keeps
@@ -8245,11 +8891,17 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       name: realm.name,
       level: view.level,
       actors: view.actors,
-      // THE DRESSING RIDES THE MAP FRAME. `projectWorld` omits the key entirely
-      // where a floor has none, and spreading rather than assigning keeps that
-      // absence — see `PropView`.
+      // THE DRESSING THIS VIEWER CAN SEE FROM THE TILE THEY ARRIVED ON, and
+      // nothing else: `projectWorld` gates it on the same eyes it fogs the
+      // bodies with, and omits the key where none of it is in sight, which in a
+      // town is nearly always. Spreading rather than assigning keeps that
+      // absence — see `PropView`. Every LATER change, including the emptying,
+      // comes on a `props` frame; the memo for it is seeded below.
       ...(view.props === undefined ? {} : { props: view.props }),
-      sites: markersFor(realm, actorId),
+      sites,
+      // AND THE MINIMAP'S OWN MARKS, from the same body — see `beaconsFor`.
+      // Absent rather than empty, so a map with no beacons costs no key.
+      ...(beacons.length === 0 ? {} : { beacons }),
       /**
        * THE NAMES OF THE COUNTRY, on an overworld only — see `RealmMsg.regions`.
        * One frame per entry and never again; the client holds it for the map.
@@ -8265,6 +8917,27 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       explored,
       selfId: actorId,
     });
+    /**
+     * ═══ THE DRESSING MEMO IS SEEDED FROM THE FRAME THAT JUST CARRIED IT ═══
+     * Written rather than cleared, and that is the difference between this and
+     * `lastVisionKey` below. The map frame IS a `props` frame for the tile the
+     * body arrived on, so clearing the memo would make the very next pump send
+     * the identical list again. Seeding it with what went out means the next
+     * send is the first genuine change — the first step taken, or the first
+     * door walked through.
+     *
+     * AND IT MUST BE WRITTEN ON EVERY ARRIVAL, not only the first: a crossing
+     * calls this, and a memo carried over from the last realm would compare one
+     * map's furniture against another's. `sendRealm` is the only place a body
+     * is handed a new map, so it is the only place this can be true.
+     */
+    session.lastPropsKey = JSON.stringify(view.props ?? []);
+    // THE MARKERS MEMO, FOR THE SAME REASON AND ON THE SAME FRAME: `sites` and
+    // `beacons` both rode the map above, so the first pump after arrival must
+    // not send an identical `sites` frame behind it. Seeded rather than cleared,
+    // exactly as the dressing is, and through the one key builder both senders
+    // share so the two can never render it differently.
+    session.lastSitesKey = sitesMemoKey(sites, beacons);
     // THE WINDOW FOR THE MAP JUST SENT, at once: the client dropped the last one
     // with the last map, and the next pump could be minutes away.
     session.lastVisionKey = undefined;
@@ -9379,8 +10052,9 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     engine.setConnected(actor.id, true);
 
     // Fogged, and the ledger taken from the frame — see `sendRealm`.
-    const view = projectWorld(world, eyesOf(session, world));
+    const view = projectWorld(world, eyesOf(session, world), teammateFor(session));
     session.visible = new Set(view.actors.map((actor) => actor.id));
+    anchorLedger(session, world);
     send(session.socket, {
       v: PROTOCOL_VERSION,
       t: 'welcome',
@@ -9500,7 +10174,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
         world,
         opts.effects,
         undefined,
-        visibleActorIds(world, eyesOf(session, world)),
+        visibleActorIds(world, eyesOf(session, world), teammateFor(session)),
       );
       session.lastEffectsKey = JSON.stringify(badges.actors);
       send(session.socket, badges);
@@ -11779,9 +12453,11 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
         ];
       }
       case 'death': {
-        // "Unfiled" is the game's own word for it — game-design.md § 11's sample
-        // log reads "Index Wraith is unfiled", and using the fiction's noun in
-        // the mechanical lane is most of what gives the Record its voice.
+        // "Unmade" is the game's own word for it — game-design.md § 11's sample
+        // log reads "Index Wraith is unmade", and using the fiction's verb in
+        // the mechanical lane is most of what gives the Record its voice. It is
+        // deliberately NOT the player's word: a player at 0 hp is Unfiled and
+        // coming back, and the two states no longer share a sentence.
         /**
          * ═══════════════════════════════════════════════════════════════════
          * WHO DID IT — `Game.lua:1686`, `#Source# killed #Target#!`
@@ -11807,7 +12483,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
          */
         const killer = event.killerId === undefined ? null : whoOrNull(event.killerId);
         const by = killer === null ? '' : ` by ${killer}`;
-        return [{ text: `${opening(event.id)} is unfiled${by}.`, depth: 1 }];
+        return [{ text: `${opening(event.id)} is unmade${by}.`, depth: 1 }];
       }
       case 'talent':
         return [
@@ -12010,7 +12686,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     // "something". The ledger still carries a body that died during the pump.
     const see = new Set([
       ...session.visible,
-      ...visibleActorIds(realm.world, eyesOf(session, realm.world)),
+      ...visibleActorIds(realm.world, eyesOf(session, realm.world), teammateFor(session)),
     ]);
     const lines: LogLine[] = [];
     const gameTurn = result.turn.gameTurn;
@@ -16687,6 +17363,8 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       // Empty, not "everything": a socket that has not said `hello` holds no
       // board at all, and the first pump after it does will send the frames.
       visible: new Set<string>(),
+      // AND NOWHERE TO HAVE SEEN IT FROM — see `Session.visibleAt`.
+      visibleAt: null,
       enteredFrom: null,
       enteredFromRealm: null,
       exitArmed: false,

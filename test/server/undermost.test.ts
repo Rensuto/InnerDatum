@@ -252,13 +252,37 @@ describe('the Undermost, over the wire', () => {
     for (const step of STEPS) {
       const x = cell.x - step.dx;
       const y = cell.y - step.dy;
-      if (!canWalk(realm.world.level, x, y) || realm.world.actorAt(x, y) !== undefined) continue;
+      // THE VIEWER'S OWN BODY DOES NOT BLOCK THE TILE IT IS STANDING ON.
+      // `stepWithinSightOf` parks it beside the cell we are about to step onto,
+      // which used to make that cell unreachable: the only open ground beside a
+      // hand-drawn exit is often one tile, and we were already on it.
+      const occupant = realm.world.actorAt(x, y);
+      if (!canWalk(realm.world.level, x, y)) continue;
+      if (occupant !== undefined && occupant.id !== client.actorId) continue;
       body.x = x;
       body.y = y;
       await client.move(step.dir);
       return;
     }
     throw new Error('no open ground beside the cell');
+  }
+
+  /**
+   * STAND WHERE YOU CAN SEE IT — and never ON it, because this cell is a door.
+   *
+   * `markersFor` draws a way on or out only on a tile the character knows
+   * (`knownTile`, seen or remembered — `engine/Grid.lua:30-32`), so a marker
+   * assertion has to put the body within sight of the cell first. Reading the
+   * arrival frame used to work because every stair was drawn to everybody, which
+   * is the bug the rule closed.
+   */
+  async function stepWithinSightOf(client: Client, cell: TileXY): Promise<void> {
+    const realm = realmOf(client);
+    const beside = STEPS.map((s) => ({ x: cell.x + s.dx, y: cell.y + s.dy })).find(
+      (t) => canWalk(realm.world.level, t.x, t.y) && realm.world.actorAt(t.x, t.y) === undefined,
+    );
+    if (beside === undefined) throw new Error('no open ground beside the cell');
+    await stepOnto(client, beside);
   }
 
   async function offAndBackOntoThreshold(client: Client): Promise<void> {
@@ -334,6 +358,8 @@ describe('the Undermost, over the wire', () => {
     // ═══ THE WAY OUT IS ON THE MAP, AND IT IS THE WAY OUT ═══
     const exit = exitOf(last);
     if (exit === null) throw new Error('no exit on the last floor');
+    // WITHIN SIGHT OF IT FIRST — see `stepWithinSightOf`.
+    await stepWithinSightOf(client, exit);
     const map = [...client.frames]
       .reverse()
       .find((f) => (f['t'] === 'sites' || f['t'] === 'realm') && Array.isArray(f['sites']));
@@ -440,6 +466,8 @@ describe('the Undermost, over the wire', () => {
     }
     expect(realmOf(client).id, 'the stairs did not lead to the prepared floor').toBe(last.id);
 
+    // WITHIN SIGHT OF IT FIRST — see `stepWithinSightOf`.
+    await stepWithinSightOf(client, exit);
     const map = [...client.frames]
       .reverse()
       .find((f) => (f['t'] === 'sites' || f['t'] === 'realm') && Array.isArray(f['sites']));

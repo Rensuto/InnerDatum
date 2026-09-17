@@ -5054,10 +5054,17 @@ export type TurnEvent =
  * A site cell is a DOOR: `crossInto` looks the cell up in the realm's
  * `"x,y" -> siteId` map and moves you. Dressing you can stand on must not.
  *
- * ═══ AND IT RIDES THE LEVEL'S OWN FRAMES BECAUSE IT NEVER MOVES ═══
- * `SitesMsg` exists to re-send markers as roamers wander; a prop is placed once
- * when the floor is built and is then as static as the walls. Putting it on the
- * two frames that already carry the whole map costs nothing per turn.
+ * ═══ AND IT IS SHOWN ONLY WHILE YOU ARE LOOKING AT IT ═══
+ * A prop is sent to a viewer while that tile is in their CURRENT vision, and is
+ * withdrawn the moment it leaves. It is never drawn from memory. See `PropsMsg`,
+ * where the rule and the deliberate divergence from upstream are argued.
+ *
+ * THIS PARAGRAPH USED TO SAY THE OPPOSITE. It read *"AND IT RIDES THE LEVEL'S
+ * OWN FRAMES BECAUSE IT NEVER MOVES"* and concluded that a static thing belongs
+ * on the frames that carry the whole map. A prop does not move; what moves is
+ * the viewer, and putting dressing on the map frame shipped every stick of
+ * furniture in Alderbrook to everyone standing in the street. The frame is per
+ * viewer now and re-sent when their sight changes.
  */
 export type PropView = {
   readonly x: number;
@@ -5100,10 +5107,13 @@ export type WelcomeMsg = {
   level: LevelView;
   actors: ActorView[];
   /**
-   * THE DRESSING ON THIS FLOOR. Absent where there is none, which is every map
-   * but a dressed delve — see `PropView`.
+   * NO DRESSING RIDES THIS FRAME. `welcome` declared `props?` from the day props
+   * landed and the welcome builder never filled it — one of the two senders was
+   * written and the other was not, so the field was dead on the wire for its
+   * whole life. It is deleted rather than filled: dressing is per viewer and
+   * withdrawable now (`PropsMsg`), and a snapshot frame cannot withdraw
+   * anything. The first `props` frame follows `realm`, which follows this.
    */
-  props?: readonly PropView[];
 };
 
 /**
@@ -5299,7 +5309,7 @@ export type TurnActor = {
    * Already run through the display-name filter. Hostile input — `fillText` and
    * `textContent` only, never markup.
    *
-   * The aggregate is named as a GROUP ("The Filed"), never as a creature: a card
+   * The aggregate is named as a GROUP ("The Taken"), never as a creature: a card
    * reading "Index Husk" beside a party of four says one monster is taking a
    * turn, when what is about to happen is all of them at once.
    */
@@ -6437,6 +6447,64 @@ export type GroundMsg = {
 };
 
 /**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE DRESSING YOU CAN SEE RIGHT NOW. NO MEMORY — AND THAT IS A DIVERGENCE.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * ═══ THE RULE ═══
+ * A prop is sent to a viewer while its tile is in that viewer's CURRENT vision
+ * (`visionOf`, the same seen set the board is fogged by) and is WITHDRAWN the
+ * moment it leaves. A prop is never shown from memory.
+ *
+ * ═══ AND UPSTREAM WOULD REMEMBER IT ═══
+ * `engine/Object.lua:28-29` sets `display_on_remember = true`, the same pair
+ * `engine/Grid.lua:30-32` gives terrain. By the letter of the port, dressing
+ * would show on any tile the character had ever seen. It deliberately does not.
+ * RULED BY THE AUTHOR ON 2026-09-17, looking at a live screenshot of Alderbrook:
+ * *"i dont want it to be the props you remember. the props should only be
+ * visible if you have actual line of sight with it."*
+ *
+ * ═══ AND FLOOR LOOT STILL FOLLOWS THE UPSTREAM RULE, ON PURPOSE ═══
+ * `GroundMsg` directly above is gated on `knownTile` — seen OR remembered — and
+ * stays that way. The two are deliberately different and the difference is not
+ * an oversight in either direction:
+ *
+ *   A COAT IS A FACT ABOUT THE PAST. You saw it, you can walk back to it, and
+ *   forgetting it would make the game lie about a decision you already took.
+ *   Upstream agrees, and the party argues about who takes it.
+ *
+ *   A BOOKSHELF IS SCENERY, AND SCENERY DRAWN THROUGH A WALL READS AS A BUG.
+ *   It never moves, so memory adds nothing you could act on, and the cost is
+ *   the whole interior of every building in town painted over solid black. That
+ *   is what the screenshot showed: forty-three props of Alderbrook on every
+ *   client standing in the street, zero of which were in sight.
+ *
+ * Whoever reads this next and reaches for `knownTile` to make the two agree:
+ * they are not meant to agree. The prop cases in `test/server/fov.test.ts` put a
+ * prop and a coat on ONE tile a viewer remembers and cannot see, and require the
+ * coat and refuse the prop — so the disagreement is pinned from inside, and a
+ * predicate changed to `knownTile` fails on the prop while the coat still passes.
+ *
+ * ═══ ABSOLUTE, NOT A PATCH, AND THE EMPTY FRAME IS THE WITHDRAWAL ═══
+ * The client REPLACES its whole prop table with this, exactly as it does for
+ * `ground` and `projectiles`. `[]` is a real answer and the common one — it is
+ * what takes a room's furniture off the screen when you step back into the
+ * street — so this frame is never suppressed for being empty.
+ *
+ * A `ViewerMsg`, and one term narrower than `GroundMsg`'s reason for being one:
+ * that frame is per viewer because of what a viewer REMEMBERS, this one because
+ * of what a viewer SEES.
+ */
+export type PropsMsg = {
+  v: typeof PROTOCOL_VERSION;
+  t: 'props';
+  /** Which realm they belong to, so a frame in flight across a crossing is dropped. */
+  realmId: string;
+  /** Every prop on a tile this viewer can see this instant. Complete, not a delta. */
+  props: readonly PropView[];
+};
+
+/**
  * ONE THING ON A SHOP'S SHELF, WITH BOTH PRICES ALREADY WORKED OUT.
  *
  * ═══ THE NUMBERS ARE THE SERVER'S, AND THE CLIENT MUST NOT DERIVE THEM ═══
@@ -6958,6 +7026,62 @@ export type SiteView = {
 };
 
 /**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * WHAT A BEACON IS: A FRIENDLY FACE, THE WAY IN, OR THE WAY ON.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `as const` and a derived union rather than an `enum` — CLAUDE.md § 1: the
+ * server type-strips and `erasableSyntaxOnly` bans a runtime enum outright.
+ */
+export const BeaconKind = {
+  /** Somebody who will not attack you: a townsperson, a shopkeeper, an escort. */
+  Friendly: 'friendly',
+  /** The tile you arrived on, and the one `leaveRealm` will take you back by. */
+  Entrance: 'entrance',
+  /** A stair down, or a zone's way out. */
+  Exit: 'exit',
+} as const;
+export type BeaconKind = (typeof BeaconKind)[keyof typeof BeaconKind];
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * A MARK ON THE MINIMAP THAT FOG DOES NOT TAKE AWAY. OURS, AND DELIBERATE.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * THIS IS THE ONE EXCEPTION TO THE FOG RULE ON ANY SURFACE and it is a game rule
+ * of ours, not a port. Upstream has no such exception: its minimap draws the
+ * same `remembers` grid the board does. The author ruled it on 2026-09-17, in
+ * the same breath as the ruling that made props sight-only, and the two are the
+ * same trade read from both ends — you may no longer see the furniture through
+ * a wall, so you must not have to hunt for the door either.
+ *
+ * ═══ WHAT IT DELIBERATELY IS NOT ═══
+ * NO HOSTILES. A beacon never carries something that will attack you: that is
+ * the intelligence the fog exists to withhold, and `visionOf` remains the only
+ * way to learn it. NO TEAMMATES either — `partyMarks` already draws those, from
+ * the party table, and a second source for the same dot is a second answer.
+ *
+ * ═══ A POSITION AND A KIND, AND NOTHING ELSE ═══
+ * No id, no name, no sprite. A mark that carried a name would let a player read
+ * the shopkeeper's title off a wall they cannot see through; a mark that carried
+ * an id would let a client join it against `inspect`. What it says is "somebody
+ * harmless is over there", which is exactly what a player standing in the street
+ * of a small town can already tell by walking twenty paces.
+ *
+ * ═══ THE RADIUS IS `MINIMAP_REVEAL_RADIUS` AND THE SERVER APPLIES IT ═══
+ * `shared/sight.ts`, twice `DEFAULT_SIGHT_RADIUS` and derived from it. The
+ * client draws every beacon it is handed WITHOUT re-testing fog — the decision
+ * has already been made, once, on the server. An exit is also sent when its tile
+ * is seen or remembered however far away it is, because a stair you have
+ * personally walked past is terrain and `engine/Grid.lua:30-32` remembers terrain.
+ */
+export type BeaconView = {
+  readonly x: number;
+  readonly y: number;
+  readonly kind: BeaconKind;
+};
+
+/**
  * One named rectangle of a region map. Inclusive bounds, matching
  * `ALDERBROOK_REGIONS` in shared/level.ts, which is where they are authored and
  * where the tiling is guaranteed.
@@ -6997,10 +7121,22 @@ export type RealmMsg = {
   name: string;
   level: LevelView;
   actors: ActorView[];
-  /** The dressing on this floor — see `PropView`. Absent where there is none. */
+  /**
+   * THE DRESSING THIS VIEWER CAN SEE FROM WHERE THEY ARE STANDING — not the
+   * dressing on this floor. Absent where none of it is in sight, which on
+   * arrival in a town is most of it. See `PropsMsg`: every later change to this
+   * list, including its emptying, comes on that frame and not on another copy
+   * of the map.
+   */
   props?: readonly PropView[];
   /** Everywhere on THIS map you can walk into. Drawn as markers. */
   sites: SiteView[];
+  /**
+   * THE MINIMAP'S OWN MARKS, which fog does not take away — see `BeaconView`.
+   * Absent where there are none. Re-sent with `sites`, because a beacon moves
+   * for the same reasons a roamer marker does: the thing moved, or you did.
+   */
+  beacons?: readonly BeaconView[];
   /**
    * WHAT THIS CHARACTER HAS EXPLORED, base64 of one bit per cell.
    *
@@ -7061,6 +7197,17 @@ export type SitesMsg = {
   /** Which realm they belong to, so a frame in flight across a crossing is dropped. */
   realmId: string;
   sites: SiteView[];
+  /**
+   * AND THE MINIMAP'S OWN MARKS, on the same frame — see `BeaconView`.
+   *
+   * ON THIS FRAME RATHER THAN ON ONE OF ITS OWN, because it is the same
+   * question this frame already answers: what is on the map near me, re-asked
+   * whenever the answer could have moved. A beacon and a roamer marker change on
+   * exactly the same events — something walked, or the viewer did — so a second
+   * frame would be a second memo, a second send path and a second crossing
+   * reset, all triggered by the same pump. Absent where there are none.
+   */
+  beacons?: readonly BeaconView[];
 };
 
 export type ServerMsg =
@@ -7096,6 +7243,7 @@ export type ServerMsg =
   | RosterMsg
   | ProgressMsg
   | GroundMsg
+  | PropsMsg
   | LoreMsg
   | ShopMsg
   | InventoryMsg
@@ -7373,6 +7521,15 @@ export type ViewerMsg =
   // that character has personally walked past, and no two characters have
   // walked the same map. There is no realm-wide answer to build.
   | GroundMsg
+  // ═══ AND THE DRESSING, ONE TERM NARROWER THAN THE FLOOR ═══
+  // Ground loot is per viewer because of what a viewer REMEMBERS. Dressing is
+  // per viewer because of what a viewer SEES, this instant — it is withdrawn
+  // when they look away, which is the one thing a broadcast could never do
+  // correctly for two people standing in different rooms. Membership here makes
+  // `broadcast(propsMsg)` a compile error, and that is exactly the mistake this
+  // frame exists to undo: props used to ride the map frame, so every client in
+  // the realm held every stick of furniture on it. See `PropsMsg`.
+  | PropsMsg
   // ═══ AND TRAPS, WHICH ARE THE SAME ARGUMENT AT ITS SHARPEST ═══
   // Ground loot is per viewer because of what a viewer REMEMBERS. A trap is per
   // viewer because of what they have FOUND OUT, and unlike a remembered pile

@@ -13,6 +13,7 @@ import {
   LOCAL_TILE_SPRITES,
   LOCAL_WALL_FACE_SPRITES,
   localDoorSpriteId,
+  loneTreeSpriteId,
 } from '../../src/client/render/canvas.ts';
 import { registerAllTalents } from '../../src/server/content/classes.ts';
 import { MVP_EFFECTS } from '../../src/server/content/effects.ts';
@@ -85,6 +86,24 @@ function doorIn(code: TileCode, walls: 'north-south' | 'west-east') {
   return { w: 3, h: 3, tiles };
 }
 
+/**
+ * A field of trees planted three apart, so every one of them is lone.
+ *
+ * 24 WIDE BECAUSE THE VARIANT IS A POSITIONAL HASH. A smaller field is a
+ * smaller sample of `tileVariant` and deals only seven of the eight; measured,
+ * 24x24 on this stride deals all eight, and the control below fails if that
+ * ever stops being true.
+ */
+function loneTreeField() {
+  const { GREEN, TREES } = TileCode;
+  const side = 24;
+  const tiles: number[] = new Array<number>(side * side).fill(GREEN);
+  for (let y = 1; y < side; y += 3) {
+    for (let x = 1; x < side; x += 3) tiles[y * side + x] = TREES;
+  }
+  return { w: side, h: side, tiles };
+}
+
 /** Every id the renderer's terrain tables, its doors and the content name, and who names it. */
 function wiredIds(): ReadonlyMap<string, string> {
   const named = new Map<string, string>();
@@ -103,6 +122,16 @@ function wiredIds(): ReadonlyMap<string, string> {
   for (const code of [TileCode.DOOR, TileCode.DOOR_OPEN, TileCode.ROCK_DOOR]) {
     for (const walls of ['north-south', 'west-east'] as const) {
       add(localDoorSpriteId(doorIn(code, walls), code, 1, 1), `door ${String(code)}, ${walls}`);
+    }
+  }
+  // AND THE LONE TREES THE SAME WAY. The overlay set is exported, but walking
+  // it directly would not prove the painter can reach it: the id comes back
+  // through `loneTreeSpriteId`, cell by cell, so a renamed sprite is a missing
+  // id here rather than one nobody looked for.
+  const field = loneTreeField();
+  for (let ty = 0; ty < field.h; ty += 1) {
+    for (let tx = 0; tx < field.w; tx += 1) {
+      add(loneTreeSpriteId(field, tx, ty), `lone tree (${String(tx)},${String(ty)})`);
     }
   }
   for (const template of MONSTER_TEMPLATES) add(template.sprite, `monster ${template.id}`);
@@ -124,6 +153,11 @@ describe('the art the game is wired to draw passes the load filter', () => {
       'tile_local_door_closed_ew',
       'tile_local_door_open_ns',
       'tile_local_rock_door',
+      // BOTH ENDS OF THE LONE-TREE SET: the stem proves the walk reached the
+      // painter at all, and `_h` proves it reached the whole variant set rather
+      // than the one variant the first cell happened to hash to.
+      'tile_local_tree_single',
+      'tile_local_tree_single_h',
       'enemy_index_ribbon_s',
       'enemy_index_inkwell_s',
       'enemy_index_strongbox_s',

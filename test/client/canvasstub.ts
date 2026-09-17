@@ -37,9 +37,24 @@ export type Blit = {
 
 export type StubImage = { readonly id: string; readonly w: number; readonly h: number };
 
+/**
+ * One `fillRect`, as it was called.
+ *
+ * GEOMETRY ONLY, NOT COLOUR. `fillStyle` is a property the proxy deliberately
+ * swallows, and the questions this reaches are about WHERE the renderer put a
+ * flat rectangle — a barrier rim on a cell, or none — not what shade it was.
+ */
+export type Rect = {
+  readonly x: number;
+  readonly y: number;
+  readonly w: number;
+  readonly h: number;
+};
+
 export type StubCtx = {
   readonly canvas: StubCanvas;
   readonly blits: Blit[];
+  readonly rects: Rect[];
 };
 
 export type StubCanvas = {
@@ -58,11 +73,18 @@ function isSource(v: unknown): v is StubCanvas | StubImage {
 
 function stubContext(canvas: StubCanvas): StubCtx {
   const blits: Blit[] = [];
-  const real: Record<string, unknown> = { canvas, blits };
+  const rects: Rect[] = [];
+  const real: Record<string, unknown> = { canvas, blits, rects };
   return new Proxy(real, {
     get(target, prop) {
       if (prop === 'canvas') return canvas;
       if (prop === 'blits') return blits;
+      if (prop === 'rects') return rects;
+      if (prop === 'fillRect') {
+        return (x: number, y: number, w: number, h: number) => {
+          rects.push({ x, y, w, h });
+        };
+      }
       if (prop === 'drawImage') {
         return (source: unknown, ...rest: number[]) => {
           // Three arities: (src, dx, dy), (src, dx, dy, dw, dh) and the
@@ -130,8 +152,11 @@ export function removeDom(): void {
  * 64-pixel blit. That is the whole point — the invariant has to hold for art
  * that is the wrong size, because art that was the wrong size is what broke it.
  */
-export function stubSprites(w: number, h: number) {
+export function stubSprites(w: number, h: number, missing?: (id: string) => boolean) {
   return {
-    sprite: (id: string) => ({ id, image: { id, w, h } as unknown as HTMLImageElement, w, h }),
+    sprite: (id: string) =>
+      missing?.(id) === true
+        ? undefined
+        : { id, image: { id, w, h } as unknown as HTMLImageElement, w, h },
   };
 }

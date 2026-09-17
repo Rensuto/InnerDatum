@@ -89,6 +89,36 @@ export const DEFAULT_SIGHT_RADIUS = 10;
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════
+ * HOW NEAR A THING HAS TO BE FOR THE MINIMAP TO MARK IT. OURS, NOT UPSTREAM'S.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * THERE IS NO CITATION FOR THIS AND THERE MUST NOT BE ONE. ToME has no minimap
+ * exception: `engine/Map.lua:594-597` hands the minimap to `toScreenMiniMap`
+ * over the SAME map object the board is drawn from, so it shows what the
+ * character has seen or remembers and nothing else. This is a GAME RULE OF
+ * OURS, ruled by the
+ * author on 2026-09-17 for a co-op game played in a voice channel: a friendly
+ * face and the way in and out are the two things four people need to be able to
+ * point at, and hunting for a stair you have already walked past is not the
+ * fight this game is about. Hostiles are never on it unseen — the exception
+ * buys navigation, not intelligence.
+ *
+ * ═══ DERIVED, AND THAT IS THE POINT ═══
+ * Twice the sight radius: near enough to be "over there", far enough to be
+ * worth a mark. Written as an expression rather than as `20` because THIS FILE
+ * HAS ALREADY PAID FOR A SECOND LITERAL — `DEFAULT_SIGHT_RADIUS` existed in
+ * `world.ts` with the right value while a second copy beside it shipped 20 for
+ * three commits (CLAUDE.md § 4). A reader who changes the sight radius must not
+ * have to know this number exists.
+ *
+ * It is a REVEAL radius and not a sight radius: nothing here decides what a body
+ * can see. `visionOf` is still the only answer to that, and the marks this
+ * radius admits carry a position and a kind and nothing else.
+ */
+export const MINIMAP_REVEAL_RADIUS = DEFAULT_SIGHT_RADIUS * 2;
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
  * HOW BRIGHT A TILE DRAWS — `Player.lua:510-517`, three lines above `playerFOV`.
  * ═══════════════════════════════════════════════════════════════════════════
  *

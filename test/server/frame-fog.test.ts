@@ -17,6 +17,7 @@ import {
   projectEffects,
   projectGroundItems,
   projectProjectiles,
+  projectWorld,
 } from '../../src/server/view/projector.ts';
 import { visibleActorIds } from '../../src/server/view/projector.ts';
 import { DEFAULT_SIGHT_RADIUS, knownTile, sightDistance } from '../../src/shared/sight.ts';
@@ -35,6 +36,7 @@ import { STUNNED } from '../../src/server/content/effects.ts';
 import { DamageType } from '../../src/server/engine/damage.ts';
 import { AiProfile } from '../../src/server/engine/actor.ts';
 import { TileCode } from '../../src/shared/protocol.ts';
+import { PropId } from '../../src/shared/props.ts';
 import { createRng } from '../../src/shared/rng.ts';
 import type { World } from '../../src/server/world/world.ts';
 
@@ -214,6 +216,55 @@ describe('the projectiles frame', () => {
     const { world, far } = sky();
     expect(projectProjectiles(world).projectiles.map((p) => p.id)).toContain(far);
   });
+
+  it('does not name a STRANGER as the shooter, however brightly lit they are', () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * "PARAMETER ADDED, BODY UNTOUCHED" — AND THIS IS THE BODY THAT WAS MISSED.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * `visibleActorIds` grew a `teammate` predicate so that a player who is not
+     * in YOUR party is fogged like anything else, and it was threaded through
+     * eight gateway call sites. This function's own internal call kept the
+     * two-argument form, so the one place that decides whether to REDACT a
+     * shooter still believed every player was on your side: a stranger's bolt
+     * arrived with their id on it, out of a room you cannot see into.
+     *
+     * THE ORB IS VISIBLE EITHER WAY. It is gated on its own tile and that rule
+     * is not under test here — what is under test is the NAME, which is the
+     * only thing on the frame that can identify a body you cannot see.
+     */
+    const world = field();
+    const me = world.addPlayer('p1', 'Dalt');
+    me.x = 1;
+    me.y = 1;
+    const stranger = world.addPlayer('p2', 'Wren');
+    stranger.x = 1 + DEFAULT_SIGHT_RADIUS + 3;
+    stranger.y = 1;
+    const shot = world.addProjectile({
+      sourceId: stranger.id,
+      origin: { x: 5, y: 1 },
+      to: { x: 2, y: 1 },
+      projSpeed: 1,
+      range: 10,
+      damage: { dam: 5, type: DamageType.Physical, apr: 0 },
+    });
+
+    const eyes = [{ x: 1, y: 1 }];
+    const mine = projectProjectiles(world, eyes, (id) => id === me.id).projectiles.find(
+      (p) => p.id === shot.id,
+    );
+    expect(mine, 'the shot itself was withheld — it is gated on its own tile').toBeDefined();
+    expect(mine?.sourceId, 'a stranger you cannot see was named as the shooter').toBeUndefined();
+    expect(JSON.stringify(mine), 'the id survived serialisation').not.toContain(stranger.id);
+
+    // AND YOUR OWN PARTY IS STILL NAMED, so the case cannot pass by redacting
+    // everybody: the same shot, with the same eyes, from a teammate.
+    const ours = projectProjectiles(world, eyes, () => true).projectiles.find(
+      (p) => p.id === shot.id,
+    );
+    expect(ours?.sourceId, 'a teammate`s shot lost its shooter').toBe(stranger.id);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -341,6 +392,76 @@ describe('knownTile — the rule the gateway actually spends', () => {
 });
 
 // ---------------------------------------------------------------------------
+// The arrival frame — the one snapshot that carries the dressing
+// ---------------------------------------------------------------------------
+
+describe('the world snapshot', () => {
+  /** A bowl in front of the eye and a bowl at the far end of the map. */
+  function dressed(): { world: World; near: string; far: string } {
+    const world = field();
+    const near = { x: 3, y: 1 };
+    const far = { x: 1 + DEFAULT_SIGHT_RADIUS + 3, y: 1 };
+    world.addProp(near, PropId.OfferingBowl);
+    world.addProp(far, PropId.OfferingBowl);
+    return {
+      world,
+      near: `${String(near.x)},${String(near.y)}`,
+      far: `${String(far.x)},${String(far.y)}`,
+    };
+  }
+
+  const cellsOf = (world: World, eyes?: readonly { x: number; y: number }[]): string[] =>
+    (projectWorld(world, eyes).props ?? []).map((prop) => `${String(prop.x)},${String(prop.y)}`);
+
+  it('carries only the dressing in sight of the tile you arrived on', () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * THE ARRIVAL FRAME WAS THE ONE PROP PATH NOTHING MEASURED.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * `broadcastPropsIfChanged` is scraped in `fov.test.ts` and driven over a
+     * socket there, and both of those read the GATEWAY. `projectWorld` builds
+     * the prop list itself, from its own eyes — replace that predicate with a
+     * bare `projectProps(world)` and 286 tests still passed, while all 43 of
+     * Alderbrook's props crossed the wire on every single arrival.
+     *
+     * The screen hides it: every caller ends in a pump whose `props` frame
+     * corrects the list a moment later. The ruling is about the WIRE — *"a prop
+     * out of sight never reaches the wire"* — so the correction is not a
+     * defence, and this asserts the frame rather than the picture.
+     */
+    const { world, near, far } = dressed();
+    const cells = cellsOf(world, [{ x: 1, y: 1 }]);
+    expect(cells, 'the bowl in front of the eye was withheld').toContain(near);
+    expect(cells, 'the whole floor`s furniture rode in on the arrival frame').not.toContain(far);
+  });
+
+  it('and with no eyes given, the whole floor — the GM console and every fixture', () => {
+    const { world, near, far } = dressed();
+    const cells = cellsOf(world);
+    expect(cells).toContain(near);
+    expect(cells).toContain(far);
+  });
+
+  it('fogs its bodies and its dressing by the same eyes', () => {
+    // ONE SIGHT PASS, TWO LISTS. They are built from the same `eyes` in the same
+    // function precisely so a change can never gate one and forget the other.
+    const { world, far } = dressed();
+    const [fx, fy] = far.split(',').map(Number);
+    husk(world, 'lurker', fx ?? 0, fy ?? 0);
+    const view = projectWorld(world, [{ x: 1, y: 1 }]);
+    expect(
+      view.actors.map((actor) => actor.id),
+      'the body at the far end was shown',
+    ).not.toContain('lurker');
+    expect(
+      (view.props ?? []).map((prop) => `${String(prop.x)},${String(prop.y)}`),
+      'the prop on that same tile was shown while the body on it was not',
+    ).not.toContain(far);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // The guard
 // ---------------------------------------------------------------------------
 
@@ -369,6 +490,23 @@ describe('every player-facing frame is built with eyes', () => {
       // AND THE MONSTERS CARD. `projectTurn` takes an OPTIONAL set of visible ids,
       // so a gateway call without one sums every hostile on the floor.
       ['projectTurn', 'eyesOf'],
+      /**
+       * ═══ AND WHOSE PARTY THE VIEWER IS IN, WHICH IS A SECOND OPTIONAL ═══
+       * `teammate` is optional on every one of these and ABSENT MEANS EVERY
+       * PLAYER IS A TEAMMATE — the old behaviour, kept for the GM console and
+       * every fixture. In the gateway that default is a leak with a friendly
+       * face: a Common realm is shared by every party in it, so a stranger two
+       * streets away comes back through any call that forgot the argument.
+       *
+       * MEASURED: of the eight sites threaded, SEVEN could be reverted one at a
+       * time with the whole suite green — the rule was held up by the single
+       * incremental path (`reconcileSight`). Every snapshot path could quietly
+       * go back to "every player is a teammate", and `session.visible` with it.
+       */
+      ['visibleActorIds', 'teammateFor'],
+      ['projectActors', 'teammateFor'],
+      ['projectWorld', 'teammateFor'],
+      ['projectProjectiles', 'teammateFor'],
     ] as const) {
       for (const match of text.matchAll(new RegExp(`${fn}\\(`, 'g'))) {
         const call = text.slice(match.index, match.index + 220);

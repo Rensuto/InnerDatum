@@ -24,8 +24,8 @@
  */
 
 import { PALETTE } from '../render/canvas.ts';
-import { TileCode, isWalkable, isSafeGround } from '../../shared/protocol.ts';
-import type { LevelView, RegionView, SiteView } from '../../shared/protocol.ts';
+import { TileCode, isWalkable, isSafeGround, BeaconKind } from '../../shared/protocol.ts';
+import type { BeaconView, LevelView, RegionView, SiteView } from '../../shared/protocol.ts';
 import type { TileXY } from '../../shared/coords.ts';
 
 /** Where the minimap sits and how big it is allowed to get. */
@@ -247,6 +247,51 @@ export type MapPaint = {
    * so.
    */
   readonly party?: readonly { readonly x: number; readonly y: number; readonly name: string }[];
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE ONE LAYER ON THIS MAP THAT THE FOG DOES NOT TAKE AWAY.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Every other list above is gated on `seen`, and the note on `seen` says why:
+   * *"a map that hid the ground but kept the towns would give away exactly what
+   * the fog is for"*. THIS ONE IS DELIBERATELY NOT, and it is the same ruling
+   * that made props line-of-sight only (2026-09-17, `PropsMsg`): you may no
+   * longer see the furniture through a wall, so you must not have to hunt for
+   * the door either. A friendly face and the way in and out are the two things
+   * a player is allowed to be told about a town they are standing in.
+   *
+   * ═══ THE DECISION WAS ALREADY MADE, ONCE, ON THE SERVER ═══
+   * `beaconsFor` sends a friendly within `MINIMAP_REVEAL_RADIUS` and a way
+   * on/out within that radius OR on ground this character has seen. NO HOSTILE
+   * IS EVER IN THIS LIST. Re-testing any of that here would be a second copy of
+   * a sight rule in the process that must never hold one — and the copy that
+   * drifts. The painter draws what it is handed.
+   *
+   * ═══ THE WINDOW STILL CLIPS IT, AND THAT IS KNOWN AND KEPT ═══
+   * `MINIMAP_RADIUS` is 16 and the reveal radius is 20, so a beacon 17 to 20
+   * tiles out is culled by the window bounds below before an ink is ever
+   * chosen. Raising the window to 20 keeps `cell` at 3 but grows
+   * `minimapReserveH` from 119 to 143, and that function records the Case Log
+   * vanishing mid-fight at 150. Sixteen tiles is already "relatively close",
+   * which is what was asked for; the extra four are a server-side allowance
+   * that the full-screen map does not draw either.
+   *
+   * ═══ AND THE CLIP IS NOT "17 TO 20". IT IS "ANYTHING PAST 16" ═══
+   * Corrected from a rendered measurement: the way-out arm of `beaconsFor` is
+   * near OR seen/remembered, and the memory half has NO BOUND. Standing at
+   * 23,12 in Alderbrook the server sent six remembered entrance beacons at
+   * y=46/47, 34 tiles off, and none of them could be drawn. That is a handful
+   * of `{x,y,kind}` triples on a frame that already carries the site list, so it
+   * is waste rather than a leak — and bounding the server to a number the CLIENT
+   * owns would put the minimap's layout arithmetic into the gateway. The clip
+   * lives here, and this is it written down honestly.
+   *
+   * ═══ THE MINIMAP ONLY, AND NOT THE WORLD MAP ═══
+   * Beacons are about the floor you are STANDING ON. The full-screen map is
+   * always the overworld's, so drawing a delve's beacons on it would be the
+   * same confident lie `partyMarks` refuses to tell with instance coordinates.
+   */
+  readonly beacons?: readonly BeaconView[];
 };
 
 /** One party member's mark: where they are and what to call them. */
@@ -427,6 +472,110 @@ const BOSS_INK = '#c000af';
 const HOSTILE_INK = '#f00000';
 const NEUTRAL_INK = '#0000f0';
 
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * A FRIENDLY FACE. AN INK NOTHING ELSE ON THIS SURFACE USES.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `PARTY_INK`'s rule, applied again: a mark has to be readable as its own kind
+ * at a glance, which means an ink no other layer here spends. Every one that is
+ * taken is taken for a reason that would be spoiled by sharing it —
+ * `NEUTRAL_INK` `#0000f0` is upstream's OBJECT blue and this map already draws
+ * loot in it, `PARTY_INK` `#6fd3a8` means somebody you are playing with,
+ * `HOSTILE_INK` and `BOSS_INK` are the two "this will kill you" answers, and
+ * `PALETTE.GOLD` is a place rather than a person.
+ *
+ * Cyan is what is left that survives three pixels against this map's terrain
+ * bands, all of which are desaturated: field `#4e5a44`, road `#8a8070`, wall
+ * `#2a2733`. It sits on the blue side of `PARTY_INK`'s mint.
+ *
+ * ═══ AND THE HUE IS THE WHOLE SEPARATION, BECAUSE THE TWO NEVER SHARE A MAP ═══
+ * This said the INK ring was the second channel against a party mark. MEASURED
+ * ON THE RENDERED CLIENT AND IT IS NOT: `main.ts` passes `party` to the WORLD
+ * MAP only, and the world map is never handed `beacons` (`MapPaint.beacons`
+ * says why). So a beacon and a party mark cannot appear on one surface, and the
+ * ring is doing a different job — see `beaconGlyph`.
+ *
+ * OUTSIDE `PALETTE`, exactly as `TRAP_INK`, `LOOT_INK`, `PARTY_INK` and the
+ * whole `DANGER_INK` ramp are: this map paints flat bands chosen for contrast
+ * at one pixel rather than for fidelity to the art, and the palette is tuned
+ * for the other job.
+ */
+const BEACON_FRIENDLY_INK = '#39c6e0';
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * AND A WAY OFF THIS MAP — `PALETTE.ORANGE`, which nothing else here spends.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * In the palette rather than beside it, because there was a free entry that
+ * fits: `ORANGE` is unused anywhere on this surface, and it is the furthest
+ * readable step from `PALETTE.GOLD` (the settlements), `CROSSING_INK` (the way
+ * between maps on the OVERWORLD) and the `DANGER_INK` amber.
+ *
+ * BOTH DIRECTIONS SHARE IT, ON PURPOSE. What a player is hunting for is "a way
+ * off this floor"; which way it goes is the detail, and it is carried by the
+ * SHAPE instead — see `beaconGlyph`. That is `DANGER_INK`'s own rule: *"about
+ * one man in twelve cannot tell the amber from the crimson"*, so a fact this
+ * map is asked for must never live in hue alone.
+ */
+const BEACON_WAY_INK = PALETTE.ORANGE;
+
+/**
+ * How one beacon is drawn: an ink, a side in pixels, and whether it is punched
+ * hollow. The outline is always `PALETTE.INK` and always one pixel, so it is
+ * not a field.
+ */
+export type BeaconGlyph = {
+  readonly ink: string;
+  /** The side of the coloured mark. The INK ring adds one pixel all round. */
+  readonly size: number;
+  /** A one-pixel ring of `ink` around an INK centre, rather than a solid block. */
+  readonly hollow: boolean;
+};
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * WHICH MARK A BEACON GETS — TWO CHANNELS, BECAUSE THREE PIXELS IS THE BUDGET.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * The minimap runs at `cell = 3` (`minimapRect`: a 33-tile window in a 200x130
+ * box). At that size a hue on its own is a smudge, so every beacon differs from
+ * every other mark on this surface in SIZE or FILL as well as in colour:
+ *
+ *   FRIENDLY — `BEACON_FRIENDLY_INK`, one cell, ringed in INK.
+ *   EXIT — `BEACON_WAY_INK`, a cell wider than a site dot, SOLID and ringed.
+ *   ENTRANCE — the same ink and size, HOLLOW. The way back is a thing you note
+ *     and walk away from; the way on is the thing you are looking for, so the
+ *     louder of the two shapes goes to the exit.
+ *
+ * ═══ WHAT THE INK RING IS ACTUALLY FOR, MEASURED ═══
+ * It is a KEYLINE against LIT ground, not a second channel against another
+ * mark. On the map's bright bands — road `#8a8070`, and the settlement gold —
+ * a 3px block of cyan with no outline loses its edges; the ring is what keeps
+ * it square. On NEVER-SEEN ground it contributes nothing at all and needs to:
+ * `UNSEEN` is `#0b0912` and `PALETTE.INK` is `#0a0813`, one step apart, so the
+ * measured glyph over black is a bare 3px cyan square — which is legible,
+ * because the fill is the loud part. The claim that used to live here (that the
+ * ring told a friendly from a teammate) was false: the two lists never reach
+ * the same surface. See `BEACON_FRIENDLY_INK`.
+ *
+ * THE FLOORS ARE NOT `cell`. At `cell = 1` (a full region, if this ever drew
+ * beacons there) a one-pixel dot under a one-pixel ring is nothing at all, so
+ * both kinds have a minimum that keeps the ring visible.
+ *
+ * PURE, AND EXPORTED FOR THE TEST. The choice is the whole feature — a beacon
+ * drawn in the party's own green is a stranger a player walks up to expecting a
+ * friend — and it is the part of this file that can be asserted rather than
+ * scraped.
+ */
+export function beaconGlyph(kind: BeaconKind, cell: number): BeaconGlyph {
+  if (kind === BeaconKind.Friendly) {
+    return { ink: BEACON_FRIENDLY_INK, size: Math.max(3, cell), hollow: false };
+  }
+  return { ink: BEACON_WAY_INK, size: Math.max(4, cell + 1), hollow: kind === BeaconKind.Entrance };
+}
+
 export function paintMap(paint: MapPaint): number {
   const {
     ctx,
@@ -443,6 +592,7 @@ export function paintMap(paint: MapPaint): number {
     traps,
     loot,
     actors,
+    beacons,
   } = paint;
 
   const { win, cell, ox, oy } = mapPlacement(level, rect, self, windowRadius);
@@ -552,6 +702,48 @@ export function paintMap(paint: MapPaint): number {
       dot,
     );
     ctx.globalAlpha = wasAlpha;
+  }
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * AND THE BEACONS, WHICH ARE THE ONE PASS ON THIS MAP WITH NO `seen` GUARD.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * READ `MapPaint.beacons` BEFORE CHANGING THIS. Every loop above it drops a
+   * mark on a cell outside `seen`, and each of those checks is load-bearing.
+   * THIS ONE IS MEANT TO BE MISSING. A beacon is a per-viewer answer the SERVER
+   * has already fogged — a friendly within `MINIMAP_REVEAL_RADIUS`, a way
+   * on or out within that radius or on ground this character has walked — and
+   * adding `seen.has()` here would silently delete the whole feature on exactly
+   * the tiles it exists for: the door you have not found yet.
+   *
+   * THE WINDOW BOUNDS STILL APPLY, and that is not the fog. A mark outside the
+   * drawn cells would be painted over the panel beside the map.
+   *
+   * UNDER THE PARTY AND UNDER YOU, over the sites. A person you are playing
+   * with outranks a person you have merely been told about, and your own mark
+   * outranks both — the order the party/self block below already argues for.
+   */
+  if (beacons !== undefined) {
+    for (const beacon of beacons) {
+      if (beacon.x < win.x0 || beacon.x > win.x1) continue;
+      if (beacon.y < win.y0 || beacon.y > win.y1) continue;
+      const glyph = beaconGlyph(beacon.kind, cell);
+      const inset = Math.floor((glyph.size - cell) / 2);
+      const bx = ox + beacon.x * cell - inset;
+      const by = oy + beacon.y * cell - inset;
+      // THE RING FIRST, AS A BOX UNDER THE MARK. A stroke would straddle the
+      // pixel boundary and blur a three-pixel glyph into four grey ones; this
+      // map draws in whole pixels for the reason `mapPlacement` gives.
+      ctx.fillStyle = PALETTE.INK;
+      ctx.fillRect(bx - 1, by - 1, glyph.size + 2, glyph.size + 2);
+      ctx.fillStyle = glyph.ink;
+      ctx.fillRect(bx, by, glyph.size, glyph.size);
+      if (glyph.hollow) {
+        ctx.fillStyle = PALETTE.INK;
+        ctx.fillRect(bx + 1, by + 1, glyph.size - 2, glyph.size - 2);
+      }
+    }
   }
 
   /**

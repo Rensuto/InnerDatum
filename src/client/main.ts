@@ -437,6 +437,7 @@ import type {
   ItemView,
   RegionView,
   PropView,
+  BeaconView,
   SiteView,
   Slot,
   TurnEvent,
@@ -1340,13 +1341,41 @@ let realmName: string | null = null;
  */
 let sites: readonly SiteView[] = [];
 /**
- * THE FLOOR'S DRESSING, and it is REPLACED whole like `sites` and `level`.
+ * THE DRESSING THIS VIEWER CAN SEE, and it is REPLACED whole like `sites`.
  *
- * A prop never moves and is never added after the floor is built, so there is no
- * delta frame for one and there deliberately is not: it arrives on `welcome` and
- * on `realm`, which are the two frames that carry the map itself.
+ * ═══ THIS COMMENT USED TO SAY IT ARRIVED WITH THE MAP AND NEVER MOVED ═══
+ * *"A prop never moves and is never added after the floor is built, so there is
+ * no delta frame for one"* — true of the prop and false of the picture. What
+ * moves is the VIEWER: props are line-of-sight only with no memory (`PropsMsg`,
+ * a deliberate divergence from upstream), so the list changes every time you
+ * walk into a room or back out of one. `realm` carries what is in sight of the
+ * tile you arrive on and every change after that, INCLUDING THE EMPTY LIST that
+ * takes a room's furniture back off the screen, comes on a `props` frame.
+ *
+ * The client does not re-test fog against this. The server has already decided.
  */
 let props: readonly PropView[] = [];
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE MINIMAP'S OWN MARKS, AND THE ONLY THING ON THIS CLIENT THE FOG SPARES.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * A friendly face near you, and the way in and the way on — see `BeaconView`.
+ * Ruled on 2026-09-17 in the same breath as the ruling that made `props` above
+ * line-of-sight only, and it is the same trade read from the other end: you may
+ * no longer see the furniture through a wall, so you must not have to hunt for
+ * the door either.
+ *
+ * REPLACED WHOLE like `sites`, and it RIDES THE SAME TWO FRAMES — `realm` and
+ * `sites` — because a beacon changes for exactly the reasons a roamer marker
+ * does: the thing moved, or you did. Absent means none, which is every inner
+ * world with no way out but the one you came in by.
+ *
+ * NOTHING IS RE-TESTED AGAINST FOG HERE OR IN THE PAINTER. The server chose
+ * this list against that viewer's own body and its own `MINIMAP_REVEAL_RADIUS`,
+ * and a hostile is never in it.
+ */
+let beacons: readonly BeaconView[] = [];
 /**
  * Which realm the markers above belong to, so a `sites` frame that crossed a
  * realm change in flight is dropped rather than painting another map's towns
@@ -5028,6 +5057,24 @@ const paintHud: HudPainter = (ctx, width, height) => {
           neutral: actor.faction === 'townsfolk',
         })),
       loot: ground.map((item) => ({ x: item.cell[0], y: item.cell[1] })),
+      /**
+       * ═══════════════════════════════════════════════════════════════════════
+       * AND THE MARKS THE FOG SPARES — see `BeaconView` and `MapPaint.beacons`.
+       * ═══════════════════════════════════════════════════════════════════════
+       *
+       * PASSED STRAIGHT THROUGH AND NOT FILTERED, which is the same rule the
+       * two lists above state and matters more here: `traps` and `ground` are
+       * narrowed by the server and re-narrowing them would be a second
+       * disagreeing answer, and this list is narrowed by the server AGAINST A
+       * RULE THIS CLIENT DOES NOT HOLD — `MINIMAP_REVEAL_RADIUS`, the viewer's
+       * own body, and the seen-or-remembered test for a way out. There is
+       * nothing to filter it with here even if it were right to.
+       *
+       * THE MINIMAP AND NOT THE WORLD MAP. The world-map call below paints
+       * `overworldLevel`, and a beacon is a fact about the floor you are
+       * standing on — the same reason `traps` and `loot` stop here.
+       */
+      beacons,
     });
 
     /**
@@ -6171,7 +6218,7 @@ function applyTurnEvent(event: TurnEvent): void {
       // the `downed` arm above refuses to do and says why: "the M3 client
       // treated 0 hp as a corpse, and a corpse is not something anybody runs
       // to". The two arms disagreed about the same body, and the Record lane
-      // printed "X is unfiled." over them for good measure.
+      // printed "X is unmade." over them for good measure.
       //
       // `hitToWire` now raises `death` only for a MONSTER, so this arm is a
       // monster's arm. It is still not a removal: the corpse stays until `left`,
@@ -13308,7 +13355,7 @@ function forgetTheWorld(): void {
   // The fight this client was in belonged to the world that has just been
   // replaced. Forgetting which side of the crossing we were on means the
   // next `turn` frame re-baselines silently rather than announcing a
-  // "CONTACT" or an "the Index closes" about a floor that no longer exists.
+  // "CONTACT" or an "the Index looks away" about a floor that no longer exists.
   combatBanner?.reset();
   // The ring was drawn around a body that may now be somewhere else, or be
   // somebody else. A stale ring is worse than none: it is a picture of a
@@ -13393,6 +13440,28 @@ function forgetTheWorld(): void {
   // and `broadcastGroundIfChanged`'s memo would then actively suppress the
   // correction, because the floor itself had not changed.
   ground = [];
+  /**
+   * ═══ AND THE DRESSING, WHICH HAD BEEN CARRIED ACROSS A WELCOME ALL ALONG ═══
+   *
+   * A REAL BUG, FOUND WHILE PROPS WERE MADE SIGHT-ONLY AND FIXED HERE. `props`
+   * was written by `case 'realm'` and by nothing else, and `welcome` never
+   * touched it — so a reconnect or a party wipe left the LAST map's furniture
+   * on screen until a `realm` frame happened to land behind it. It was invisible
+   * while a prop was a fact about a floor everybody held; it is a wrong picture
+   * now that a prop is a fact about what THIS viewer can see this instant.
+   *
+   * SAFE FOR THE SAME REASON THE FLOOR ABOVE IS: the welcome path restates it.
+   * `sendRealm` is called on the line after the `welcome` is sent and carries
+   * what is in sight of the arrival tile (server/net/gateway.ts), and where
+   * there is no realm registry to send one, the pump's
+   * `broadcastPropsIfChanged` restates it against a memo seeded EMPTY — which
+   * is exactly the state this line puts the client in.
+   */
+  props = [];
+  // ...AND THE MARKS WITH THEM, on the identical argument: a door drawn on a
+  // map that has been replaced is the one mark on this surface a player would
+  // actually walk to, because it is the one the fog is not allowed to hide.
+  beacons = [];
   inventory = null;
   shop = null;
   reviveArmed = false;
@@ -13472,9 +13541,15 @@ function applyServerMessage(msg: ServerMsg): void {
       realmKind = msg.kind;
       realmName = msg.name;
       sites = msg.sites;
-      // `?? []` — a floor with no dressing omits the key, and a server too old
-      // to send one is the same absence. Both mean "draw nothing".
+      // `?? []` — a floor with no dressing IN SIGHT OF THE ARRIVAL TILE omits
+      // the key, and a server too old to send one is the same absence. Both
+      // mean "draw nothing", and the first `props` frame after this fills it.
       props = msg.props ?? [];
+      // ...AND THE MARKS THE FOG SPARES, on the same frame and by the same
+      // rule: absent means none. Set here rather than left alone because this
+      // is a NEW MAP — the last map's door is the worst mark this client could
+      // draw, and `?? []` is what clears it when the new one has none.
+      beacons = msg.beacons ?? [];
       currentRealmId = msg.realmId;
       // THE LAST WINDOW WAS OF THE LAST MAP; this map's arrives right behind it.
       vision = null;
@@ -13568,6 +13643,12 @@ function applyServerMessage(msg: ServerMsg): void {
     case 'sites':
       if (msg.realmId === currentRealmId) {
         sites = msg.sites;
+        // THE BEACONS RIDE THIS FRAME, and are replaced whole with it. `?? []`
+        // is a real answer: it is how the last friendly to walk out of range
+        // leaves the map, and how the ways on and out go dark again. Inside the
+        // realm-id guard with `sites` for the reason stated there — a frame for
+        // a map this client has left would draw another town's door on this one.
+        beacons = msg.beacons ?? [];
         if (realmKind === 'overworld') overworldSites = msg.sites;
       }
       break;
@@ -14289,6 +14370,25 @@ function applyServerMessage(msg: ServerMsg): void {
       // Pick up row through `lootAt`. The redraw is `onMessage`'s, which calls
       // `requestDraw()` after every applied frame.
       ground = msg.items;
+      break;
+    case 'props':
+      // ═══ v26 — THE DRESSING YOU CAN SEE. COMPLETE, REPLACED, AND WITHDRAWN ═══
+      //
+      // `ground`'s rule directly above, with the one difference that is the whole
+      // reason this frame exists: the floor is sent by what you REMEMBER and this
+      // is sent by what you SEE, so it is taken away again. An empty array is not
+      // an edge case here — it is half of what the frame does, and it is what
+      // takes a room's furniture off the screen as you step back into the street.
+      //
+      // DROPPING A STALE FRAME IS `sites`' JOB AND NOT THIS ONE'S: a `props`
+      // frame for a map you have left would draw another floor's furniture on
+      // this one, so the realm id is checked exactly as it is there.
+      //
+      // NOTHING IS RE-TESTED AGAINST FOG. `paintProps` draws what it is handed;
+      // the decision was made once, on the server, against that viewer's own
+      // eyes. A client-side belt here would be a second copy of the sight rule
+      // in the one process that must never hold one.
+      if (msg.realmId === currentRealmId) props = msg.props;
       break;
     case 'inventory':
       // ═══ v10 — YOUR BAG AND YOUR DOLL. UNICAST, ABSOLUTE, BOTH HALVES AT ONCE ═══

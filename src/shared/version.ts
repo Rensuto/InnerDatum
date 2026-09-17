@@ -660,6 +660,44 @@
  * ═══════════════════════════════════════════════════════════════════════════
 
 
+ * 25 -> 26 (ONLY WHAT YOU CAN SEE). Dressing stops being part of the map:
+ * `ServerMsg` gains `PropsMsg`, `RealmMsg.props` narrows from "every prop on
+ * this floor" to "the props this viewer can see from where they are standing",
+ * and the never-filled `WelcomeMsg.props` is deleted.
+ *
+ * ═══ WHY THIS FORCES A BUMP, WHERE A NARROWING USUALLY DOES NOT ═══
+ * Fogging an outbound frame is normally free — the entries below fog `joined`,
+ * `left`, the player lane, the badges, the sky and the roamer markers, and not
+ * one of them moved this number, because a client shown less draws less and
+ * nothing it draws becomes false. THAT ARGUMENT DEPENDS ON THE CLIENT BEING
+ * ABLE TO HEAR THE WITHDRAWAL, and a v25 client cannot: it has no `props` case,
+ * so an unknown `t` falls through its dispatch and is dropped.
+ *
+ * What that leaves on screen is the exact bug this number is being moved for. A
+ * v25 client keeps whatever `realm` handed it at the doorway — a partial room's
+ * furniture, chosen by where its body happened to stand on arrival — FOREVER,
+ * painted over never-seen black, with no frame that can ever correct or clear
+ * it. It is not "an older client misses a feature"; it is an older client
+ * drawing a picture the server has stopped believing, which is `18 -> 19`'s rule
+ * verbatim. A mismatch instead closes the socket with `version_mismatch` and
+ * costs a page reload in an Activity, where clients are served fresh on launch.
+ *
+ * CONSIDERED AND NOT BUMPED FOR, though they ride the same number: `RealmMsg`
+ * and `SitesMsg` each gain an OPTIONAL `beacons`, the minimap's own marks
+ * (`BeaconView`). An older client ignores the key and draws the minimap it
+ * always drew — nothing it holds becomes false — so on the `VisionMsg.sight`
+ * precedent that half would have shipped under 25. It is named here so the next
+ * reader does not have to work out which half of this commit did the forcing.
+ *
+ * `SCHEMA_VERSION` STAYS 1. Nothing here is persisted and nothing ever was: a
+ * prop is laid by the realm's own generator from its seed, and a beacon is
+ * derived per frame from the realm registry and the party table. What a
+ * character REMEMBERS is saved, and this commit is precisely the decision not to
+ * consult that memory for dressing.
+ *
+ * ═══════════════════════════════════════════════════════════════════════════
+
+
  * 24 -> 25 (THEMED TERRAIN). Twenty-two terrain codes, `TileCode` 34 to 55:
  * the dungeon's water, lava, void, crystal, slime, sand, burnt and gloomy grid
  * families, the harmless `_FAKE` twins of the water and lava floors, and
@@ -1087,7 +1125,7 @@
  * path rather than read from disk. When that changes it will be an OPTIONAL
  * field and docs/data-schemas.md:48-49 applies unchanged.
  */
-export const PROTOCOL_VERSION = 25;
+export const PROTOCOL_VERSION = 26;
 
 /**
  * Bumped whenever a persisted save file's shape changes. Every bump needs a

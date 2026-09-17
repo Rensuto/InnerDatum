@@ -40,7 +40,7 @@ describe('shared constants', () => {
     expect(Math.log2(TILE_PX) % 1).toBe(0);
   });
 
-  it('pins PROTOCOL_VERSION at 24 — the floor can be waiting for you', () => {
+  it('pins PROTOCOL_VERSION at 26 — only what you can see', () => {
     // AN EXPLICIT PIN, so the bump cannot be silently reverted by a merge.
     // Everything above only asserts the constants are positive integers, which
     // a revert would pass. THE JUSTIFICATION MOVES WITH THE NUMBER — a pin whose
@@ -163,10 +163,20 @@ describe('shared constants', () => {
     // it, fogged past the first tile, with no route the client can plan. The
     // water that drowns and the lava that burns would be indistinguishable from
     // their harmless twins, because both would be rock.
-    expect(PROTOCOL_VERSION).toBe(25);
+    //
+    // v26 STOPS DRESSING BEING PART OF THE MAP. `RealmMsg.props` narrows to what
+    // the viewer can actually SEE and the withdrawal rides a new `props` frame,
+    // which a v25 client drops on an unknown `t`. So that client keeps whatever
+    // furniture happened to be in sight of the tile it walked in on — forever,
+    // over never-seen black, with no frame that can ever correct or clear it.
+    // It is 18 -> 19's rule rather than a narrowing an old client can ignore:
+    // every OTHER fogging pass in this file left the older client drawing LESS
+    // and nothing false, and this one leaves it drawing a room the server has
+    // stopped believing in.
+    expect(PROTOCOL_VERSION).toBe(26);
   });
 
-  it('keeps the 24 -> 25 changelog entry beside the constant, and non-empty', () => {
+  it('keeps the 25 -> 26 changelog entry beside the constant, and non-empty', () => {
     // THE PROSE IS THE DELIVERABLE HERE, NOT DECORATION. Every bump in this file
     // is argued above the constant, and the argument is the only thing that
     // tells the next person whether their change forces a bump or is an addition
@@ -194,21 +204,23 @@ describe('shared constants', () => {
     // touched — a guard that proves the discipline held LAST TIME is not a
     // guard. It moves with the constant now, and the assertions below name this
     // entry's own frame.
-    const afterHeading = source.split('24 -> 25 (THEMED TERRAIN)')[1] ?? '';
+    const afterHeading = source.split('25 -> 26 (ONLY WHAT YOU CAN SEE)')[1] ?? '';
     // The entry ends where the one before it begins. Entries are written newest
     // first ABOVE the constant, so cutting at the constant would read every
     // older entry too, and an assertion could pass on somebody else's prose.
-    const entry = afterHeading.split('23 -> 24 (A LIGHT SOURCE)')[0] ?? '';
+    const entry = afterHeading.split('24 -> 25 (THEMED TERRAIN)')[0] ?? '';
 
     expect(afterHeading).not.toBe('');
     expect(entry.length, 'the entry runs on into the constant').toBeLessThan(afterHeading.length);
     expect(entry.trim().length).toBeGreaterThan(200);
     // It must name the thing that FORCES the bump, not merely list what was
     // added — an entry that only enumerates additions is an entry arguing for
-    // NOT bumping. Here that is the codes, and the resource field that rides
-    // the same number must be argued for too.
-    expect(entry).toContain('`TileCode`');
-    expect(entry).toContain('`ResourceMsg`');
+    // NOT bumping. Here that is the new frame and the field that narrowed under
+    // it, and the half that rides the same number without forcing it has to be
+    // argued for too, or the next reader cannot tell which half did the work.
+    expect(entry).toContain('`PropsMsg`');
+    expect(entry).toContain('`RealmMsg.props`');
+    expect(entry).toContain('`beacons`');
     // And it must say what it deliberately did NOT do to the save file, because
     // the reflex when a protocol moves is to move both numbers.
     expect(entry).toContain('SCHEMA_VERSION');
