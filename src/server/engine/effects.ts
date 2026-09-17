@@ -2076,10 +2076,13 @@ export function effectModifiers(state: EffectState, actorId: string): EffectModi
   if (table === undefined || table.size === 0) return {};
 
   let stunned = false;
+  let blind = false;
+  let pinned = false;
   let dazed = false;
   let scoured = false;
   let breached = false;
   let freeze = false;
+  let freeResources = false;
   let globalSpeedAdd = 0;
   let apPenalty = 0;
   let mpPenalty = 0;
@@ -2093,6 +2096,23 @@ export function effectModifiers(state: EffectState, actorId: string): EffectModi
     const mods = state.defs.get(effectId)?.modifiers;
     if (mods === undefined) continue;
     stunned = stunned || mods.stunned === true;
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * THREE FLAGS THIS LOOP NEVER READ, SO THREE STATUSES DID NOTHING.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * `recomputeAttributes` has always written `blind`, `pinned` and
+     * `freeResources` from this function's answer, and this function never
+     * gave one: BLINDED (`physical.lua:650`), PINNED (`:993`) and HIGHBORN'S
+     * BLOOM (`other.lua:1582`) landed, badged, ticked and expired, and the
+     * body saw, walked and paid exactly as before. Every test of the three set
+     * the FLAG by hand, so each half was right and the join between them was
+     * missing. `effect-flags.test.ts` now applies every boolean modifier in
+     * the catalogue through `setEffect` and reads it back off the sheet.
+     */
+    blind = blind || mods.blind === true;
+    pinned = pinned || mods.pinned === true;
+    freeResources = freeResources || mods.freeResources === true;
     dazed = dazed || mods.dazed === true;
     scoured = scoured || mods.scoured === true;
     breached = breached || mods.breached === true;
@@ -2150,10 +2170,13 @@ export function effectModifiers(state: EffectState, actorId: string): EffectModi
 
   return {
     stunned,
+    blind,
+    pinned,
     dazed,
     scoured,
     breached,
     noTalentsCooldown: freeze,
+    freeResources,
     globalSpeedAdd,
     apPenalty,
     mpPenalty,

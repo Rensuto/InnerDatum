@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
-import { EffectId, PINNED } from '../../src/server/content/effects.ts';
+import { EffectId, PINNED, createMvpEffectState } from '../../src/server/content/effects.ts';
 import { itemById } from '../../src/server/content/items.ts';
 import { AiProfile } from '../../src/server/engine/actor.ts';
+import { statusApplier } from '../../src/server/engine/effects.ts';
 import { createTurnEngine } from '../../src/server/turn-engine.ts';
 import { createWorld } from '../../src/server/world/world.ts';
 import { TileCode } from '../../src/shared/protocol.ts';
@@ -54,10 +55,16 @@ function scene(seed: string, opts: { withHusk?: boolean } = {}) {
     if (found === undefined) throw new Error(`test fixture: actor ${id} is missing`);
     return found;
   };
-  /** The flag the effect composes, set directly — the composer is not on trial. */
+  /**
+   * THROUGH THE STATUS DOOR, NOT THE FLAG. This set `flags.pinned` by hand, on
+   * the grounds that "the composer is not on trial" — and the composer never
+   * collected `pinned`, so every Pinned in the game did nothing while all three
+   * cases here passed. No `applyPower`, so no save is rolled.
+   */
+  const effects = createMvpEffectState();
+  const status = statusApplier(effects, world.rng);
   const pin = (id: string): void => {
-    const body = actor(id);
-    body.combat = { ...body.combat, flags: { ...body.combat?.flags, pinned: true } };
+    expect(status(actor(id), EffectId.Pinned, 3).dur, 'the pin did not land').toBe(3);
   };
   return { world, engine, actor, pin };
 }

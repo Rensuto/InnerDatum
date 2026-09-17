@@ -21,6 +21,11 @@
 //             t-engine4 game/modules/tome/class/Actor.lua:1198-1204 (boss_rank_circles — the
 //             under-token ring keyed off `rank`, which is what ui_token_ring_elite.png is)
 //                                       :1701-1751 (the rank ladder: stat, level and life adjust)
+//             t-engine4 game/modules/tome/data/general/npcs/aquatic_critter.lua:24-42
+//             (BASE_NPC_AQUATIC_CRITTER), :44-49 (giant eel), :67-75 (dragon turtle),
+//             :91-98 (squid)
+//             t-engine4 game/engines/default/engine/Entity.lua:73-80 (importBase — a child
+//             entity is merged into its base, not substituted for it)
 // T-Engine4 (C) 2009-2018 Nicolas Casalini "DarkGod" — https://te4.org/license
 
 /**
@@ -432,7 +437,7 @@ export type MonsterTemplate = {
    * Every template in this file already cites the upstream family it was built
    * from, and upstream puts `open_door` on the family BASE entity — so the
    * answer for each of ours is written down in the file it was ported from.
-   * Upstream sets it on 28 of 69 npc families; ours comes out at four of nine,
+   * Upstream sets it on 28 of 69 npc families; ours comes out at four of ten,
    * which is the same proportion arrived at independently.
    *
    * ABSENT IS FALSE, and that is upstream's default too: a body with no hands,
@@ -449,11 +454,12 @@ export type MonsterTemplate = {
    *
    * A LOOKUP, like `opensDoors` above, and in the same place: upstream puts
    * `no_breath = 1` on the family BASE entity, so each template's answer is in
-   * the file it cites. Of our nine families, two carry it — losgoroth
+   * the file it cites. Of our ten families, two carry it — losgoroth
    * (`npcs/losgoroth.lua:48`) and crystal (`npcs/crystal.lua:48`) — so three
-   * templates do: the Wraith, the Cairn and the Watcher. Ant, ghoul, canine,
-   * troll, feline and elven-caster set neither field, and none of the nine sets
-   * `can_breath` at all.
+   * templates do: the Wraith, the Cairn and the Watcher. One carries
+   * `can_breath={water=1}` instead, aquatic_critter (`npcs/aquatic_critter.lua:38`),
+   * so the Weir's three breathe the water. Ant, ghoul, canine, troll, feline and
+   * elven-caster set neither field.
    *
    * THE GHOUL IS UNDEAD AND STILL BREATHES. `npcs/ghoul.lua:44` is `undead = 1`
    * with no `no_breath` beside it; upstream gives that to the skeleton race
@@ -2958,6 +2964,324 @@ export const INDEX_WATCHER: MonsterTemplate = Object.freeze({
   },
 });
 
+// ---------------------------------------------------------------------------
+// THE WEIR'S OWN — aquatic_critter.lua, the creatures that breathe the water
+// ---------------------------------------------------------------------------
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THREE THINGS THAT LIVE IN THE WATER, FROM THE ONE FAMILY UPSTREAM PUTS THERE.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * The Weir is `lake-nur` level 2 (shared/mapgen/zones.ts), and upstream fills
+ * that level from one filter: `filters = {{special_rarity="water_rarity"}}`
+ * (data/zones/lake-nur/zone.lua:91). Nothing carries a `water_rarity` of its
+ * own. The zone's npc list makes one, by renaming the `rarity` of every entity
+ * in two files as it loads them (data/zones/lake-nur/npcs.lua:20-21):
+ *
+ *     load("/data/general/npcs/aquatic_critter.lua", function(e)
+ *         if e.rarity then e.water_rarity, e.rarity = e.rarity, nil end end)
+ *
+ * So the level's population is `aquatic_critter.lua` and `aquatic_demon.lua`,
+ * and nothing else. The three here are the three of that file that need no
+ * system this game lacks:
+ *
+ *   ours             upstream        rarity   what it needs
+ *   index_ribbon     giant eel       1        nothing
+ *   index_inkwell    squid           1        T_GRAB, ported as talents/grab.ts
+ *   index_strongbox  dragon turtle   5        nothing
+ *
+ * NOT PORTED, and each for a TALENT this game lacks, never for its level:
+ *
+ *   electric eel           aquatic_critter.lua:51-65    Chain Lightning, Lightning
+ *   ink squid              aquatic_critter.lua:100-108  Blinding Ink (npcs.lua:852)
+ *   ancient dragon turtle  aquatic_critter.lua:77-89    Tidal Wave, Freeze, `ai = "tactical"`
+ *   water imp              aquatic_demon.lua:44-59      Water Bolt (npcs.lua:557), Phase Door
+ *   Walrog                 aquatic_demon.lua:61-82      a unique; Tidal Wave, Freeze
+ *
+ * A `level_range` FLOOR ABOVE THE LEVEL IS NOT AN EXCLUSION, which this note
+ * said it was for the water imp. `engine/Zone.lua:218` weights an entity below
+ * its floor at `10000 / (ood_factor * (floor - level))`, `ood_factor` 3
+ * (`engine/Zone.lua:65`), before dividing by rarity, and the module first bends
+ * the level to `500 * level / (level + 450)` (`tome/class/Zone.lua:73-75`). So all
+ * eight have weight on both maps. At the Weir's level 6 the eel and the squid
+ * are 10000, the ink squid 5000, the electric eel 2500, the dragon turtle 2000,
+ * the water imp 974, the ancient turtle 24 and Walrog 4, and the three ported
+ * are 72% of the draw. At the twin's level 10 the imp is past its floor and at
+ * full weight, 10000, a quarter of the pool, and the three are 56%. The roster
+ * is upstream's with what cannot be cast taken out, not upstream's exactly.
+ *
+ * ═══ THE BASE IS SHARED, AND UPSTREAM MERGES IT RATHER THAN REPLACING IT ═══
+ * Each creature is `newEntity{ base = "BASE_NPC_AQUATIC_CRITTER", ... }`, and
+ * `importBase` (engine/Entity.lua:73-80) deep-clones the base and merges the
+ * child into it (`table.mergeAppendArray(temp, t, true)`). So the dragon
+ * turtle's `resists = { [PHYSICAL] = 50 }` is ADDED to the base's cold 25 and
+ * does not replace it, and its `stats` table overwrites four keys the base
+ * already set. Every number below that a creature does not set is the base's.
+ *
+ * ═══ THE BASE, `aquatic_critter.lua:24-42` ═══
+ *
+ *     autolevel = "warrior",
+ *     ai = "dumb_talented_simple", ai_state = { ai_move="move_complex", talent_in=1, },
+ *     stats = { str=12, dex=10, mag=3, con=13 },
+ *     combat_armor = 1, combat_def = 1,
+ *     combat = { dam=resolvers.levelup(resolvers.mbonus(36, 10), 1, 1), atk=25, apr=7, dammod={str=0.8} },
+ *     max_life = resolvers.rngavg(20,30), life_rating = 9,
+ *     infravision = 10,
+ *     rank = 1,
+ *     size_category = 2,
+ *     can_breath={water=1},
+ *     resists = { [DamageType.COLD] = 25, },
+ *
+ * NOT CARRIED: `size_category` and `not_power_source`, which no system here
+ * reads; `body = { INVEN = 10 }`, which is an inventory; the squid's
+ * `ingredient_on_death`, because there are no ingredients.
+ *
+ * ═══ `drops` IS AUTHORED, AS IT IS ON EVERY TEMPLATE IN THIS FILE ═══
+ * The family has no `resolvers.drops`, and this said so and left the field off.
+ * Neither do the ant, canine, losgoroth or feline bases, and the husk, the
+ * Eidolon, the Wraith and the Inspector all drop: in this file `drops` is the
+ * game's reward layer, not a port of one. Left off, the Weir became the hardest
+ * room at level 6 and the only one whose bodies carried nothing. So the three
+ * drop what the cairn they replaced dropped, and what the Eidolon and the Glut
+ * drop: one common piece, always.
+ *
+ * ═══ RANK 1 AND RANK 2 ARE BOTH `Normal` ═══
+ * `RANK_VALUE` (shared/leveling.ts) has three words and `Normal` IS upstream's
+ * rank 2. The dragon turtle is rank 2 and lands on it exactly. The eel and the
+ * squid are rank 1, which has no word here, and take `Normal` as the giant brown
+ * ant under `INDEX_HUSK` does: they grow at rank 2's rate. A rank-2 upstream
+ * creature is `Elite` here only when it BEHAVES as one (`validateTemplate`), which
+ * is why the losgoroth and the troll are `Normal` and the snow cat is not.
+ *
+ * ═══ NO ART OF THEIR OWN, SO THEY WEAR BODIES THAT ALREADY DRAW ═══
+ * Nothing on disk depicts any of the three, and a sprite id with no manifest row
+ * paints `canvas.ts`'s violet missing-asset box on every client. The Watcher
+ * shipped the same way, in the cairn's body, until its own was drawn. Each wears
+ * the body whose creature fights most like it, and the three stay distinct from
+ * each other. Their own ids are `enemy_index_ribbon_s`, `enemy_index_inkwell_s`
+ * and `enemy_index_strongbox_s`, and replacing a body is this field and nothing
+ * else.
+ */
+
+/**
+ * THE GIANT EEL, `aquatic_critter.lua:44-49`: the base and nothing else.
+ *
+ * The plain one. It swims at you and bites, with the family's accuracy of 25
+ * against the husk's 15, and it is five bodies in eleven.
+ */
+export const INDEX_RIBBON: MonsterTemplate = Object.freeze({
+  // `autolevel = "warrior"` (aquatic_critter.lua:29) -> autolevel_schemes.lua:25-27,
+  // `learnStats{ STR, STR, DEX }`. The husk's scheme, for the husk's reason.
+  autoStats: ['str', 'str', 'dex'],
+  id: 'index_ribbon',
+  displayName: 'Index Ribbon',
+  description:
+    'A typewriter ribbon the weir has been holding back, grown long and black in the dark water. ' +
+    'It comes at you the way a line of type crosses a page, and it does not stop at the margin.',
+  // NO ART OF ITS OWN — see the region header. The husk's body: the plain chaser
+  // wears the plain chaser's.
+  sprite: 'enemy_index_husk_s',
+  // `rank = 1` (aquatic_critter.lua:36). See the region header.
+  rank: ActorRank.Normal,
+  // `can_breath={water=1}` (aquatic_critter.lua:38).
+  canBreath: { water: 1 },
+
+  // aquatic_critter.lua:34 `max_life = resolvers.rngavg(20,30)` = 25.
+  maxHp: resolveRngAvg(20, 30),
+  // aquatic_critter.lua:34 `life_rating = 9`. The first template to author one;
+  // the rest grow at tome/class/Actor.lua:187's 10, including two whose bases set
+  // their own (losgoroth.lua:35 is 8, troll.lua:37 is 15) and were not carried.
+  lifeRating: 9,
+  hpRegen: 0,
+
+  // No `global_speed_base` anywhere in the family, so 1.0.
+  globalSpeed: 1,
+  speedFactor: 1,
+
+  // `ai = "dumb_talented_simple"`, `ai_move="move_complex"`, `talent_in=1`
+  // (aquatic_critter.lua:30): walk at it, hit it, every turn. No `talentIn`, as
+  // `INDEX_HUSK` explains — `rng.chance(1)` has one answer.
+  profile: AiProfile.MeleeChaser,
+  // aquatic_critter.lua:35 `infravision = 10`.
+  aggroRange: 10,
+  preferredRange: 1,
+  minRange: 0,
+  attackRange: 1,
+  huntsIsolated: false,
+  shoulderAfter: 0,
+
+  // See the region header: the cairn's drop, which these replaced.
+  drops: { chance: 100, pick: idsOfTier('common') },
+
+  combat: {
+    // aquatic_critter.lua:31, VERBATIM. The giant brown ant's exact block.
+    stats: { str: 12, dex: 10, con: 13, mag: 3 },
+    // aquatic_critter.lua:32 `combat_armor = 1, combat_def = 1`.
+    mods: { armour: 1, def: 1 },
+    // aquatic_critter.lua:33:
+    //   combat = { dam=resolvers.levelup(resolvers.mbonus(36, 10), 1, 1),
+    //              atk=25, apr=7, dammod={str=0.8} }
+    // `resolveMBonus` returns the flat 10, upstream's floor; see content/resolvers.ts.
+    weapon: {
+      dam: resolveLevelup(resolveMBonus(36, 10)),
+      atk: 25,
+      apr: 7,
+      damMod: { str: 0.8 },
+    },
+    // aquatic_critter.lua:40 `resists = { [DamageType.COLD] = 25, }`.
+    profile: { resists: { [DamageType.Cold]: 25 } },
+    range: 1.5,
+    minRange: 0,
+    damageType: DamageType.Physical,
+  },
+});
+
+/**
+ * THE SQUID, `aquatic_critter.lua:91-98`: the base, and Grab at rank 3.
+ *
+ * The other half of the Weir, and the reason not to fight in the open water:
+ * what it takes hold of cannot step away. See `talents/grab.ts`.
+ */
+export const INDEX_INKWELL: MonsterTemplate = Object.freeze({
+  /**
+   * `resolvers.talents{ [Talents.T_GRAB]=3, }` (aquatic_critter.lua:96).
+   *
+   * AT RANK 1, NOT 3. A creature's talents are all born at rank 1
+   * (`ensureMonsterSheet`, main.ts) and a template has no way to say otherwise,
+   * the same limit `rush.ts` records for the Eidolon. So the pin asks for 2 turns
+   * where upstream's squid asks for 4 (`grabDuration`), and the blow is 107% where
+   * upstream's is 126%.
+   *
+   * MELEE CHASER at `attackRange` 1 against a 1.5-reach talent, so it arrives and
+   * `monster-casts.test.ts` sees it cast.
+   */
+  talents: ['talent:grab'],
+  // `autolevel = "warrior"` (aquatic_critter.lua:29), from the base.
+  autoStats: ['str', 'str', 'dex'],
+  id: 'index_inkwell',
+  displayName: 'Index Inkwell',
+  description:
+    'An inkwell that went under and kept spilling. What came out of it reaches every way at once, ' +
+    'and whatever it takes hold of stays where it was put.',
+  // NO ART OF ITS OWN — see the region header. The Overwritten Husk's body, whose
+  // trailing strips read as reach, and whose own creature is the other melee body
+  // that disables on the blow.
+  sprite: 'enemy_index_husk_elite_s',
+  // `rank = 1` (aquatic_critter.lua:36). See the region header.
+  rank: ActorRank.Normal,
+  // `can_breath={water=1}` (aquatic_critter.lua:38).
+  canBreath: { water: 1 },
+
+  // aquatic_critter.lua:34, from the base.
+  maxHp: resolveRngAvg(20, 30),
+  lifeRating: 9,
+  hpRegen: 0,
+
+  globalSpeed: 1,
+  speedFactor: 1,
+
+  // aquatic_critter.lua:30, from the base.
+  profile: AiProfile.MeleeChaser,
+  // aquatic_critter.lua:35 `infravision = 10`.
+  aggroRange: 10,
+  preferredRange: 1,
+  minRange: 0,
+  attackRange: 1,
+  huntsIsolated: false,
+  shoulderAfter: 0,
+
+  // See the region header: the cairn's drop, which these replaced.
+  drops: { chance: 100, pick: idsOfTier('common') },
+
+  combat: {
+    // aquatic_critter.lua:31-33, from the base, as INDEX_RIBBON.
+    stats: { str: 12, dex: 10, con: 13, mag: 3 },
+    mods: { armour: 1, def: 1 },
+    weapon: {
+      dam: resolveLevelup(resolveMBonus(36, 10)),
+      atk: 25,
+      apr: 7,
+      damMod: { str: 0.8 },
+    },
+    // aquatic_critter.lua:40, from the base.
+    profile: { resists: { [DamageType.Cold]: 25 } },
+    range: 1.5,
+    minRange: 0,
+    damageType: DamageType.Physical,
+  },
+});
+
+/**
+ * THE DRAGON TURTLE, `aquatic_critter.lua:67-75`: rank 2, Strength 22, and half
+ * of every physical blow turned aside.
+ *
+ * The rare one — rarity 5 against the other two's 1, so one body in eleven. It
+ * is the family's accuracy behind ten more Strength, and a weapon does half of
+ * what it should to it, so the party's fire, lightning and darkness are what
+ * take it apart.
+ */
+export const INDEX_STRONGBOX: MonsterTemplate = Object.freeze({
+  // `autolevel = "warrior"` (aquatic_critter.lua:29), from the base.
+  autoStats: ['str', 'str', 'dex'],
+  id: 'index_strongbox',
+  displayName: 'Index Strongbox',
+  description:
+    'A deed box that sank with the ledgers still locked inside and came back up walking. ' +
+    'Blows ring off the lid.',
+  // NO ART OF ITS OWN — see the region header. The Glut's body: the other thing
+  // in the bestiary that a blow sinks into, built like a filing cabinet.
+  sprite: 'enemy_index_glut_s',
+  // `rank = 2` (aquatic_critter.lua:72) — `Normal`, which IS upstream's rank 2.
+  rank: ActorRank.Normal,
+  // `can_breath={water=1}` (aquatic_critter.lua:38), from the base.
+  canBreath: { water: 1 },
+
+  // aquatic_critter.lua:34, from the base.
+  maxHp: resolveRngAvg(20, 30),
+  lifeRating: 9,
+  hpRegen: 0,
+
+  globalSpeed: 1,
+  speedFactor: 1,
+
+  profile: AiProfile.MeleeChaser,
+  // aquatic_critter.lua:35 `infravision = 10`, from the base.
+  aggroRange: 10,
+  preferredRange: 1,
+  minRange: 0,
+  attackRange: 1,
+  huntsIsolated: false,
+  shoulderAfter: 0,
+
+  // See the region header: the cairn's drop, which these replaced.
+  drops: { chance: 100, pick: idsOfTier('common') },
+
+  combat: {
+    // aquatic_critter.lua:73 `stats = { str=22, dex=10, mag=3, con=13 }`.
+    stats: { str: 22, dex: 10, con: 13, mag: 3 },
+    // aquatic_critter.lua:32-33, from the base.
+    mods: { armour: 1, def: 1 },
+    weapon: {
+      dam: resolveLevelup(resolveMBonus(36, 10)),
+      atk: 25,
+      apr: 7,
+      damMod: { str: 0.8 },
+    },
+    profile: {
+      resists: {
+        // aquatic_critter.lua:40, the base's, KEPT: `importBase` merges.
+        [DamageType.Cold]: 25,
+        // aquatic_critter.lua:74 `resists = { [DamageType.PHYSICAL] = 50, }`.
+        [DamageType.Physical]: 50,
+      },
+    },
+    range: 1.5,
+    minRange: 0,
+    damageType: DamageType.Physical,
+  },
+});
+
 export const MONSTER_TEMPLATES: readonly MonsterTemplate[] = Object.freeze([
   INDEX_HUSK,
   INDEX_WRAITH,
@@ -2968,6 +3292,9 @@ export const MONSTER_TEMPLATES: readonly MonsterTemplate[] = Object.freeze([
   INDEX_INSPECTOR,
   INDEX_INQUISITOR,
   INDEX_WATCHER,
+  INDEX_RIBBON,
+  INDEX_INKWELL,
+  INDEX_STRONGBOX,
 ]);
 
 /** Their ids, same order. */

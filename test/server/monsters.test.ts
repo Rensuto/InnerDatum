@@ -258,6 +258,12 @@ describe('the roster is well formed', () => {
       // AND THE ONE AUTHORED BODY. Every other row is a roster entry rolled into
       // a generated floor; this is placed. See `DelveSpec.boss`.
       'index_watcher/ranged_kiter/boss',
+      // AND THE WATER'S. A ground the player chose, and the rule above in its
+      // plainest form: the Weir is a lake level, and nothing else in the
+      // bestiary can breathe there. aquatic_critter.lua:24-98.
+      'index_ribbon/melee_chaser/normal',
+      'index_inkwell/melee_chaser/normal',
+      'index_strongbox/melee_chaser/normal',
     ]);
     expect(monsterById('index_wraith')).toBe(INDEX_WRAITH);
     expect(monsterById('index_glut')).toBe(INDEX_GLUT);
@@ -513,6 +519,12 @@ describe('the adopted ToME entries survive the port', () => {
       ['index_inspector', 'A Disgraced Inspector', 'enemy_disgraced_inspector_s'],
       ['index_inquisitor', 'A High Inquisitor', 'enemy_high_inquisitor_s'],
       ['index_watcher', 'The Watcher', 'enemy_the_watcher'],
+      // BORROWED BODIES, pinned as borrowed: nothing on disk draws any of the
+      // three, so each wears a body that already draws. See the region header
+      // above `INDEX_RIBBON`.
+      ['index_ribbon', 'Index Ribbon', 'enemy_index_husk_s'],
+      ['index_inkwell', 'Index Inkwell', 'enemy_index_husk_elite_s'],
+      ['index_strongbox', 'Index Strongbox', 'enemy_index_glut_s'],
     ]);
     expect(INDEX_HUSK.description).toContain('half-erased citizen overwritten by Index pages');
     expect(INDEX_WRAITH.description).toContain('A cited absence given shape');
@@ -540,6 +552,14 @@ describe('the adopted ToME entries survive the port', () => {
       'warg',
       'crystal',
       'wisp',
+      // aquatic_critter.lua:45, :68, :92 — the Weir's three.
+      'eel',
+      'eels',
+      'squid',
+      'turtle',
+      'dragon',
+      'reptile',
+      'tentacles',
     ]) {
       const leaked = new RegExp(`\\b${upstream}\\b`).test(facing);
       expect({ upstream, leaked }).toEqual({ upstream, leaked: false });
@@ -1260,6 +1280,20 @@ describe('the balance table the wraith’s retune rests on', () => {
        * bar attached.
        */
       ['index_watcher', 5.95, 5.95, 5.95],
+      /**
+       * THE WEIR'S THREE, AT LEVEL 1, AND FLAT FOR THE CAIRN'S REASON TWICE
+       * OVER. `atk = 25` (aquatic_critter.lua:33) against every class's defence
+       * is past `hitChance`'s ceiling of 100, and `apr = 7` is over every class's
+       * armour, so neither who you are nor what you wear moves the number.
+       *
+       * The Ribbon and the Inkwell are one row because they are one stat block;
+       * Grab is on top of it and is not a swing. The Strongbox's 11.557 is the
+       * same weapon behind Strength 22 (:73) — the highest melee row in the
+       * game at level 1, which is what one body in eleven costs.
+       */
+      ['index_ribbon', 7.035, 7.035, 7.035],
+      ['index_inkwell', 7.035, 7.035, 7.035],
+      ['index_strongbox', 11.557, 11.557, 11.557],
     ]);
   });
 

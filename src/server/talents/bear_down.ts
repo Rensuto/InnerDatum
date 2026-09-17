@@ -151,11 +151,15 @@ export const bearDown: Talent = {
     // A corpse cannot be stunned. The swing above still took its RNG draws, so
     // the stream does not depend on whether it died first -- the guarantee
     // `grasping_hold.ts` and `damage.ts` both make for the same replay reason.
-    if (!victim.alive) return talentDone([hit]);
+    //
+    // AND A MISS CANNOT STUN: upstream's Stun is `if hit then` (:210). This
+    // comment said so for as long as the guard below it read `!victim.alive`
+    // alone, so every missed swing still reached `ctx.status` and stunned --
+    // the half of the rule the note described and the code did not do.
+    // `grab.ts`, the same shape ported later, gates on both.
+    if (!hit.hit || !victim.alive) return talentDone([hit]);
 
-    // UPSTREAM STUNS ONLY ON A HIT (:210, `if hit then`). `ctx.status` is
-    // reached the same way here: the attack resolves first and its result is
-    // what the log prints, so a miss cannot stun.
+    // `ctx.status` asks the immunity and the save itself; see the header.
     const landed = ctx.status?.(victim, EffectId.Stunned, STUN_TURNS, {
       applyPower: combatPhysicalpower(self.combat ?? {}),
       srcId: self.id,

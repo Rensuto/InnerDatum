@@ -61,6 +61,9 @@ import {
   INDEX_EIDOLON,
   INDEX_HUSK,
   INDEX_HUSK_ELITE,
+  INDEX_INKWELL,
+  INDEX_RIBBON,
+  INDEX_STRONGBOX,
   INDEX_WRAITH,
   monsterInit,
   INDEX_WATCHER,
@@ -282,6 +285,58 @@ const DROWNED: readonly MonsterTemplate[] = [INDEX_CAIRN, INDEX_HUSK, INDEX_HUSK
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════
+ * THE WEIR: WHAT BREATHES THE WATER, AT UPSTREAM'S WEIGHTS.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * The Weir is `lake-nur` level 2, and that level draws only from `water_rarity`
+ * (data/zones/lake-nur/zone.lua:91), which is `aquatic_critter.lua`'s own
+ * `rarity` renamed as it loads (data/zones/lake-nur/npcs.lua:20). It shared
+ * `DROWNED` until now, and on a floor that is all water the husks had nowhere
+ * they could breathe: every body placed was a cairn. See the region header
+ * above `INDEX_RIBBON` in content/monsters.ts for the three and what is not
+ * ported.
+ *
+ * ═══ 5 : 5 : 1, AND THE PLACER DOES NOT ROLL ═══
+ * `engine/Zone.lua:217-221` weights an entity inside its level range at
+ * `floor(10000 / rarity)`: the eel and the squid 10000, the turtle 2000. So one
+ * body in eleven is a turtle and the rest split evenly. That is the ratio AMONG
+ * THE THREE. Upstream's draw also holds five creatures whose talents are not
+ * ported, weighted in even where their level floor is above the room's, and the
+ * three are 72% of it here and 56% on the twin: see the region header above
+ * `INDEX_RIBBON`.
+ *
+ * `populateDelve` does not draw a creature, it walks this list as a CYCLE
+ * (`roster[i % roster.length]`). So the weighting is the list's length and
+ * order: eleven entries, five of each and one turtle.
+ *
+ * ═══ THE TURTLE IS SIXTH, AND THAT IS WHAT MAKES THE WEIGHT HOLD AT THIS SIZE ═══
+ * A cycle of eleven never reaches its end on a Weir floor alone (4-6 bodies),
+ * so WHERE the turtle sits decides whether a room has one. Sixth gives a room of
+ * `n` bodies exactly `round(n / 11)` turtles: none at 4 or 5, one from 6 to 16,
+ * two from 17. That is the nearest whole number to upstream's expectation at
+ * every size the Weir places — 4-6 alone, 8-12 for three, 6-8 and 12-16 on the
+ * twin. First would put one in every room; last would put none in any room
+ * short of eleven.
+ *
+ * Eel and squid alternate around it, so any room holds as near half of each as
+ * its size allows. The eel leads because it leads the file.
+ */
+const WEIR: readonly MonsterTemplate[] = [
+  INDEX_RIBBON,
+  INDEX_INKWELL,
+  INDEX_RIBBON,
+  INDEX_INKWELL,
+  INDEX_RIBBON,
+  INDEX_STRONGBOX,
+  INDEX_INKWELL,
+  INDEX_RIBBON,
+  INDEX_INKWELL,
+  INDEX_RIBBON,
+  INDEX_INKWELL,
+];
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
  * THE EIGHT, AND THEY ARE MEANT TO BE TOLD APART
  * ═══════════════════════════════════════════════════════════════════════════
  *
@@ -457,8 +512,9 @@ export const DELVES: ReadonlyMap<string, DelveSpec> = new Map<string, DelveSpec>
   //     47 steps, in the clearing inside the southern wood — so it draws on the
   //     wood's own roster, which is the same rule Blackwood follows.
   ['site:barrow_end', { monsters: [5, 7], roster: THICKET, litter: [3, 5], levelRange: [5, 5] }],
-  //     71 steps, on the beach behind the wood.
-  ['site:the_weir', { monsters: [4, 6], roster: DROWNED, litter: [3, 4], levelRange: [6, 6] }],
+  //     71 steps, on the beach behind the wood. What lives in the Lake of Nur's
+  //     water lives here — see `WEIR`.
+  ['site:the_weir', { monsters: [4, 6], roster: WEIR, litter: [3, 4], levelRange: [6, 6] }],
   //     106 steps, and the worst room on the moor. NOT the furthest — Gearford
   //     Ward is 109 — which the note here claimed until the walk was measured.
   //     THE TREES START HERE, which `places.ts` has said since before there was
@@ -538,6 +594,27 @@ export function dangerWord(spec: DelveSpec): string {
   const ranged = spec.roster.some((t) => t.projSpeed !== undefined) ? 2 : 0;
   /**
    * ═══════════════════════════════════════════════════════════════════════════
+   * AND A ROOM UNDER WATER, WHICH THE TWO TERMS ABOVE CANNOT SEE.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * The Weir read `restless` while it held a cairn, and only because the cairn
+   * shoots. Its own roster (`WEIR`) is three melee bodies at `Normal` rank, so
+   * neither term fired and six bodies graded `quiet` — the grade the first case
+   * reads to pick where to send a new character (`first-room.test.ts`, which
+   * caught it: a beginner is dead in two turns at the band's top).
+   *
+   * BY PROPERTY, as the rest of this function is: a roster that breathes water
+   * is one authored for a floor under water, where every turn spent fighting
+   * costs the party air and costs the residents nothing. 3, the elite's weight, and
+   * it puts back exactly the grades these rooms had — `restless` for the Weir,
+   * `dangerous` for its twin — so the map says what it said before. MEASURED
+   * GENEROUS: `tools/delve-run.mjs 4` at level 1 has the Weir at 0/4 solo clears
+   * against `restless` Cairnfoot's 2/4 at the same level, and the probe runs
+   * without the underwater aura.
+   */
+  const underwater = spec.roster.some((t) => (t.canBreath?.water ?? 0) > 0) ? 3 : 0;
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
    * AND A BOSS, WHICH THIS DID NOT KNOW ABOUT AT ALL.
    * ═══════════════════════════════════════════════════════════════════════════
    *
@@ -578,7 +655,7 @@ export function dangerWord(spec: DelveSpec): string {
    */
   if (spec.boss !== undefined) return 'grim';
 
-  const weight = spec.monsters[1] + elite + ranged;
+  const weight = spec.monsters[1] + elite + ranged + underwater;
 
   if (weight <= 7) return 'quiet';
   if (weight <= 9) return 'restless';
@@ -1165,10 +1242,36 @@ export function populateDelve(
      */
     const guarded = breathableFor(world, inRoom, template);
     const room = breathableFor(world, candidates, template);
-    const at =
-      i === 0 && guarded.length > 0
-        ? guarded[(offset + i * stride) % guarded.length]
-        : room[(offset + i * stride) % room.length];
+    const share = i === 0 && guarded.length > 0 ? guarded : room;
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * THE NEXT FREE TILE IN THIS BODY'S SHARE, NOT THE ONE ALREADY STOOD ON.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * The guard is aimed into `guarded` and everybody after it into `room`, so
+     * the two indexings can name one tile. The body was then handed to
+     * `world.addMonster`, whose ring search takes the nearest free tile of ANY
+     * kind: a bubble nothing may be born on (`tome/class/Grid.lua:102-109`,
+     * which `breathableFor` ports), or ground inside `DOOR_CLEARANCE`.
+     * MEASURED over 200 seeds of both Weirs, four floors, parties of 1, 3 and
+     * 6: 151 of 61,884 bodies were moved that way and 13 were born on a
+     * bubble; the Drowned Chapel and Blackwood moved 16 of 27,416. None of
+     * either now.
+     *
+     * So a taken tile steps on through the same list, which holds only ground
+     * this body may be born on. No draw is added, and a body whose aim was free
+     * lands exactly where it always did. Only a share with no free tile left
+     * falls back to the aim and the ring search, as every body did before.
+     */
+    const aim = (offset + i * stride) % share.length;
+    let at = share[aim];
+    for (let step = 0; step < share.length; step += 1) {
+      const tile = share[(aim + step) % share.length];
+      if (tile !== undefined && world.actorAt(tile.x, tile.y) === undefined) {
+        at = tile;
+        break;
+      }
+    }
     if (at === undefined) continue;
 
     // Qualified by realm — `delve_0` was the same string in every party's copy

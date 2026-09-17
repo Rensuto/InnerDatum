@@ -232,17 +232,27 @@ describe('who does not drown', () => {
     expect(body.isSuffocating).toBe(true);
   });
 
-  it('three templates carry `no_breath`, each from its family base, and none `can_breath`', () => {
+  it('three templates carry `no_breath` and three `can_breath`, each from its family base', () => {
     const noBreath = MONSTER_TEMPLATES.filter((t) => t.noBreath === true).map((t) => t.id);
     // npcs/losgoroth.lua:48 and npcs/crystal.lua:48.
     expect(noBreath.sort()).toEqual(['index_cairn', 'index_watcher', 'index_wraith']);
-    expect(MONSTER_TEMPLATES.filter((t) => t.canBreath !== undefined)).toEqual([]);
+    // npcs/aquatic_critter.lua:38, `can_breath={water=1}` on BASE_NPC_AQUATIC_CRITTER.
+    const water = MONSTER_TEMPLATES.filter((t) => t.canBreath !== undefined);
+    expect(water.map((t) => t.id).sort()).toEqual([
+      'index_inkwell',
+      'index_ribbon',
+      'index_strongbox',
+    ]);
+    for (const template of water) expect(template.canBreath).toEqual({ water: 1 });
     for (const template of MONSTER_TEMPLATES) {
       const body = createMonsterActor('b', monsterInit(template, { x: 0, y: 0 }));
       expect(
         body.noBreath === true,
         `${template.id} lost its breath flag on the way to the body`,
       ).toBe(template.noBreath === true);
+      expect(body.canBreath, `${template.id} lost its can_breath on the way to the body`).toEqual(
+        template.canBreath,
+      );
     }
   });
 });

@@ -453,7 +453,9 @@ const ZONE_AURA_UNDERWATER = 'effect:zone_aura_underwater';
  * underwater aura on every body (`levels[2]`, `:86-94`). `underwater = true`
  * itself only picks a shader (`tome/class/Player.lua:488`) and is not carried. The
  * level's actor filter, `special_rarity = "water_rarity"` (`:91`), is the
- * population's business (`server/content/delve.ts`), and is not ported.
+ * population's business: `server/content/delve.ts` gives the Weir a roster of
+ * three of the creatures that filter admits (`WEIR`), since a delve names its
+ * roster rather than filtering one.
  *
  * Level 1 is a static map (`:67-85`). Level 3 (`:95-118`) is the same Roomer with
  * its grids swapped by layout and a Sher'Tul fortress for its way down — which

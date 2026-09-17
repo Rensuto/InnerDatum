@@ -67,14 +67,21 @@ import { rush } from './rush.ts';
 import { uncorroborated } from './uncorroborated.ts';
 import { bearDown } from './bear_down.ts';
 import { graspingHold } from './grasping_hold.ts';
+import { grab } from './grab.ts';
 import type { Talent } from '../engine/talents.ts';
 
 /**
- * THE SCALING CURVE EVERY CREATURE TALENT USES.
+ * THE SCALING CURVE THE AUTHORED CREATURE TALENTS SHARE.
  *
- * `combatTalentScale`'s fourth argument, shared from here so the three talent
- * files cannot drift into three different curves. A creature's abilities should
- * all sharpen at the same rate; nothing in the fiction distinguishes them.
+ * `combatTalentScale`'s fourth argument, shared from here so the authored talent
+ * files cannot drift into different curves. A creature's abilities should all
+ * sharpen at the same rate; nothing in the fiction distinguishes them.
+ *
+ * NOT EVERY CREATURE TALENT, which this used to say. The ported ones keep
+ * upstream's default: `bear_down.ts` and `grab.ts` leave `combatTalentScale`'s
+ * fourth argument off, and so scale at 0.5.
+ * Monster talents are born at rank 1, where every curve gives its `low`, so no
+ * number in play differs today; the two agree only at ranks 1 and 5.
  */
 export const MONSTER_CURVE = 0.75;
 
@@ -108,4 +115,5 @@ export const MONSTER_TALENTS: readonly Talent[] = Object.freeze([
   uncorroborated,
   rush,
   clearTheAltar,
+  grab,
 ]);

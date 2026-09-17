@@ -77,15 +77,14 @@ describe('the Weir, underwater', () => {
 
   it('puts at least one body on every floor, and none where it would drown', () => {
     /**
-     * MEASURED, AND WORTH SAYING: every body the Weir places is an Index Cairn.
-     * Its roster is two husks to a cairn, and a husk is ToME's giant brown ant,
-     * which does not breathe water (`npcs/ant.lua`); the cairn is a crystal,
-     * `no_breath` (`npcs/crystal.lua:48`). So on a floor that is all water the
-     * husks have nowhere to stand and the room holds the cairns alone: 2 bodies
-     * on each of 120 floors of the Weir and 2 or 3 on its twin's, where a solo
-     * party met 5.8 on average when the lake was dry.
-     * Upstream fills this level from `water_rarity` creatures (lake-nur/zone.lua:91),
-     * which nothing here ports.
+     * THIS SAID EVERY BODY THE WEIR PLACED WAS AN INDEX CAIRN, and it was: the
+     * Weir shared `DROWNED`, two husks to a cairn, and a husk does not breathe
+     * water, so the cairns (`no_breath`, `npcs/crystal.lua:48`) stood alone, two
+     * to a floor. Upstream fills this level from `water_rarity` creatures
+     * (lake-nur/zone.lua:91), and the Weir has those now (`WEIR`, content/delve.ts),
+     * all three `can_breath={water=1}` (`npcs/aquatic_critter.lua:38`).
+     * `weir-roster.test.ts` holds the whole band and the drowning run; this is
+     * the breath rule over every body on the floor.
      */
     for (const siteId of WEIRS) {
       for (let floor = 1; floor <= floorsOfSite(siteId); floor += 1) {

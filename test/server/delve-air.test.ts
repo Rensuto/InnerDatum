@@ -177,3 +177,62 @@ describe('Grid.lua:102-109 — nobody is born under water', () => {
     expect(shore?.x).toBeLessThan(20);
   });
 });
+
+describe('every body lands where the placer aimed it', () => {
+  it('no body is handed to the ring search, which does not know what it may breathe', () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * TWO AIMS COULD NAME ONE TILE, AND THE SECOND BODY WENT WHEREVER WAS NEAR.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * The guard is aimed into the drawn room and every body after it into the
+     * whole of its share, and the two indexings can land on one tile. The
+     * later body then reached `world.addMonster`'s search for the nearest free
+     * tile, which asks nothing about air: over 4,800 Weir floors 151 bodies
+     * were moved that way and 13 were born on a bubble. The placer now steps
+     * on through the body's own share instead.
+     *
+     * Measured before the fix, on this file's two floors at the sizes below:
+     * 52 of 1,800 floors moved a body.
+     */
+    const DRY_ROOM = { id: 'vault:dry', at: { x: 10, y: 6 }, turn: 'none', w: 6, h: 6 } as const;
+    const cases = [
+      [TileCode.FLOOR, INDEX_WRAITH],
+      [TileCode.POND_WATER, INDEX_HUSK],
+    ] as const;
+    let floors = 0;
+    for (const [right, template] of cases) {
+      for (const n of [6, 10, 14]) {
+        for (let s = 0; s < 100; s += 1) {
+          const map = halfAndHalf(right, [DRY_ROOM]);
+          const world = createWorld(`delve-aim-${String(n)}-${String(s)}`, map);
+          const place = world.addMonster.bind(world);
+          const moved: string[] = [];
+          world.addMonster = (id, init) => {
+            const body = place(id, init);
+            if (body.x !== init.x || body.y !== init.y) {
+              moved.push(
+                `${id} aimed ${String(init.x)},${String(init.y)} put ${String(body.x)},${String(body.y)}`,
+              );
+            }
+            return body;
+          };
+          const placed = populateDelve(
+            world,
+            map,
+            { ...rosterOf([template]), monsters: [n, n] },
+            undefined,
+            1,
+          );
+          expect(placed, 'precondition: the whole band was placed').toBe(n);
+          expect(
+            moved,
+            `${template.id} on ${String(right)}, ${String(n)} bodies, seed ${String(s)}`,
+          ).toEqual([]);
+          floors += 1;
+        }
+      }
+    }
+    expect(floors).toBe(600);
+  });
+});
