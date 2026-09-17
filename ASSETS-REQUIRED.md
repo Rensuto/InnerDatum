@@ -322,37 +322,6 @@ the bag scale them down. Each must read as a lantern at 32x32 and be told apart
 from the other two by shape and flame colour, not by size alone.
 
 
-## The Index Cairn is drawn as filing drawers, and it is a stack of stones
-
-**Measured, not guessed: `client/public/assets/enemies/enemy_index_cairn_s.png` was opened.** It is
-48x64, `provenance: derived`, `sha256_16: 4386ca2628191411` in `manifest.placeholders.json`, and it
-shows a column of three or four dark box-drawers with pale rectangular label plates on their faces
-and pale pulls, stacked square and upright on a dark ground. It is a filing cabinet. The withdrawn
-`enemy_the_watcher` order below already says so in passing — *"the grey stacked-drawer Index Cairn
-it replaces"* — but no order was ever written against the Cairn itself, because nobody had looked at
-the file.
-
-**The text moved and the picture did not.** `INDEX_CAIRN.description` is now *"A stack of stones
-nobody admits to building, leaning at an angle the eye slides off. It does not come for you. It
-simply has a clear view, and time."* (`src/server/content/monsters.ts`). This is the only one of the
-twelve shipped creatures whose sprite still draws the thing the direction names as what this game is
-not, and a player meets it on floor one.
-
-- **enemy_index_cairn_s** (live, 48x64, `enemies/`)
-  - Problem: a stack of dark box-drawers with pale label plates and pulls — office furniture, drawn
-    square and upright. The description calls for stones and calls for a wrong angle; the sprite has
-    neither.
-  - Regenerate: a cairn of 5-7 rough moor stones stacked shoulder-high, each stone a distinct mass
-    with its own silhouette bump so the stack reads as stones and not as a column, and the whole
-    stack **leaning**, off-vertical by 8-12 degrees, with the top two stones leaning further than
-    the bottom ones so the lean is wrong rather than merely tilted. Cold grey granite with lichen-pale
-    speckle, a firm dark outline, and no face, no eye and no limbs — it is masonry that shoots, and
-    the threat must come from the pose. One small dark gap between two stones may carry a single
-    violet glint as the Index accent. No drawers, no label plates, no pulls, no paper and no ink.
-
-**It fires from eight tiles and never closes**, so the silhouette is what a player reads it by at
-range, across water, in the dark. Keep the mass solid and the outline unbroken.
-
 ## The standing commission: people, bestiary, bosses, effects, items, props
 
 **A backlog to draw from for a long while.** The list lives in

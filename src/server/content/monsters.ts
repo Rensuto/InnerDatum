@@ -1985,8 +1985,8 @@ export const INDEX_CAIRN: MonsterTemplate = Object.freeze({
   id: 'index_cairn',
   displayName: 'Index Cairn',
   description:
-    'A stack of stones nobody admits to building, leaning at an angle the eye slides off. ' +
-    'It does not come for you. It simply has a clear view, and time.',
+    'Moor stones fitted into a body, lit violet where they do not quite meet. It keeps its ' +
+    'distance, and it has never needed to hurry.',
   sprite: 'enemy_index_cairn_s',
   rank: ActorRank.Normal,
   // `no_breath = 1` — npcs/crystal.lua:48, on BASE_NPC_CRYSTAL. Deep water does not drown it.
