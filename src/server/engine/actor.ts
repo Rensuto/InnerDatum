@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Dalton Barraclough
 // Ported from t-engine4 game/modules/tome/class/Actor.lua:139-150, 476-609, 1353-1360, 3948-3953
+//             t-engine4 game/modules/tome/class/Actor.lua:574-590, 6725-6741 (air, suffocate)
 //             t-engine4 game/engines/default/engine/Actor.lua:41-61, 469-485
 //             t-engine4 game/engines/default/engine/interface/ActorTalents.lua:1002-1013
 // T-Engine4 (C) 2009-2018 Nicolas Casalini "DarkGod" — https://te4.org/license
@@ -66,6 +67,8 @@ import { createEnergyActor } from '../../shared/energy.ts';
 import { spendForAction } from '../../shared/energy.ts';
 import { ActorKind, ActorRank } from '../../shared/protocol.ts';
 import type { PanelLayoutView } from '../../shared/protocol.ts';
+import { breathes } from '../../shared/terrain.ts';
+import type { AirGrid } from '../../shared/terrain.ts';
 import type { EnergyActor } from '../../shared/energy.ts';
 import { DIR_ORDER, DIR_VECTORS } from '../../shared/coords.ts';
 import type { Dir, TileXY } from '../../shared/coords.ts';
@@ -334,6 +337,53 @@ type ActorCommon = {
    * still have something to point at.
    */
   alive: boolean;
+
+  // --- breath ---------------------------------------------------------------
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * AIR — a resource every body has, min 0, max 100, regen 3.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * tome/data/resources.lua:45 defines it with the engine's default bounds
+   * (engines/default/engine/interface/ActorResource.lua:61-62, `min 0`,
+   * `max 100`), and tome/class/Actor.lua:228 sets `t.air_regen = t.air_regen or 3`. It
+   * regenerates once per base turn in `regenResources` (:558), and only ground
+   * with an `air_level` takes it away (`actBase`, :574-590).
+   *
+   * NOT SAVED, and not a number any save has ever held: a body loads full, as
+   * one built fresh does. Carried across a realm crossing, as upstream's actor
+   * object is.
+   *
+   * CAN SIT ABOVE `maxAir` FOR ONE TURN. `suffocate` subtracts unclamped
+   * (:6728), so an air bubble's -15 "suffocation" lands a body at 115; the next
+   * `regenResources` bounds it back to 100. Upstream's own arithmetic, kept.
+   */
+  air: number;
+  maxAir: number;
+  airRegen: number;
+  /**
+   * `can_breath` — tome/class/Actor.lua:205 defaults it to `{}`, and a count above 0
+   * for a condition means the body breathes that air (:586). Absent here is
+   * upstream's empty table.
+   */
+  canBreath?: { readonly water?: number };
+  /**
+   * `no_breath` — tome/class/Actor.lua:6726, `suffocate` returns before touching air.
+   * Losgoroths and crystals carry it (npcs/losgoroth.lua:48, npcs/crystal.lua:48).
+   */
+  noBreath?: boolean;
+  /**
+   * `is_suffocating` — recomputed every base turn BEFORE the status pass, and
+   * what `EFF_SUFFOCATING` reads to decide whether to hurt or to leave
+   * (timed_effects/other.lua:2276).
+   */
+  isSuffocating: boolean;
+  /**
+   * `force_suffocate` — set by `suffocate`, so something that took this body's
+   * breath BETWEEN two base turns keeps it suffocating through the next one
+   * (tome/class/Actor.lua:575-583). The terrain arm clears it again at :589.
+   */
+  forceSuffocate: boolean;
 
   // --- combat ---------------------------------------------------------------
   /**
@@ -1449,6 +1499,15 @@ const DEFAULT_PLAYER_DAMAGE_MAX = 7;
  */
 export const STARTING_MONEY = 15;
 
+/**
+ * `max_air` — the resource's default ceiling (engines/default/engine/interface/ActorResource.lua:62,
+ * `max = (max == nil) and 100 or max`, and tome/data/resources.lua:45 passes nil).
+ * Every body, player or monster, starts here.
+ */
+export const MAX_AIR = 100;
+/** `air_regen` — tome/class/Actor.lua:228, `t.air_regen = t.air_regen or 3`. */
+export const AIR_REGEN = 3;
+
 const DEFAULT_MONSTER_MAX_HP = 24;
 const DEFAULT_MONSTER_HP_REGEN = 0;
 /**
@@ -1620,6 +1679,10 @@ export type MonsterInit = {
   readonly onDie?: OnDeathZone;
   /** May it open a door? Absent is false. See `MonsterActor.opensDoors`. */
   readonly opensDoors?: boolean;
+  /** `can_breath`. Absent is upstream's empty table. See `ActorCommon.canBreath`. */
+  readonly canBreath?: { readonly water?: number };
+  /** `no_breath`. Absent is false. See `ActorCommon.noBreath`. */
+  readonly noBreath?: boolean;
   /**
    * Which side. DEFAULTS TO `Redacted`, so every existing roster entry is
    * byte-identical and no seeded stream moves.
@@ -1667,6 +1730,14 @@ export function createPlayerActor(id: string, init: PlayerInit): PlayerActor {
     maxHp,
     hpRegen: init.hpRegen ?? DEFAULT_PLAYER_HP_REGEN,
     alive: true,
+    // BORN BREATHING. No birth descriptor this game ports sets `can_breath` or
+    // `no_breath` (the skeleton's `no_breath`, birth/races/undead.lua:185, is
+    // not an origin here), so a player is upstream's default body.
+    air: MAX_AIR,
+    maxAir: MAX_AIR,
+    airRegen: AIR_REGEN,
+    isSuffocating: false,
+    forceSuffocate: false,
     attackRange: 1,
     damageMin: init.damageMin ?? DEFAULT_PLAYER_DAMAGE_MIN,
     damageMax: init.damageMax ?? DEFAULT_PLAYER_DAMAGE_MAX,
@@ -1797,6 +1868,16 @@ export function createMonsterActor(id: string, init: MonsterInit): MonsterActor 
     maxHp,
     hpRegen: init.hpRegen ?? DEFAULT_MONSTER_HP_REGEN,
     alive: true,
+    air: MAX_AIR,
+    maxAir: MAX_AIR,
+    airRegen: AIR_REGEN,
+    // NAMED, for `onDie`'s reason below: a field the template sets and this
+    // constructor forgets is dropped in silence. Absent stays absent, which is
+    // upstream's `{}` and `nil`.
+    ...(init.canBreath === undefined ? {} : { canBreath: init.canBreath }),
+    ...(init.noBreath === undefined ? {} : { noBreath: init.noBreath }),
+    isSuffocating: false,
+    forceSuffocate: false,
     // A kiter's reach is its stand-off distance unless it says otherwise;
     // anything else and it walks to exactly where it refuses to shoot from.
     attackRange: init.attackRange ?? Math.max(1, preferredRange),
@@ -2007,6 +2088,157 @@ export function setCooldown(actor: CooldownHolder, talentId: string, turns: numb
 export type StatusPass = (actor: EngineActor) => boolean;
 
 /**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE GROUND AND THE ONE STATUS BREATHING CAN START — injected, like `StatusPass`.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `airAt` is `game.level.map:checkEntity(x, y, Map.TERRAIN, "air_level")` and
+ * its `air_condition` twin (tome/class/Actor.lua:584). The scheduler reads it off
+ * `world.level` through `shared/terrain.ts#airOf`, so this file never learns
+ * what a tile is.
+ *
+ * `startSuffocating` is the `setEffect` inside `suffocate` (:6733-6736):
+ *
+ * ```lua
+ * if not self:hasEffect(self.EFF_SUFFOCATING) then
+ *   game.logSeen(self, "#LIGHT_RED#%s starts suffocating to death!", ...)
+ *   self:setEffect(self.EFF_SUFFOCATING, 1, {dam=20})
+ * end
+ * ```
+ *
+ * A CALLBACK, for `StatusPass`'s cycle and one more reason: the effect id is
+ * content, and `engine/` names no authored status. The adapter that holds the
+ * effect table owns the `hasEffect` guard. Absent means no status system — the
+ * body runs out of air and nothing hurts it, which is what a world without
+ * statuses can honestly say.
+ */
+export type TerrainProbe = {
+  readonly airAt: (x: number, y: number) => AirGrid | undefined;
+  readonly startSuffocating?: (actor: EngineActor) => void;
+};
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * LOSE AIR — tome/class/Actor.lua:6725-6741, `suffocate`.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * ```lua
+ * if self:attr("no_breath") then return false, false end
+ * if self:attr("invulnerable") then return false, false end
+ * self.air = self.air - value
+ * self.force_suffocate = true
+ * if self.air <= 0 then
+ *   self.air = 0
+ *   if not self:hasEffect(self.EFF_SUFFOCATING) then ... setEffect(EFF_SUFFOCATING, 1, {dam=20}) end
+ *   return false, true
+ * end
+ * return false, true
+ * ```
+ *
+ * Returns upstream's second value, `affected`: whether the body's breath was
+ * touched at all. Its first, `dead`, is always false (the `die` at :6738 is
+ * commented out upstream; `EFF_SUFFOCATING` is what kills).
+ *
+ * UNCLAMPED ABOVE. A negative `value` — an air bubble's +15 — raises air past
+ * `maxAir`, and the next `regenResources` bounds it. See `ActorCommon.air`.
+ *
+ * NOT PORTED: `invulnerable`. Nothing in this game grants it.
+ */
+export function suffocate(
+  actor: EngineActor,
+  value: number,
+  startSuffocating?: (actor: EngineActor) => void,
+): boolean {
+  if (actor.noBreath === true) return false;
+  actor.air -= value;
+  actor.forceSuffocate = true;
+  if (actor.air <= 0) {
+    actor.air = 0;
+    startSuffocating?.(actor);
+  }
+  return true;
+}
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * A BODY THAT COMES BACK COMES BACK BREATHING.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Upstream has no wipe, no respawn and no revive. Its one way back from death,
+ * `DeathDialog`, runs `cleanActor` — every effect removed with `force`, so
+ * `EFF_SUFFOCATING` too (dialogs/DeathDialog.lua:92-120) — and then
+ * `restoreResources`, whose `resetToFull` sets every pool to its maximum, air
+ * included (dialogs/DeathDialog.lua:123-128, tome/class/Actor.lua:3675-3696).
+ *
+ * The air half is this function; the status half is the effect table's
+ * (`PumpCtx.stopSuffocating`). The two flags go with the air: `resetToFull`
+ * leaves them, but a body stood up with `force_suffocate` still set would read as
+ * suffocating on its first base turn wherever it stands.
+ *
+ * WITHOUT IT A DROWNED BODY NEVER GETS UP. A downed body skips `actBase`, so it
+ * lies at 0 air with the blow still climbing, and the Weir's arrival is water:
+ * stood up there, the next base turn took 25–100% of its life and downed it
+ * again, every turn, for as long as anyone watched.
+ */
+export function catchBreath(actor: EngineActor): void {
+  actor.air = actor.maxAir;
+  actor.isSuffocating = false;
+  actor.forceSuffocate = false;
+}
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * "SUFFOCATE ?" — tome/class/Actor.lua:574-590, IN ITS ORDER.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * ```lua
+ * if not self.force_suffocate then
+ *   self.is_suffocating = nil
+ * else
+ *   self.force_suffocate = nil
+ *   self.is_suffocating = true
+ * end
+ * local air_level, air_condition = <terrain>
+ * if air_level then
+ *   if not air_condition or not self.can_breath[air_condition] or self.can_breath[air_condition] <= 0 then
+ *     self.is_suffocating = true
+ *     self:suffocate(-air_level, self, ...)
+ *     self.force_suffocate = nil
+ *   end
+ * end
+ * ```
+ *
+ * BETWEEN `regenResources` (:558) AND `timedEffects` (:597), and that position is
+ * the rule. `EFF_SUFFOCATING` reads `is_suffocating` in the same base turn, so
+ * the flag must already say where the body stands when the status pass runs —
+ * which is why the effect bites on the very turn it lands.
+ *
+ * ═══ THE BUBBLE SUFFOCATES YOU, AND THAT IS KEPT (D5-6) ═══
+ * WATER_FLOOR_BUBBLE's `air_level` is +15 with no condition, so `not
+ * air_condition` holds for every body: `is_suffocating` goes TRUE and
+ * `suffocate(-15)` gives air. A body already suffocating goes on taking
+ * `EFF_SUFFOCATING`'s blow while it refills, until it stands on ground with no
+ * `air_level` at all. The fix is one comparison; it is not made here.
+ *
+ * `no_breath` DOES NOT CLEAR THE FLAG. Upstream sets `is_suffocating` before
+ * `suffocate` refuses, and only `suffocate` reads `no_breath`.
+ */
+function breathe(actor: EngineActor, terrain: TerrainProbe | undefined): void {
+  if (!actor.forceSuffocate) {
+    actor.isSuffocating = false;
+  } else {
+    actor.forceSuffocate = false;
+    actor.isSuffocating = true;
+  }
+  const air = terrain?.airAt(actor.x, actor.y);
+  if (air === undefined) return;
+  if (breathes(actor, air)) return;
+  actor.isSuffocating = true;
+  suffocate(actor, -air.level, terrain?.startSuffocating);
+  actor.forceSuffocate = false;
+}
+
+/**
  * THE SPEED-INDEPENDENT PASS — tome/class/Actor.lua:476-609.
  *
  * Called by `tickLevel` exactly once per game turn per living actor, at any
@@ -2021,8 +2253,11 @@ export type StatusPass = (actor: EngineActor) => boolean;
  *   - `checkStillInCombat` (tome/class/Actor.lua:608) — engagement is LEVEL-WIDE in this
  *     game rather than per-actor, so it lives in the scheduler's game-turn hook
  *     instead of here. See scheduler.ts.
+ *
+ * `terrain` IS THE GROUND UNDER THE BODY, injected for `statusPass`'s reason:
+ * absent means no air rule is read, and the body only regains breath.
  */
-export function actBase(actor: EngineActor, statusPass?: StatusPass): void {
+export function actBase(actor: EngineActor, statusPass?: StatusPass, terrain?: TerrainProbe): void {
   if (!actor.alive) return;
 
   /**
@@ -2059,6 +2294,13 @@ export function actBase(actor: EngineActor, statusPass?: StatusPass): void {
     const factor = bound(healingFactor(actor.combat ?? {}), HEAL_FACTOR_MIN, HEAL_FACTOR_MAX);
     actor.hp = Math.min(actor.maxHp, actor.hp + regen * factor);
   }
+
+  // tome/class/Actor.lua:558 — `regenResources`, air's share of it. The other pools
+  // are the talent engine's and refill in `TalentResolution.actBase`.
+  // ActorResource.lua:208, `util.bound(self.air + self.air_regen, min, max)`.
+  actor.air = bound(actor.air + actor.airRegen, 0, actor.maxAir);
+
+  breathe(actor, terrain);
 
   // tome/class/Actor.lua:597 — `self:timedEffects()`. Status durations tick HERE, before
   // the cooldown pass, because upstream's own comment at :605 says so: "Cooldown

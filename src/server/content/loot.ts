@@ -336,10 +336,11 @@ export function rollLoot(rng: Rng, baseId: string, level: number): string {
     // alternative is refusing to drop anything, which is worse.
     if (ego === undefined) continue;
 
-    // DRAW — the magnitude. `rng.mbonus` is a C builtin and the reference clone
-    // ships no `src/`, so this is a REIMPLEMENTATION of a stated contract
-    // rather than a translation — the standing ruling content/resolvers.ts:36-42
-    // already records, and the same one `rollDrop`'s `rng.percent` makes.
+    // DRAW — the magnitude. This was written when `rng.mbonus` was taken for a
+    // C builtin with no source, so it is a REIMPLEMENTATION of a stated contract
+    // rather than a translation, as `rollDrop`'s `rng.percent` is. `rng.mbonus`
+    // is Lua (game/loader/pre-init.lua) and is now ported as `mbonus` in
+    // shared/mapgen/lua.ts; this flat draw is not it yet. See content/resolvers.ts.
     const power = rng.int('ego.power', 0, MAX_EGO_POWER);
     refs.push({ code: ego.code, power });
   }

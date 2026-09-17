@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 import { projectLoadout, projectResource } from '../../src/server/view/projector.ts';
+import { createPlayerActor } from '../../src/server/engine/actor.ts';
 import { ResourceKind } from '../../src/shared/protocol.ts';
 import type { LoadoutTalent } from '../../src/shared/protocol.ts';
 
@@ -2446,5 +2447,34 @@ describe('projectZones', () => {
     burn(world, [{ x: 4, y: 4 }], { type: DamageType.Darkness, damage: 5 });
 
     expect(projectZones(world).tiles[0]?.type).toBe(DamageType.Darkness);
+  });
+});
+
+describe('the viewer’s own air rides the resource frame only while they are short of it', () => {
+  /**
+   * `ResourceMsg.air` — absent at the ceiling, so a client reads absence as
+   * "breathing freely". The fixture bodies are built by the real constructor,
+   * because `airViewOf` reads `air` and `maxAir` off the actor.
+   */
+  const POOL = { kind: ResourceKind.Resolve, current: 40, max: 100, discrete: false };
+  const body = (air: number) => {
+    const actor = createPlayerActor('p_air', { name: 'Dalt', sprite: 'x', x: 0, y: 0 });
+    actor.air = air;
+    return actor;
+  };
+
+  it('carries a short breath, floored', () => {
+    expect(projectResource(body(72.6), POOL)?.air).toEqual({ cur: 72, max: 100 });
+    expect(projectResource(body(0), POOL)?.air).toEqual({ cur: 0, max: 100 });
+  });
+
+  it('omits the key at full, and above full — a bubble lands a body at 115', () => {
+    expect(Object.keys(projectResource(body(100), POOL) ?? {})).not.toContain('air');
+    expect(Object.keys(projectResource(body(115), POOL) ?? {})).not.toContain('air');
+  });
+
+  it('and a body with no air field at all reads as full, not as NaN', () => {
+    const bare = { id: 'actor_a' } as unknown as Parameters<typeof projectResource>[0];
+    expect(Object.keys(projectResource(bare, POOL) ?? {})).not.toContain('air');
   });
 });

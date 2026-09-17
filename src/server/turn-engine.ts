@@ -26,6 +26,8 @@ import { inBounds, step } from '../shared/coords.ts';
 import { bound } from '../shared/scale.ts';
 import { HEAL_FACTOR_MAX, HEAL_FACTOR_MIN, healingFactor } from './engine/derived.ts';
 import { REST_MAX_TURNS, RestStop, restBonus, restCheck } from '../shared/rest.ts';
+import { tileAt } from '../shared/level.ts';
+import { airOf, breathes } from '../shared/terrain.ts';
 import type { RestResult, RestView } from '../shared/rest.ts';
 import {
   ActorKind,
@@ -41,7 +43,15 @@ import { seedTestEncounter } from './content/encounter.ts';
 import { SLOT_ORDER } from './content/items.ts';
 import { isMoneyId } from './content/money.ts';
 import { resolveItem } from './content/resolve.ts';
-import { HOLD_INTENT, IntentKind, cooldownOf, isHostile, isPlayer } from './engine/actor.ts';
+import { EffectId } from './content/effects.ts';
+import {
+  HOLD_INTENT,
+  IntentKind,
+  catchBreath,
+  cooldownOf,
+  isHostile,
+  isPlayer,
+} from './engine/actor.ts';
 import type { Intent } from './engine/actor.ts';
 import type { Barrier, BarrierLevel, PartyScope } from './engine/barrier.ts';
 import { createBarrier } from './engine/barrier.ts';
@@ -50,6 +60,9 @@ import type { DownedState } from './engine/downed.ts';
 import {
   dispel,
   forgetActor as forgetEffects,
+  hasEffect,
+  removeEffect,
+  setEffect,
   statusApplier,
   statusPass,
   effectDef,
@@ -655,6 +668,11 @@ function resetFloor(
    * `world.rng` because `dispel` may draw — an effect's `onRemove` is allowed
    * to, and taking the draw off the world's own labelled stream is what keeps a
    * seeded replay a replay.
+   *
+   * ═══ WHAT `dispel` LEAVES: `noRemove` ═══
+   * A zone aura stays, because the body is still on the level that lays it.
+   * Suffocating is already gone: the scheduler took it off with `force`, and
+   * refilled the air, the moment it stood the party up (`restoreBreath`).
    */
   if (effects !== undefined) {
     for (const id of restored) {
@@ -1714,6 +1732,7 @@ function buildRestView(
 
   const view = talents.resourceOf(self);
   const regen = talents.poolRegenOf?.(self) ?? 0;
+  const underfoot = airOf(tileAt(world.level, self.x, self.y));
 
   return {
     hp: self.hp,
@@ -1726,6 +1745,23 @@ function buildRestView(
     // ready, because `projectCooldowns` reads the same map to grey the buttons.
     cooling: [...self.cooldowns.values()].some((turns) => turns > 0),
     threat,
+    /**
+     * THE LUNGS, and the ground under them. `losing` is `suffocate`'s
+     * `affected and value > 0` (Player.lua:773) asked of the tile: an air level
+     * below zero that this body cannot breathe, and no `no_breath` to stop
+     * `suffocate` before it starts (tome/class/Actor.lua:6726).
+     */
+    air: {
+      value: self.air,
+      max: self.maxAir,
+      regen: self.airRegen,
+      suffocating: self.isSuffocating,
+      losing:
+        underfoot !== undefined &&
+        underfoot.level < 0 &&
+        self.noBreath !== true &&
+        !breathes(self, underfoot),
+    },
   };
 }
 
@@ -2496,6 +2532,13 @@ export function createTurnEngine(opts: TurnEngineOptions): ReapingTurnEngine {
 
       const result = respawn(state, actor);
       if (!result.ok) return refuse(respawnRefusalText(result.reason));
+      // BREATHING, as the wipe and a revive stand a body up (scheduler.ts
+      // `restoreBreath`). Between pumps there is no drain to note it into, so
+      // the removal is silent; the badge frame after the next pump shows it.
+      catchBreath(actor);
+      if (opts.effects !== undefined) {
+        removeEffect(opts.effects, actor, EffectId.Suffocating, world.rng, undefined, true, true);
+      }
 
       // WHERE, not whether — and the answer is deliberately ignored. A level
       // with no free tile at all (which takes more than 761 players) leaves them
@@ -3054,6 +3097,54 @@ export function createTurnEngine(opts: TurnEngineOptions): ReapingTurnEngine {
           statusCtx === undefined
             ? undefined
             : statusApplier(statusCtx.state, world.rng, statusCtx.ctx),
+        /**
+         * ═══════════════════════════════════════════════════════════════════
+         * AND THE ONE STATUS THE GROUND LAYS ON — `EFF_SUFFOCATING`.
+         * ═══════════════════════════════════════════════════════════════════
+         * tome/class/Actor.lua:6733-6736, guard and all: a body already suffocating
+         * keeps the blow it has reached rather than starting again at 20%.
+         * From the same `EffectCtx` as the door above, so "Suffocating" is
+         * noted into the same drain and shows under the same turn.
+         *
+         * No `applyPower`, so no save and no draw (tome/class/Actor.lua:6999) —
+         * upstream passes none either. The `{dam=20}` is the definition's own
+         * `parameters`, which `setEffect` fills in.
+         */
+        startSuffocating:
+          statusCtx === undefined
+            ? undefined
+            : (body: Actor): void => {
+                if (hasEffect(statusCtx.state, body.id, EffectId.Suffocating)) return;
+                setEffect(
+                  statusCtx.state,
+                  body,
+                  EffectId.Suffocating,
+                  1,
+                  {},
+                  world.rng,
+                  statusCtx.ctx,
+                );
+              },
+        /**
+         * AND OFF AGAIN, FOR A BODY THAT IS STOOD UP: `cleanActor`'s
+         * `removeEffect(eff, false, true)` (dialogs/DeathDialog.lua:115), the
+         * `force` being the only thing `no_remove` answers to. Same `EffectCtx`,
+         * so "Suffocating leaves" lands in the same drain.
+         */
+        stopSuffocating:
+          statusCtx === undefined
+            ? undefined
+            : (body: Actor): void => {
+                removeEffect(
+                  statusCtx.state,
+                  body,
+                  EffectId.Suffocating,
+                  world.rng,
+                  statusCtx.ctx,
+                  false,
+                  true,
+                );
+              },
         /**
          * AND THE HALF THAT REACHES A PLAYER'S EYES.
          *

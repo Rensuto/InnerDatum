@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Dalton Barraclough
 // Ported from t-engine4 game/modules/tome/class/Player.lua:971-1075 (`restCheck`).
+//             t-engine4 game/modules/tome/class/Player.lua:771-781 (`suffocate` stops a rest)
 // T-Engine4 (C) 2009-2018 Nicolas Casalini "DarkGod" -- https://te4.org/license
 
 /**
@@ -44,8 +45,23 @@ export const RestStop = {
    * information in it.
    */
   Hostile: 'hostile',
-  /** Player.lua:1003 — `life_regen <= 0`, "losing health!". */
+  /** Player.lua:1002 — `life_regen <= 0`, "losing health!". */
   Bleeding: 'bleeding',
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * "losing breath!" — THE GROUND IS TAKING YOUR AIR.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Two arms upstream, and both stop here. `restCheck` refuses outright while
+   * `air_regen < 0` (Player.lua:1001), which nothing in this game can make true
+   * yet. The one that fires is `Player:suffocate` (:771-781): a turn that took
+   * air, leaving less than three quarters of it, calls `restStop("suffocating")`.
+   *
+   * So a body standing in deep water may rest a few turns to finish a heal, and
+   * is stood up by the rule once its lungs are a quarter empty — long before the
+   * water starts to hurt, which is the point of stopping.
+   */
+  Breath: 'breath',
   /**
    * ═══════════════════════════════════════════════════════════════════════════
    * SOMETHING HIT YOU. Player.lua:722-724 — `restStop("taken damage")`.
@@ -120,6 +136,27 @@ export type RestView = {
   /** Any talent still on cooldown — Player.lua:1041-1049's `wait_cooldowns`. */
   readonly cooling: boolean;
   /**
+   * THE BODY'S BREATH, and whether the ground under it is taking any.
+   *
+   * REQUIRED, so a caller cannot build a view that forgets the lungs and rests a
+   * body to death in deep water.
+   */
+  readonly air: {
+    readonly value: number;
+    readonly max: number;
+    /** `air_regen`, per game turn. Below zero refuses a rest (Player.lua:1001). */
+    readonly regen: number;
+    /** `is_suffocating`, as the last base turn left it (Player.lua:1004). */
+    readonly suffocating: boolean;
+    /**
+     * WOULD THIS GROUND TAKE AIR NEXT TURN: negative `air_level` the body cannot
+     * breathe, and no `no_breath`. Upstream's `affected and value > 0` at
+     * Player.lua:773, asked of the tile rather than of the turn that just went,
+     * because this rule runs before every turn including the first.
+     */
+    readonly losing: boolean;
+  };
+  /**
    * The nearest hostile this body can SEE, or null. Resolved by the caller,
    * because line of sight lives in the engine and this file may not import it.
    */
@@ -144,13 +181,27 @@ export function restCheck(view: RestView): RestAnswer {
     return { rest: false, stop: RestStop.Hostile, threat: view.threat };
   }
 
-  // :1003 — `if self.life_regen <= 0 then return false, "losing health!"`.
+  const air = view.air;
+  // :771-781 — `Player:suffocate`'s `restStop("suffocating")`. Upstream's comes
+  // mid-turn, after the air is gone; asked here of the tile, before the turn,
+  // it stops on the same turn's count. `air < 100` is upstream's own second
+  // clause (:775) and is kept although `0.75 * max` already implies it at 100.
+  if (air.losing && air.value < 0.75 * air.max && air.value < 100) {
+    return { rest: false, stop: RestStop.Breath };
+  }
+  // :1001 — `if self.air_regen < 0 then return false, "losing breath!" end`.
+  if (air.regen < 0) return { rest: false, stop: RestStop.Breath };
+
+  // :1002 — `if self.life_regen <= 0 then return false, "losing health!"`.
   // Checked BEFORE the "is there anything to gain" questions, or a bleeding body
   // at full health would rest forever waiting for a number that only falls.
   if (view.hpRegen <= 0) return { rest: false, stop: RestStop.Bleeding };
 
-  // :1004 — health still to recover, and a regen that can recover it.
+  // :1003 — health still to recover, and a regen that can recover it.
   if (view.hp < view.maxHp) return { rest: true };
+
+  // :1004 — breath still to recover, on ground that is not taking it.
+  if (air.value < air.max && air.regen > 0 && !air.suffocating) return { rest: true };
 
   // :1011-1020 — a resource below its ceiling with a positive trickle.
   const pool = view.resource;
@@ -214,6 +265,9 @@ export function restStopText(answer: RestAnswer, turnsRested: number, bearing: s
       return `${spent} — ${answer.threat?.name ?? 'something'} to the ${bearing}.`;
     case RestStop.Bleeding:
       return `${spent} — you are losing blood faster than you make it.`;
+    case RestStop.Breath:
+      // Upstream's reason string, "losing breath!", in the Record lane's voice.
+      return `${spent} — you are losing breath.`;
     case RestStop.Hurt:
       // Upstream's own reason string is "taken damage"; this is that sentence in
       // the Record lane's voice. It does not name the source — the log line for

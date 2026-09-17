@@ -412,6 +412,28 @@ describe('what follows a character through a door', () => {
     expect(after?.maxHp).toBe(100);
     expect(after?.hp).toBe(100);
   });
+
+  it('carries a short breath through the door rather than refilling it', async () => {
+    /**
+     * Air is a property of the body, and upstream's zone change keeps the actor
+     * object (tome/class/Actor.lua:228 sets `air_regen` once, at construction). A body
+     * rebuilt by `addPlayer` starts full, so without the carry a door is a free
+     * lungful. The far side may already have run a base turn (+3), so the bound
+     * is "not refilled", not an exact number.
+     */
+    const { actorId, socket } = await hello(server.port);
+    const before = server.realms.realmOf(actorId)?.world.getActor(actorId);
+    if (before === undefined || before.kind !== 'player') return;
+    before.air = 40;
+
+    await stepOnto(server.realms, actorId, socket, doorCell(server.realms));
+
+    const after = server.realms.realmOf(actorId)?.world.getActor(actorId);
+    expect(after, 'no body on the far side').toBeDefined();
+    expect(after).not.toBe(before);
+    expect(after?.air, 'a door refilled the lungs').toBeGreaterThanOrEqual(40);
+    expect(after?.air).toBeLessThan(50);
+  });
 });
 
 describe('walking into the dark territory', () => {

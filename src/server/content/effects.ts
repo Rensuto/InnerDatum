@@ -6,6 +6,7 @@
 //             t-engine4 game/modules/tome/class/Actor.lua:606 (the no_talents_cooldown guard)
 //             t-engine4 game/modules/tome/data/damage_types.lua:150-153 (stunned ×0.4 outgoing)
 //             t-engine4 game/engines/default/engine/interface/ActorTemporaryEffects.lua:54
+//             t-engine4 game/modules/tome/data/timed_effects/other.lua:2265-2289 (SUFFOCATING)
 // T-Engine4 (C) 2009-2018 Nicolas Casalini "DarkGod" — https://te4.org/license
 //
 // The badge art (ui/icons/status/icon_status_*.png) is the author's own and is NOT GPL.
@@ -52,7 +53,7 @@
  */
 
 import { bound } from '../../shared/scale.ts';
-import { DamageType, STUNNED_DAMAGE_MULT, applyDamage } from '../engine/damage.ts';
+import { DamageType, STUNNED_DAMAGE_MULT, applyDamage, takeHit } from '../engine/damage.ts';
 import { tomeCooldownToTurns } from '../engine/talents.ts';
 import { healActor } from '../engine/damage.ts';
 import {
@@ -63,6 +64,7 @@ import {
   effectModifiers,
   immunityAgainst,
   lockoutTalents,
+  removeEffect,
 } from '../engine/effects.ts';
 import type { EffectDef, EffectHookArgs, EffectInstance, EffectState } from '../engine/effects.ts';
 
@@ -240,6 +242,12 @@ export const EffectId = {
    * and the only source of `reduceDetrimentalTime` in the game.
    */
   OutOfPhase: 'effect:out_of_phase',
+  /**
+   * THE FIRST STATUS THE GROUND GIVES YOU. Nothing casts it: `actBase` lays it
+   * on a body whose air has run out (tome/class/Actor.lua:6733-6736), and it leaves by
+   * itself the turn that body can breathe. timed_effects/other.lua:2265-2289.
+   */
+  Suffocating: 'effect:suffocating',
 } as const;
 export type EffectId = (typeof EffectId)[keyof typeof EffectId];
 
@@ -2032,6 +2040,131 @@ export const OUT_OF_PHASE: EffectDef = Object.freeze({
   modifiers: { reduceDetrimentalTime: OUT_OF_PHASE_POWER },
 } satisfies EffectDef);
 
+// ---------------------------------------------------------------------------
+// SUFFOCATING — timed_effects/other.lua:2265-2289
+// ---------------------------------------------------------------------------
+
+/**
+ * `parameters = { dam=20 }` (timed_effects/other.lua:2273), and the `{dam=20}` `suffocate`
+ * passes (tome/class/Actor.lua:6735). The PERCENT of maximum life the first blow takes.
+ */
+export const SUFFOCATING_START_PERCENT = 20;
+/** `eff.dam = util.bound(eff.dam + 5, 20, 100)` — timed_effects/other.lua:2286. */
+const SUFFOCATING_STEP_PERCENT = 5;
+/** The same line's ceiling: from the seventeenth blow on, all of it. */
+const SUFFOCATING_MAX_PERCENT = 100;
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * SUFFOCATING. THE GROUND PUTS IT ON YOU AND ONLY THE GROUND TAKES IT OFF.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * ```lua
+ * newEffect{
+ *   name = "SUFFOCATING", type = "other", subtype = { suffocating=true },
+ *   status = "detrimental", decrease = 0, no_remove = true,
+ *   parameters = { dam=20 },
+ *   on_timeout = function(self, eff)
+ *     if not self.is_suffocating then
+ *       self:removeEffect(self.EFF_SUFFOCATING, false, true)
+ *       return
+ *     end
+ *     -- Bypass all shields & such
+ *     ...ActorLife.takeHit(self, self.max_life * eff.dam / 100, self, ...)
+ *     eff.dam = util.bound(eff.dam + 5, 20, 100)
+ *   end,
+ * }
+ * ```
+ *
+ * ═══ `decrease = 0` AND `no_remove`: A CONDITION, NOT A TIMER ═══
+ * The duration never falls, so it never expires, and nothing may take it off
+ * — no cure, no dispel, not `timedEffects` itself (`EffectDef.noRemove`). The
+ * one way out is its own `on_timeout`, with `force`, on the first base turn the
+ * body is not suffocating. `actBase` sets that flag before the status pass, so
+ * stepping onto dry ground ends it that same turn, before it can bite.
+ *
+ * ═══ IT BITES ON THE TURN IT LANDS ═══
+ * `suffocate` sets it inside `actBase` at :588 and `timedEffects` runs at :597,
+ * so the first 20% comes out in the same base turn air hits zero. Then 25, 30,
+ * 35 … and from the seventeenth turn, everything.
+ *
+ * ═══ NO RESIST, NO SHIELD, NO CRIT, NO TYPE ═══
+ * `takeHit` with `onTakeHit` detached — `engine/damage.ts#takeHit`, not
+ * `applyDamage`. So the hit reports no damage type: it is not fire or
+ * physical, it is your lungs.
+ *
+ * ═══ `type = "other"`, A CHANNEL THIS GAME DOES NOT HAVE ═══
+ * Physical is the nearest true label and the argument HIGHBORNS_BLOOM makes
+ * holds: nothing rolls a save against it (no `applyPower` is ever passed), and
+ * a cure by channel finds it and cannot remove it. `typeOther` keeps what
+ * upstream exempts "other" from: blanket immunity and shortened afflictions.
+ *
+ * NOT PORTED: the "starts suffocating to death!" line (tome/class/Actor.lua:6734).
+ * The status lane's own "gained" note says it, once, on the same turn.
+ */
+export const SUFFOCATING: EffectDef = Object.freeze({
+  id: EffectId.Suffocating,
+  badge: 'Su',
+  // timed_effects/other.lua:2267 — `desc = "Suffocating"`.
+  displayName: 'Suffocating',
+  description:
+    'You are suffocating! Each turn you lose an ever increasing percent of your total life.',
+  // timed_effects/other.lua:2268 — the long_desc, with its number.
+  describe: (instance: EffectInstance): string =>
+    'You are suffocating! Each turn you lose an ever increasing percent of your total ' +
+    `life (currently ${String(Math.round(instance.params.power ?? SUFFOCATING_START_PERCENT))}%).`,
+  type: SaveChannel.Physical,
+  // timed_effects/other.lua:2269 — `type = "other"`. See `EffectDef.typeOther`.
+  typeOther: true,
+  status: EffectStatus.Detrimental,
+  // No `on_merge` upstream, so a re-set replaces it — and `suffocate` never
+  // re-sets one that is already there.
+  stackMode: StackMode.Refresh,
+  // timed_effects/other.lua:2270 — `subtype = { suffocating=true }`.
+  subtypes: ['suffocating'],
+  // timed_effects/other.lua:2272 — `decrease = 0, no_remove = true`.
+  decrease: 0,
+  noRemove: true,
+  icon: 'icon_status_suffocating',
+  // `eff.dam`, carried as `power` — this codebase's one magnitude field.
+  parameters: { power: SUFFOCATING_START_PERCENT },
+
+  onTimeout: ({ state, actor, eff, rng, ctx }: EffectHookArgs): boolean => {
+    // :2276-2279 — breathing again. `force`, because nothing else may remove it.
+    if (actor.isSuffocating !== true) {
+      removeEffect(state, actor, EffectId.Suffocating, rng, ctx, false, true);
+      return false;
+    }
+
+    const percent = eff.params.power ?? SUFFOCATING_START_PERCENT;
+    // :2283-2285 — onTakeHit detached, then `self.max_life * eff.dam / 100`, raw.
+    const outcome = takeHit(actor, (actor.maxHp * percent) / 100);
+    // :2286 — the next blow is five points worse, capped at the whole body.
+    eff.params.power = bound(
+      percent + SUFFOCATING_STEP_PERCENT,
+      SUFFOCATING_START_PERCENT,
+      SUFFOCATING_MAX_PERCENT,
+    );
+
+    // REPORTED AS BLEEDING REPORTS, so a monster that drowns is buried and a
+    // player who drowns is downed by the lanes that already do both. No source
+    // (upstream's `src` is the body itself) and no type — see the header.
+    if (outcome.dealt > 0 || outcome.killed) {
+      ctx.noteDamage?.({
+        victimId: actor.id,
+        sourceId: null,
+        amount: outcome.dealt,
+        hp: actor.hp,
+        maxHp: actor.maxHp,
+        killed: outcome.killed,
+        crit: false,
+      });
+    }
+    // Never `true`: returning it would ask a removal `noRemove` refuses.
+    return false;
+  },
+} satisfies EffectDef);
+
 export const MVP_EFFECTS: readonly EffectDef[] = Object.freeze([
   STUNNED,
   BLEEDING,
@@ -2057,6 +2190,7 @@ export const MVP_EFFECTS: readonly EffectDef[] = Object.freeze([
   RUNE_SATURATION,
   DAMAGE_SHIELD,
   OUT_OF_PHASE,
+  SUFFOCATING,
 ]);
 
 /** Effect ids, for a content-completeness check and for the client's badge atlas. */
@@ -2115,7 +2249,11 @@ export function validateEffect(def: EffectDef): readonly string[] {
   if (def.subtypes.length === 0) {
     problems.push(`${def.id}: no subtypes — nothing can ever grant immunity to it`);
   }
-  if (def.decrease <= 0) {
+  // `decrease: 0` IS LEGAL FOR EXACTLY ONE SHAPE: an effect nothing else may
+  // remove that removes ITSELF. `EFF_SUFFOCATING` is that shape
+  // (timed_effects/other.lua:2272-2279); without both halves it is a status that never ends.
+  const leavesByItself = def.noRemove === true && def.onTimeout !== undefined;
+  if (def.decrease < 0 || (def.decrease === 0 && !leavesByItself)) {
     problems.push(
       `${def.id}: decrease ${def.decrease} never expires (ActorTemporaryEffects.lua:91)`,
     );

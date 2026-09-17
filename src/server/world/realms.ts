@@ -1137,7 +1137,13 @@ export function createRealms(opts: RealmsOptions): Realms {
      * one line above, so the two cannot disagree.
      */
     const spec = specFor(site.id);
-    if (spec !== undefined) realm.baseLevel = delveLevel(spec, party) + floor - 1;
+    if (spec !== undefined) {
+      realm.baseLevel = delveLevel(spec, party) + floor - 1;
+      // AND THE TERRAIN RESOLVES AT IT: lava's `mindam`/`maxdam` read
+      // `resolvers.current_level`, which is this same `base_level + lev - 1`
+      // (engine/Zone.lua:1031). See `World.setTerrainLevel`.
+      realm.world.setTerrainLevel(realm.baseLevel);
+    }
     return realm;
   };
 

@@ -12,6 +12,7 @@ import {
   float,
   genrandReal,
   getval,
+  mbonus,
   mod,
   normal,
   normalFloat,
@@ -257,6 +258,105 @@ describe('rng.normal (C rng_normal, Angband`s randnor_table)', () => {
     expect(inside / draws).toBeGreaterThan(0.665);
     expect(inside / draws).toBeLessThan(0.693);
     expect(Math.abs(sum / draws - 1000)).toBeLessThan(2);
+  });
+});
+
+describe('rng.mbonus (pre-init.lua)', () => {
+  it('clamps the level to max_level - 1 before anything else', () => {
+    // Level 200 is 89: bonus 90*89/90 = 89, remainder 0, and a zero offset.
+    // Unclamped it would be 200, and the final clamp would make it 90.
+    expect(mbonus(scriptedInts([0, 3, 0, 99]), 'm', 90, 200, 90)).toBe(89);
+  });
+
+  it('adds one to the mean when the first roll is under the remainder', () => {
+    // max 40 at level 1: bonus 40/90, remainder 40 out of 90.
+    expect(mbonus(scriptedInts([39, 0, 0, 99]), 'm', 40, 1, 90)).toBe(1);
+    expect(mbonus(scriptedInts([40, 0, 0, 99]), 'm', 40, 1, 90)).toBe(0);
+  });
+
+  it('compares that roll against a FRACTIONAL remainder, untruncated', () => {
+    // 10 * 4.55 is 45.5: a roll of 45 is under it. Truncated to 45 it would not be.
+    expect(mbonus(scriptedInts([45, 0, 0, 99]), 'm', 10, 4.55, 90)).toBe(1);
+  });
+
+  it('widens the spread by one when the second roll is under max % 4', () => {
+    // max 5: spread 1.25, remainder 1. Roll 0 makes it 2.25; a table roll of
+    // 22493 is index 64, one standard deviation, so the offset IS the spread.
+    expect(mbonus(scriptedInts([89, 0, 22493, 99]), 'm', 5, 1, 90)).toBe(2);
+    expect(mbonus(scriptedInts([89, 1, 22493, 99]), 'm', 5, 1, 90)).toBe(1);
+  });
+
+  it('clamps the normal`s answer to 0..max, after it', () => {
+    expect(mbonus(scriptedInts([89, 1, 22493, 0]), 'm', 5, 1, 90)).toBe(0);
+    // Index 255: 2 * 255 / 64 is 7, over the ceiling of 5.
+    expect(mbonus(scriptedInts([89, 0, 32767, 99]), 'm', 5, 1, 90)).toBe(5);
+  });
+
+  it('draws nothing for the normal when the truncated spread is under 1', () => {
+    // max 3: spread 0.75, and a second roll of 3 is not under 3. Two rolls,
+    // and the script would throw on a third.
+    expect(mbonus(scriptedInts([0, 3]), 'm', 3, 1, 90)).toBe(1);
+  });
+
+  it('asks for exactly those ranges, in that order', () => {
+    const asked: [number, number][] = [];
+    const inner = createRng('mbonus-asked');
+    const rng: Rng = {
+      ...inner,
+      int: (label, lo, hi) => {
+        asked.push([lo, hi]);
+        return inner.int(label, lo, hi);
+      },
+    };
+    mbonus(rng, 'm', 10, 30, 90);
+    expect(asked).toEqual([
+      [0, 89],
+      [0, 3],
+      [0, 32767],
+      [0, 99],
+    ]);
+  });
+
+  it('spends range(0, max_level - 1), range(0, 3), then the normal`s two, for lava`s 5 and 10', () => {
+    const rng = createRng('mbonus-draws');
+    const twin = createRng('mbonus-draws');
+    for (const max of [5, 10]) {
+      for (let level = 1; level <= 50; level += 1) {
+        mbonus(rng, 'm', max, level, 90);
+        twin.int('t', 0, 89);
+        twin.int('t', 0, 3);
+        twin.int('t', 0, 32767);
+        twin.int('t', 0, 99);
+      }
+    }
+    expect(rng.getState().state).toBe(twin.getState().state);
+  });
+
+  it('is an integer in 0..max, and at level 1 of 90 half of a 40 lands on 0 and the rest average about 4', () => {
+    const rng = createRng('mbonus-spread');
+    for (const max of [3, 5, 10, 40]) {
+      for (let level = 1; level <= 100; level += 7) {
+        for (let n = 0; n < 50; n += 1) {
+          const v = mbonus(rng, 'm', max, level, 90);
+          expect(Number.isInteger(v)).toBe(true);
+          expect(v).toBeGreaterThanOrEqual(0);
+          expect(v).toBeLessThanOrEqual(max);
+        }
+      }
+    }
+    // The figures content/resolvers.ts quotes for `resolvers.mbonus(40, 15)`.
+    let zero = 0;
+    let sum = 0;
+    const draws = 40000;
+    for (let n = 0; n < draws; n += 1) {
+      const v = mbonus(rng, 'm', 40, 1, 90);
+      if (v === 0) zero += 1;
+      sum += v;
+    }
+    expect(zero / draws).toBeGreaterThan(0.45);
+    expect(zero / draws).toBeLessThan(0.55);
+    expect(sum / draws).toBeGreaterThan(3.6);
+    expect(sum / draws).toBeLessThan(4.4);
   });
 });
 

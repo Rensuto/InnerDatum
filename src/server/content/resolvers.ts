@@ -29,16 +29,20 @@
  * ═══════════════════════════════════════════════════════════════════════════
  *
  * Two of the three upstream forms are stochastic: `rng.avg` and `rng.mbonus`.
- * Neither is ported, and the reason is the same for both and is worth stating
- * once, at the top, because it is the kind of omission that gets "fixed" by a
- * well-meaning future reader:
+ * Neither draws HERE, and the reason is worth stating once, at the top,
+ * because it is the kind of omission that gets "fixed" by a well-meaning future
+ * reader:
  *
- *   1. THE DISTRIBUTIONS ARE NOT READABLE. `rng.avg` and `rng.mbonus` are C
- *      functions in the engine core, and `reference/t-engine4` HAS NO `src/`
- *      DIRECTORY — the clone ships CONTRIBUTING, COPYING, COPYING-MEDIA,
- *      CREDITS, `game/` and premake4.lua, and nothing else. Any variance form
- *      written here would be OUR INVENTION wearing a `// Ported from` comment,
- *      which is precisely the failure this whole work item exists to correct.
+ *   1. THE DISTRIBUTIONS WERE NOT READABLE WHEN THIS WAS WRITTEN, AND ARE NOW.
+ *      `reference/t-engine4` has no `src/` and no `game/loader/`, so this file
+ *      said any variance form would be OUR INVENTION wearing a `// Ported
+ *      from` comment. That stopped being true when the C core and the loader
+ *      were read at tag tome-1.6.0: `rng.avg` is C's `rng_avg`, the mean of
+ *      `nb` (default 2) draws of `range(x, y)`, and `rng.mbonus` is LUA in
+ *      `game/loader/pre-init.lua`, ported verbatim as `mbonus` in
+ *      `shared/mapgen/lua.ts`. The terrain resolves lava's `mindam`/`maxdam`
+ *      through it, per floor (`world/world.ts`, `burnRange`). So the
+ *      distribution is no longer a reason; the argument below still is.
  *
  *   2. THE VARIANCE WOULD COST TWO LABELLED DRAWS AT SPAWN TIME. `src/shared/`
  *      is pure and every draw is labelled (CLAUDE.md § 3); a per-spawn HP roll
@@ -75,11 +79,10 @@
  * constant is a faithful port of the shape even though it is not a faithful port
  * of the distribution.
  *
- * NOT PORTED: the spread. `rng.avg(x, y)` draws several times in [x, y] and
- * averages, giving a bell around (x + y) / 2 rather than the flat draw
- * `rng.range` would give — that is the whole point of the function upstream, and
- * it is a C function this clone does not carry the source for (see the file
- * header). We take the MEAN, which is the centre of whatever that bell is.
+ * NOT PORTED: the spread. `rng.avg(x, y)` is C's `rng_avg` (T-Engine4 tag
+ * tome-1.6.0): two integer draws of `x + rand_div(1 + y - x)`, averaged, so a
+ * triangle around (x + y) / 2 rather than the flat draw `rng.range` would give.
+ * We take the MEAN, which for integer bounds is exactly that triangle's centre.
  *
  * The two real callers are both degenerate anyway: `ant.lua:37` writes
  * `rngavg(5,5)`, where x === y and the distribution collapses to the constant 5
@@ -106,33 +109,35 @@ export function resolveRngAvg(x: number, y: number): number {
  * resolvers.mbonus_max_level = 90
  * ```
  *
- * `rng.mbonus(max, level, max_level)` scales a random bonus by how far up the
- * level ladder the entity is: at `max_level` it can reach `max`, and at level 1
- * it is pinned to roughly `max / max_level`. ToME raises the ceiling from the
- * engine's 50 to **90**, so at OUR tier the scaled term is on the order of
- * 40/90 ≈ 0.444 — under half a point.
+ * `rng.mbonus(max, level, max_level)` (`game/loader/pre-init.lua`, ported as
+ * `mbonus` in `shared/mapgen/lua.ts`) centres a bell on `max * level /
+ * max_level`, with a spread of `max / 4`, and clamps it to `[0, max]`. ToME
+ * raises the ceiling from the engine's 50 to **90**.
  *
- * SAY IT PLAINLY RATHER THAN ROUNDING IT AWAY: for the one real caller,
- * `losgoroth.lua:30` `resolvers.mbonus(40, 15)`, the true level-1 value is
- * 15 + something in roughly [0, 0.44], and this function returns a flat 15. The
- * port is therefore EXACT TO WITHIN ABOUT 0.4 of a point of weapon damage
- * rating, which then goes under the square root at Combat.lua:1682-1687 and
- * becomes a few thousandths of a point of damage. It is not exact. It is close
- * enough that the honest thing is to write the error down, and it is the same
- * two reasons as the file header: the distribution is unreadable and the
- * variance would cost a labelled draw.
+ * ═══ THIS NOTE USED TO SAY "UNDER HALF A POINT", AND THAT WAS WRONG ═══
+ * It read the centre and forgot the spread. At level 1 the centre is under 1
+ * but the spread is a quarter of `max`, and the clamp folds the lower half onto
+ * 0. For the one real caller, `losgoroth.lua:30` `resolvers.mbonus(40, 15)`,
+ * the level-1 value is 15 plus a bonus that is 0 about half the time, averages
+ * about 4, and can reach 40 (measured over 400,000 draws of `mbonus`). This
+ * function returns a flat 15, which is UPSTREAM'S FLOOR, not its mean: the
+ * weapon rating is about 4 points low on average, before the square root at
+ * Combat.lua:1682-1687 shrinks that to a small fraction of a point of damage.
+ * `resolveMBonus(80, 40)` (items.ts) is the same shape, about 8 low.
  *
- * NOT PORTED: the `rng.mbonus` draw itself (C function, no source in the clone)
- * and therefore the level-scaled term. At level 1 that term is smaller than the
- * rounding on the number it is added to.
+ * KEPT, AND NOW FOR ONE REASON RATHER THAN TWO. The distribution is readable
+ * (see the file header); the per-spawn labelled draw is still the cost, and
+ * every value this feeds is a per-template constant, not a per-spawn roll.
+ *
+ * NOT PORTED: the `rng.mbonus` draw itself, and therefore the whole bonus term.
  *
  * @param _max the ceiling the bonus reaches at `mbonus_max_level` (90).
- *   DELIBERATELY UNCONSUMED at level 1 — underscored so eslint's
- *   `argsIgnorePattern` states that in the signature itself rather than in a
- *   comment somebody can delete. It stays in the parameter list so a call site
- *   can be diffed character-for-character against the upstream expression, and
- *   so the day autolevel lands the scaling term has somewhere to go.
- * @param add the flat term, which IS the whole value at our tier.
+ *   DELIBERATELY UNCONSUMED — underscored so eslint's `argsIgnorePattern`
+ *   states that in the signature itself rather than in a comment somebody can
+ *   delete. It stays in the parameter list so a call site can be diffed
+ *   character-for-character against the upstream expression, and so the day
+ *   the draw is wanted the bonus term has somewhere to go.
+ * @param add the flat term, and the floor of upstream's value.
  */
 export function resolveMBonus(_max: number, add: number): number {
   return add;

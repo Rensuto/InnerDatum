@@ -885,6 +885,41 @@ describe('the zones frame', () => {
 });
 
 describe('the hotbar, on a server with the talent book wired in', () => {
+  it('sends the viewer’s air on the resource frame while they stand in deep water', async () => {
+    /**
+     * `ResourceMsg.air`, end to end: `actBase` drains the pool on a POND_WATER
+     * tile, `projectResource` puts it on the frame, and the memo key — which
+     * suppresses a `resource` frame nothing on it changed — has to count air as
+     * a change, or a body drowns behind a bar that never moves.
+     */
+    server = await bootLive('gateway-air');
+    const client = await connect(server.port);
+    const welcome = await client.hello();
+    const body = server.world.getActor(String(welcome?.['selfId']));
+    if (body === undefined) throw new Error('the welcome named no body');
+    const level = server.world.level;
+    level.tiles[body.y * level.w + body.x] = TileCode.POND_WATER;
+    // Past the first frames: whatever the welcome sent was at full breath.
+    await client.waitFor('resource');
+    client.clear();
+
+    const seen: number[] = [];
+    for (let turn = 0; turn < 12; turn += 1) {
+      client.send({ t: 'hold' });
+      client.send({ t: 'ping' });
+      await client.waitFor('pong');
+      for (const frame of client.all('resource')) {
+        const air = frame['air'] as { cur?: unknown } | undefined;
+        if (typeof air?.cur === 'number') seen.push(air.cur);
+      }
+      client.clear();
+    }
+    expect(seen.length, 'no resource frame ever carried the air').toBeGreaterThan(1);
+    // Every turn in the water is a new number, so every turn is a new frame.
+    expect(new Set(seen).size).toBe(seen.length);
+    expect(seen[seen.length - 1]).toBe(body.air);
+  });
+
   it('arrives in the welcome frame set instead of being skipped', async () => {
     server = await bootLive('gateway-hotbar');
     const client = await connect(server.port);

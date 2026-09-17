@@ -17,6 +17,7 @@ const settled: RestView = {
   afflicted: false,
   cooling: false,
   threat: null,
+  air: { value: 100, max: 100, regen: 3, suffocating: false, losing: false },
 };
 
 const hurt = (over: Partial<RestView> = {}): RestView => ({ ...settled, hp: 20, ...over });
@@ -80,7 +81,7 @@ describe('what interrupts it', () => {
   it('reports the hostile even while bleeding, because that is the actionable half', () => {
     /**
      * THE ORDER IS UPSTREAM'S AND IT IS LOAD-BEARING. `restCheck` tests spotted
-     * hostiles at :974, long before `life_regen <= 0` at :1003. A body that is
+     * hostiles at :974, long before `life_regen <= 0` at :1002. A body that is
      * both bleeding and being approached is told about the thing approaching,
      * because that is the fact it can still do something about.
      */
@@ -91,7 +92,7 @@ describe('what interrupts it', () => {
   });
 
   it('stops when health is going DOWN rather than up', () => {
-    // :1003 — `if self.life_regen <= 0 then return false, "losing health!"`.
+    // :1002 — `if self.life_regen <= 0 then return false, "losing health!"`.
     const answer = restCheck(hurt({ hpRegen: -0.5 }));
     expect(answer.rest).toBe(false);
     if (answer.rest) return;
@@ -158,5 +159,85 @@ describe('the player is always told why it ended', () => {
 
   it('reads as finished when it finished', () => {
     expect(restStopText(restCheck(settled), 30, 'here')).toContain('Ready');
+  });
+});
+
+describe('losing breath — Player.lua:771-781 and :1001, :1004', () => {
+  /** Standing in deep water, lungs `value` full, the ground still taking them. */
+  const wading = (value: number, over: Partial<RestView> = {}): RestView => ({
+    ...hurt(),
+    air: { value, max: 100, regen: 3, suffocating: true, losing: true },
+    ...over,
+  });
+
+  it('lets a wading body finish a heal until its lungs are a quarter empty', () => {
+    // :775 — `self.air < 0.75 * self.max_air`. 75 is not below it; 74 is.
+    expect(restCheck(wading(75)).rest).toBe(true);
+    const answer = restCheck(wading(74));
+    expect(answer.rest).toBe(false);
+    if (answer.rest) return;
+    expect(answer.stop).toBe(RestStop.Breath);
+  });
+
+  it('does not stop a body that is short of breath on ground that gives it back', () => {
+    // `affected and value > 0` (:773) is the ground TAKING air. On dry ground
+    // with 10 air nothing is being taken, and :1004 keeps the rest going to
+    // refill — even at full health.
+    const answer = restCheck({
+      ...settled,
+      air: { value: 10, max: 100, regen: 3, suffocating: false, losing: false },
+    });
+    expect(answer.rest).toBe(true);
+  });
+
+  it('does not wait on air that is not coming back while the body is suffocating (:1004)', () => {
+    // A bubble: short of breath, not losing, but `is_suffocating` is true (D5-6).
+    const answer = restCheck({
+      ...settled,
+      air: { value: 50, max: 100, regen: 3, suffocating: true, losing: false },
+    });
+    expect(answer.rest).toBe(false);
+  });
+
+  it('refuses outright while breath regenerates backwards (:1001), ahead of the bleed', () => {
+    const answer = restCheck(
+      hurt({
+        hpRegen: -1,
+        air: { value: 100, max: 100, regen: -1, suffocating: false, losing: false },
+      }),
+    );
+    expect(answer.rest).toBe(false);
+    if (answer.rest) return;
+    expect(answer.stop).toBe(RestStop.Breath);
+  });
+
+  it('an `air_regen` of exactly 0 is not losing breath: :1001 is `< 0`', () => {
+    expect(restCheck(hurt({ air: { ...settled.air, regen: 0 } })).rest).toBe(true);
+  });
+
+  it('breath that does not regenerate is nothing to wait for (:1004, `air_regen > 0`)', () => {
+    const answer = restCheck({
+      ...settled,
+      air: { value: 50, max: 100, regen: 0, suffocating: false, losing: false },
+    });
+    expect(answer.rest).toBe(false);
+  });
+
+  it('losing breath outranks losing health (:771-781 and :1001 before :1002)', () => {
+    const answer = restCheck({ ...wading(10), hpRegen: -1 });
+    expect(answer.rest).toBe(false);
+    if (answer.rest) return;
+    expect(answer.stop).toBe(RestStop.Breath);
+  });
+
+  it('still names a hostile first', () => {
+    const answer = restCheck({ ...wading(10), threat: { name: 'Husk', dx: 1, dy: 0 } });
+    expect(answer.rest).toBe(false);
+    if (answer.rest) return;
+    expect(answer.stop).toBe(RestStop.Hostile);
+  });
+
+  it('says upstream’s reason', () => {
+    expect(restStopText(restCheck(wading(10)), 4, 'here')).toContain('losing breath');
   });
 });

@@ -5,7 +5,7 @@
 //   and the C core, which the reference tree does not ship: rng_range, rng_percent,
 //   rng_chance, rng_float, rng_normal, rng_normal_float and randnor_table in
 //   src/core_lua.c, rand_div and genrand_real in src/SFMT.c and src/SFMT.h, and
-//   rng.table, rng.tableRemove and rng.tableSampleIterator in game/loader/pre-init.lua
+//   rng.mbonus, rng.table, rng.tableRemove and rng.tableSampleIterator in game/loader/pre-init.lua
 //   (all at T-Engine4 tag tome-1.6.0, commit 0d95bc38; unchanged through tome-1.7.6);
 //   and math_random in src/luajit2/src/lib_math.c, LuaJIT's own generator, which
 //   game/loader/pre-init.lua seeds from the clock (T-Engine4 tag tome-1.6.0)
@@ -234,6 +234,57 @@ export function normal(rng: Rng, label: string, mean: number, sd: number): numbe
   }
   const offset = Math.trunc((stand * low) / RANDNOR_STD);
   return rng.int(label, 0, 99) < 50 ? m - offset : m + offset;
+}
+
+/**
+ * `rng.mbonus(max, level, max_level)` (`game/loader/pre-init.lua`, T-Engine4 tag
+ * tome-1.6.0): a bonus in `[0, max]` that grows with the level, Angband's
+ * `m_bonus`. Lua, not C, so every step below is a line of it:
+ *
+ * ```lua
+ * if level > max_level - 1 then level = max_level - 1 end
+ * local bonus = (max * level) / max_level
+ * local extra = (max * level) % max_level
+ * if rng.range(0, max_level - 1) < extra then bonus = bonus + 1 end
+ * local stand = max / 4
+ * extra = max % 4
+ * if rng.range(0, 3) < extra then stand = stand + 1 end
+ * local val = rng.normal(bonus, stand)
+ * if val < 0 then val = 0 end
+ * if val > max then val = max end
+ * return val
+ * ```
+ *
+ * - `/` IS FLOAT DIVISION and `%` is Lua's floored one (`mod`). Neither result
+ *   is rounded here: `rng.normal` truncates `bonus` and `stand` when it reads
+ *   them, and the `extra` comparisons read a possibly fractional `extra`.
+ * - THE ROUNDING IS PROBABILISTIC, and that is the point of both rolls: a
+ *   remainder of `extra` out of `max_level` adds one to the mean `extra` times
+ *   in `max_level`, and a remainder of `max % 4` does the same to the spread.
+ * - DRAWS: `range(0, max_level - 1)` (none when `max_level` is 1), then
+ *   `range(0, 3)`, then `normal`'s two — or none, when the truncated spread is
+ *   under 1, which a `max` of 3 or less can roll.
+ * - Clamped to `[0, max]` AFTER the normal, so half the spread at a low level
+ *   piles up on 0.
+ */
+export function mbonus(
+  rng: Rng,
+  label: string,
+  max: number,
+  level: number,
+  maxLevel: number,
+): number {
+  const lvl = level > maxLevel - 1 ? maxLevel - 1 : level;
+  let bonus = (max * lvl) / maxLevel;
+  const extraBonus = mod(max * lvl, maxLevel);
+  if (range(rng, label, 0, maxLevel - 1) < extraBonus) bonus += 1;
+  let stand = max / 4;
+  const extraStand = mod(max, 4);
+  if (range(rng, label, 0, 3) < extraStand) stand += 1;
+  const val = normal(rng, label, bonus, stand);
+  if (val < 0) return 0;
+  if (val > max) return max;
+  return val;
 }
 
 /** `TWOPI` in `rng_normal_float`, a literal that is this double to the last bit. */

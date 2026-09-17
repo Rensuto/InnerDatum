@@ -1240,6 +1240,9 @@ describe('the status roster (game-design.md § 12)', () => {
       // WHAT A BLINK LEAVES BEHIND, and the only source of a duration
       // reduction in the game — magical.lua:2277-2303.
       EffectId.OutOfPhase,
+      // THE FIRST ONE THE GROUND GIVES. Nothing casts it; running out of air
+      // does — timed_effects/other.lua:2265-2289.
+      EffectId.Suffocating,
     ]);
     expect(MVP_EFFECTS.map((def) => def.icon)).toEqual([
       'icon_status_stunned',
@@ -1266,6 +1269,7 @@ describe('the status roster (game-design.md § 12)', () => {
       'icon_status_rune_saturation',
       'icon_status_damage_shield',
       'icon_status_out_of_phase',
+      'icon_status_suffocating',
     ]);
   });
 
@@ -1308,7 +1312,20 @@ describe('the status roster (game-design.md § 12)', () => {
      * a property of the body wearing a duration, which is what a passive or a
      * piece of gear is for.
      */
+    /**
+     * ═══ EXCEPT THE ONE THE GROUND HOLDS ON YOU ═══
+     * `EFF_SUFFOCATING` is `decrease = 0, no_remove = true`
+     * (timed_effects/other.lua:2272): it lasts exactly as long as you stand where
+     * you cannot breathe, and removes itself the turn you can. That is the one
+     * shape `validateEffect` lets a zero through, and it is named here so a
+     * second permanent effect has to be argued for rather than slipping in.
+     */
     for (const def of MVP_EFFECTS) {
+      if (def.id === EffectId.Suffocating) {
+        expect(def.decrease, def.id).toBe(0);
+        expect(def.noRemove, def.id).toBe(true);
+        continue;
+      }
       expect(def.decrease, def.id).toBe(1);
     }
     const kinds = new Set(MVP_EFFECTS.map((def) => def.status));
@@ -1397,6 +1414,10 @@ describe('the status roster (game-design.md § 12)', () => {
       [EffectId.DamageShield]: SaveChannel.Magical,
       // magical.lua:2281 — `type = "magical"`, upstream's own.
       [EffectId.OutOfPhase]: SaveChannel.Magical,
+      // timed_effects/other.lua:2269 is `type = "other"`. Physical is the nearest true label and
+      // nothing rolls against it: no `applyPower` is ever passed, and a cure by
+      // channel that finds it cannot remove it (`noRemove`).
+      [EffectId.Suffocating]: SaveChannel.Physical,
     });
   });
 

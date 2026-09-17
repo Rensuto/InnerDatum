@@ -317,6 +317,7 @@ import {
   PARTY_PANE_MIN_H,
 } from './ui/partypanel.ts';
 import { resourceLabel } from './ui/resource.ts';
+import { losingBreath } from './ui/air.ts';
 import {
   TalentHitKind,
   talentMessageWake,
@@ -430,6 +431,7 @@ import type {
   ZoneTileView,
   TrapView,
   ResourceView,
+  AirView,
   ServerMsg,
   ItemView,
   RegionView,
@@ -1496,6 +1498,8 @@ let deepenable: readonly string[] = [];
 let deepened: readonly string[] = [];
 let cooldowns: Readonly<Record<string, number>> = {};
 let resource: ResourceView | null = null;
+/** The viewer's own air — `ResourceMsg.air`, null while breathing freely. */
+let air: AirView | null = null;
 
 /**
  * THE VIEWER'S OWN LEDGER (v9): level, xp into it, the next threshold, and the
@@ -3433,6 +3437,8 @@ function partyView(): PartyPaneView | null {
     // viewer-private, so the pane puts it on the self row.
     // See `PartyPaneView.resource`.
     resource,
+    // And their breath, beside it on the same row. See `PartyPaneView.air`.
+    air,
     // ═══ AND THE TWO THAT MOVED HERE WHEN THE BOTTOM STRIP WAS DELETED ═══
     // Both are viewer-private in the same way and both land on the self row.
     progress,
@@ -13875,9 +13881,15 @@ function applyServerMessage(msg: ServerMsg): void {
         openNoteId = null;
       }
       break;
-    case 'resource':
+    case 'resource': {
       resource = msg.resource;
+      const before = air;
+      air = msg.air ?? null;
+      // Player.lua:771-781 — the ground took air and left under three quarters of
+      // it, so a walk or an explore stops. See `losingBreath`.
+      if (losingBreath(before, air)) cancelTravel('you are losing breath — travel stopped');
       break;
+    }
 
     case 'roster':
       /**

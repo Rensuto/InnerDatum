@@ -146,6 +146,7 @@ import type {
   ZonesMsg,
   TerrainMsg,
   TrapsMsg,
+  AirView,
   ResourceMsg,
   ResourceView,
   TurnActor,
@@ -1203,7 +1204,30 @@ export function projectResource(
       ...(resource.mp === undefined ? {} : { mp: resource.mp }),
       ...(resource.maxMp === undefined ? {} : { maxMp: resource.maxMp }),
     },
+    // AND THE LUNGS, ONLY WHILE THEY ARE SHORT. See `ResourceMsg.air` and `airViewOf`.
+    ...airFieldOf(viewer),
   };
+}
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE VIEWER'S AIR, OR NOTHING — tome/data/resources.lua:45.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Undefined at or above the ceiling: a full body has nothing to show, and one
+ * a bubble lifted past it (`suffocate` is unclamped, tome/class/Actor.lua:6728) is full.
+ *
+ * `!(air < max)` RATHER THAN `air >= max`, so a body with no air field — a
+ * fixture cast from `{ id }` — reads as full instead of as `NaN` on the wire.
+ */
+function airViewOf(viewer: Actor): AirView | undefined {
+  if (!(viewer.air < viewer.maxAir)) return undefined;
+  return { cur: Math.max(0, Math.floor(viewer.air)), max: viewer.maxAir };
+}
+
+function airFieldOf(viewer: Actor): { air?: AirView } {
+  const air = airViewOf(viewer);
+  return air === undefined ? {} : { air };
 }
 
 // ---------------------------------------------------------------------------

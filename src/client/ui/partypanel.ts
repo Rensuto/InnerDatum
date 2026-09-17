@@ -133,7 +133,8 @@ import { HP_LOW } from '../../shared/vitals.ts';
 import { RESOURCE_H, drawResource, resourceStripH } from './resource.ts';
 import { PURSE_GAP, drawPurse } from './purse.ts';
 import { drawXpBar, xpBarGeometry } from './xpbar.ts';
-import type { ProgressMsg, ResourceView } from '../../shared/protocol.ts';
+import { drawAirBar } from './air.ts';
+import type { AirView, ProgressMsg, ResourceView } from '../../shared/protocol.ts';
 
 // ---------------------------------------------------------------------------
 // Geometry. See the layout note in the header before changing any of it.
@@ -395,6 +396,12 @@ export type PartyPaneView = {
    * no rows to afford; this surface may not.
    */
   readonly money: number | null;
+  /**
+   * THE VIEWER'S OWN AIR, OR NULL WHILE THEY BREATHE FREELY. `ResourceMsg.air`,
+   * straight through. OPTIONAL, so every view a fixture built before it reads as
+   * a body with full lungs — which is what absent means on the wire too.
+   */
+  readonly air?: AirView | null;
 };
 
 export type PartyPaneLayout = {
@@ -441,6 +448,8 @@ export function partyPaneView(options: {
   readonly progress: ProgressMsg | null;
   /** The viewer's purse. NULL, never zero — see `PartyPaneView.money`. */
   readonly money: number | null;
+  /** The viewer's air, null when full. See `PartyPaneView.air`. */
+  readonly air?: AirView | null;
 }): PartyPaneView {
   const roster = new Map(options.roster.map((member) => [member.id, member]));
 
@@ -472,6 +481,7 @@ export function partyPaneView(options: {
     resource: options.resource,
     progress: options.progress,
     money: options.money,
+    air: options.air ?? null,
   };
 }
 
@@ -1031,6 +1041,7 @@ type SelfExtras = {
   readonly resource: ResourceView | null;
   readonly progress: ProgressMsg | null;
   readonly money: number | null;
+  readonly air?: AirView | null;
 };
 
 function drawRow(
@@ -1304,6 +1315,11 @@ function drawRow(
   const digitsW = Math.ceil(ctx.measureText(digits).width) + 4;
   ctx.textAlign = 'left';
   drawHpBar(ctx, textX, barY, contentRight - textX - digitsW, BAR_H, member, false);
+  // YOUR BREATH, in the gap between the hp bar and the pools band — see
+  // ui/air.ts for why a sliver and not a band. Only yours, only while short.
+  if (member.isSelf) {
+    drawAirBar(ctx, self.air ?? null, textX, barY + BAR_H + 1, contentRight - textX - digitsW);
+  }
 }
 
 /**
@@ -1320,6 +1336,7 @@ function drawCompactRow(
   sprites: SpriteSource,
   row: PartyPaneRow,
   rect: PanelRect,
+  air: AirView | null,
 ): void {
   const { member, downed } = row;
   const { x, y, w } = rect;
@@ -1341,6 +1358,10 @@ function drawCompactRow(
   if (!member.online || downed !== null) hatchOver(ctx, token);
   if (member.isLeader) drawLeaderPennant(ctx, token.x, token.y);
   drawVoice(ctx, sprites, row.voice, token.x + FACE_PX - VOICE_PX, token.y + FACE_PX - VOICE_PX);
+  // YOUR BREATH HERE TOO, on the face's last row and the gap under it: Portraits
+  // is the layout a narrow window forces, and the Weir is no kinder there. The
+  // hp bar below keeps all three of its rows.
+  if (member.isSelf) drawAirBar(ctx, air, token.x, token.y + FACE_PX - 1, FACE_PX);
   drawHpBar(ctx, token.x, y + FACE_PX + 2, FACE_PX, COMPACT_BAR_H, member, downed !== null);
 }
 
@@ -1438,7 +1459,7 @@ export function drawPartyPane(options: PartyPaneOptions): void {
   }
 
   for (const slot of geometry.rows) {
-    if (compact) drawCompactRow(ctx, sprites, slot.row, slot.rect);
+    if (compact) drawCompactRow(ctx, sprites, slot.row, slot.rect, view.air ?? null);
     else drawRow(ctx, sprites, slot.row, slot.rect, view.inCombat, view);
   }
 

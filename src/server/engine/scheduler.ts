@@ -58,7 +58,7 @@
 
 import { chebyshev, dirFromVector, step } from '../../shared/coords.ts';
 import { ActResult, tickLevel } from '../../shared/energy.ts';
-import { canRoute, canWalk } from '../../shared/level.ts';
+import { canRoute, canWalk, tileAt } from '../../shared/level.ts';
 // THE ONLY NEW IMPORT PROGRESSION NEEDS, AND IT IS FROM src/shared/ (CLAUDE.md
 // § 5: engine/** may not reach net/, persist/, ops/ or http/). progression.ts is
 // pure arithmetic over three numbers — no state, no dice, no clock — so it is
@@ -81,6 +81,7 @@ import {
   IntentKind,
   actBase,
   areEnemies,
+  catchBreath,
   cooldownOf,
   isHostile,
   isMonster,
@@ -107,6 +108,15 @@ import { applyDamage } from './damage.ts';
 import { teleportRandom } from './talents.ts';
 import { canOpenDoors } from './doors.ts';
 import { trapSentence, trapTakes } from './traps.ts';
+import {
+  BUBBLES_DEPLETED,
+  bubbleOf,
+  burnMessage,
+  burnOf,
+  rollBurn,
+  spendsBubble,
+  terrainSourceId,
+} from './onstand.ts';
 import { soundAlarm } from '../ai/alarm.ts';
 import { tickZones, visibleFrom } from './zones.ts';
 import { DAMAGE_TYPES } from '../../shared/damagetype.ts';
@@ -117,7 +127,15 @@ import type { TalentShape } from '../../shared/protocol.ts';
 import type { AiCtx } from '../ai/npc.ts';
 import { MoveBlock } from '../world/world.ts';
 import type { World } from '../world/world.ts';
-import type { EngineActor, Intent, MonsterActor, PlayerActor, StatusPass } from './actor.ts';
+import type {
+  EngineActor,
+  Intent,
+  MonsterActor,
+  PlayerActor,
+  StatusPass,
+  TerrainProbe,
+} from './actor.ts';
+import { airOf } from '../../shared/terrain.ts';
 import type { StatusApply, StatusHit } from './effects.ts';
 import type { DamageType } from '../../shared/damagetype.ts';
 import type { ActorMove, GuardCounter, TalentHit } from './talents.ts';
@@ -1140,6 +1158,27 @@ export type PumpCtx = {
    * Absent → `strike` takes the branch it has always taken. No draw, no shift.
    */
   readonly applyStatus?: StatusApply;
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE ONE STATUS THE GROUND LAYS ON A BODY — see `TerrainProbe.startSuffocating`.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `suffocate`'s `setEffect(EFF_SUFFOCATING, 1, {dam=20})` behind its
+   * `hasEffect` guard (tome/class/Actor.lua:6733-6736). A closure for `applyStatus`'s
+   * reason, and one more: this module names no authored effect, and the id is
+   * content. `turn-engine.ts` builds it from the same `EffectCtx` as the clock
+   * and the door, so the "Suffocating" note lands in the same drain.
+   *
+   * Absent → air still runs out and nothing hurts for it.
+   */
+  readonly startSuffocating?: (actor: EngineActor) => void;
+  /**
+   * AND THE WAY BACK OUT OF IT: `EFF_SUFFOCATING` removed with `force`, as
+   * `cleanActor` removes it from a body death gives back
+   * (dialogs/DeathDialog.lua:115). Called with `catchBreath` on every body a wipe
+   * or a revive stands up — see `restoreBreath`.
+   */
+  readonly stopSuffocating?: (actor: EngineActor) => void;
 
   /**
    * ═══════════════════════════════════════════════════════════════════════════
@@ -1723,6 +1762,17 @@ export function pump(world: World, ctx: PumpCtx): PumpResult {
   // see `applyRoundTails`, which is the entire argument.
   for (const scope of scopes) applyRoundTails(actors, ctx, scope);
 
+  /**
+   * THE GROUND UNDER EVERY BODY, for `actBase`'s air step (tome/class/Actor.lua:584).
+   * Read through `world.level` at the moment of asking, so a tile that changed
+   * earlier in this pump — a door opened, a bubble spent — is the tile it is now.
+   * Built once per pump rather than per body; nothing in it is per body.
+   */
+  const terrain: TerrainProbe = {
+    airAt: (x, y) => airOf(tileAt(world.level, x, y)),
+    ...(ctx.startSuffocating === undefined ? {} : { startSuffocating: ctx.startSuffocating }),
+  };
+
   const result = tickLevel(ticking, {
     clock: world.turn.clock,
     // See `PumpCtx.freeRuns`. Forwarded and not interpreted: the cadence belongs
@@ -1834,7 +1884,7 @@ export function pump(world: World, ctx: PumpCtx): PumpResult {
 
       const actor = resolveActor(world, energyActor);
       if (actor === undefined) return;
-      actBase(actor, ctx.statusPass);
+      actBase(actor, ctx.statusPass, terrain);
       // THE TALENT HALF OF THE SAME PASS, and it goes here rather than anywhere
       // else for the reason `actBase` itself does: it is the AP/MP refill and
       // the class resource's regeneration, both of which must fire exactly ONCE
@@ -1866,6 +1916,9 @@ export function pump(world: World, ctx: PumpCtx): PumpResult {
        */
       resolveStatusHits(run, null);
       survivalPass(actor, run);
+      // AND WHAT THE TILE UNDER THEM DOES — last, after the countdown. See
+      // `onStandPass` for why this clock and not the act clock (D5-4).
+      onStandPass(actor, run);
     },
 
     // THE SPEED-DEPENDENT PASS. A hasted monster arrives here more often, and
@@ -2491,6 +2544,7 @@ function resolveIntent(actor: EngineActor, intent: Intent, run: Run): Resolution
           ? { ok: false, reason: Refusal.OutOfRange }
           : { ok: false, reason: Refusal.NotDowned };
       }
+      restoreBreath(run.ctx, target);
       return {
         ok: true,
         effect: {
@@ -4228,6 +4282,109 @@ function tickGroundZones(run: Run, sweepTurn: number | null): void {
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════
+ * THE TILE UNDER A BODY DOES SOMETHING — `on_stand`, tome/class/Actor.lua:681.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * ```lua
+ * game.level.map:checkEntity(self.x, self.y, Map.TERRAIN, "on_stand", self)
+ * ```
+ *
+ * Two grids answer: LAVA_FLOOR burns and WATER_FLOOR_BUBBLE spends a charge
+ * (`shared/terrain.ts` `ON_STAND`). A FAKE twin is a different code with no
+ * entry, so it does nothing here and nothing needs to ask.
+ *
+ * ═══ ON THE BASE CLOCK, ONCE A GAME TURN, AND THAT IS A DIVERGENCE (D5-4) ═══
+ * Upstream fires this inside `act()`, after `actBase` in the same tick
+ * (engine/GameEnergyBased.lua:114-130), so for a speed-1 body it is once a game
+ * turn, after the air step — which this keeps. Here it hangs off the `actBase`
+ * callback instead, because our `act` is re-entered on every `Park` and every
+ * idle resolve pass and would burn a waiting player once per pass. The
+ * consequences, every one of them once a game turn where upstream is once an
+ * action: a hasted body burns once a turn, not three times; a slowed body burns
+ * every turn, not every other one; a monster out of the fight, whose `act`
+ * returns early, still burns and still spends a bubble; and a player who takes
+ * several steps in one round burns once, on the tile they stand on when their
+ * base clock ticks. `test/server/onstand.test.ts` pins the first three; the
+ * last rides on the same clock and has no test of its own.
+ *
+ * ═══ LAST IN THE PASS, AFTER `survivalPass` ═══
+ * Upstream's `on_stand` runs after the whole of `actBase`. A burn that downs a
+ * player enrols them through `noteCasualty`, as a zone's burn does, so the
+ * countdown above did not need to see it first — and a body already down when
+ * the pass began is skipped here, as upstream skips a dead body's `act`.
+ *
+ * ═══ THE FACTION CHECK IS NOT PORTED ═══
+ * `if self.faction and who:reactionToward(self) >= 0 then return end`
+ * (data/general/grids/lava.lua:34). No grid here has a faction, which is also
+ * true of every plain upstream lava floor, so it would never fire.
+ */
+function onStandPass(actor: EngineActor, run: Run): void {
+  if (!actor.alive) return;
+  const { world } = run;
+  const code = tileAt(world.level, actor.x, actor.y);
+
+  const burn = burnOf(code);
+  if (burn !== undefined) {
+    const span = world.burnRange(code);
+    if (span === undefined) return;
+    const sourceId = terrainSourceId(code);
+    // `DT:get(DT.FIRE).projector(self, x, y, FIRE, rng.range(mindam, maxdam))`
+    // (data/general/grids/lava.lua:36): the ordinary projector, so resists,
+    // shields and affinity all apply, from a source with no sheet at all.
+    const outcome = applyDamage(
+      actor,
+      rollBurn(world.rng, span),
+      burn.type,
+      { id: sourceId },
+      world.rng,
+    );
+    // Nothing landed — fully resisted, or eaten by a shield. Upstream's line
+    // below is gated on `dam > 0`, and a zero is the non-event `noteBlows`
+    // refuses to pay for; the retaliation lane makes the same call.
+    if (outcome.dealt <= 0 && !outcome.killed) return;
+
+    const blow: Blow = {
+      targetId: actor.id,
+      hit: true,
+      crit: false,
+      type: outcome.type,
+      damage: outcome.dealt,
+      killed: outcome.killed,
+      hp: actor.hp,
+      maxHp: actor.maxHp,
+      at: { x: actor.x, y: actor.y },
+    };
+    // `ambient`, for the zone burn's and the trap's reason: nobody swung.
+    run.sink.push({ t: 'attacked', id: sourceId, ...blow, ambient: true });
+
+    // `if dam > 0 and who.player then self:logCombat(who, "#Source# burns #Target#!")`
+    // (:38). The `dam > 0` half is the return above. Players only, for the
+    // trap's reason as well as upstream's: the Record lane is a realm-wide
+    // broadcast with no per-viewer form.
+    if (actor.kind === ActorKind.Player) {
+      run.records.push(trapSentence(burnMessage(code), actor.name));
+    }
+
+    const burnt: Effect = { kind: 'attack', ...blow };
+    noteBlows(burnt, run);
+    noteCasualty(burnt, run, null, sourceId);
+    return;
+  }
+
+  /**
+   * THE BUBBLE — data/general/grids/water.lua:106-115. The +15 air already
+   * came from `actBase`'s air step (its `air_level`); this is only the charge.
+   */
+  if (bubbleOf(code) === undefined || !spendsBubble(actor)) return;
+  const left = world.spendBubble(actor.x, actor.y);
+  if (left === undefined || left > 0) return;
+  // `game.logSeen(who, ...)`: players only, for the burn's reason above.
+  if (actor.kind === ActorKind.Player) run.records.push(BUBBLES_DEPLETED);
+  world.depleteBubble(actor.x, actor.y);
+}
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
  * A MONSTER IS BURIED. THE FOUR THINGS THAT HAPPEN, IN ONE PLACE AT LAST.
  * ═══════════════════════════════════════════════════════════════════════════
  *
@@ -4931,14 +5088,46 @@ function checkWipe(run: Run, sweepTurn: number | null): void {
     if (!survey.wiped) continue;
 
     survival.wiped.add(scopeId);
+    const restored = resetFloorParty(players, survival.state);
+    // BREATHING, BEFORE ANOTHER BASE TURN CAN PASS. The party is stood up HERE,
+    // mid-pump, and base turns run until it parks; `resetFloor` only moves it
+    // after `pump` returns. See `restoreBreath`.
+    for (const id of restored) {
+      const body = run.world.getActor(id);
+      if (body !== undefined) restoreBreath(run.ctx, body);
+    }
     run.sink.push({
       t: 'party_wipe',
       gameTurn: run.world.turn.clock.gameTurn,
       partyId: scopeId,
       duringSweep: sweepTurn !== null,
-      restored: resetFloorParty(players, survival.state),
+      restored,
     });
   }
+}
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * STAND UP BREATHING — the air refilled and `EFF_SUFFOCATING` taken off.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Every way this game gives a body back — the wipe, a revive, a respawn — is
+ * upstream's one way back from death, `cleanActor` plus `restoreResources`
+ * (dialogs/DeathDialog.lua:92-128), as far as breath goes. See `catchBreath`.
+ *
+ * `noRemove` is why this has to be said out loud: the wipe's `dispel` cannot take
+ * Suffocating off, a downed body skips `actBase`, and the Weir's arrival is
+ * water. Measured before this existed: a solo player who drowned there was
+ * restored at air 0 with the blow at 40%, downed again two turns later, and from
+ * the eighteenth turn wiped on every turn with no end.
+ *
+ * A REVIVE KEEPS ITS 25% AND EVERY OTHER STATUS. Only breath is restored there:
+ * a body picked up at a quarter of its life, still suffocating at 25% or more a
+ * turn, is dead on the next base turn, so a revive in water would do nothing.
+ */
+function restoreBreath(ctx: PumpCtx, body: EngineActor): void {
+  catchBreath(body);
+  ctx.stopSuffocating?.(body);
 }
 
 // ---------------------------------------------------------------------------

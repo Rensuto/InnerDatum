@@ -5774,11 +5774,33 @@ export type LoreMsg = {
   notes: readonly LoreView[];
 };
 
+/**
+ * THE VIEWER'S OWN AIR — tome/data/resources.lua:45, a pool every body has.
+ *
+ * `cur` is floored: air moves in whole steps (regen 3, water -5) and a bar is
+ * all that draws it.
+ */
+export type AirView = {
+  readonly cur: number;
+  readonly max: number;
+};
+
 /** THE VIEWER'S OWN class resource. */
 export type ResourceMsg = {
   v: typeof PROTOCOL_VERSION;
   t: 'resource';
   resource: ResourceView;
+  /**
+   * ═══ ABSENT AT FULL, and that is the whole of when a client draws nothing ═══
+   * Upstream's HUD shows the air bar only while it is below its ceiling, and a
+   * body above it (a bubble reads 115 on every turn it is stood in) is full too. So the
+   * key rides only while a body is short of breath, and a client reads absence
+   * as "breathing freely", never as "unknown".
+   *
+   * OPTIONAL WITHOUT A BUMP OF ITS OWN — `version.ts`'s 24 -> 25 entry says so:
+   * an older client ignores the key and nothing it draws becomes false.
+   */
+  air?: AirView;
 };
 
 /**

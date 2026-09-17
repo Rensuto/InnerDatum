@@ -444,6 +444,29 @@ export type MonsterTemplate = {
 
   /**
    * ═══════════════════════════════════════════════════════════════════════════
+   * `no_breath` AND `can_breath` — WHETHER DEEP WATER DROWNS IT.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * A LOOKUP, like `opensDoors` above, and in the same place: upstream puts
+   * `no_breath = 1` on the family BASE entity, so each template's answer is in
+   * the file it cites. Of our nine families, two carry it — losgoroth
+   * (`npcs/losgoroth.lua:48`) and crystal (`npcs/crystal.lua:48`) — so three
+   * templates do: the Wraith, the Cairn and the Watcher. Ant, ghoul, canine,
+   * troll, feline and elven-caster set neither field, and none of the nine sets
+   * `can_breath` at all.
+   *
+   * THE GHOUL IS UNDEAD AND STILL BREATHES. `npcs/ghoul.lua:44` is `undead = 1`
+   * with no `no_breath` beside it; upstream gives that to the skeleton race
+   * (`birth/races/undead.lua:185`), not to the type. Absent here is its answer.
+   *
+   * ABSENT IS UPSTREAM'S DEFAULT: `can_breath = {}` (tome/class/Actor.lua:205), no
+   * `no_breath`. A body that lacks both drowns in water like a player does.
+   */
+  readonly noBreath?: boolean;
+  readonly canBreath?: { readonly water?: number };
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
    * `proj_speed` — TILES PER GAME TURN, NOT ACTIONS PER TURN
    * ═══════════════════════════════════════════════════════════════════════════
    *
@@ -1015,6 +1038,8 @@ export const INDEX_WRAITH: MonsterTemplate = Object.freeze({
     'body should be. Hangs at the outer ring and lobs dark orbs at the player.',
   sprite: 'enemy_index_wraith_s',
   rank: ActorRank.Normal,
+  // `no_breath = 1` — npcs/losgoroth.lua:48, on BASE_NPC_LOSGOROTH. Deep water does not drown it.
+  noBreath: true,
 
   // ═══════════════════════════════════════════════════════════════════════
   // PORTED. losgoroth.lua:63 `max_life = resolvers.rngavg(40,60)` = 50.
@@ -1956,6 +1981,8 @@ export const INDEX_CAIRN: MonsterTemplate = Object.freeze({
     'It simply has a clear view, and time.',
   sprite: 'enemy_index_cairn_s',
   rank: ActorRank.Normal,
+  // `no_breath = 1` — npcs/crystal.lua:48, on BASE_NPC_CRYSTAL. Deep water does not drown it.
+  noBreath: true,
 
   // crystal.lua:34 `max_life = resolvers.rngavg(12,34)` = 23.
   maxHp: resolveRngAvg(12, 34),
@@ -2826,6 +2853,8 @@ export const INDEX_WATCHER: MonsterTemplate = Object.freeze({
     'and it has had a long time to read them.',
   sprite: 'enemy_the_watcher',
   rank: ActorRank.Boss,
+  // `no_breath = 1` — npcs/crystal.lua:48, on BASE_NPC_CRYSTAL — INDEX_CAIRN's base too. Deep water does not drown it.
+  noBreath: true,
 
   // OURS — see the derivation above. Upstream's crystals are all 23.
   maxHp: 220,
@@ -3139,6 +3168,11 @@ export function monsterInit(template: MonsterTemplate, at: TileXY, level: number
     // actor from the day doors shipped; this line is the half that was missing,
     // and without it every template's answer was `undefined`.
     opensDoors: template.opensDoors,
+    // AND WHETHER IT BREATHES. Spread, so a template that says nothing hands the
+    // body nothing — upstream's `{}` and `nil`, and the carried-field guard's
+    // "a field nothing sets is not covered" in the same breath.
+    ...(template.noBreath === undefined ? {} : { noBreath: template.noBreath }),
+    ...(template.canBreath === undefined ? {} : { canBreath: template.canBreath }),
     // THE ORB'S FROZEN DAMAGE, authored per template. Absent on both melee
     // creatures, and absent is not "3-6" here — it is "this creature never
     // reaches `fire`". See the note above.

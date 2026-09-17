@@ -71,6 +71,14 @@ import type { Rng } from '../../shared/rng.ts';
 import type { EngineActor, MonsterInit, PlayerInit } from '../engine/actor.ts';
 import type { Projectile, ProjectileInit } from '../engine/projectile.ts';
 import { isClosedDoorCode, openedFormOf } from '../../shared/terrain.ts';
+import {
+  DEFAULT_TERRAIN_LEVEL,
+  bubbleOf,
+  burnOf,
+  resolveBurn,
+  rollBubbleCharges,
+} from '../engine/onstand.ts';
+import type { BurnRange } from '../engine/onstand.ts';
 
 /**
  * An actor as the SERVER holds it — deliberately not an `ActorView`.
@@ -750,6 +758,54 @@ export type World = {
    */
   restoreTerrain(): void;
   /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE LEVEL THIS FLOOR'S TERRAIN RESOLVES AT — `resolvers.current_level`.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `base_level + lev - 1` (engine/Zone.lua:1031), which is `Realm.baseLevel`,
+   * and the realm that decides that number says it here once it knows it.
+   * Nobody saying anything is level 1, upstream's own starting value
+   * (engine/resolvers.lua:85).
+   *
+   * WRITE ONCE, AND NEVER AFTER A VALUE HAS BEEN RESOLVED. A floor whose lava
+   * already burnt somebody at one level must not start burning at another.
+   * @returns false when refused: already set, already resolved, or not finite.
+   */
+  setTerrainLevel(level: number): boolean;
+  /** See `setTerrainLevel`. */
+  terrainLevel(): number;
+  /**
+   * WHAT A BURNING TILE DEALS ON THIS FLOOR — `mindam` and `maxdam`
+   * (data/general/grids/lava.lua:30-31), resolved the first time anything asks,
+   * at `terrainLevel`, and the same answer for the rest of the floor.
+   * Undefined for a code that burns nobody. See `engine/onstand.ts`.
+   */
+  burnRange(code: number): BurnRange | undefined;
+  /**
+   * ONE BREATH OUT OF AN AIR BUBBLE — `self.nb_charges = self.nb_charges - 1`
+   * (data/general/grids/water.lua:108).
+   *
+   * The tile's charges are rolled the first time anybody spends one
+   * (`resolvers.rngrange(4, 7)`, :104), on a stream forked for that tile alone:
+   * upstream's bubble is `force_clone`, so every grid holds its own count, and
+   * the order bodies find the bubbles in must not change how full each one is.
+   *
+   * Writes no terrain. The caller says the line and then calls `depleteBubble`,
+   * in upstream's order (:109-112).
+   * @returns the charges left, or undefined when the tile is not a bubble.
+   */
+  spendBubble(x: number, y: number): number | undefined;
+  /**
+   * `game.zone:addEntity(game.level, WATER_FLOOR, "terrain", x, y)`
+   * (data/general/grids/water.lua:111-112): the spent bubble becomes the water
+   * it was in, through `terrainDelta` so `TerrainMsg` carries it.
+   *
+   * GUARDED as `openDoor` is: it turns a bubble into its `depletesTo` or it
+   * does nothing.
+   * @returns false when the tile is not a bubble.
+   */
+  depleteBubble(x: number, y: number): boolean;
+  /**
    * One tile's items, in that same stable order. Empty is the common case.
    *
    * PICKUP TAKES INDEX 0. That is the whole reason the order is specified: "the
@@ -922,6 +978,19 @@ export function createWorld(
   const shopRng = root.fork('world.shop');
   // ITS OWN STREAM, so lighting a level moves no other draw. See `shared/light.ts`.
   const lit = lightLevel(level, authored.rooms ?? [], lighting, root.fork('world.light'));
+
+  /**
+   * THE TERRAIN'S OWN NUMBERS: its level, lava's resolved damage, each bubble's
+   * charges. Two more forks, free for `world.loot`'s reason, so resolving a
+   * floor's lava or rolling a bubble moves no combat draw. Keyed below by code
+   * and by tile, so neither depends on what was asked first.
+   */
+  const resolveRng = root.fork('terrain.resolve');
+  const bubbleRng = root.fork('terrain.bubble');
+  let terrainLevel = DEFAULT_TERRAIN_LEVEL;
+  let terrainLevelSet = false;
+  const burnRanges = new Map<number, BurnRange>();
+  const bubbleCharges = new Map<string, number>();
 
   /** Each character's memory of this level, by actor id. See `World.memoryOf`. */
   const memory = new Map<string, Uint8Array>();
@@ -1462,6 +1531,57 @@ export function createWorld(
       level.tiles[tileIndex(change.x, change.y, level.w)] = change.was;
       terrainDelta.set(key, { ...change, code: change.was });
     }
+    // AND EVERY BUBBLE IS AS FULL AS IT WAS BUILT. A restored bubble keeping a
+    // spent count would empty on the first breath; the next spend re-rolls the
+    // same count from the same per-tile fork, so this is the generator's number.
+    bubbleCharges.clear();
+  };
+
+  const setTerrainLevel = (next: number): boolean => {
+    if (terrainLevelSet || burnRanges.size > 0 || !Number.isFinite(next)) return false;
+    terrainLevel = next;
+    terrainLevelSet = true;
+    return true;
+  };
+
+  const burnRange = (code: number): BurnRange | undefined => {
+    const burn = burnOf(code);
+    if (burn === undefined) return undefined;
+    const known = burnRanges.get(code);
+    if (known !== undefined) return known;
+    const resolved = Object.freeze(resolveBurn(resolveRng.fork(String(code)), burn, terrainLevel));
+    burnRanges.set(code, resolved);
+    return resolved;
+  };
+
+  /** The bubble on this tile and its code, or undefined — off the grid included. */
+  const bubbleAt = (x: number, y: number) => {
+    if (!Number.isInteger(x) || !Number.isInteger(y)) return undefined;
+    if (x < 0 || y < 0 || x >= level.w || y >= level.h) return undefined;
+    const code = level.tiles[tileIndex(x, y, level.w)] ?? TileCode.WALL;
+    const bubble = bubbleOf(code);
+    return bubble === undefined ? undefined : { code: code as TileCode, bubble };
+  };
+
+  const spendBubble = (x: number, y: number): number | undefined => {
+    const here = bubbleAt(x, y);
+    if (here === undefined) return undefined;
+    const key = `${String(x)},${String(y)}`;
+    const had = bubbleCharges.get(key) ?? rollBubbleCharges(bubbleRng.fork(key), here.bubble);
+    bubbleCharges.set(key, had - 1);
+    return had - 1;
+  };
+
+  const depleteBubble = (x: number, y: number): boolean => {
+    const here = bubbleAt(x, y);
+    if (here === undefined) return false;
+    const key = `${String(x)},${String(y)}`;
+    level.tiles[tileIndex(x, y, level.w)] = here.bubble.depletesTo;
+    // `was` IS THE BUBBLE, even on a second depletion: nothing but the floor
+    // reset turns water back into a bubble, so the code here is the generator's.
+    terrainDelta.set(key, { x, y, code: here.bubble.depletesTo, was: here.code });
+    bubbleCharges.delete(key);
+    return true;
   };
 
   const trapKey = (x: number, y: number): string => `${String(x)},${String(y)}`;
@@ -1576,6 +1696,11 @@ export function createWorld(
     removeTrap: (x: number, y: number): boolean => traps.delete(trapKey(x, y)),
     terrainChanges: (): readonly TerrainChange[] => [...terrainDelta.values()],
     restoreTerrain,
+    setTerrainLevel,
+    terrainLevel: (): number => terrainLevel,
+    burnRange,
+    spendBubble,
+    depleteBubble,
     addProp,
     props: (): readonly Prop[] => [...props.values()],
     itemsAt,

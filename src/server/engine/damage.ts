@@ -14,6 +14,7 @@
 //                                                              856-875 (darkness)
 //                                                              876-904 (mind)
 //             t-engine4 game/engines/default/engine/interface/ActorLife.lua:71-81 (takeHit)
+//             t-engine4 game/modules/tome/class/interface/ActorLife.lua:41-60 (raw takeHit)
 // T-Engine4 (C) 2009-2018 Nicolas Casalini "DarkGod" — https://te4.org/license
 
 /**
@@ -1327,4 +1328,60 @@ export function applyDamage(
 
   notifySource(source, target.id ?? '', dealt, type, resolved.crit, false);
   return { ...empty, dealt, absorbed, affinityHealed: pay(target, resolved) };
+}
+
+/** What a raw `takeHit` did. `applyDamage`'s outcome without the pipeline's fields. */
+export type TakeHitOutcome = {
+  /** HP actually removed — never more than the target had, as `DamageOutcome.dealt`. */
+  readonly dealt: number;
+  /** True only on the hit that crossed zero. */
+  readonly killed: boolean;
+};
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * STEP 9 ALONE — `takeHit` WITH `onTakeHit` DETACHED.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * ```lua
+ * -- Bypass all shields & such
+ * local old = self.onTakeHit
+ * self.onTakeHit = nil
+ * mod.class.interface.ActorLife.takeHit(self, self.max_life * eff.dam / 100, self, ...)
+ * self.onTakeHit = old
+ * ```
+ *
+ * `EFF_SUFFOCATING` (timed_effects/other.lua:2282-2287). Then
+ * tome/class/interface/ActorLife.lua:41-60 does nothing but subtract: `onTakeHit` is nil, so no
+ * shield, no talent callback; and it is not a projector, so no resist, no
+ * affinity, no crit and no damage type. That is why this is a separate door and
+ * not `applyDamage` with everything turned off — every one of those stages is
+ * a place a future change to `applyDamage` could quietly start applying.
+ *
+ * NO DRAW, and it may never take one: it runs inside `timedEffects`, on the
+ * same stream `applyDamage`'s death note guards.
+ *
+ * NO `notifySource`, AND NO SOURCE AT ALL. Upstream passes `src = self`, and
+ * `src` is read only by `oktodie` — `on_kill` and `die(src)` — which here is
+ * the caller's business: the effect reports the hit through
+ * `EffectCtx.noteDamage` and the scheduler buries or downs the body. The
+ * deal/kill callbacks fire from the projector, which this is not.
+ *
+ * `applyDamage`'s two recorded deviations hold here too: `die_at` is 0, and
+ * `dealt` is clamped to the hit points the body had.
+ */
+export function takeHit(target: DamageTarget, amount: number): TakeHitOutcome {
+  // tome/class/interface/ActorLife.lua:43 — `if value <= 0 then return false, 0 end`. A corpse takes
+  // nothing either, as `applyDamage` refuses one.
+  if (!target.alive || !(amount > 0)) return { dealt: 0, killed: false };
+  // :49 — `self.life = self.life - value`.
+  const dealt = Math.min(target.hp, amount);
+  target.hp -= dealt;
+  // :51 — `if self.life <= self.die_at and not self.dead`.
+  if (target.hp <= 0) {
+    target.hp = 0;
+    target.alive = false;
+    return { dealt, killed: true };
+  }
+  return { dealt, killed: false };
 }

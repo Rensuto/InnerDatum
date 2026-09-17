@@ -9,6 +9,7 @@
 //                                                        :74-98  (timedEffects)
 //                                                        :100-165 (setEffect)
 //                                                        :171-190 (hasEffect / removeEffect)
+//                                                        :191 (no_remove and force)
 //             t-engine4 game/modules/tome/class/interface/Combat.lua:275-293 (checkHitOld)
 //             t-engine4 game/modules/tome/data/timed_effects/physical.lua:133-141 (CUT on_merge)
 // T-Engine4 (C) 2009-2018 Nicolas Casalini "DarkGod" — https://te4.org/license
@@ -429,6 +430,46 @@ export type EffectDef = {
    * dispelled, which is how ToME writes sustains that live in the same table.
    */
   readonly decrease: number;
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * `e.no_remove` — NOTHING TAKES THIS OFF BUT THE EFFECT ITSELF.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * ```lua
+   * if _M.tempeffect_def[eff].no_remove and not force then return end
+   * ```
+   *
+   * ActorTemporaryEffects.lua:191, the first line of `removeEffect` after the
+   * setting-up deferral. So a cure, a dispel, a wipe's reset and even
+   * `timedEffects`' own expiry (:95-97 passes no `force`) all leave it on the
+   * body. The effect leaves by calling `removeEffect` with `force` from its own
+   * `on_timeout` — `EFF_SUFFOCATING` does exactly that the turn the body can
+   * breathe again (timed_effects/other.lua:2276-2279).
+   *
+   * Pairs with `decrease: 0`: a duration that never falls and a removal nobody
+   * else may make is a condition the WORLD holds on you, not a timer.
+   */
+  readonly noRemove?: true;
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * `e.type == "other"` — A CHANNEL `SaveChannel` CANNOT SAY.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Upstream's fourth type, for what the world does to a body rather than what
+   * an attack does: suffocation and every zone aura. `type` still carries the
+   * nearest save channel for whatever reads it; this flag keeps the three places
+   * `setEffect` asks `e.type ~= "other"`, all of which let an "other" effect
+   * through:
+   *
+   *   - `negative_status_effect_immune` does not refuse it (tome/class/Actor.lua:6956),
+   *     and no per-channel immunity names "other" (:6958-6960);
+   *   - `reduce_detrimental_status_effects_time` does not shorten it (:7048).
+   *
+   * That second one is not cosmetic for a `decrease: 0` condition: shortened to
+   * `ceil(0)`, it would expire on the next tick into a `noRemove` refusal and
+   * sit on the body as a badge that does nothing and cannot be laid again.
+   */
+  readonly typeOther?: true;
   /** The 24×24 badge on disk. An asset key, never a path — the client owns the manifest. */
   readonly icon: string;
   /**
@@ -635,6 +676,13 @@ export type EffectActor = {
   readonly cooldowns: Map<string, number>;
   /** Monsters only. The energy GAIN multiplier; see `EffectModifiers.globalSpeedAdd`. */
   globalSpeed?: number;
+  /**
+   * `self.is_suffocating` — set by `actBase` each base turn (tome/class/Actor.lua:578-590)
+   * BEFORE `timedEffects` runs, and read by `EFF_SUFFOCATING`'s `on_timeout`
+   * (timed_effects/other.lua:2276). Optional so a bare fixture reads as a body
+   * that is breathing.
+   */
+  readonly isSuffocating?: boolean;
 };
 
 /**
@@ -1020,9 +1068,12 @@ export function canBe(
    * slipping into one ego — into immunity to every detrimental effect in the
    * game. Two locks on the same door, because that door is the whole M4 system.
    */
-  if (immunityOf(state, actor.id, ImmunityKey.AllNegative) > 0) return { can: false, chance: 0 };
-  if (immunityOf(state, actor.id, BLANKET_IMMUNITY[def.type]) > 0) {
-    return { can: false, chance: 0 };
+  // `e.type ~= "other"` at :6956, and "other" is none of :6958-6960's three.
+  if (def.typeOther !== true) {
+    if (immunityOf(state, actor.id, ImmunityKey.AllNegative) > 0) return { can: false, chance: 0 };
+    if (immunityOf(state, actor.id, BLANKET_IMMUNITY[def.type]) > 0) {
+      return { can: false, chance: 0 };
+    }
   }
 
   // :6964-6968 — the subtype product.
@@ -1544,7 +1595,8 @@ export function setEffect(
    * NO DRAW. It is arithmetic on a number the body already had.
    */
   const shorten = Math.max(0, Math.min(PERCENT, target.combat?.flags?.reduceDetrimentalTime ?? 0));
-  if (def.status === EffectStatus.Detrimental && shorten > 0) {
+  // `e.type ~= "other"` (:7048) — see `EffectDef.typeOther`.
+  if (def.status === EffectStatus.Detrimental && def.typeOther !== true && shorten > 0) {
     dur = Math.ceil(dur * (1 - shorten / PERCENT));
   }
 
@@ -1600,7 +1652,9 @@ export function setEffect(
       case StackMode.Refresh:
         // :128 — remove and re-add. `deactivate` genuinely runs, which is what
         // lets an effect that grabbed something on the way in let go of it.
-        removeEffect(state, target, effectId, rng, ctx, true);
+        // `force`, as upstream's `removeEffect(eff_id, true, true)`: a re-set
+        // replaces even an effect nothing else may remove.
+        removeEffect(state, target, effectId, rng, ctx, true, true);
         break;
     }
   }
@@ -1710,12 +1764,20 @@ export function removeEffect(
   rng: Rng,
   ctx: EffectCtx = NO_CTX,
   silent = false,
+  /**
+   * `force` — the third argument of upstream's `removeEffect(eff, silent, force)`.
+   * Only an effect declared `noRemove` reads it; see `EffectDef.noRemove`.
+   */
+  force = false,
 ): boolean {
   const table = state.byActor.get(actor.id);
   const eff = table?.get(effectId);
   if (table === undefined || eff === undefined) return false;
 
   const def = state.defs.get(effectId);
+  // ActorTemporaryEffects.lua:191 — `if ...no_remove and not force then return end`.
+  // BEFORE `deactivate`, exactly as upstream refuses before `on_lose`.
+  if (def?.noRemove === true && !force) return false;
   // :192-196 — deactivate BEFORE the instance leaves the table, so a hook can
   // still read its own parameters.
   def?.deactivate?.({ state, actor, eff, def, rng, ctx });
@@ -1760,8 +1822,9 @@ export function dispel(
     const def = state.defs.get(effectId);
     if (def !== undefined && filter(def, eff)) doomed.push(effectId);
   }
-  for (const effectId of doomed) removeEffect(state, actor, effectId, rng, ctx);
-  return doomed.length;
+  // COUNTS WHAT WENT, not what matched: a `noRemove` effect matches the filter
+  // and stays (ActorTemporaryEffects.lua:191).
+  return doomed.filter((effectId) => removeEffect(state, actor, effectId, rng, ctx)).length;
 }
 
 /** Every detrimental effect resisted by one channel. The shape a cure takes. */
@@ -1885,12 +1948,12 @@ export function timedEffects(
     eff.dur -= def.decrease;
   }
 
-  // :95-97.
-  for (const effectId of doomed) removeEffect(state, actor, effectId, rng, ctx);
+  // :95-97. No `force`, so a `noRemove` effect stays and is not reported gone.
+  const expired = doomed.filter((effectId) => removeEffect(state, actor, effectId, rng, ctx));
 
   return {
     ticked,
-    expired: doomed,
+    expired,
     noTalentsCooldown: noTalentsCooldown(state, actor.id),
   };
 }

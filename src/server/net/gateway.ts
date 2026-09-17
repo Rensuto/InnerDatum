@@ -5098,7 +5098,10 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
           // changed. AP is spent and refilled every single turn; leaving it out
           // would ship the pip row and leave it frozen at whatever it happened
           // to hold the first time somebody's class resource moved.
-          `|ap:${String(resource.resource.ap ?? -1)}/${String(resource.resource.maxAp ?? -1)}`,
+          `|ap:${String(resource.resource.ap ?? -1)}/${String(resource.resource.maxAp ?? -1)}` +
+          // AND THE LUNGS, for the same reason: a key without air is a bar
+          // that never moves while a body drowns. Already floored on the wire.
+          `|air:${String(resource.air?.cur ?? -1)}`,
     ].join('|');
     if (key === session.viewerKey) return;
     session.viewerKey = key;
@@ -9828,6 +9831,9 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
      */
     to.maxHp = from.maxHp;
     to.hp = Math.max(1, Math.min(to.maxHp, from.hp));
+    // AIR IS A PROPERTY OF THE BODY, as upstream's actor object keeps it across a
+    // zone change. Unclamped: `actBase` bounds it on the next base turn.
+    to.air = from.air;
     to.cooldowns.clear();
     for (const [talentId, turns] of from.cooldowns) {
       if (turns > 0) to.cooldowns.set(talentId, turns);
@@ -11793,6 +11799,13 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
         // "not 3" the mechanic is invisible: a player sees a short stun and
         // concludes the enemy was weak, rather than that their save worked.
         const scaled = event.turns < event.maximum;
+        // ═══ A CONDITION HAS NO TURNS TO COUNT ═══
+        // `decrease = 0` never ticks down, so "1 turn(s)" would be a lie about the
+        // one status that kills you fastest. Upstream's own line for it is
+        // "#Target# is suffocating." (timed_effects/other.lua:2274).
+        if (opts.effects?.defs.get(event.effectId)?.decrease === 0) {
+          return [{ text: `${opening(event.id)} is ${effect}.`, depth: 1 }];
+        }
         return [
           {
             text: scaled
