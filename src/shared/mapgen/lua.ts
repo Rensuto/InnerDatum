@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Dalton Barraclough
 // Ported from t-engine4 game/engines/default/engine/utils.lua:1957-1961 (util.bound)
-//   and game/engines/default/engine/utils.lua:1979-1984 (util.getval);
+//   and game/engines/default/engine/utils.lua:1979-1984 (util.getval)
+//   and game/engines/default/engine/utils.lua:33-38 (math.round);
 //   and the C core, which the reference tree does not ship: rng_range, rng_percent,
 //   rng_chance, rng_float, rng_normal, rng_normal_float and randnor_table in
 //   src/core_lua.c, rand_div and genrand_real in src/SFMT.c and src/SFMT.h, and
@@ -467,4 +468,39 @@ export function mod(a: number, b: number): number {
  */
 export function mathRandom(rng: Rng, label: string, m: number, n: number): number {
   return Math.floor(rng.nextFloat(label) * (n - m + 1)) + m;
+}
+
+/** `num`'s default in `math.round`: six decimal digits of fixed point. */
+const MATH_ROUND_FIXED_POINT = 1000000;
+
+/**
+ * `math.round(v, mult)` (`engine/utils.lua:33-38`), T-Engine4's own addition to
+ * Lua's `math`: `v` to the NEAREST MULTIPLE of `mult`, default 1.
+ *
+ * ```lua
+ * mult = mult or 1
+ * num = num or 1000000
+ * v, mult = v*num, mult*num
+ * return v >= 0 and math.floor((v + mult/2)/mult) * mult/num or math.ceil((v - mult/2)/mult) * mult/num
+ * ```
+ *
+ * - HALVES ROUND AWAY FROM ZERO: `mathRound(45, 2)` is 46 and
+ *   `mathRound(-45, 2)` is -46, the upstream comment's `math.round(4.65, 0.1)`
+ *   is 4.7 and `math.round(-4.475, 0.01)` is -4.48.
+ * - BOTH SIDES ARE SCALED BY 1e6 FIRST, so a decimal `mult` that doubles cannot
+ *   hold exactly still lands on its multiple: without it, -4.475 would round
+ *   to -4.47. The arithmetic is double, in upstream's order.
+ * - `a and b or c` is a plain choice here: `b` is a number, which Lua never
+ *   reads as false.
+ *
+ * The third argument, `num`, is not ported; no caller in the ported tables
+ * passes one. The Infinite Dungeon rounds a maze to its corridor width with it
+ * (`data/zones/infinite-dungeon/zone.lua:228-231`).
+ */
+export function mathRound(v: number, mult = 1): number {
+  const scaled = v * MATH_ROUND_FIXED_POINT;
+  const step = mult * MATH_ROUND_FIXED_POINT;
+  return scaled >= 0
+    ? (Math.floor((scaled + step / 2) / step) * step) / MATH_ROUND_FIXED_POINT
+    : (Math.ceil((scaled - step / 2) / step) * step) / MATH_ROUND_FIXED_POINT;
 }

@@ -48,6 +48,8 @@ import { createForest, generate as generateForest } from './forest.ts';
 import type { ForestData } from './forest.ts';
 import { NIL_TERRAIN, createGenMap } from './genmap.ts';
 import type { GenMap, GridKeys, Spot } from './genmap.ts';
+import { createHexacle, generate as generateHexacle } from './hexacle.ts';
+import type { HexacleMapSpec } from './hexacle.ts';
 import { truthy } from './lua.ts';
 import { createMaze, generate as generateMaze } from './maze.ts';
 import type { MazeData } from './maze.ts';
@@ -84,7 +86,8 @@ export type MapGeneratorSpec =
   | TownMapSpec
   | BuildingMapSpec
   | MazeMapSpec
-  | OctopusMapSpec;
+  | OctopusMapSpec
+  | HexacleMapSpec;
 
 /** The part of a zone table a level is built from. */
 export type LevelSpec<M extends MapGeneratorSpec = MapGeneratorSpec> = {
@@ -194,6 +197,11 @@ function runGenerator(
     case 'Octopus':
       return {
         result: generateOctopus(createOctopus(map, spec, rng, zone, level), lev, oldLev),
+        lit: [],
+      };
+    case 'Hexacle':
+      return {
+        result: generateHexacle(createHexacle(map, spec, rng, zone, level), lev, oldLev),
         lit: [],
       };
     case 'Building': {

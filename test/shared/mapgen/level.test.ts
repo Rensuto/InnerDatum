@@ -19,6 +19,11 @@ import {
 import type { LevelSpec, RoomerMapSpec } from '../../../src/shared/mapgen/level.ts';
 import { createRoomer, generate } from '../../../src/shared/mapgen/roomer.ts';
 import {
+  HEXACLE_INFINITE_DUNGEON,
+  createHexacle,
+  generate as generateHexacle,
+} from '../../../src/shared/mapgen/hexacle.ts';
+import {
   BUILDING_INFINITE_DUNGEON,
   createBuilding,
   generate as generateBuilding,
@@ -483,5 +488,32 @@ describe('newLevel on a Building table', () => {
     expect(buildings).toBeGreaterThan(20);
     // The vaults must stand inside buildings for the last check to mean anything.
     expect(vaultInside).toBeGreaterThan(0);
+  });
+});
+
+describe('newLevel on a Hexacle table', () => {
+  it('dispatches to Hexacle: the certified attempt is createHexacle and generate on its own seed', () => {
+    // `class = "engine.generator.map.Hexacle"` (data/zones/infinite-dungeon/zone.lua:173)
+    // names the generator `Zone:newLevel` builds with (engine/Zone.lua:1053-1055).
+    let tiles = 0;
+    for (let s = 0; s < 6; s += 1) {
+      const seed = `hexacle-dispatch:${String(s)}`;
+      const level = newLevel(HEXACLE_INFINITE_DUNGEON, seed, { level: 1, maxLevel: 1 });
+      expect(level.failed, seed).toBe(false);
+      const { down } = level.map;
+      if (down === undefined) throw new Error(`${seed}: no down stair`);
+      expect(reach(level.map, up(level.map)).has(`${String(down.x)},${String(down.y)}`)).toBe(true);
+      const rng = createRng(`${seed}#${String(level.attempts)}`);
+      const { map: table } = HEXACLE_INFINITE_DUNGEON;
+      const map = createGenMap(60, 60, table.grid, rng);
+      const gen = createHexacle(map, table, rng, { maxLevel: 1 }, { forceRecreate: null });
+      const result = generateHexacle(gen, 1, 0);
+      if (result === null) throw new Error(`${seed}: the direct build failed`);
+      expect(level.map.view.tiles, seed).toEqual(Array.from(map.tiles));
+      expect([level.map.spawns[0], level.map.down], seed).toEqual([result.up, result.down]);
+      tiles += level.map.view.tiles.filter((c) => c === TileCode.FLOOR).length;
+    }
+    // Rings of floor, not a level the dispatch left as nil terrain.
+    expect(tiles).toBeGreaterThan(6 * 600);
   });
 });

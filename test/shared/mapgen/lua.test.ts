@@ -12,6 +12,8 @@ import {
   float,
   genrandReal,
   getval,
+  mathRandom,
+  mathRound,
   mbonus,
   mod,
   normal,
@@ -518,5 +520,51 @@ describe('Lua `%`', () => {
     expect(mod(-1, 5)).toBe(4);
     expect(mod(5, 5)).toBe(0);
     expect(mod(7, 5)).toBe(2);
+  });
+});
+
+describe('math.round (engine/utils.lua:33-38)', () => {
+  it('rounds to the nearest multiple of mult, 1 by default, halves away from zero', () => {
+    expect([mathRound(45, 2), mathRound(44, 2), mathRound(43.9, 2)]).toEqual([46, 44, 44]);
+    expect([mathRound(-45, 2), mathRound(-44, 2)]).toEqual([-46, -44]);
+    // The Infinite Dungeon's case: a map side to a corridor width (zone.lua:228-231).
+    expect([mathRound(39, 6), mathRound(38, 6), mathRound(126, 7), mathRound(37, 5)]).toEqual([
+      42, 36, 126, 35,
+    ]);
+    expect([mathRound(2.5), mathRound(-2.5), mathRound(2.4), mathRound(7)]).toEqual([3, -3, 2, 7]);
+  });
+
+  it('scales by a million first, so the examples in its own comment hold', () => {
+    // `math.round(4.65, 0.1)=4.7, math.round(-4.475, 0.01) = -4.48` (utils.lua:31).
+    expect(mathRound(4.65, 0.1)).toBe(4.7);
+    expect(mathRound(-4.475, 0.01)).toBe(-4.48);
+    // Without the scale both of these land a hundredth short: -4.47 and 2.67.
+    expect(mathRound(2.675, 0.01)).toBe(2.68);
+  });
+});
+
+describe('math.random at the argument forms the Infinite Dungeon passes', () => {
+  // zone.lua:126 `(1, ceil(vx*vy/2000))`, :134 `(12, 20)`, :149 `(1, 2)`, :156 `(0, ...)`.
+  it.each([
+    [1, 3],
+    [12, 20],
+    [1, 2],
+    [0, 4],
+  ])('is uniform over every integer of [%i, %i], one raw draw a call', (m, n) => {
+    const rng = createRng(`math.random:${String(m)}:${String(n)}`);
+    const calls = 4000;
+    const seen = new Map<number, number>();
+    for (let i = 0; i < calls; i += 1) {
+      const before = count(rng);
+      const v = mathRandom(rng, 'm', m, n);
+      expect(count(rng) - before).toBe(1);
+      seen.set(v, (seen.get(v) ?? 0) + 1);
+    }
+    const values = [...seen.keys()].sort((a, b) => a - b);
+    expect(values).toEqual(Array.from({ length: n - m + 1 }, (_, i) => m + i));
+    const expected = calls / values.length;
+    for (const hits of seen.values()) {
+      expect(Math.abs(hits - expected)).toBeLessThan(expected * 0.2);
+    }
   });
 });
