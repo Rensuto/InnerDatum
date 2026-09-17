@@ -1952,12 +1952,32 @@ const LOCAL_DOOR_SPRITES = {
 
 type LocalDoorOrientation = 'ns' | 'ew';
 
+/**
+ * Ground a door may continue beneath itself: walkable, and not another door. A
+ * closed `DOOR` fails the first test (it is not in `WALKABLE`); an open one is
+ * walkable, and its own picture is a doorway, never a floor. Upstream types both
+ * as `type = "wall"` (tome/data/general/grids/basic.lua:218-238), which is the
+ * answer the orientation rule below reads too.
+ */
+function isDoorGround(code: TileCode): boolean {
+  return isWalkable(code) && code !== TileCode.DOOR_OPEN;
+}
+
+/**
+ * Ported from tome/class/NicerTiles.lua:641-657 (`niceTileDoor3d`): walls north
+ * AND south take `north_south` (DOOR_VERT, our `ew`), else walls west AND east
+ * take `west_east` (DOOR_HORIZ, our `ns`), else the base door, whose picture is
+ * the front view (grids/basic.lua:220, `granite_door1.png`), which is also `ns`.
+ *
+ * The NORTH-SOUTH TEST COMES FIRST, and that order is the rule, not a tie-break:
+ * a counting rule sent a door boxed in on all four sides to `ns`, and upstream
+ * sends it to DOOR_VERT. And a neighbouring door counts as wall whether open or
+ * shut, as it does upstream, so opening one door cannot turn the next one round.
+ */
 function localDoorOrientation(level: LevelView, tx: number, ty: number): LocalDoorOrientation {
-  const ns =
-    Number(isWalkable(tileAt(level, tx, ty - 1))) + Number(isWalkable(tileAt(level, tx, ty + 1)));
-  const ew =
-    Number(isWalkable(tileAt(level, tx - 1, ty))) + Number(isWalkable(tileAt(level, tx + 1, ty)));
-  return ns >= ew ? 'ns' : 'ew';
+  const wall = (x: number, y: number): boolean => !isDoorGround(tileAt(level, x, y));
+  if (wall(tx, ty - 1) && wall(tx, ty + 1)) return 'ew';
+  return 'ns';
 }
 
 function localDoorGroundPair(
@@ -1968,8 +1988,8 @@ function localDoorGroundPair(
 ): readonly [TileCode, TileCode] {
   const first = orientation === 'ns' ? tileAt(level, tx, ty - 1) : tileAt(level, tx - 1, ty);
   const second = orientation === 'ns' ? tileAt(level, tx, ty + 1) : tileAt(level, tx + 1, ty);
-  const firstGround = isWalkable(first) && first !== TileCode.DOOR_OPEN ? first : null;
-  const secondGround = isWalkable(second) && second !== TileCode.DOOR_OPEN ? second : null;
+  const firstGround = isDoorGround(first) ? first : null;
+  const secondGround = isDoorGround(second) ? second : null;
   return [
     firstGround ?? secondGround ?? TileCode.FLOOR,
     secondGround ?? firstGround ?? TileCode.FLOOR,

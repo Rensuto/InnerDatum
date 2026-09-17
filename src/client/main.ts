@@ -650,6 +650,74 @@ const NEEDED_ASSET_PREFIXES = [
   'prop_trap_rune_fire',
   'prop_trap_alarm_bell',
   'prop_trap_sliding_rock',
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE TOWN FURNISHINGS — EVERY `propId` A SETTLEMENT PLAN PLACES.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * The authored towns (server/content/towns.ts `townPropsFor`) put lamp posts,
+   * stalls, wells and shop counters on the map, and for as long as this list
+   * admitted only `prop_eldritch_`, `paintProps` asked for every one of them,
+   * got undefined, and drew the violet missing-asset box: forty-odd boxes ringing
+   * the square in Alderbrook, with every PNG installed and served. The third
+   * time this filter has hidden finished art (see `icon_ability_` and
+   * `icon_passive_` above), in the same invisible-from-both-ends shape.
+   *
+   * EXACT IDS, as the traps are, not `prop_`: eighty-odd prop PNGs are on disk
+   * and nothing places the rest. VERIFIED PRESENT before adding: every id below
+   * is a row in `client/public/assets/manifest.placeholders.json` AND a 64x64 PNG
+   * (`props/commission/`). test/client/town-prop-loading.test.ts joins each
+   * town's placements to this list, so a new furnishing fails there first.
+   */
+  'prop_alembic',
+  'prop_archive_shelf',
+  'prop_barrel',
+  'prop_bedroll',
+  'prop_bookshelf',
+  'prop_broken_altar',
+  'prop_campfire',
+  'prop_card_catalogue',
+  'prop_cauldron',
+  'prop_chapel_pew',
+  'prop_civic_planter',
+  'prop_cloth_bolts',
+  'prop_coat_stand',
+  'prop_crate',
+  'prop_dress_form',
+  'prop_eel_trap',
+  'prop_fallen_log',
+  'prop_filing_cabinet',
+  'prop_fishing_net',
+  'prop_flowering_shrub',
+  'prop_font',
+  'prop_furnace',
+  'prop_gear_pile',
+  'prop_glass_case',
+  'prop_grain_sack',
+  'prop_gravestone_a',
+  'prop_gravestone_b',
+  'prop_handcart',
+  'prop_hearth',
+  'prop_herb_rack',
+  'prop_iron_safe',
+  'prop_jar_shelf',
+  'prop_lamp_post',
+  'prop_loom',
+  'prop_market_stall',
+  'prop_noticeboard',
+  'prop_office_desk',
+  'prop_open_grave',
+  'prop_reading_desk',
+  'prop_shop_counter',
+  'prop_sluice_gate',
+  'prop_street_bench',
+  'prop_tent',
+  'prop_toadstools',
+  'prop_tree_stump',
+  'prop_typewriter_desk',
+  'prop_wagon',
+  'prop_well',
+  'prop_wetland_reeds',
 ] as const;
 
 /**

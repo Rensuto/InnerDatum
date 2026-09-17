@@ -11,14 +11,33 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { collectAssetFiles, reconcileInventory, scanRepository } from './art-needs-lib.mjs';
+import {
+  collectAssetFiles,
+  loadFilterPrefixes,
+  reconcileInventory,
+  scanRepository,
+  unloadedIds,
+} from './art-needs-lib.mjs';
 
 const REPO = join(fileURLToPath(new URL('.', import.meta.url)), '..');
 const ASSETS = join(REPO, 'client', 'public', 'assets');
 const MANIFEST = join(ASSETS, 'manifest.placeholders.json');
+const CLIENT_ENTRY = join(REPO, 'src', 'client', 'main.ts');
 
 const scan = scanRepository(REPO);
 const present = collectAssetFiles(ASSETS);
+
+// The client's load filter. An id no prefix admits is never fetched, so it is
+// missing on screen whether or not its file is on disk (see `loadFilterPrefixes`).
+const loadFilter = existsSync(CLIENT_ENTRY)
+  ? loadFilterPrefixes(readFileSync(CLIENT_ENTRY, 'utf8'), 'src/client/main.ts')
+  : null;
+if (loadFilter === null) {
+  console.error(
+    'art-needs: NEEDED_ASSET_PREFIXES not found in src/client/main.ts; load check skipped',
+  );
+}
+const unloaded = loadFilter === null ? [] : unloadedIds(scan.runtime, loadFilter);
 
 function provenanceSets() {
   const standIns = new Set();
@@ -152,13 +171,14 @@ const report = {
   unused: inventory.unused,
   duplicates: inventory.duplicates,
   unresolvedDynamic: scan.unresolvedDynamic,
+  filteredBeforeLoading: unloaded,
 };
 
 const argv = process.argv.slice(2);
 if (argv.includes('--json')) {
   console.log(JSON.stringify(report, null, 2));
 } else if (argv.includes('--missing')) {
-  for (const item of missingBriefs) console.log(item.id);
+  for (const id of [...new Set([...inventory.missing, ...unloaded])].sort()) console.log(id);
 } else {
   const bare = fileCount === 0;
   console.log('ART NEEDS — source-derived, context-aware inventory');
@@ -170,6 +190,7 @@ if (argv.includes('--json')) {
     `  files present                 : ${String(report.onDiskFiles)}${bare ? '  (bare clone)' : ''}`,
   );
   console.log(`  missing art                   : ${String(report.missing.length)}`);
+  console.log(`  filtered out before loading   : ${String(unloaded.length)}`);
   if (!bare) console.log(`  active stand-ins              : ${String(report.placeholder.length)}`);
   if (!bare)
     console.log(`  active old-cell remasters     : ${String(report.forTheOldCell.length)}`);
@@ -186,6 +207,14 @@ if (argv.includes('--json')) {
         console.log(`    ${item.id} — ${item.name}`);
         console.log(`      ${item.demand}; ${item.referencedBy[0] ?? 'unknown source'}`);
       }
+    }
+  }
+
+  if (unloaded.length > 0) {
+    console.log('\nNAMED BY SOURCE, FILTERED OUT BEFORE LOADING (NEEDED_ASSET_PREFIXES)');
+    console.log('-'.repeat(68));
+    for (const id of unloaded) {
+      console.log(`  ${id}${present.has(id) ? '  (on disk)' : ''}; ${locationsFor(id)[0] ?? ''}`);
     }
   }
 

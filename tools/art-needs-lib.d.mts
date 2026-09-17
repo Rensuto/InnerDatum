@@ -52,3 +52,7 @@ export function reconcileInventory(input: {
   unused: string[];
   duplicates: { id: string; paths: string[] }[];
 };
+
+export function loadFilterPrefixes(text: string, fileName?: string): string[] | null;
+
+export function unloadedIds(runtime: ReferenceMap, prefixes: readonly string[]): string[];

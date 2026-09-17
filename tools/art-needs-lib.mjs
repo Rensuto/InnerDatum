@@ -261,3 +261,57 @@ export function reconcileInventory({ runtime, requests, present, standIns, upsca
     duplicates,
   };
 }
+
+/**
+ * The client's load filter, read from syntax: the string literals of the
+ * `NEEDED_ASSET_PREFIXES` array in `src/client/main.ts`.
+ *
+ * A THIRD PLACE AN ID CAN FAIL, AND THE INVENTORY ABOVE CANNOT SEE IT. Source
+ * names an id and the file is on disk, so `reconcileInventory` calls it
+ * present; but `main.ts` filters the manifest by these prefixes before loading,
+ * and an id no prefix admits is never fetched. It draws as its fallback on
+ * every machine with the art installed. That once hid the passive and sustain
+ * talent icons, and then every town furnishing, while this report said nothing
+ * was missing.
+ *
+ * Returns null when the declaration is gone, so a rename reads as a blind check
+ * rather than as a filter that admits nothing.
+ */
+export function loadFilterPrefixes(text, fileName = 'main.ts') {
+  const sourceFile = ts.createSourceFile(fileName, text, ts.ScriptTarget.Latest, true);
+  let prefixes = null;
+  const visit = (node) => {
+    if (prefixes !== null) return;
+    if (
+      ts.isVariableDeclaration(node) &&
+      ts.isIdentifier(node.name) &&
+      node.name.text === 'NEEDED_ASSET_PREFIXES' &&
+      node.initializer !== undefined
+    ) {
+      let value = node.initializer;
+      while (
+        ts.isAsExpression(value) ||
+        ts.isSatisfiesExpression(value) ||
+        ts.isParenthesizedExpression(value)
+      ) {
+        value = value.expression;
+      }
+      if (ts.isArrayLiteralExpression(value)) {
+        prefixes = value.elements
+          .filter((element) => ts.isStringLiteralLike(element))
+          .map((element) => element.text);
+      }
+      return;
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sourceFile);
+  return prefixes;
+}
+
+/** Ids source draws that no load-filter prefix admits, present on disk or not. */
+export function unloadedIds(runtime, prefixes) {
+  return [...runtime.keys()]
+    .filter((id) => !prefixes.some((prefix) => id.startsWith(prefix)))
+    .sort();
+}
