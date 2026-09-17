@@ -144,11 +144,20 @@ describe('a room whose arrival is shut in', () => {
      * kept a room of one cell, found over 5000 seeds a ground. Upstream's
      * Cavern rebuilds a level whose open region is too small
      * (`Cavern.lua:100-109`), and so does this.
+     *
+     * RE-FOUND 2026-09-17, when the noise became libtcod's (octave weights
+     * 1, 1/2, 1/4, 1/8 and a cubic curve): Wood 1361, Scree 1579 and Walls 456
+     * all built open first time, so they no longer reached the rebuild at all.
+     * Over 5000 seeds a ground the first build now seals Wood 5 times, Walls 14
+     * and Fen 5 (it shares Wood's noise), and Open, Upland and Scree never. Each
+     * seed below kept 1 cell on its first build and over 300 on its second.
+     * Re-measured the same day when the tree roll began truncating its chance,
+     * as `rng.percent` does: the same counts and the same three seeds.
      */
     const sealed: readonly (readonly [Ground, number])[] = [
-      [Ground.Wood, 1361],
-      [Ground.Scree, 1579],
-      [Ground.Walls, 456],
+      [Ground.Wood, 54],
+      [Ground.Walls, 179],
+      [Ground.Fen, 2249],
     ];
     for (const [ground, n] of sealed) {
       const m = makeArena(`realm:site:encounter:${String(n)}`, ground);
@@ -164,11 +173,14 @@ describe('each ground as open as the upstream zone it comes from', () => {
   it('keeps each ground inside the band upstream`s numbers give it', () => {
     /**
      * Measured over these forty seeds, as a share of the 22x22 interior a body
-     * can stand on: OPEN (the Golem Graveyard) 92.9%, UPLAND (upstream's
-     * ambush) 83.5%, SCREE (the Mark of the Spellblaze) 78.0%, WOOD
-     * (Trollmire) 63.7%, WALLS (the Ring of Blood) 63.6%, and FEN (Slazish Fen,
-     * less its channel) 62.2%. The walk this replaced gave 62%, 42%, 36%, 34%,
-     * 46% and 42.5%.
+     * can stand on: OPEN (the Golem Graveyard) 94.1%, UPLAND (upstream's
+     * ambush) 86.6%, SCREE (the Mark of the Spellblaze) 80.7%, WOOD
+     * (Trollmire) 63.0%, WALLS (the Ring of Blood) 62.3%, and FEN (Slazish Fen,
+     * less its channel) 61.4%. Those are on libtcod's noise with the tree roll's
+     * chance truncated as `rng.percent` truncates it (2026-09-17); the textbook
+     * noise before it gave 92.9%, 83.5%, 78.0%, 63.7%, 63.6% and 62.2%, inside
+     * the same bands. The walk this replaced gave 62%, 42%, 36%, 34%, 46% and
+     * 42.5%.
      */
     const band: Readonly<Record<Ground, readonly [number, number]>> = {
       [Ground.Open]: [0.88, 0.97],

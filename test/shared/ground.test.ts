@@ -220,10 +220,14 @@ describe('six grounds build six different rooms', () => {
       expect(makeArena(name, Ground.Upland).view.tiles).toEqual(makeArena(name).view.tiles);
     }
 
-    // UPSTREAM'S AMBUSH ON THIS ROOM: 406 cells of the 22x22 interior for this
+    // UPSTREAM'S AMBUSH ON THIS ROOM: 415 cells of the 22x22 interior for this
     // seed, where the walk it replaced carved 203. If this moves, the default
-    // fight moved.
-    expect(walkableCount(makeArena('realm:site:encounter:1'))).toBe(406);
+    // fight moved. It moved twice on purpose on 2026-09-17, re-measured rather
+    // than guessed: 406 became 410 when `shared/noise.ts` became libtcod's
+    // (octave weights that ignore hurst, a cubic curve), and 410 became 415 when
+    // the tree roll truncated its chance as `rng.percent` does (C core:
+    // `rng_percent`), which takes a point or so of trees out of the thin ground.
+    expect(walkableCount(makeArena('realm:site:encounter:1'))).toBe(415);
   });
 
   it('gives the fen water, and gives it to nothing else', () => {
@@ -246,8 +250,11 @@ describe('six grounds build six different rooms', () => {
       ).length;
 
     // NOT EVERY FEN. A cut the ford cannot keep connected is taken back whole,
-    // which left 87 fens in 200 dry under the walk and 76 in 200 under the
-    // forest, so the claim is made over a sweep rather than one seed.
+    // which left 87 fens in 200 dry under the walk, 76 in 200 under the forest
+    // and 78 once its noise was libtcod's, so the claim is made over a sweep
+    // rather than one seed. Over 10,000 realm seeds that is 41.0% of fens with
+    // no water at all (38.5% on the textbook noise): the all-or-nothing revert
+    // is the lever if that is too many.
     const seeds = Array.from({ length: 20 }, (_, i) => i + 1);
     expect(
       seeds.some((seed) => water(Ground.Fen, seed) > 0),

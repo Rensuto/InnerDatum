@@ -1070,23 +1070,33 @@ function rollPercent(rng: Rng, label: string): number {
  * `rng.normalFloat(mean, std)` — Actor.lua:7007.
  *
  * ═══════════════════════════════════════════════════════════════════════════
- * A REIMPLEMENTATION OF DOCUMENTED SEMANTICS, NOT A TRANSLATION
+ * NOT UPSTREAM'S. THE C HAS BEEN READ, AND THIS IS A KNOWN DIVERGENCE.
  * ═══════════════════════════════════════════════════════════════════════════
- * `rng.normalFloat` is native C in `src/rng.c` and is ABSENT from the reference
- * clone, exactly like `rng.percent` and `core.fov.*`. docs/tome-mechanics.md
- * § 10 lists it as one of the primitives that must be written from scratch.
+ * `rng.normalFloat` is native C, absent from the reference clone, and this
+ * stand-in was written before the C was found. It has been now (C core:
+ * `rng_normal_float`, src/core_lua.c, T-Engine4 tag tome-1.6.0), and it IS a
+ * Gaussian: Box-Muller over two inclusive uniforms, the second value cached for
+ * the next call, so odd calls draw two and even calls draw none. The literal
+ * port is `normalFloat` in `shared/mapgen/lua.ts`.
  *
- * T-Engine's `normalFloat` is NOT a Gaussian. It is the mean of
- * `NORMAL_SAMPLES` uniform draws on `[-std, +std]` — a Bates distribution,
- * n = 3 — added to `mean`. Two properties follow and both matter here:
+ * MEASURED, the difference is not small. At save chance 50 (mean 55, std 50)
+ * upstream scales about 13.6% of failed saves to no duration at all and about
+ * 18.4% to the full one; the stand-in below never reaches 0 and reaches the
+ * full duration about 0.06% of the time. It stays until it is replaced as a
+ * change of its own, because replacing it moves every save-gated duration and
+ * the five-draw budget `setEffect` promises, which fifteen test files pin.
  *
- *   - IT IS BOUNDED. The result never leaves `mean ± std`. A true Box–Muller
- *     Gaussian has infinite tails, and with `mean_pct = 110, std = 50` those
- *     tails would occasionally produce a duration multiplier of 3 or 4 that the
- *     `util.bound(..., 0, 2)` at :7007 was never written to catch.
- *   - ITS SPREAD IS NARROWER THAN `std` SUGGESTS. Averaging three samples gives
- *     a standard deviation of `std / 3` ≈ 16.7 percentage points, not 50. Swap
- *     in a real Gaussian and every stun duration becomes three times as noisy.
+ * WHAT THE STAND-IN IS: the mean of `NORMAL_SAMPLES` uniform draws on
+ * `[-std, +std]` — a Bates distribution, n = 3 — added to `mean`. Two
+ * properties follow, and both are where it parts from upstream:
+ *
+ *   - IT IS BOUNDED. The result never leaves `mean ± std`. Upstream's
+ *     Gaussian has tails, and the `util.bound(..., 0, 2)` at :7007 is what
+ *     catches them: a failed save can scale to nothing, or to double before
+ *     `math.min(p.maximum, ...)` at :7012 cuts it back to the full duration.
+ *   - ITS SPREAD IS NARROWER THAN `std` SAYS. Averaging three samples gives a
+ *     standard deviation of `std / 3`, about 16.7 percentage points, not
+ *     upstream's 50.
  *
  * Three draws, labelled individually, so a replay diff names the sample that
  * diverged rather than just "the duration roll".

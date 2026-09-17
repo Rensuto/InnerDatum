@@ -43,8 +43,10 @@
  * largest open region and fills the rest (`Cavern.lua:98-106`); here the region
  * kept is the arrival's, since that is where you are. Cavern also rebuilds a
  * level whose region is too small (`Cavern.lua:100-109`), and here that is a
- * room under a third of its interior: on the densest grounds about one arena in
- * a thousand shuts the arrival tile inside a ring of trees.
+ * room under a third of its interior. Measured over 5000 seeds a ground on
+ * libtcod's noise: the first build shuts the arrival tile inside a ring of trees
+ * 14 times on the walled yard, 5 in the wood and the fen, and never on the open,
+ * upland or scree grounds.
  *
  * PURE, and seeded from `shared/rng.ts` with labelled draws, so an ambush is
  * reproducible from the realm that caused it. `src/shared/` bans `Math.random`
@@ -205,9 +207,11 @@ function forest(
   const noise = createNoise2(rng, `arena.noise.${String(build)}`);
 
   // `Forest.lua:148-152`, which counts its cells from 1. One roll a cell, from
-  // 0 to 99 and under the chance: `rng.percent` is engine C the reference tree
-  // does not carry, and that is its usual reading. The margin stays solid so the
-  // room is sealed.
+  // 0 to 99 and under the chance, the chance TRUNCATED first: `rng.percent` is
+  // `rand_div(100) < (int)p` in the engine's C (C core: `rng_percent`,
+  // src/core_lua.c, T-Engine4 tag tome-1.6.0), so `rng.percent(math.sqrt(v))`
+  // rolls against the whole part of the root, and a v of 10 is 3%, not 3.16%.
+  // The margin stays solid so the room is sealed.
   for (let x = MARGIN; x < ARENA_W - MARGIN; x += 1) {
     for (let y = MARGIN; y < ARENA_H - MARGIN; y += 1) {
       const n = noise.fbmPerlin(
@@ -217,7 +221,7 @@ function forest(
       );
       const v = Math.floor((n / 2 + 0.5) * MAX_PERCENT);
       const roll = rng.int('arena.tree', 0, 99);
-      const tree = v >= spec.sqrtPercent ? roll < v : roll < Math.sqrt(v);
+      const tree = v >= spec.sqrtPercent ? roll < v : roll < Math.trunc(Math.sqrt(v));
       if (!tree) tiles[tileIndex(x, y, ARENA_W)] = TileCode.FLOOR;
     }
   }

@@ -99,11 +99,13 @@ export type HitOpts = {
 /**
  * `rng.percent(v)` — the d100 behind every roll in this file.
  *
- * ToME's `rng.percent` is native C and is NOT in the reference clone (the clone
- * holds 1,656 `.lua` files and zero `.c`/`.h` — see docs/tome-mechanics.md § 10).
- * So this is a REIMPLEMENTATION of documented semantics, not a translation:
- * `rand_range(1, 100) <= v`, both ends inclusive. Our `rng.int` is inclusive on
- * both ends by contract, so it maps across directly.
+ * ToME's `rng.percent` is native C, which the reference clone does not carry
+ * (it holds `.lua` files only). The C has since been read (C core:
+ * `rng_percent`, src/core_lua.c, T-Engine4 tag tome-1.6.0): `rand_div(100) <
+ * (int)v`, a roll of 0..99 against the truncated chance. `rng.int(1, 100) <= v`
+ * is the same event for every `v` — the roll is shifted by one and the
+ * comparison with it, and a fractional `v` admits no extra whole roll either
+ * way — so this stays as written. `shared/mapgen/lua.ts` has the literal form.
  *
  * The roll is drawn UNCONDITIONALLY, even when the chance is 0 or 100 and the
  * outcome is already decided. That is deliberate and it matters more than it
