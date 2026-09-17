@@ -25,11 +25,18 @@
  * ═══════════════════════════════════════════════════════════════════════════
  * CONNECTIVITY IS PROVEN, NOT HOPED FOR
  * ═══════════════════════════════════════════════════════════════════════════
- * Every generator here finishes by carving from the spawn to anything it
- * stranded, so "can the player reach the far side" is a property of the
+ * The town, the cave and the ruin finish by carving from the spawn to anything
+ * they stranded, so "can the player reach the far side" is a property of the
  * algorithm. A sealed pocket in a hand-authored map is a bug somebody notices;
  * in a generated one it is a bug that appears one run in fifty and cannot be
  * reproduced from a description.
+ *
+ * THE WORKS PROVES IT UPSTREAM'S WAY INSTEAD. It is ToME's Roomer
+ * (`mapgen/`), which repairs nothing: `newLevel` throws a level away and makes
+ * another when the up stair cannot reach the down stair or a vault's entrance
+ * (`engine/Zone.lua:1131-1158`). A room the tunnels never opened can stay shut,
+ * as it can in ToME, and since nobody here can dig one out, its ground is made
+ * rock (see `works`).
  *
  * PURE, and seeded from shared/rng.ts with labelled draws, so a floor is
  * reproducible from the realm that opened it.
@@ -37,10 +44,10 @@
 
 import { tileIndex } from './coords.ts';
 import { createRng } from './rng.ts';
-import type { TileRect } from './level.ts';
 import { TileCode } from './protocol.ts';
-import { partition } from './bsp.ts';
-import type { BspNode } from './bsp.ts';
+import { passable, reachableSet } from './mapgen/connectivity.ts';
+import { ROOMER_RUINS_KOR_PUL, keepTrying } from './mapgen/level.ts';
+import type { LevelSpec } from './mapgen/level.ts';
 import { placeVault, stampVault } from './vault.ts';
 import type { VaultShape } from './vault.ts';
 import { VAULTS_BY_SHAPE } from './vaults.ts';
@@ -62,7 +69,7 @@ export const SiteShape = {
   Cave: 'cave',
   /** Mostly open, with broken fragments of wall. Chapels, altars, wreckage. */
   Ruin: 'ruin',
-  /** A regular grid of blocks and corridors. Works, archives, anything built. */
+  /** Rooms joined by tunnels, as ToME's Roomer lays them. Works, archives, anything built. */
   Works: 'works',
 } as const;
 export type SiteShape = (typeof SiteShape)[keyof typeof SiteShape];
@@ -95,47 +102,6 @@ export type SiteShape = (typeof SiteShape)[keyof typeof SiteShape];
 export const DOOR_CLEARANCE = 8;
 
 /**
- * The smallest room BSP may cut for a works floor.
- *
- * FOUR, because one tile of it is spent on the shared wall at each edge: a leaf
- * of four is a room of two, which is the smallest thing a player can stand in
- * and still call a room. Three would tile more finely and produce corridors
- * with doors on them rather than rooms.
- */
-const WORKS_MIN_ROOM = 7;
-
-/**
- * ═══════════════════════════════════════════════════════════════════════════
- * FIFTY — UPSTREAM'S OWN NUMBER, ONCE THE CANDIDATES WERE UPSTREAM'S TOO.
- * ═══════════════════════════════════════════════════════════════════════════
- *
- * `Roomer.lua:33` defaults `door_chance` to 50 and `RoomsLoader.lua:921-928`
- * spends it exactly this way — a percentage roll per candidate.
- *
- * ═══ THIS SHIPPED AS 18, AND THE CONSTANT WAS NEVER THE PROBLEM ═══
- * The first version surveyed the FINISHED MAP for anything shaped like a
- * doorway and found about thirty per floor — every gap two rooms happened to
- * share, and every wall a corridor merely clipped on its way past. 50% of that
- * was sixteen doors a delve, so the percentage was dropped to 18 to land on a
- * sane density, under a long note explaining why ours had to differ.
- *
- * THAT NOTE WAS WRONG ABOUT WHICH END WAS OFF. Upstream does not survey: it
- * records the tiles its TUNNEL broke through (`RoomsLoader.lua:912`'s `t[3]`)
- * and rolls over those alone. An L-shaped passage between two rooms breaks
- * through two walls — one leaving, one arriving — so a floor of ten rooms
- * offers about twenty candidates, which is what ours offers now. Measured over
- * eighty seeds: a mean of 10.6 doors, between 5 and 18.
- *
- * ═══ AND A DOOR IS CHEAP HERE, WHICH IS THE OTHER HALF ═══
- * Sixteen was reasoned about as "a pause every few steps", and a pause is what
- * a door costs in ToME. It is not what one costs here: `Actor.lua:1346` charges
- * a move's energy only when the body actually changed tile, so opening a door
- * costs a player NOTHING — a re-prompt, not a turn. What is being tuned is how
- * often the floor asks you to notice something.
- */
-const DOOR_CHANCE = 50;
-
-/**
  * ═══════════════════════════════════════════════════════════════════════════
  * UPSTREAM'S LEVEL SIZE.
  * ═══════════════════════════════════════════════════════════════════════════
@@ -144,8 +110,8 @@ const DOOR_CHANCE = 50;
  * levels are 50 by 50 (data/zones/ruins-kor-pul/zone.lua:30) and so are its
  * smaller towns (data/zones/town-zigur/zone.lua:27). Trollmire's forest is 65 by
  * 40. So a site is 50 by 50 now, whatever its shape, and the generators below
- * scale with it: a cave carves the same fraction, a works cuts more rooms, a town
- * lays more blocks.
+ * scale with it: a cave carves the same fraction and a town lays more blocks. A
+ * works is Kor'Pul's own 50 by 50 table (`mapgen/level.ts`).
  */
 const W = 50;
 const H = 50;
@@ -271,224 +237,84 @@ function ruin(g: Grid, rng: Rng): TileXY {
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════
- * WORKS: ROOMS AND CORRIDORS, CUT BY `BSP.lua`.
+ * WORKS: A ROOMER LEVEL, LAID THE WAY THE RUINS OF KOR'PUL ARE.
  * ═══════════════════════════════════════════════════════════════════════════
  *
- * The only shape here that is deliberately BUILT, and until now it was a
- * LATTICE: `room(...)` filled the floor and a nested loop stamped square blocks
- * on a fixed pitch, with one gallery through the middle so the grid had a
- * spine. It read as industrial and it was not a building — every cell was the
- * same size, every junction was the same junction, and there was nowhere a
- * player could be said to be IN.
+ * `mapgen/level.ts` holds the zone table and `mapgen/roomer.ts` the generator:
+ * up to ten rooms from ToME's own room library, each with a small weighted chance
+ * of being a money vault or one of our drawn rooms instead, tunnels from each
+ * room to the next, a door rolled
+ * on half the places a tunnel broke through a wall, and both stairs placed by
+ * the generator rather than chosen afterwards.
  *
- * `shared/bsp.ts` cuts the rectangle into rooms of genuinely different sizes.
- * Each leaf gets a floor inset one tile from its own bounds, so the walls
- * BETWEEN rooms are what is left rather than something drawn — which is
- * upstream's trick and the reason the result never has a double wall.
+ * ═══ IT REPLACED A BSP TILING ═══
+ * That floor was cut by `shared/bsp.ts` into rooms that filled the building
+ * wall to wall, each joined to its sibling, with a corridor dug afterwards to
+ * anything left stranded. It read as built, and it was not ToME's: Kor'Pul's
+ * rooms stand apart in rock, in dozens of authored shapes, and its tunnels
+ * wander between them.
  *
- * ═══ AND IT IS WHERE THE DOORS FINALLY LIVE ═══
- * A door was terrain with nowhere to be: `shared/vaults.ts` carries three, and
- * a vault lands on maybe half of floors. A room cut by BSP has a MOUTH by
- * construction — the one tile a corridor punches through its wall — and that is
- * what a door is for. Every corridor here ends in one.
+ * ═══ THE PALETTE IS THE ZONE'S GRID KEYS, NOT A REPAINT ═══
+ * `'.'` is the palette's floor and `'#'` its wall and a door stays DOOR — the
+ * grids a ToME zone names in its own `generator.map` table
+ * (`data/zones/ruins-kor-pul/zone.lua:47-51`). Both stairs are the floor, because
+ * a stair here is a site marker standing on it, not terrain. A key that
+ * names one code draws nothing when it resolves (`engine/Generator.lua:59-77`),
+ * so a painted works makes the same draws, and has the same walls, as a plain
+ * one. `roof` is a town's third code; a works has one kind of wall.
  *
- * ═══ EVERY EXISTING WORKS FLOOR CHANGES, AND THAT IS SAFE ═══
- * A delve is rebuilt per instance from the realm seed and no floor is ever
- * persisted (`content/delve.ts`: *"the same party re-entering finds the room
- * they left"* is a property of the SEED, not of a save). So this is not a
- * migration; it is the next party through the door finding a different
- * building. `connect` still runs afterwards, so reachability is true by
- * construction whatever the corridors did.
+ * ═══ ONE TABLE FOR EVERY FLOOR ═══
+ * `makeSiteMap` is not told which floor it builds, so every floor is built as
+ * level 1. With `forceLastStair` that loses nothing: the generator always places
+ * a down stair, and `realms.ts` decides whether this floor has a level below it.
+ *
+ * ═══ ONLY A CERTIFIED LEVEL, AS TOME ONLY ENTERS ONE ═══
+ * `keepTrying` (`mapgen/level.ts`) never hands back a level whose stairs or
+ * vault entrances `newLevel` could not join.
+ *
+ * ═══ AND SOLID ROCK WHERE NOBODY CAN GO — OUR RULE, NOT UPSTREAM'S ═══
+ * A Roomer floor can keep ground its tunnels never opened: a room they missed,
+ * a money vault walled in by the rooms around it. Upstream keeps it, and a ToME
+ * player who lands there digs out. Nobody here can dig, and three things put a
+ * body somewhere without walking it there: the search for a free tile beside a
+ * crowded arrival (`World.findSpawn`), a teleport (`talents.ts`
+ * `teleportRandom`), and a teleport trap. Before the drawn vaults had their
+ * apron (`mapgen/rooms-loader.ts`), the fourth to sixth arrival of a party was
+ * put in a sealed pocket on 7 of 20,000 floors, with no way out. So every
+ * walkable cell and door the up stair cannot reach — eight neighbours, a shut
+ * door passable, the rule that certified the level — is made the zone's wall.
+ * Nobody could see into that ground either, so the floor a party walks and sees
+ * is unchanged; the level only stops offering places that are not on it.
+ * Measured over 6,000 floors: 85 had any, and two had more than half their
+ * walkable ground sealed (`site:outer_index` seeds 141 and 1149).
  */
-function works(g: Grid, rng: Rng, crossings: TileXY[], rooms: TileRect[]): TileXY {
-  const tree = partition(
-    W - MARGIN * 2,
-    H - MARGIN * 2,
-    WORKS_MIN_ROOM,
-    WORKS_MIN_ROOM,
-    rng,
-    'site.works.bsp',
-  );
-
-  /** A leaf's floor: inset one tile, so neighbours share the wall between them. */
-  const inner = (leaf: { x: number; y: number; w: number; h: number }) => ({
-    x0: leaf.x + MARGIN + 1,
-    y0: leaf.y + MARGIN + 1,
-    x1: leaf.x + MARGIN + leaf.w - 2,
-    y1: leaf.y + MARGIN + leaf.h - 2,
-  });
-
-  const centres: TileXY[] = [];
-
-  /**
-   * ═══════════════════════════════════════════════════════════════════════════
-   * CARVE AND CONNECT IN ONE WALK, SIBLING TO SIBLING.
-   * ═══════════════════════════════════════════════════════════════════════════
-   *
-   * Each node answers with one point inside itself; an internal node joins the
-   * two points its children answered with, and passes one up. So every corridor
-   * links two halves of the SAME subtree and is as short as that subtree is
-   * wide — which is the standard way a BSP floor is wired and, more to the
-   * point here, the thing that keeps a corridor from crossing the building.
-   *
-   * ═══ THE FIRST VERSION JOINED CONSECUTIVE LEAVES IN A FLAT LIST ═══
-   * `partition` finishes a subtree before starting its sibling, so consecutive
-   * leaves are USUALLY neighbours — but the pair that straddles a subtree
-   * boundary is not, and that corridor runs the width of the map through
-   * whatever is in the way. Measured, it is why a works offered about
-   * thirty door candidates when they were surveyed off the finished map. The
-   * candidates are the tunnel's own crossings now (`RoomsLoader.lua:912`), so
-   * that is no longer what decides the density — but a corridor that runs the
-   * width of the building is still a corridor through three rooms nobody asked
-   * it to enter.
-   */
-  const wire = (node: BspNode): TileXY | null => {
-    if (node.children === null) {
-      const at = inner(node);
-      // A LEAF CAN BE TOO THIN TO HOLD ANYTHING once the inset is taken — the
-      // minimum bounds the CUT, not what survives the shared wall. Answering
-      // null is honest: it leaves solid rock where a room would have been one
-      // tile wide, and the parent joins whatever its other half offered.
-      if (at.x1 < at.x0 || at.y1 < at.y0) return null;
-      room(g, at.x0, at.y0, at.x1, at.y1, TileCode.FLOOR);
-      // THE ROOM AND ITS WALLS, which is what upstream lights when a room's roll
-      // hits: every cell of the room's own map (RoomsLoader.lua:652).
-      rooms.push({ x0: at.x0 - 1, y0: at.y0 - 1, x1: at.x1 + 1, y1: at.y1 + 1 });
-      const centre = {
-        x: Math.floor((at.x0 + at.x1) / 2),
-        y: Math.floor((at.y0 + at.y1) / 2),
-      };
-      centres.push(centre);
-      return centre;
-    }
-
-    // DEPTH FIRST, LEFT THEN RIGHT — the order `partition` itself recurses in,
-    // so the rooms are carved in the order the tree was cut and the seed means
-    // the same thing on both sides.
-    const a = wire(node.children[0]);
-    const b = wire(node.children[1]);
-    if (a !== null && b !== null) tunnel(g, a, b, crossings);
-    return a ?? b;
+function works(seed: string, palette: SitePalette): AuthoredMap {
+  const table = ROOMER_RUINS_KOR_PUL;
+  const spec: LevelSpec = {
+    ...table,
+    map: {
+      ...table.map,
+      grid: {
+        ...table.map.grid,
+        '.': palette.floor,
+        '#': palette.wall,
+        up: palette.floor,
+        down: palette.floor,
+      },
+    },
   };
-
-  wire(tree.root);
-
-  return centres[0] ?? { x: Math.floor(W / 2), y: Math.floor(H / 2) };
+  return sealUnreachable(keepTrying(spec, seed, { level: 1, maxLevel: 1 }).map, palette.wall);
 }
 
-/**
- * ═══════════════════════════════════════════════════════════════════════════
- * A DOOR WHERE SOMETHING BROKE THROUGH A WALL.
- * ═══════════════════════════════════════════════════════════════════════════
- *
- * A SURVEY OF THE FINISHED MAP, and it must be exactly that. A tile is a
- * doorway if it is floor, the two tiles on ONE axis are solid, and the opening
- * leads into something wider than itself. Nothing else on this map produces
- * that shape.
- *
- * ═══ IT READS THE MAP RATHER THAN REMEMBERING THE CUT, AND IT HAD TO LEARN ═══
- * The first version took the BSP tree and walked each leaf's own boundary,
- * hung inside `works`. That is the map as the ROOMS were cut, and three things
- * write floor afterwards: `connect` repairs stranded pockets, the vault stamp
- * drops a drawn room in, and both can open the ground beside a tile that was a
- * doorway a moment earlier — leaving a door standing in the open with floor on
- * all four sides, which is a turn's delay in the middle of a room.
- *
- * Measured: a door at 5,20 on the fifth seed, put there by the VAULT rather
- * than by `connect`, which is why moving the call inside `works` fixed nothing.
- * A survey that runs last cannot disagree with the map it surveys.
- *
- * ═══ AND IT NEEDS NO TREE, WHICH IS WHAT MAKES RUNNING LAST POSSIBLE ═══
- * The leaf bounds were only ever there to tell a room's mouth from a corridor's
- * pinch — a one-tile corridor is walls-on-one-axis for its whole length. The
- * `opensWide` test asks that directly: at least one side of the gap has to lead
- * somewhere broader than a single tile.
- *
- * ═══ NOT EVERY MOUTH, BECAUSE A FLOOR OF DOORS IS A FLOOR OF STOPPING ═══
- * A door costs a turn to open and blocks sight until it is. On a building with
- * a dozen mouths that is a dozen pauses crossing one delve, which is the
- * opposite of what the tile is for — it should mark the rooms worth committing
- * to. `DOOR_CHANCE` is the share, drawn per mouth so the same floor always
- * hangs the same doors.
- */
-/**
- * ═══════════════════════════════════════════════════════════════════════════
- * MAY A DOOR STAND HERE — `RoomsLoader.lua:781-806` (`canDoor`).
- * ═══════════════════════════════════════════════════════════════════════════
- *
- * ```lua
- * open_spaces[dir] = not self.map:checkEntity(coord[1], coord[2], Map.TERRAIN, "block_move")
- * for i, dir in pairs(util.primaryDirs()) do
- *   local opposed_dir = util.opposedDir(dir, x, y)
- *   if open_spaces[dir] and open_spaces[opposed_dir] then
- *     ... local blocked = true
- *     for _, check_dir in pairs(sides) do blocked = blocked and not open_spaces[check_dir] end
- *     if blocked then return true end
- * ```
- *
- * A through-line OPEN on one axis, and BLOCKED on the other. Two conditions,
- * and the first version of this file only had the second — "solid on both sides
- * of exactly one axis", which is the same rule with the open half assumed.
- *
- * ═══ THE HALF THAT WAS ASSUMED IS THE HALF THAT STOPS `++` ═══
- * A door BLOCKS MOVE. Upstream's `open_spaces` is built from `block_move`, so a
- * door already standing next to a candidate makes that axis not-open and
- * `canDoor` answers false — which is why upstream never puts two doors side by
- * side. Testing only for walls misses it, because a door is not a wall: the
- * generator shipped floors with `++` in them, two turns of opening for one way
- * through.
- *
- * Passable here means FLOOR and nothing else, which is what `block_move`
- * reduces to on a map whose only codes are floor, wall and door.
- *
- * ═══ AND BLOCKED MEANS WALL, WHICH IS WHERE THIS LEAVES UPSTREAM ═══
- * `block_move` counts a door as blocked on the other axis as well, so upstream's
- * rule lets a door hang with another door at its side: `++` again, turned. It
- * happened here once the repair corridor learned to go around a drawn room: the
- * corridor ran down the room's wall past a mouth that had just been given a
- * door, and the tile beside that door was a crossing too. A doorway is a hole in
- * a wall, so both tiles on the blocked axis have to be wall.
- */
-function canDoor(g: Grid, x: number, y: number): boolean {
-  const open = (cx: number, cy: number): boolean => at(g, cx, cy) === TileCode.FLOOR;
-  const wall = (cx: number, cy: number): boolean => at(g, cx, cy) === TileCode.WALL;
-  const openNS = open(x, y - 1) && open(x, y + 1);
-  const openEW = open(x - 1, y) && open(x + 1, y);
-  const blockedNS = wall(x, y - 1) && wall(x, y + 1);
-  const blockedEW = wall(x - 1, y) && wall(x + 1, y);
-  return (openNS && blockedEW) || (openEW && blockedNS);
-}
-
-function hangDoors(g: Grid, rng: Rng, spawn: TileXY, crossings: readonly TileXY[]): void {
-  let seen = 0;
-  for (const { x, y } of crossings) {
-    // NEVER THE ARRIVAL TILE. Being asked to open a door before the map has
-    // finished drawing is `delve.ts`'s named bug report, one tile further in.
-    if (x === spawn.x && y === spawn.y) continue;
-
-    /**
-     * ═══════════════════════════════════════════════════════════════════════
-     * RE-CHECKED AGAINST THE FINISHED MAP, BECAUSE THE CROSSING IS A MEMORY.
-     * ═══════════════════════════════════════════════════════════════════════
-     *
-     * The list was recorded while the works was being cut. Two things write
-     * floor afterwards — `connect` repairing a stranded pocket and the vault
-     * stamp — and either can open the ground beside a tile that was a doorway
-     * at the time, leaving a door with floor on all four sides. That is a
-     * turn's delay in the middle of a room, and it shipped once: a door at 5,20
-     * put there by the vault.
-     *
-     * So the crossing decides WHICH tiles are considered and the finished map
-     * decides whether each is still a doorway. Neither alone is enough.
-     */
-    if (at(g, x, y) !== TileCode.FLOOR) continue;
-
-    if (!canDoor(g, x, y)) continue;
-
-    seen += 1;
-    if (rng.int(`site.works.door.${String(seen)}`, 1, 100) > DOOR_CHANCE) continue;
-    put(g, x, y, TileCode.DOOR);
-  }
+/** `map` with everything its up stair cannot reach made `wall`. See `works`. */
+function sealUnreachable(map: AuthoredMap, wall: number): AuthoredMap {
+  const up = map.spawns[0];
+  if (up === undefined) return map;
+  const reached = reachableSet(map.view, up);
+  const tiles = map.view.tiles.map((code, i) =>
+    reached[i] === 1 || !passable(code) ? code : wall,
+  );
+  return { ...map, view: { ...map.view, tiles } };
 }
 
 /**
@@ -614,44 +440,6 @@ function dig(g: Grid, held: Uint8Array, from: TileXY, to: TileXY): void {
  * on a 50x50 grid and it makes "the far side is reachable" true by construction
  * rather than by inspection.
  */
-/**
- * ═══════════════════════════════════════════════════════════════════════════
- * A CORRIDOR THAT REMEMBERS WHERE IT BROKE THROUGH — `RoomsLoader.lua:910-916`.
- * ═══════════════════════════════════════════════════════════════════════════
- *
- * ```lua
- * for _, t in ipairs(tun) do
- *   if t[3] and self.data.door then self.possible_doors[#self.possible_doors+1] = t end
- * ```
- *
- * Upstream's tunneller collects the tiles it walked and flags the ones that
- * crossed into a room; `placeDoors` then rolls only over THOSE. That is the
- * whole reason its `door_chance` can be 50 and still leave a floor with a
- * handful of doors.
- *
- * A tile this converted from WALL to FLOOR is exactly that flag: it is where
- * the passage broke through something solid. Surveying the finished map instead
- * — which is what the first version did — offers about thirty candidates on a
- * 34x30 floor, because it also finds every gap two rooms happen to share and
- * every wall a corridor merely clipped on its way past.
- */
-function tunnel(g: Grid, a: TileXY, b: TileXY, crossings: TileXY[]): void {
-  let { x, y } = a;
-  const step = (): void => {
-    if (at(g, x, y) === TileCode.WALL) crossings.push({ x, y });
-    put(g, x, y, TileCode.FLOOR);
-  };
-  while (x !== b.x) {
-    step();
-    x += x < b.x ? 1 : -1;
-  }
-  while (y !== b.y) {
-    step();
-    y += y < b.y ? 1 : -1;
-  }
-  step();
-}
-
 function connect(g: Grid, from: TileXY, held: Uint8Array): void {
   for (let pass = 0; pass < 12; pass += 1) {
     const seen = new Set<number>();
@@ -784,16 +572,13 @@ export function makeSiteMap(
   shape: SiteShape,
   palette: SitePalette = DEFAULT_SITE_PALETTE,
 ): AuthoredMap {
+  // A WORKS IS ITS OWN LEVEL, with its own seeds per attempt — see `works`.
+  // Nothing below runs for it: no shared vault roll, no `connect`, no repaint.
+  if (shape === SiteShape.Works) return works(seed, palette);
+
   const rng = createRng(seed);
   const g = blank();
 
-  /**
-   * WHERE A TUNNEL BROKE THROUGH A WALL — upstream's `possible_doors`, and the
-   * only tiles `hangDoors` will consider. Empty for every shape but the works,
-   * which is the only one that tunnels between rooms it cut.
-   */
-  const crossings: TileXY[] = [];
-  const rooms: TileRect[] = [];
   /** The cells a stamped room holds, which no repair corridor writes. See `dig`. */
   const held = new Uint8Array(W * H);
 
@@ -802,9 +587,7 @@ export function makeSiteMap(
       ? town(g, rng)
       : shape === SiteShape.Cave
         ? cave(g, rng)
-        : shape === SiteShape.Ruin
-          ? ruin(g, rng)
-          : works(g, rng, crossings, rooms);
+        : ruin(g, rng);
 
   /**
    * ═══════════════════════════════════════════════════════════════════════════
@@ -874,7 +657,7 @@ export function makeSiteMap(
        * rock, writes walls into walls and changes nothing anybody can see — and
        * measured over sixty floors a shape, a third of cave rooms landed exactly
        * there. This counts how much of the footprint is already floor and lets
-       * the best spot win; every legal spot stays legal, so a works with no open
+       * the best spot win; every legal spot stays legal, so a floor with no open
        * rectangle still gets its room rather than none.
        */
       (spot, shape) => {
@@ -910,20 +693,6 @@ export function makeSiteMap(
   // here, and `leaveRealm` treats it as the door.
   put(g, spawn.x, spawn.y, TileCode.FLOOR);
   connect(g, spawn, held);
-
-  /**
-   * AND THE DOORS, LAST OF EVERYTHING THAT WRITES FLOOR — see `hangDoors`.
-   *
-   * WORKS ONLY. A cave and a ruin are not built and have no mouths to hang one
-   * on; a town is drawn at world-map scale where a door would be a pixel. The
-   * same split `content/delve.ts` makes for traps: somebody has to have PUT it
-   * there.
-   *
-   * BEFORE THE PALETTE REPAINT, which is not a preference: the survey compares
-   * against `TileCode.FLOOR` and `TileCode.WALL`, and after a repaint a works
-   * floor is SOOT on CRAG and every one of those tests answers false.
-   */
-  if (shape === SiteShape.Works) hangDoors(g, rng, spawn, crossings);
 
   /**
    * THE REPAINT, LAST, over the finished grid. The CARVERS put in two codes and
@@ -972,7 +741,8 @@ export function makeSiteMap(
 
   return {
     vaults: placed,
-    rooms,
+    // Only a room generator records rooms, and none of these three is one.
+    rooms: [],
     view: { w: W, h: H, tiles: g },
     spawns: [spawn],
     /** A floor is somewhere you are, not somewhere you leave from. */

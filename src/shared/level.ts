@@ -56,6 +56,17 @@ export type AuthoredMap = {
   /** Cells that open an inner-world. Keyed by `"x,y"`. */
   readonly sites: ReadonlyMap<string, string>;
   /**
+   * WHERE THE GENERATOR PUT THE STAIR DOWN, when a generator did.
+   *
+   * Upstream's generators place `down` themselves — a random open cell for
+   * Roomer (`engine/generator/map/Roomer.lua:48-56`), a map edge for others —
+   * and `spawns[0]` is the matching `up`. Absent for a map nothing generated, or
+   * whose generator does not choose one, which leaves the choice to whoever
+   * adds the stair. It is a cell and not a site: whether this floor has a level
+   * below it at all is the realm's decision, not the map's.
+   */
+  readonly down?: TileXY;
+  /**
    * ═══════════════════════════════════════════════════════════════════════════
    * WHICH DRAWN ROOMS WERE STAMPED INTO THIS FLOOR, AND WHERE.
    * ═══════════════════════════════════════════════════════════════════════════

@@ -68,6 +68,7 @@ import { ActorRank } from '../../shared/protocol.ts';
 import { REDACTION_SITE_ID } from '../../shared/level.ts';
 import { embellish } from './encounter.ts';
 import { canWalk } from '../../shared/level.ts';
+import { reachableSet } from '../../shared/mapgen/connectivity.ts';
 import { LORE, noteIdFor } from './lore.ts';
 import { PROP_IDS } from '../../shared/props.ts';
 import { rollDrop } from './encounter.ts';
@@ -615,13 +616,33 @@ export function partyHint(spec: DelveSpec): string | null {
  * SEARCHED, NOT COMPUTED — `seedAmbush`'s hard-won lesson. A generated floor
  * has whatever shape the walk gave it, so a ring of angles lands most of its
  * candidates in rock; the tiles that exist are the ones to choose from.
+ *
+ * ═══ ONLY GROUND A PARTY CAN GET TO — OUR RULE, NOT UPSTREAM'S ═══
+ * ToME's generators place on any open cell (`engine/generator/actor/Random.lua:114`),
+ * and a Roomer floor can keep a room its tunnels never opened: upstream only
+ * refuses a level whose stairs or vault entrances are cut off
+ * (`engine/Zone.lua:1131-1158`). A ToME player digs into the rest. Nobody here
+ * can dig, so a monster sealed in rock is a floor that can never be cleared and
+ * litter there is loot nobody can pick up. A candidate must be reachable from
+ * the door by the rule that certified the level: eight neighbours, a shut door
+ * passable (`shared/mapgen/connectivity.ts`).
+ *
+ * ═══ AND NEVER ON A STAIR ═══
+ * Upstream marks a stair's cell `special` (`engine/generator/map/Roomer.lua:53`)
+ * and its actor, object and trap generators all skip special cells
+ * (`engine/generator/actor/Random.lua:114`, `object/Random.lua:50`,
+ * `trap/Random.lua:47`). A cell in `sites` is the stair down or the way out,
+ * and nothing is put on one.
  */
-function roomFor(world: World, door: TileXY): TileXY[] {
+function roomFor(world: World, map: AuthoredMap, door: TileXY): TileXY[] {
   const level = world.level;
+  const reached = reachableSet(level, door);
   const out: TileXY[] = [];
   for (let y = 1; y < level.h - 1; y += 1) {
     for (let x = 1; x < level.w - 1; x += 1) {
       if (!canWalk(level, x, y)) continue;
+      if (reached[y * level.w + x] !== 1) continue;
+      if (map.sites.has(`${String(x)},${String(y)}`)) continue;
       if (Math.max(Math.abs(x - door.x), Math.abs(y - door.y)) < DOOR_CLEARANCE) continue;
       out.push({ x, y });
     }
@@ -977,7 +998,7 @@ export function populateDelve(
   scope: PopulationScope = PopulationScope.Everything,
 ): number {
   const door = map.spawns[0] ?? { x: Math.floor(map.view.w / 2), y: Math.floor(map.view.h / 2) };
-  const candidates = roomFor(world, door);
+  const candidates = roomFor(world, map, door);
   // A ROOM WITH NO FAR CORNER. Small or badly-shaped floors happen; leaving it
   // empty is honest, and the caller's log line is what makes it visible.
   if (candidates.length === 0) return 0;
@@ -1014,20 +1035,38 @@ export function populateDelve(
    * land wholly inside ground this function was about to throw away, and
    * `inRoom` came back empty for 206 of 400 caves and 151 of 400 works. Nobody
    * reading these three causes would have suspected it, because none of them
-   * was ever the reason. The placer now honours the same clearance
-   * (`shared/sitemap.ts`), and the solid-wall case above is what remains.
+   * was ever the reason. The cave and ruin placer now honours the same
+   * clearance (`shared/sitemap.ts`), and the solid-wall case above is what
+   * remains for them.
+   *
+   * ═══ A WORKS HAS SEVERAL, AND THE DRAWN ONES COME FIRST ═══
+   * A works is ToME's Roomer, which can lay a money vault and more than one
+   * drawn room on a floor, and lays its rooms before it picks its stairs,
+   * anywhere, so the arrival can come down beside one. The guarded room is the
+   * first drawn room (`vault:`) that offers a candidate, else the first room
+   * function's (`room:`) that does: a drawn room is the one somebody composed,
+   * and a money vault is a room upstream fills with coin rather than builds.
+   * Measured over 300 works: 145 had a drawn room and 40 more than one, and
+   * picking `vaults[0]` alone guarded a money vault on 23 of the 145. 8 floors
+   * with a room have none offering a candidate, and fall through as above. A
+   * cave or a ruin has at most one room, so for them this is the room it always
+   * was.
    */
-  const room = map.vaults?.[0];
-  const inRoom =
-    room === undefined
-      ? []
-      : candidates.filter(
-          (tile) =>
-            tile.x >= room.at.x &&
-            tile.y >= room.at.y &&
-            tile.x < room.at.x + room.w &&
-            tile.y < room.at.y + room.h,
-        );
+  const insideOf = (room: NonNullable<AuthoredMap['vaults']>[number]): TileXY[] =>
+    candidates.filter(
+      (tile) =>
+        tile.x >= room.at.x &&
+        tile.y >= room.at.y &&
+        tile.x < room.at.x + room.w &&
+        tile.y < room.at.y + room.h,
+    );
+  const vaults = map.vaults ?? [];
+  const drawnRooms = vaults.filter((room) => room.id.startsWith('vault:'));
+  let inRoom: TileXY[] = [];
+  for (const room of [...drawnRooms, ...vaults.filter((room) => !drawnRooms.includes(room))]) {
+    inRoom = insideOf(room);
+    if (inRoom.length > 0) break;
+  }
 
   const rolled = world.rng.int('delve.count', spec.monsters[0], spec.monsters[1]);
   /**
@@ -1390,20 +1429,20 @@ export function populateDelve(
     const trapRng = world.rng.fork('delve.traps');
     const count = trapRng.int('delve.traps.count', spec.traps[0], spec.traps[1]);
     /**
-     * NOT IN THE DRAWN ROOM. Upstream rejects any cell whose `room_map` entry is
+     * NOT IN A DRAWN ROOM. Upstream rejects any cell whose `room_map` entry is
      * `special` (`generator/trap/Random.lua:47`), which is exactly its vaults — a hand-drawn
      * room is somebody's composition and a generator scattering hazards through
-     * it is the generator arguing with the author. `inRoom` is that set here.
+     * it is the generator arguing with the author. That is every `vault:` room
+     * on the floor, not only the guarded one, and the guarded room besides.
      *
      * `candidates` has already dropped everything within `DOOR_CLEARANCE` of the
      * arrival tile, which does the other half of the job this file's header
      * insists on: *"being hit before the map has finished drawing is not tension,
      * it is a bug report."* A trap on the threshold is the purest form of that.
      */
-    const inRoomKeys = new Set(inRoom.map((cell) => `${String(cell.x)},${String(cell.y)}`));
-    const open = candidates.filter(
-      (cell) => !inRoomKeys.has(`${String(cell.x)},${String(cell.y)}`),
-    );
+    const keyOf = (cell: TileXY): string => `${String(cell.x)},${String(cell.y)}`;
+    const special = new Set([...inRoom, ...drawnRooms.flatMap(insideOf)].map(keyOf));
+    const open = candidates.filter((cell) => !special.has(keyOf(cell)));
     const offset = open.length === 0 ? 0 : trapRng.int('delve.traps.offset', 0, open.length - 1);
     const stride = Math.max(1, Math.floor(open.length / Math.max(1, count)));
     for (let i = 0; i < count; i += 1) {

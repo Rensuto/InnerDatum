@@ -199,9 +199,13 @@ export function floorsOfSite(siteId: string): number {
   return spec === undefined ? 1 : floorsOf(spec);
 }
 
-/** `map` with a stair down on the furthest tile from its door, when it has one. */
+/**
+ * `map` with a stair down: where its generator put one (`AuthoredMap.down`, as
+ * upstream's generators choose `default_down`), else on the furthest tile from
+ * its door, when it has one.
+ */
 function withStairsDown(map: AuthoredMap): AuthoredMap {
-  const at = stairsDownCell(map);
+  const at = map.down ?? stairsDownCell(map);
   if (at === undefined) return map;
   return {
     ...map,
@@ -1202,7 +1206,8 @@ export function createRealms(opts: RealmsOptions): Realms {
  * two tile codes, so every one of them was the same grey box in a different
  * outline, and those two codes are what the player has been looking at since M1.
  *
- * The floor/wall pair is a POST-PASS over the finished grid (`makeSiteMap`), so
+ * The floor/wall pair is a POST-PASS over the finished grid (`makeSiteMap`), or
+ * for a works the Roomer's own `'.'` and `'#'` grid keys, which draw nothing, so
  * the generator is untouched and the walkable cells are identical bit for bit —
  * `test/shared/sitemap.test.ts` is the proof, and it asserts the rule both
  * halves carry: the floor must be `isWalkable`, the wall must not be.

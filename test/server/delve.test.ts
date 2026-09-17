@@ -1,10 +1,24 @@
 import { describe, expect, it } from 'vitest';
 
-import { DELVES, specFor, dangerWord, forArea, partyHint } from '../../src/server/content/delve.ts';
+import {
+  DELVES,
+  specFor,
+  dangerWord,
+  forArea,
+  partyHint,
+  populateDelve,
+} from '../../src/server/content/delve.ts';
 import type { DelveSpec } from '../../src/server/content/delve.ts';
-import { RealmKind, SITES, createRealms } from '../../src/server/world/realms.ts';
+import {
+  RealmKind,
+  SITES,
+  STAIRS_DOWN_SITE_ID,
+  createRealms,
+} from '../../src/server/world/realms.ts';
+import { createWorld } from '../../src/server/world/world.ts';
+import type { AuthoredMap } from '../../src/shared/level.ts';
 import { createTurnEngine } from '../../src/server/turn-engine.ts';
-import { ActorKind } from '../../src/shared/protocol.ts';
+import { ActorKind, TileCode } from '../../src/shared/protocol.ts';
 import { SiteShape, makeSiteMap } from '../../src/shared/sitemap.ts';
 import { Faction } from '../../src/server/engine/actor.ts';
 
@@ -123,6 +137,165 @@ describe('where they stand', () => {
     const foes = realm.world.allActors().filter((a) => a.kind === ActorKind.Monster);
     const cells = new Set(foes.map((f) => `${String(f.x)},${String(f.y)}`));
     expect(cells.size).toBe(foes.length);
+  });
+});
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * ONLY ON GROUND A PARTY CAN GET TO, AND NEVER ON A STAIR.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * A works is ToME's Roomer now, and a Roomer floor can keep a room its tunnels
+ * never opened — upstream only refuses a level whose stairs or vault entrances
+ * are cut off (`engine/Zone.lua:1131-1158`), and a ToME player digs into the
+ * rest. Nobody here digs, so a body in a sealed room is a floor nobody can
+ * clear. Our rule: a candidate must be reachable from the arrival the way the
+ * level was certified, eight-way with a shut door passable. And a stair is a
+ * `special` cell upstream's generators skip (`engine/generator/actor/Random.lua:114`).
+ *
+ * Hand-built floors, so each rule is the only thing that decides the outcome.
+ */
+describe('what a party cannot reach', () => {
+  /** A floor of `w` by `h` wall with `open` carved as floor. */
+  function floorOf(
+    w: number,
+    h: number,
+    open: (x: number, y: number) => boolean,
+  ): AuthoredMap['view'] {
+    const tiles: number[] = [];
+    for (let y = 0; y < h; y += 1) {
+      for (let x = 0; x < w; x += 1) tiles.push(open(x, y) ? TileCode.FLOOR : TileCode.WALL);
+    }
+    return { w, h, tiles };
+  }
+
+  /** Every cell anything was put on: bodies, ground items, traps and props. */
+  function occupied(world: ReturnType<typeof createWorld>): { x: number; y: number }[] {
+    return [
+      ...world.allActors().filter((a) => a.kind === ActorKind.Monster),
+      ...world.groundItems(),
+      ...world.traps(),
+      ...world.props(),
+    ].map(({ x, y }) => ({ x, y }));
+  }
+
+  const underworks = (): DelveSpec => {
+    const spec = specFor('site:underworks');
+    if (spec === undefined) throw new Error('no spec for the Underworks');
+    return spec;
+  };
+
+  it('puts nothing in a pocket sealed off from the arrival', () => {
+    // Two halves, the far one bigger and walled off at x = 20.
+    const view = floorOf(40, 20, (x, y) => x > 0 && y > 0 && x < 39 && y < 19 && x !== 20);
+    const map: AuthoredMap = { view, spawns: [{ x: 2, y: 2 }], sites: new Map() };
+    const world = createWorld('unreachable-pocket', map);
+    const placed = populateDelve(world, map, underworks());
+
+    expect(placed, 'precondition: the reachable half holds something').toBeGreaterThan(0);
+    for (const at of occupied(world)) {
+      expect(
+        at.x,
+        `something was put in the sealed half at ${String(at.x)},${String(at.y)}`,
+      ).toBeLessThan(20);
+    }
+  });
+
+  it('reaches through a shut door and round a corner, as a body walks', () => {
+    // A corridor inside the door clearance, a shut door, then a room entered
+    // only on the diagonal: (8,5) to (9,6), with (9,5) and (8,6) solid. Every
+    // candidate is behind both.
+    const view = floorOf(
+      30,
+      12,
+      (x, y) => (y === 5 && x >= 1 && x <= 8) || (x >= 9 && x <= 20 && y >= 6 && y <= 10),
+    );
+    view.tiles[5 * 30 + 7] = TileCode.DOOR;
+    const map: AuthoredMap = { view, spawns: [{ x: 2, y: 5 }], sites: new Map() };
+    const world = createWorld('behind-a-door', map);
+    const placed = populateDelve(world, map, underworks());
+
+    expect(placed, 'the room behind the door and the corner got nobody').toBeGreaterThan(0);
+    for (const at of occupied(world)) {
+      expect(at.x >= 9 && at.y >= 6, `${String(at.x)},${String(at.y)} is not in the room`).toBe(
+        true,
+      );
+    }
+  });
+
+  describe('on a floor with several rooms', () => {
+    /** Room `r` holds `at`. */
+    const inside = (r: NonNullable<AuthoredMap['vaults']>[number], at: { x: number; y: number }) =>
+      at.x >= r.at.x && at.y >= r.at.y && at.x < r.at.x + r.w && at.y < r.at.y + r.h;
+    const MONEY = { id: 'room:money_vault', at: { x: 14, y: 14 }, turn: 'none', w: 5, h: 5 };
+    const DRAWN = { id: 'vault:test', at: { x: 30, y: 12 }, turn: 'none', w: 6, h: 6 };
+    const OTHER = { id: 'vault:other', at: { x: 12, y: 28 }, turn: 'none', w: 8, h: 8 };
+
+    function open(seed: string, vaults: AuthoredMap['vaults']) {
+      const view = floorOf(40, 40, (x, y) => x > 0 && y > 0 && x < 39 && y < 39);
+      const map: AuthoredMap = { view, spawns: [{ x: 2, y: 2 }], sites: new Map(), vaults };
+      return { world: createWorld(seed, map), map };
+    }
+
+    it('guards a drawn room before a money vault laid ahead of it', () => {
+      // A Roomer floor records rooms in placement order, and a money vault is
+      // often first. The drawn room is the one somebody composed.
+      for (let n = 0; n < 12; n += 1) {
+        const { world, map } = open(`guard-drawn-${String(n)}`, [MONEY, DRAWN]);
+        populateDelve(world, map, underworks());
+        expect(
+          world.groundItems().some((item) => inside(DRAWN, item)),
+          'no litter in the drawn room',
+        ).toBe(true);
+        expect(
+          world.allActors().some((a) => a.kind === ActorKind.Monster && inside(DRAWN, a)),
+          'nobody guarding the drawn room',
+        ).toBe(true);
+      }
+    });
+
+    it('lays no trap in any drawn room, guarded or not', () => {
+      // Upstream's trap generator skips every special cell
+      // (generator/trap/Random.lua:47), and every cell of every lesser vault is
+      // special. Forty traps spread over the floor would find the second room
+      // many times over without the rule.
+      const spec: DelveSpec = { ...underworks(), traps: [40, 40] };
+      let traps = 0;
+      for (let n = 0; n < 6; n += 1) {
+        const { world, map } = open(`traps-drawn-${String(n)}`, [DRAWN, OTHER]);
+        populateDelve(world, map, spec);
+        traps += world.traps().length;
+        for (const trap of world.traps()) {
+          const at = `${String(trap.x)},${String(trap.y)}`;
+          expect(inside(DRAWN, trap), `a trap in the guarded room at ${at}`).toBe(false);
+          expect(inside(OTHER, trap), `a trap in the other drawn room at ${at}`).toBe(false);
+        }
+      }
+      expect(traps, 'precondition: the floor holds traps').toBeGreaterThan(100);
+    });
+  });
+
+  it('never puts anything on the stair down', () => {
+    // A corridor whose twelve cells past the door clearance are every candidate
+    // there is, with the stair in the middle of them. The bodies alone cover
+    // half the list, so across thirty floors the stair would be stood on,
+    // littered or trapped many times over without the rule.
+    const view = floorOf(30, 5, (x, y) => y === 2 && x >= 1 && x <= 21);
+    const map: AuthoredMap = {
+      view,
+      spawns: [{ x: 2, y: 2 }],
+      sites: new Map([['15,2', STAIRS_DOWN_SITE_ID]]),
+    };
+    for (let n = 0; n < 30; n += 1) {
+      const world = createWorld(`stair-down-${String(n)}`, map);
+      const placed = populateDelve(world, map, underworks());
+      expect(placed, 'precondition: the corridor holds something').toBeGreaterThan(0);
+      for (const at of occupied(world)) {
+        expect(`${String(at.x)},${String(at.y)}`, 'something was put on the stair').not.toBe(
+          '15,2',
+        );
+      }
+    }
   });
 });
 

@@ -21,7 +21,8 @@ import {
   zoneOf,
 } from '../../src/server/world/realms.ts';
 import { canWalk } from '../../src/shared/level.ts';
-import { ActorKind } from '../../src/shared/protocol.ts';
+import type { AuthoredMap } from '../../src/shared/level.ts';
+import { ActorKind, TileCode } from '../../src/shared/protocol.ts';
 import { PROTOCOL_VERSION } from '../../src/shared/version.ts';
 import type { Realm, Realms, SiteDef } from '../../src/server/world/realms.ts';
 import type { TileXY } from '../../src/shared/coords.ts';
@@ -34,6 +35,8 @@ import type { TileXY } from '../../src/shared/coords.ts';
 
 const FRAME_TIMEOUT_MS = 4_000;
 const UNDERWORKS = 'site:underworks';
+/** A works: ToME's Roomer, which chooses its own stair down. */
+const GEARFORD = 'site:gearford_ward';
 /** The one room with a boss in it: Alderbrook's altar has none. */
 const WATCHERS_ALTAR = 'site:redaction:watchers_altar';
 
@@ -100,6 +103,96 @@ describe('the floors of one delve', () => {
         'the stair is on the threshold',
       ).toBe(false);
     }
+  });
+
+  it('stands a works stair where its generator put it, and none on the last floor', () => {
+    /**
+     * Roomer places its own down stair (`engine/generator/map/Roomer.lua:48-56`)
+     * and hands it back as `AuthoredMap.down`. The realm stands the stair there
+     * rather than on the furthest tile it can find, and still decides whether
+     * this floor has a level below it. The map is rebuilt from the seed the
+     * realm built it from: the root and the realm id (`realms.ts` `seedFor`).
+     */
+    const root = 'floors-works';
+    const realms = makeRealms(root);
+    const floors = floorsOfSite(GEARFORD);
+    expect(floors, 'a one-floor delve cannot test stairs').toBeGreaterThan(1);
+    for (let floor = 1; floor <= floors; floor += 1) {
+      const realm = floorOf(realms, GEARFORD, 'party-w', floor);
+      const drawn = site(GEARFORD).map(`${root}:${realm.id}`, undefined, floor);
+      expect(drawn.view.tiles, 'precondition: the same floor rebuilt').toEqual(
+        realm.world.level.tiles,
+      );
+      expect(drawn.down, `floor ${String(floor)} came back without a stair`).toBeDefined();
+      expect(stairsDownOf(realm), `floor ${String(floor)}`).toEqual(
+        floor < floors ? drawn.down : null,
+      );
+    }
+  });
+
+  it('populates the floor it stood the stair on, and puts a wipe back on it too', () => {
+    /**
+     * THE JOIN BETWEEN THE REALM AND `populateDelve`. The placer refuses a cell
+     * in `sites` (`content/delve.ts`, `roomFor`), and the stair only reaches
+     * `sites` in the map `withStairsDown` returns. Handing the populate call, or
+     * the wipe's reseed, the map as drawn would put bodies, litter and traps on
+     * the stair with every unit test still green.
+     *
+     * A one-row corridor whose stair is in the middle of every candidate there
+     * is: the roster alone covers about one cell in seven, so over thirty floors
+     * the stair would be stood on many times over.
+     */
+    const w = 60;
+    const tiles = Array.from({ length: w * 5 }, (_, i) =>
+      Math.floor(i / w) === 2 && i % w >= 1 && i % w <= w - 2 ? TileCode.FLOOR : TileCode.WALL,
+    );
+    const corridor: AuthoredMap = {
+      view: { w, h: 5, tiles },
+      spawns: [{ x: 2, y: 2 }],
+      down: { x: 30, y: 2 },
+      sites: new Map(),
+    };
+    const gearford: SiteDef = { ...site(GEARFORD), map: () => corridor };
+    const realms = makeRealms('stair-join');
+    const onStair = (realm: Realm): string[] => {
+      const at = stairsDownOf(realm);
+      if (at === null) throw new Error('precondition: the floor has no stair down');
+      const { world } = realm;
+      const here = (thing: { readonly x: number; readonly y: number }): boolean =>
+        thing.x === at.x && thing.y === at.y;
+      return [
+        ...world.allActors().filter((a) => a.kind === ActorKind.Monster && here(a)),
+        ...world.groundItems().filter(here),
+        ...world.traps().filter(here),
+        ...world.props().filter(here),
+      ].map((thing) => JSON.stringify(thing).slice(0, 80));
+    };
+    let bodies = 0;
+    for (let n = 0; n < 30; n += 1) {
+      const realm = realms.open(
+        gearford,
+        `party-stair-${String(n)}`,
+        undefined,
+        undefined,
+        undefined,
+        1,
+      );
+      expect(stairsDownOf(realm), 'precondition: the stair is where the map put it').toEqual({
+        x: 30,
+        y: 2,
+      });
+      expect(onStair(realm), `floor ${String(n)}: populated onto the stair`).toEqual([]);
+
+      const { world } = realm;
+      for (const body of world.allActors().filter((a) => a.kind === ActorKind.Monster)) {
+        world.removeActor(body.id);
+      }
+      expect(world.reseedFloor, 'precondition: the realm gave its floor a reseed').toBeDefined();
+      world.reseedFloor?.(world);
+      bodies += world.allActors().filter((a) => a.kind === ActorKind.Monster).length;
+      expect(onStair(realm), `floor ${String(n)}: a wipe put a body on the stair`).toEqual([]);
+    }
+    expect(bodies, 'precondition: the reseed put nobody back').toBeGreaterThan(100);
   });
 
   it('counts every floor a party has open as one zone, and an ambush as a zone of one', () => {

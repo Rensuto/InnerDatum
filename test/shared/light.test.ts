@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { lightLevel } from '../../src/shared/light.ts';
+import { TileCode, isWalkable } from '../../src/shared/protocol.ts';
 import { createRng } from '../../src/shared/rng.ts';
 import { makeSiteMap, SiteShape } from '../../src/shared/sitemap.ts';
 
@@ -67,19 +68,36 @@ describe('the light a level makes on its own', () => {
     expect([...once]).toEqual([...twice]);
   });
 
-  it('records each room with its walls, so the rooms leave no gap between them', () => {
-    // A room carved by the works is its floor and the wall ring around it, and the
-    // rings of neighbours meet. So every tile inside the rooms' bounding box is in
-    // some room; a list that dropped the walls would leave two-tile bands between.
-    const x0 = Math.min(...rooms.map((r) => r.x0));
-    const y0 = Math.min(...rooms.map((r) => r.y0));
-    const x1 = Math.max(...rooms.map((r) => r.x1));
-    const y1 = Math.max(...rooms.map((r) => r.y1));
-    for (let y = y0; y <= y1; y += 1) {
-      for (let x = x0; x <= x1; x += 1) {
-        expect(inRoom(x, y), `${String(x)},${String(y)} is between rooms`).toBe(true);
+  it('records each room with its walls, as a lit room is lit wall and all', () => {
+    // engine/generator/map/RoomsLoader.lua:652 (and rooms/simple.lua:33 for a
+    // room function) lights every cell of the room's w by h, and every room the
+    // works lays is walled on its edge: a function room draws a ring of '#', and
+    // an ASCII room's edge is only '#' and '!'. So a recorded rectangle's EDGE is
+    // wall but for the few tiles a tunnel opened, where a list that dropped the
+    // walls would have an edge of floor. Measured over 200 works: no room's edge
+    // is more than 38% walkable, and the same rectangles inset by one average 90%.
+    //
+    // A drawn room is not in the list to check: a lesser vault's generator never
+    // reads its lit roll (rooms/lesser_vault.lua:90), so it is not a room the
+    // light lights.
+    let checked = 0;
+    for (const r of rooms) {
+      checked += 1;
+      let edge = 0;
+      let open = 0;
+      for (let y = r.y0; y <= r.y1; y += 1) {
+        for (let x = r.x0; x <= r.x1; x += 1) {
+          if (x !== r.x0 && x !== r.x1 && y !== r.y0 && y !== r.y1) continue;
+          edge += 1;
+          if (isWalkable(works.view.tiles[y * size.w + x] ?? TileCode.WALL)) open += 1;
+        }
       }
+      expect(
+        open / edge,
+        `${String(r.x0)},${String(r.y0)} was recorded without its walls`,
+      ).toBeLessThan(0.5);
     }
+    expect(checked, 'no room to check').toBeGreaterThan(1);
   });
 
   it('records the rooms only a room generator carves', () => {

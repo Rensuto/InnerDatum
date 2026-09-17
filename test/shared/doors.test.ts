@@ -181,9 +181,9 @@ describe('doors reach a generated floor', () => {
      *
      * This asserted exactly ONE — the door on whatever vault the floor rolled —
      * and that was the whole supply when it was written. The works generator
-     * hangs its own on the mouths BSP cuts, so a built floor now carries a
-     * handful and the exact number is a property of the seed rather than of the
-     * rule.
+     * hangs its own where its tunnels broke through a wall, so a built floor now
+     * carries a handful and the exact number is a property of the seed rather
+     * than of the rule.
      */
     const map = makeSiteMap('door-seed-0', SiteShape.Works);
     expect(doorsIn(map.view.tiles), 'no door reached a built floor at all').toBeGreaterThan(0);
