@@ -215,15 +215,30 @@ function runGenerator(
   }
 }
 
+/** What `newLevel` and `keepTrying` build a table at, besides the table. */
+export type LevelOptions = {
+  /** Upstream's `lev`. */
+  readonly level: number;
+  /** The zone's `max_level`. */
+  readonly maxLevel: number;
+  /** Upstream's `old_lev`: the level above, unless given. */
+  readonly oldLevel?: number;
+  /**
+   * A RULE OF THIS GAME'S, NOT UPSTREAM'S: asked of a map that has passed every
+   * check upstream makes, it gives a reason to refuse that map too, or `null`
+   * to keep it. A refused map is a failed attempt like any other, so the next
+   * attempt's own seed builds the next one and a seed still makes one level.
+   * `Zone:newLevel` asks no such question; a caller that asks one says what its
+   * rule is, and why.
+   */
+  readonly refuse?: (map: AuthoredMap) => string | null;
+};
+
 /**
  * `Zone:newLevel(level_data, lev, old_lev)` (`engine/Zone.lua:1023-1166`), for
  * the map alone.
  */
-export function newLevel(
-  spec: LevelSpec,
-  seed: string,
-  opts: { readonly level: number; readonly maxLevel: number; readonly oldLevel?: number },
-): NewLevelResult {
+export function newLevel(spec: LevelSpec, seed: string, opts: LevelOptions): NewLevelResult {
   let last: AuthoredMap | null = null;
   for (let attempt = 1; attempt <= MAX_LEVEL_GENERATION_COUNT; attempt += 1) {
     const rng = createRng(`${seed}#${String(attempt)}`);
@@ -237,6 +252,7 @@ export function newLevel(
     last = toAuthoredMap(map, up, down, spec.map.grid, lit);
     if (result === null || level.forceRecreate !== null) continue;
     if (connectivityFailure(spec, map, up, down, result.spots) !== null) continue;
+    if (opts.refuse !== undefined && opts.refuse(last) !== null) continue;
     return { map: last, attempts: attempt, failed: false };
   }
   // The loop always runs, so `last` is set; the fallback only satisfies the type.
@@ -270,15 +286,25 @@ export const KEEP_TRYING_ROUNDS = 10;
  *
  * Measured, no Kor'Pul level has needed a second round in 6,000, so a table
  * that exhausts every round cannot make a level at all and throws.
+ *
+ * ═══ A TABLE THAT IS ROLLED, ROLLED AGAIN EACH ROUND ═══
+ * `spec` may be a function of the round's seed: the level data a zone's
+ * `alter_level_data` rolls (`data/zones/infinite-dungeon/zone.lua:100-259`).
+ * Upstream rolls it once per level change (`engine/Zone.lua:833-843`, `:892`)
+ * and every attempt of that change reuses it (`:1060`, `:1138`), so it is
+ * called once a round and its table shared by all fifty attempts. The result
+ * carries the table the certified level was built from.
  */
 export function keepTrying(
-  spec: LevelSpec,
+  spec: LevelSpec | ((roundSeed: string) => LevelSpec),
   seed: string,
-  opts: { readonly level: number; readonly maxLevel: number; readonly oldLevel?: number },
-): NewLevelResult {
+  opts: LevelOptions,
+): NewLevelResult & { readonly spec: LevelSpec } {
   for (let round = 0; round < KEEP_TRYING_ROUNDS; round += 1) {
-    const level = newLevel(spec, round === 0 ? seed : `${seed}~${String(round)}`, opts);
-    if (!level.failed) return level;
+    const roundSeed = round === 0 ? seed : `${seed}~${String(round)}`;
+    const table = typeof spec === 'function' ? spec(roundSeed) : spec;
+    const level = newLevel(table, roundSeed, opts);
+    if (!level.failed) return { ...level, spec: table };
   }
   throw new Error(
     `keepTrying: ${String(KEEP_TRYING_ROUNDS * MAX_LEVEL_GENERATION_COUNT)} attempts at '${seed}' made no level`,

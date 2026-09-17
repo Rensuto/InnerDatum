@@ -5,7 +5,14 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { passable, reachable, reachableSet } from '../../../src/shared/mapgen/connectivity.ts';
+import type { AuthoredMap } from '../../../src/shared/level.ts';
+import {
+  passable,
+  reachable,
+  reachableSet,
+  sealUnreachable,
+  sealedShare,
+} from '../../../src/shared/mapgen/connectivity.ts';
 import { TileCode } from '../../../src/shared/protocol.ts';
 
 /** `#` wall, `.` floor, `+` shut door, `~` nil terrain. */
@@ -65,5 +72,49 @@ describe('reachableSet', () => {
     // Start marked though it is a wall; (4,0) and (3,2) are walled off.
     const marked = [...seen].flatMap((v, i) => (v === 1 ? [i] : []));
     expect(marked).toEqual([0, 1, 2, 6, 10, 11]);
+  });
+});
+
+/** `rows` as a level whose up stair is `up`. */
+function level(rows: readonly string[], up?: { x: number; y: number }): AuthoredMap {
+  const g = grid(rows);
+  return {
+    view: { w: g.w, h: g.h, tiles: g.tiles },
+    spawns: up === undefined ? [] : [up],
+    sites: new Map(),
+  };
+}
+
+describe('sealUnreachable — our rule, not upstream`s', () => {
+  it('makes every floor and door its up stair cannot reach the wall, and nothing else', () => {
+    // The right-hand room, door and all, is cut off by the wall column; nil stays nil.
+    const map = level(['..#.+', '.+#..', '..#~.'], { x: 0, y: 0 });
+    const { FLOOR: F, DOOR: D, WALL: W, CRAG: C } = TileCode;
+    expect(sealUnreachable(map, C).view.tiles).toEqual([
+      ...[F, F, W, C, C],
+      ...[F, D, W, C, C],
+      ...[F, F, W, -1, C],
+    ]);
+  });
+
+  it('leaves a level with no up stair as it is', () => {
+    const map = level(['.#.']);
+    expect(sealUnreachable(map, TileCode.CRAG)).toBe(map);
+  });
+});
+
+describe('sealedShare', () => {
+  it('is the share of floor and doors the seal would take', () => {
+    // Six passable cells, the two beyond the wall column cut off: a third.
+    expect(sealedShare(level(['..#.', '.+#+'], { x: 0, y: 0 }))).toBeCloseTo(2 / 6, 12);
+    expect(sealedShare(level(['...', '.+.'], { x: 0, y: 0 }))).toBe(0);
+    // An up stair on a wall still reaches the ground beside it, and none past a wall.
+    expect(sealedShare(level(['#.', '..'], { x: 0, y: 0 }))).toBe(0);
+    expect(sealedShare(level(['##.'], { x: 0, y: 0 }))).toBe(1);
+  });
+
+  it('is 0 for a level with no up stair or no ground', () => {
+    expect(sealedShare(level(['.#.']))).toBe(0);
+    expect(sealedShare(level(['###'], { x: 0, y: 0 }))).toBe(0);
   });
 });

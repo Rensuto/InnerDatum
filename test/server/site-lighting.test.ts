@@ -3,54 +3,160 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { ENCOUNTER_SITE, SITES, UNDERMOST_SITE_ID } from '../../src/server/world/realms.ts';
+import { createDownedState } from '../../src/server/engine/downed.ts';
+import { createPartyState } from '../../src/server/engine/party.ts';
+import { createTurnEngine } from '../../src/server/turn-engine.ts';
+import {
+  ENCOUNTER_SITE,
+  SITES,
+  UNDERMOST_SITE_ID,
+  createRealms,
+  floorsOfSite,
+} from '../../src/server/world/realms.ts';
 import { createWorld } from '../../src/server/world/world.ts';
+import type { AuthoredMap } from '../../src/shared/level.ts';
 import { REDACTION_SITE_ID } from '../../src/shared/level.ts';
 
-/** How many of a site's tiles its own light reaches, built as a realm builds it. */
-function litCount(id: string, floor = 1): { readonly lit: number; readonly of: number } {
+/** A site's floor, built and lit the way `realms.open` builds and lights one. */
+function built(
+  id: string,
+  floor = 1,
+  seed = `lighting:${id}:${String(floor)}`,
+): { readonly map: AuthoredMap; readonly lit: Uint8Array } {
   const def = SITES.get(id);
   if (def === undefined) throw new Error(`no site ${id}`);
-  const seed = `lighting:${id}`;
-  const world = createWorld(seed, def.map(seed, undefined, floor), id, def.lighting);
-  let lit = 0;
-  for (const tile of world.lit) lit += tile;
-  return { lit, of: world.lit.length };
+  const map = def.map(seed, undefined, floor);
+  const world = createWorld(seed, map, id, map.lighting ?? def.lighting);
+  return { map, lit: world.lit };
 }
 
-const TOWNS = ['site:alderbrook', 'site:threadneedle_row', 'site:ashwick_row', 'site:saints_rest'];
-const RUINS = [
+function count(lit: Uint8Array): number {
+  let n = 0;
+  for (const tile of lit) n += tile;
+  return n;
+}
+
+/** 1 where a tile is inside one of `map.rooms`. */
+function inRooms(map: AuthoredMap): Uint8Array {
+  const { w, h } = map.view;
+  const mask = new Uint8Array(w * h);
+  for (const r of map.rooms ?? []) {
+    for (let y = Math.max(0, r.y0); y <= Math.min(h - 1, r.y1); y += 1) {
+      for (let x = Math.max(0, r.x0); x <= Math.min(w - 1, r.x1); x += 1) mask[y * w + x] = 1;
+    }
+  }
+  return mask;
+}
+
+const TOWNS = [
+  'site:alderbrook',
+  'site:threadneedle_row',
+  'site:ashwick_row',
+  'site:saints_rest',
   'site:wayfarers_camp',
-  'site:watchers_altar',
-  'site:drowned_chapel',
-  'site:barrow_end',
 ];
-const CAVES = ['site:blackwood_outskirts', 'site:underworks', 'site:hollow_mine', 'site:cairnfoot'];
-const WORKS = ['site:gearford_ward', 'site:glass_archive', 'site:outer_index', 'site:the_weir'];
+
+/**
+ * Each zone's floors, as its zone.lua lights them — written out here from the
+ * Lua, not read back from `shared/mapgen/zones.ts`, so the table cannot
+ * certify itself.
+ *
+ *   all      `all_lited = true`
+ *   dark     not lit, and nothing lights a room: a Cavern or a Maze places
+ *            none, and the Lake of Nur rolls `lite_room_chance = 0`
+ *   rooms    not lit; every room at `lite_room_chance = 100`
+ *   rolled   not lit; rooms and buildings at the chance the floor rolled
+ */
+const BY_FLOOR: Readonly<Record<string, readonly ('all' | 'dark' | 'rooms' | 'rolled')[]>> = {
+  // halfling-ruins/zone.lua:30
+  'site:drowned_chapel': ['all', 'all', 'all'],
+  // orc-breeding-pit/zone.lua:30, commented out
+  'site:underworks': ['dark', 'dark', 'dark'],
+  // old-forest/zone.lua:32
+  'site:barrow_end': ['all', 'all', 'all'],
+  // heart-gloom/zone.lua:34
+  'site:cairnfoot': ['all', 'all', 'all', 'all'],
+  // lake-nur/zone.lua:32 commented out, :45 lite_room_chance = 0
+  'site:the_weir': ['dark', 'dark', 'dark', 'dark'],
+  // rhaloren-camp/zone.lua:104 overground; :34 commented out and :44 at 100 underground
+  'site:watchers_altar': ['all', 'all', 'rooms', 'rooms'],
+  // ardhungol/zone.lua:29, commented out
+  'site:hollow_mine': ['dark', 'dark', 'dark', 'dark'],
+  // maze/zone.lua:144, commented out
+  'site:outer_index': ['dark', 'dark', 'dark', 'dark'],
+  // scintillating-caves/zone.lua:34
+  'site:glass_archive': ['all', 'all', 'all', 'all'],
+  // infinite-dungeon/zone.lua:31 commented out, :158 rng.range(0, 100)
+  'site:gearford_ward': ['rolled', 'rolled', 'rolled', 'rolled'],
+  // trollmire/zone.lua:162
+  'site:blackwood_outskirts': ['all', 'all', 'all', 'all'],
+};
 
 describe('how each place is lit', () => {
-  it('lights every tile of a town and of a ruin', () => {
-    for (const id of [...TOWNS, ...RUINS]) {
-      const { lit, of } = litCount(id);
-      expect(lit, id).toBe(of);
+  it('lights every tile of a town', () => {
+    for (const id of TOWNS) {
+      const { lit } = built(id);
+      expect(count(lit), id).toBe(lit.length);
     }
   });
 
-  it('lights nothing in a cave', () => {
-    for (const id of CAVES) expect(litCount(id).lit, id).toBe(0);
+  it('lists every delve on the moor, and every floor of each', () => {
+    const delves = [...SITES.values()]
+      .filter(
+        (s) => s.populate !== undefined && s.id.startsWith('site:') && !s.id.includes(':redaction'),
+      )
+      .map((s) => s.id)
+      .filter((id) => id !== UNDERMOST_SITE_ID);
+    expect(Object.keys(BY_FLOOR).toSorted()).toEqual(delves.toSorted());
+    for (const [id, floors] of Object.entries(BY_FLOOR)) {
+      expect(floors.length, id).toBe(floorsOfSite(id));
+    }
+  });
+
+  it('lights each floor of each delve as its zone lights that level', () => {
+    for (const [id, floors] of Object.entries(BY_FLOOR)) {
+      floors.forEach((how, i) => {
+        const floor = i + 1;
+        const at = `${id} floor ${String(floor)}`;
+        const { map, lit } = built(id, floor);
+        const rooms = inRooms(map);
+        switch (how) {
+          case 'all':
+            expect(count(lit), at).toBe(lit.length);
+            break;
+          case 'dark':
+            expect(count(lit), at).toBe(0);
+            break;
+          case 'rooms':
+            // Exactly the rooms: every tile of one, and nothing outside them.
+            expect(count(rooms), `${at}: no room to light`).toBeGreaterThan(0);
+            expect(Array.from(lit), at).toEqual(Array.from(rooms));
+            expect(count(lit), `${at}: nothing was left dark`).toBeLessThan(lit.length);
+            break;
+          case 'rolled':
+            for (let t = 0; t < lit.length; t += 1) {
+              if (lit[t] === 1) expect(rooms[t], `${at}: lit outside every room`).toBe(1);
+            }
+            break;
+        }
+      });
+    }
+  });
+
+  it('rolls a Gearford floor`s light, so some floors are brighter than others', () => {
+    // `lite_room_chance = rng.range(0, 100)` per level (infinite-dungeon/zone.lua:158):
+    // over twenty floors the lit share of the buildings cannot all be one value.
+    const shares = Array.from({ length: 20 }, (_, n) => {
+      const { map, lit } = built('site:gearford_ward', 1 + (n % 4), `lighting:rolled:${String(n)}`);
+      return count(lit) / Math.max(1, count(inRooms(map)));
+    });
+    expect(Math.min(...shares)).toBeLessThan(0.35);
+    expect(Math.max(...shares)).toBeGreaterThan(0.65);
   });
 
   it('lights nothing on the Undermost`s cave floors, where every character wakes', () => {
     for (const floor of [1, 2]) {
-      expect(litCount(UNDERMOST_SITE_ID, floor).lit, `floor ${String(floor)}`).toBe(0);
-    }
-  });
-
-  it('lights the rooms of a works and leaves the ground outside them dark', () => {
-    for (const id of WORKS) {
-      const { lit, of } = litCount(id);
-      expect(lit, `${id}: no room was lit`).toBeGreaterThan(0);
-      expect(lit, `${id}: nothing was left dark`).toBeLessThan(of);
+      expect(count(built(UNDERMOST_SITE_ID, floor).lit), `floor ${String(floor)}`).toBe(0);
     }
   });
 
@@ -60,13 +166,59 @@ describe('how each place is lit', () => {
     const darkTwins = twins.filter((twin) => {
       const original = twin.replace(`${REDACTION_SITE_ID}:`, 'site:');
       expect(SITES.get(twin)?.lighting, twin).toEqual(SITES.get(original)?.lighting);
-      return CAVES.includes(original);
+      const how = BY_FLOOR[original];
+      if (how === undefined) return false;
+      // Floor by floor, a twin's floor is its original's level — the floors a
+      // twin has beyond its original's are that zone's last.
+      for (let floor = 1; floor <= floorsOfSite(twin); floor += 1) {
+        const want = how[Math.min(floor, how.length) - 1];
+        const { lit } = built(twin, floor);
+        if (want === 'all') expect(count(lit), `${twin} floor ${String(floor)}`).toBe(lit.length);
+        if (want === 'dark') expect(count(lit), `${twin} floor ${String(floor)}`).toBe(0);
+      }
+      return how[0] === 'dark';
     });
-    expect(darkTwins.length, 'no twin of a cave, so the dark case is unchecked').toBeGreaterThan(0);
+    expect(
+      darkTwins.length,
+      'no twin of a dark zone, so the dark case is unchecked',
+    ).toBeGreaterThan(0);
+  });
+
+  it('says, for the site as a whole, what its first floor says', () => {
+    // A site's own `lighting` is what a map that carries none is lit by. Every
+    // zone floor carries its own, so this is the site's first floor — and a
+    // floor that rolls its chance has none a site could state (`{}`).
+    for (const [id, floors] of Object.entries(BY_FLOOR)) {
+      const own = SITES.get(id)?.lighting;
+      if (floors[0] === 'rolled') {
+        expect(own, id).toEqual({});
+        continue;
+      }
+      expect(own, id).toEqual(built(id, 1).map.lighting);
+    }
   });
 
   it('keeps the Redaction’s moor and the breach arena lit', () => {
     expect(SITES.get(REDACTION_SITE_ID)?.lighting).toBeUndefined();
     expect(ENCOUNTER_SITE.lighting).toBeUndefined();
+  });
+
+  it('lights a realm by its floor`s own light, not only its site`s', () => {
+    // THE JOIN: `realms.open` hands `createWorld` the level's lighting. The
+    // Watcher's Altar is lit everywhere on floor 1 and only in its rooms on
+    // floor 3, and the site carries one answer.
+    const downed = createDownedState();
+    const parties = createPartyState();
+    const realms = createRealms({
+      seed: 'lighting-join',
+      engineFor: (world) => createTurnEngine({ world, downed, parties }),
+    });
+    const site = SITES.get('site:watchers_altar');
+    if (site === undefined) throw new Error('no altar');
+    const above = realms.open(site, 'party-light', undefined, undefined, undefined, 1);
+    const below = realms.open(site, 'party-light', undefined, undefined, undefined, 3);
+    expect(count(above.world.lit)).toBe(above.world.lit.length);
+    expect(count(below.world.lit)).toBeGreaterThan(0);
+    expect(count(below.world.lit)).toBeLessThan(below.world.lit.length);
   });
 });

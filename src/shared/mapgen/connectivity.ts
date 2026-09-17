@@ -30,6 +30,7 @@
  */
 
 import type { TileXY } from '../coords.ts';
+import type { AuthoredMap } from '../level.ts';
 import { TileCode, isWalkable } from '../protocol.ts';
 import { adjacentCoords } from './dirs.ts';
 
@@ -74,4 +75,50 @@ export function reachable(grid: TileGrid, from: TileXY, to: TileXY): boolean {
   if (to.x < 0 || to.y < 0 || to.x >= grid.w || to.y >= grid.h) return false;
   if (!passable(grid.tiles[to.y * grid.w + to.x] ?? -1)) return false;
   return reachableSet(grid, from)[to.y * grid.w + to.x] === 1;
+}
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * SOLID ROCK WHERE NOBODY CAN GO — OUR RULE, NOT UPSTREAM'S
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `map` with every walkable cell and door its up stair (`spawns[0]`) cannot
+ * reach, by the rule above, made `wall`.
+ *
+ * A generated level can keep ground its stairs never join: a room its tunnels
+ * missed, a building with no door, a clearing ringed by trees. Upstream keeps
+ * it, and a ToME player who lands there digs out. Nobody here can dig, and
+ * three things put a body somewhere without walking it there: the search for a
+ * free tile beside a crowded arrival (`World.findSpawn`), a teleport
+ * (`talents.ts` `teleportRandom`), and a teleport trap. Nobody could see into
+ * that ground either, so the floor a party walks and sees is unchanged; the
+ * level only stops offering places that are not on it.
+ */
+export function sealUnreachable(map: AuthoredMap, wall: number): AuthoredMap {
+  const up = map.spawns[0];
+  if (up === undefined) return map;
+  const reached = reachableSet(map.view, up);
+  const tiles = map.view.tiles.map((code, i) =>
+    reached[i] === 1 || !passable(code) ? code : wall,
+  );
+  return { ...map, view: { ...map.view, tiles } };
+}
+
+/**
+ * The share of `map`'s walkable cells and doors that `sealUnreachable` would
+ * make rock: 0 when its up stair reaches all of them, 1 when it reaches none,
+ * and 0 for a map with no up stair or no such cell, which it leaves alone.
+ */
+export function sealedShare(map: AuthoredMap): number {
+  const up = map.spawns[0];
+  if (up === undefined) return 0;
+  const reached = reachableSet(map.view, up);
+  let ground = 0;
+  let sealed = 0;
+  map.view.tiles.forEach((code, i) => {
+    if (!passable(code)) return;
+    ground += 1;
+    if (reached[i] !== 1) sealed += 1;
+  });
+  return ground === 0 ? 0 : sealed / ground;
 }

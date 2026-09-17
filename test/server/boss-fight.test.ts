@@ -13,6 +13,9 @@ import { wsGateway } from '../../src/server/net/gateway.ts';
 import { createTurnEngine } from '../../src/server/turn-engine.ts';
 import { createRealms, floorsOfSite, stairsDownOf } from '../../src/server/world/realms.ts';
 import { canWalk } from '../../src/shared/level.ts';
+import { findPath } from '../../src/shared/path.ts';
+import { hasLineOfSight } from '../../src/shared/sight.ts';
+import type { TileXY } from '../../src/shared/coords.ts';
 import { ActorKind, ActorRank } from '../../src/shared/protocol.ts';
 import { PROTOCOL_VERSION } from '../../src/shared/version.ts';
 import type { Realms } from '../../src/server/world/realms.ts';
@@ -232,6 +235,34 @@ async function walkToTheAltar(realms: Realms, client: Client): Promise<void> {
   }
 }
 
+/**
+ * WHERE TO STAND TO BE SHOT AT: open ground the boss can see, as near its
+ * `preferredRange` of nine as the room allows and outside its `minRange`.
+ *
+ * The altar's last floor used to be an open ruin, so nine tiles west of the
+ * boss was always floor in its sight. It is the Rhaloren camp's underground
+ * level now — rooms and tunnels (`shared/mapgen/zones.ts`) — and nine tiles
+ * west is as likely rock as not. The scenario still wants the same thing, so it
+ * asks the room for it instead of assuming the room is empty.
+ */
+function vantage(realm: NonNullable<ReturnType<Realms['realmOf']>>, boss: TileXY): TileXY {
+  const level = realm.world.level;
+  let best: TileXY | undefined;
+  let bestAway = 0;
+  for (let y = 0; y < level.h; y += 1) {
+    for (let x = 0; x < level.w; x += 1) {
+      const away = Math.max(Math.abs(x - boss.x), Math.abs(y - boss.y));
+      if (away <= 3 || away > 9 || away <= bestAway) continue;
+      if (!canWalk(level, x, y) || realm.world.actorAt(x, y) !== undefined) continue;
+      if (!hasLineOfSight(level, { x, y }, boss)) continue;
+      best = { x, y };
+      bestAway = away;
+    }
+  }
+  if (best === undefined) throw new Error('no ground in sight of the boss');
+  return best;
+}
+
 /** The boss, and the room it is standing in. */
 function theWatcher(
   realms: Realms,
@@ -324,8 +355,9 @@ describe('fighting the Watcher', () => {
     }
     me.maxHp = 900;
     me.hp = 900;
-    me.x = boss.x - 9;
-    me.y = boss.y;
+    const stand = vantage(realm, boss);
+    me.x = stand.x;
+    me.y = stand.y;
 
     for (let turn = 0; turn < 40 && !client.everCarried().includes('effect:stunned'); turn += 1) {
       client.send({ t: 'hold' });
@@ -378,16 +410,33 @@ describe('fighting the Watcher', () => {
     }
     me.maxHp = 900;
     me.hp = 900;
-    me.x = boss.x - 9;
-    me.y = boss.y;
+    const stand = vantage(realm, boss);
+    me.x = stand.x;
+    me.y = stand.y;
 
     const before = me.hp;
+    const DIRS: Readonly<Record<string, string>> = {
+      '1,0': 'e',
+      '-1,0': 'w',
+      '0,1': 's',
+      '0,-1': 'n',
+      '1,1': 'se',
+      '-1,1': 'sw',
+      '1,-1': 'ne',
+      '-1,-1': 'nw',
+    };
     for (let turn = 0; turn < 45; turn += 1) {
-      // WALK AT IT. The direction is recomputed each turn because it retreats.
-      const dx = Math.sign(boss.x - me.x);
-      const dy = Math.sign(boss.y - me.y);
-      const dir =
-        dy === 0 ? (dx > 0 ? 'e' : 'w') : dx === 0 ? (dy > 0 ? 's' : 'n') : dy > 0 ? 'se' : 'ne';
+      // WALK AT IT, round the walls. The route is recomputed each turn because
+      // it retreats.
+      const route = findPath(
+        me,
+        boss,
+        (x, y) => (x === boss.x && y === boss.y) || canWalk(realm.world.level, x, y),
+      );
+      const next = route?.[0];
+      if (next === undefined) break;
+      const dir = DIRS[`${String(next.x - me.x)},${String(next.y - me.y)}`];
+      if (dir === undefined) break;
       client.send({ t: 'move', dir });
       await sleep(70);
     }

@@ -1438,10 +1438,23 @@ describe('what the moor tells you when you come back out', () => {
     await sleep(400);
     expect(server.realms.realmOf(walkerId)?.siteId, 'never got in').toBe('site:watchers_altar');
 
-    // Arriving DISARMS the tile, so leaving is a step off and a step back on.
-    walker.send({ t: 'move', dir: 'w' });
+    // Arriving DISARMS the tile, so leaving is a step off and a step back on —
+    // onto whichever side of the arrival is open ground. The altar's first
+    // floor is the Rhaloren camp's, entered on the map's left edge
+    // (rhaloren-camp/zone.lua:116), where west is off the map.
+    const inside = server.realms.realmOf(walkerId);
+    const arrived = inside?.world.getActor(walkerId);
+    if (inside === undefined || arrived === undefined) throw new Error('no body inside');
+    const off = [
+      { dx: 1, dy: 0, there: 'e', back: 'w' },
+      { dx: -1, dy: 0, there: 'w', back: 'e' },
+      { dx: 0, dy: 1, there: 's', back: 'n' },
+      { dx: 0, dy: -1, there: 'n', back: 's' },
+    ].find((s) => canWalk(inside.world.level, arrived.x + s.dx, arrived.y + s.dy));
+    if (off === undefined) throw new Error('the arrival has no open ground beside it');
+    walker.send({ t: 'move', dir: off.there });
     await sleep(250);
-    walker.send({ t: 'move', dir: 'e' });
+    walker.send({ t: 'move', dir: off.back });
     await sleep(450);
     expect(server.realms.realmOf(walkerId)?.kind, 'never got back out').toBe(RealmKind.Overworld);
 

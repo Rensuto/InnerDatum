@@ -56,6 +56,8 @@
 import { arenaGround, makeArena } from '../../shared/arena.ts';
 import { ShopShelf } from '../content/shops.ts';
 import { SiteShape, makeSiteMap } from '../../shared/sitemap.ts';
+import type { SitePalette } from '../../shared/sitemap.ts';
+import { ZONES, siteLighting, zoneFloor, zoneLevel } from '../../shared/mapgen/zones.ts';
 import type { SiteLighting } from '../../shared/light.ts';
 import type { Ground } from '../../shared/level.ts';
 import { TileCode } from '../../shared/protocol.ts';
@@ -1111,12 +1113,15 @@ export function createRealms(opts: RealmsOptions): Realms {
     // EVERY FLOOR BUT THE LAST HAS A STAIR DOWN.
     const drawn = site.map(seedFor(opts.seed, id), ground, floor);
     const builtMap = floor < floorsOfSite(site.id) ? withStairsDown(drawn) : drawn;
+    // A LEVEL THAT SAYS HOW IT IS LIT IS LIT THAT WAY, whatever its site says:
+    // upstream's light is per level (`AuthoredMap.lighting`).
+    const lighting = drawn.lighting ?? site.lighting;
     const realm = build(id, RealmKind.Inner, site.name, builtMap, {
       partyId,
       siteId: site.id,
       floor,
       lingerMs: site.lingerMs,
-      ...(site.lighting === undefined ? {} : { lighting: site.lighting }),
+      ...(lighting === undefined ? {} : { lighting }),
       // THE SAME CALL AS THE LINE BELOW, SCOPED TO HOSTILES: the same site, map,
       // party, lead and floor, so a wipe puts back this floor's own population
       // rather than the engine's default test encounter. See `World.reseedFloor`.
@@ -1255,6 +1260,11 @@ const HIDDEN_SITES: ReadonlySet<string> = new Set([
  * The world maps and the breach arena set nothing and stay lit; upstream's
  * ambush zone is `all_lited` (class/GameState.lua:828).
  *
+ * A SITE BUILT AS A TOME ZONE IS LIT AS ITS ZONE SAYS INSTEAD, floor by floor
+ * (`zoneSite`). By shape it is only the towns, their Redaction twins and the
+ * Undermost now: no site reads the Works row, which stays because the `Record`
+ * answers every shape.
+ *
  * A `Record` over every shape, so a new shape cannot arrive without an answer.
  */
 const SHAPE_LIGHTING: Readonly<Record<SiteShape, SiteLighting | undefined>> = {
@@ -1268,6 +1278,44 @@ const SHAPE_LIGHTING: Readonly<Record<SiteShape, SiteLighting | undefined>> = {
 function lightingFor(shape: SiteShape): { readonly lighting?: SiteLighting } {
   const lighting = SHAPE_LIGHTING[shape];
   return lighting === undefined ? {} : { lighting };
+}
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * A SITE THAT IS A TOME ZONE IS BUILT AS THAT ZONE — `shared/mapgen/zones.ts`.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Its `map` and its `lighting`, for a site the zone table names, and nothing for
+ * one it does not. Spread AFTER the shape's, so it replaces them: the shape
+ * built every works as Kor'Pul and every cave as the breeding pits, and a zone
+ * builds each floor as the level of its own zone that floor is.
+ *
+ * `map` takes the FLOOR, which the shape's closure ignored: a Drowned Chapel's
+ * first floor is a ruined town and its second a dungeon of rooms. The palette is
+ * the row's floor and wall, and it must be the zone's own (`ZoneDef.palette`):
+ * the zone's tests build every level in that one, so a row whose colours drifted
+ * from it would ship floors no test built, and is refused when this table loads.
+ *
+ * `lighting` is floor 1's, and a floor's own map carries its own (`open` reads
+ * that first): the Watcher's Altar is lit everywhere above ground and by the
+ * room below it, and a Gearford floor lights on the chance it rolled — which
+ * no site-wide value can say, so a rolled zone's says only that it is not lit
+ * everywhere.
+ */
+function zoneSite(
+  id: string,
+  palette: SitePalette,
+): { readonly map?: SiteDef['map']; readonly lighting?: SiteLighting } {
+  const zone = ZONES.get(id);
+  if (zone === undefined) return {};
+  if (zone.palette.floor !== palette.floor || zone.palette.wall !== palette.wall) {
+    throw new Error(`${id}: its row's floor and wall are not its zone's (shared/mapgen/zones.ts)`);
+  }
+  return {
+    map: (seed: string, _ground?: Ground, floor = 1): AuthoredMap =>
+      zoneLevel(id, seed, floor, palette),
+    lighting: siteLighting(zoneFloor(zone, 1).lighting),
+  };
 }
 
 const AUTHORED_SITES: readonly (readonly [string, SiteDef])[] = (
@@ -1576,6 +1624,8 @@ const AUTHORED_SITES: readonly (readonly [string, SiteDef])[] = (
           },
         }
       : {}),
+    // AND IF THE SITE IS A TOME ZONE, THE ZONE BUILDS AND LIGHTS IT. See `zoneSite`.
+    ...zoneSite(id, { floor, wall }),
   },
 ]);
 

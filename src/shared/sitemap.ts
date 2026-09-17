@@ -49,7 +49,7 @@
 import { tileIndex } from './coords.ts';
 import { createRng } from './rng.ts';
 import { TileCode } from './protocol.ts';
-import { passable, reachableSet } from './mapgen/connectivity.ts';
+import { sealUnreachable } from './mapgen/connectivity.ts';
 import { CAVERN_ORC_BREEDING_PIT, ROOMER_RUINS_KOR_PUL, keepTrying } from './mapgen/level.ts';
 import type { CavernMapSpec, LevelSpec } from './mapgen/level.ts';
 import { placeVault, stampVault } from './vault.ts';
@@ -319,17 +319,6 @@ function works(seed: string, palette: SitePalette): AuthoredMap {
     },
   };
   return sealUnreachable(keepTrying(spec, seed, { level: 1, maxLevel: 1 }).map, palette.wall);
-}
-
-/** `map` with everything its up stair cannot reach made `wall`. See `works`. */
-function sealUnreachable(map: AuthoredMap, wall: number): AuthoredMap {
-  const up = map.spawns[0];
-  if (up === undefined) return map;
-  const reached = reachableSet(map.view, up);
-  const tiles = map.view.tiles.map((code, i) =>
-    reached[i] === 1 || !passable(code) ? code : wall,
-  );
-  return { ...map, view: { ...map.view, tiles } };
 }
 
 /**

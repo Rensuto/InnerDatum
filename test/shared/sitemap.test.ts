@@ -6,6 +6,8 @@ import {
   keepTrying,
   newLevel,
 } from '../../src/shared/mapgen/level.ts';
+import { ZONES, zoneFloor } from '../../src/shared/mapgen/zones.ts';
+import { REDACTION_SITE_ID } from '../../src/shared/level.ts';
 import type { AuthoredMap } from '../../src/shared/level.ts';
 import type { TileXY } from '../../src/shared/coords.ts';
 import {
@@ -190,6 +192,21 @@ describe('a palette repaints a floor without moving one wall', () => {
   });
 });
 
+/**
+ * How many codes the grid of a site's zone names for its first floor
+ * (`shared/mapgen/zones.ts`) — a Redaction twin's being its original's — or 0
+ * for a site no zone builds.
+ */
+function zoneCodes(id: string): number {
+  const zone = ZONES.get(id.replace(`${REDACTION_SITE_ID}:`, 'site:'));
+  if (zone === undefined) return 0;
+  const { grid } = zoneFloor(zone, 1).table(zone.palette).map;
+  const named = Object.values(grid).flatMap((g) =>
+    typeof g === 'function' ? [] : typeof g === 'number' ? [g] : g,
+  );
+  return new Set(named).size;
+}
+
 describe('every shipped site is painted with a legal pair', () => {
   /**
    * THE RULE BOTH HALVES CARRY, asserted over the real table rather than over
@@ -234,7 +251,10 @@ describe('every shipped site is painted with a legal pair', () => {
        */
       const codes = new Set(site.map(`palette-check-${id}`).view.tiles);
       expect(codes.size).toBeGreaterThanOrEqual(2);
-      expect(codes.size).toBeLessThanOrEqual(3);
+      // OR AS MANY AS THE SITE'S ZONE NAMES, where that is more: the Rhaloren
+      // camp's grass has a TREE in sixteen (rhaloren-camp/zone.lua:118) beside
+      // its walls and its doors — still one ground, every other code opaque.
+      expect(codes.size).toBeLessThanOrEqual(Math.max(3, zoneCodes(id)));
 
       const walkable = [...codes].filter((c) => isWalkable(c));
       expect(walkable, `${id} has ${String(walkable.length)} kinds of ground`).toHaveLength(1);

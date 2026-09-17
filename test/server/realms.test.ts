@@ -150,10 +150,21 @@ function site(id: string): SiteDef {
   return def;
 }
 
-/** A site with any lighting of its own taken off, as every site was before light. */
-function unlit(id: string): SiteDef {
+/**
+ * A site lit as `lighting` says, or with no lighting at all when it is absent —
+ * as every site was before light. Both halves: the site's own, and the one
+ * each floor's map carries (`AuthoredMap.lighting`), which wins over it.
+ */
+function litAs(id: string, lighting?: SiteDef['lighting']): SiteDef {
   const { lighting: _lighting, ...bare } = site(id);
-  return bare;
+  return {
+    ...bare,
+    ...(lighting === undefined ? {} : { lighting }),
+    map: (seed, ground, floor) => {
+      const { lighting: _own, ...map } = bare.map(seed, ground, floor);
+      return lighting === undefined ? map : { ...map, lighting };
+    },
+  };
 }
 
 describe('the overworld', () => {
@@ -860,27 +871,37 @@ describe('a site’s lighting reaches the level it builds', () => {
    */
   it('lights a site that says nothing everywhere', () => {
     const realms = makeRealms();
-    // A ruin, which sets no lighting of its own (`SHAPE_LIGHTING`).
-    const mine = realms.open(site('site:watchers_altar'), 'party-lit');
+    // The Weir, whose zone lights nothing (lake-nur/zone.lua:45), with that
+    // taken off: a level nobody said anything about is lit everywhere.
+    const mine = realms.open(litAs('site:the_weir'), 'party-lit');
     expect(mine.world.lit.length).toBe(mine.world.level.w * mine.world.level.h);
     expect(mine.world.lit.every((bit) => bit === 1)).toBe(true);
   });
 
   it('builds a dark level from a dark site', () => {
     const realms = makeRealms();
-    const dark = { ...site('site:hollow_mine'), lighting: { litRoomChance: 0 } };
+    // The Glass Archive has rooms and is lit everywhere by its zone; at chance 0
+    // not one of its tiles is.
+    const dark = litAs('site:glass_archive', { litRoomChance: 0 });
     const mine = realms.open(dark, 'party-dark');
     expect(mine.world.lit.every((bit) => bit === 0)).toBe(true);
   });
 
+  it('builds a dark level from a site whose zone lights nothing', () => {
+    const realms = makeRealms();
+    const mine = realms.open(site('site:hollow_mine'), 'party-dark-zone');
+    expect(mine.world.lit.every((bit) => bit === 0)).toBe(true);
+  });
+
   it('moves no draw of the world’s own stream, on a floor with rooms to roll', () => {
-    // WITH ITS OWN LIGHT TAKEN OFF: a works now lights its rooms at 100, which
-    // would make both sides of this comparison the same site.
-    const lit = makeRealms('light-stream').open(unlit('site:gearford_ward'), 'party-a');
+    // WITH ITS OWN LIGHT TAKEN OFF on one side and every room lit on the other,
+    // so the two sides differ only in whether the rooms were rolled for.
+    const lit = makeRealms('light-stream').open(litAs('site:gearford_ward'), 'party-a');
     const dark = makeRealms('light-stream').open(
-      { ...site('site:gearford_ward'), lighting: { litRoomChance: 100 } },
+      litAs('site:gearford_ward', { litRoomChance: 100 }),
       'party-a',
     );
+    expect(dark.world.lit).not.toEqual(lit.world.lit);
     expect(dark.world.level.tiles).toEqual(lit.world.level.tiles);
     expect(dark.world.rng.nextU32('probe')).toBe(lit.world.rng.nextU32('probe'));
   });

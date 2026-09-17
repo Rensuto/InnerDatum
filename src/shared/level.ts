@@ -22,6 +22,7 @@
 import { inBounds, tileIndex } from './coords.ts';
 import { TileCode, blocksSight, isWalkable, isKnownTile } from './protocol.ts';
 import type { TileXY } from './coords.ts';
+import type { SiteLighting } from './light.ts';
 import type { LevelView } from './protocol.ts';
 
 const WALL_CHAR = '#';
@@ -105,6 +106,19 @@ export type AuthoredMap = {
    * (engine/generator/map/RoomsLoader.lua:625, :652). See `shared/light.ts`.
    */
   readonly rooms?: readonly LitRoom[];
+  /**
+   * HOW THIS LEVEL LIGHTS ITSELF, when the level says, and then it wins over
+   * the site's `lighting`.
+   *
+   * Upstream's light is a fact about a LEVEL, not a zone: `all_lited` is read
+   * off the level's merged data (`engine/Zone.lua:1034`), which a zone's
+   * `levels[n]` can change, and `lite_room_chance` is the generator's, which a
+   * level's table — or a rolled one — sets (`engine/generator/map/Roomer.lua:34`).
+   * The Lake of Nur's first level is lit everywhere and its second is not
+   * (`data/zones/lake-nur/zone.lua:67-68`), so one answer per site cannot hold
+   * both. Absent for a map no zone table built (`shared/mapgen/zones.ts`).
+   */
+  readonly lighting?: SiteLighting;
   readonly vaults?: readonly {
     readonly id: string;
     readonly at: TileXY;

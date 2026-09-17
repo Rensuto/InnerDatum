@@ -231,12 +231,42 @@ describe('newLevel refusing a level', () => {
 });
 
 describe('keepTrying — the level change ToME makes again', () => {
+  it('refuses what `refuse` refuses as a failed attempt, and builds on from the next', () => {
+    // Our rule, asked after upstream's checks pass (`LevelOptions.refuse`).
+    for (let s = 0; s < 5; s += 1) {
+      const seed = `refuse:${String(s)}`;
+      const plain = newLevel(ROOMER_RUINS_KOR_PUL, seed, OPTS);
+      expect(plain.failed).toBe(false);
+      const asked: AuthoredMap[] = [];
+      const refused = newLevel(ROOMER_RUINS_KOR_PUL, seed, {
+        ...OPTS,
+        refuse: (map) => {
+          asked.push(map);
+          return asked.length === 1 ? 'the first one' : null;
+        },
+      });
+      // Asked of the level upstream certified, and of nothing before it.
+      expect(asked[0], seed).toEqual(plain.map);
+      expect(refused.attempts, seed).toBeGreaterThan(plain.attempts);
+      expect(refused.failed, seed).toBe(false);
+      expect(refused.map, seed).toEqual(asked[1]);
+      expect(refused.map.view.tiles, seed).not.toEqual(plain.map.view.tiles);
+    }
+    const never = newLevel(ROOMER_RUINS_KOR_PUL, 'refuse:all', { ...OPTS, refuse: () => 'no' });
+    expect(never.failed).toBe(true);
+    expect(never.attempts).toBe(MAX_LEVEL_GENERATION_COUNT);
+    expect(() =>
+      keepTrying(ROOMER_RUINS_KOR_PUL, 'refuse:all', { ...OPTS, refuse: () => 'no' }),
+    ).toThrow(/made no level/);
+  });
+
   it('is newLevel`s own level when that certifies', () => {
     for (let s = 0; s < 5; s += 1) {
       const seed = `keep:${String(s)}`;
-      expect(keepTrying(ROOMER_RUINS_KOR_PUL, seed, OPTS)).toEqual(
-        newLevel(ROOMER_RUINS_KOR_PUL, seed, OPTS),
-      );
+      expect(keepTrying(ROOMER_RUINS_KOR_PUL, seed, OPTS)).toEqual({
+        ...newLevel(ROOMER_RUINS_KOR_PUL, seed, OPTS),
+        spec: ROOMER_RUINS_KOR_PUL,
+      });
     }
   });
 
@@ -266,7 +296,49 @@ describe('keepTrying — the level change ToME makes again', () => {
       expect(round).toBeDefined();
       const kept = keepTrying(scattered, seed, OPTS);
       expect(kept.failed).toBe(false);
-      expect(kept).toEqual(newLevel(scattered, `${seed}~${String(round)}`, OPTS));
+      expect(kept).toEqual({
+        ...newLevel(scattered, `${seed}~${String(round)}`, OPTS),
+        spec: scattered,
+      });
+      return;
+    }
+    throw new Error('no seed failed a whole round');
+  });
+
+  it('rolls a rolled table once a round, from that round`s seed, and hands back the one it used', () => {
+    // `alter_level_data` runs once per level change and every attempt of that
+    // change reuses its table (`engine/Zone.lua:892`, `:1060`). A failing
+    // round is a new level change, so it rolls again.
+    const scattered: LevelSpec<RoomerMapSpec> = {
+      width: 40,
+      height: 40,
+      map: { ...ROOMER_RUINS_KOR_PUL.map, nbRooms: 12, rooms: ['small_x'], noTunnels: true },
+    };
+    for (let s = 0; s < 120; s += 1) {
+      const seed = `rolled:${String(s)}`;
+      if (!newLevel(scattered, seed, OPTS).failed) continue;
+      const asked: string[] = [];
+      // The table a round rolls names the round in a field that changes no
+      // draw (`lite_room_chance` is rolled against, never skipped), so which
+      // table certified shows and the level is the plain table's.
+      const kept = keepTrying(
+        (roundSeed) => {
+          asked.push(roundSeed);
+          return { ...scattered, map: { ...scattered.map, liteRoomChance: asked.length } };
+        },
+        seed,
+        OPTS,
+      );
+      expect(asked[0]).toBe(seed);
+      expect(asked.slice(1)).toEqual(asked.slice(1).map((_, k) => `${seed}~${String(k + 1)}`));
+      expect(asked.length).toBeGreaterThan(1);
+      const last = asked[asked.length - 1] ?? '';
+      const { spec, ...level } = kept;
+      expect(level).toEqual(newLevel(scattered, last, OPTS));
+      expect(spec).toEqual({
+        ...scattered,
+        map: { ...scattered.map, liteRoomChance: asked.length },
+      });
       return;
     }
     throw new Error('no seed failed a whole round');
