@@ -639,6 +639,104 @@ describe('interiors stay flat, and the overworld does not', () => {
   });
 });
 
+describe('local material art is a different scale namespace', () => {
+  const source = readFileSync(
+    new URL('../../src/client/render/canvas.ts', import.meta.url),
+    'utf8',
+  );
+  const table = source.split('const LOCAL_TILE_SPRITES')[1]?.split('};')[0] ?? '';
+
+  it('gives abstract FLOOR and WALL their own player-scale material art', () => {
+    expect(table).not.toBe('');
+    expect(table).toContain('TileCode.FLOOR');
+    expect(table).toContain("'tile_local_floor'");
+    expect(table).toContain('TileCode.WALL');
+    expect(table).toContain("'tile_local_wall'");
+  });
+
+  it('draws closed and open doors as architecture instead of fallback squares', () => {
+    expect(table).toContain('TileCode.DOOR');
+    expect(table).toContain("'tile_local_door_closed'");
+    expect(table).toContain('TileCode.DOOR_OPEN');
+    expect(table).toContain("'tile_local_door_open'");
+  });
+
+  it('draws water crossings with a full local bridge family', () => {
+    expect(table).toContain('TileCode.BRIDGE');
+    for (const suffix of ['', '_b', '_c', '_d', '_e', '_f', '_g', '_h']) {
+      expect(table).toContain(`'tile_local_bridge${suffix}'`);
+    }
+  });
+
+  it('names only player-scale local sprites', () => {
+    const code = table.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+    const ids = [...code.matchAll(/'([a-z_]+)'/g)].map((match) => match[1]);
+    expect(ids.length).toBeGreaterThan(0);
+    for (const id of ids) expect(id).toMatch(/^tile_local_/);
+  });
+
+  it('covers every material currently emitted in common or inner maps', () => {
+    for (const code of [
+      'CIVIC',
+      'COBBLE',
+      'CRAG',
+      'DOOR',
+      'DOOR_OPEN',
+      'ERASED',
+      'GREEN',
+      'HEATH',
+      'HILLS',
+      'MIRE',
+      'MOUNTAIN',
+      'PAVING',
+      'BRIDGE',
+      'PLAINS',
+      'SHORE',
+      'SOOT',
+      'TERRACE',
+      'TOWN_WALL',
+      'TREES',
+      'WATER',
+      'WORKS',
+      'YARD',
+    ]) {
+      expect(table, `${code} has no local-scale sprite`).toContain(`TileCode.${code}`);
+    }
+  });
+});
+
+describe('local city walls have adjacency-driven vertical faces', () => {
+  const source = readFileSync(
+    new URL('../../src/client/render/canvas.ts', import.meta.url),
+    'utf8',
+  );
+  const table = source.split('const LOCAL_WALL_FACE_SPRITES')[1]?.split('};')[0] ?? '';
+
+  it('covers every architectural wall family without roof art', () => {
+    expect(table).not.toBe('');
+    for (const code of ['WALL', 'CIVIC', 'TERRACE', 'WORKS', 'TOWN_WALL']) {
+      expect(table, `${code} has no vertical wall face`).toContain(`TileCode.${code}`);
+    }
+    expect(table).not.toContain('roof');
+  });
+
+  it('names only explicit player-scale face sprites', () => {
+    const code = table.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+    const ids = [...code.matchAll(/'([a-z_]+)'/g)].map((match) => match[1]);
+    expect(ids).toHaveLength(40);
+    for (const id of ids) expect(id).toMatch(/^tile_local_[a-z_]+_face(?:_[b-h])?$/);
+  });
+
+  it('draws a full face only on a south edge beside walkable ground', () => {
+    const functionBody = source.split('function paintLocalWallFace')[1]?.split('\n  }')[0] ?? '';
+    expect(functionBody).toContain('tileAt(level, tx, ty + 1)');
+    expect(functionBody).toContain('isWalkable');
+    expect(functionBody).not.toContain('tx - 1');
+    expect(functionBody).not.toContain('tx + 1');
+    expect(functionBody).not.toContain('ty - 1');
+  });
+});
+
 describe('every marker family the server can send has art behind it', () => {
   // THE GAP THIS CAUGHT. `SITES` labels its settlements `town`, and the marker
   // set Codex delivered contains `office` — so all four settlements silently

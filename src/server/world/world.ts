@@ -53,6 +53,7 @@ import { createFog } from '../../shared/fog.ts';
 import { lineOfSightFor } from '../view/eyesight.ts';
 import type { LineActor } from '../view/eyesight.ts';
 import { lightLevel } from '../../shared/light.ts';
+import { propBlocksMovement } from '../../shared/props.ts';
 import type { SiteLighting } from '../../shared/light.ts';
 import { resolveItem } from '../content/resolve.ts';
 import { createMonsterActor, createPlayerActor } from '../engine/actor.ts';
@@ -1036,9 +1037,17 @@ export function createWorld(
     return undefined;
   };
 
-  /** Walkable terrain AND unoccupied. Terrain alone is `canWalk`. */
+  /** Props are few and fixed; one honest scan beats a second position index. */
+  const blockingPropAt = (x: number, y: number): Prop | undefined => {
+    for (const prop of props.values()) {
+      if (prop.x === x && prop.y === y && propBlocksMovement(prop.propId)) return prop;
+    }
+    return undefined;
+  };
+
+  /** Walkable terrain, no body, and no furnishing occupying the footprint. */
   const isFree = (x: number, y: number): boolean =>
-    canWalk(level, x, y) && actorAt(x, y) === undefined;
+    canWalk(level, x, y) && actorAt(x, y) === undefined && blockingPropAt(x, y) === undefined;
 
   /**
    * Preference order: the authored spawn cluster in order (wrapping), then any
@@ -1386,6 +1395,7 @@ export function createWorld(
     const actor = actors.get(id);
     if (actor === undefined) return false;
     if (!canWalk(level, tile.x, tile.y)) return false;
+    if (blockingPropAt(tile.x, tile.y) !== undefined) return false;
     const sitting = actorAt(tile.x, tile.y);
     if (sitting !== undefined && sitting.id !== id) return false;
     actor.x = tile.x;
@@ -1426,7 +1436,10 @@ export function createWorld(
     if (!canWalk(level, target.x, target.y)) {
       return { ok: false, reason: MoveBlock.Terrain };
     }
-    if (actorAt(target.x, target.y) !== undefined) {
+    if (
+      actorAt(target.x, target.y) !== undefined ||
+      blockingPropAt(target.x, target.y) !== undefined
+    ) {
       return { ok: false, reason: MoveBlock.Occupied };
     }
 

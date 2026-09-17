@@ -161,3 +161,67 @@ for (const [id, def] of Object.entries(DEFS)) {
  * frozen entries is surface without a reader.
  */
 export const PROP_IDS: readonly PropId[] = Object.freeze(Object.keys(DEFS) as PropId[]);
+
+/**
+ * Furnishings whose visible footprint occupies their cell.
+ *
+ * These are kept separate from `PROP_IDS`: that older list is the three inert
+ * eldritch dressings a delve scatters at random. Adding a market stall to that
+ * list would make every cave roll civic furniture. Town plans place the keys
+ * below deliberately, and the world consults this set when a body tries to
+ * enter their cell.
+ */
+const BLOCKING_PROP_IDS: ReadonlySet<string> = new Set<string>([
+  'prop_alembic',
+  'prop_archive_shelf',
+  'prop_barrel',
+  'prop_bedroll',
+  'prop_bookshelf',
+  'prop_broken_altar',
+  'prop_campfire',
+  'prop_card_catalogue',
+  'prop_cauldron',
+  'prop_chapel_pew',
+  'prop_cloth_bolts',
+  'prop_coat_stand',
+  'prop_civic_planter',
+  'prop_crate',
+  'prop_dress_form',
+  'prop_eel_trap',
+  'prop_fallen_log',
+  'prop_fishing_net',
+  'prop_filing_cabinet',
+  'prop_furnace',
+  'prop_font',
+  'prop_grain_sack',
+  'prop_gear_pile',
+  'prop_gravestone_a',
+  'prop_gravestone_b',
+  'prop_handcart',
+  'prop_hearth',
+  'prop_herb_rack',
+  'prop_iron_safe',
+  'prop_jar_shelf',
+  'prop_lamp_post',
+  'prop_loom',
+  'prop_market_stall',
+  'prop_noticeboard',
+  'prop_glass_case',
+  'prop_office_desk',
+  'prop_open_grave',
+  'prop_reading_desk',
+  'prop_shop_counter',
+  'prop_sluice_gate',
+  'prop_street_bench',
+  'prop_flowering_shrub',
+  'prop_tent',
+  'prop_tree_stump',
+  'prop_typewriter_desk',
+  'prop_wagon',
+  'prop_well',
+]);
+
+/** Server-authoritative collision for an art key. Unknown dressing is inert. */
+export function propBlocksMovement(propId: string): boolean {
+  return BLOCKING_PROP_IDS.has(propId);
+}

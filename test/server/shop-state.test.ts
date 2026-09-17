@@ -50,13 +50,12 @@ describe('where a shop lives', () => {
 
   it('exists on exactly the towns that are meant to have one, with the shelf each keeps', () => {
     /**
-     * TWO NOW, AND THE SECOND ONE NEEDED A SECOND SHELF TO BE WORTH ADDING.
+     * FIVE NOW, EACH WITH A SHELF THAT MAKES THE WALK WORTH TAKING.
      *
-     * `SHOP_SITES` argued for one shop and said *"when a second shop lands it is
-     * one string here"*. A shop stocking the same catalogue would not have been
-     * a second destination, it would have been the same shop further away — so
-     * the string arrived with `ShopShelf`, and Ashwick sells what you drink
-     * while Threadneedle sells what you wear.
+     * A shop stocking the same catalogue would only be the same destination
+     * farther away. `ShopShelf` keeps the five local identities mechanical:
+     * Ashwick sells what you drink, Threadneedle what you wear, Saint's Rest
+     * relics, the camp road gear, and Alderbrook a broad civic stock.
      *
      * Ashwick is named ALCHEMY ROW and has had a mixer standing in it since the
      * towns were populated, saying "I mix what the Index has not read yet" over
@@ -67,8 +66,11 @@ describe('where a shop lives', () => {
       .filter((realm) => realm.shop !== undefined)
       .map((realm) => [realm.siteId, realm.shop?.shelf]);
     expect(withShops).toEqual([
+      ['site:alderbrook', 'general'],
       ['site:threadneedle_row', 'outfitter'],
       ['site:ashwick_row', 'apothecary'],
+      ['site:wayfarers_camp', 'caravan'],
+      ['site:saints_rest', 'reliquary'],
     ]);
   });
 
@@ -102,6 +104,17 @@ describe('where a shop lives', () => {
       expect(slot.id, 'the apothecary is selling something you cannot drink').toBe(
         'item_draught_mending',
       );
+    }
+  });
+
+  it('gives every physical keeper a non-empty shelf at the first restock', () => {
+    const shopRealms = realms('all-shop-stock')
+      .all()
+      .filter((realm) => realm.shop !== undefined);
+    expect(shopRealms).toHaveLength(5);
+    for (const realm of shopRealms) {
+      expect(catchUpShop(realm, 1), realm.siteId).toBe(true);
+      expect(realm.shop?.stock, realm.siteId).toHaveLength(NB_FILL);
     }
   });
 

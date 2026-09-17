@@ -436,10 +436,13 @@ function toneFor(card: TurnActor): CardTone {
 function chipIdFor(state: TurnActorState): string | null {
   switch (state) {
     case TurnActorState.Waiting:
+      return 'ui_icon_turn_waiting';
     case TurnActorState.Committed:
+      return 'ui_icon_turn_committed';
     case TurnActorState.Bell:
+      return 'ui_icon_turn_bell';
     case TurnActorState.StandingBy:
-      return `ui_icon_turn_${state}`;
+      return 'ui_icon_turn_standing_by';
     case TurnActorState.Acting:
       return null;
   }

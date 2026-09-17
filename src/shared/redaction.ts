@@ -401,7 +401,8 @@ export const REDACTION_REGIONS = ALDERBROOK_REGIONS;
  *
  * `makeRedaction` mints a twin as `${REDACTION_SITE_ID}:${bare}` — so
  * `site:redaction:alderbrook` — and the view layer turns a site id back into the
- * name of a 32x32 sprite. It used to do that with `siteId.replace('site:', '')`,
+ * name of a one-cell overworld sprite. It used to do that with
+ * `siteId.replace('site:', '')`,
  * which replaces ONCE, so every twin asked for `tile_ow_landmark_redaction:
  * alderbrook`. No such file exists and a colon cannot be one on the platform
  * this is hosted from, so all thirteen places on the second landmass fell back
@@ -417,10 +418,33 @@ export const REDACTION_REGIONS = ALDERBROOK_REGIONS;
  * fact read in opposite directions. Apart, they drift the first time the prefix
  * changes — and the version that drifted is the one that shipped.
  *
- * THE DOOR ITSELF IS UNAFFECTED: `site:redaction` has no trailing colon, so it
- * still resolves to `tile_ow_landmark_redaction`, still misses, and still draws
- * the gate, which `SiteView.landmark` says is deliberate.
+ * THE DOOR ITSELF IS UNAFFECTED: `site:redaction` resolves to
+ * `tile_ow_landmark_redaction`, the gate silhouette that belongs there.
  */
+const LANDMARK_ID_BY_SITE: Readonly<Record<string, string>> = {
+  'site:alderbrook': 'tile_ow_landmark_alderbrook',
+  'site:threadneedle_row': 'tile_ow_landmark_threadneedle_row',
+  'site:ashwick_row': 'tile_ow_landmark_ashwick_row',
+  'site:wayfarers_camp': 'tile_ow_landmark_wayfarers_camp',
+  'site:saints_rest': 'tile_ow_landmark_saints_rest',
+  'site:blackwood_outskirts': 'tile_ow_landmark_blackwood_outskirts',
+  'site:gearford_ward': 'tile_ow_landmark_gearford_ward',
+  'site:glass_archive': 'tile_ow_landmark_glass_archive',
+  'site:underworks': 'tile_ow_landmark_underworks',
+  'site:watchers_altar': 'tile_ow_landmark_watchers_altar',
+  'site:hollow_mine': 'tile_ow_landmark_hollow_mine',
+  'site:drowned_chapel': 'tile_ow_landmark_drowned_chapel',
+  'site:outer_index': 'tile_ow_landmark_outer_index',
+  'site:cairnfoot': 'tile_ow_landmark_cairnfoot',
+  'site:barrow_end': 'tile_ow_landmark_barrow_end',
+  'site:the_weir': 'tile_ow_landmark_the_weir',
+  [REDACTION_SITE_ID]: 'tile_ow_landmark_redaction',
+};
+
 export function landmarkIdFor(siteId: string): string {
-  return `tile_ow_landmark_${siteId.replace(/^site:(?:redaction:)?/, '')}`;
+  const twinPrefix = `${REDACTION_SITE_ID}:`;
+  const originalSiteId = siteId.startsWith(twinPrefix)
+    ? `site:${siteId.slice(twinPrefix.length)}`
+    : siteId;
+  return LANDMARK_ID_BY_SITE[originalSiteId] ?? 'tile_ow_landmark_redaction';
 }

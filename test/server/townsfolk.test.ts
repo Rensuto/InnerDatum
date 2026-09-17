@@ -259,14 +259,20 @@ describe('everybody wears their own face', () => {
     ).toEqual([
       ['site:threadneedle_row', 'merrow', 'Merrow Stitch', 'chr_npc_merrow_stitch_s'],
       ['site:threadneedle_row', 'vane', 'Pinnock Vane', 'chr_npc_pinnock_vane_s'],
+      ['site:threadneedle_row', 'elia', 'Elia Broom', 'chr_npc_bookbinder_s'],
       ['site:alderbrook', 'reeve', 'Reeve Ashcombe', 'chr_npc_reeve_ashcombe_s'],
       ['site:alderbrook', 'bell', 'Halloway Bell', 'chr_npc_halloway_bell_s'],
+      ['site:alderbrook', 'tamsin', 'Tamsin Reed', 'chr_npc_registry_clerk_s'],
+      ['site:alderbrook', 'nell', 'Nell Cask', 'chr_npc_pawnbroker_s'],
       ['site:saints_rest', 'sexton', 'Sexton Pell', 'chr_npc_sexton_pell_s'],
       ['site:saints_rest', 'colley', 'Wren Colley', 'chr_npc_wren_colley_s'],
+      ['site:saints_rest', 'mercy', 'Mercy Venn', 'chr_npc_mourner_s'],
       ['site:wayfarers_camp', 'carrow', 'Carrow Ninefold', 'chr_npc_carrow_ninefold_s'],
       ['site:wayfarers_camp', 'ash', 'Mabbot Ash', 'chr_npc_mabbot_ash_s'],
+      ['site:wayfarers_camp', 'fen', 'Orla Fen', 'chr_npc_camp_cook_s'],
       ['site:ashwick_row', 'thessaly', 'Thessaly Vaunt', 'chr_npc_thessaly_vaunt_s'],
       ['site:ashwick_row', 'quill', 'Ivo Quill', 'chr_npc_ivo_quill_s'],
+      ['site:ashwick_row', 'mara', 'Mara Dock', 'chr_npc_alchemy_apprentice_s'],
     ]);
   });
 

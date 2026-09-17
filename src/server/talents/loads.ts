@@ -105,8 +105,15 @@ export function loadedWith(engine: TalentEngine, self: TalentActor): ActiveLoad 
   return null;
 }
 
-/** The one common body. Three loads differ only in name, tier and rider. */
-function load(bare: string, name: string, tier: number, blurb: string, rider: string): Talent {
+/** The one common body. Three loads differ only in name, art, tier and rider. */
+function load(
+  bare: string,
+  iconId: string,
+  name: string,
+  tier: number,
+  blurb: string,
+  rider: string,
+): Talent {
   return {
     id: talentId(bare),
     name,
@@ -116,7 +123,7 @@ function load(bare: string, name: string, tier: number, blurb: string, rider: st
     /** loads is about CUN — knowing which one to reach for. See `Talent.statGate`. */
     statGate: 'cun',
     kind: TalentKind.Sustained,
-    iconId: `icon_sustain_${bare}`,
+    iconId,
     // FREE TO PRESS. `careful_method.ts` carries the argument: charging AP means
     // nobody ever changes stance in the one moment it is interesting.
     cost: { ap: 0 },
@@ -156,6 +163,7 @@ const DEEP_TIER = 3;
 
 export const causticLoad = load(
   'caustic_load',
+  'icon_sustain_caustic_load',
   'Caustic Load',
   ENTRY_TIER,
   'It keeps working after it lands.',
@@ -164,6 +172,7 @@ export const causticLoad = load(
 
 export const frostLoad = load(
   'frost_load',
+  'icon_sustain_frost_load',
   'Frost Load',
   ENTRY_TIER,
   'Nothing moves quickly through it.',
@@ -172,6 +181,7 @@ export const frostLoad = load(
 
 export const concussiveLoad = load(
   'concussive_load',
+  'icon_sustain_concussive_load',
   'Concussive Load',
   DEEP_TIER,
   'The loudest thing in the room, briefly.',

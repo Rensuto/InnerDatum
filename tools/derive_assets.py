@@ -13,11 +13,11 @@ The source art tree is READ-ONLY. This script opens files there and writes
 only into client/public/assets/.
 
 Usage:
-    python tools/derive_assets.py [--src <ART_SOURCE_DIR>] [--check]
+    python tools/derive_assets.py [--src <ART_SOURCE_DIR>] [--out <dir>] [--check]
 
---check verifies outputs match what would be generated, and exits non-zero if
-not. It proves the derivation is deterministic — that re-running it reproduces
-the art already in your working tree, byte for byte.
+--check builds into a temporary directory, verifies those files against the
+deployed outputs, and exits non-zero on a difference. It never writes into the
+deployed art tree.
 
 Not a CI step: the art is not distributed with this repository, so CI has
 nothing to check against. This is for the machine that holds the source art.
@@ -27,7 +27,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
-import sys
+import tempfile
 from os import environ
 from pathlib import Path
 
@@ -62,6 +62,24 @@ SOUTH_ROW = ROW_ORDER.index("s")   # 4
 # shoes before tops so a long hem covers the ankle; hair last, over the skull.
 DOLL_ORDER = ["base", "bottoms", "shoes", "tops", "hair"]
 
+# A `_s` enemy source is one horizontal animation strip. Its filename does not
+# encode the frame geometry, and height is not a safe proxy for width: the
+# replacement Eidolon is six 64x64 frames (384x64), while the Husk is six
+# 48x64 frames (288x64). The old `height > 32 -> width 48` heuristic silently
+# cut sixteen columns off every Eidolon frame.
+#
+# Keep the contract beside the closed set of assets that consumes it. A source
+# replacement with different geometry now fails loudly until this table is
+# reviewed, rather than being accepted and clipped.
+ENEMY_FRAME_SIZE: dict[str, tuple[int, int]] = {
+    "index_husk": (48, 64),
+    "index_wraith": (24, 32),
+    "index_husk_elite": (24, 32),
+    "index_cairn": (24, 32),
+    "index_glut": (24, 32),
+    "index_eidolon": (64, 64),
+}
+
 
 def sheet(rel: str) -> Path:
     return SRC / rel
@@ -89,6 +107,21 @@ def frame0_south(path: Path) -> Image.Image:
     if w % FRAME_W:
         raise SystemExit(f"{path.name}: width {w} is not a multiple of {FRAME_W}")
     return im.crop((0, top, FRAME_W, top + FRAME_H))
+
+
+def enemy_frame0(path: Path, frame_size: tuple[int, int]) -> Image.Image:
+    """Take frame zero from a one-row enemy strip with explicit geometry."""
+    im = Image.open(path).convert("RGBA")
+    frame_w, frame_h = frame_size
+    if im.height != frame_h:
+        raise SystemExit(
+            f"{path.name}: unexpected height {im.height} (contract says {frame_h})"
+        )
+    if im.width % frame_w:
+        raise SystemExit(
+            f"{path.name}: width {im.width} is not a multiple of frame width {frame_w}"
+        )
+    return im.crop((0, 0, frame_w, frame_h))
 
 
 def composite(layers: list[Image.Image]) -> Image.Image:
@@ -162,6 +195,15 @@ def prone(tok: Image.Image) -> Image.Image:
 MAP_SPACE = ("characters/", "enemies/", "props/")
 MAP_SCALE = 2
 
+# Some legacy source frames carry more transparent staging canvas than the
+# Inner Datum renderer contract. The Eidolon's 64x64 source frame has a narrow
+# hovering body inside it; after the honest 2x pixel transform, its visible
+# pixels fit the approved 96x128 large-creature envelope. Trim only the empty
+# staging margins and fail if replacement art ever grows into the trim zone.
+MAP_CANVAS_SIZE: dict[str, tuple[int, int]] = {
+    "enemies/enemy_index_eidolon_s.png": (96, 128),
+}
+
 
 def to_cell(im, rel):
     """Nearest-neighbour double, for map-space art only."""
@@ -170,11 +212,62 @@ def to_cell(im, rel):
     return im.resize((im.width * MAP_SCALE, im.height * MAP_SCALE), Image.NEAREST)
 
 
-def save(im: Image.Image, rel: str) -> Path:
-    dest = OUT / rel
+def exact_2x_blocks(image: Image.Image) -> bool:
+    """True when every output pixel is part of an identical 2x2 legacy block."""
+    rgba = image.convert("RGBA")
+    if rgba.width % 2 or rgba.height % 2:
+        return False
+    pixels = rgba.load()
+    for y in range(0, rgba.height, 2):
+        for x in range(0, rgba.width, 2):
+            value = pixels[x, y]
+            if (
+                pixels[x + 1, y] != value
+                or pixels[x, y + 1] != value
+                or pixels[x + 1, y + 1] != value
+            ):
+                return False
+    return True
+
+
+def save(im: Image.Image, rel: str, output_root: Path = OUT) -> Path:
+    dest = output_root / rel
     dest.parent.mkdir(parents=True, exist_ok=True)
+    # A broad legacy rebuild must never silently replace an already installed
+    # native map-space remaster with this script's old-cell fallback. Staging
+    # builds still receive every legacy output, and --check will still report
+    # the intentional difference. Replacing native art is an explicit reviewed
+    # installer action, not a side effect of `npm run assets`.
+    if (
+        output_root.resolve() == OUT.resolve()
+        and rel.startswith(MAP_SPACE)
+        and dest.exists()
+        and not exact_2x_blocks(Image.open(dest))
+    ):
+        print(f"  KEEP {rel}: deployed map art is already native")
+        return dest
     # Deterministic: no timestamp chunk, fixed compression.
-    to_cell(im, rel).save(dest, "PNG", optimize=True)
+    final = to_cell(im, rel)
+    canvas_size = MAP_CANVAS_SIZE.get(rel)
+    if canvas_size is not None:
+        target_w, target_h = canvas_size
+        if final.width < target_w or final.height < target_h:
+            raise SystemExit(
+                f"{rel}: {final.size} is smaller than required canvas {canvas_size}"
+            )
+        left = (final.width - target_w) // 2
+        top = final.height - target_h
+        crop_box = (left, top, left + target_w, top + target_h)
+        alpha_box = final.getchannel("A").getbbox()
+        if alpha_box is not None:
+            ax0, ay0, ax1, ay1 = alpha_box
+            cx0, cy0, cx1, cy1 = crop_box
+            if ax0 < cx0 or ay0 < cy0 or ax1 > cx1 or ay1 > cy1:
+                raise SystemExit(
+                    f"{rel}: visible pixels {alpha_box} exceed approved canvas crop {crop_box}"
+                )
+        final = final.crop(crop_box)
+    final.save(dest, "PNG", optimize=True)
     return dest
 
 
@@ -190,8 +283,9 @@ def doll(part: str, name: str) -> Image.Image:
     return frame0_south(sheet(f"{CUSTOM}/{part}/chr_custom_{name}_s.png"))
 
 
-def build() -> list[tuple[str, str]]:
+def build(output_root: Path = OUT) -> list[tuple[str, str]]:
     made: list[tuple[str, str]] = []
+    standing_tokens: dict[str, Image.Image] = {}
 
     # --- 1. Straight crops. The class already exists, under another name. ---
     #
@@ -208,7 +302,9 @@ def build() -> list[tuple[str, str]]:
         if not src.exists():
             print(f"  SKIP {out_name}: missing {src_rel}")
             continue
-        save(frame0_south(src), f"characters/{out_name}")
+        token = frame0_south(src)
+        save(token, f"characters/{out_name}", output_root)
+        standing_tokens[out_name] = token
         made.append((out_name, f"crop col0 of {Path(src_rel).name}"))
 
     # --- 2. Paper-doll composites. Classes nobody ever drew. ---
@@ -257,7 +353,9 @@ def build() -> list[tuple[str, str]]:
         if not layers:
             print(f"  SKIP {out_name}: no layers resolved")
             continue
-        save(composite(layers), f"characters/{out_name}")
+        token = composite(layers)
+        save(token, f"characters/{out_name}", output_root)
+        standing_tokens[out_name] = token
         made.append((out_name, f"composite of {len(layers)} paper-doll layers"))
 
     # --- 3. Enemy tokens. THE OMISSION THAT SHIPPED A GAME WITH NO MONSTERS. ---
@@ -268,53 +366,56 @@ def build() -> list[tuple[str, str]]:
     # tests (nothing asserts a PNG exists) and invisible in review (the ids were
     # correct), and only showed up the first time somebody fought something.
     #
-    # Frame sizes DIFFER per creature and must not be assumed: the husk and the
-    # eidolon are 48x64 filmstrips, the rest are 24x32. `frame0_south` reads the
-    # real height, so this table only names what to crop.
-    enemies = [
-        "index_husk", "index_wraith", "index_husk_elite",
-        "index_cairn", "index_glut", "index_eidolon",
-    ]
-    for name in enemies:
+    # Frame sizes DIFFER per creature and must not be inferred from height.
+    # In particular, the current Eidolon is 64x64 while the Husk is 48x64.
+    for name, frame_size in ENEMY_FRAME_SIZE.items():
         src = sheet(f"sprites/enemies/enemy_{name}_s.png")
         if not src.exists():
             print(f"  SKIP enemy_{name}_s.png: no source")
             continue
-        im = Image.open(src).convert("RGBA")
-        # One frame wide, full height: the height IS the frame height for a
-        # single-row `_s` filmstrip, whatever the creature's scale.
-        fw = FRAME_W if im.height <= FRAME_H else 48
-        save(im.crop((0, 0, fw, im.height)), f"enemies/enemy_{name}_s.png")
-        made.append((f"enemy_{name}_s.png", f"crop col0 ({fw}x{im.height})"))
+        frame = enemy_frame0(src, frame_size)
+        save(frame, f"enemies/enemy_{name}_s.png", output_root)
+        made.append(
+            (f"enemy_{name}_s.png", f"crop col0 ({frame.width}x{frame.height})")
+        )
 
     # --- 4. Downed/prone variants, derived from the tokens above. ---
+    # `prone` operates in the 24x32 source cell. Do not reopen the already
+    # doubled deployed token here: rotating that 48x64 image into a 32x24
+    # canvas crops away half the body before `save` doubles it a second time.
     for cls in ("watchman", "inspector", "alchemist"):
-        src = OUT / "characters" / f"chr_player_{cls}_s.png"
-        if not src.exists():
-            print(f"  SKIP downed {cls}: {src.name} was not produced")
+        standing_name = f"chr_player_{cls}_s.png"
+        tok = standing_tokens.get(standing_name)
+        if tok is None:
+            print(f"  SKIP downed {cls}: {standing_name} was not produced")
             continue
-        tok = Image.open(src).convert("RGBA")
-        save(prone(tok), f"characters/chr_player_{cls}_downed_s.png")
+        save(prone(tok), f"characters/chr_player_{cls}_downed_s.png", output_root)
         made.append((f"chr_player_{cls}_downed_s.png", "prone derivation (stand-in)"))
 
     return made
 
 
-def digest(root: Path) -> dict[str, str]:
-    out = {}
-    for p in sorted(root.rglob("*.png")):
-        out[str(p.relative_to(root)).replace("\\", "/")] = hashlib.sha256(
-            p.read_bytes()
-        ).hexdigest()[:16]
-    return out
+def output_mismatches(staged: Path, deployed: Path) -> list[str]:
+    """Return generated PNGs that are absent from or differ from deployment."""
+    mismatches: list[str] = []
+    for expected in sorted(staged.rglob("*.png")):
+        rel = expected.relative_to(staged)
+        actual = deployed / rel
+        expected_hash = hashlib.sha256(expected.read_bytes()).digest()
+        actual_hash = hashlib.sha256(actual.read_bytes()).digest() if actual.exists() else None
+        if actual_hash != expected_hash:
+            mismatches.append(str(rel).replace("\\", "/"))
+    return mismatches
 
 
-if __name__ == "__main__":
+def main(argv: list[str] | None = None) -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--src", type=Path, default=DEFAULT_SRC)
+    ap.add_argument("--out", type=Path, default=OUT)
     ap.add_argument("--check", action="store_true")
-    args = ap.parse_args()
+    args = ap.parse_args(argv)
 
+    global SRC
     SRC = args.src
     if not SRC.exists():
         raise SystemExit(
@@ -324,17 +425,25 @@ if __name__ == "__main__":
             f"copy in .env or the environment. Looked in: {SRC}"
         )
 
-    before = digest(OUT / "characters") if (OUT / "characters").exists() else {}
-    made = build()
-    after = digest(OUT / "characters")
+    if args.check:
+        with tempfile.TemporaryDirectory(prefix="inner-datum-derive-check-") as temp:
+            staged = Path(temp)
+            made = build(staged)
+            changed = output_mismatches(staged, args.out)
+        if changed:
+            raise SystemExit(f"CHECK FAILED — deployed outputs differ: {changed}")
+        destination = args.out
+    else:
+        made = build(args.out)
+        destination = args.out
 
-    print(f"\n{len(made)} assets derived from existing art -> {OUT / 'characters'}")
+    print(f"\n{len(made)} assets derived from existing art -> {destination}")
     for name, how in made:
         print(f"  {name:38s} {how}")
 
     if args.check:
-        if before != after:
-            changed = {k for k in after if before.get(k) != after[k]}
-            print(f"\nCHECK FAILED — not reproducible: {sorted(changed)}")
-            sys.exit(1)
-        print("\nCHECK OK — output is byte-identical")
+        print("\nCHECK OK — deployed outputs are byte-identical; deployment was not written")
+
+
+if __name__ == "__main__":
+    main()

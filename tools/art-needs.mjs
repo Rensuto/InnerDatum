@@ -1,151 +1,54 @@
 #!/usr/bin/env node
 /**
- * art-needs — what still has to be drawn, derived from the code.
- *
- * ============================================================================
- * WHY THIS IS COMPUTED AND NOT WRITTEN DOWN
- * ============================================================================
- * Codex draws this project's art; NEXUS keeps the list of what is still needed
- * (D16). The obvious way to keep that list is a markdown file somebody updates.
- *
- * That is the single most expensive mistake in this codebase's history. A rule
- * written out as a hand-written list, with N-1 of its entries wrong, has cost
- * six separate bugs here — and a list of missing art has exactly that shape: it
- * is right on the day it is written and silently wrong every day after, because
- * the thing it describes lives somewhere else and moves without telling anyone.
- *
- * So the list is DERIVED. Every asset id the code actually references, diffed
- * against the files that actually exist. It cannot drift, because there is
- * nothing to keep in step: add a talent with a new `iconId` and the gap appears
- * here on the next run, whether or not anybody remembered.
- *
- * ============================================================================
- * IT MUST WORK IN A BARE CLONE
- * ============================================================================
- * `client/public/assets/` is gitignored and ships only via the deploy script —
- * the art is All Rights Reserved and is not distributed with this repository
- * (ASSETS-LICENSE.md). A fresh clone therefore has NO assets at all, and this
- * tool must still run and still be useful there: with nothing on disk, every
- * referenced id is reported as needed, which is the honest answer.
- *
- * ============================================================================
- * WHAT IT CANNOT SEE, STATED SO NOBODY TRUSTS IT TOO FAR
- * ============================================================================
- * It reads STRING LITERALS. An id assembled at runtime — `icon_${slot}` — is
- * invisible to it, and the report says so rather than pretending completeness.
- * A probe that shows a slice is evidence of PRESENCE, never of ABSENCE.
+ * Derive Inner Datum's art backlog from source syntax and the deployed files.
  *
  * Usage:
- *   node tools/art-needs.mjs            # human-readable report
- *   node tools/art-needs.mjs --json     # machine-readable, for a hand-off
- *   node tools/art-needs.mjs --missing  # just the ids, one per line
+ *   node tools/art-needs.mjs
+ *   node tools/art-needs.mjs --json
+ *   node tools/art-needs.mjs --missing
  */
 
-import { readdirSync, readFileSync, statSync, existsSync } from 'node:fs';
-import { join, relative, basename, extname } from 'node:path';
+import { existsSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { collectAssetFiles, reconcileInventory, scanRepository } from './art-needs-lib.mjs';
 
 const REPO = join(fileURLToPath(new URL('.', import.meta.url)), '..');
 const ASSETS = join(REPO, 'client', 'public', 'assets');
-const SOURCE_DIRS = ['src', 'content'];
+const MANIFEST = join(ASSETS, 'manifest.placeholders.json');
 
-/**
- * THE PREFIXES THAT NAME ART, and this list IS the contract.
- *
- * Derived from the manifest's own ids rather than invented: every asset in
- * `manifest.placeholders.json` starts with one of these, so a new prefix means
- * somebody introduced a category and this line is where they say so.
- */
-const PREFIXES = [
-  'icon',
-  'enemy',
-  'tile',
-  'ui',
-  'npc',
-  'item',
-  'player',
-  'prop',
-  'char',
-  'branding',
-  'innerdatum',
-  'favicon',
-];
+const scan = scanRepository(REPO);
+const present = collectAssetFiles(ASSETS);
 
-/**
- * CASE-SENSITIVE, AND THAT IS A FIX RATHER THAN A DETAIL.
- *
- * With the `i` flag this matched `CHAR_W` — a layout constant in the talent
- * panel — and reported it as a missing sprite. Asset ids are lowercase by
- * convention throughout the manifest (`enemy_index_husk_s`, `favicon_32`), so
- * dropping the flag removes a whole class of SHOUTING_CONSTANT false positives
- * that would otherwise sit in the commission list forever, undrawable.
- */
-const ID_RX = new RegExp(`['"\`]((?:${PREFIXES.join('|')})_[a-z0-9_]+)['"\`]`, 'g');
-/** An id being BUILT rather than written. Reported, never resolved. */
-const DYNAMIC_RX = new RegExp(`['"\`](?:${PREFIXES.join('|')})_[a-z0-9_]*\\$\\{`, 'g');
-
-function walk(dir, out = []) {
-  if (!existsSync(dir)) return out;
-  for (const entry of readdirSync(dir)) {
-    const full = join(dir, entry);
-    const st = statSync(full);
-    if (st.isDirectory()) walk(full, out);
-    else if (/\.(ts|tsx|mjs|js|json)$/.test(entry)) out.push(full);
-  }
-  return out;
-}
-
-// ── what the code asks for ───────────────────────────────────────────────────
-const referenced = new Map(); // id -> Set<file>
-const dynamic = [];
-for (const dir of SOURCE_DIRS) {
-  for (const file of walk(join(REPO, dir))) {
-    const text = readFileSync(file, 'utf8');
-    const where = relative(REPO, file).replace(/\\/g, '/');
-    for (const m of text.matchAll(ID_RX)) {
-      const id = m[1];
-      /**
-       * A TRAILING UNDERSCORE IS A PREFIX, NOT AN ID. The client builds hotbar
-       * and status ids by concatenation — "icon_active_" plus the talent name —
-       * so the literal in the source is half of a name. Counting those as
-       * missing art reported four gaps that can never be filled, because no file
-       * could ever be called "icon_active_". They are recorded as construction
-       * sites instead, which is the honest bucket: this tool cannot see what
-       * they resolve to.
-       */
-      if (id.endsWith('_')) {
-        dynamic.push(where);
-        continue;
-      }
-      if (!referenced.has(id)) referenced.set(id, new Set());
-      referenced.get(id).add(where);
+function provenanceSets() {
+  const standIns = new Set();
+  const upscaled = new Set();
+  if (!existsSync(MANIFEST)) return { standIns, upscaled };
+  try {
+    const parsed = JSON.parse(readFileSync(MANIFEST, 'utf8'));
+    for (const asset of parsed.assets ?? []) {
+      if (asset.provenance === 'stand-in') standIns.add(asset.id);
+      if (asset.provenance === 'upscaled') upscaled.add(asset.id);
     }
-    if (DYNAMIC_RX.test(text)) dynamic.push(where);
-    DYNAMIC_RX.lastIndex = 0;
+  } catch {
+    // A missing or unreadable deploy manifest is equivalent to a bare clone.
   }
+  return { standIns, upscaled };
 }
 
-/**
- * ═══════════════════════════════════════════════════════════════════════════
- *   AN ID IS NOT A COMMISSION.
- * ═══════════════════════════════════════════════════════════════════════════
- *
- * `enemy_index_wraith_s` tells an artist the filename and nothing else. What
- * they need is what the thing IS — its name, and the sentence the game already
- * uses to describe it, which is the same sentence a player will read while
- * looking at the sprite.
- *
- * All of it is already written down in the content files. This pulls it out
- * beside each id, so the report is a brief rather than an inventory.
- *
- * ═══ SCRAPED, NOT IMPORTED, AND THAT IS DELIBERATE ═══
- * Importing the content modules would drag the whole server graph into a tool
- * that has to run in a bare clone with no build step and no assets. Reading the
- * text keeps this a script. The cost is that a name assembled at runtime is
- * invisible — which is the same limit the id scan already has, and the report
- * already says so.
- */
-function briefFor(id, files) {
+const provenance = provenanceSets();
+const inventory = reconcileInventory({
+  runtime: scan.runtime,
+  requests: scan.requests,
+  present,
+  ...provenance,
+});
+
+function locationsFor(id) {
+  return [...new Set([...(scan.runtime.get(id) ?? []), ...(scan.requests.get(id) ?? [])])].sort();
+}
+
+function sourceWindowFor(id, files) {
   for (const rel of files) {
     let text;
     try {
@@ -153,234 +56,156 @@ function briefFor(id, files) {
     } catch {
       continue;
     }
-    const at = text.indexOf(`'${id}'`);
+    const needles = [`'${id}'`, `"${id}"`, `\`${id}\``];
+    const at = needles.map((needle) => text.indexOf(needle)).find((index) => index >= 0) ?? -1;
     if (at < 0) continue;
 
-    // The nearest `name:` / `displayName:` ABOVE or BELOW the id, whichever is
-    // closer — content files put the sprite before the name as often as after.
-    /**
-     * THE TALENT'S OWN BLOCK, A WINDOW FOR A TABLE.
-     *
-     * ═══ "ONE TALENT PER FILE" STOPPED BEING TRUE, AND THIS MISLED THE ARTIST ═══
-     * This used to read the WHOLE FILE for anything under `talents/`, on the
-     * stated grounds that "one talent per file is a project rule, not an
-     * accident". It is not a rule any more: every locked generic tree is six
-     * talents in one module, and `legwork.ts` opens by saying so — *"SIX TALENTS
-     * IN ONE FILE, which is the shape every LOCKED generic tree uses"*.
-     *
-     * So the first `name:` in the file won for all six. `icon_active_downhill`
-     * was listed as **Long Stride**, carrying Long Stride's prose — an artist
-     * following this list would have drawn the wrong talent, and the list would
-     * have looked complete while they did it.
-     *
-     * The fix is to stop guessing from the path. A talent is a literal
-     * `export const x: Talent = { … };`, so the block containing the id is the
-     * exact scope its name and prose live in — right for one per file and for
-     * six, and it needs no rule to stay true.
-     *
-     * A content TABLE (monsters, items) has no such literal, so it falls back to
-     * the window: reading the whole file there would attach entry one's
-     * description to entry forty's sprite.
-     */
     const blockStart = text.lastIndexOf('export const ', at);
     const declaresTalent =
       blockStart >= 0 && /^export const \w+: Talent = \{/.test(text.slice(blockStart, at));
     const blockEnd = declaresTalent ? text.indexOf('\n};', at) : -1;
-    const window = declaresTalent
+    return declaresTalent
       ? text.slice(blockStart, blockEnd < 0 ? text.length : blockEnd)
-      : text.slice(Math.max(0, at - 900), at + 900);
-    const name =
-      /displayName:\s*'([^']+)'/.exec(window)?.[1] ?? /\bname:\s*'([^']+)'/.exec(window)?.[1];
-    /**
-     * A TALENT DESCRIBES ITSELF IN A TEMPLATE LITERAL, so its prose arrives with
-     * `${...}` holes in it. Blanking the holes beats skipping the string:
-     * "Always on. … harder to stun, slow or knock about" tells an artist what to
-     * draw, and the exact number never would have.
-     */
-    const raw =
-      /description:\s*'([^']+)'/.exec(window)?.[1] ??
-      /describe:[\s\S]{0,240}?`([\s\S]{12,240}?)`/.exec(window)?.[1];
-    const description = raw
-      ?.replace(/\$\{[^}]*\}/g, '…')
-      .replace(/\s+/g, ' ')
-      .trim();
-
-    if (name !== undefined || description !== undefined) {
-      return {
-        ...(name === undefined ? {} : { name }),
-        ...(description === undefined ? {} : { description: description.trim() }),
-      };
-    }
+      : text.slice(Math.max(0, at - 700), at + 900);
   }
-  return {};
+  return '';
 }
 
-/** What KIND of art this is, so a brief can be batched by discipline. */
+function titleFromId(id) {
+  return id
+    .replace(
+      /^(?:chr_(?:player|npc)|enemy|favicon|icon_(?:active|passive|sustain|monster|status|character)|icon|innerdatum|item|prop|tile_(?:ow|local)|tile|ui)_/,
+      '',
+    )
+    .split('_')
+    .map((word) => (word === '' ? '' : `${word[0].toUpperCase()}${word.slice(1)}`))
+    .join(' ');
+}
+
+function briefFor(id) {
+  const files = locationsFor(id);
+  const window = sourceWindowFor(id, files);
+  const name =
+    /displayName:\s*'([^']+)'/.exec(window)?.[1] ??
+    /\bname:\s*'([^']+)'/.exec(window)?.[1] ??
+    titleFromId(id);
+  const raw =
+    /description:\s*'([^']+)'/.exec(window)?.[1] ??
+    /describe:[\s\S]{0,240}?`([\s\S]{12,240}?)`/.exec(window)?.[1];
+  const description = raw
+    ?.replace(/\$\{[^}]*\}/g, '…')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return {
+    id,
+    kind: kindOf(id),
+    name,
+    ...(description === undefined ? {} : { description }),
+    demand:
+      scan.runtime.has(id) && scan.requests.has(id)
+        ? 'runtime and explicit request'
+        : scan.runtime.has(id)
+          ? 'runtime'
+          : 'explicit request',
+    referencedBy: files,
+  };
+}
+
 function kindOf(id) {
+  if (id.startsWith('chr_player_')) return 'player sprite';
+  if (id.startsWith('chr_npc_')) return 'townsfolk sprite';
   if (id.startsWith('enemy_')) return 'enemy sprite';
-  if (id.startsWith('icon_passive_')) return 'talent icon (passive)';
   if (id.startsWith('icon_active_')) return 'talent icon (active)';
+  if (id.startsWith('icon_passive_')) return 'talent icon (passive)';
+  if (id.startsWith('icon_sustain_')) return 'talent icon (sustain)';
+  if (id.startsWith('icon_monster_')) return 'talent icon (monster)';
+  if (id.startsWith('icon_status_')) return 'status icon';
+  if (id.startsWith('icon_character_')) return 'character portrait';
   if (id.startsWith('icon_')) return 'UI icon';
+  if (id.startsWith('tile_local_')) return 'local material tile';
+  if (id.startsWith('tile_ow_')) return 'overworld tile';
   if (id.startsWith('tile_')) return 'terrain tile';
-  if (id.startsWith('npc_')) return 'townsfolk sprite';
   if (id.startsWith('item_')) return 'item sprite';
   if (id.startsWith('prop_')) return 'prop sprite';
-  if (id.startsWith('char_') || id.startsWith('player_')) return 'player sprite';
+  if (id.startsWith('innerdatum_') || id.startsWith('favicon_')) return 'branding';
   return 'asset';
 }
 
-// ── what is actually on disk ─────────────────────────────────────────────────
-const present = new Map(); // id -> relative path
-function collect(dir) {
-  if (!existsSync(dir)) return;
-  for (const entry of readdirSync(dir)) {
-    const full = join(dir, entry);
-    if (statSync(full).isDirectory()) collect(full);
-    else if (/\.(png|webp|jpg|jpeg|gif|svg)$/i.test(entry)) {
-      present.set(basename(entry, extname(entry)), relative(ASSETS, full).replace(/\\/g, '/'));
-    }
-  }
-}
-collect(ASSETS);
+const missingBriefs = inventory.missing.map(briefFor);
+const requestedPresent = inventory.requestPresent.map(briefFor);
+const demandedCount = new Set([...inventory.runtimeIds, ...inventory.requestIds]).size;
+const fileCount = [...present.values()].reduce((total, paths) => total + paths.length, 0);
 
-// Provenance, when the manifest is here. A stand-in is PRESENT but replaceable;
-// so is a token drawn for the old 32-pixel cell and doubled to fit the 64 one —
-// present, correct, and carrying no detail at the size it is drawn at. The
-// manifest MEASURES that (`is_upscaled`), so this list empties itself as native
-// art lands rather than needing anybody to strike a line off it.
-const standIns = new Set();
-const upscaled = new Set();
-const manifestPath = join(ASSETS, 'manifest.placeholders.json');
-if (existsSync(manifestPath)) {
-  try {
-    const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
-    for (const a of manifest.assets ?? []) {
-      if (a.provenance === 'stand-in') standIns.add(a.id);
-      if (a.provenance === 'upscaled') upscaled.add(a.id);
-    }
-  } catch {
-    /* a manifest we cannot read is the same as no manifest */
-  }
-}
-
-const missing = [...referenced.keys()].filter((id) => !present.has(id)).sort();
-const placeholder = [...referenced.keys()].filter((id) => standIns.has(id)).sort();
-const forTheOldCell = [...referenced.keys()].filter((id) => upscaled.has(id)).sort();
-const unused = [...present.keys()].filter((id) => !referenced.has(id)).sort();
-
-const byCategory = (ids) => {
-  const out = new Map();
-  for (const id of ids) {
-    const key = id.split('_')[0];
-    out.set(key, [...(out.get(key) ?? []), id]);
-  }
-  return [...out.entries()].sort((a, b) => b[1].length - a[1].length);
+const report = {
+  generated: 'derived from TypeScript syntax and deployed files; do not hand-edit',
+  runtimeReferenced: inventory.runtimeIds.length,
+  explicitRequests: inventory.requestIds.length,
+  demanded: demandedCount,
+  onDiskIds: present.size,
+  onDiskFiles: fileCount,
+  missing: missingBriefs,
+  runtimeMissing: inventory.runtimeMissing,
+  explicitRequestMissing: inventory.requestMissing,
+  explicitRequestPresentButUnwired: requestedPresent,
+  placeholder: inventory.placeholder,
+  forTheOldCell: inventory.forTheOldCell,
+  unused: inventory.unused,
+  duplicates: inventory.duplicates,
+  unresolvedDynamic: scan.unresolvedDynamic,
 };
 
-// ── report ───────────────────────────────────────────────────────────────────
 const argv = process.argv.slice(2);
 if (argv.includes('--json')) {
-  console.log(
-    JSON.stringify(
-      {
-        generated: 'derived from source; do not hand-edit',
-        referenced: referenced.size,
-        onDisk: present.size,
-        /**
-         * THE COMMISSION LIST. One entry per sprite still to draw, carrying what
-         * it is and the words the game already uses for it — so the brief and the
-         * game cannot describe the same thing differently.
-         */
-        missing: missing.map((id) => ({
-          id,
-          kind: kindOf(id),
-          ...briefFor(id, [...(referenced.get(id) ?? [])]),
-          referencedBy: [...(referenced.get(id) ?? [])],
-        })),
-        placeholder,
-        forTheOldCell,
-        unused,
-        dynamicIdFiles: [...new Set(dynamic)],
-      },
-      null,
-      2,
-    ),
-  );
+  console.log(JSON.stringify(report, null, 2));
 } else if (argv.includes('--missing')) {
-  for (const id of missing) console.log(id);
+  for (const item of missingBriefs) console.log(item.id);
 } else {
-  const bare = present.size === 0;
-  console.log('ART NEEDS — derived from the code, never hand-maintained (D16)');
-  console.log('='.repeat(64));
-  console.log(`  asset ids referenced in source : ${String(referenced.size)}`);
+  const bare = fileCount === 0;
+  console.log('ART NEEDS — source-derived, context-aware inventory');
+  console.log('='.repeat(68));
+  console.log(`  runtime asset ids             : ${String(report.runtimeReferenced)}`);
+  console.log(`  explicit unwired requests     : ${String(report.explicitRequests)}`);
+  console.log(`  total demanded ids            : ${String(report.demanded)}`);
   console.log(
-    `  files present on disk          : ${String(present.size)}${bare ? '   (bare clone — art is gitignored and ships via deploy)' : ''}`,
+    `  files present                 : ${String(report.onDiskFiles)}${bare ? '  (bare clone)' : ''}`,
   );
-  console.log(`  STILL NEEDED                   : ${String(missing.length)}`);
-  if (!bare) console.log(`  present but a stand-in         : ${String(placeholder.length)}`);
-  if (!bare) console.log(`  drawn for the old 32px cell    : ${String(forTheOldCell.length)}`);
-  console.log(`  on disk, referenced by nothing : ${String(unused.length)}`);
-  console.log();
+  console.log(`  missing art                   : ${String(report.missing.length)}`);
+  if (!bare) console.log(`  active stand-ins              : ${String(report.placeholder.length)}`);
+  if (!bare)
+    console.log(`  active old-cell remasters     : ${String(report.forTheOldCell.length)}`);
+  console.log(`  duplicate asset ids           : ${String(report.duplicates.length)}`);
+  console.log(`  unresolved dynamic art ids    : ${String(report.unresolvedDynamic.length)}`);
 
-  if (missing.length > 0) {
-    console.log('STILL NEEDED, by category');
-    console.log('-'.repeat(64));
-    for (const [cat, ids] of byCategory(missing)) {
-      console.log(`  ${cat}  (${String(ids.length)})`);
-      for (const id of ids) {
-        const files = [...(referenced.get(id) ?? [])];
-        const info = briefFor(id, files);
-        console.log(`      ${id}`);
-        console.log(
-          `          what   : ${kindOf(id)}${info.name === undefined ? '' : ` — ${info.name}`}`,
-        );
-        if (info.description !== undefined) {
-          console.log(`          reads  : ${info.description.slice(0, 96)}`);
-        }
-        console.log(`          from   : ${files[0] ?? ''}`);
+  if (missingBriefs.length > 0) {
+    console.log('\nSTILL NEEDED');
+    console.log('-'.repeat(68));
+    const grouped = Map.groupBy(missingBriefs, (item) => item.kind);
+    for (const [kind, items] of [...grouped].sort((a, b) => b[1].length - a[1].length)) {
+      console.log(`  ${kind} (${String(items.length)})`);
+      for (const item of items) {
+        console.log(`    ${item.id} — ${item.name}`);
+        console.log(`      ${item.demand}; ${item.referencedBy[0] ?? 'unknown source'}`);
       }
-      console.log();
     }
   }
 
-  if (placeholder.length > 0) {
-    console.log(`STAND-INS awaiting real art (${String(placeholder.length)})`);
-    console.log('-'.repeat(64));
-    console.log('  Correct size, correct name, correct palette. Replacing one is a');
-    console.log('  file overwrite — no code, manifest or pipeline change.');
-    console.log(`  ${placeholder.slice(0, 12).join(', ')}${placeholder.length > 12 ? ', …' : ''}`);
-    console.log();
+  if (requestedPresent.length > 0) {
+    console.log('\nART PRESENT, WIRING STILL REQUESTED');
+    console.log('-'.repeat(68));
+    for (const item of requestedPresent) console.log(`  ${item.id}`);
   }
 
-  if (forTheOldCell.length > 0) {
-    console.log(`DRAWN FOR THE OLD 32-PIXEL CELL (${String(forTheOldCell.length)})`);
-    console.log('-'.repeat(64));
-    console.log('  Real art, doubled to the 64-pixel cell shared/version.ts now draws.');
-    console.log('  Every pixel is duplicated, so a token carries the detail of a sprite');
-    console.log('  a quarter its area. WANTED: native 48x64 tokens and 64-wide props,');
-    console.log('  same names, same bottom-centre anchor — a file overwrite and nothing');
-    console.log('  else. The flag is measured from the pixels and clears itself.');
-    console.log(
-      `  ${forTheOldCell.slice(0, 12).join(', ')}${forTheOldCell.length > 12 ? ', …' : ''}`,
-    );
-    console.log();
+  if (report.unresolvedDynamic.length > 0) {
+    console.log('\nUNRESOLVED DYNAMIC ART IDS');
+    console.log('-'.repeat(68));
+    for (const item of report.unresolvedDynamic) {
+      console.log(`  ${item.file}:${String(item.line)}  ${item.expression}`);
+    }
   }
 
-  if (unused.length > 0) {
-    console.log(`ON DISK BUT REFERENCED BY NOTHING (${String(unused.length)})`);
-    console.log('-'.repeat(64));
-    console.log('  Not necessarily waste — art often lands before the code that uses');
-    console.log('  it. Worth a look if one has been sitting here for a while.');
-    console.log(`  ${unused.slice(0, 12).join(', ')}${unused.length > 12 ? ', …' : ''}`);
-    console.log();
-  }
-
-  if (dynamic.length > 0) {
-    console.log('WHAT THIS TOOL CANNOT SEE');
-    console.log('-'.repeat(64));
-    console.log('  These files build an asset id at runtime, so its gaps are invisible');
-    console.log('  here. A slice is evidence of presence, never of absence.');
-    for (const f of [...new Set(dynamic)]) console.log(`      ${f}`);
-    console.log();
+  if (report.duplicates.length > 0) {
+    console.log('\nDUPLICATE ASSET IDS');
+    console.log('-'.repeat(68));
+    for (const item of report.duplicates) console.log(`  ${item.id}: ${item.paths.join(', ')}`);
   }
 }

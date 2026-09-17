@@ -60,7 +60,7 @@
 import { EGO_TAG_ORDER, egoByCode, egosForTag } from './egos.ts';
 import { computeRarities, pickEntity } from './rarity.ts';
 import { MAX_EGO_POWER, formatItemId, materialMultiplier, parseItemId } from './resolve.ts';
-import { ITEMS, itemById } from './items.ts';
+import { ITEMS, Slot, itemById } from './items.ts';
 import { isMoneyId } from './money.ts';
 import { LEVELS_PER_BAND, bandFor, materialFor } from './loot.ts';
 import type { ItemEgoRef } from './resolve.ts';
@@ -328,20 +328,24 @@ const SHOP_EGO_CHANCE = 70;
  */
 /**
  * ═══════════════════════════════════════════════════════════════════════════
- * WHAT A SHOP SELLS. Two shelves, and the difference is why there are two shops.
+ * WHAT A SHOP SELLS. A small set of destination shelves, each with a reason to visit.
  * ═══════════════════════════════════════════════════════════════════════════
  *
- * A second shop stocking the same catalogue is not a second destination — it is
- * the same shop, further away. Ashwick is named ALCHEMY ROW and has a mixer
- * standing in it saying *"I mix what the Index has not read yet"*, and it sold
- * nothing at all; a name that promises a trade the place does not carry on is
- * the same broken promise as a town with nobody in it.
+ * A shop stocking the same catalogue is not a new destination — it is the same
+ * shop further away. The five shelves therefore follow place: civic general
+ * goods, clothing, alchemy, memorial keepsakes, and road gear.
  */
 export const ShopShelf = {
+  /** A mixed starter counter in Alderbrook: equipment and draughts together. */
+  General: 'general',
   /** Everything worn. Threadneedle Row, where you go to be better dressed. */
   Outfitter: 'outfitter',
   /** Everything drunk. Ashwick, and the only place that reliably has one. */
   Apothecary: 'apothecary',
+  /** Rings, lights and keepsakes among the named dead of Saint's Rest. */
+  Reliquary: 'reliquary',
+  /** Boots, cloaks, belts and lights chosen for the road rather than a wardrobe. */
+  Caravan: 'caravan',
 } as const;
 export type ShopShelf = (typeof ShopShelf)[keyof typeof ShopShelf];
 
@@ -356,9 +360,27 @@ export type ShopShelf = (typeof ShopShelf)[keyof typeof ShopShelf];
  * item existing and an item being part of how you play.
  */
 function shelfPool(shelf: ShopShelf): readonly Item[] {
-  return shelf === ShopShelf.Apothecary
-    ? ITEMS.filter((item) => item.use !== undefined)
-    : ITEMS.filter((item) => item.use === undefined);
+  if (shelf === ShopShelf.Apothecary) return ITEMS.filter((item) => item.use !== undefined);
+  if (shelf === ShopShelf.Outfitter) return ITEMS.filter((item) => item.use === undefined);
+  if (shelf === ShopShelf.Reliquary) {
+    return ITEMS.filter(
+      (item) =>
+        item.slot === Slot.Ring ||
+        item.slot === Slot.Trinket ||
+        item.slot === Slot.Neck ||
+        item.slot === Slot.Lite,
+    );
+  }
+  if (shelf === ShopShelf.Caravan) {
+    return ITEMS.filter(
+      (item) =>
+        item.slot === Slot.Feet ||
+        item.slot === Slot.Cloak ||
+        item.slot === Slot.Belt ||
+        item.slot === Slot.Lite,
+    );
+  }
+  return ITEMS;
 }
 
 function rollStockItem(rng: Rng, level: number, shelf: ShopShelf): string | undefined {

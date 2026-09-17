@@ -45,10 +45,14 @@ PROVENANCE = [
     # Without this row they match the broad `items/` stand-in row below and are
     # reported as procedural slot silhouettes - finished art counted as debt.
     ("items/equipment/",                         "derived",  "ImageGen source + deterministic native reduction"),
+    ("items/commission/",                        "derived",  "ImageGen standing-commission master + deterministic native reduction"),
     ("ui/icons/status/production/",              "derived",  "native code-authored status glyph"),
     # The six attribute icons for the stat rail. Same reason as `items/equipment/`:
     # the broad `ui/` row is a stand-in row and would claim them.
     ("ui/icons/stats/",                          "derived",  "ImageGen source + deterministic native reduction"),
+    ("ui/icons/status/commission/",              "derived",  "ImageGen standing-commission master + deterministic native reduction"),
+    ("ui/effects/",                              "derived",  "ImageGen standing-commission master + deterministic native reduction"),
+    ("characters/commission/",                   "derived",  "ImageGen standing-commission master + deterministic native reduction"),
     ("characters/chr_player_watchman_s.png",        "derived",  "direct high-resolution source-cell rebake"),
     ("characters/chr_player_inspector_s.png",       "derived",  "direct high-resolution source-cell rebake"),
     ("characters/chr_player_enforcer_s.png",        "derived",  "direct high-resolution source-cell rebake"),
@@ -70,7 +74,9 @@ PROVENANCE = [
     ("enemies/enemy_index_cairn_s.png",             "derived",  "ImageGen source + deterministic native reduction"),
     ("enemies/enemy_index_glut_s.png",              "derived",  "ImageGen source + deterministic native reduction"),
     ("enemies/enemy_index_husk_elite_s.png",        "derived",  "ImageGen source + deterministic native reduction"),
+    ("enemies/commission/",                         "derived",  "ImageGen standing-commission master + deterministic native reduction"),
     ("enemies/",                                    "derived",  "paper-doll composite"),
+    ("props/commission/",                           "derived",  "ImageGen standing-commission master + deterministic native reduction"),
     ("ui/icons/characters/icon_character_the_redactor.png", "derived", "ImageGen source + deterministic native reduction"),
     ("ui/pips/ui_pip_ink.png",                      "derived",  "ImageGen source + deterministic native reduction"),
     ("tiles/tile_ow_landmark_redaction.png",        "derived",  "ImageGen source + deterministic native reduction"),

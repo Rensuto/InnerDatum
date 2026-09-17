@@ -44,7 +44,7 @@ import { PROTOCOL_VERSION } from '../../src/shared/version.ts';
  * one says so at its own site rather than implying a catch it does not make.
  */
 describe('the first thing the game asks a new character to do', () => {
-  it('opens the file and names one room, and the room is one you can close', async () => {
+  it('lets the void notice them and names one room they can quiet', async () => {
     const dataDir = await mkdtemp(join(tmpdir(), 'inner-datum-firstcase-'));
     const port = 31947;
     const server = spawn(process.execPath, ['src/server/main.ts'], {
@@ -105,8 +105,8 @@ describe('the first thing the game asks a new character to do', () => {
       // which fires again on every threshold for the rest of the character's
       // life.
       expect(
-        lines.filter((l) => /your file is open/i.test(l.text ?? '')),
-        'the file opened before the character existed',
+        lines.filter((l) => /the void has noticed you/i.test(l.text ?? '')),
+        'the void noticed them before the character existed',
       ).toHaveLength(0);
 
       const options = (frames.find((f) => f['t'] === 'class_options')?.['options'] ?? []) as {
@@ -118,13 +118,13 @@ describe('the first thing the game asks a new character to do', () => {
 
       // ═══ THE ASSERTION THAT WAS FAILING, AND THE ONE LIVE COUNTERFACTUAL ═══
       // Verified by deleting the block: "expected undefined to be defined".
-      const opened = lines.find((l) => /your file is open/i.test(l.text ?? ''));
-      expect(opened, 'a new character is still never told the file exists').toBeDefined();
+      const opened = lines.find((l) => /the void has noticed you/i.test(l.text ?? ''));
+      expect(opened, 'a new character is still never noticed by the void').toBeDefined();
       expect(opened?.lane, 'advice belongs in the margin, not the record').toBe('margin');
       expect(opened?.text).toContain(String(fileableCount(SITES)));
 
       const start = lines.find((l) => /^start with /i.test(l.text ?? ''));
-      expect(start, 'the game opened a file and then named nothing to put in it').toBeDefined();
+      expect(start, 'the void noticed them and then named nowhere to go').toBeDefined();
       // The line is `Start with NAME — grade, bearing, N tiles. ...` and a
       // room name may hold spaces, so the em dash is the separator, not a gap.
       const halves = (start?.text ?? '').replace(/^Start with /, '').split(' — ');

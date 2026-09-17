@@ -156,7 +156,7 @@ afterEach(async () => {
  * about the helper. The body is put on the tile NEXT to the marker and takes one
  * step, which is `crossIntoSite` and every frame that follows it.
  */
-async function intoAshwick(client: Client, actorId: string): Promise<void> {
+async function intoAshwick(client: Client, actorId: string, atKeeper = true): Promise<void> {
   const overworld = server.realms.overworld;
   let cell: { x: number; y: number } | undefined;
   for (const [key, siteId] of overworld.sites) {
@@ -179,10 +179,34 @@ async function intoAshwick(client: Client, actorId: string): Promise<void> {
   expect(server.realms.realmOf(actorId)?.siteId, 'never got through the door').toBe(
     'site:ashwick_row',
   );
+  if (atKeeper) {
+    // Transaction tests begin at the counter. The route from the gate to this
+    // room is covered by the authored-town reachability test; this suite owns
+    // the shop loop and keeps its setup focused on that seam.
+    const town = server.realms.realmOf(actorId);
+    const keeper = town?.world.getActor(`${town.id}:town:thessaly`);
+    const shopper = town?.world.getActor(actorId);
+    if (keeper === undefined || shopper === undefined)
+      throw new Error('the Ashwick counter is empty');
+    shopper.x = keeper.x;
+    shopper.y = keeper.y + 1;
+  }
   await sleep(80);
 }
 
 describe('a player can buy healing and drink it', () => {
+  it('refuses a purchase made from the town gate instead of the counter', async () => {
+    const client = await connect(server.port);
+    const actorId = await client.hello();
+    await intoAshwick(client, actorId, false);
+    const stock = client.latest('shop')?.['stock'];
+    if (!Array.isArray(stock)) throw new Error('no stock');
+    const itemId = (stock[0] as Record<string, unknown> | undefined)?.['itemId'];
+    client.send({ t: 'shop_buy', itemId: String(itemId) });
+    await sleep(80);
+    expect(client.latest('error')?.['message']).toBe('step up to the shopkeeper');
+  });
+
   it('shows a shelf of draughts at Ashwick and nowhere else', async () => {
     const client = await connect(server.port);
     const actorId = await client.hello();

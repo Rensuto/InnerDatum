@@ -275,8 +275,7 @@ describe('the door on the Alderbrook side', () => {
  * is hosted from.
  *
  * These cases are the whole contract, and the last one is the point: the door is
- * NOT a twin and must keep missing, because `SiteView.landmark` says the gate is
- * what it is meant to draw.
+ * NOT a twin, so it keeps the Redaction gate silhouette of its own.
  */
 describe('landmarkIdFor', () => {
   it('names a place its own silhouette', () => {
@@ -300,5 +299,9 @@ describe('landmarkIdFor', () => {
 
   it('leaves the door alone, so it still draws the gate', () => {
     expect(landmarkIdFor('site:redaction')).toBe('tile_ow_landmark_redaction');
+  });
+
+  it('falls back to the gate instead of minting an untracked asset id', () => {
+    expect(landmarkIdFor('site:not_authored')).toBe('tile_ow_landmark_redaction');
   });
 });

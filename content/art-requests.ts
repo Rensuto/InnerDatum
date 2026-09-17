@@ -134,7 +134,7 @@ const ZONES = 'data/zones';
 
 /**
  * ═══ THE PEOPLE OF ALDERBROOK ═══
- * The ten named townsfolk wear their own faces now
+ * The sixteen named townsfolk wear their own faces now
  * (`src/server/content/townsfolk.ts`), so they have left this list. What is
  * left fills streets, shops and camps with people nobody has authored yet.
  */
@@ -182,12 +182,6 @@ export const TOWNSFOLK_ART_COMMISSION: readonly ArtRequest[] = [
     'An elderly citizen with a walking stick and a heavy coat, stooped but watchful.',
   ),
   actor(
-    { id: 'chr_npc_registry_clerk_s' },
-    "Saint Orwin's Square",
-    '',
-    'A registry clerk in sleeve garters and a green eyeshade, pen in hand.',
-  ),
-  actor(
     { id: 'chr_npc_office_secretary_s' },
     "The detective's office",
     '',
@@ -212,22 +206,10 @@ export const TOWNSFOLK_ART_COMMISSION: readonly ArtRequest[] = [
     'A foundry foreman in a bowler with a pocket watch out and rolled blueprints under one arm.',
   ),
   actor(
-    { id: 'chr_npc_alchemy_apprentice_s' },
-    'Ashwick Alchemy Row',
-    `${ZONES}/town-angolwen/npcs.lua`,
-    'An apprentice in an oversized apron carrying an armful of jars.',
-  ),
-  actor(
     { id: 'chr_npc_curate_s' },
     "Saint's Rest",
     `${NPCS}/sunwall-town.lua`,
     'The curate: black cassock, a lantern and a prayer book, a calm and stubborn face.',
-  ),
-  actor(
-    { id: 'chr_npc_mourner_s' },
-    "Saint's Rest",
-    '',
-    'A veiled mourner in black holding a few white lilies.',
   ),
   actor(
     { id: 'chr_npc_smallholder_s' },
@@ -236,22 +218,10 @@ export const TOWNSFOLK_ART_COMMISSION: readonly ArtRequest[] = [
     'A smallholder with a hoe and a basket of turnips, boots caked in field mud.',
   ),
   actor(
-    { id: 'chr_npc_camp_cook_s' },
-    "A Wayfarers' Camp",
-    '',
-    'A camp cook with a ladle and a dented pot, apron over a greatcoat.',
-  ),
-  actor(
     { id: 'chr_npc_drover_s' },
     "A Wayfarers' Camp",
     '',
     'A drover with a crook and a long weatherproof coat.',
-  ),
-  actor(
-    { id: 'chr_npc_pawnbroker_s' },
-    'Threadneedle Row',
-    '',
-    "A pawnbroker in half-moon spectacles with a jeweller's loupe and a ticket book.",
   ),
   actor(
     { id: 'chr_npc_fence_s' },
@@ -276,12 +246,6 @@ export const TOWNSFOLK_ART_COMMISSION: readonly ArtRequest[] = [
     'The Glass Archive',
     '',
     'A friendly archivist in white cotton gloves carrying a document in a glass case.',
-  ),
-  actor(
-    { id: 'chr_npc_bookbinder_s' },
-    'Threadneedle Row',
-    '',
-    'A bookbinder with an awl and a stack of folded signatures.',
   ),
   actor(
     { id: 'chr_npc_ferryman_s' },
@@ -2195,45 +2159,6 @@ const TRAPS = 'data/general/traps';
 
 export const PROP_ART_COMMISSION: readonly ArtRequest[] = [
   cell(
-    { id: 'prop_market_stall' },
-    'any town',
-    '',
-    'A market stall with a striped awning and crates of produce.',
-  ),
-  cell({ id: 'prop_shop_counter' }, 'shops', '', 'A wooden shop counter with a brass bell on top.'),
-  cell({ id: 'prop_lamp_post' }, 'streets', '', 'A cast-iron gas lamp post, lit.'),
-  cell({ id: 'prop_street_bench' }, 'streets', '', 'A wrought-iron park bench.'),
-  cell({ id: 'prop_crate' }, 'any', '', 'A stamped wooden crate.'),
-  cell({ id: 'prop_barrel' }, 'any', '', 'An iron-hooped barrel.'),
-  cell({ id: 'prop_grain_sack' }, 'any', '', 'A tied grain sack.'),
-  cell({ id: 'prop_handcart' }, 'streets', '', 'A two-wheeled handcart.'),
-  cell({ id: 'prop_well' }, 'any town', '', 'A stone well with a winch.'),
-  cell({ id: 'prop_noticeboard' }, 'any town', '', 'A noticeboard covered in pinned bills.'),
-  cell(
-    { id: 'prop_iron_safe' },
-    "The detective's office",
-    '',
-    'The iron safe that cites an address that does not exist.',
-  ),
-  cell(
-    { id: 'prop_office_desk' },
-    "The detective's office",
-    '',
-    'A cluttered desk with a green-shaded lamp.',
-  ),
-  cell(
-    { id: 'prop_filing_cabinet' },
-    'offices, archives',
-    '',
-    'A tall filing cabinet with one drawer open.',
-  ),
-  cell({ id: 'prop_typewriter_desk' }, 'offices', '', 'A small desk with a typewriter.'),
-  cell({ id: 'prop_coat_stand' }, 'offices', '', 'A coat stand with a hat and a scarf.'),
-  cell({ id: 'prop_bookshelf' }, 'any interior', '', 'A crammed bookshelf.'),
-  cell({ id: 'prop_hearth' }, 'any interior', '', 'A small lit fireplace.'),
-  cell({ id: 'prop_furnace' }, 'Gearford Industrial Ward', '', 'A glowing blast furnace mouth.'),
-  cell({ id: 'prop_gear_pile' }, 'Gearford Industrial Ward', '', 'A pile of rusted gears.'),
-  cell(
     { id: 'prop_steam_pipe' },
     'Gearford Industrial Ward',
     '',
@@ -2247,74 +2172,12 @@ export const PROP_ART_COMMISSION: readonly ArtRequest[] = [
     '',
     'A heap of coal with a shovel in it.',
   ),
-  cell(
-    { id: 'prop_alembic' },
-    'Ashwick Alchemy Row',
-    '',
-    'A glass alembic bubbling over a burner.',
-  ),
-  cell({ id: 'prop_cauldron' }, 'Ashwick Alchemy Row', '', 'A cast-iron cauldron steaming.'),
-  cell({ id: 'prop_jar_shelf' }, 'Ashwick Alchemy Row', '', 'A shelf of labelled specimen jars.'),
-  cell({ id: 'prop_herb_rack' }, 'Ashwick Alchemy Row', '', 'A drying rack of hanging herbs.'),
-  cell({ id: 'prop_gravestone_a' }, "Saint's Rest", '', 'A leaning slate gravestone.'),
-  cell({ id: 'prop_gravestone_b' }, "Saint's Rest", '', 'A stone cross grave marker.'),
-  cell(
-    { id: 'prop_open_grave' },
-    "Saint's Rest",
-    '',
-    'A freshly dug open grave with a spade stuck in the mound.',
-  ),
   cell({ id: 'prop_mausoleum_door' }, "Saint's Rest", '', 'A mausoleum door with a rusted gate.'),
-  cell({ id: 'prop_chapel_pew' }, "Saint's Rest, the Drowned Chapel", '', 'A wooden pew.'),
-  cell({ id: 'prop_font' }, "Saint's Rest, the Drowned Chapel", '', 'A stone font.'),
-  cell({ id: 'prop_campfire' }, "A Wayfarers' Camp", '', 'A campfire with a kettle on a tripod.'),
-  cell({ id: 'prop_tent' }, "A Wayfarers' Camp", '', 'A canvas tent.'),
-  cell({ id: 'prop_bedroll' }, "A Wayfarers' Camp", '', 'A rolled blanket and a pack.'),
-  cell({ id: 'prop_wagon' }, "A Wayfarers' Camp", '', 'A covered wagon.'),
-  cell({ id: 'prop_loom' }, 'Threadneedle Row', '', 'A weaving loom mid-work.'),
-  cell(
-    { id: 'prop_dress_form' },
-    'Threadneedle Row',
-    '',
-    "A tailor's dress form with a half-made coat.",
-  ),
-  cell({ id: 'prop_cloth_bolts' }, 'Threadneedle Row', '', 'Stacked bolts of cloth.'),
-  cell(
-    { id: 'prop_glass_case' },
-    'The Glass Archive',
-    '',
-    'A glass display case holding one document.',
-  ),
-  cell(
-    { id: 'prop_card_catalogue' },
-    'The Glass Archive',
-    '',
-    'A card catalogue with a drawer pulled out.',
-  ),
-  cell(
-    { id: 'prop_reading_desk' },
-    'The Glass Archive',
-    '',
-    'A slanted reading desk with an open ledger.',
-  ),
-  cell({ id: 'prop_archive_shelf' }, 'The Glass Archive', '', 'A glass-fronted archive shelf.'),
   cell({ id: 'prop_sewer_grate' }, 'The Underworks', '', 'A floor grate with dark water below.'),
   cell({ id: 'prop_pipe_junction' }, 'The Underworks', '', 'A junction of large pipes.'),
   cell({ id: 'prop_mine_cart' }, 'The Hollow Mine', '', 'An ore cart on a short stretch of rail.'),
   cell({ id: 'prop_support_beam' }, 'The Hollow Mine', '', 'A timber mine support.'),
   cell({ id: 'prop_ore_pile' }, 'The Hollow Mine', '', 'A pile of rough ore.'),
-  cell(
-    { id: 'prop_broken_altar' },
-    'The Drowned Chapel',
-    '',
-    'A cracked altar under an inch of water.',
-  ),
-  cell({ id: 'prop_sluice_gate' }, 'The Weir', '', 'A wooden sluice gate.'),
-  cell({ id: 'prop_fishing_net' }, 'The Weir', '', 'A net hung to dry on poles.'),
-  cell({ id: 'prop_eel_trap' }, 'The Weir', '', 'A wicker eel trap.'),
-  cell({ id: 'prop_tree_stump' }, 'Blackwood Outskirts', '', 'A mossy tree stump.'),
-  cell({ id: 'prop_fallen_log' }, 'Blackwood Outskirts', '', 'A rotting fallen log.'),
-  cell({ id: 'prop_toadstools' }, 'Blackwood Outskirts', '', 'A ring of pale toadstools.'),
   cell(
     { id: 'prop_evidence_box_closed' },
     'any delve',

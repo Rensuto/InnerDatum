@@ -1939,6 +1939,66 @@ export function settlementRoofSpriteId(code: TileCode, tx: number, ty: number): 
   return phases[row * SETTLEMENT_ROOF_PHASE_SIDE + column] ?? null;
 }
 
+const LOCAL_DOOR_SPRITES = {
+  [TileCode.DOOR]: {
+    ns: 'tile_local_door_closed_ns',
+    ew: 'tile_local_door_closed_ew',
+  },
+  [TileCode.DOOR_OPEN]: {
+    ns: 'tile_local_door_open_ns',
+    ew: 'tile_local_door_open_ew',
+  },
+} as const;
+
+type LocalDoorOrientation = 'ns' | 'ew';
+
+function localDoorOrientation(level: LevelView, tx: number, ty: number): LocalDoorOrientation {
+  const ns =
+    Number(isWalkable(tileAt(level, tx, ty - 1))) + Number(isWalkable(tileAt(level, tx, ty + 1)));
+  const ew =
+    Number(isWalkable(tileAt(level, tx - 1, ty))) + Number(isWalkable(tileAt(level, tx + 1, ty)));
+  return ns >= ew ? 'ns' : 'ew';
+}
+
+function localDoorGroundPair(
+  level: LevelView,
+  tx: number,
+  ty: number,
+  orientation: LocalDoorOrientation,
+): readonly [TileCode, TileCode] {
+  const first = orientation === 'ns' ? tileAt(level, tx, ty - 1) : tileAt(level, tx - 1, ty);
+  const second = orientation === 'ns' ? tileAt(level, tx, ty + 1) : tileAt(level, tx + 1, ty);
+  const firstGround = isWalkable(first) && first !== TileCode.DOOR_OPEN ? first : null;
+  const secondGround = isWalkable(second) && second !== TileCode.DOOR_OPEN ? second : null;
+  return [
+    firstGround ?? secondGround ?? TileCode.FLOOR,
+    secondGround ?? firstGround ?? TileCode.FLOOR,
+  ];
+}
+
+/**
+ * A door's suffix names the direction a body passes through it. ToME's open
+ * form is floor; these overlays keep that ground visible and only draw the
+ * jamb, threshold and leaf. The neighboring walkable pair tells us whether the
+ * opening runs north-south or east-west, so a divider never borrows a doorway
+ * painted for the perpendicular wall.
+ */
+export function localDoorSpriteId(
+  level: LevelView,
+  code: TileCode,
+  tx: number,
+  ty: number,
+): string | null {
+  const sprites =
+    code === TileCode.DOOR
+      ? LOCAL_DOOR_SPRITES[TileCode.DOOR]
+      : code === TileCode.DOOR_OPEN
+        ? LOCAL_DOOR_SPRITES[TileCode.DOOR_OPEN]
+        : undefined;
+  if (sprites === undefined) return null;
+  return sprites[localDoorOrientation(level, tx, ty)];
+}
+
 /**
  * Player-scale terrain for every world material currently used by a Common or
  * Inner realm.
@@ -1948,35 +2008,304 @@ export function settlementRoofSpriteId(code: TileCode, tx: number, ty: number): 
  * complete 64px civic-building symbol to every solid cell inside the city.  A
  * 5x3 block therefore became fifteen doll houses beside a one-cell-tall human.
  * These ids instead name seamless, close-scale material slices: one cell of
- * paving, masonry, roof, rock or vegetation.  Repeating them joins a mass; it
+ * paving, masonry, wall cap, rock or vegetation. Repeating them joins a mass; it
  * never repeats a complete building.
  *
  * No entry falls back to `TILE_SPRITES`.  Missing local art deliberately takes
  * `tileFill`'s clear flat-colour path, because a plain wall at the correct scale
  * is more truthful than a beautifully drawn mountain or house at the wrong one.
- * FLOOR and WALL remain absent for the same reason they always were: abstract
- * generated chambers need no commissioned surface.
+ * FLOOR and WALL now belong here too: delves use the same player-scale material
+ * contract as settlements, while retaining their own neutral stone families.
  */
 export const LOCAL_TILE_SPRITES: TerrainSpriteTable = {
-  [TileCode.COBBLE]: ['tile_local_cobble', 'tile_local_cobble_b'],
-  [TileCode.PAVING]: ['tile_local_paving'],
-  [TileCode.GREEN]: ['tile_local_green'],
-  [TileCode.MIRE]: ['tile_local_mire'],
-  [TileCode.SOOT]: ['tile_local_soot'],
-  [TileCode.TERRACE]: ['tile_local_terrace'],
-  [TileCode.CIVIC]: ['tile_local_civic'],
-  [TileCode.WORKS]: ['tile_local_works'],
-  [TileCode.TREES]: ['tile_local_trees'],
-  [TileCode.ERASED]: ['tile_local_erased'],
-  [TileCode.WATER]: ['tile_local_water'],
-  [TileCode.PLAINS]: ['tile_local_plains', 'tile_local_plains_b'],
-  [TileCode.HILLS]: ['tile_local_hills'],
-  [TileCode.HEATH]: ['tile_local_heath'],
-  [TileCode.SHORE]: ['tile_local_shore'],
-  [TileCode.YARD]: ['tile_local_yard'],
-  [TileCode.TOWN_WALL]: ['tile_local_town_wall'],
-  [TileCode.MOUNTAIN]: ['tile_local_mountain'],
-  [TileCode.CRAG]: ['tile_local_crag'],
+  [TileCode.FLOOR]: [
+    'tile_local_floor',
+    'tile_local_floor_b',
+    'tile_local_floor_c',
+    'tile_local_floor_d',
+    'tile_local_floor_e',
+    'tile_local_floor_f',
+    'tile_local_floor_g',
+    'tile_local_floor_h',
+  ],
+  [TileCode.WALL]: [
+    'tile_local_wall',
+    'tile_local_wall_b',
+    'tile_local_wall_c',
+    'tile_local_wall_d',
+    'tile_local_wall_e',
+    'tile_local_wall_f',
+    'tile_local_wall_g',
+    'tile_local_wall_h',
+  ],
+  [TileCode.DOOR]: ['tile_local_door_closed'],
+  [TileCode.DOOR_OPEN]: ['tile_local_door_open'],
+  [TileCode.COBBLE]: [
+    'tile_local_cobble',
+    'tile_local_cobble_b',
+    'tile_local_cobble_c',
+    'tile_local_cobble_d',
+    'tile_local_cobble_e',
+    'tile_local_cobble_f',
+    'tile_local_cobble_g',
+    'tile_local_cobble_h',
+  ],
+  [TileCode.PAVING]: [
+    'tile_local_paving',
+    'tile_local_paving_b',
+    'tile_local_paving_c',
+    'tile_local_paving_d',
+    'tile_local_paving_e',
+    'tile_local_paving_f',
+    'tile_local_paving_g',
+    'tile_local_paving_h',
+  ],
+  [TileCode.BRIDGE]: [
+    'tile_local_bridge',
+    'tile_local_bridge_b',
+    'tile_local_bridge_c',
+    'tile_local_bridge_d',
+    'tile_local_bridge_e',
+    'tile_local_bridge_f',
+    'tile_local_bridge_g',
+    'tile_local_bridge_h',
+  ],
+  [TileCode.GREEN]: [
+    'tile_local_green',
+    'tile_local_green_b',
+    'tile_local_green_c',
+    'tile_local_green_d',
+    'tile_local_green_e',
+    'tile_local_green_f',
+    'tile_local_green_g',
+    'tile_local_green_h',
+  ],
+  [TileCode.MIRE]: [
+    'tile_local_mire',
+    'tile_local_mire_b',
+    'tile_local_mire_c',
+    'tile_local_mire_d',
+    'tile_local_mire_e',
+    'tile_local_mire_f',
+    'tile_local_mire_g',
+    'tile_local_mire_h',
+  ],
+  [TileCode.SOOT]: [
+    'tile_local_soot',
+    'tile_local_soot_b',
+    'tile_local_soot_c',
+    'tile_local_soot_d',
+    'tile_local_soot_e',
+    'tile_local_soot_f',
+    'tile_local_soot_g',
+    'tile_local_soot_h',
+  ],
+  [TileCode.TERRACE]: [
+    'tile_local_terrace',
+    'tile_local_terrace_b',
+    'tile_local_terrace_c',
+    'tile_local_terrace_d',
+    'tile_local_terrace_e',
+    'tile_local_terrace_f',
+    'tile_local_terrace_g',
+    'tile_local_terrace_h',
+  ],
+  [TileCode.CIVIC]: [
+    'tile_local_civic',
+    'tile_local_civic_b',
+    'tile_local_civic_c',
+    'tile_local_civic_d',
+    'tile_local_civic_e',
+    'tile_local_civic_f',
+    'tile_local_civic_g',
+    'tile_local_civic_h',
+  ],
+  [TileCode.WORKS]: [
+    'tile_local_works',
+    'tile_local_works_b',
+    'tile_local_works_c',
+    'tile_local_works_d',
+    'tile_local_works_e',
+    'tile_local_works_f',
+    'tile_local_works_g',
+    'tile_local_works_h',
+  ],
+  [TileCode.TREES]: [
+    'tile_local_trees',
+    'tile_local_trees_b',
+    'tile_local_trees_c',
+    'tile_local_trees_d',
+    'tile_local_trees_e',
+    'tile_local_trees_f',
+    'tile_local_trees_g',
+    'tile_local_trees_h',
+  ],
+  [TileCode.ERASED]: [
+    'tile_local_erased',
+    'tile_local_erased_b',
+    'tile_local_erased_c',
+    'tile_local_erased_d',
+    'tile_local_erased_e',
+    'tile_local_erased_f',
+    'tile_local_erased_g',
+    'tile_local_erased_h',
+  ],
+  [TileCode.WATER]: [
+    'tile_local_water',
+    'tile_local_water_b',
+    'tile_local_water_c',
+    'tile_local_water_d',
+    'tile_local_water_e',
+    'tile_local_water_f',
+    'tile_local_water_g',
+    'tile_local_water_h',
+  ],
+  [TileCode.PLAINS]: [
+    'tile_local_plains',
+    'tile_local_plains_b',
+    'tile_local_plains_c',
+    'tile_local_plains_d',
+    'tile_local_plains_e',
+    'tile_local_plains_f',
+    'tile_local_plains_g',
+    'tile_local_plains_h',
+  ],
+  [TileCode.HILLS]: [
+    'tile_local_hills',
+    'tile_local_hills_b',
+    'tile_local_hills_c',
+    'tile_local_hills_d',
+    'tile_local_hills_e',
+    'tile_local_hills_f',
+    'tile_local_hills_g',
+    'tile_local_hills_h',
+  ],
+  [TileCode.HEATH]: [
+    'tile_local_heath',
+    'tile_local_heath_b',
+    'tile_local_heath_c',
+    'tile_local_heath_d',
+    'tile_local_heath_e',
+    'tile_local_heath_f',
+    'tile_local_heath_g',
+    'tile_local_heath_h',
+  ],
+  [TileCode.SHORE]: [
+    'tile_local_shore',
+    'tile_local_shore_b',
+    'tile_local_shore_c',
+    'tile_local_shore_d',
+    'tile_local_shore_e',
+    'tile_local_shore_f',
+    'tile_local_shore_g',
+    'tile_local_shore_h',
+  ],
+  [TileCode.YARD]: [
+    'tile_local_yard',
+    'tile_local_yard_b',
+    'tile_local_yard_c',
+    'tile_local_yard_d',
+    'tile_local_yard_e',
+    'tile_local_yard_f',
+    'tile_local_yard_g',
+    'tile_local_yard_h',
+  ],
+  [TileCode.TOWN_WALL]: [
+    'tile_local_town_wall',
+    'tile_local_town_wall_b',
+    'tile_local_town_wall_c',
+    'tile_local_town_wall_d',
+    'tile_local_town_wall_e',
+    'tile_local_town_wall_f',
+    'tile_local_town_wall_g',
+    'tile_local_town_wall_h',
+  ],
+  [TileCode.MOUNTAIN]: [
+    'tile_local_mountain',
+    'tile_local_mountain_b',
+    'tile_local_mountain_c',
+    'tile_local_mountain_d',
+    'tile_local_mountain_e',
+    'tile_local_mountain_f',
+    'tile_local_mountain_g',
+    'tile_local_mountain_h',
+  ],
+  [TileCode.CRAG]: [
+    'tile_local_crag',
+    'tile_local_crag_b',
+    'tile_local_crag_c',
+    'tile_local_crag_d',
+    'tile_local_crag_e',
+    'tile_local_crag_f',
+    'tile_local_crag_g',
+    'tile_local_crag_h',
+  ],
+};
+
+/**
+ * A local building is a raised wall mass, not a field of roof icons.
+ *
+ * The base sprite above is its horizontal cap/material. This second layer is a
+ * transparent vertical face occupying the lower 28 pixels of the same cell. It
+ * is drawn only where the wall's SOUTH side meets walkable ground: one coherent
+ * facade per street edge, independent of how large the solid mass behind it is.
+ * That is the readable town grammar used by dense tactical roguelikes while the
+ * materials, palette and detail remain original Inner Datum art.
+ *
+ * Static ids are deliberate. `art-needs` must be able to prove every requested
+ * face exists; synthesized filenames turn a visible gap into an unreported one.
+ */
+export const LOCAL_WALL_FACE_SPRITES: TerrainSpriteTable = {
+  [TileCode.WALL]: [
+    'tile_local_wall_face',
+    'tile_local_wall_face_b',
+    'tile_local_wall_face_c',
+    'tile_local_wall_face_d',
+    'tile_local_wall_face_e',
+    'tile_local_wall_face_f',
+    'tile_local_wall_face_g',
+    'tile_local_wall_face_h',
+  ],
+  [TileCode.TERRACE]: [
+    'tile_local_terrace_face',
+    'tile_local_terrace_face_b',
+    'tile_local_terrace_face_c',
+    'tile_local_terrace_face_d',
+    'tile_local_terrace_face_e',
+    'tile_local_terrace_face_f',
+    'tile_local_terrace_face_g',
+    'tile_local_terrace_face_h',
+  ],
+  [TileCode.CIVIC]: [
+    'tile_local_civic_face',
+    'tile_local_civic_face_b',
+    'tile_local_civic_face_c',
+    'tile_local_civic_face_d',
+    'tile_local_civic_face_e',
+    'tile_local_civic_face_f',
+    'tile_local_civic_face_g',
+    'tile_local_civic_face_h',
+  ],
+  [TileCode.WORKS]: [
+    'tile_local_works_face',
+    'tile_local_works_face_b',
+    'tile_local_works_face_c',
+    'tile_local_works_face_d',
+    'tile_local_works_face_e',
+    'tile_local_works_face_f',
+    'tile_local_works_face_g',
+    'tile_local_works_face_h',
+  ],
+  [TileCode.TOWN_WALL]: [
+    'tile_local_town_wall_face',
+    'tile_local_town_wall_face_b',
+    'tile_local_town_wall_face_c',
+    'tile_local_town_wall_face_d',
+    'tile_local_town_wall_face_e',
+    'tile_local_town_wall_face_f',
+    'tile_local_town_wall_face_g',
+    'tile_local_town_wall_face_h',
+  ],
 };
 
 const NO_TILE_SPRITES: TerrainSpriteTable = {};
@@ -2585,6 +2914,23 @@ export function createRenderer(options: RendererOptions): Renderer {
     backCtx.drawImage(sprite.image, sx, sy, TILE_PX, TILE_PX);
   }
 
+  function terrainSprite(
+    table: TerrainSpriteTable,
+    code: TileCode,
+    tx: number,
+    ty: number,
+    overrideId?: string,
+  ): Sprite | undefined {
+    const ids = table[code];
+    let id = overrideId;
+    if (id === undefined) {
+      if (ids === undefined) return undefined;
+      id = ids.length === 1 ? ids[0] : ids[tileVariant(tx, ty, ids.length)];
+    }
+    if (id === undefined) return undefined;
+    return sprites.sprite(id);
+  }
+
   function paintTerrain(
     table: TerrainSpriteTable,
     code: TileCode,
@@ -2594,15 +2940,7 @@ export function createRenderer(options: RendererOptions): Renderer {
     sy: number,
     overrideId?: string,
   ): boolean {
-    const ids = table[code];
-    let id = overrideId;
-    if (id === undefined) {
-      if (ids === undefined) return false;
-      id = ids.length === 1 ? ids[0] : ids[tileVariant(tx, ty, ids.length)];
-    }
-    if (id === undefined) return false;
-
-    const sprite: Sprite | undefined = sprites.sprite(id);
+    const sprite = terrainSprite(table, code, tx, ty, overrideId);
     if (sprite === undefined) return false;
 
     // Scaled to TILE_PX rather than drawn at the sprite's own size: a tile that
@@ -2612,6 +2950,58 @@ export function createRenderer(options: RendererOptions): Renderer {
     // double into the 64-pixel cell — chunky, never blurred, and correct the
     // moment the native 64-pixel family for that scale is installed.
     backCtx.drawImage(sprite.image, sx, sy, TILE_PX, TILE_PX);
+    return true;
+  }
+
+  function paintDoorGroundSlice(
+    table: TerrainSpriteTable,
+    code: TileCode,
+    tx: number,
+    ty: number,
+    orientation: LocalDoorOrientation,
+    second: boolean,
+    sx: number,
+    sy: number,
+  ): void {
+    const half = TILE_PX / 2;
+    const dx = sx + (orientation === 'ew' && second ? half : 0);
+    const dy = sy + (orientation === 'ns' && second ? half : 0);
+    const dw = orientation === 'ew' ? half : TILE_PX;
+    const dh = orientation === 'ns' ? half : TILE_PX;
+    const sprite = terrainSprite(table, code, tx, ty);
+    if (sprite === undefined) {
+      backCtx.fillStyle = tileFill(code);
+      backCtx.fillRect(dx, dy, dw, dh);
+      return;
+    }
+
+    const sw = orientation === 'ew' ? sprite.w / 2 : sprite.w;
+    const sh = orientation === 'ns' ? sprite.h / 2 : sprite.h;
+    const sourceX = orientation === 'ew' && second ? sprite.w - sw : 0;
+    const sourceY = orientation === 'ns' && second ? sprite.h - sh : 0;
+    backCtx.drawImage(sprite.image, sourceX, sourceY, sw, sh, dx, dy, dw, dh);
+  }
+
+  /** Continue both neighboring surfaces under a transparent same-level door. */
+  function paintLocalDoor(
+    level: LevelView,
+    table: TerrainSpriteTable,
+    code: TileCode,
+    tx: number,
+    ty: number,
+    sx: number,
+    sy: number,
+  ): boolean {
+    const id = localDoorSpriteId(level, code, tx, ty);
+    if (id === null) return false;
+    const door = sprites.sprite(id);
+    if (door === undefined) return false;
+
+    const orientation = localDoorOrientation(level, tx, ty);
+    const [first, second] = localDoorGroundPair(level, tx, ty, orientation);
+    paintDoorGroundSlice(table, first, tx, ty, orientation, false, sx, sy);
+    paintDoorGroundSlice(table, second, tx, ty, orientation, true, sx, sy);
+    backCtx.drawImage(door.image, sx, sy, TILE_PX, TILE_PX);
     return true;
   }
 
@@ -2738,6 +3128,35 @@ export function createRenderer(options: RendererOptions): Renderer {
     if (isWalkable(tileAt(level, tx, ty + 1))) backCtx.fillRect(sx, sy + TILE_PX - W, TILE_PX, W);
     if (isWalkable(tileAt(level, tx - 1, ty))) backCtx.fillRect(sx, sy, W, TILE_PX);
     if (isWalkable(tileAt(level, tx + 1, ty))) backCtx.fillRect(sx + TILE_PX - W, sy, W, TILE_PX);
+  }
+
+  /**
+   * Give local walls height without changing collision or realm generation.
+   *
+   * Only a south edge gets a full vertical face because the camera sees the
+   * south/front side of the wall. North/east/west boundaries retain the thin
+   * value rim from `paintBarrierEdge`; drawing full faces on all four sides
+   * would make every exposed cell look like an isolated box. Doors replace a
+   * wall cell and therefore interrupt this run naturally.
+   */
+  function paintLocalWallFace(
+    level: LevelView,
+    realmKind: string | null,
+    code: TileCode,
+    tx: number,
+    ty: number,
+    sx: number,
+    sy: number,
+  ): void {
+    if (realmKind !== 'common' && realmKind !== 'inner') return;
+    if (!isWalkable(tileAt(level, tx, ty + 1))) return;
+    const ids = LOCAL_WALL_FACE_SPRITES[code];
+    if (ids === undefined) return;
+    const id = ids.length === 1 ? ids[0] : ids[tileVariant(tx, ty, ids.length)];
+    if (id === undefined) return;
+    const sprite = sprites.sprite(id);
+    if (sprite === undefined) return;
+    backCtx.drawImage(sprite.image, sx, sy, TILE_PX, TILE_PX);
   }
 
   /**
@@ -2920,7 +3339,10 @@ export function createRenderer(options: RendererOptions): Renderer {
         // THE LINE OVER THE GROUND. Only when a terrain sprite actually
         // drew — see `paintTransport`.
         const roofId = paintsWorldTopology ? settlementRoofSpriteId(code, tx, ty) : null;
-        if (paintTerrain(table, code, tx, ty, sx, sy, roofId ?? undefined)) {
+        const painted =
+          (!paintsWorldTopology && paintLocalDoor(level, table, code, tx, ty, sx, sy)) ||
+          paintTerrain(table, code, tx, ty, sx, sy, roofId ?? undefined);
+        if (painted) {
           // Road/rail/bridge overlays describe whole overworld connections.
           // Reusing them inside a town puts a map-scale junction on one patch
           // of player-scale paving, the same category error this table split
@@ -2944,7 +3366,9 @@ export function createRenderer(options: RendererOptions): Renderer {
           }
         }
 
-        // ALWAYS, ART OR NO ART. See `paintBarrierEdge`.
+        // The face establishes actual architectural height; the unconditional
+        // value rim keeps every other blocking boundary readable.
+        paintLocalWallFace(level, realmKind, code, tx, ty, sx, sy);
         paintBarrierEdge(level, code, tx, ty, sx, sy);
       }
     }

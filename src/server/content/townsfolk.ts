@@ -6,11 +6,10 @@
  * PEOPLE WHO LIVE HERE. THE TOWNS WERE EMPTY ROOMS WITH SHELVES IN THEM.
  * ═══════════════════════════════════════════════════════════════════════════
  *
- * There is a whole shop system — stock, restock, prices, buy and sell, a client
- * tab — and until now there was nobody behind it. `net/gateway.ts` says so
- * outright: *"There is no 'are you next to the shopkeeper' check because there
- * is no shopkeeper: the shop belongs to the realm, and being in the realm is
- * being in the shop."* Five settlements, thirteen sites, and not one person.
+ * The shop system once belonged to a realm rather than a person: entering town
+ * exposed stock and a buy could be sent from the gate. Every settlement now has
+ * a physical counter keeper, and the gateway requires the buyer or seller to
+ * stand beside that body. The other residents make the place more than a shop.
  *
  * ═══════════════════════════════════════════════════════════════════════════
  * WHY A `MonsterActor` WITH A FACTION AND NOT A THIRD `ActorKind`
@@ -47,6 +46,7 @@
 import { AiProfile, Faction } from '../engine/actor.ts';
 import { canWalk } from '../../shared/level.ts';
 import { TileCode, TopicId, isWalkable } from '../../shared/protocol.ts';
+import { townResidentAt } from './towns.ts';
 import type { AuthoredMap } from '../../shared/level.ts';
 import type { World } from '../world/world.ts';
 
@@ -80,7 +80,7 @@ export type TownsfolkSpec = {
    * trade: nobody else wears it, and test/server/townsfolk.test.ts pins who
    * wears which, written out, so two faces cannot quietly change places.
    *
-   * ═══ WAS ONE STAND-IN FOR ALL TEN ═══
+   * ═══ WAS ONE STAND-IN FOR THE ORIGINAL TEN ═══
    * Every one of them wore `chr_npc_bent_watchman_s`, the only authored, unused
    * sprite under that prefix, whose id names a hostile from game-design.md's
    * sample log. This note asked for a single shared `chr_npc_counter_keeper_s`
@@ -94,9 +94,11 @@ export type TownsfolkSpec = {
    *
    * A FACE LEAVES THE COMMISSION IN THE CHANGE THAT NAMES IT HERE. That is
    * `art-requests.ts`'s own header rule, and the same test file holds these
-   * ten to it: a face worn here and still on order fails there.
+   * sixteen to it: a face worn here and still on order fails there.
    */
   readonly sprite: string;
+  /** Talking to this person opens the realm's existing shop shelf. */
+  readonly shopkeeper?: true;
   /** Said the first time somebody walks into her, per realm. */
   readonly greetFirst: string;
   /** Said on every bump after that. */
@@ -256,6 +258,7 @@ export const TOWNSFOLK: ReadonlyMap<string, readonly TownsfolkSpec[]> = new Map<
         id: 'merrow',
         name: 'Merrow Stitch',
         sprite: 'chr_npc_merrow_stitch_s',
+        shopkeeper: true,
         greetFirst: 'Merrow Stitch. I mend what the Index unpicks.',
         greetAgain: 'Still here. So is the counter.',
         greetFiled: 'Your coat has been somewhere. I can tell from here.',
@@ -309,6 +312,28 @@ export const TOWNSFOLK: ReadonlyMap<string, readonly TownsfolkSpec[]> = new Map<
         },
         later: {
           [TopicId.Rumour]: 'West past the Sedge. I will not haul out there.',
+        },
+      },
+      {
+        id: 'elia',
+        name: 'Elia Broom',
+        sprite: 'chr_npc_bookbinder_s',
+        greetFirst: 'Broom. I bind ledgers that refuse to stay shut.',
+        greetAgain: 'Still binding. Still losing pages.',
+        greetFiled: 'Your filings reach me before you do.',
+        deflect: [
+          'Mind the bindings.',
+          'Those presses weigh more than you.',
+          'Push again and I bind your sleeves together.',
+        ],
+        topics: {
+          [TopicId.Where]: 'The chapel is close. Merrow knows the safe road.',
+          [TopicId.Party]: 'A second pair of hands keeps the binding straight.',
+          [TopicId.Roads]: 'The canal path is quick when the bridge is dry.',
+          [TopicId.Rumour]: 'Books leave the Bracken Waste with extra pages.',
+        },
+        later: {
+          [TopicId.Rumour]: 'West of the Sedge, even blank books come back full.',
         },
       },
     ],
@@ -464,6 +489,51 @@ export const TOWNSFOLK: ReadonlyMap<string, readonly TownsfolkSpec[]> = new Map<
           [TopicId.Rumour]: 'West past the Sedge. I got a mile in and turned.',
         },
       },
+      {
+        id: 'tamsin',
+        name: 'Tamsin Reed',
+        sprite: 'chr_npc_registry_clerk_s',
+        greetFirst: 'Reed. I keep the registry and mislay nothing.',
+        greetAgain: 'The registry is open. It is always open.',
+        greetFiled: 'Your hand is becoming familiar in these books.',
+        deflect: [
+          'Not over the ledger.',
+          'I have a form for that sort of behaviour.',
+          'Again, and I file you under public nuisance.',
+        ],
+        topics: {
+          [TopicId.Where]: 'Ashwick first. Its draughts fit a new purse.',
+          [TopicId.Party]: 'Joint filings close faster. So do joint cases.',
+          [TopicId.Roads]: 'Every maintained road begins in this registry.',
+          [TopicId.Rumour]: 'A Bracken Waste road is taxed but cannot be found.',
+        },
+        later: {
+          [TopicId.Rumour]: 'The missing road was last filed west of the Sedge.',
+        },
+      },
+      {
+        id: 'nell',
+        name: 'Nell Cask',
+        sprite: 'chr_npc_pawnbroker_s',
+        shopkeeper: true,
+        greetFirst: 'Cask. I buy what came back and sell what might.',
+        greetAgain: 'Counter is open. Show me what survived.',
+        greetFiled: 'Your name makes the better pieces easier to price.',
+        deflect: [
+          'Mind the counter.',
+          'Everything here has already survived one owner.',
+          'Again, and I price the bruise before I give it.',
+        ],
+        topics: {
+          [TopicId.Where]: 'Try my counter. Ashwick keeps the surer draughts.',
+          [TopicId.Party]: 'Buy for the group. It is cheaper than mourning.',
+          [TopicId.Roads]: 'The canal bridges point straight to my door.',
+          [TopicId.Rumour]: 'Goods come from the Bracken Waste without owners.',
+        },
+        later: {
+          [TopicId.Rumour]: 'West of the Sedge, ownership is a dangerous claim.',
+        },
+      },
     ],
   ],
   /**
@@ -519,7 +589,8 @@ export const TOWNSFOLK: ReadonlyMap<string, readonly TownsfolkSpec[]> = new Map<
         id: 'colley',
         name: 'Wren Colley',
         sprite: 'chr_npc_wren_colley_s',
-        greetFirst: 'Colley. I write the names. Pell does the digging.',
+        shopkeeper: true,
+        greetFirst: 'Colley. I keep names and what the dead leave.',
         greetAgain: 'Names still coming. Slowly, lately.',
         greetFiled: 'You give me places to name. Nobody else does.',
         deflect: [
@@ -537,6 +608,28 @@ export const TOWNSFOLK: ReadonlyMap<string, readonly TownsfolkSpec[]> = new Map<
         },
         later: {
           [TopicId.Rumour]: 'West of the Sedge I have no names at all.',
+        },
+      },
+      {
+        id: 'mercy',
+        name: 'Mercy Venn',
+        sprite: 'chr_npc_mourner_s',
+        greetFirst: 'Venn. I sit with the ones nobody visits.',
+        greetAgain: 'The quiet keeps its own hours.',
+        greetFiled: 'Fewer names came in after your last return.',
+        deflect: [
+          'Not among the stones.',
+          'Grief has made heavier people than you.',
+          'Do that again and Pell finds room for you.',
+        ],
+        topics: {
+          [TopicId.Where]: 'Begin at the chapel. Leave by the same door.',
+          [TopicId.Party]: 'Go together. Coming back alone changes a person.',
+          [TopicId.Roads]: 'The stream marks the safe edge of the close.',
+          [TopicId.Rumour]: 'A bell rings beneath the Blackwater Wood.',
+        },
+        later: {
+          [TopicId.Rumour]: 'West of the Sedge, the dead do not stay named.',
         },
       },
     ],
@@ -603,6 +696,29 @@ export const TOWNSFOLK: ReadonlyMap<string, readonly TownsfolkSpec[]> = new Map<
           [TopicId.Rumour]: 'West past the Sedge is where I did not get to.',
         },
       },
+      {
+        id: 'fen',
+        name: 'Orla Fen',
+        sprite: 'chr_npc_camp_cook_s',
+        shopkeeper: true,
+        greetFirst: 'Fen. Soup, road gear, and no credit.',
+        greetAgain: 'Still hot. That is more than I can say for you.',
+        greetFiled: 'You look hungry in a more experienced way.',
+        deflect: [
+          'Mind the pot.',
+          'I have a ladle and no patience.',
+          'Again, and supper learns your name.',
+        ],
+        topics: {
+          [TopicId.Where]: 'East for walls. South for trouble worth learning.',
+          [TopicId.Party]: 'A shared pot feeds more than separate tins.',
+          [TopicId.Roads]: 'Follow the creek until it meets the made road.',
+          [TopicId.Rumour]: 'The creek runs uphill near the Blackwater Wood.',
+        },
+        later: {
+          [TopicId.Rumour]: 'West of the Sedge, water boils without a fire.',
+        },
+      },
     ],
   ],
   [
@@ -612,6 +728,7 @@ export const TOWNSFOLK: ReadonlyMap<string, readonly TownsfolkSpec[]> = new Map<
         id: 'thessaly',
         name: 'Thessaly Vaunt',
         sprite: 'chr_npc_thessaly_vaunt_s',
+        shopkeeper: true,
         greetFirst: 'Vaunt. I mix what the Index has not read yet.',
         greetAgain: 'Still mixing. Mind the fumes.',
         greetFiled: 'You have used what I mix. It shows on you.',
@@ -660,6 +777,28 @@ export const TOWNSFOLK: ReadonlyMap<string, readonly TownsfolkSpec[]> = new Map<
         },
         later: {
           [TopicId.Rumour]: 'West of the Sedge. Nothing I mix helps there.',
+        },
+      },
+      {
+        id: 'mara',
+        name: 'Mara Dock',
+        sprite: 'chr_npc_alchemy_apprentice_s',
+        greetFirst: 'Dock. I label what Vaunt has not named yet.',
+        greetAgain: 'The labels keep changing after I write them.',
+        greetFiled: 'Your cases need stronger labels than mine.',
+        deflect: [
+          'Mind the bottles.',
+          'That shelf has a temper.',
+          'Again, and I test the blue one on you.',
+        ],
+        topics: {
+          [TopicId.Where]: 'The Underworks first. Take a draught with you.',
+          [TopicId.Party]: 'Three people notice three different fumes.',
+          [TopicId.Roads]: 'The drain reaches the road. Follow either.',
+          [TopicId.Rumour]: 'Rain falls upward beyond the Blackwater Wood.',
+        },
+        later: {
+          [TopicId.Rumour]: 'West of the Sedge, glass remembers being sand.',
         },
       },
     ],
@@ -786,6 +925,11 @@ export function isTownsfolkId(actorId: string): boolean {
   return actorId.includes(TOWNSFOLK_ID_MARK);
 }
 
+/** Does talking to this person expose the shop shelf in their realm? */
+export function isShopkeeperSpec(spec: TownsfolkSpec | undefined): boolean {
+  return spec?.shopkeeper === true;
+}
+
 /**
  * The mark that makes a townsfolk id recognisable without a table lookup.
  *
@@ -802,10 +946,9 @@ const TOWNSFOLK_ID_MARK = ':town:';
  * ═══════════════════════════════════════════════════════════════════════════
  * IT SEARCHES, IT DOES NOT COMPUTE — `delve.ts#roomFor`'s hard-won lesson
  * ═══════════════════════════════════════════════════════════════════════════
- * A hand-authored coordinate per town is a coordinate that is inside a wall the
- * first time anybody edits the map, and nothing would throw: `addMonster`
- * settles for the nearest free tile, so she would simply drift somewhere odd and
- * stay there. So the tile is FOUND, against the map as built.
+ * Authored settlements supply workplace and street coordinates. Each is checked
+ * against the built map before use; a missing or newly blocked anchor falls back
+ * to the deterministic search below instead of drifting silently.
  *
  * BEHIND A COUNTER means orthogonally adjacent to a wall. It is the cheapest
  * available reading of "has her back to something", it needs no new authoring in
@@ -824,6 +967,7 @@ export function placeTownsfolk(
   world: World,
   map: AuthoredMap,
   specs: readonly TownsfolkSpec[],
+  siteId?: string,
 ): number {
   if (specs.length === 0) return 0;
 
@@ -833,7 +977,13 @@ export function placeTownsfolk(
   let placed = 0;
 
   for (const spec of specs) {
-    const at = findCounter(level, arrival, taken);
+    const authored = townResidentAt(siteId, spec.id);
+    const at =
+      authored !== undefined &&
+      canWalk(level, authored.x, authored.y) &&
+      !taken.has(`${String(authored.x)},${String(authored.y)}`)
+        ? authored
+        : findCounter(level, arrival, taken);
     if (at === undefined) continue;
     taken.add(`${String(at.x)},${String(at.y)}`);
 

@@ -151,7 +151,7 @@ import { specFor, dangerWord, partyHint } from '../content/delve.ts';
 import { monsterById } from '../content/monsters.ts';
 import type { MonsterTemplate } from '../content/monsters.ts';
 import type { Combatant, PrimaryStats } from '../engine/derived.ts';
-import { STANDING_LEVEL, specForActorId } from '../content/townsfolk.ts';
+import { STANDING_LEVEL, isShopkeeperSpec, specForActorId } from '../content/townsfolk.ts';
 import { healActor } from '../engine/damage.ts';
 import type { ClientUse, TopicId } from '../../shared/protocol.ts';
 import type { DamageType } from '../../shared/damagetype.ts';
@@ -3599,6 +3599,18 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     const msg = shopFrameFor(realmFor(session));
     if (msg !== null) send(session.socket, msg);
   };
+
+  /** The physical person who accepts this transaction, within speaking reach. */
+  const shopkeeperAtHand = (realm: PumpTarget, body: EngineActor): boolean =>
+    realm.world
+      .allActors()
+      .some(
+        (actor) =>
+          isMonster(actor) &&
+          actor.faction === Faction.Townsfolk &&
+          isShopkeeperSpec(specForActorId(actor.id)) &&
+          Math.max(Math.abs(actor.x - body.x), Math.abs(actor.y - body.y)) <= 1,
+      );
 
   /**
    * THE FLOOR, TO SOMEBODY WHO HAS SEEN NOTHING — `welcome` and a resume.
@@ -9656,6 +9668,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
           : (spec.deflect[(seen - 2) % spec.deflect.length] ?? spec.greetAgain);
 
     broadcastMargin(realm, { text, speaker: standing.name });
+    if (isShopkeeperSpec(spec)) sendShopIfAny(session);
     return true;
   };
 
@@ -10926,10 +10939,9 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    * clock with no reason to be running.
    *
    * ═══ THE SHELF IS THE REALM'S, SO THE DOOR IS THE PERMISSION ═══
-   * There is no "are you next to the shopkeeper" check because there is no
-   * shopkeeper: the shop belongs to the realm, and being in the realm is being
-   * at it. A player in a breach naming a coat on Threadneedle Row is refused
-   * because THEIR realm has no shelf, not because a distance test failed.
+   * Stock belongs to the realm, so every player sees the same shelf and one
+   * purchase updates the room. The transaction belongs to the physical keeper:
+   * buying or selling requires standing within speaking reach of her counter.
    */
   /**
    * WHAT A PLAYER CALLS THE PART OF THEM A SLOT IS. `Slot` is a wire token —
@@ -10972,6 +10984,11 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     const body = realm.world.getActor(actorId);
     if (body === undefined || body.kind !== ActorKind.Player || !body.alive) {
       sendError(session.socket, ErrorCode.Refused, 'you cannot shop right now');
+      return;
+    }
+
+    if (!shopkeeperAtHand(realm, body)) {
+      sendError(session.socket, ErrorCode.OutOfRange, 'step up to the shopkeeper');
       return;
     }
 
@@ -11077,6 +11094,11 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     const body = realm.world.getActor(actorId);
     if (body === undefined || body.kind !== ActorKind.Player || !body.alive) {
       sendError(session.socket, ErrorCode.Refused, 'you cannot shop right now');
+      return;
+    }
+
+    if (!shopkeeperAtHand(realm, body)) {
+      sendError(session.socket, ErrorCode.OutOfRange, 'step up to the shopkeeper');
       return;
     }
 
@@ -13160,6 +13182,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       lastHeard.set(roomKey, now);
       broadcastMargin(realm, line, session.connId);
     }
+    if (isShopkeeperSpec(spec)) sendShopIfAny(session);
   };
 
   const handleSay = (session: Session, msg: ClientSay): void => {
@@ -13622,12 +13645,12 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       if (!woke && total > 0 && closed === 0) {
         const start = body === undefined ? undefined : firstCase(realm, body.x, body.y, actorId);
         sendMargin(session, realm, {
-          text: `Your file is open. ${String(total)} rooms in it, none of them closed.`,
+          text: `The void has noticed you. ${String(total)} places answer, none quieted.`,
           depth: 0,
         });
         if (start !== undefined) {
           sendMargin(session, realm, {
-            text: `Start with ${start.name} — ${start.grade}, ${start.bearing}, ${String(start.distance)} tiles.${roadClause(start.road)} Clear it and it is filed.`,
+            text: `Start with ${start.name} — ${start.grade}, ${start.bearing}, ${String(start.distance)} tiles.${roadClause(start.road)} Go there. Silence what answers.`,
             depth: 1,
           });
         }

@@ -87,6 +87,7 @@ import type { MonsterTemplate } from '../content/monsters.ts';
 import { seedAmbush } from '../content/encounter.ts';
 import { createWorld } from './world.ts';
 import { placeTownsfolk, townsfolkFor } from '../content/townsfolk.ts';
+import { makeSettlementMap, placeTownProps } from '../content/towns.ts';
 import type { TileXY } from '../../shared/coords.ts';
 import type { AuthoredMap, Region } from '../../shared/level.ts';
 import type { ReapingTurnEngine } from '../turn-engine.ts';
@@ -387,18 +388,13 @@ export type ShopState = {
 };
 
 /**
- * WHICH TOWNS HAVE A SHOP. One, for now.
+ * WHICH TOWNS HAVE A SHOP. Every authored settlement has one physical keeper.
  *
- * A `Set` READ IN `build` rather than a sixth column on the thirteen `SITES`
- * rows: that would be thirteen rows of churn, twelve of them `false`, to carry
- * one boolean about one place. When a second shop lands it is one string here.
- *
- * Threadneedle Row rather than Alderbrook, because Alderbrook is the hub
- * everybody passes through and a merchant row is somewhere you go ON PURPOSE —
- * which is the difference between a shop being a destination and a shop being
- * a tollbooth.
+ * A map read in `build` rather than shop columns on every `SITES` row: only the
+ * five shared settlements carry shelves, and the value names their local stock.
  */
 const SHOP_SITES: ReadonlyMap<string, ShopShelf> = new Map<string, ShopShelf>([
+  ['site:alderbrook', ShopShelf.General],
   ['site:threadneedle_row', ShopShelf.Outfitter],
   /**
    * ASHWICK ALCHEMY ROW, AND ITS NAME HAS BEEN PROMISING THIS THE WHOLE TIME.
@@ -413,6 +409,8 @@ const SHOP_SITES: ReadonlyMap<string, ShopShelf> = new Map<string, ShopShelf>([
    * what the Index has not read yet"* over an empty counter.
    */
   ['site:ashwick_row', ShopShelf.Apothecary],
+  ['site:saints_rest', ShopShelf.Reliquary],
+  ['site:wayfarers_camp', ShopShelf.Caravan],
 ]);
 
 export type Realm = {
@@ -971,7 +969,8 @@ export function createRealms(opts: RealmsOptions): Realms {
      * and a town does not have one.
      */
     const folk = townsfolkFor(extra.siteId);
-    if (folk.length > 0) placeTownsfolk(world, map, folk);
+    if (folk.length > 0) placeTownsfolk(world, map, folk, extra.siteId);
+    placeTownProps(world, extra.siteId);
 
     realms.set(id, realm);
     return realm;
@@ -1575,6 +1574,7 @@ const AUTHORED_SITES: readonly (readonly [string, SiteDef])[] = (
      * rock, and `SitePalette.roof` is optional for exactly that reason.
      */
     map: (seed) =>
+      makeSettlementMap(id) ??
       makeSiteMap(
         seed,
         shape,

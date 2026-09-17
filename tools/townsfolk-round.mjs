@@ -261,6 +261,10 @@ function makeTracker() {
         for (const a of f.actors ?? [])
           at.set(a.id, { x: a.x, y: a.y, name: a.name, kind: a.kind });
       }
+      if (f.t === 'joined' && f.actor !== undefined) {
+        const a = f.actor;
+        at.set(a.id, { x: a.x, y: a.y, name: a.name, kind: a.kind });
+      }
       if (f.t === 'sweep')
         for (const ev of f.events ?? []) if (ev.k === 'move') step(ev.id, ev.x, ev.y);
       if (f.t === 'moved') step(f.id, f.x, f.y);
@@ -292,10 +296,17 @@ async function walkUpTo(track, id) {
 }
 const TOPIC_NAME = (t) => (t === undefined ? '(greeting)' : t);
 
-/** Every settlement on the map, nearest first — a town is a marker with no grade. */
+/** Every authored settlement on the map, nearest first. Delves can share markers. */
+const TOWN_NAMES = new Set([
+  'Alderbrook',
+  'Threadneedle Row',
+  'Ashwick Alchemy Row',
+  "Saint's Rest",
+  "A Wayfarers' Camp",
+]);
 const townsOf = (me) =>
   (latest('sites')?.sites ?? [])
-    .filter((s) => s.sprite === undefined && s.danger === undefined)
+    .filter((s) => TOWN_NAMES.has(s.name))
     .map((s) => ({ s, d: Math.max(Math.abs(s.x - me.x), Math.abs(s.y - me.y)) }))
     .sort((a, b) => a.d - b.d);
 
@@ -325,7 +336,10 @@ for (const { s: town } of townsOf(posOf())) {
   // Everything that is not the player and not hostile. A townsfolk is a
   // `MonsterActor` with a friendly faction (see the file's own header on why she
   // is not a third `ActorKind`), so the wire tells them apart by `kind`.
-  const folk = (inside?.actors ?? []).filter((a) => a.id !== selfId && a.kind !== 'player');
+  const track = makeTracker();
+  const folk = [...track().entries()]
+    .map(([id, actor]) => ({ id, ...actor }))
+    .filter((a) => a.id !== selfId && a.kind !== 'player');
   console.log(
     `  ${String(folk.length)} person/people: ${folk.map((f) => String(f.name)).join(', ') || '(nobody)'}`,
   );
@@ -337,7 +351,6 @@ for (const { s: town } of townsOf(posOf())) {
 
   // ── ask each of them everything, twice ───────────────────────────────────
   // TWICE, because the question is not "does she answer" but "does she repeat".
-  const track = makeTracker();
   for (const person of folk) {
     const closed = await walkUpTo(track, person.id);
     const heard = new Map();

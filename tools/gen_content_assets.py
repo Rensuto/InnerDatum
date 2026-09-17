@@ -102,10 +102,35 @@ def to_cell(im, rel):
     return im.resize((im.width * MAP_SCALE, im.height * MAP_SCALE), Image.NEAREST)
 
 
+def exact_2x_blocks(im):
+    """Detect a legacy nearest-neighbour 2x map sprite from its pixels."""
+    rgba = im.convert("RGBA")
+    if rgba.width % 2 or rgba.height % 2:
+        return False
+    px = rgba.load()
+    for y in range(0, rgba.height, 2):
+        for x in range(0, rgba.width, 2):
+            value = px[x, y]
+            if px[x + 1, y] != value or px[x, y + 1] != value or px[x + 1, y + 1] != value:
+                return False
+    return True
+
+
 def save(im, rel):
     p = OUT / rel
     p.parent.mkdir(parents=True, exist_ok=True)
-    to_cell(im, rel).save(p, "PNG", optimize=True)
+    rendered = to_cell(im, rel)
+    # This generator is deliberately a fallback lane. Once an artist has
+    # installed native map art, a routine `npm run assets` must not replace it
+    # with the old exact-2x paper-doll/procedural output. Interface assets are
+    # unaffected, and still-generated exact-2x map stand-ins remain rebuildable.
+    if rel.startswith(MAP_SPACE) and p.exists():
+        deployed = Image.open(p).convert("RGBA")
+        if not exact_2x_blocks(deployed):
+            print(f"  PRESERVE native map art: {rel}")
+            MADE.append(rel)
+            return
+    rendered.save(p, "PNG", optimize=True)
     MADE.append(rel)
 
 

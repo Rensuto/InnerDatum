@@ -13,7 +13,8 @@ antialiasing, because the client upscales by integer factors. A soft edge turns 
 Palette is sampled from the real art, not invented — see PALETTE below.
 
 Usage:
-    python tools/gen_ui_assets.py [--only <substring>] [--contact]
+    python tools/gen_ui_assets.py [--only <substring>] [--out-dir <path>]
+    python tools/gen_ui_assets.py --map-space-only --out-dir <staging-path>
 """
 
 from __future__ import annotations
@@ -67,38 +68,10 @@ def img(w: int, h: int) -> tuple[Image.Image, ImageDraw.ImageDraw]:
     return im, ImageDraw.Draw(im)
 
 
-# --------------------------------------------------------------------------
-# `ui/markers/` IS MAP SPACE, WHATEVER DIRECTORY IT LIVES IN.
-# --------------------------------------------------------------------------
-# Everything under it is a mark ON A CELL -- the targeting squares, the
-# area-of-effect fill, the token rings, the downed silhouette, the ping. They
-# are addressed by tile and drawn on the map's grid, so they belong to the
-# 64-pixel cell (shared/version.ts's TILE_PX) and not to the interface buffer,
-# whose scale is a different number entirely (render/canvas.ts's HUD_MIN_W).
-#
-# The rest of `ui/` -- frames, chrome, icons, the item slots -- is interface art
-# and is deliberately NOT doubled: it is drawn at `hudScale`, and doubling it
-# would make every panel twice the size it is meant to be.
-#
-# The renderer scales a cell mark to the cell regardless (see `blitCell`), so
-# this is about SHARPNESS rather than correctness: a 32-pixel mark stretched
-# over a 64-pixel cell is seamless and chunky, and this makes it seamless and
-# clean.
-MAP_SPACE = ("ui/markers/",)
-MAP_SCALE = 2
-
-
-def to_cell(im: Image.Image, rel: str) -> Image.Image:
-    """Nearest-neighbour double, for map-space art only."""
-    if not rel.startswith(MAP_SPACE):
-        return im
-    return im.resize((im.width * MAP_SCALE, im.height * MAP_SCALE), Image.NEAREST)
-
-
 def save(im: Image.Image, rel: str) -> None:
     dest = OUT / rel
     dest.parent.mkdir(parents=True, exist_ok=True)
-    to_cell(im, rel).save(dest, "PNG", optimize=True)
+    im.save(dest, "PNG", optimize=True)
     MADE.append(rel)
 
 
@@ -147,7 +120,7 @@ def glyph(d, cells, col, ox=0, oy=0, scale=1):
 
 
 # --------------------------------------------------------------------------
-# 1. Token rings (M1) — 32x32, ellipse in the bottom ~12 px
+# 1. Token rings (M1) — native 64x64, ellipse in the bottom ~24 px
 # --------------------------------------------------------------------------
 
 def token_rings():
@@ -158,23 +131,27 @@ def token_rings():
         "neutral": (GREY_HI,   (153, 153, 159, 50)),
     }
     for name, (edge, fill) in variants.items():
-        im, d = img(32, 32)
-        # Ellipse sits on the floor plane under the feet: bottom 12 px.
-        d.ellipse([3, 19, 28, 30], fill=fill)
-        d.ellipse([3, 19, 28, 30], outline=edge)
+        im, d = img(64, 64)
+        # Authored on the 64px floor plane. The two-pixel outer line and
+        # one-pixel inner highlight are native detail, not a doubled 32px ring.
+        d.ellipse([6, 38, 57, 61], fill=fill, outline=INK, width=2)
+        d.ellipse([8, 40, 55, 59], outline=edge, width=2)
         # Break the ring left/right so overlapping tokens still read.
-        d.point((3, 24), CLEAR); d.point((28, 24), CLEAR)
+        d.rectangle([6, 48, 9, 51], fill=CLEAR)
+        d.rectangle([54, 48, 57, 51], fill=CLEAR)
         save(im, f"ui/markers/ui_token_ring_{name}.png")
 
     # Elite: the base hostile ring plus four spikes. index_husk_elite is 24x32
     # while base index_husk is 48x64, so without this the elite reads as the
     # SMALLER creature.
-    im, d = img(32, 32)
-    d.ellipse([3, 19, 28, 30], fill=(206, 62, 74, 60))
-    d.ellipse([3, 19, 28, 30], outline=ORANGE)
-    for x in (7, 15, 23):
-        d.line([(x, 18), (x, 15)], fill=ORANGE)
-        d.point((x, 14), GOLD)
+    im, d = img(64, 64)
+    d.ellipse([6, 38, 57, 61], fill=(206, 62, 74, 60), outline=INK, width=2)
+    d.ellipse([8, 40, 55, 59], outline=ORANGE, width=2)
+    for x in (14, 31, 48):
+        d.line([(x, 38), (x, 31)], fill=ORANGE, width=2)
+        d.point((x, 30), GOLD)
+    d.rectangle([6, 48, 9, 51], fill=CLEAR)
+    d.rectangle([54, 48, 57, 51], fill=CLEAR)
     save(im, "ui/markers/ui_token_ring_elite.png")
 
 
@@ -488,72 +465,83 @@ def cursors():
 
 
 # --------------------------------------------------------------------------
-# 8. Tile markers (M3) — 32x32 floor-plane stamps on a 32 px stride.
-#    NOT 64x64: at 64 each marker blankets 2x2 tiles and mis-registers.
+# 8. Tile markers (M3) — native 64x64 floor-plane stamps on a 64 px stride.
 # --------------------------------------------------------------------------
 
 def tile_markers():
-    im, d = img(32, 32)                                  # cursor: corner brackets
-    for (cx, cy, dx, dy) in ((0, 0, 1, 1), (31, 0, -1, 1), (0, 31, 1, -1), (31, 31, -1, -1)):
-        for i in range(8):
-            d.point((cx + dx * i, cy), PARCHMENT)
-            d.point((cx, cy + dy * i), PARCHMENT)
+    im, d = img(64, 64)                                  # cursor: corner brackets
+    for (cx, cy, dx, dy) in ((0, 0, 1, 1), (63, 0, -1, 1), (0, 63, 1, -1), (63, 63, -1, -1)):
+        d.line([(cx, cy), (cx + dx * 15, cy)], fill=INK, width=3)
+        d.line([(cx, cy), (cx, cy + dy * 15)], fill=INK, width=3)
+        d.line([(cx + dx, cy + dy), (cx + dx * 14, cy + dy)], fill=PARCHMENT)
+        d.line([(cx + dx, cy + dy), (cx + dx, cy + dy * 14)], fill=PARCHMENT)
     save(im, "ui/markers/ui_tile_marker_cursor.png")
 
-    im, d = img(32, 32)                                  # valid
-    d.rectangle([0, 0, 31, 31], fill=(86, 138, 116, 46), outline=VERDIGRIS)
+    im, d = img(64, 64)                                  # valid
+    d.rectangle([0, 0, 63, 63], fill=(86, 138, 116, 46), outline=INK, width=2)
+    d.rectangle([2, 2, 61, 61], outline=VERDIGRIS)
     save(im, "ui/markers/ui_tile_marker_valid.png")
 
-    im, d = img(32, 32)                                  # invalid
-    d.rectangle([0, 0, 31, 31], fill=(150, 30, 44, 46), outline=CRIMSON)
-    d.line([(6, 6), (25, 25)], fill=CRIMSON_HI)
-    d.line([(25, 6), (6, 25)], fill=CRIMSON_HI)
+    im, d = img(64, 64)                                  # invalid
+    d.rectangle([0, 0, 63, 63], fill=(150, 30, 44, 46), outline=INK, width=2)
+    d.rectangle([2, 2, 61, 61], outline=CRIMSON)
+    d.line([(13, 13), (50, 50)], fill=CRIMSON_HI, width=3)
+    d.line([(50, 13), (13, 50)], fill=CRIMSON_HI, width=3)
+    d.point((31, 31), PARCHMENT)
     save(im, "ui/markers/ui_tile_marker_invalid.png")
 
-    im, d = img(32, 32)                                  # aoe
-    d.rectangle([0, 0, 31, 31], fill=(255, 132, 39, 50), outline=ORANGE)
-    for i in range(-32, 32, 8):                          # hatch, not colour-only
-        d.line([(i, 0), (i + 32, 32)], fill=(255, 132, 39, 70))
+    im, d = img(64, 64)                                  # aoe
+    d.rectangle([0, 0, 63, 63], fill=(255, 132, 39, 50), outline=INK, width=2)
+    d.rectangle([2, 2, 61, 61], outline=ORANGE)
+    for i in range(-64, 64, 11):                         # hatch, not colour-only
+        d.line([(i, 0), (i + 64, 64)], fill=(255, 132, 39, 70))
     save(im, "ui/markers/ui_tile_marker_aoe.png")
 
     # min-range hole. The Inspector cannot shoot adjacent (min_range 3). If the
     # dead zone is invisible the class reads as broken, so this is deliberately
     # the loudest marker in the set.
-    im, d = img(32, 32)
-    d.rectangle([0, 0, 31, 31], fill=(33, 8, 46, 120), outline=CRIMSON)
-    for i in range(-32, 32, 6):
-        d.line([(i, 31), (i + 31, 0)], fill=(206, 62, 74, 110))
-    d.rectangle([0, 0, 31, 31], outline=CRIMSON_HI)
+    im, d = img(64, 64)
+    d.rectangle([0, 0, 63, 63], fill=(33, 8, 46, 120), outline=INK, width=2)
+    for i in range(-64, 64, 9):
+        d.line([(i, 63), (i + 63, 0)], fill=(206, 62, 74, 110), width=2)
+    d.rectangle([2, 2, 61, 61], outline=CRIMSON_HI)
     save(im, "ui/markers/ui_tile_marker_minrange.png")
 
 
 # --------------------------------------------------------------------------
-# 9. Map markers (M4) — 32x32
+# 9. Map markers (M4) — native 64x64
 # --------------------------------------------------------------------------
 
 def map_markers():
     # downed — must be spottable across a 30x30 room instantly.
-    im, d = img(32, 32)
-    d.ellipse([4, 20, 27, 29], fill=(150, 30, 44, 70), outline=CRIMSON)
-    for a, b in (((10, 8), (22, 20)), ((22, 8), (10, 20))):
-        d.line([a, b], fill=CRIMSON_HI)
-        d.line([(a[0] + 1, a[1]), (b[0] + 1, b[1])], fill=CRIMSON_HI)
+    im, d = img(64, 64)
+    d.ellipse([8, 40, 55, 59], fill=(150, 30, 44, 70), outline=CRIMSON, width=2)
+    for a, b in (((20, 16), (44, 40)), ((44, 16), (20, 40))):
+        d.line([a, b], fill=INK, width=5)
+        d.line([a, b], fill=CRIMSON_HI, width=3)
+    d.point((32, 28), PARCHMENT)
     save(im, "ui/markers/ui_marker_downed.png")
 
     # erased — the 5-turn timer expired. A redaction bar: the Index's own
     # visual language for something struck from the record.
-    im, d = img(32, 32)
-    d.rectangle([2, 12, 29, 21], fill=INK, outline=VOID)
-    d.line([(4, 16), (27, 16)], fill=VIOLET)
-    d.rectangle([2, 12, 29, 21], outline=VIOLET_HI)
+    im, d = img(64, 64)
+    d.rectangle([4, 24, 59, 43], fill=INK, outline=VOID, width=2)
+    d.line([(8, 31), (55, 31)], fill=VIOLET, width=2)
+    d.line([(8, 35), (55, 35)], fill=(99, 64, 158, 150))
+    d.rectangle([5, 25, 58, 42], outline=VIOLET_HI)
     save(im, "ui/markers/ui_marker_erased.png")
 
     # point — the map ping. One PNG covers all six players; per-player colour is
     # a canvas tint.
-    im, d = img(32, 32)
-    for r, col in ((13, (255, 228, 121, 90)), (9, (255, 228, 121, 150)), (5, GOLD)):
-        ring(d, 16, 16, r, r, col)
-    d.point((16, 16), PARCHMENT)
+    im, d = img(64, 64)
+    for r, col, width in ((26, (255, 228, 121, 90), 1),
+                          (18, (255, 228, 121, 150), 2),
+                          (10, GOLD, 2)):
+        ring(d, 32, 32, r, r, col, width=width)
+    for a, b in (((32, 2), (32, 8)), ((32, 56), (32, 62)),
+                 ((2, 32), (8, 32)), ((56, 32), (62, 32))):
+        d.line([a, b], fill=GOLD)
+    d.rectangle([31, 31, 33, 33], fill=PARCHMENT)
     save(im, "ui/markers/ui_marker_point.png")
 
 
@@ -731,12 +719,32 @@ BUILDERS = [
     portraits,
 ]
 
+# The only builders whose output lives in map space. Keeping this explicit gives
+# the art repair lane a narrow command that cannot overwrite unrelated UI art.
+MAP_SPACE_BUILDERS = [token_rings, tile_markers, map_markers]
+
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--only", default=None)
+    ap.add_argument(
+        "--map-space-only",
+        action="store_true",
+        help="generate only the thirteen 64x64 cell markers and token rings",
+    )
+    ap.add_argument(
+        "--out-dir",
+        type=Path,
+        default=OUT,
+        help="output root (defaults to the deployed runtime asset directory)",
+    )
     args = ap.parse_args()
 
-    for fn in BUILDERS:
+    if args.only and args.map_space_only:
+        ap.error("--only and --map-space-only are mutually exclusive")
+
+    OUT = args.out_dir.resolve()
+    selected = MAP_SPACE_BUILDERS if args.map_space_only else BUILDERS
+    for fn in selected:
         if args.only and args.only not in fn.__name__:
             continue
         fn()

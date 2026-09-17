@@ -24,6 +24,7 @@ import { turnVault } from '../../src/shared/vault.ts';
 import type { VaultTurn } from '../../src/shared/vault.ts';
 import { TileCode, blocksSight, isWalkable } from '../../src/shared/protocol.ts';
 import type { SitePalette } from '../../src/shared/sitemap.ts';
+import { townBuildingsFor } from '../../src/server/content/towns.ts';
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════
@@ -242,8 +243,24 @@ describe('every shipped site is painted with a legal pair', () => {
      * `test/shared/redaction.test.ts`, which is the equivalent promise for a
      * map you cannot paint in two colours.
      */
-    if (site.kind === RealmKind.Overworld) continue;
+    // Shared settlements are authored multi-material maps now: streets,
+    // interiors, greens, water, bridges, doors, buildings and a boundary.
+    // Their stronger geometry contract lives in server/towns.test.ts.
+    if (site.kind === RealmKind.Overworld || site.kind === RealmKind.Common) continue;
     it(`${id} opens onto ground you can stand on, behind walls you cannot`, () => {
+      const built = site.map(`palette-check-${id}`);
+      // The Redaction carries transformed instances of the five shared
+      // settlement maps under Inner ids. Geometry, not the id/kind, is the
+      // honest discriminator: a map with civic water and bridges is governed
+      // by the authored-settlement tests, not the two-colour carver contract.
+      if (
+        built.view.tiles.includes(TileCode.WATER) &&
+        built.view.tiles.includes(TileCode.BRIDGE) &&
+        built.view.tiles.includes(TileCode.GREEN)
+      ) {
+        expect(built.rooms?.length ?? 0).toBeGreaterThanOrEqual(4);
+        return;
+      }
       /**
        * TWO CODES, OR THREE FOR A TOWN. This used to demand exactly two, which
        * was right while a site was floor-and-wall. A town now paints its
@@ -256,7 +273,6 @@ describe('every shipped site is painted with a legal pair', () => {
        * you can stand on, and every other code solid AND opaque. A third code
        * that was walkable, or that you could see through, would still fail.
        */
-      const built = site.map(`palette-check-${id}`);
       const codes = new Set(built.view.tiles);
       expect(codes.size).toBeGreaterThanOrEqual(2);
       // OR AS MANY AS THE SITE'S ZONE NAMES, where that is more: the Rhaloren
@@ -353,15 +369,15 @@ describe('every shipped site is painted with a legal pair', () => {
       const view = SITES.get(id)?.map(`edge-check-${id}`).view;
       if (view === undefined) throw new Error(`no such site ${id}`);
 
-      const solid = new Set([...new Set(view.tiles)].filter((c) => !isWalkable(c)));
-      expect(solid.size, `${id} draws its edge and its buildings the same`).toBe(2);
-
-      // And the ring really is the ring: the corner cell is the boundary code,
-      // and it is not what the blocks are made of.
       const corner = view.tiles[0];
-      const middleBlocks = [...solid].filter((c) => c !== corner);
       expect(corner).toBe(TileCode.TOWN_WALL);
-      expect(middleBlocks).toHaveLength(1);
+      const buildings = townBuildingsFor(id);
+      expect(buildings.length).toBeGreaterThan(0);
+      for (const building of buildings) {
+        const wall = view.tiles[building.shell.y0 * view.w + building.shell.x0];
+        expect(isWalkable(wall ?? TileCode.FLOOR), `${id}/${building.id} has no wall`).toBe(false);
+        expect(wall, `${id}/${building.id} uses the boundary as its facade`).not.toBe(corner);
+      }
     }
   });
 });

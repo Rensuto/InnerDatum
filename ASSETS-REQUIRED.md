@@ -1,120 +1,85 @@
 # Assets this game expects
 
-The artwork is **not distributed with this repository** — see
-[ASSETS-LICENSE.md](ASSETS-LICENSE.md). Nothing is broken; a clone is simply expected to bring
-its own art.
+The artwork is **not distributed with this repository**; see
+[ASSETS-LICENSE.md](ASSETS-LICENSE.md). A bare clone is supported: missing art
+renders as an explicit fallback instead of making an actor or interaction
+silently disappear.
 
-Of the 111 sprites the game addresses, **64 are generated procedurally** and need no
-source art at all. The remaining **47** are yours to draw.
+## Get the current worklist
 
-## Start here
+The code and deployed asset tree are the inventory. Do not copy a count or a
+filename list into this document.
 
-```
-python -m pip install pillow
-npm run assets
-```
-
-That writes 64 PNGs — the panels, pips, cursors, markers, status and turn icons, props and
-placeholder branding — plus `manifest.placeholders.json`, which is the only table the client
-reads. The game is then playable.
-
-The sprites you have not supplied draw as violet fallback boxes rather than vanishing, so what is
-missing is visible on screen instead of appearing as an invisible monster. Running with no art at
-all is also supported: the client logs one line and boots into all-placeholder rendering.
-
-## Conventions
-
-| | |
-|---|---|
-| Human-scale actors | 24x32, single south-facing frame |
-| Large creatures | 48x64 |
-| Downed/prone variants | 32x24 — wider than tall |
-| Item and ability icons | 64x64 |
-| Cover art | 1024x1024 |
-
-Straight (non-premultiplied) alpha, RGBA8, hard 1px edges — the client upscales by integer
-factors, so a soft edge turns to mush. World entities anchor bottom-centre and may overflow
-upward out of their tile. There is no animation system: one frame, facing south.
-
-Drop your files at these paths under `client/public/assets/`, re-run `npm run assets` to pick them
-up in the manifest, and they render. Ids are addressed only through that manifest, so a complete
-replacement set using the same paths drops in without touching `src/`.
-
-## The 47 you must supply
-
-### `branding/` — 6 files, 1024x1024, 680x240
-
-```
-innerdatum_activity_banner_680x240.png         680x240
-innerdatum_activity_banner_680x240_v2.png      680x240
-innerdatum_discord_bot_avatar_1024.png         1024x1024
-innerdatum_discord_bot_icon_1024.png           1024x1024
-innerdatum_game_app_icon_1024.png              1024x1024
-innerdatum_game_app_icon_1024_v2.png           1024x1024
+```powershell
+npm run art:needs
+node tools/art-needs.mjs --missing
+node tools/art-needs.mjs --json
 ```
 
-### `characters/` — 10 files, 24x32, 32x24
+`npm run art:needs` reports:
 
-```
-chr_npc_bent_watchman_s.png                    24x32
-chr_player_alchemist_downed_s.png              32x24
-chr_player_alchemist_s.png                     24x32
-chr_player_cipher_clerk_s.png                  24x32
-chr_player_enforcer_s.png                      24x32
-chr_player_inspector_downed_s.png              32x24
-chr_player_inspector_s.png                     24x32
-chr_player_voidling_s.png                      24x32
-chr_player_watchman_downed_s.png               32x24
-chr_player_watchman_s.png                      24x32
-```
+- every literal art id referenced by current source;
+- explicit `*ART_REQUESTS` that are intentionally not wired yet;
+- demanded ids with no deployed file;
+- active stand-ins and old-cell remasters from the manifest;
+- on-disk files no current source references;
+- duplicate ids and dynamic expressions the scanner cannot prove.
 
-### `enemies/` — 8 files, 24x32, 48x64
+The scanner parses source syntax rather than searching raw text, so comments
+and documentation examples are not accidental commissions. A clean report has
+zero duplicate ids and zero unresolved dynamic art ids. A missing file is a
+valid production backlog item; silencing it by pointing code at unrelated art
+is not.
 
-```
-enemy_disgraced_inspector_s.png                24x32
-enemy_high_inquisitor_s.png                    24x32
-enemy_index_cairn_s.png                        24x32
-enemy_index_eidolon_s.png                      48x64
-enemy_index_glut_s.png                         24x32
-enemy_index_husk_elite_s.png                   24x32
-enemy_index_husk_s.png                         48x64
-enemy_index_wraith_s.png                       24x32
-```
+## Runtime scale contract
 
-### `items/` — 23 files, 64x64
+The complete contract, including realm-specific terrain rules, anchoring, and
+visual QA, is [docs/art-scale-contract.md](docs/art-scale-contract.md).
 
-```
-item_inquisitors_breeches.png                  64x64
-item_inquisitors_cipher.png                    64x64
-item_inquisitors_cowl.png                      64x64
-item_inquisitors_mantle.png                    64x64
-item_inquisitors_seal.png                      64x64
-item_inquisitors_tome.png                      64x64
-item_inquisitors_treads.png                    64x64
-item_inspectors_deerstalker.png                64x64
-item_inspectors_dossier.png                    64x64
-item_inspectors_locket.png                     64x64
-item_inspectors_longcoat.png                   64x64
-item_inspectors_oxfords.png                    64x64
-item_inspectors_signet.png                     64x64
-item_inspectors_slacks.png                     64x64
-item_iron_ingot.png                            64x64
-item_leather_chest.png                         64x64
-item_watchmans_badge.png                       64x64
-item_watchmans_boots.png                       64x64
-item_watchmans_brass_ring.png                  64x64
-item_watchmans_buckler.png                     64x64
-item_watchmans_cap.png                         64x64
-item_watchmans_coat.png                        64x64
-item_watchmans_trousers.png                    64x64
+| Kind | Native production size | Placement |
+|---|---:|---|
+| Terrain or world-map cell | **64x64** | Exactly fills one cell |
+| Standing human-scale actor | **48x64** | Bottom-centred on its occupied cell |
+| Downed/prone human | **64x48** | Bottom-centred, wider than standing |
+| Large creature | **96x128** | Bottom-centred; may overflow upward and sideways |
+| Item and ability icon | **64x64** | UI placement owns its displayed size |
+| Cell-space marker or ring | **64x64** for new art | Renderer fills exactly one 64px cell |
+
+Straight RGBA8 alpha, hard pixel edges, no premultiplication, and no smoothing.
+Actors may overflow the cell; terrain and cell-space overlays may not.
+
+## Install and manifest
+
+Runtime files live below `client/public/assets/` and are deployed separately
+from this git repository. Replacing an asset is normally an overwrite at the
+same path and id, followed by a manifest rebuild:
+
+```powershell
+python tools/build_asset_manifest.py
+npm run check:assets
 ```
 
-## Regenerating from your own source tree
+`npm run assets` regenerates the project's procedural UI/content assets before
+rebuilding the manifest. Do not run it merely to inventory the art; use
+`npm run art:needs` for that.
 
-`tools/derive_assets.py` crops and composites finished tokens out of a separate source-art tree
-(filmstrips and a paper-doll layer kit). It is specific to this author's art and is not required:
-point `ART_SOURCE_DIR` at such a tree and run `npm run assets:all`, or ignore it entirely and draw
-the files above by hand.
+Terrain has two isolated production lanes at the workspace root:
+
+- `local-art-production/` builds and installs the 64px material tiles used in
+  common and inner realms.
+- `world-settlement-art-production/` builds and installs the 64px coordinate-
+  phased settlement roof surfaces used on the overworld.
+
+Each installer validates a closed output set, dimensions, basename collisions,
+and copy hashes, then rebuilds the manifest. Neither installer deletes runtime
+art.
+
+## Historical specifications
+
+[docs/assets-needed.md](docs/assets-needed.md) preserves the 2026-08 planning
+tables because many rows contain useful visual briefs and source-art notes.
+They describe the former 32px cell and 24x32 actor era and are **not** the live
+worklist or current size specification.
 
 ## Outstanding commission: the Alchemist's model sheet
 

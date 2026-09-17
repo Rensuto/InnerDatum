@@ -2,7 +2,7 @@
 // Copyright (C) 2026 Dalton Barraclough
 //
 // ═══════════════════════════════════════════════════════════════════════════
-// LOOK AT THE GAME.  `node tools/look.mjs [--all] [--px 8] [--out shot.png]`
+// LOOK AT THE GAME. `node tools/look.mjs [--all] [--open-doors] [--px 8] [--out shot.png]`
 // ═══════════════════════════════════════════════════════════════════════════
 //
 // Every art decision in this project so far has been made BLIND. The world was
@@ -34,6 +34,8 @@
 // a poor trade in a project whose runtime is deliberately four packages.
 //
 //   node tools/look.mjs                 the player's viewport, 1:1, as shipped
+//   node tools/look.mjs --site site:alderbrook --actor chr_player_redactor_s
+//                                       a pure local scale probe with chosen actor
 //   node tools/look.mjs --all --px 6    the whole world at 6px a tile
 //
 // PLAIN .mjs AND NOT IN THE TS BUILD, like everything else in tools/.
@@ -45,8 +47,16 @@ import { deflateSync, inflateSync } from 'node:zlib';
 
 import { WebSocket } from 'ws';
 
-import { DEFAULT_VIEWPORT, TILE_SPRITES, tileVariant } from '../src/client/render/canvas.ts';
-import { TileCode } from '../src/shared/protocol.ts';
+import {
+  DEFAULT_VIEWPORT,
+  LOCAL_WALL_FACE_SPRITES,
+  TILE_SPRITES,
+  localDoorSpriteId,
+  settlementRoofSpriteId,
+  tileSpritesForRealm,
+  tileVariant,
+} from '../src/client/render/canvas.ts';
+import { isWalkable, TileCode } from '../src/shared/protocol.ts';
 // THE SERVER'S OWN NUMBER, NEVER A LITERAL. These tools hardcoded `v: 18`
 // and could not connect at all from the day PROTOCOL_VERSION became 19 — the
 // handshake was refused with `version_mismatch` and the fixed sleep after it
@@ -62,9 +72,13 @@ const argOf = (name, fallback) => {
   return i < 0 ? fallback : process.argv[i + 1];
 };
 const WHOLE = process.argv.includes('--all');
-const PX = Number(argOf('--px', WHOLE ? '8' : '32'));
+const PX = Number(argOf('--px', WHOLE ? '8' : '64'));
 const OUT = argOf('--out', WHOLE ? 'world.png' : 'view.png');
 const PORT = argOf('--port', '31991');
+const SITE = argOf('--site', null);
+const OVERWORLD = process.argv.includes('--overworld');
+const OPEN_DOORS = process.argv.includes('--open-doors');
+const ACTOR = argOf('--actor', 'chr_player_watchman_s');
 
 // ═══════════════════════════════════════════════════════════════════════════
 // PNG, BOTH WAYS.
@@ -192,7 +206,19 @@ const cache = new Map();
 function spriteOf(id) {
   if (cache.has(id)) return cache.get(id);
   let found = null;
-  for (const dir of ['tiles', 'characters', 'enemies', 'items', 'ui', 'branding']) {
+  for (const dir of [
+    'tiles/world-settlement',
+    'tiles/local',
+    'tiles',
+    'characters/commission',
+    'characters',
+    'props/commission',
+    'props',
+    'enemies',
+    'items',
+    'ui',
+    'branding',
+  ]) {
     const p = `${ASSETS}${dir}/${id}.png`;
     if (existsSync(p)) {
       found = decodePng(readFileSync(p));
@@ -216,13 +242,14 @@ function makeCanvas(w, h) {
  * question this tool exists to answer — does the ground read as one country or
  * as noise — is exactly the question that sampling destroys.
  */
-function blit(dst, sprite, dx, dy, px) {
+function blitSized(dst, sprite, dx, dy, dw, dh) {
   if (sprite === null) return false;
-  const step = sprite.w / px;
-  for (let y = 0; y < px; y += 1) {
+  const stepX = sprite.w / dw;
+  const stepY = sprite.h / dh;
+  for (let y = 0; y < dh; y += 1) {
     const ty = dy + y;
     if (ty < 0 || ty >= dst.h) continue;
-    for (let x = 0; x < px; x += 1) {
+    for (let x = 0; x < dw; x += 1) {
       const tx = dx + x;
       if (tx < 0 || tx >= dst.w) continue;
       let r = 0;
@@ -231,13 +258,13 @@ function blit(dst, sprite, dx, dy, px) {
       let a = 0;
       let n = 0;
       for (
-        let sy = Math.floor(y * step);
-        sy < Math.max(Math.floor((y + 1) * step), Math.floor(y * step) + 1);
+        let sy = Math.floor(y * stepY);
+        sy < Math.max(Math.floor((y + 1) * stepY), Math.floor(y * stepY) + 1);
         sy += 1
       ) {
         for (
-          let sx = Math.floor(x * step);
-          sx < Math.max(Math.floor((x + 1) * step), Math.floor(x * step) + 1);
+          let sx = Math.floor(x * stepX);
+          sx < Math.max(Math.floor((x + 1) * stepX), Math.floor(x * stepX) + 1);
           sx += 1
         ) {
           if (sx >= sprite.w || sy >= sprite.h) continue;
@@ -259,6 +286,32 @@ function blit(dst, sprite, dx, dy, px) {
     }
   }
   return true;
+}
+
+function blit(dst, sprite, dx, dy, px) {
+  return blitSized(dst, sprite, dx, dy, px, px);
+}
+
+function cropSprite(sprite, x, y, w, h) {
+  if (sprite === null) return null;
+  const crop = { w, h, rgba: Buffer.alloc(w * h * 4) };
+  for (let row = 0; row < h; row += 1) {
+    const sourceStart = ((y + row) * sprite.w + x) * 4;
+    const targetStart = row * w * 4;
+    sprite.rgba.copy(crop.rgba, targetStart, sourceStart, sourceStart + w * 4);
+  }
+  return crop;
+}
+
+/** Match the live renderer: native aspect ratio, bottom-centred in one cell. */
+function blitActor(dst, sprite, cellX, cellY, px) {
+  if (sprite === null) return false;
+  const scale = px / 64;
+  const dw = Math.max(1, Math.round(sprite.w * scale));
+  const dh = Math.max(1, Math.round(sprite.h * scale));
+  const dx = cellX + Math.floor((px - dw) / 2);
+  const dy = cellY + px - dh;
+  return blitSized(dst, sprite, dx, dy, dw, dh);
 }
 
 /**
@@ -393,10 +446,65 @@ if (process.argv.includes('--sheet')) {
  */
 let pureLevel = null;
 let pureSites = null;
+let pureRealmName = null;
+let pureRealmKind = null;
+let pureActor = null;
+let pureActors = null;
+let pureProps = null;
+const pureModeCount =
+  Number(SITE !== null) + Number(OVERWORLD) + Number(process.argv.includes('--redaction'));
+if (pureModeCount > 1) {
+  throw new Error('--site, --overworld, and --redaction select different pure realms; choose one');
+}
+if (SITE !== null) {
+  const { SITES, createRealms } = await import('../src/server/world/realms.ts');
+  const { createTurnEngine } = await import('../src/server/turn-engine.ts');
+  const site = SITES.get(SITE);
+  if (site === undefined) throw new Error(`unknown site: ${SITE}`);
+  const registry = createRealms({
+    seed: `look:${SITE}`,
+    engineFor: (world) => createTurnEngine({ world }),
+  });
+  const built =
+    registry.all().find((realm) => realm.siteId === SITE) ?? registry.open(site, 'look');
+  pureLevel = {
+    w: built.world.level.w,
+    h: built.world.level.h,
+    tiles: built.world.level.tiles,
+  };
+  pureSites = [];
+  pureRealmName = site.name;
+  pureRealmKind = site.kind;
+  pureActors = built.world
+    .allActors()
+    .map((actor) => ({ x: actor.x, y: actor.y, sprite: actor.sprite }));
+  pureProps = built.world.props().map((prop) => ({ x: prop.x, y: prop.y, sprite: prop.propId }));
+  const spawn = built.spawns[0] ?? {
+    x: Math.floor(built.world.level.w / 2),
+    y: Math.floor(built.world.level.h / 2),
+  };
+  pureActor = { ...spawn, sprite: ACTOR };
+}
+if (OVERWORLD) {
+  const { makeOverworld } = await import('../src/shared/level.ts');
+  const { landmarkIdFor } = await import('../src/shared/redaction.ts');
+  const map = makeOverworld();
+  pureLevel = { w: map.view.w, h: map.view.h, tiles: map.view.tiles };
+  pureSites = [...map.sites.entries()].map(([cell, siteId]) => {
+    const [x, y] = cell.split(',').map(Number);
+    return { x, y, name: String(siteId), marker: 'gate', landmark: landmarkIdFor(String(siteId)) };
+  });
+  pureRealmName = 'Alderbrook Moor';
+  pureRealmKind = 'overworld';
+  const spawn = map.spawns[0] ?? { x: Math.floor(map.view.w / 2), y: Math.floor(map.view.h / 2) };
+  pureActor = { ...spawn, sprite: ACTOR };
+}
 if (process.argv.includes('--redaction')) {
   const { makeRedaction, landmarkIdFor } = await import('../src/shared/redaction.ts');
   const map = makeRedaction();
   pureLevel = { w: map.view.w, h: map.view.h, tiles: map.view.tiles };
+  pureRealmName = 'The Redaction';
+  pureRealmKind = 'overworld';
   pureSites = [...map.sites.entries()].map(([cell, siteId]) => {
     const [x, y] = cell.split(',').map(Number);
     return { x, y, name: String(siteId), marker: 'gate', landmark: landmarkIdFor(String(siteId)) };
@@ -406,6 +514,16 @@ if (process.argv.includes('--redaction')) {
 // ═══════════════════════════════════════════════════════════════════════════
 // A SOCKET, BECAUSE THE FRAME IS THE TRUTH.
 // ═══════════════════════════════════════════════════════════════════════════
+// Pure-realm visual QA can photograph the passable state without scripting a
+// player route to every hinge. This changes the throwaway view only; the game
+// still opens doors through its normal bump action.
+if (OPEN_DOORS && pureLevel !== null) {
+  pureLevel = {
+    ...pureLevel,
+    tiles: pureLevel.tiles.map((code) => (code === TileCode.DOOR ? TileCode.DOOR_OPEN : code)),
+  };
+}
+
 const server =
   pureLevel !== null
     ? { kill() {} }
@@ -453,7 +571,10 @@ if (pureLevel === null) {
 }
 
 const latest = (t) => frames.filter((f) => f.t === t).at(-1);
-const realm = pureLevel === null ? latest('realm') : { name: 'The Redaction', level: pureLevel };
+const realm =
+  pureLevel === null
+    ? latest('realm')
+    : { name: pureRealmName, kind: pureRealmKind, level: pureLevel };
 const sites = pureSites ?? latest('sites')?.sites ?? [];
 const level = realm?.level;
 if (level === undefined) {
@@ -461,7 +582,7 @@ if (level === undefined) {
   process.exit(1);
 }
 
-const me = (realm.actors ?? []).find((a) => a.id === selfId) ?? { x: 0, y: 0 };
+const me = pureActor ?? (realm.actors ?? []).find((a) => a.id === selfId) ?? { x: 0, y: 0 };
 /**
  * `--at x,y --size WxH` — LOOK AT A PLACE, not at wherever you happen to spawn.
  *
@@ -506,19 +627,109 @@ const view =
 const canvas = makeCanvas(view.w * PX, view.h * PX);
 const missing = new Map();
 let painted = 0;
+const terrainSprites = tileSpritesForRealm(realm.kind ?? null);
+const codeAt = (x, y) =>
+  x < 0 || y < 0 || x >= level.w || y >= level.h ? TileCode.WALL : level.tiles[y * level.w + x];
+const groundCode = (primary, alternate) =>
+  isWalkable(primary) && primary !== TileCode.DOOR_OPEN
+    ? primary
+    : isWalkable(alternate) && alternate !== TileCode.DOOR_OPEN
+      ? alternate
+      : TileCode.FLOOR;
+const terrainSprite = (code, tx, ty) => {
+  const ids = terrainSprites[code];
+  if (ids === undefined) return { id: `code ${String(code)}`, sprite: null };
+  const id = ids.length === 1 ? ids[0] : ids[tileVariant(tx, ty, ids.length)];
+  return { id, sprite: spriteOf(id) };
+};
+
+function blitDoorHalf(code, tx, ty, orientation, second, dx, dy) {
+  const { id, sprite } = terrainSprite(code, tx, ty);
+  if (sprite === null) {
+    missing.set(id, (missing.get(id) ?? 0) + 1);
+    return false;
+  }
+  const horizontalSplit = Math.floor(sprite.w / 2);
+  const verticalSplit = Math.floor(sprite.h / 2);
+  const destinationSplit = Math.floor(PX / 2);
+  const crop =
+    orientation === 'ns'
+      ? cropSprite(
+          sprite,
+          0,
+          second ? verticalSplit : 0,
+          sprite.w,
+          second ? sprite.h - verticalSplit : verticalSplit,
+        )
+      : cropSprite(
+          sprite,
+          second ? horizontalSplit : 0,
+          0,
+          second ? sprite.w - horizontalSplit : horizontalSplit,
+          sprite.h,
+        );
+  const targetX = dx + (orientation === 'ew' && second ? destinationSplit : 0);
+  const targetY = dy + (orientation === 'ns' && second ? destinationSplit : 0);
+  const targetW = orientation === 'ew' ? (second ? PX - destinationSplit : destinationSplit) : PX;
+  const targetH = orientation === 'ns' ? (second ? PX - destinationSplit : destinationSplit) : PX;
+  return blitSized(canvas, crop, targetX, targetY, targetW, targetH);
+}
+
 for (let y = 0; y < view.h; y += 1) {
   for (let x = 0; x < view.w; x += 1) {
     const tx = view.x0 + x;
     const ty = view.y0 + y;
     const code = level.tiles[ty * level.w + tx];
-    const ids = TILE_SPRITES[code];
-    if (ids === undefined) {
-      missing.set(`code ${String(code)}`, (missing.get(`code ${String(code)}`) ?? 0) + 1);
-      continue;
+    const roofId = realm.kind === 'overworld' ? settlementRoofSpriteId(code, tx, ty) : null;
+    const doorId = realm.kind === 'overworld' ? null : localDoorSpriteId(level, code, tx, ty);
+    if (doorId !== null) {
+      const orientation = doorId.endsWith('_ns') ? 'ns' : 'ew';
+      const firstNeighbor = orientation === 'ns' ? codeAt(tx, ty - 1) : codeAt(tx - 1, ty);
+      const secondNeighbor = orientation === 'ns' ? codeAt(tx, ty + 1) : codeAt(tx + 1, ty);
+      blitDoorHalf(
+        groundCode(firstNeighbor, secondNeighbor),
+        tx,
+        ty,
+        orientation,
+        false,
+        x * PX,
+        y * PX,
+      );
+      blitDoorHalf(
+        groundCode(secondNeighbor, firstNeighbor),
+        tx,
+        ty,
+        orientation,
+        true,
+        x * PX,
+        y * PX,
+      );
+      if (blit(canvas, spriteOf(doorId), x * PX, y * PX, PX)) painted += 1;
+      else missing.set(doorId, (missing.get(doorId) ?? 0) + 1);
+    } else {
+      const ids = roofId === null ? terrainSprites[code] : [roofId];
+      if (ids === undefined) {
+        missing.set(`code ${String(code)}`, (missing.get(`code ${String(code)}`) ?? 0) + 1);
+        continue;
+      }
+      const id = ids.length === 1 ? ids[0] : ids[tileVariant(tx, ty, ids.length)];
+      if (blit(canvas, spriteOf(id), x * PX, y * PX, PX)) painted += 1;
+      else missing.set(id, (missing.get(id) ?? 0) + 1);
     }
-    const id = ids.length === 1 ? ids[0] : ids[tileVariant(tx, ty, ids.length)];
-    if (blit(canvas, spriteOf(id), x * PX, y * PX, PX)) painted += 1;
-    else missing.set(id, (missing.get(id) ?? 0) + 1);
+
+    // Match the browser's local architectural-height pass. The south cell is
+    // the only adjacency that exposes a full vertical face in this viewpoint.
+    if (realm.kind === 'common' || realm.kind === 'inner') {
+      const south = ty + 1 < level.h ? level.tiles[(ty + 1) * level.w + tx] : TileCode.WALL;
+      const faceIds = isWalkable(south) ? LOCAL_WALL_FACE_SPRITES[code] : undefined;
+      if (faceIds !== undefined) {
+        const faceId =
+          faceIds.length === 1 ? faceIds[0] : faceIds[tileVariant(tx, ty, faceIds.length)];
+        if (!blit(canvas, spriteOf(faceId), x * PX, y * PX, PX)) {
+          missing.set(faceId, (missing.get(faceId) ?? 0) + 1);
+        }
+      }
+    }
   }
 }
 
@@ -540,9 +751,29 @@ for (const s of sites) {
   }
 }
 
+// Furnishings and residents for a pure settlement probe. These come from the
+// built World, not the content tables, so the image catches missing wiring as
+// well as bad coordinates.
+for (const prop of pureProps ?? []) {
+  const x = prop.x - view.x0;
+  const y = prop.y - view.y0;
+  if (x < 0 || y < 0 || x >= view.w || y >= view.h) continue;
+  if (!blit(canvas, spriteOf(prop.sprite), x * PX, y * PX, PX)) {
+    missing.set(prop.sprite, (missing.get(prop.sprite) ?? 0) + 1);
+  }
+}
+for (const actor of pureActors ?? []) {
+  const x = actor.x - view.x0;
+  const y = actor.y - view.y0;
+  if (x < 0 || y < 0 || x >= view.w || y >= view.h) continue;
+  if (!blitActor(canvas, spriteOf(actor.sprite ?? ''), x * PX, y * PX, PX)) {
+    missing.set(actor.sprite ?? '(actor)', (missing.get(actor.sprite ?? '(actor)') ?? 0) + 1);
+  }
+}
+
 // And the player, so the shot is framed the way the screenshot was.
 if (!WHOLE) {
-  blit(canvas, spriteOf(me.sprite ?? ''), (me.x - view.x0) * PX, (me.y - view.y0) * PX, PX);
+  blitActor(canvas, spriteOf(me.sprite ?? ''), (me.x - view.x0) * PX, (me.y - view.y0) * PX, PX);
 }
 
 /**

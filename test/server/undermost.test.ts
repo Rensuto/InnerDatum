@@ -561,7 +561,7 @@ describe('a new character wakes in the Undermost', () => {
       'nobody told it why',
     ).toBe(true);
     expect(
-      margin.some((text) => text.startsWith('Your file is open')),
+      margin.some((text) => text.startsWith('The void has noticed you')),
       'a character in the cave was pointed at a case on the surface',
     ).toBe(false);
   });
