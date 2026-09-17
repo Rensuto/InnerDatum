@@ -315,8 +315,8 @@ describe('the wipe is narrated in the order it happened', () => {
      * `death` event raised for a PLAYER. `killed` is `applyDamage`'s answer and
      * is true of any body taken to 0, which for a player is the Downed state
      * (`alive === false` on purpose). The Record lane renders `death` as "X is
-     * unfiled." — the game's word for a monster removed for good — so the
-     * transcript read:
+     * unmade." — the game's word for a monster removed for good, worded "is
+     * unfiled." when this was measured — so the transcript read:
      *
      *     Player 1 is unfiled.
      *     Player 1 is DOWN — 5 turns, and nobody is coming.

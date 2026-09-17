@@ -94,7 +94,7 @@ function pinLine(name: string, landed: SetEffectResult | undefined): string[] {
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════
- * GRAB -- the Index Inkwell's. It hits, and if it hits, you stay.
+ * GRAB -- the Index Clutch's. It hits, and if it hits, you stay.
  * ═══════════════════════════════════════════════════════════════════════════
  *
  * NOT GRASPING HOLD WITH A NEW NAME. `grasping_hold.ts` is the Glut's and is

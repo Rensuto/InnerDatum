@@ -66,10 +66,10 @@ export const PLACE_BLURBS: ReadonlyMap<string, string> = new Map<string, string>
   ['site:underworks', 'Below the ward, below the water table, and still going down.'],
   [
     'site:glass_archive',
-    'Shelves of records nobody filed, in a building nobody built. The Index keeps its own copies.',
+    'Glass shelves holding nothing, in a building nobody built. Your reflection in them is a moment late.',
   ],
   ['site:watchers_altar', 'Somebody has been leaving things here. Recently.'],
-  ['site:hollow_mine', 'Cut for ore, abandoned for a reason the paperwork does not give.'],
+  ['site:hollow_mine', 'Cut for ore, abandoned when the tunnels went deeper than anyone dug.'],
   [
     'site:drowned_chapel',
     'The tide took the nave and left the arches. It is quieter than water should be.',

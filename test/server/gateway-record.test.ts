@@ -19,7 +19,7 @@ import { describe, expect, it } from 'vitest';
  *           nobody to name, and inventing one would be worse than the silence."*
  *
  * The failure both share is silent and identical: reach for `nameOf` instead of
- * `nameOrNull` and the line reads "Index Husk is unfiled by someone" — a game
+ * `nameOrNull` and the line reads "Index Husk is unmade by someone" — a game
  * that knows and will not say. `reap-broadcast.test.ts` already asserts no line
  * contains "someone", but only for a kill that HAS a visible killer, which is
  * the case that cannot produce it.

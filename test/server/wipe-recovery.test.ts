@@ -560,8 +560,9 @@ describe('the events are broadcast in causal order', () => {
     /**
      * ═══ A `death` LINK USED TO SIT BETWEEN THESE TWO, AND IT WAS WRONG ═══
      * `killed` is true of any body taken to 0, and for a PLAYER that is the
-     * Downed state. The Record lane renders `death` as "X is unfiled." — a
-     * monster's permanent removal — so the transcript announced the detective
+     * Downed state. The Record lane renders `death` as "X is unmade." — a
+     * monster's permanent removal, worded "is unfiled." when this was measured
+     * — so the transcript announced the detective
      * gone for good on the line above the one giving them five turns and an
      * ally. The causal order this test is about is unchanged.
      */

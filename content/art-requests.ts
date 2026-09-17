@@ -21,15 +21,16 @@
  * over; the picture does not.
  *
  * ═══ THE SETTING, IN ONE PARAGRAPH ═══
- * Alderbrook is a gaslit city of watchmen, inspectors, clerks and alchemists,
- * soot and brass, typewriters and ledgers. The detectives work out of an office
- * on Saint Orwin's Square. Beneath the city is the Index, a record rewriting
- * what it files. Its creatures are THE REDACTED: things half-erased and
- * overwritten, shown with loose pages, black redaction bars, strike-through
- * marks, ink and a faint static. Its human servants are THE FILED. Ordinary
- * fauna of the moor and the underways is plain and grim, not cute. Tone is dry
- * and procedural; nothing is played for laughs. In early-game names avoid "the
- * Veil", "Outer Index" and "cosmic entity".
+ * Alderbrook is a gaslit city of watchmen, inspectors and alchemists, soot and
+ * brass, fog and lamplight. The detectives work out of an office on Saint
+ * Orwin's Square. Beneath the city is the Index: a void that unmakes what it
+ * touches and overwrites what is left. Its creatures are THE REDACTED: things
+ * half-erased and overwritten, shown with pieces cut clean out of them, holes
+ * with depth behind them, wrong angles and a faint static. Its human servants
+ * are THE TAKEN. Ordinary fauna of the moor and the underways is plain and
+ * grim, not cute. Tone is quiet and exact: the horror is what a thing does to
+ * a body, to the light and to the eye, and nothing is played for laughs. In
+ * early-game names avoid "the Veil", "Outer Index" and "cosmic entity".
  *
  * ═══ SIZES AND ANCHORS — ASSETS-REQUIRED.md § Runtime scale contract ═══
  *   48x64   a standing human-scale body, one frame, facing SOUTH, bottom-centred
@@ -290,32 +291,32 @@ export const ENEMY_ART_COMMISSION: readonly ArtRequest[] = [
     { id: 'enemy_ledger_mouse_s' },
     'The Underworks, cellars',
     `${NPCS}/rodent.lua`,
-    'A pale mouse the size of a terrier, pulped paper matted into its fur.',
+    'A pale mouse the size of a terrier, one flank worn through to black.',
   ),
   actor(
     { id: 'enemy_ledger_rat_s' },
     'The Underworks, cellars',
     `${NPCS}/rodent.lua`,
-    'A grey-brown rat as long as a forearm, a strip of ledger paper in its teeth.',
+    'A grey-brown rat as long as a forearm, a human finger in its teeth.',
   ),
   actor(
     { id: 'enemy_moor_hare_s' },
     'Blackwood Outskirts',
     `${NPCS}/rodent.lua`,
-    'A moor hare grown wrong: too long in the legs, too still, eyes like wet ink.',
+    'A moor hare grown wrong: too long in the legs, too still, eyes like holes.',
   ),
   actor(
     { id: 'enemy_glass_rat_s' },
     'The Glass Archive',
     `${NPCS}/rodent.lua`,
-    'A rat with shards of archive glass grown out through its back.',
+    'A rat with shards of black glass grown out through its back.',
   ),
   // Worm masses — `vermin.lua`.
   actor(
     { id: 'enemy_pageworm_mass_s' },
     'The Underworks',
     `${NPCS}/vermin.lua`,
-    'A heap of pale worms threaded through pulped paper, slowly spreading.',
+    'A heap of pale worms knotted round a hole in the floor, slowly spreading.',
   ),
   actor(
     { id: 'enemy_pageworm_mass_green_s' },
@@ -327,14 +328,14 @@ export const ENEMY_ART_COMMISSION: readonly ArtRequest[] = [
     { id: 'enemy_carrion_pageworm_mass_s' },
     "Saint's Rest",
     `${NPCS}/vermin.lua`,
-    "The diseased kind: grey-red worms feeding on something in a clerk's coat.",
+    'The diseased kind: grey-red worms feeding on someone still in their coat.',
   ),
   // Undead rats — `undead-rat.lua`.
   actor(
     { id: 'enemy_struck_rat_skeletal_s' },
     "Saint's Rest",
     `${NPCS}/undead-rat.lua`,
-    'A rat skeleton with a black strike-through bar across its skull.',
+    'A rat skeleton with a band of nothing cut straight across its skull.',
   ),
   actor(
     { id: 'enemy_struck_rat_ghoulish_s' },
@@ -358,20 +359,20 @@ export const ENEMY_ART_COMMISSION: readonly ArtRequest[] = [
     { id: 'enemy_gigantic_bone_rat' },
     "Saint's Rest",
     `${NPCS}/undead-rat.lua`,
-    'A rat skeleton the size of a pony, ribs strung with name tags.',
+    'A rat skeleton the size of a pony, ribs hung with the teeth of what it ate.',
   ),
   // Molds — `molds.lua`. Stationary.
   actor(
     { id: 'enemy_ink_bloom_grey_s' },
     'Cellars, the Underworks',
     `${NPCS}/molds.lua`,
-    'A grey fungal bloom that is also a spreading ink blot, rooted to the floor.',
+    'A grey fungal bloom rooted in a black stain that goes deeper than the floor.',
   ),
   actor(
     { id: 'enemy_ink_bloom_brown_s' },
     'Cellars, the Underworks',
     `${NPCS}/molds.lua`,
-    'A brown bloom that puffs spores like dust from an old file.',
+    'A brown bloom that puffs spores which hang in the air and never fall.',
   ),
   actor(
     { id: 'enemy_ink_bloom_shining_s' },
@@ -385,42 +386,42 @@ export const ENEMY_ART_COMMISSION: readonly ArtRequest[] = [
     `${NPCS}/molds.lua`,
     'A poison-green bloom glistening with droplets.',
   ),
-  // Oozes — `ooze.lua`. Spilled ink that moves.
+  // Oozes — `ooze.lua`. Spills of the void that crawl.
   actor(
     { id: 'enemy_ink_spill_green_s' },
     'The Underworks',
     `${NPCS}/ooze.lua`,
-    'A crawling pool of green ink with half-dissolved pages in it.',
+    'A crawling pool of green ooze with half-dissolved bones in it.',
   ),
   actor(
     { id: 'enemy_ink_spill_red_s' },
     'The Underworks',
     `${NPCS}/ooze.lua`,
-    'Red ink that steams where it moves.',
+    'Red ooze that steams where it moves.',
   ),
   actor(
     { id: 'enemy_ink_spill_blue_s' },
     'The Weir',
     `${NPCS}/ooze.lua`,
-    'Blue-black ink with a skin of frost.',
+    'Blue-black ooze with a skin of frost.',
   ),
   actor(
     { id: 'enemy_ink_spill_white_s' },
     'The Glass Archive',
     `${NPCS}/ooze.lua`,
-    'Correction fluid gone feral: chalk-white, blank, erasing the floor under it.',
+    'Blankness gone feral: chalk-white, featureless, erasing the floor under it.',
   ),
   actor(
     { id: 'enemy_ink_spill_black_s' },
     'The Outer Index',
     `${NPCS}/ooze.lua`,
-    'Pure black ink that swallows the light around it.',
+    'Bottomless black that swallows the light around it.',
   ),
   large(
     { id: 'enemy_the_blotter' },
     'The Underworks',
     `${NPCS}/ooze.lua`,
-    "A translucent cube of blotting jelly with a lost detective's hat and keys suspended inside.",
+    "A translucent cube of jelly with a lost detective's hat and keys suspended inside, further in than the cube is deep.",
   ),
   // Jellies — `jelly.lua`. Stationary, one per colour.
   actor(
@@ -445,7 +446,7 @@ export const ENEMY_ART_COMMISSION: readonly ArtRequest[] = [
     { id: 'enemy_ink_jelly_white_s' },
     'The Glass Archive',
     `${NPCS}/jelly.lua`,
-    'A white jelly mound with a paper clip floating in it.',
+    'A white jelly mound with a wedding ring floating in it.',
   ),
   actor(
     { id: 'enemy_ink_jelly_yellow_s' },
@@ -457,7 +458,7 @@ export const ENEMY_ART_COMMISSION: readonly ArtRequest[] = [
     { id: 'enemy_ink_jelly_black_s' },
     'The Outer Index',
     `${NPCS}/jelly.lua`,
-    'A black jelly mound with a surface like a printed page.',
+    'A black jelly mound with a night sky in it that is not this one.',
   ),
   // Snakes — `snake.lua`. Blackwood.
   actor(
@@ -564,18 +565,18 @@ export const ENEMY_ART_COMMISSION: readonly ArtRequest[] = [
     `${NPCS}/bear.lua`,
     'A bear in scraps of chain barding, a broken collar round its neck.',
   ),
-  // Spiders — `spider.lua`. They bind with paper and gum.
+  // Spiders — `spider.lua`. They bind with gum and thread that ends in mid-air.
   actor(
     { id: 'enemy_binder_spider_s' },
     'The Glass Archive',
     `${NPCS}/spider.lua`,
-    'A dog-sized spider spinning strands of gummed paper.',
+    'A dog-sized spider spinning threads that end in mid-air.',
   ),
   actor(
     { id: 'enemy_gum_spitter_s' },
     'The Glass Archive',
     `${NPCS}/spider.lua`,
-    'A squat spider with a swollen jaw that spits glue.',
+    'A squat spider with a swollen jaw that spits black gum.',
   ),
   actor(
     { id: 'enemy_chitin_binder_s' },
@@ -593,20 +594,20 @@ export const ENEMY_ART_COMMISSION: readonly ArtRequest[] = [
     { id: 'enemy_weaver_patriarch' },
     'The Glass Archive',
     `${NPCS}/spider.lua`,
-    'A huge male weaver wearing a shawl of stitched pages.',
+    'A huge male weaver wearing a shawl of stitched shrouds.',
   ),
   large(
     { id: 'enemy_weaver_matriarch' },
     'The Glass Archive',
     `${NPCS}/spider.lua`,
-    'A huge female weaver, egg sac bound in ledger cloth.',
+    'A huge female weaver, egg sac bound in grave-cloth.',
   ),
-  // Ants — `ant.lua`. Archive ants carry away paper.
+  // Ants — `ant.lua`. Archive ants carry away the pieces.
   actor(
     { id: 'enemy_archive_ant_white_s' },
     'The Glass Archive',
     `${NPCS}/ant.lua`,
-    'A white ant the size of a cat, carrying a torn page.',
+    'A white ant the size of a cat, carrying a torn-off hand.',
   ),
   actor(
     { id: 'enemy_archive_ant_brown_s' },
@@ -661,7 +662,7 @@ export const ENEMY_ART_COMMISSION: readonly ArtRequest[] = [
     { id: 'enemy_citation_moth_swarm_s' },
     'The Glass Archive',
     `${NPCS}/swarm.lua`,
-    'A cloud of grey moths with printed marks on their wings.',
+    'A cloud of grey moths with eyes on their wings that follow you.',
   ),
   actor(
     { id: 'enemy_bee_swarm_s' },
@@ -681,12 +682,12 @@ export const ENEMY_ART_COMMISSION: readonly ArtRequest[] = [
     `${NPCS}/swarm.lua`,
     'A single huge biting fly with a drill-like proboscis.',
   ),
-  // Skeletons — `skeleton.lua`. THE STRUCK-THROUGH: dead with their names crossed out.
+  // Skeletons — `skeleton.lua`. THE STRUCK-THROUGH: dead with a band of them cut out of the world.
   actor(
     { id: 'enemy_struck_warrior_degenerated_s' },
     "Saint's Rest",
     `${NPCS}/skeleton.lua`,
-    'A crumbling skeleton with a rusted blade and a black bar across the skull.',
+    'A crumbling skeleton with a rusted blade and a band of nothing across the skull.',
   ),
   actor(
     { id: 'enemy_struck_archer_degenerated_s' },
@@ -698,7 +699,7 @@ export const ENEMY_ART_COMMISSION: readonly ArtRequest[] = [
     { id: 'enemy_struck_mage_s' },
     "Saint's Rest",
     `${NPCS}/skeleton.lua`,
-    "A skeleton in the rags of a clerk's robe, finger bones inked black.",
+    'A skeleton in the rags of a long robe, finger bones gone black to the wrist.',
   ),
   actor(
     { id: 'enemy_struck_warrior_s' },
@@ -716,19 +717,19 @@ export const ENEMY_ART_COMMISSION: readonly ArtRequest[] = [
     { id: 'enemy_struck_magus_s' },
     'Barrow End',
     `${NPCS}/skeleton.lua`,
-    'A skeleton trailing loose pages that circle it like a cloak.',
+    'A skeleton trailing torn scraps of dark that circle it like a cloak.',
   ),
   actor(
     { id: 'enemy_struck_warrior_armoured_s' },
     'Barrow End',
     `${NPCS}/skeleton.lua`,
-    'A skeleton in dented plate stamped with a filing number.',
+    'A skeleton in dented plate with a hole through it that has no back.',
   ),
   actor(
     { id: 'enemy_struck_master_archer_s' },
     'Barrow End',
     `${NPCS}/skeleton.lua`,
-    'A skeleton archer with a quiver of ink-black bolts.',
+    'A skeleton archer with a quiver of bolts that drink the light.',
   ),
   actor(
     { id: 'enemy_struck_assassin_s' },
@@ -736,7 +737,7 @@ export const ENEMY_ART_COMMISSION: readonly ArtRequest[] = [
     `${NPCS}/skeleton.lua`,
     'A crouched skeleton with two long knives and a dark hood.',
   ),
-  // Ghouls — `ghoul.lua`. THE UNFILED.
+  // Ghouls — `ghoul.lua`. THE UNBURIED.
   actor(
     { id: 'enemy_unfiled_ghoul_s' },
     "Saint's Rest",
@@ -759,7 +760,7 @@ export const ENEMY_ART_COMMISSION: readonly ArtRequest[] = [
     { id: 'enemy_risen_corpse_s' },
     "Saint's Rest",
     `${NPCS}/ghoul.lua`,
-    'A fresh corpse still in its Sunday clothes, toe tag swinging.',
+    'A fresh corpse still in its Sunday clothes, pennies still on its eyes.',
   ),
   // Ghosts — `ghost.lua`. WRONG SHADOWS.
   actor(
@@ -840,32 +841,32 @@ export const ENEMY_ART_COMMISSION: readonly ArtRequest[] = [
     { id: 'enemy_vampire_lord' },
     'The Drowned Chapel',
     `${NPCS}/vampire.lua`,
-    'A tall vampire lord with a cloak of bats that are also torn pages.',
+    'A tall vampire lord with a cloak of bats that are also holes in the air.',
   ),
   // Liches — `lich.lua`.
   actor(
     { id: 'enemy_lich_s' },
     'The Glass Archive',
     `${NPCS}/lich.lua`,
-    'A skeletal archivist in rotted robes holding a glowing index card.',
+    'A skeletal sexton in rotted robes holding a lantern that shines darkness.',
   ),
   large(
     { id: 'enemy_ancient_lich' },
     'The Glass Archive',
     `${NPCS}/lich.lua`,
-    'An ancient lich floating in a column of drifting pages.',
+    'An ancient lich floating in a column of ash that falls upward.',
   ),
   large(
     { id: 'enemy_archlich' },
     'The Outer Index',
     `${NPCS}/lich.lua`,
-    'A lich with a crown of fountain pens, its robe a black redaction bar.',
+    'A lich with a crown of long black fingers, its robe a hard-edged hole in the world.',
   ),
   large(
     { id: 'enemy_blood_lich' },
     'The Outer Index',
     `${NPCS}/lich.lua`,
-    'A lich wet with red ink that runs upward.',
+    'A lich wet with blood that runs upward.',
   ),
   // Bone giants — `bone-giant.lua`.
   large(
@@ -884,20 +885,20 @@ export const ENEMY_ART_COMMISSION: readonly ArtRequest[] = [
     { id: 'enemy_eternal_bone_giant' },
     'The Outer Index',
     `${NPCS}/bone-giant.lua`,
-    'A bone giant whose bones are covered in tiny handwriting.',
+    'A bone giant whose bones are pitted with tiny holes that go too deep.',
   ),
   large(
     { id: 'enemy_runed_bone_giant' },
     'The Outer Index',
     `${NPCS}/bone-giant.lua`,
-    'A bone giant with glowing filing numbers branded down its spine.',
+    'A bone giant with runes cut down its spine that glow like open wounds.',
   ),
-  // Orcs — `orc.lua`. THE FILED: gangs working for whoever is annotating.
+  // Orcs — `orc.lua`. THE TAKEN: gangs who work for the Index and come back a little less each time.
   actor(
     { id: 'enemy_filed_bruiser_s' },
     'Gearford Industrial Ward',
     `${NPCS}/orc.lua`,
-    "A big gang bruiser in a docker's coat with an iron bar and a Filed armband.",
+    "A big gang bruiser in a docker's coat with an iron bar and one eye gone black.",
   ),
   actor(
     { id: 'enemy_filed_crossbow_s' },
@@ -939,7 +940,7 @@ export const ENEMY_ART_COMMISSION: readonly ArtRequest[] = [
     { id: 'enemy_filed_grand_knife_s' },
     'Threadneedle Row',
     `${NPCS}/orc.lua`,
-    'The best knife in the Filed: masked, silent, a blade in each hand and one in the teeth.',
+    'The best knife among the Taken: masked, silent, a blade in each hand and one in the teeth.',
   ),
   // Thieves — `thieve.lua`. Street crime.
   actor(
@@ -1052,7 +1053,7 @@ export const ENEMY_ART_COMMISSION: readonly ArtRequest[] = [
     `${NPCS}/construct.lua`,
     'An automaton with glass tanks of bubbling reagent on its shoulders.',
   ),
-  // Crystals — `crystal.lua`. ARCHIVE GLASS.
+  // Crystals — `crystal.lua`. ARCHIVE GLASS: shards that show somewhere else.
   actor(
     { id: 'enemy_archive_glass_red_s' },
     'The Glass Archive',
@@ -1201,7 +1202,7 @@ export const ENEMY_ART_COMMISSION: readonly ArtRequest[] = [
     { id: 'enemy_worm_that_walks_s' },
     'The Outer Index',
     `${NPCS}/horror.lua`,
-    "A mass of worms in the shape of a man in a clerk's coat.",
+    'A mass of worms in the shape of a man, wearing his coat.',
   ),
   large(
     { id: 'enemy_bloated_horror' },
@@ -1255,7 +1256,7 @@ export const ENEMY_ART_COMMISSION: readonly ArtRequest[] = [
     { id: 'enemy_oozing_horror' },
     'The Outer Index',
     `${NPCS}/horror.lua`,
-    'A dripping heap of ink and flesh with arms forming and dissolving.',
+    'A dripping heap of black ooze and flesh with arms forming and dissolving.',
   ),
   actor(
     { id: 'enemy_umbral_horror_s' },
@@ -1305,25 +1306,25 @@ export const BOSS_ART_COMMISSION: readonly ArtRequest[] = [
     { id: 'enemy_undermost_picket_s' },
     'The intro cave, last floor',
     `${ZONES}/reknor-escape/npcs.lua`,
-    "The warden's pickets: miners in torn safety harnesses with picks, heads bound in Index pages.",
+    "The warden's pickets: miners in torn safety harnesses with picks, heads gone to a knot of black void.",
   ),
   actor(
     { id: 'enemy_the_rat_registrar_s' },
     "Saint's Rest",
     `${NPCS}/undead-rat.lua`,
-    'A skeletal rat in a tiny paper mortarboard with green witchfire in its sockets.',
+    'A skeletal rat king, the tails of dead rats knotted into its own, green witchfire in its sockets.',
   ),
   actor(
     { id: 'enemy_the_skeletal_bloom_s' },
     'The Underworks',
     `${NPCS}/molds.lua`,
-    'An ink bloom grown over a whole skeleton, which it moves like a puppet.',
+    'A black bloom grown over a whole skeleton, which it moves like a puppet.',
   ),
   actor(
     { id: 'enemy_barrow_end_shade_s' },
     'Barrow End',
     `${ZONES}/ruins-kor-pul/npcs.lua`,
-    'The Shade: the ghost of a sorcerer-clerk in a tall collar, pages whirling round him.',
+    'The Shade: the ghost of a sorcerer in a tall collar, scraps of his own shadow whirling round him.',
   ),
   large(
     { id: 'enemy_kors_fury' },
@@ -1365,7 +1366,7 @@ export const BOSS_ART_COMMISSION: readonly ArtRequest[] = [
     { id: 'enemy_the_prism_record' },
     'The Glass Archive',
     `${ZONES}/scintillating-caves/npcs.lua`,
-    'A vast faceted crystal holding a burning page at its heart.',
+    'A vast faceted crystal with a burning hole at its heart.',
   ),
   actor(
     { id: 'enemy_the_simulacrum_s' },
@@ -1509,25 +1510,25 @@ export const BOSS_ART_COMMISSION: readonly ArtRequest[] = [
     { id: 'enemy_krogar_s' },
     'The Hollow Mine',
     `${ZONES}/unremarkable-cave/npcs.lua`,
-    "Krogar, a Filed boss in a stained miner's coat with an axe and a lantern.",
+    "Krogar, a boss of the Taken in a stained miner's coat with an axe and a lantern.",
   ),
   large(
     { id: 'enemy_the_archive_queen' },
     'The Glass Archive',
     `${NPCS}/ant.lua`,
-    'The queen of the archive ants, bloated with eggs, surrounded by paper nests.',
+    'The queen of the archive ants, bloated with eggs, surrounded by nests of bone and hair.',
   ),
   large(
     { id: 'enemy_ninandra_the_great_weaver' },
     'The Glass Archive',
     `${NPCS}/spider.lua`,
-    'Ninandra, the great weaver, spinning a web of bound books.',
+    'Ninandra, the great weaver, her web full of caught shadows.',
   ),
   large(
     { id: 'enemy_kratorr_the_glutton' },
     'Gearford Industrial Ward',
     `${NPCS}/orc.lua`,
-    'The Glutton, a vast Filed boss eating at a table he drags behind him.',
+    'The Glutton, a vast boss of the Taken eating at a table he drags behind him.',
   ),
   large(
     { id: 'enemy_rungof_the_hound_titan' },
@@ -1852,13 +1853,13 @@ export const EFFECT_ART_COMMISSION: readonly ArtRequest[] = [
     { id: 'ui_fx_death_erase' },
     'The Redacted',
     '',
-    'A Redacted body erased: pages peeling off and the shape crossing out.',
+    'A Redacted body unmade: its edges tearing away into a hole that closes.',
   ),
   once(
     { id: 'ui_fx_page_burst' },
     'The Redacted',
     '',
-    'A burst of loose pages scattering from a struck Redacted.',
+    'A burst of torn black scraps scattering from a struck Redacted.',
   ),
   loop({ id: 'ui_fx_stunned' }, 'any', '', 'Small circling sparks above a stunned head.'),
   loop({ id: 'ui_fx_confused' }, 'any', '', 'Swirling question-mark scribbles above a head.'),

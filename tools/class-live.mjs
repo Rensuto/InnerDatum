@@ -695,16 +695,16 @@ if (WANT === 'alchemist') {
     const after = inkOf();
     const spent = before !== null && after !== null ? before.value - after.value : null;
     /**
-     * "UNFILED" IS THIS GAME'S WORD FOR DEAD — scheduler.ts:434 narrates
-     * "Ren is unfiled." The first version of this guessed at an English
-     * vocabulary the game does not use ("dies", "falls", "is destroyed") and
-     * reported "NOTHING DIED in 14 flares" about a run whose own log said
-     * "Index Cairn is unfiled" two lines above the verdict.
+     * "UNMADE" IS THIS GAME'S WORD FOR A MONSTER KILLED — the Record lane
+     * narrates "Index Cairn is unmade." The first version of this guessed at an
+     * English vocabulary the game does not use ("dies", "falls", "is destroyed")
+     * and reported "NOTHING DIED in 14 flares" about a run whose own log said
+     * "Index Cairn is unfiled" (the wording then) two lines above the verdict.
      *
      * Read the words the server actually prints; do not invent a synonym for
      * them.
      */
-    const wasKill = lines2.some((l) => /is unfiled/i.test(l));
+    const wasKill = lines2.some((l) => /is unmade/i.test(l));
     costs.push({ spent, wasKill });
     console.log(
       `  cast ${String(cast + 1)}: reagents ${String(before?.value)} -> ${String(after?.value)}${wasKill ? '  (THE KILL)' : ''}`,

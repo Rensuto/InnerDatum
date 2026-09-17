@@ -753,7 +753,7 @@ describe('the card wearing your own face', () => {
  * The hostile card wears a monster's MAP sprite, and four of the Index's bodies
  * — the husk, the husk elite, the eidolon and the glut — are 96x128. Halving
  * that gives 48x64, which is taller than any card, so the card refused the
- * sprite and printed "TF" for the very thing the party was fighting. The cap
+ * sprite and printed "TT" for the very thing the party was fighting. The cap
  * that fixes it must not reach a player's 64x64 face, so both halves are here.
  *
  * THE SIZES ARE WRITTEN OUT, not read from disk. The PNGs are not in the
@@ -849,8 +849,8 @@ describe('a portrait lands at a whole fraction of its art, on both forms of the 
       // THE LETTERS ARE THE REFUSAL, and they are only absent because the body
       // drew. The same frame with no art at all must still print them, or the
       // assertion below it could never fail.
-      expect(textsOf(paint(view(frame), NO_SPRITES, width))).toContain('TF');
-      expect(textsOf(ops)).not.toContain('TF');
+      expect(textsOf(paint(view(frame), NO_SPRITES, width))).toContain('TT');
+      expect(textsOf(ops)).not.toContain('TT');
     },
   );
 

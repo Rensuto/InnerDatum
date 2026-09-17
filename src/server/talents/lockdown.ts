@@ -233,7 +233,7 @@ export const lockdown: Talent = {
     // A corpse has no rhythm left to disrupt. The swing above still consumed
     // its RNG draws, so the stream does not depend on whether it died first
     // (damage.ts makes the same guarantee for the same reason).
-    if (!victim.alive) return talentDone([hit], [`${victim.name} is unfiled.`]);
+    if (!victim.alive) return talentDone([hit], [`${victim.name} is unmade.`]);
 
     // ═══ THE STUN ═══
     // `ctx.status` absent is a fixture with no status table, not an error: the

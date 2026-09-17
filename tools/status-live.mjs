@@ -904,7 +904,7 @@ console.log(
  *
  *     An Index Breach is quiet now.
  *     2 damage. Index Husk 0/25.
- *     Index Husk is unfiled.
+ *     Index Husk is unmade.
  *
  * A unit test on the cleared-room predicate cannot see this — the predicate was
  * always right, and `test/server/cleared.test.ts` passes either way. Only frame
@@ -913,7 +913,7 @@ console.log(
 const allLines = [];
 for (const f of frames) if (f.t === 'log') for (const l of f.lines ?? []) allLines.push(l.text);
 const quietAt = allLines.findIndex((t) => /is quiet now\./.test(t));
-const lastKillAt = allLines.map((t) => /is unfiled\./.test(t)).lastIndexOf(true);
+const lastKillAt = allLines.map((t) => /is unmade\./.test(t)).lastIndexOf(true);
 
 beat('THE CLEARED-ROOM BEAT, IN ORDER');
 if (quietAt === -1) {

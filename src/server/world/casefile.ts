@@ -15,7 +15,7 @@
  *
  * ═══ IT IS THE ONE MECHANIC THIS GAME WAS ALREADY NAMED AFTER ═══
  * The log is a CASE LOG. Its lanes are `Record` and `Margin`. Its panels are
- * drawn on `PanelSkin.CaseFile`. A monster you kill is *unfiled*. The fiction
+ * drawn on `PanelSkin.CaseFile`. A monster you kill is *unmade*. The fiction
  * has been that of an investigator working cases since before there was a
  * second map to work them on, and the one thing an investigator's case file
  * does — say which cases are closed — was the thing it did not do.

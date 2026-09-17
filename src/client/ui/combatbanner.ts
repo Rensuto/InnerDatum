@@ -110,13 +110,13 @@ export type CombatAnnouncement = {
 /**
  * What the hostile side is called when the frame does not say.
  *
- * The server names the aggregate card ("The Filed"), and on an OPENING crossing
+ * The server names the aggregate card ("The Taken"), and on an OPENING crossing
  * that card is guaranteed present — the projector emits it exactly while
  * engaged, and `inCombat` is true by definition of the crossing. The fallback is
  * for the closing line and for a half-deployed server, and it names the party's
  * word for them rather than "the enemy", which is not a word this game uses.
  */
-const DEFAULT_SIDE = 'the Filed';
+const DEFAULT_SIDE = 'the Taken';
 
 /** The one card that stands for every hostile on the floor. See protocol.ts. */
 function hostileSide(turn: TurnMsg): string {
@@ -125,7 +125,7 @@ function hostileSide(turn: TurnMsg): string {
 }
 
 /**
- * The prose. Outer Index register: clerical, ominous, understated.
+ * The prose. Outer Index register: void, ominous, understated.
  *
  * THE DETAIL LINE IS THE HALF THAT ANSWERS THE ACTUAL COMPLAINT — "there is no
  * indicator that it's turn-based once combat starts". A player who has only ever
@@ -146,16 +146,16 @@ export function combatAnnouncement(cue: CombatCue, turn: TurnMsg): CombatAnnounc
       return {
         cue,
         headline: `CONTACT — ${side} have seen you`,
-        detail: 'the case is open · every move costs a turn · the party decides together',
-        record: `CONTACT — ${side} have seen you. Every move costs a turn until the Index closes.`,
+        detail: 'the world thins · every move costs a turn · the party decides together',
+        record: `CONTACT — ${side} have seen you. Every move costs a turn until the Index looks away.`,
       };
     }
     case CombatCue.Closed:
       return {
         cue,
-        headline: 'THE INDEX CLOSES — nothing is hunting you',
-        detail: 'the file is shut · move freely · nobody is waiting on you',
-        record: 'The Index closes — nothing is hunting you. Free movement.',
+        headline: 'THE INDEX LOOKS AWAY — nothing is hunting you',
+        detail: 'the world settles · move freely · nobody is waiting on you',
+        record: 'The Index looks away — nothing is hunting you. Free movement.',
       };
   }
 }
@@ -363,7 +363,7 @@ export function createCombatBanner(options: CombatBannerOptions): CombatBanner {
   function show(announcement: CombatAnnouncement): void {
     // REPLACE, NEVER QUEUE. Engagement can in principle drop and re-arm in
     // consecutive turns (it decays a few turns after the last contact rather
-    // than snapping to zero), and a queued "the Index closes" playing after
+    // than snapping to zero), and a queued "the Index looks away" playing after
     // combat has already resumed would be a banner that is simply wrong.
     stopTimers();
     live = announcement;

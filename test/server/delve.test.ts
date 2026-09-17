@@ -28,7 +28,7 @@ import { Faction } from '../../src/server/engine/actor.ts';
  * ═══════════════════════════════════════════════════════════════════════════
  *
  * Every one of them generated EMPTY: a player was told "Cut for ore, abandoned
- * for a reason the paperwork does not give", walked thirty tiles across a moor,
+ * when the tunnels went deeper than anyone dug", walked thirty tiles across a moor,
  * and found a room with nothing in it. Eight times. No writing on a threshold
  * survives that, and nothing in the test suite noticed — because "is there
  * anything in there" was not a question anything asked.

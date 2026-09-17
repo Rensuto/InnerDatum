@@ -46,7 +46,7 @@ import type { Talent } from '../engine/talents.ts';
  *
  * ═══ EFFACED, NOT SLOWED ═══
  * `expunge` already slows, in an area, and `recension` slows what it lands
- * beside. Effaced is the class's own mark — "rubbed out at the edges", every
+ * beside. Effaced is the class's own mark — "worn thin at the edges", every
  * roll made and resisted worse — and putting it on the one body that got close
  * is what makes the retreat stick rather than merely delaying the next swing.
  */

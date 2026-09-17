@@ -183,7 +183,7 @@ describe('a monster killed by a status', () => {
      * `hitToWire` PUSHES `death` FOR WHOEVER `killed` NAMES, PLAYER OR NOT.
      * ═══════════════════════════════════════════════════════════════════════
      *
-     * The Record lane prints "X is unfiled." for a `death` — the game's own word
+     * The Record lane prints "X is unmade." for a `death` — the game's own word
      * for a monster's permanent removal — so a player bled to 0 with an ally two
      * tiles away and five turns to reach them reads as gone for good. That is a
      * real fault on the attack path and it is queued; what this pins is that the

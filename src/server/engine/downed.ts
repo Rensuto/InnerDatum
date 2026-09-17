@@ -717,7 +717,7 @@ export const RespawnRefusal = {
    * *"I died"* would stop meaning *"GET TO ME"*. Wait, or be reached.
    */
   Downed: 'downed',
-  /** A monster does not file paperwork. Monsters die; players are Unfiled. */
+  /** The two words are deliberately different. Monsters are unmade; players are Unfiled. */
   NotAPlayer: 'not_a_player',
 } as const;
 export type RespawnRefusal = (typeof RespawnRefusal)[keyof typeof RespawnRefusal];

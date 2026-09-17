@@ -148,14 +148,14 @@ export function levelFeeling(areaLevel: number, bodyLevel: number): LevelFeeling
 export function levelFeelingText(feeling: LevelFeeling): string | null {
   switch (feeling) {
     case LevelFeeling.Terror:
-      return 'Nothing here is filed under anything you have read. This is far past you.';
+      return 'Nothing here has a shape your eyes agree on. This is far past you.';
     case LevelFeeling.Wary:
-      return 'The paperwork here is heavier than yours. Walk carefully.';
+      return 'The dark here is older than you are. Walk carefully.';
     case LevelFeeling.Even:
       return null;
     case LevelFeeling.Confident:
-      return 'You have closed worse than this. It should not hold you long.';
+      return 'You have walked out of worse than this. It should not hold you long.';
     case LevelFeeling.Bored:
-      return 'There is nothing here you have not already filed twice. Your time is worth more elsewhere.';
+      return 'There is nothing here you have not already buried twice. Your time is worth more elsewhere.';
   }
 }

@@ -322,6 +322,37 @@ the bag scale them down. Each must read as a lantern at 32x32 and be told apart
 from the other two by shape and flame colour, not by size alone.
 
 
+## The Index Cairn is drawn as filing drawers, and it is a stack of stones
+
+**Measured, not guessed: `client/public/assets/enemies/enemy_index_cairn_s.png` was opened.** It is
+48x64, `provenance: derived`, `sha256_16: 4386ca2628191411` in `manifest.placeholders.json`, and it
+shows a column of three or four dark box-drawers with pale rectangular label plates on their faces
+and pale pulls, stacked square and upright on a dark ground. It is a filing cabinet. The withdrawn
+`enemy_the_watcher` order below already says so in passing — *"the grey stacked-drawer Index Cairn
+it replaces"* — but no order was ever written against the Cairn itself, because nobody had looked at
+the file.
+
+**The text moved and the picture did not.** `INDEX_CAIRN.description` is now *"A stack of stones
+nobody admits to building, leaning at an angle the eye slides off. It does not come for you. It
+simply has a clear view, and time."* (`src/server/content/monsters.ts`). This is the only one of the
+twelve shipped creatures whose sprite still draws the thing the direction names as what this game is
+not, and a player meets it on floor one.
+
+- **enemy_index_cairn_s** (live, 48x64, `enemies/`)
+  - Problem: a stack of dark box-drawers with pale label plates and pulls — office furniture, drawn
+    square and upright. The description calls for stones and calls for a wrong angle; the sprite has
+    neither.
+  - Regenerate: a cairn of 5-7 rough moor stones stacked shoulder-high, each stone a distinct mass
+    with its own silhouette bump so the stack reads as stones and not as a column, and the whole
+    stack **leaning**, off-vertical by 8-12 degrees, with the top two stones leaning further than
+    the bottom ones so the lean is wrong rather than merely tilted. Cold grey granite with lichen-pale
+    speckle, a firm dark outline, and no face, no eye and no limbs — it is masonry that shoots, and
+    the threat must come from the pose. One small dark gap between two stones may carry a single
+    violet glint as the Index accent. No drawers, no label plates, no pulls, no paper and no ink.
+
+**It fires from eight tiles and never closes**, so the silhouette is what a player reads it by at
+range, across water, in the dark. Keep the mass solid and the outline unbroken.
+
 ## The standing commission: people, bestiary, bosses, effects, items, props
 
 **A backlog to draw from for a long while.** The list lives in
@@ -354,9 +385,10 @@ right: 4 frames (256x64) for a loop, 6 frames (384x64) for something played
 once. Projectiles are drawn pointing east. The file header gives the full
 convention and the colour family for each damage type.
 
-**Style.** Gaslit Alderbrook: soot, brass, ink and paper. The Redacted show loose
-pages, black redaction bars, strike-throughs and a faint static; the Filed are
-people. Bodies face south in one frame and must read in silhouette at 48x64.
+**Style.** Gaslit Alderbrook: soot, brass, fog and lamplight. The Redacted show
+pieces cut clean out of them, holes with depth behind them, wrong angles and a
+faint static; the Taken are people. Bodies face south in one frame and must read
+in silhouette at 48x64.
 
 ## Regeneration round one: the standing commission, reviewed (2026-09-16)
 
@@ -415,7 +447,7 @@ The effect briefs below refer to these by name, so each entry only lists what is
    - All four ink spills were drawn as hooded wraiths, and most ants have spider bodies (no antennae, no waist).
    - Keep the antlered deer skull for the Index faction only.
 7. **Readability falls short of the live reference.** Many commissions use heavy speckle or dither and a ragged black pixel spray instead of the live art's firm dark outline (actors_48x64_01 and _03, the 96x128 tendril bosses, the horned horror). Their silhouettes break up at native size.
-8. **The props that define a character are too small or missing.** Many NPC props are a few pixels or absent (bell, pick, mortar, loupe, clipboard, rope), and so are boss signature items (mortarboard, chain of office, knives, bound books). Regeneration briefs should call for defining props at least 5-8 px across.
+8. **The props that define a character are too small or missing.** Many NPC props are a few pixels or absent (bell, pick, mortar, loupe, clipboard, rope), and so are the props that mark a boss (knotted rat tails, chain of office, knives, caught shadows). Regeneration briefs should call for defining props at least 5-8 px across.
 9. **Named materials come out brown.** Brass, iron and black wood end up generic brown on items (sabre, wand, boathook, surveyor's staff, riot shield) and props (shop bell, Norgos's picks). Each named material needs its own hue.
 10. **The trap runes need to be one family.** prop_trap_rune_acid, a flat chalk circle, is the model. Fire, ice and lightning should match its form and change only glyph and colour, and the teleport glyph should be grey static rather than green.
 11. **Status icons need one framing decision.** Six have purple frames, three grey frames and seven none. The reviewer wanted purple frames everywhere, while the second reviewer points out that unframed dark squares are also live style. Choose one and apply it to all sixteen. Four icons carry grey residue blobs. Judge icons at the real 24 px badge size (partypanel.ts BADGE_PX = 24).
@@ -428,22 +460,22 @@ The effect briefs below refer to these by name, so each entry only lists what is
 
 - **enemy_ink_spill_red_s** (actors_48x64_01) [BLOCKER]
   - Problem: this is a navy hooded wraith in a tan robe. It has no red at all (visible pixels average 45,44,42), no pool shape and no steam. The ooze family is told apart by colour and blob shape, so players will read it as a ghost.
-  - Regenerate: a low, crawling puddle of glossy red ink hugging the floor, bottom-centred in the lower half of the canvas. Give it a thick liquid edge with a few pseudopod-like runs, a wet highlight, and pale steam wisps rising from its leading edge. Crimson with dark ink shadows. Nothing humanoid: no hood, no face.
+  - Regenerate: a low, crawling puddle of glossy red ooze hugging the floor, bottom-centred in the lower half of the canvas. Give it a thick liquid edge with a few pseudopod-like runs, a wet highlight, and pale steam wisps rising from its leading edge. Crimson with near-black shadows. Nothing humanoid: no hood, no face.
 - **enemy_pageworm_mass_green_s** (actors_48x64_01) [BLOCKER]
   - Problem: a hooded, dripping humanoid with a dark face slit and long clawed arms. It has no worms, no heap and no etched stone; only the green matches the brief.
-  - Regenerate: use the same subject and silhouette as enemy_pageworm_mass_s, a low heap of writhing worms threaded through pulped paper. Recolour it as the acid kind: sickly green worms that visibly drip, with pale pitted stone at the base where it has crawled. No hood, face or arms.
+  - Regenerate: use the same subject and silhouette as enemy_pageworm_mass_s, a low heap of writhing worms knotted round a small black hole in the floor. Recolour it as the acid kind: sickly green worms that visibly drip, with pale pitted stone at the base where it has crawled. No hood, face or arms.
 - **enemy_weaver_young_s** (actors_48x64_02) [BLOCKER]
   - Problem: a narrow (25 px) vertical pale figure with red-brown hair-like streaks, which reads as a hanging corpse or long-haired ghoul. It has no round body, no legs and no eyes, and looks nothing like the three spiders beside it.
   - Regenerate: a pale young spider facing south, low in the frame. It needs a small round body and eight very long, thin, jointed legs spread wide; legs too long for the body is the point. Pale bone and grey with a dark 1 px outline. It must read as a spider in silhouette at 1x.
 - **enemy_weaver_patriarch** (actors_96x128_04) [BLOCKER]
   - Problem: an upright two-armed, two-legged hooded humanoid covered in hanging paper strips (a paper golem). ToME's spider.lua files the weaver patriarch as a Fate Weaver spider, and the matriarch beside it on the sheet is an eight-legged spider.
-  - Regenerate: a huge front-on spider in the same view and anatomy family as enemy_weaver_matriarch: eight legs, cephalothorax, abdomen and fangs. Make the male visibly different from her: a leaner abdomen, longer and heavier front legs, no egg sac. Drape a shawl of pages stitched together with visible thread over the cephalothorax and upper abdomen. Use the matriarch's ink-and-bone palette, spread the legs wide, and leave 2-4 px under the leg tips.
+  - Regenerate: a huge front-on spider in the same view and anatomy family as enemy_weaver_matriarch: eight legs, cephalothorax, abdomen and fangs. Make the male visibly different from her: a leaner abdomen, longer and heavier front legs, no egg sac. Drape a shawl of grey shroud-cloth stitched together with visible thread over the cephalothorax and upper abdomen. Use the matriarch's black-and-bone palette, spread the legs wide, and leave 2-4 px under the leg tips.
 - **enemy_the_rat_registrar_s** (actors_48x64_01) [MAJOR]
-  - Problem: on zoom a rat skull and body are there, but the paper mortarboard is missing, and green vines wrap the whole body instead of witchfire glowing in the sockets. At sheet scale it reads as the same creature as enemy_the_skeletal_bloom_s beside it.
-  - Regenerate: a skeletal rat boss facing south (rat skull, spine, ribcage, long bony tail) with a small white paper mortarboard on its skull. The only green is glowing witchfire points in the eye sockets. No vines or tendrils, and a silhouette clearly different from the skeletal bloom's.
+  - Problem: on zoom a rat skull and body are there, but nothing marks it as the boss, and green vines wrap the whole body instead of witchfire glowing in the sockets. At sheet scale it reads as the same creature as enemy_the_skeletal_bloom_s beside it.
+  - Regenerate: a skeletal rat king facing south (rat skull, spine, ribcage, long bony tail) with the tails of three or four smaller dead rats knotted into its own and trailing behind it, each small skull at least 5 px across. The only green is glowing witchfire points in the eye sockets. No vines or tendrils, and a silhouette clearly different from the skeletal bloom's.
 - **enemy_carrion_pageworm_mass_s** (actors_48x64_01) [MAJOR]
   - Problem: an upright man in a bowler hat and a long brown coat. It has no worms and no heap, and it is brown rather than grey-red.
-  - Regenerate: a heap of grey-red worms in the same form as enemy_pageworm_mass_s, piled over a slumped or fallen clerk whose coat shows through as a sleeve, lapel or collar. Nothing standing upright. Diseased grey-red palette.
+  - Regenerate: a heap of grey-red worms in the same form as enemy_pageworm_mass_s, piled over a slumped or fallen body whose coat shows through as a sleeve, lapel or collar. Nothing standing upright. Diseased grey-red palette.
 
 #### 2. Animation and frame layout (33 blockers, 16 majors)
 
@@ -475,8 +507,8 @@ In every entry here the poses were drawn 32-55 px apart instead of one per 64 px
 - **ui_fx_teleport_in** (effect_384x64_06) [BLOCKER]. Same layout fault and the same symmetric pulse. Regenerate: R-GRID6 as the exact reverse of teleport_out. Frame 0 is a thin static crease (or blank), the body unfolds out of it in frames 1-4, and frame 5 is the full body with the last static flecks settling. It only grows.
 - **ui_fx_summon** (effect_384x64_06) [BLOCKER]. About 32 px apart; two rings each in frames 2 and 3, and the peak is clipped at x=192. Regenerate: R-GRID6 only. Keep the pale chalk ellipse and dark violet tendrils on the same baseline in every frame: build-up in frames 0-2, flare peak in frames 3-4, fade in frame 5.
 - **ui_fx_stealth_fade** (effect_384x64_06) [BLOCKER]. About 32 px apart, with doubled figures. The content is also a teal sliver-body-sliver pulse that reads as another teleport. Regenerate: R-GRID6. Frame 0 is a clear, fully visible body about 48 px tall. In frames 1-5 dark smoke rises over it while it loses detail in place through dithered erosion (no shrinking into a crease), ending as a faint wisp. Smoky near-black and dim grey-violet; no cyan static.
-- **ui_fx_death_erase** (effect_384x64_06) [BLOCKER]. About 32 px apart, with doubled bodies and the peak split. The content has no paper tones, pages or redaction bars and reads as a teleport. Regenerate: R-GRID6. Frame 0 is a Redacted body (about 48 px) in ink and static. In frames 1-3 pale off-white page scraps with faint ruled lines peel off and flutter outward, while horizontal black redaction bars and strike-through lines slash across the figure. In frames 4-5 the shape collapses into ink specks and one last drifting page. Cream paper, black bars and ink dominate; drop the cyan glow.
-- **ui_fx_page_burst** (effect_384x64_06) [BLOCKER]. About 32 px apart, with doubled bursts and the peak clipped. The content is a cyan-white crystal star that reads as a cold hit. Regenerate: R-GRID6. Frame 0 is a small impact flash. In frames 1-3 loose rectangular pages (cream with faint ruled lines or redaction marks, plus a few ink flecks) tumble outward. In frames 4-5 they scatter further and fade. No crystal star shapes and no cyan.
+- **ui_fx_death_erase** (effect_384x64_06) [BLOCKER]. About 32 px apart, with doubled bodies and the peak split. The content has no tearing and no hole, and reads as a teleport. Regenerate: R-GRID6. Frame 0 is a Redacted body (about 48 px) in near-black and static. In frames 1-3 its edges tear away in ragged strips that are pulled inward, while a flat black hole with no shading opens across the middle of the figure. In frames 4-5 the shape folds into the hole and the hole closes to a single dark speck. Near-black, torn grey and faint static dominate; drop the cyan glow.
+- **ui_fx_page_burst** (effect_384x64_06) [BLOCKER]. About 32 px apart, with doubled bursts and the peak clipped. The content is a cyan-white crystal star that reads as a cold hit. Regenerate: R-GRID6. Frame 0 is a small impact flash. In frames 1-3 ragged scraps of flat black with torn pale-grey edges, plus a few static flecks, tumble outward. In frames 4-5 they scatter further and fade. No crystal star shapes and no cyan.
 - **ui_fx_fear** (effect_384x64_07) [BLOCKER]. About 32 px apart. Each pose also fills in an opaque dark-navy body (pixel 205,35 is 5,14,28 at full alpha) that would cover the actor. Regenerate: R-GRID6. Draw only a cold, trembling outline and loose flecks tracing a 48x64 standing body (bottom-centred, about 56 px tall), with a transparent interior. Make the line wavering rather than crystalline, so it doesn't read as cold damage.
 - **ui_fx_critical_hit** (effect_384x64_07) [BLOCKER]. 32-38 px apart. Regenerate: R-GRID6. Keep the sharp gold/white four-point star and dark flecks, and remove the curled '?'-like hook in pose 5.
 - **ui_fx_blood_splash** (effect_384x64_07) [BLOCKER]. About 38 px apart. Regenerate: R-GRID6 only, anchored at the same low ground line in every cell. The restrained dark maroon is right.
@@ -538,29 +570,29 @@ Area entries take R-AREA and beam entries take R-BEAM. The off-brief areas and b
   - Problem: a teal and red-brown smear spanning x 3-46. Neither knife is visible, and it is as big as any boss.
   - Regenerate: a small, lithe ghost-thief about two-thirds of human height, bottom-centred, in a crouched ready stance, with a clearly visible pale ghostly knife in each hand. Spectral palette, compact clean silhouette.
 - **enemy_undermost_picket_s** (actors_48x64_01)
-  - Problem: the head is a black scribble that reads as hair or void rather than bound pages, and the pick is a 1-2 px line that vanishes at native size. This is one of the first enemies every player meets on the intro cave floor. The orange harness does read.
-  - Regenerate: a miner in work clothes and a torn safety harness (keep the orange straps) holding an obvious pick, with the head wrapped in pale off-white paper pages carrying faint text lines. The pick and the paper head must both read at 48x64.
+  - Problem: the pick is a 1-2 px line that vanishes at native size, and the black void head is a loose scribble that can read as hair. This is one of the first enemies every player meets on the intro cave floor. The orange harness does read.
+  - Regenerate: a miner in work clothes and a torn safety harness (keep the orange straps) holding an obvious pick, with the head gone: a tight knot of black void, hard-edged, darker than anything around it and clearly not hair, where the face should be. The pick and the void head must both read at 48x64.
 - **enemy_ink_bloom_grey_s** (actors_48x64_01)
   - Problem: blood-red caps on a brown stalk; visible pixels average 58,40,39. ToME tells the mold variants apart by colour alone (grey mold is SLATE).
-  - Regenerate: keep the rooted cup-fungus shape and the ink blot at the base, recoloured to desaturated grey: ash-grey caps, charcoal stalk, black ink spatter. No red.
+  - Regenerate: keep the rooted cup-fungus shape and the black stain at the base, recoloured to desaturated grey: ash-grey caps, charcoal stalk, a black stain that looks deeper than the floor. No red.
 - **enemy_ink_bloom_shining_s** (actors_48x64_01)
   - Problem: a rust-brown mass of trailing roots around a cream core, shaped like a jellyfish and close to the brown bloom in colour. No crackle; ToME's shining mold is YELLOW.
   - Regenerate: a floor-rooted fungal bloom whose caps and core glow pale yellow-white, with a few crisp electric-yellow spark arcs over a dark base that sits on the ground.
 - **enemy_ink_spill_green_s** (actors_48x64_01)
-  - Problem: an olive-khaki compost mound (average 78,63,39, more brown than green) with nothing glossy or liquid. The pages are present.
-  - Regenerate: a low, flat, spreading pool of glossy green ink with a liquid edge and wet highlights, and two or three half-dissolved pages sinking in it. Mostly horizontal.
+  - Problem: an olive-khaki compost mound (average 78,63,39, more brown than green) with nothing glossy or liquid. The sunken shapes are present, but as pages rather than bones.
+  - Regenerate: a low, flat, spreading pool of glossy green ooze with a liquid edge and wet highlights, and two or three half-dissolved bones sinking in it. Mostly horizontal.
 - **enemy_ink_spill_blue_s** (actors_48x64_02)
   - Problem: a hooded, robed wraith with a face, hands and brown robe bands.
-  - Regenerate: a low, spreading blob of blue-black liquid ink with wet highlights and a pale frosted crust or ice-rimmed edge, with drips and splashes across the floor. Blue-black and pale frost blue only.
+  - Regenerate: a low, spreading blob of blue-black liquid ooze with wet highlights and a pale frosted crust or ice-rimmed edge, with drips and splashes across the floor. Blue-black and pale frost blue only.
 - **enemy_ink_spill_white_s** (actors_48x64_02)
   - Problem: a white shrouded ghost with a hooded face and trailing clawed arms.
-  - Regenerate: a chalk-white spill of correction fluid shaped as an ooze or puddle: a blank, matte mass whose rim wipes out the floor texture beneath it. Low silhouette, white and pale grey with a dark outline so it reads on light floors.
+  - Regenerate: a chalk-white spill of blankness shaped as an ooze or puddle: a blank, matte mass whose rim wipes out the floor texture beneath it. Low silhouette, white and pale grey with a dark outline so it reads on light floors.
 - **enemy_ink_spill_black_s** (actors_48x64_02)
   - Problem: a hooded, robed wraith. It is mostly near-black, so the colour is acceptable; the shape is the defect.
-  - Regenerate: a low, spreading mass of glossy near-black ink with faint rim highlights and a slight dark halo at its edge suggesting it swallows light. Neutral black, no olive or khaki highlights.
+  - Regenerate: a low, spreading mass of glossy near-black ooze with faint rim highlights and a slight dark halo at its edge suggesting it swallows light. Neutral black, no olive or khaki highlights.
 - **enemy_ink_jelly_black_s** (actors_48x64_02)
-  - Problem: large pale lavender-grey chunks that read as rubble, about half pale, with no type lines.
-  - Regenerate: a mound matching the other jellies' silhouette, with a glossy, predominantly black body whose surface carries faint rows of printed type, like a page stretched over jelly. No faces, skulls or rock chunks.
+  - Problem: large pale lavender-grey chunks that read as rubble, about half pale, with no depth to them.
+  - Regenerate: a mound matching the other jellies' silhouette, with a glossy, predominantly black body holding a few faint pinprick lights deep inside it, like a night sky seen through jelly. No faces, skulls or rock chunks.
 - **enemy_static_hound_s** (actors_48x64_02)
   - Problem: a solid brown dog with orange flecks spraying off it like embers (45% red and 12% orange saturated pixels). It reads as a fire creature, and no teeth are visible.
   - Regenerate: a stray hound facing south whose body is mostly grey, white and black TV static with a broken, flickering outline. Only the bared teeth are drawn solid and crisp. No warm flecks.
@@ -589,26 +621,26 @@ Area entries take R-AREA and beam entries take R-BEAM. The off-brief areas and b
 ##### Actors 96x128 (8)
 
 - **enemy_the_watcher** (actors_96x128_01)
-  - Problem: a navy and cream tendril mass around a glowing eye. There are no drawers, no shroud and nothing from the Index, and it drops the look of the grey stacked-drawer Index Cairn it replaces.
-  - Regenerate: a tall, upright, roughly human-height silhouette built from a column of 3-5 stacked filing-cabinet drawers (brass pulls, label frames, soot-grey or dark-oak bodies) with a ragged cloth or paper shroud over the shoulders. One large open eye fills the pulled-open top drawer. Loose pages, redaction bars or ink drips are welcome. No tendril mass, symmetric diamond or sparkle glints.
+  - Problem: none against the new brief. The delivered navy and cream tendril mass around one large open eye is what this creature is; the old order asked for filing drawers and is withdrawn. What is missing is the altar it grew out of, and the silhouette is dark enough to sink into a dark floor.
+  - Regenerate: keep the tendril mass and the single large open eye. Root the tendrils in a low heap of stacked grey stones and left-out offerings (a cup, a doll, a candle stub, 4-6 px each) so it reads as an altar still being added to, and give the whole silhouette a firm dark outline. No filing drawers, pages, redaction bars or ink; no symmetric diamond or sparkle glints.
 - **enemy_the_prism_record** (actors_96x128_01)
-  - Problem: cream root tendrils bury the cyan facets, and the red core reads as an eye or gem. No page and no flame.
-  - Regenerate: plainly mineral: a faceted crystal cluster with straight edges, flat planes and glassy highlights, and no tendrils. Visible inside it is a single ruled paper page, curling and burning orange-yellow. Pale cyan or white glass (not navy and cream), with a solid angular outline.
+  - Problem: cream root tendrils bury the cyan facets, and the red core reads as an eye or gem. No burning hole.
+  - Regenerate: plainly mineral: a faceted crystal cluster with straight edges, flat planes and glassy highlights, and no tendrils. Visible inside it is a single ragged black hole rimmed in orange-yellow fire, reaching further back than the crystal is thick. Pale cyan or white glass (not navy and cream), with a solid angular outline.
 - **enemy_ninandra_the_great_weaver** (actors_96x128_03)
-  - Problem: a mirrored gold filigree around a glowing cyan lattice. There is no body, no eyes and no books, so it reads as a heraldic crest or a frost rune, and the cyan reads as a cold or lightning effect.
-  - Regenerate: an unmistakable giant spider facing south, with a fat abdomen, a head with a cluster of eyes, and eight separately readable jointed legs. Behind her is a web whose strands carry recognisable bound books (spines, covers, some hanging open with loose pages). Dark, solid body; cyan only as small highlights. It must read in silhouette first.
+  - Problem: a mirrored gold filigree around a glowing cyan lattice. There is no body, no eyes and nothing caught in anything, so it reads as a heraldic crest or a frost rune, and the cyan reads as a cold or lightning effect.
+  - Regenerate: an unmistakable giant spider facing south, with a fat abdomen, a head with a cluster of eyes, and eight separately readable jointed legs. Behind her is a web with recognisable human shadows caught in its strands (flat black person-shapes with no shading, some torn, one or two still reaching). Dark, solid body; cyan only as small highlights. It must read in silhouette first.
 - **enemy_the_archive_queen** (actors_96x128_03)
-  - Problem: an unsegmented fleshy mass. At play size two round pale bulges above a long dark vertical slit read as breasts and genitals, a tone failure for this setting. There are no paper nests (the eggs on the lower body do read).
-  - Regenerate: a segmented ant queen facing south: head with mandibles and antennae, narrow thorax, six jointed legs, and a huge swollen abdomen carrying clusters of small pale ovals. No central slit or opening and no pair of large round forms. Her base is surrounded by paper nests of crumpled ledger pages, folded card and string built into comb-like cells. Chitin brown and paper cream with a clear dark outline.
+  - Problem: an unsegmented fleshy mass. At play size two round pale bulges above a long dark vertical slit read as breasts and genitals, a tone failure for this setting. There are no nests (the eggs on the lower body do read).
+  - Regenerate: a segmented ant queen facing south: head with mandibles and antennae, narrow thorax, six jointed legs, and a huge swollen abdomen carrying clusters of small pale ovals. No central slit or opening and no pair of large round forms. Her base is surrounded by nests of bone, hair and dried gut built into comb-like cells. Chitin brown and bone cream with a clear dark outline.
 - **enemy_brown_bear** (actors_96x128_04)
   - Problem: a steel blue-grey coat (47% of pixels lean blue, 0% warm) beside the genuinely brown war bear. ToME's bear.lua gives it colors.UMBER.
   - Regenerate: keep the reared, roaring pose and fur detail, and repaint in warm browns: umber shadow, chestnut mid-tones, dusty tan highlights on the shoulders and muzzle. No blue. Lighter or more grizzled than the war bear, so the two stay apart.
 - **enemy_archlich** (actors_96x128_05)
-  - Problem: the crown is tapered brown spikes (no nibs, barrels or clips), and the robe is split by a glowing purple seam rather than a redaction bar. Purple glow alone is fine, since it is the Index accent.
-  - Regenerate: keep the floating lich, the outstretched skeletal hands and the dark palette. The crown becomes 4-6 recognisable upright fountain pens: metal nibs pointing up, dark barrels, a brass clip or band glinting on one or two. The robe, or a wide band down its front, is a flat-black, hard-edged rectangular redaction bar. Accents stay small (ink or faint static), and the skull face is not split by an energy seam.
+  - Problem: the crown is tapered brown spikes (no joints or nails), and the robe is split by a glowing purple seam rather than a flat black hole. Purple glow alone is fine, since it is the Index accent.
+  - Regenerate: keep the floating lich, the outstretched skeletal hands and the dark palette. The crown becomes 4-6 recognisable long black fingers standing upright, jointed, with a pale nail catching the light on one or two. The robe, or a wide band down its front, is a flat-black, hard-edged hole with nothing behind it. Accents stay small (violet or faint static), and the skull face is not split by an energy seam.
 - **enemy_eternal_bone_giant** (actors_96x128_05)
-  - Problem: the bones are smooth bone-white, with no handwriting marks even at 10-12x zoom. That feature is the only thing tying this giant to the setting. Its silhouette resemblance to the other giants is normal family likeness, so changing the pose is optional.
-  - Regenerate: cover the large bone surfaces (ribs, upper arms, thighs, shins, skull crest) in dense rows of 1 px broken dashes and hooks in faded sepia or ink-black, following the length of each bone, so they read as handwriting texture at 1x.
+  - Problem: the bones are smooth bone-white, with no pitting even at 10-12x zoom. That feature is the only thing tying this giant to the setting. Its silhouette resemblance to the other giants is normal family likeness, so changing the pose is optional.
+  - Regenerate: cover the large bone surfaces (ribs, upper arms, thighs, shins, skull crest) in dense rows of 1 px black pits and holes, following the length of each bone, so they read as bone riddled deeper than it is thick at 1x.
 - **enemy_patchwork_brute** (actors_96x128_06)
   - Problem: no brass anywhere (none of its 48 colours is brass), teal lines that wander like veins, no head, and four or more embedded skulls, so it reads as a necromantic bone golem. A teal lacing over the chest slit does exist.
   - Regenerate: keep the hulking brute made of several bodies. Give it a head, even a mismatched one. Add suture seams with short cross-stitches where limbs and panels of skin meet, with mismatched skin tones either side, and several bright brass staples or clamps readable at native size. At most one skull.
@@ -697,8 +729,8 @@ Area entries take R-AREA and beam entries take R-BEAM. The off-brief areas and b
   - Problem: a red cloth cap, red apron, clean cream sleeves and a long tool held low, with nothing soot-black; the tongs read as a trident. They spawn in different zones, but the defining trait is missing.
   - Regenerate: a soot-black foundry hand in charcoal clothes and a dark brown leather skullcap, with soot-smeared face and forearms and maybe one hot orange forge glint. Heavy tan leather gauntlets to the elbow, and long two-jawed iron tongs held diagonally. No red cap and no cream sleeves.
 - **enemy_ancient_lich** (actors_96x128_04), looks like the live enemy_index_husk_elite_s and enemy_index_eidolon_s
-  - Problem: an antlered deer skull above a robe tapering to a ragged floating hem, close to a recolour of husk_elite. No brief outside the Index faction uses antlers, and it clashes with enemy_lich_s. The pages are scattered flecks rather than a column, and the navy robe edges sink into dark floors.
-  - Regenerate: no antlers and no deer skull. A withered ancient human skull, perhaps hooded or under a scholar's cap, consistent with enemy_lich_s, in tattered archival robes, floating. A readable vertical column of pages spirals up past the body, a little brighter than the robe. Raise the robe values or add a rim light.
+  - Problem: an antlered deer skull above a robe tapering to a ragged floating hem, close to a recolour of husk_elite. No brief outside the Index faction uses antlers, and it clashes with enemy_lich_s. The ash is scattered flecks rather than a column, and the navy robe edges sink into dark floors.
+  - Regenerate: no antlers and no deer skull. A withered ancient human skull, perhaps hooded, consistent with enemy_lich_s, in tattered grave robes, floating. A readable vertical column of pale ash falls upward past the body, a little brighter than the robe. Raise the robe values or add a rim light.
 - **ui_fx_area_light** (effect_256x64_02), looks like ui_fx_area_fire
   - Problem: a near-identical silhouette and pulse (low flicker, a tall central tongue in frame 3, flanking tongues). It is gold where fire is red-orange, but golden flame tongues still read as fire. It also fails tiling (section 3).
   - Regenerate: R-AREA, as an even field of radiance: glare, glinting motes and soft rays in pale gold with a dominant white core. No flame tongues and no orange.
@@ -712,8 +744,8 @@ Area entries take R-AREA and beam entries take R-BEAM. The off-brief areas and b
 #### 7. Unreadable (7 majors)
 
 - **enemy_barrow_end_shade_s** (actors_48x64_01)
-  - Problem: a speckle cloud of pale pink, blue-grey and dark pixels. There is a faint head but no readable collar, and the "pages" are single-pixel noise. It is a named zone boss.
-  - Regenerate: a ghostly sorcerer-clerk with a readable head framed by a tall stiff collar, in pale spectral tones, with a few distinct loose pages (small light rectangles with a line or two of text marks) orbiting him. A solid central silhouette with no scatter noise.
+  - Problem: a speckle cloud of pale pink, blue-grey and dark pixels. There is a faint head but no readable collar, and the orbiting scraps are single-pixel noise. It is a named zone boss.
+  - Regenerate: a ghostly sorcerer with a readable head framed by a tall stiff collar, in pale spectral tones, with a few distinct scraps of his own shadow (small ragged near-black shapes with a faint pale rim) orbiting him. A solid central silhouette with no scatter noise.
 - **enemy_bee_swarm_s** (actors_48x64_03)
   - Problem: slate and teal speckle with zero amber pixels and no individual bees. Its roughly diamond outline sits next to the moth swarm's similar shape.
   - Regenerate: 10-20 separate small bees, each with a readable body and wing pixels, in dull amber and soot-black banding (grim, not cute). Space them unevenly, with a few darting out from the edges, and avoid a symmetric diamond outline.
@@ -787,21 +819,21 @@ Each line gives the issue, then the fix. (v) marks a finding the second reviewer
 
 **actors_48x64_02**
 - enemy_archive_ant_carpenter_s (v): no antennae, spider-like legs, sawdust unreadable. Fix: ant silhouette, bent antennae, visible pale sawdust at the jaws.
-- enemy_archive_ant_white_s (v): the carried page reads as an extra body segment; no antennae. Fix: the page as a separate light rectangle with a ragged edge and ink lines.
+- enemy_archive_ant_white_s (v): the carried load reads as an extra body segment; no antennae. Fix: the torn-off hand as a separate pale shape with readable fingers and a ragged wrist.
 - enemy_archive_ant_brown_s (v): an evenly segmented tube, like a termite or tick. Fix: big head, antennae, narrow waist, rounded abdomen.
 - enemy_moor_wolf_s (v): lowered head hard to read, teal tint, no ribs. Fix: plain grey, readable muzzle, ribs along the flanks.
 - enemy_hooded_cobra_s: gold trim and heraldic glyphs. Fix: natural muted snake colours.
 - enemy_rattlesnake_s: saturated indigo and violet. Fix: dusty tan and brown with dark diamond bands.
 - enemy_archive_ant_lightning_s: fat oval body, no waist; olive-gold close to the acid ant. Fix: ant segments, cleaner electric yellow.
-- enemy_gum_spitter_s: no swollen jaw. Fix: bulging chelicerae with a string of glue.
+- enemy_gum_spitter_s: no swollen jaw. Fix: bulging chelicerae with a string of black gum.
 - enemy_great_wolf_s: no torn ear or scarred muzzle; green cast. Fix: notched ear, pale muzzle scar, grey-brown coat.
 
 **actors_48x64_03**
 - enemy_filed_bruiser_s: an unexplained shadow tendril or third arm. Fix: remove it.
-- enemy_citation_moth_swarm_s: no print marks on the wings. Fix: 1 px strike-throughs or tiny redaction bars on the 3-5 largest moths.
+- enemy_citation_moth_swarm_s: no eyes on the wings. Fix: a 2x2 px pale eyespot with a dark pupil on each wing of the 3-5 largest moths.
 - enemy_banshee_s: muddy grey-brown, mouth not open. Fix: pale cold grey-white with a clearly open mouth.
-- enemy_lich_s: the held object is a beige blob with no glow. Fix: a pale ruled index card of about 5x4 px with a 1 px halo.
-- enemy_risen_corpse_s: rotted, no toe tag. Fix: waxy fresh corpse in dark Sunday clothes with a small pale toe tag.
+- enemy_lich_s: the held object is a beige blob with no glow. Fix: a small lantern of about 5x5 px whose glass is black, with a 1 px pale halo around it.
+- enemy_risen_corpse_s: rotted, no pennies on the eyes. Fix: waxy fresh corpse in dark Sunday clothes with two dull copper pennies on its eyes.
 - enemy_forest_wight_s: no marsh-light eyes. Fix: two small glowing pale green-yellow eyes.
 - enemy_ruin_banshee_s: green streaks read as moss. Fix: plaster whites and dust greys with falling chunks.
 - enemy_wrong_shadow_master_s: not taller than wrong_shadow; pale cross glyph; blob orbiters. Fix: a taller, broader shadow with 4-6 small person-shaped shadows orbiting it.
@@ -847,17 +879,17 @@ Each line gives the issue, then the fix. (v) marks a finding the second reviewer
 
 **actors_96x128_03**
 - enemy_kratorr_the_glutton: no dragged table; an unreadable caged lump in the hand. Fix: a chain in the fist running back to a laden table edge behind his flank.
-- enemy_gigantic_bone_rat: no name tags; Index-purple shadows. Fix: pale tags hanging from ribs and spine; cold grave palette.
+- enemy_gigantic_bone_rat: no hanging teeth; Index-purple shadows. Fix: small pale teeth strung from ribs and spine; cold grave palette.
 - enemy_the_blotter: the hat reads as a stone. Fix: a bowler or deerstalker with a clear brim, in soot-brown.
 
 **actors_96x128_04**
-- enemy_vampire_lord: the page half of the bat cloak is lost, and shards fray the silhouette. Fix: a third of the bats as torn off-white pages; pull the shards in.
-- enemy_weaver_matriarch: egg sac not wrapped in ledger cloth. Fix: ruled buff cloth strips criss-crossed with thread.
+- enemy_vampire_lord: the hole half of the bat cloak is lost, and shards fray the silhouette. Fix: a third of the bats as flat black bat-shaped holes with a faint violet rim; pull the shards in.
+- enemy_weaver_matriarch: egg sac not wrapped in grave cloth. Fix: grey-white grave-cloth strips criss-crossed with thread.
 - enemy_war_bear: barding reads as green cloth; same pose as the black and cave bears. Fix: grey-iron mail scraps and a visible broken collar and chain; vary the pose.
 
 **actors_96x128_05**
-- enemy_blood_lich (v): antlered-skull motif shared with the Index eidolon (overlap only 0.49, so not a duplicate); hem drips run downward. Fix: a human lich skull, and red ink rivulets visibly climbing with a wet sheen.
-- enemy_runed_bone_giant: spine marks read as runes and are dim. Fix: separated 3x5 px numerals with a hot pale core.
+- enemy_blood_lich (v): antlered-skull motif shared with the Index eidolon (overlap only 0.49, so not a duplicate); hem drips run downward. Fix: a human lich skull, and blood rivulets visibly climbing with a wet sheen.
+- enemy_runed_bone_giant: spine runes are right but dim. Fix: separated 3x5 px runes with a hot pale core, like open wounds.
 - enemy_furnace_brute: furnace-grille helmet and lava veins read as a fire elemental. Fix: a scarred brutish face and blistered soot-black skin with dull ember burns.
 - enemy_cave_brute: ice-blue flares behind the arms read as a cold aura. Fix: remove them; short drips from the hair and fingers instead.
 

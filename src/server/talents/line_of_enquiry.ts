@@ -137,7 +137,7 @@ export const lineOfEnquiry: Talent = {
     // A corpse cannot be slowed. The shot above still took its RNG draws, so the
     // stream does not depend on whether it died first — `lockdown.ts` makes the
     // same guarantee for the same reason.
-    if (!victim.alive) return talentDone([hit], [`${victim.name} is unfiled.`]);
+    if (!victim.alive) return talentDone([hit], [`${victim.name} is unmade.`]);
 
     const turns = slowTurnsAt(ctx.talentLevel);
     const landed = ctx.status?.(victim, EffectId.Slowed, turns, {

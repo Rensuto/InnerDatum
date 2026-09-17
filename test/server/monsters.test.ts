@@ -521,13 +521,13 @@ describe('the adopted ToME entries survive the port', () => {
       ['index_watcher', 'The Watcher', 'enemy_the_watcher'],
       // THEIR OWN BODIES, which replaced the husk's, the Overwritten Husk's and
       // the Glut's they shipped in. See the region header above `INDEX_RIBBON`.
-      ['index_ribbon', 'Index Ribbon', 'enemy_index_ribbon_s'],
-      ['index_inkwell', 'Index Inkwell', 'enemy_index_inkwell_s'],
-      ['index_strongbox', 'Index Strongbox', 'enemy_index_strongbox_s'],
+      ['index_ribbon', 'Index Throat', 'enemy_index_ribbon_s'],
+      ['index_inkwell', 'Index Clutch', 'enemy_index_inkwell_s'],
+      ['index_strongbox', 'Index Carapace', 'enemy_index_strongbox_s'],
     ]);
-    expect(INDEX_HUSK.description).toContain('half-erased citizen overwritten by Index pages');
-    expect(INDEX_WRAITH.description).toContain('A cited absence given shape');
-    expect(INDEX_HUSK_ELITE.description).toContain('A husk the Index kept editing');
+    expect(INDEX_HUSK.description).toContain('half-erased citizen, overwritten from the inside');
+    expect(INDEX_WRAITH.description).toContain('An absence given shape');
+    expect(INDEX_HUSK_ELITE.description).toContain('A husk the Index kept reaching into');
     // ...and no upstream creature NAME leaked into anything a player can read.
     // CLAUDE.md's licensing note: take the numbers and the behaviour, the
     // identity stays ours. Whole words only — a substring test would fail the

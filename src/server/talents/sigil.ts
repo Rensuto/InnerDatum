@@ -162,7 +162,7 @@ export const sigil: Talent = {
 
     // Marking a corpse would leave an effect on a body nobody can hit, and the
     // duration would tick for four turns on an actor that never acts again.
-    if (!victim.alive) return talentDone([hit], [`${victim.name} is unfiled.`]);
+    if (!victim.alive) return talentDone([hit], [`${victim.name} is unmade.`]);
 
     // SNAPSHOT. `power` is the mark's strength at the moment it was painted;
     // `markMultiplier` reads it back as `1 + power/100` for every hit landed on

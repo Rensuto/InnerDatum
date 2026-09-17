@@ -253,7 +253,7 @@ export const ROAMER_KINDS: readonly {
  * is the fastest way to say that the ordinary population of this country is not
  * here any more. What is left of Alderbrook's four are the two that were never
  * ordinary: the glut, which the Index made out of something, and the wraith,
- * which is a citation of an absence.
+ * which is an absence given shape.
  *
  * THE CAIRN IS NOT LOST BY DROPPING IT. `ambushRoster` still adds one on
  * `Ground.Fen` wherever the fight happens, so the fen keeps its firing line on

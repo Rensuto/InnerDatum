@@ -21,7 +21,7 @@ import type { ClearedFacts, DepartureFacts } from '../../src/server/world/cleare
  *
  *     An Index Breach is quiet now.
  *     2 damage. Index Husk 0/25.
- *     Index Husk is unfiled.
+ *     Index Husk is unmade.
  *
  * — the room falling silent above the blow that silenced it, deterministically,
  * every time. A pure function of `ClearedFacts` has no access to the question

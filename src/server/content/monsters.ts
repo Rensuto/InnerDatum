@@ -659,8 +659,8 @@ export type MonsterTemplate = {
 // ---------------------------------------------------------------------------
 
 /**
- * "A half-erased citizen overwritten by Index pages bleeding through the Veil.
- * Slow, hollow, and hungry for contact."
+ * "A half-erased citizen, overwritten from the inside by whatever bleeds through
+ * the Veil. Slow, hollow, and hungry for contact."
  *
  * ═══ WHY THE GIANT BROWN ANT ═══
  * It is ToME's own answer to "what does a party meet on floor one": `rank = 1`
@@ -727,7 +727,7 @@ export const INDEX_HUSK: MonsterTemplate = Object.freeze({
   id: 'index_husk',
   displayName: 'Index Husk',
   description:
-    'A half-erased citizen overwritten by Index pages bleeding through the Veil. ' +
+    'A half-erased citizen, overwritten from the inside by whatever bleeds through the Veil. ' +
     'Slow, hollow, and hungry for contact.',
   sprite: 'enemy_index_husk_s',
   rank: ActorRank.Normal,
@@ -855,14 +855,15 @@ export const INDEX_HUSK: MonsterTemplate = Object.freeze({
 // ---------------------------------------------------------------------------
 
 /**
- * "A cited absence given shape: pages, ink, and a detached watching glyph
- * drifting where a body should be. Hangs at the outer ring and lobs dark orbs."
+ * "An absence given shape: a tear in the air, and one lidless eye drifting where
+ * a body should be. It keeps its distance and throws cold dark that drags at
+ * your legs."
  *
  * ═══ WHY THE WRAITH AND NOT THE CAIRN ═══
  * PLAN.md's M3 line offers `index_cairn` or `index_wraith` for the ranged slot.
  * The source settles it: `index_cairn` is authored as a melee chaser — it is the
- * slow grinder that shoulders into melee — while the wraith "hangs at the outer
- * ring". Taking the cairn would mean overriding the author's own AI field to
+ * slow grinder that shoulders into melee — while the wraith "keeps its
+ * distance". Taking the cairn would mean overriding the author's own AI field to
  * fill a slot the author already filled.
  *
  * ═══ WHY THE LOSGOROTH ═══
@@ -1040,8 +1041,8 @@ export const INDEX_WRAITH: MonsterTemplate = Object.freeze({
   id: 'index_wraith',
   displayName: 'Index Wraith',
   description:
-    'A cited absence given shape: pages, ink, and a detached watching glyph drifting where a ' +
-    'body should be. Hangs at the outer ring and lobs dark orbs at the player.',
+    'An absence given shape: a tear in the air, and one lidless eye drifting where a body ' +
+    'should be. It keeps its distance and throws a dark that drags at your legs.',
   sprite: 'enemy_index_wraith_s',
   rank: ActorRank.Normal,
   // `no_breath = 1` — npcs/losgoroth.lua:48, on BASE_NPC_LOSGOROTH. Deep water does not drown it.
@@ -1432,7 +1433,7 @@ export const INDEX_WRAITH: MonsterTemplate = Object.freeze({
     // to shoot from, every turn, forever.
     minRange: 2,
     // OURS. damage_types.lua:856-875, `dark_orb`. Upstream's void blast is
-    // Arcane; the orb being made of ink and absence is the author's setting.
+    // Arcane; the orb being made of cold dark and absence is the author's setting.
     damageType: DamageType.Darkness,
   },
 });
@@ -1597,8 +1598,8 @@ export const INDEX_HUSK_ELITE: MonsterTemplate = Object.freeze({
   id: 'index_husk_elite',
   displayName: 'Overwritten Husk',
   description:
-    'A husk the Index kept editing. The pages have set into something that reads the room ' +
-    'before it moves, and it goes for whoever is standing on their own.',
+    'A husk the Index kept reaching into, and what it left has set hard. It watches the room ' +
+    'before it moves, and goes for whoever is standing on their own.',
   sprite: 'enemy_index_husk_elite_s',
   rank: ActorRank.Elite,
 
@@ -1658,8 +1659,8 @@ export const INDEX_HUSK_ELITE: MonsterTemplate = Object.freeze({
   shoulderAfter: 5,
   // HANDS, AND UPSTREAM SAYS SO ON THE FAMILY BASE. `ghoul.lua:40`
   // `open_door = true`, set on BASE_NPC_GHOUL so every ghoul in the game has it.
-  // Ours is a husk the Index kept editing until it read the room before moving;
-  // a thing that deliberate does not stop at a handle.
+  // Ours is a husk the Index kept reaching into until it watched the room
+  // before moving; a thing that deliberate does not stop at a handle.
   opensDoors: true,
   // No `projSpeed` (melee) and no `talentIn`. The ghoulking DOES tighten the
   // cadence — `ai_state = { talent_in=2 }` at ghoul.lua:94 against the ghoul's
@@ -1837,8 +1838,8 @@ export const INDEX_EIDOLON: MonsterTemplate = Object.freeze({
   id: 'index_eidolon',
   displayName: 'Index Eidolon',
   description:
-    'A reading of somebody that the Index kept after it stopped keeping them. It moves the way ' +
-    'a misremembered thing moves — too quickly, and only ever towards you.',
+    'An afterimage of somebody that the Index kept after it stopped keeping them. It moves the ' +
+    'way a misremembered thing moves — too quickly, and only ever towards you.',
   sprite: 'enemy_index_eidolon_s',
   rank: ActorRank.Normal,
 
@@ -1874,9 +1875,10 @@ export const INDEX_EIDOLON: MonsterTemplate = Object.freeze({
    * THE TOUCH — and it is the creature's own sentence, made mechanical.
    * ═══════════════════════════════════════════════════════════════════════════
    *
-   * *"A reading of somebody that the Index kept after it stopped keeping them.
-   * It moves the way a misremembered thing moves."* It has had a description
-   * about misremembering and a stat line about speed, and nothing joining them.
+   * *"An afterimage of somebody that the Index kept after it stopped keeping
+   * them. It moves the way a misremembered thing moves."* It has had a
+   * description about misremembering and a stat line about speed, and nothing
+   * joining them.
    *
    * CONFUSED is that join: the thing that moves like a misremembering makes YOU
    * misremember which way you were going (mental.lua:67-87 — half your steps
@@ -1983,8 +1985,8 @@ export const INDEX_CAIRN: MonsterTemplate = Object.freeze({
   id: 'index_cairn',
   displayName: 'Index Cairn',
   description:
-    'A stack of citations weathered into the shape of a marker stone. It does not come for you. ' +
-    'It simply has a clear view, and time.',
+    'A stack of stones nobody admits to building, leaning at an angle the eye slides off. ' +
+    'It does not come for you. It simply has a clear view, and time.',
   sprite: 'enemy_index_cairn_s',
   rank: ActorRank.Normal,
   // `no_breath = 1` — npcs/crystal.lua:48, on BASE_NPC_CRYSTAL. Deep water does not drown it.
@@ -2035,7 +2037,7 @@ export const INDEX_CAIRN: MonsterTemplate = Object.freeze({
     },
     /**
      * ═══════════════════════════════════════════════════════════════════════
-     * YOU CANNOT MAKE A PILE OF CITATIONS BLEED, AND IT HAS NO MIND TO ADDLE.
+     * YOU CANNOT MAKE A PILE OF STONES BLEED, AND IT HAS NO MIND TO ADDLE.
      * ═══════════════════════════════════════════════════════════════════════
      * `crystal.lua:41-49` gives every crystal `cut_immune`, `confusion_immune`,
      * `blind_immune`, `fear_immune`, `poison_immune` and `disease_immune` — six
@@ -2241,8 +2243,8 @@ export const INDEX_GLUT: MonsterTemplate = Object.freeze({
   id: 'index_glut',
   displayName: 'Index Glut',
   description:
-    'Something the Index took and did not finish reading. It has kept growing in the parts that ' +
-    'were left, and it closes the distance the way a filing cabinet would.',
+    'Something the Index took and did not finish swallowing. It has kept growing in the parts ' +
+    'that were left, and it closes the distance the way a tide does.',
   sprite: 'enemy_index_glut_s',
   rank: ActorRank.Normal,
 
@@ -2284,7 +2286,7 @@ export const INDEX_GLUT: MonsterTemplate = Object.freeze({
   shoulderAfter: 0,
   // `troll.lua:47` `open_door = true`, on BASE_NPC_TROLL. A troll is not
   // subtle and does not need to be — the door opens because something big
-  // leaned on it. Ours closes distance "the way a filing cabinet would".
+  // leaned on it. Ours closes distance "the way a tide does".
   opensDoors: true,
 
   drops: { chance: 100, pick: idsOfTier('common') },
@@ -2418,7 +2420,7 @@ export const INDEX_INSPECTOR: MonsterTemplate = Object.freeze({
    * IT ALREADY HUNTED THE ISOLATED. NOW YOU CAN FEEL IT.
    *
    * huntsIsolated is invisible from the receiving end — a player who gets
-   * picked on cannot tell targeting from bad luck. Uncorroborated triples its
+   * picked on cannot tell targeting from bad luck. Unwitnessed triples its
    * damage against somebody with nobody beside them, which says the same thing
    * in one blow and makes the counterplay the one this elite pair was built
    * around: stand next to each other.
@@ -2431,8 +2433,8 @@ export const INDEX_INSPECTOR: MonsterTemplate = Object.freeze({
   id: 'index_inspector',
   displayName: 'A Disgraced Inspector',
   description:
-    'Somebody who worked this ground before it was taken, still working it. The badge is legible. ' +
-    'Nothing else is.',
+    'Somebody who worked this ground before it was taken, still working it. The badge is still ' +
+    'in one piece. Nothing else is.',
   sprite: 'enemy_disgraced_inspector_s',
   /**
    * ELITE, AND `validateTemplate` IS WHY — IT REFUSED THE NORMAL VERSION.
@@ -2486,8 +2488,8 @@ export const INDEX_INSPECTOR: MonsterTemplate = Object.freeze({
   // `humanoid_random_boss.lua:35` `open_door = true`. The cited body family
   // here is `feline.lua` — it is where the speed and the pounce came from —
   // but the creature is a PERSON: "Somebody who worked this ground before it
-  // was taken, still working it. The badge is legible." Upstream's rule is
-  // about the mind and the hands, not the stat block they were built on.
+  // was taken, still working it. The badge is still in one piece." Upstream's
+  // rule is about the mind and the hands, not the stat block they were built on.
   opensDoors: true,
 
   // THE DARK TERRITORY PAYS BETTER, which is the other half of `redactedSpec`'s
@@ -2732,11 +2734,11 @@ export const INDEX_INQUISITOR: MonsterTemplate = Object.freeze({
  * `places.ts` on the Redaction's Watcher's Altar: *"Whoever was leaving things
  * here never stopped. The pile has been added to since the country ended."*
  *
- * And `INDEX_CAIRN` is *"a stack of citations weathered into the shape of a
- * marker stone"*. THE PILE IS THE CREATURE. The blurb describes a thing that
- * outlasted the erasure and is still growing, on an altar, in a country that
- * ended — and the game already had a monster made of stacked citations. This
- * is that, at the size the sentence implies.
+ * And `INDEX_CAIRN` is *"a stack of stones nobody admits to building, leaning at
+ * an angle the eye slides off"*. THE PILE IS THE CREATURE. The blurb describes a
+ * thing that outlasted the erasure and is still growing, on an altar, in a
+ * country that ended — and the game already had a monster made of a stacked
+ * pile. This is that, at the size the sentence implies.
  *
  * ═══════════════════════════════════════════════════════════════════════════
  * WHAT MAKES IT A BOSS AND NOT A BIGGER CAIRN
@@ -2855,8 +2857,8 @@ export const INDEX_WATCHER: MonsterTemplate = Object.freeze({
   id: 'index_watcher',
   displayName: 'The Watcher',
   description:
-    'The altar, still being added to. Every citation ever filed against this country is in it, ' +
-    'and it has had a long time to read them.',
+    'The altar, still being added to. Everything this country ever left out for it has gone in, ' +
+    'and something a long way under the stones looks back out.',
   sprite: 'enemy_the_watcher',
   rank: ActorRank.Boss,
   // `no_breath = 1` — npcs/crystal.lua:48, on BASE_NPC_CRYSTAL — INDEX_CAIRN's base too. Deep water does not drown it.
@@ -3073,10 +3075,10 @@ export const INDEX_RIBBON: MonsterTemplate = Object.freeze({
   // `learnStats{ STR, STR, DEX }`. The husk's scheme, for the husk's reason.
   autoStats: ['str', 'str', 'dex'],
   id: 'index_ribbon',
-  displayName: 'Index Ribbon',
+  displayName: 'Index Throat',
   description:
-    'A typewriter ribbon the weir has been holding back, grown long and black in the dark water. ' +
-    'It comes at you the way a line of type crosses a page, and it does not stop at the margin.',
+    'A long black throat with no body around it, coiling up out of the water the weir holds ' +
+    'back. It comes at you mouth-first, and the water does not close behind it.',
   // Its own body: an eel of void coiling up out of black water. See the region header.
   sprite: 'enemy_index_ribbon_s',
   // `rank = 1` (aquatic_critter.lua:36). See the region header.
@@ -3157,10 +3159,10 @@ export const INDEX_INKWELL: MonsterTemplate = Object.freeze({
   // `autolevel = "warrior"` (aquatic_critter.lua:29), from the base.
   autoStats: ['str', 'str', 'dex'],
   id: 'index_inkwell',
-  displayName: 'Index Inkwell',
+  displayName: 'Index Clutch',
   description:
-    'An inkwell that went under and kept spilling. What came out of it reaches every way at once, ' +
-    'and whatever it takes hold of stays where it was put.',
+    'A knot of arms that went under and has been untying ever since. It reaches every way ' +
+    'at once, and whatever it takes hold of stays where it was put.',
   // Its own body: a squid-shaped spill of void reaching every way at once. See the
   // region header.
   sprite: 'enemy_index_inkwell_s',
@@ -3221,10 +3223,10 @@ export const INDEX_STRONGBOX: MonsterTemplate = Object.freeze({
   // `autolevel = "warrior"` (aquatic_critter.lua:29), from the base.
   autoStats: ['str', 'str', 'dex'],
   id: 'index_strongbox',
-  displayName: 'Index Strongbox',
+  displayName: 'Index Carapace',
   description:
-    'A deed box that sank with the ledgers still locked inside and came back up walking. ' +
-    'Blows ring off the lid.',
+    'A heavy shell that sank with someone still inside and came back up walking. It is deeper ' +
+    'inside than it is outside. Blows ring off it.',
   // Its own body: a dragon turtle under a riveted iron shell. See the region header.
   sprite: 'enemy_index_strongbox_s',
   // `rank = 2` (aquatic_critter.lua:72) — `Normal`, which IS upstream's rank 2.

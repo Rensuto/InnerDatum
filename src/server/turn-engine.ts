@@ -967,7 +967,7 @@ function toWireEvents(
        *
        * ═══ AND `death` ONLY FOR A MONSTER ═══
        * `hitToWire` pushes `death` for whoever `killed` names, player or not,
-       * and the Record lane prints "X is unfiled." for it — which is a monster's
+       * and the Record lane prints "X is unmade." for it — which is a monster's
        * permanent death printed over a player who is merely DOWNED with an ally
        * running at them. That is a real fault and it is not this event's to
        * repeat: here the player arm is `survivalPass`, which raises `downed`,
@@ -1435,9 +1435,11 @@ function hitToWire(
    * `killed` is `applyDamage`'s answer, and it is true of ANY body taken to 0 —
    * which for a player is the Downed state, deliberately (`alive === false` on
    * purpose, engine/downed.ts). This pushed `death` for it, and the Record lane
-   * renders that as *"X is unfiled."*: the game's own word for a monster being
+   * renders that as *"X is unmade."*: the game's own word for a monster being
    * removed for good, printed over somebody with five turns on the clock and an
-   * ally two tiles away.
+   * ally two tiles away. (The line was worded *"is unfiled"* when this was
+   * measured — the same word the player's Downed state still uses, which is
+   * half of why it read as final. The transcripts below are quoted as logged.)
    *
    * MEASURED over a real socket, walking a Watchman into an ambush — the events
    * in the order the client received them:

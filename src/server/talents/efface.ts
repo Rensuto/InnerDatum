@@ -29,10 +29,10 @@ import type { Talent } from '../engine/talents.ts';
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════
- * EFFACE — the High Inquisitor's. It reads you, and you get worse at everything.
+ * EFFACE — the High Inquisitor's. It looks through you, and you get worse at everything.
  * ═══════════════════════════════════════════════════════════════════════════
  *
- * "It is not looking at you. It is looking you up."
+ * "It is not looking at you. It is looking through you."
  *
  * ═══ NO DAMAGE AT ALL, WHICH IS THE ENTIRE IDEA ═══
  * Every other talent in this file is a blow with a rider. This one spends the
@@ -73,7 +73,7 @@ export function effaceTurns(level: number): number {
 function effaceLine(name: string, landed: SetEffectResult | undefined): string[] {
   if (landed === undefined) return [];
   if (landed.outcome === SetEffectOutcome.Immune || landed.dur <= 0) {
-    return [`${name} is not on the list.`];
+    return [`${name} is still all there.`];
   }
   return [`${name} is effaced (${String(landed.dur)} turns).`];
 }
@@ -112,6 +112,6 @@ export const efface: Talent = {
   },
 
   describe: (_self, level) =>
-    `Reads the target, worsening every roll they make and resist for ` +
+    `Stares through the target, worsening every roll they make and resist for ` +
     `${String(effaceTurns(level))} turns (physical save).`,
 };

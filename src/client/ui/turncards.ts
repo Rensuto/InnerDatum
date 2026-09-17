@@ -448,7 +448,7 @@ function chipIdFor(state: TurnActorState): string | null {
   }
 }
 
-/** Two letters, for a card with no portrait. `The Filed` -> `TF`. */
+/** Two letters, for a card with no portrait. `The Taken` -> `TT`. */
 function initialsOf(name: string): string {
   const words = name.split(' ').filter((word) => word !== '');
   const first = words[0];

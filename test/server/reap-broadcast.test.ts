@@ -36,7 +36,7 @@ import type { Actor, World } from '../../src/server/world/world.ts';
  *
  *   TOO EARLY AND THE CASE LOG LIES. `nameOf` reads the name off the live body
  *   and `hitToWire` reads its `maxHp`. Reap inside the pump and the Record lane
- *   prints "5 damage. someone 0/0." above "someone is unfiled." — nothing
+ *   prints "5 damage. someone 0/0." above "someone is unmade." — nothing
  *   throws, the log simply stops naming what happened.
  *
  *   TOO LATE AND THE CORPSE SHIPS. The full resync that follows a survival event
@@ -266,7 +266,7 @@ function husk(id: string, x: number, y: number, hp = HUSK_MAX_HP): Actor {
 describe('the kill is narrated before the body leaves', () => {
   it('names the monster and prints a real maxHp, then sends ONE `left` for it', async () => {
     // ═══════════════════════════════════════════════════════════════════════
-    // THE 'someone is unfiled' / '0/0' REGRESSION, PINNED FROM THE WIRE.
+    // THE 'someone is unmade' / '0/0' REGRESSION, PINNED FROM THE WIRE.
     // ═══════════════════════════════════════════════════════════════════════
     //
     // `nameOf` is `world.getActor(id)?.name ?? 'someone'` and `hitToWire` reads
@@ -296,7 +296,7 @@ describe('the kill is narrated before the body leaves', () => {
      * cannot see, and a death from an effect whose source is gone carries none
      * at all — the line degrades to the bare sentence in both.
      */
-    expect(lines).toContain('Index Husk is unfiled by Player 1.');
+    expect(lines).toContain('Index Husk is unmade by Player 1.');
     expect(lines.some((line) => line.includes('someone'))).toBe(false);
     // The damage line carries the victim's ABSOLUTE vitals, and the maximum is
     // read off the body. `0/0` is what a reaped-too-early body reports.

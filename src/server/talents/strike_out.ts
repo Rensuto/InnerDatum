@@ -57,7 +57,7 @@ import type { Talent } from '../engine/talents.ts';
  * `EFFACED` has been in `content/effects.ts` since the husk was written, and
  * until this talent the only thing in the game that could put it on anything was
  * a monster. It is the right mark for this class by its own description —
- * "rubbed out at the edges" — and reusing it rather than inventing a fifth
+ * "worn thin at the edges" — and reusing it rather than inventing a fifth
  * status keeps the badge row legible.
  *
  * Its channel is PHYSICAL (`physical.lua:31`) even though the Redactor applies

@@ -413,7 +413,7 @@ describe('the hostile side is one card', () => {
     expect(side?.id).toBe(MONSTERS_TURN_ID);
     // A GROUP, never a creature. "Index Husk" on a card beside four detectives
     // would say one husk is taking a turn.
-    expect(side?.name).toBe('The Filed');
+    expect(side?.name).toBe('The Taken');
     // The sum over the living hostiles — how much fight is left in the other
     // side, drawn as a group bar.
     expect(side?.maxHp).toBe(

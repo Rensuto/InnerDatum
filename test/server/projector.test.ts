@@ -549,7 +549,7 @@ describe('projectTurn', () => {
     const cards = engaged.actors.filter((c) => c.kind === 'monsters');
     expect(cards).toHaveLength(1);
     expect(engaged.actors[engaged.actors.length - 1]?.id).toBe(MONSTERS_TURN_ID);
-    expect(cards[0]?.name).toBe('The Filed');
+    expect(cards[0]?.name).toBe('The Taken');
     expect(cards[0]?.isSelf).toBe(false);
   });
 

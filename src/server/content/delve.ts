@@ -20,8 +20,8 @@
  *     The Drowned Chapel    inner   34x30   monsters= 0   floor items=0
  *     The Outer Index       inner   34x30   monsters= 0   floor items=0
  *
- * A player is told "Cut for ore, abandoned for a reason the paperwork does not
- * give", walks thirty tiles across a moor to get there, and finds an empty
+ * A player is told "Cut for ore, abandoned when the tunnels went deeper than
+ * anyone dug", walks thirty tiles across a moor to get there, and finds an empty
  * room. Eight of them. Every named destination on the map was a door onto
  * nothing, and no amount of writing on the threshold survives that.
  *

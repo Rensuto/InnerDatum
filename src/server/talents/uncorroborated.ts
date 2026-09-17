@@ -33,11 +33,16 @@ import type { Talent } from '../engine/talents.ts';
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════
- * UNCORROBORATED — the Disgraced Inspector's. It hits hardest when you are
+ * UNWITNESSED — the Disgraced Inspector's. It hits hardest when you are
  * standing on your own.
  * ═══════════════════════════════════════════════════════════════════════════
  *
  * "One witness is a story. Two is a fact."
+ *
+ * THE DISPLAY NAME MOVED AND THE ID DID NOT. It was "Uncorroborated"; the id is
+ * still `talent:uncorroborated` and so is this file, because an id is a save
+ * key and a name is prose. What nobody sees is easy to unmake, which is the
+ * same idea in the register the rest of the Index speaks.
  *
  * That is the epigraph of the PLAYER Inspector's Corroboration
  * (`corroboration.ts`), and this is the same sentence read from the other end.
@@ -127,7 +132,7 @@ function woundLine(name: string, landed: SetEffectResult | undefined): string[] 
 
 export const uncorroborated: Talent = {
   id: talentId('uncorroborated'),
-  name: 'Uncorroborated',
+  name: 'Unwitnessed',
   classId: null,
   tree: 'monster/index',
   kind: TalentKind.Active,

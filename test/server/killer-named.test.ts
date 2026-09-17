@@ -521,8 +521,9 @@ describe('a death in a room that resets', () => {
        *
        * `killed` is `applyDamage`'s answer and is true of any body taken to 0 —
        * for a player that is the Downed state, `alive === false` on purpose. The
-       * Record lane renders `death` as "X is unfiled.", the game's word for a
-       * monster removed for good, so the transcript read "Player 1 is unfiled."
+       * Record lane renders `death` as "X is unmade.", the game's word for a
+       * monster removed for good — worded "is unfiled" when this was measured,
+       * the player's own Downed word — so the transcript read "Player 1 is unfiled."
        * and then "Player 1 is DOWN — 5 turns". Two lines about one body
        * disagreeing about whether the run was over, wrong one first.
        */

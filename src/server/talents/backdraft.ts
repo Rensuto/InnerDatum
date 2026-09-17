@@ -141,7 +141,7 @@ export const backdraft: Talent = {
     // Corpses do not get shoved. `alive` is checked after the projector so the
     // damage draws happen either way and the RNG stream cannot depend on a
     // kill race (damage.ts makes the same guarantee).
-    if (!victim.alive) return talentDone([hit], [`${victim.name} is unfiled.`]);
+    if (!victim.alive) return talentDone([hit], [`${victim.name} is unmade.`]);
 
     const shoved = knockback(ctx.world, victim, origin, PUSH_TILES);
     return talentDone(

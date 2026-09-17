@@ -800,16 +800,16 @@ export const SLOWED: EffectDef = Object.freeze({
  * makes it the right thing for a ranged elite to open with rather than close on.
  *
  * ═══ THE SUBTYPE IS UPSTREAM'S, NOT OURS ═══
- * `acid` is a poor fit for an archive, and it stays because subtypes are what
- * immunities match on. Inventing a stylish one nothing checks would make this
- * effect unresistable by any future immunity that mirrors ToME's — which is the
- * same silent-inertness this effect exists to fix.
+ * `acid` is a poor fit for being stared through, and it stays because subtypes
+ * are what immunities match on. Inventing a stylish one nothing checks would
+ * make this effect unresistable by any future immunity that mirrors ToME's —
+ * which is the same silent-inertness this effect exists to fix.
  */
 export const EFFACED: EffectDef = Object.freeze({
   id: EffectId.Effaced,
   badge: 'Ef',
   displayName: 'Effaced',
-  description: 'Rubbed out at the edges. Every roll you make and every roll you resist is worse.',
+  description: 'Worn thin at the edges. Every roll you make and every roll you resist is worse.',
   // physical.lua:31 — `type = "physical"`.
   type: SaveChannel.Physical,
   status: EffectStatus.Detrimental,

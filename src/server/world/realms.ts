@@ -1591,9 +1591,9 @@ const AUTHORED_SITES: readonly (readonly [string, SiteDef])[] = (
      * AND SOMETHING IS IN THERE. FOR THE FIRST TIME.
      * ═══════════════════════════════════════════════════════════════════
      * Every one of the eight delves generated EMPTY — a player walked
-     * thirty tiles to "The Hollow Mine", read a line about paperwork, and
-     * found nothing at all. content/delve.ts carries the eight specs and
-     * argues the shape; this is only the wiring.
+     * thirty tiles to "The Hollow Mine", read a line about tunnels that went
+     * deeper than anyone dug, and found nothing at all. content/delve.ts
+     * carries the eight specs and argues the shape; this is only the wiring.
      *
      * ABSENT ON A COMMON SITE, which `createRealms` enforces at
      * construction rather than trusting: one monster in a town arms
