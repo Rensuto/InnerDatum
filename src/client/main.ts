@@ -153,6 +153,7 @@ import {
   migrateStoredKeymap,
   resetAll,
   resetOne,
+  sameRemap,
   SLOTS_PER_ACTION,
 } from './input/keymap.ts';
 import { MouseIntentKind, mouseIntentAt, travelTargetAllowed } from './input/mouseintent.ts';
@@ -193,6 +194,7 @@ import {
   drawLogGrip,
   logDragAt,
   logGripAt,
+  LOG_TABS,
   SCROLL_STEP,
 } from './ui/caselog.ts';
 import {
@@ -301,6 +303,7 @@ import {
   escapeMenuPaging,
   escapeMenuRect,
   escapeMenuRows,
+  escapeMenuVisibleEntries,
   MenuHitKind,
   MenuRowKind,
   MenuScreen,
@@ -2403,6 +2406,21 @@ let storedUiScale: number | null = null;
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════
+ * A STORED KEYMAP THAT `migrateStoredKeymap` HAD TO REPAIR, WAITING TO BE SENT.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `storedUiScale`'s seam exactly, and for the same reason: `case 'keybinds'`
+ * runs at module scope and the SOCKET lives in `boot`'s closure, so the frame
+ * handler can correct the local tables and only `onMessage` can tell the server.
+ *
+ * NULL MEANS "NOTHING TO SAY", which includes the overwhelmingly common case of
+ * a map that needed no repair at all. Cleared as it is consumed, so a later
+ * frame about something else cannot re-send a correction already made.
+ */
+let keymapRepair: KeyRemap | null = null;
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
  * WHAT THE RENDERER SETTLED ON, LAST TIME ANYBODY ASKED IT.
  * ═══════════════════════════════════════════════════════════════════════════
  *
@@ -4113,7 +4131,19 @@ function unmovedPanelRect(
       // THE SCREEN GOES THROUGH HERE, not through a second call on the input
       // side: this resolver is what both the painter and the hit test read, so
       // a keys screen that grew for one and not the other is unreachable.
-      return menuOpen ? escapeMenuRect({ ...options, screen: menuScreen }) : null;
+      // THE ROWS GO WITH THE SCREEN, and for the same reason the screen does:
+      // this resolver is what BOTH the painter and the hit test read, so a panel
+      // sized to its contents for one and not the other is unreachable. Built
+      // here rather than cached for `charSheetRows`' reason above — one call,
+      // one answer, no cache — and only while the menu is open, which the
+      // ternary already decides.
+      return menuOpen
+        ? escapeMenuRect({
+            ...options,
+            screen: menuScreen,
+            rows: escapeMenuRows(escapeMenuView(liveUiScale, liveUiScalePercent)),
+          })
+        : null;
     /**
      * ═══════════════════════════════════════════════════════════════════════
      * THE CASE LOG — bottom-left, and the shape is upstream's.
@@ -7844,6 +7874,25 @@ async function boot(): Promise<void> {
         mirrorInterfaceSize();
         storedUiScale = null;
       }
+      /**
+       * THE REPAIRED KEYMAP GOES BACK, ONCE. `case 'keybinds'` has already put
+       * it on the board; this is the half that takes the retired binding out of
+       * the player's file, so the migration is an UPGRADE rather than a rule
+       * that undoes their next deliberate rebind on every load. See
+       * `keymapRepair` and `migrateStoredKeymap`.
+       *
+       * THROUGH `commitRemap`, which keeps that function the only place a
+       * `set_keybinds` frame is built — and which calls `setKeymap` again with
+       * the value already live, which is free and keeps the one writer.
+       *
+       * CLEARED BEFORE THE SEND, not after: `commitRemap` can fail loudly and
+       * this must not become a frame retried on every message either way.
+       */
+      if (keymapRepair !== null) {
+        const repair = keymapRepair;
+        keymapRepair = null;
+        commitRemap(repair);
+      }
       // RE-ANCHOR THE RING. The caster can be shoved while it is open —
       // Backdraft pushes, and so will monsters — and a ring still drawn around
       // where they used to stand is a picture of a rule that is no longer true.
@@ -9942,6 +9991,14 @@ async function boot(): Promise<void> {
         // class this repo already accepted for the sheet's `[G]` control.
         toggleInventoryPanel();
         return;
+      case UiCommand.ShowJournal:
+        // A TOGGLE, AND IT ASKS THE SERVER FOR NOTHING. The notes half is
+        // already held (`knownNotes`, from the absolute `lore` frame) and the
+        // quests half has no producer yet, so the screen is correct the instant
+        // it appears. `showJournal` is the one route — see its note for why the
+        // key and the menu row must not be two.
+        showJournal();
+        return;
       case UiCommand.ToggleLog:
         logVisible = !logVisible;
         requestDraw();
@@ -10032,6 +10089,45 @@ async function boot(): Promise<void> {
     resetMenuState();
     syncCommandLineReach();
     requestDraw();
+  }
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * OPEN THE JOURNAL — OR PUT IT AWAY. The ONE route, for the key and the row.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Ruled: *"case notes should actually be 'Journal' which will serve as a quest
+   * log/ similar"*, *"we can put journal to the J key"*.
+   *
+   * ═══ IT TOGGLES, WHICH IS WHAT EVERY OTHER SCREEN KEY IN THIS CLIENT DOES ═══
+   * `c`, `g` and `i` each put their panel away again, and `UiCommand.ShowSheet`
+   * argues why at length: nothing in `onCancel`'s chain backs out of a menu
+   * SCREEN — Escape on the Journal closes the whole menu — so the key that
+   * opened it is the key that has to put it away. A `j` that only ever opened
+   * would be the one screen key in the client that needed a different key to
+   * close it.
+   *
+   * ═══ THREE STATES, NOT TWO, AND THE MIDDLE ONE IS THE MENU ROW'S ═══
+   * Closed → open on the Journal. Open on the Journal → closed. Open on ANOTHER
+   * screen → swap to the Journal WITHOUT closing, because that is exactly what
+   * the `JOURNAL` row does when it is pressed, and both routes land here so
+   * neither can grow its own opinion.
+   *
+   * IT OPENS FOLDED, every time. `openNoteId` is cleared on the way in rather
+   * than on the way out, so a Journal reopened after a crash-quit mid-note is
+   * still a list first — `showMenuScreen`'s own rule for the arm, one level up.
+   */
+  function showJournal(): void {
+    if (menuOpen && menuScreen === MenuScreen.Journal) {
+      closeMenu();
+      return;
+    }
+    openNoteId = null;
+    if (menuOpen) {
+      showMenuScreen(MenuScreen.Journal);
+      return;
+    }
+    openMenu(MenuScreen.Journal);
   }
 
   /** Swap screens inside the one surface. Not a way out — see `onCancel`. */
@@ -10184,13 +10280,26 @@ async function boot(): Promise<void> {
     requestDraw();
   }
 
-  /** The root entries a keypress may land on, in reading order. */
+  /**
+   * The entries a keypress may land on, in reading order.
+   *
+   * ═══ THE ONES ON THE SCREEN, WHICH THIS USED TO GET WRONG ═══
+   * It walked the whole ROW LIST while the geometry truncates — the panel prints
+   * `N more — panel too small` and this screen has no pager for the Journal — so
+   * on a short window the marker could step onto a row nobody can see and Enter
+   * would unfold an invisible note. The pointer could never reach those rows, so
+   * the two hands disagreed about what the panel contained.
+   *
+   * `escapeMenuVisibleEntries` runs the SAME geometry the painter and the hit
+   * test run, which is what makes "what the keyboard can reach" and "what is
+   * drawn" one answer rather than two. A null rect means the panel is not on
+   * screen at all, and then there is nothing to select.
+   */
   function enabledEntryIndices(rows: readonly MenuRow[]): readonly number[] {
-    const out: number[] = [];
-    for (const row of rows) {
-      if (row.kind === MenuRowKind.Entry && row.enabled) out.push(row.index);
-    }
-    return out;
+    const { hudW: logicalW, hudH: logicalH } = renderer.metrics();
+    const rect = hudLayout(logicalW, logicalH).menu;
+    if (rect === null) return [];
+    return escapeMenuVisibleEntries(rect, rows);
   }
 
   /**
@@ -10328,12 +10437,16 @@ async function boot(): Promise<void> {
       case 'keys':
         showMenuScreen(MenuScreen.Keys);
         return;
-      case 'notes':
-        // THE ARCHIVE OPENS FOLDED. Nothing is unfolded until a row is pressed,
+      case 'journal':
+        // THE JOURNAL OPENS FOLDED. Nothing is unfolded until a row is pressed,
         // so the screen is a list first and a document second — which is what
         // `ShowLore` is, and what keeps the panel inside its row budget.
-        openNoteId = null;
-        showMenuScreen(MenuScreen.Notes);
+        //
+        // ONE CALL, SHARED WITH THE `j` KEY. `showJournal` is where both routes
+        // meet: a row that reimplemented the open is `Game.lua:2307`'s own
+        // mistake, and this file refuses it everywhere else already
+        // (`runUiCommand`'s note).
+        showJournal();
         return;
       case 'note':
         // PRESSING THE OPEN ONE FOLDS IT AWAY, so the same row is both the
@@ -10706,6 +10819,139 @@ async function boot(): Promise<void> {
       // Intent only. Nothing local changes here; the world moves when the
       // server says it did.
       socket.send({ v: PROTOCOL_VERSION, t: 'move', dir });
+    },
+    /**
+     * ═════════════════════════════════════════════════════════════════════════
+     * AN ARROW KEY. IT MOVES A SELECTION AND IT NEVER MOVES THE BODY.
+     * ═════════════════════════════════════════════════════════════════════════
+     *
+     * The author took the arrows off movement — *"i want to remove the other
+     * directional keys from the keyboard"* — precisely so the surfaces that
+     * SELECT could have them, and this is where that lands. keys.ts's
+     * `ARROW_NAV` is the last lookup in the dispatch, so a press only arrives
+     * here when the keymap had no meaning for it.
+     *
+     * ═══ IT IS `onMove`'s CHAIN WITH THE LAST TWO STEPS CUT OFF ═══
+     * Same surfaces, same order, same reasons — every paragraph on `onMove`
+     * above applies to this list unchanged, and the order is duplicated rather
+     * than shared because sharing it would mean a boolean parameter deciding
+     * whether the body moves, which is the one thing this split exists to make
+     * impossible. What is MISSING is the whole point: no `reviveArmed` branch
+     * and NOTHING THAT MOVES THE BODY.
+     *
+     * ═══ AND THE PROPERTY IS "NO `move` FRAME", NOT "NO `send`" ═══
+     * This block used to claim there was no `socket.send` in the function at
+     * all, and a test scraped four substrings out of this file to keep it that
+     * way. Review measured the CALL SET rather than the text and the claim was
+     * false one call deep: Left/Right with the UI SIZE row lit reaches
+     * `moveMenuSelection` -> `runMenuEffect({kind:'ui-scale'})` ->
+     * `applyUiScale` -> `set_ui_scale`. That frame is correct and wanted — it is
+     * how the keyboard reaches a setting the pointer already reaches — so the
+     * claim was what was wrong, not the code. A scrape that reads four names in
+     * one function body cannot see a `{t:'move'}` in a callee, which is memory
+     * `test-the-join-not-the-halves` in the small.
+     *
+     * So the guarantee is stated as what it is and tested as what it is: NO
+     * BRANCH OF THIS FUNCTION, OR OF ANYTHING IT CALLS, SENDS A `move` FRAME.
+     * `test/client/keybindwiring.test.ts` walks the transitive callee set from
+     * this body and asserts that of every function in it.
+     *
+     * ═══ AND THE REVIVE ARM IS WHY THE MENU GATE IS THE SAME GATE ═══
+     * `onMove` lets a direction fall PAST an open menu while a revive is armed,
+     * because that key is answering "press a direction" and swallowing it would
+     * advertise a verb and deliver half of it. An arrow cannot answer that
+     * prompt — it never reaches the `revive` frame — so if it took the menu
+     * selection instead, the two hands would disagree about what the same
+     * prompt means. It does not: `!reviveArmed` is the identical gate, and an
+     * arrow pressed with a revive armed does nothing, which is the honest
+     * answer for a key that cannot complete it.
+     *
+     * TARGETING IS IN, because an aim cursor is a selection: it sends nothing,
+     * the server is never told the mode is open, and steering it with the
+     * arrows is what every player who has aimed anything expects.
+     */
+    onNavigate: (dir) => {
+      if (roster !== null) {
+        moveRosterSelection(dir);
+        return;
+      }
+      if (classOptions !== null) {
+        movePickerSelection(dir);
+        return;
+      }
+      if (dialogueView !== null) {
+        moveDialogueSelection(dir);
+        return;
+      }
+      if (menuOpen && !reviveArmed) {
+        moveMenuSelection(dir);
+        return;
+      }
+      sweep?.settle();
+      if (targeting !== null && targeting.active()) {
+        targeting.moveCursor(dir);
+        return;
+      }
+      /**
+       * ═══════════════════════════════════════════════════════════════════════
+       * AND THE LOG, WHICH THE RULING NAMED AND THE FIRST PASS DID NOT GIVE IT.
+       * ═══════════════════════════════════════════════════════════════════════
+       * The arrows were freed *"for the dialogue window's selection, the log and
+       * menus"*. Two of the three were wired and the log was not — it kept
+       * PgUp/PgDn and its three new tabs had no keyboard route AT ALL, so with
+       * nothing else open all four arrows fell off the end of this chain doing
+       * nothing in front of a panel that had just grown a tab strip. On a pass
+       * whose standard is *"we just want the game to feel intuitive"* that is
+       * the wrong half to leave out, and it needs no new binding, which is the
+       * entire point of having freed the keys.
+       *
+       * LAST, BELOW TARGETING, and that ordering is the whole of the design: the
+       * log is open almost always (`logVisible` starts true), so a branch any
+       * higher would be a branch that took the arrows away from every surface
+       * under it. Everything with a selection answers first; the log is what the
+       * arrows mean when nothing else wants them.
+       *
+       * THE RECT, NOT THE FLAG. `logVisible` is true on a viewport too narrow to
+       * dock the panel (`DOCK_MIN_VIEWPORT_W`), and a key that scrolled a box
+       * nobody can see is this file's own worst failure mode. `hudLayout` is the
+       * one resolver the painter reads, so "is it on screen" is asked exactly
+       * once.
+       *
+       * UP AND DOWN SCROLL, LEFT AND RIGHT TURN THE TAB. Vertical is what the
+       * mouse wheel and PgUp/PgDn already mean on this panel, and horizontal is
+       * what a strip of three buttons in a row means everywhere. `SCROLL_STEP`
+       * is shared with `onScroll` deliberately — two step sizes for one panel is
+       * two opinions about how far "down" is.
+       *
+       * IT SENDS NOTHING, like every other branch here. `scroll` and `selectTab`
+       * are local view state on a transcript the server has already delivered.
+       */
+      const { hudW: navW, hudH: navH } = renderer.metrics();
+      const logRect = hudLayout(navW, navH).log;
+      if (logRect !== null && caseLog !== null) {
+        const delta = step({ x: 0, y: 0 }, dir);
+        if (delta.y !== 0) {
+          // THE SIGN IS FLIPPED, `onScroll`'s rule verbatim: `+1` out of
+          // keymap.ts is BACK IN TIME, and an UP arrow means further back.
+          caseLog.scroll(delta.y < 0 ? SCROLL_STEP : -SCROLL_STEP);
+          requestDraw();
+          return;
+        }
+        if (delta.x !== 0) {
+          const at = LOG_TABS.indexOf(caseLog.activeTab());
+          const next = LOG_TABS[Math.min(Math.max(0, at + delta.x), LOG_TABS.length - 1)];
+          // CLAMPED AND NOT WRAPPED. The strip is drawn as three buttons in a
+          // row and a row has ends; wrapping would put PEOPLE one press left of
+          // ALL, which no tab strip anybody has used does.
+          if (next !== undefined && caseLog.selectTab(next)) requestDraw();
+          return;
+        }
+      }
+      // NOTHING, AND DELIBERATELY NOT A STEP. With no surface open and no log on
+      // screen the arrows mean what every unbound key means. The press is still
+      // swallowed by keys.ts so the activity iframe does not scroll, and it still
+      // reaches the travel-cancel listener, so an arrow stops a walk exactly as
+      // it always did.
     },
     /**
      * TAB TURNS THE CHARACTER SHEET'S PAGE — `CharacterSheet.lua:110`.
@@ -15767,14 +16013,47 @@ function applyServerMessage(msg: ServerMsg): void {
       // exactly what `createTalentSheet` does with a talent id the class no
       // longer has.
       /**
-       * MIGRATED FIRST. A save written before the world map existed still says
+       * ═══════════════════════════════════════════════════════════════════════
+       * MIGRATED FIRST, AND WRITTEN BACK WHEN THE MIGRATION CHANGED ANYTHING.
+       * ═══════════════════════════════════════════════════════════════════════
+       *
+       * A save written before the world map existed still says
        * `toggle_log: ['key:m']`, and `m` is now the world map's default — both
        * would land in the same table and the later action would win, so the
-       * returning player presses M and gets the Case Log. See
-       * `migrateStoredKeymap`, which drops only a stored key that some OTHER
-       * action now defaults to.
+       * returning player presses M and gets the Case Log. A save written before
+       * the WASD ruling still says `move_south: ['key:j']`, and `j` is the
+       * Journal's key — `directionFor` runs before `uiByKey`, so that one player
+       * would press J and walk south for ever. See `migrateStoredKeymap`, which
+       * resets a slot holding either kind of stale key back to `default`.
+       *
+       * ═══ THE WRITE-BACK IS WHAT MAKES IT AN UPGRADE INSTEAD OF A RULE ═══
+       * Without it the migration re-runs on every load, which is fine for a
+       * stale file and WRONG for the player it is supposed to protect: somebody
+       * who reads the ruling, opens the Keys screen and deliberately puts `k`
+       * back on north would have that undone silently, every session, by the
+       * very function whose docblock promises them they keep it. Sending the
+       * corrected map once takes the retired value out of storage, and the next
+       * load has nothing to migrate.
+       *
+       * THROUGH `commitRemap`, so this stays true of that function: it is the
+       * ONLY place a `set_keybinds` frame is constructed. It also re-runs
+       * `setKeymap` with the same value, which is why the `else` exists rather
+       * than a bare call above it — one compile of the tables, not two.
+       *
+       * ONLY WHEN `persisted`. An anonymous socket has no character file, so
+       * there is nothing on the other end to correct and the frame would be a
+       * refusal waiting to happen. `migrateStoredKeymap` runs for them all the
+       * same: the local tables must still be right for the session.
        */
-      setKeymap(migrateStoredKeymap(ACTIONS, msg.binds));
+      {
+        const migrated = migrateStoredKeymap(ACTIONS, msg.binds);
+        setKeymap(migrated);
+        // RECORDED HERE, SENT IN `onMessage`. The socket lives in `boot`'s
+        // closure and this switch does not — `storedUiScale`'s seam, named on
+        // its own declaration. Null unless there is genuinely something to
+        // correct, so the common load sends nothing.
+        keymapRepair = msg.persisted && !sameRemap(migrated, msg.binds) ? migrated : null;
+      }
       keybindsPersisted = msg.persisted;
       // ...AND THE CHAT ROW'S PLACEHOLDER, because `say` is rebindable and that
       // string names its key. See `syncCommandLinePlaceholder`.

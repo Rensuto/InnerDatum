@@ -43,8 +43,10 @@
  * they disagree, so `keys.ts` has always kept five tables on lowercased
  * `event.key` and two on `event.code`, and argued both sides:
  *   - `key`, so a binding follows the player's LAYOUT — "on AZERTY the physical
- *     KeyH is not where an H is printed", and the vi keys are muscle memory
- *     about letters;
+ *     KeyH is not where an H is printed", and a letter binding is muscle memory
+ *     about a LETTER. (It was the vi ring that made this argument; it is WASD
+ *     that makes it now, and on AZERTY that is ZQSD — the same fact, which is
+ *     exactly why the namespace must stay `key`.)
  *   - `code`, because the numpad has no stable `key` at all — with NumLock on,
  *     Numpad8 reports the string '8'; with it off it reports 'ArrowUp'.
  * A remap that flattened those into one namespace breaks numpad movement
@@ -218,12 +220,15 @@ export type ActionDef = {
    * THE PERMANENT FLOOR: bindings no remap can touch, reach or clear.
    *
    * ═══ THIS IS HOW "REBINDABLE" IS PER-SLOT WITHOUT A THIRD WIRE SLOT ═══
-   * Decision (c) freezes the ARROWS and the NUMPAD on every direction, NumpadEnter
-   * on Commit and Numpad5 on Hold, while leaving the vi letters, Space, Enter and
-   * '.' fully rebindable. Those are per-SLOT freezes on actions that are otherwise
-   * open, and the wire carries exactly two slots
-   * (src/shared/protocol.ts:2149-2159), so they cannot live in `defaults`: the
-   * orthogonal directions would need three.
+   * Decision (c) froze the ARROWS and the NUMPAD on every direction, NumpadEnter
+   * on Commit and Numpad5 on Hold, while leaving the letters, Space, Enter and
+   * '.' fully rebindable. THE ARROWS ARE NO LONGER AMONG THEM — the author ruled
+   * them off movement so the dialogue window, the menus and the roster could have
+   * them — but the NUMPAD still is, on all eight directions, and it is now the
+   * whole of movement's permanent floor. Those are per-SLOT freezes on actions
+   * that are otherwise open, and the wire carries exactly two slots
+   * (src/shared/protocol.ts:2149-2159), so they cannot live in `defaults`: a
+   * cardinal would then need three.
    *
    * SO THE FROZEN BINDINGS SIT OUTSIDE THE OVERLAY ENTIRELY. They are compiled in
    * unconditionally, they are never serialised, and no `setBinding` can name
@@ -275,17 +280,44 @@ export const ACTIONS = [
   // ═══════════════════════════════════════════════════════════════════════════
   // MOVEMENT — in `DIR_ORDER`, clockwise from north (src/shared/coords.ts:46-53)
   //
-  // THREE KEY SETS, AND THAT IS NOT NEGOTIABLE PER keys.ts's OWN HEADER: "a
-  // roguelike that only reads the arrow keys will be described as broken by
-  // every player who has touched one before". The vi letters are the MNEMONIC
-  // set and are the ones a player has an opinion about, so they are the
-  // rebindable slot; the arrows and the numpad carry no mnemonic argument at all
-  // and are frozen as the permanent floor.
+  // ═══ TWO KEY SETS NOW: WASD FOR THE CARDINALS, THE NUMPAD FOR ALL EIGHT ═══
+  // Ruled by the author: *"we would prefer WASD for basic movements, then numpad
+  // for all directional movements. i want to remove the other directional keys
+  // from the keyboard. players can always rebind them later"*, and the standard
+  // the whole pass is measured against — *"we just want the game to feel
+  // intuitive"*.
+  //
+  // THE vi LETTERS ARE GONE FROM THE DEFAULTS. h/j/k/l/y/u/b/n were the MNEMONIC
+  // set and the argument for them was real — it is the roguelike standard and
+  // this file made it for eleven versions — but it is a mnemonic only for people
+  // who already know it, and the table this game is played by is four friends in
+  // a voice channel. WASD needs no explaining to any of them. The letters are not
+  // forbidden, they are merely unbound: anyone who wants `hjkl` back has one
+  // screen to visit, and `k` in slot 1 costs nothing.
+  //
+  // THE DIAGONALS KEEP NO LETTER AT ALL. y/u/b/n were the other half of the vi
+  // ring and there is no WASD equivalent, so the four diagonal rows ship with an
+  // EMPTY rebindable slot and their frozen numpad key. NOT q/e/z/c, and the
+  // author was told so: those four letters are already an FPS convention for
+  // something else, `z` is auto-explore and `c` is the character sheet, and a
+  // laptop with no numpad is answered by chorded W+A rather than by four more
+  // letters. Numpad 1-9 still covers all eight directions plus Numpad5 = hold.
+  //
+  // ═══ AND THE ARROWS HAVE LEFT MOVEMENT ENTIRELY ═══
+  // They used to be the permanent floor on the four cardinals. They are now bound
+  // to NOTHING here, which frees them for the surfaces that SELECT rather than
+  // walk — the dialogue window's answers, the escape menu, the roster and the
+  // class picker. keys.ts owns that lane (`ARROW_NAV`) and it is deliberately the
+  // LAST lookup in the dispatch, so a player who binds an arrow to a direction on
+  // the Keys screen still gets the step. An arrow no longer moves the body by
+  // default, and `test/client/input/keys.test.ts` fails if one ever does again.
   //
   // THE NUMPAD IS ON `code` AND MUST STAY THERE. With NumLock on, Numpad8's
   // `event.key` is the string '8' — indistinguishable from the number row and
   // therefore from the hotbar; with NumLock off it is 'ArrowUp'. The physical key
-  // is the only stable identity.
+  // is the only stable identity — and that lookup runs FIRST, which is why the
+  // numpad keeps working with NumLock off even though 'ArrowUp' is now a
+  // selection key.
   // ═══════════════════════════════════════════════════════════════════════════
   {
     id: 'move_north',
@@ -293,11 +325,8 @@ export const ACTIONS = [
     group: 'Movement',
     order: 1,
     effect: { kind: 'move', dir: Dir.N },
-    defaults: [{ kind: 'key', value: 'k' }],
-    fixed: [
-      { kind: 'key', value: 'arrowup' },
-      { kind: 'code', value: 'Numpad8' },
-    ],
+    defaults: [{ kind: 'key', value: 'w' }],
+    fixed: [{ kind: 'code', value: 'Numpad8' }],
     rebindable: true,
   },
   {
@@ -306,7 +335,9 @@ export const ACTIONS = [
     group: 'Movement',
     order: 2,
     effect: { kind: 'move', dir: Dir.NE },
-    defaults: [{ kind: 'key', value: 'u' }],
+    // NO LETTER. See the section header: the vi ring went with the cardinals and
+    // WASD has no diagonal. The numpad is the diagonal, and it is frozen.
+    defaults: [],
     fixed: [{ kind: 'code', value: 'Numpad9' }],
     rebindable: true,
   },
@@ -316,17 +347,17 @@ export const ACTIONS = [
     group: 'Movement',
     order: 3,
     effect: { kind: 'move', dir: Dir.E },
-    // `l` IS EAST AND THAT IS WHY THE TALENT PANEL COULD NOT HAVE IT. ToME's own
-    // levelup mnemonic is dialog-local ("[L]evelup", dialogs/CharacterSheet.lua:99
-    // and the `c == 'l'` branch at :289) and it is moot regardless: `dirByKey` is
-    // consulted FIRST in the dispatch, an order keys.ts calls load-bearing. Shift
-    // cannot rescue it either — every key-side lookup lowercases and deliberately
-    // does not exclude Shift, so `L` is `l`.
-    defaults: [{ kind: 'key', value: 'l' }],
-    fixed: [
-      { kind: 'key', value: 'arrowright' },
-      { kind: 'code', value: 'Numpad6' },
-    ],
+    // ═══ `l` IS FREE NOW, AND THE TALENT PANEL STILL DOES NOT TAKE IT ═══
+    // This row used to say that `l` was east and that was why the levelup
+    // mnemonic could not have it. East is `d`; `l` is bound to nothing. Moving
+    // `show_talents` off `g` and onto `l` would be a second change to a shipped
+    // default in one pass, for a mnemonic whose only in-tree evidence is
+    // dialog-local ("[L]evelup", dialogs/CharacterSheet.lua:99 and the
+    // `c == 'l'` branch at :289) — a BUTTON LABEL, not a bindings table. Left
+    // alone deliberately, and recorded here so the next reader knows the
+    // obstacle is gone rather than still standing.
+    defaults: [{ kind: 'key', value: 'd' }],
+    fixed: [{ kind: 'code', value: 'Numpad6' }],
     rebindable: true,
   },
   {
@@ -335,7 +366,7 @@ export const ACTIONS = [
     group: 'Movement',
     order: 4,
     effect: { kind: 'move', dir: Dir.SE },
-    defaults: [{ kind: 'key', value: 'n' }],
+    defaults: [],
     fixed: [{ kind: 'code', value: 'Numpad3' }],
     rebindable: true,
   },
@@ -345,11 +376,14 @@ export const ACTIONS = [
     group: 'Movement',
     order: 5,
     effect: { kind: 'move', dir: Dir.S },
-    defaults: [{ kind: 'key', value: 'j' }],
-    fixed: [
-      { kind: 'key', value: 'arrowdown' },
-      { kind: 'code', value: 'Numpad2' },
-    ],
+    // ═══ `j` LEAVES HERE, AND THAT IS WHAT FREES IT FOR THE JOURNAL ═══
+    // A stored `move_south: ['key:j']` written before this pass would otherwise
+    // still be holding the key upstream puts its journal on. It does not survive:
+    // `RETIRED_DEFAULTS` names `key:j` as this row's old default and
+    // `migrateStoredKeymap` resets that slot to the shipped default, which is now
+    // `s`. See that function, which is the whole of the upgrade path.
+    defaults: [{ kind: 'key', value: 's' }],
+    fixed: [{ kind: 'code', value: 'Numpad2' }],
     rebindable: true,
   },
   {
@@ -358,7 +392,7 @@ export const ACTIONS = [
     group: 'Movement',
     order: 6,
     effect: { kind: 'move', dir: Dir.SW },
-    defaults: [{ kind: 'key', value: 'b' }],
+    defaults: [],
     fixed: [{ kind: 'code', value: 'Numpad1' }],
     rebindable: true,
   },
@@ -368,11 +402,8 @@ export const ACTIONS = [
     group: 'Movement',
     order: 7,
     effect: { kind: 'move', dir: Dir.W },
-    defaults: [{ kind: 'key', value: 'h' }],
-    fixed: [
-      { kind: 'key', value: 'arrowleft' },
-      { kind: 'code', value: 'Numpad4' },
-    ],
+    defaults: [{ kind: 'key', value: 'a' }],
+    fixed: [{ kind: 'code', value: 'Numpad4' }],
     rebindable: true,
   },
   {
@@ -381,7 +412,7 @@ export const ACTIONS = [
     group: 'Movement',
     order: 8,
     effect: { kind: 'move', dir: Dir.NW },
-    defaults: [{ kind: 'key', value: 'y' }],
+    defaults: [],
     fixed: [{ kind: 'code', value: 'Numpad7' }],
     rebindable: true,
   },
@@ -477,9 +508,12 @@ export const ACTIONS = [
     group: 'Turn',
     order: 12,
     effect: { kind: 'command', command: 'explore' },
-    // `z` IS UPSTREAM'S KEY for auto-explore and it is free here — `a`, `d`,
-    // `e`, `o`, `q`, `s`, `w` and `x` were the letters left after the vi ring
-    // and the screens took theirs, and `e` went to revive when rest took `r`.
+    // `z` IS UPSTREAM'S KEY for auto-explore and it is free here. That used to
+    // read "`a`, `d`, `e`, `o`, `q`, `s`, `w` and `x` were the letters left
+    // after the vi ring and the screens took theirs" — FOUR OF THOSE EIGHT ARE
+    // MOVEMENT NOW (w/a/s/d), and `e` went to revive when rest took `r`, so the
+    // free letters today are `o`, `q`, `x` and the eight the vi ring gave back:
+    // h, j, k, l, y, u, b, n. `z` did not move and did not have to.
     defaults: [{ kind: 'key', value: 'z' }],
     // NOTHING FROZEN, for `rest`'s reason: the numpad hand does not reach for
     // this mid-fight, because it is refused with anything in sight.
@@ -567,10 +601,16 @@ export const ACTIONS = [
   },
 
   // ═══════════════════════════════════════════════════════════════════════════
-  // SCREENS — the letters vi movement left free. h/j/k/l and y/u/b/n are spoken
-  // for and always will be; r, f, t, c, m, p, g and i are not, and picking
-  // anything shifted would collide with the capitals a shift-holding player
-  // still means as moves.
+  // SCREENS — the letters movement leaves free. This read "the letters vi
+  // movement left free. h/j/k/l and y/u/b/n are spoken for and always will be",
+  // and "always" lasted eleven versions: movement is w/a/s/d now and the vi ring
+  // is unbound. WHAT IS SPOKEN FOR HERE DID NOT MOVE — r, f, c, m, p, g and i
+  // are what they were — and picking anything shifted would still collide with
+  // the capitals a shift-holding player means as moves.
+  //
+  // ONE LETTER HAS BEEN SPENT OUT OF THE RING SINCE, AND ONLY ONE: `j`, on the
+  // Journal, in the same pass that freed it. Seven of the eight are still
+  // unbound and a player may take any of them on the Keys screen.
   // ═══════════════════════════════════════════════════════════════════════════
   {
     id: 'say',
@@ -627,7 +667,7 @@ export const ACTIONS = [
     // THE KEY IS CHOSEN, NOT PORTED. ToME's levelup screen is opened by a VIRTUAL
     // action (class/Game.lua:2215) whose default lives in the /data/keybinds
     // directory this clone does not have — see this file's header, which sets out
-    // the grep that proves it. `g` is one of the letters vi movement left free.
+    // the grep that proves it. `g` is a letter no movement key has ever wanted.
     defaults: [{ kind: 'key', value: 'g' }],
     fixed: [],
     rebindable: true,
@@ -683,6 +723,53 @@ export const ACTIONS = [
     fixed: [],
     rebindable: true,
   },
+  {
+    id: 'show_journal',
+    name: 'Journal',
+    group: 'Screens',
+    order: 23,
+    effect: { kind: 'ui', command: 'show_journal' },
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * `J`, AND IT IS THE INTUITIVE CHOICE RATHER THAN THE LEFTOVER ONE.
+     * ═══════════════════════════════════════════════════════════════════════
+     * Ruled: *"case notes should actually be 'Journal' which will serve as a
+     * quest log/ similar"*, *"we can put journal to the J key"*.
+     *
+     * `j` IS FREE BECAUSE OF THE ROW ELEVEN ABOVE THIS ONE, not in spite of it.
+     * It was `move_south`'s vi default from M2 until the WASD ruling in this
+     * same pass; the ruling retired the whole vi ring, and the first letter that
+     * came free is the first letter of the word. Every OTHER Screens key
+     * (r, f, c, m, p, g, i) is where it was.
+     *
+     * ═══ THE VERB IS PORTED; THE LETTER IS UPSTREAM'S CONVENTION, NOT A
+     *     CITATION, AND THIS SAYS SO RATHER THAN DRESSING ONE UP ═══
+     * `SHOW_QUESTS` is a real virtual action — `modules/tome/class/Game.lua:2234`
+     * registers it and hands `engine/dialogs/ShowQuests.lua` the party's main
+     * member. The DEFAULT BINDING for it is not readable here: this clone has no
+     * `data/keybinds` directory at all (the same gap `show_talents`, `toggle_log`
+     * and `show_world_map` each record above), so `j` is asserted as the
+     * author's ruling and as the genre's own letter, and nothing more.
+     *
+     * ═══ THE INSERTION RENUMBERED TWELVE ROWS AND THAT IS DELIBERATE ═══
+     * `order` is definition order (KeyBind.lua:38-40's monotonic `bind_order`)
+     * and a test pins it to exactly that, so a row added in the middle of the
+     * Screens block moves every Hotbar and Log row down one rather than taking a
+     * number out of sequence. `order` is display order and nothing else — no
+     * stored keymap holds it — so the renumbering migrates nothing. The zoom
+     * removal three rows up is the same edit in the other direction.
+     *
+     * ═══ A STORED `j` ON `move_south` CANNOT FIGHT THIS ROW ═══
+     * `RETIRED_DEFAULTS` names `key:j` as `move_south`'s retired default, so
+     * `migrateStoredKeymap`'s rule two resets it on load and the caller writes
+     * the corrected map back. That is what stops the ONE player who had
+     * movement stored from having the Journal key walk them south instead — see
+     * that function, which was written for this row before it existed.
+     */
+    defaults: [{ kind: 'key', value: 'j' }],
+    fixed: [],
+    rebindable: true,
+  },
 
   // ═══════════════════════════════════════════════════════════════════════════
   // HOTBAR — FOUR KEYED SLOTS OUT OF EIGHT, NONE OF THE FOUR REBINDABLE, AND THE
@@ -704,7 +791,7 @@ export const ACTIONS = [
     id: 'hotbar_1',
     name: 'Talent slot 1',
     group: 'Hotbar',
-    order: 23,
+    order: 24,
     effect: { kind: 'slot', slot: 0 },
     defaults: [],
     fixed: [{ kind: 'key', value: '1' }],
@@ -714,7 +801,7 @@ export const ACTIONS = [
     id: 'hotbar_2',
     name: 'Talent slot 2',
     group: 'Hotbar',
-    order: 24,
+    order: 25,
     effect: { kind: 'slot', slot: 1 },
     defaults: [],
     fixed: [{ kind: 'key', value: '2' }],
@@ -724,7 +811,7 @@ export const ACTIONS = [
     id: 'hotbar_3',
     name: 'Talent slot 3',
     group: 'Hotbar',
-    order: 25,
+    order: 26,
     effect: { kind: 'slot', slot: 2 },
     defaults: [],
     fixed: [{ kind: 'key', value: '3' }],
@@ -734,7 +821,7 @@ export const ACTIONS = [
     id: 'hotbar_4',
     name: 'Talent slot 4',
     group: 'Hotbar',
-    order: 26,
+    order: 27,
     effect: { kind: 'slot', slot: 3 },
     defaults: [],
     fixed: [{ kind: 'key', value: '4' }],
@@ -781,7 +868,7 @@ export const ACTIONS = [
     id: 'hotbar_5',
     name: 'Talent slot 5',
     group: 'Hotbar',
-    order: 27,
+    order: 28,
     effect: { kind: 'slot', slot: 4 },
     defaults: [],
     fixed: [{ kind: 'code', value: 'Digit5' }],
@@ -791,7 +878,7 @@ export const ACTIONS = [
     id: 'hotbar_6',
     name: 'Talent slot 6',
     group: 'Hotbar',
-    order: 28,
+    order: 29,
     effect: { kind: 'slot', slot: 5 },
     defaults: [],
     fixed: [{ kind: 'code', value: 'Digit6' }],
@@ -827,7 +914,7 @@ export const ACTIONS = [
     id: 'hotbar_7',
     name: 'Talent slot 7',
     group: 'Hotbar',
-    order: 29,
+    order: 30,
     effect: { kind: 'slot', slot: 6 },
     defaults: [],
     fixed: [{ kind: 'code', value: 'Digit7' }],
@@ -837,7 +924,7 @@ export const ACTIONS = [
     id: 'hotbar_8',
     name: 'Talent slot 8',
     group: 'Hotbar',
-    order: 30,
+    order: 31,
     effect: { kind: 'slot', slot: 7 },
     defaults: [],
     fixed: [{ kind: 'code', value: 'Digit8' }],
@@ -847,7 +934,7 @@ export const ACTIONS = [
     id: 'hotbar_9',
     name: 'Talent slot 9',
     group: 'Hotbar',
-    order: 31,
+    order: 32,
     effect: { kind: 'slot', slot: 8 },
     defaults: [],
     fixed: [{ kind: 'code', value: 'Digit9' }],
@@ -865,7 +952,7 @@ export const ACTIONS = [
     // keybind for `toggle_log` survives the rename untouched.
     name: 'Log',
     group: 'Log',
-    order: 32,
+    order: 33,
     effect: { kind: 'ui', command: 'toggle_log' },
     // THE KEY IS CHOSEN, NOT PORTED, AND THIS SAYS SO RATHER THAN DRESSING A
     // GUESS AS A CITATION. ToME has a SHOW_MESSAGE_LOG action and its Classic HUD
@@ -879,9 +966,11 @@ export const ACTIONS = [
     // player reaches for constantly on a 170x100 region, and the Case Log is
     // already visible in the dock without being toggled at all.
     //
-    // `v` FOR "VIEW" IS ARBITRARY AND SAYS SO. The vi-keys take h/j/k/l/y/u/b/n
-    // for movement and the screens take c/g/i/p/t, so the honest options were
-    // few and none of them are mnemonic. THE MEMBER DID NOT CHANGE, which is the
+    // `v` FOR "VIEW" IS ARBITRARY AND SAYS SO. It was picked when the vi ring
+    // held h/j/k/l/y/u/b/n and the screens held c/g/i/p/t, so the honest options
+    // were few and none of them were mnemonic. Movement has given the vi letters
+    // back since, but `v` is not worse for that and moving a shipped default
+    // twice in one pass costs more than it buys. THE MEMBER DID NOT CHANGE, which is the
     // entire point of naming actions rather than keys — this row moved off `c`
     // at v8 and off `m` now, and nothing downstream noticed either time. It is
     // rebindable, so anyone who disagrees has one screen to visit.
@@ -893,7 +982,7 @@ export const ACTIONS = [
     id: 'scroll_back',
     name: 'Scroll the log back',
     group: 'Log',
-    order: 33,
+    order: 34,
     // +1 is BACK IN TIME, matching what Page Up does in every document ever
     // written. Shift picks the other lane, and that is a fact about a panel
     // rather than about a key, so it is not an action here.
@@ -906,7 +995,7 @@ export const ACTIONS = [
     id: 'scroll_forward',
     name: 'Scroll the log forward',
     group: 'Log',
-    order: 34,
+    order: 35,
     effect: { kind: 'scroll', steps: -1 },
     defaults: [{ kind: 'key', value: 'pagedown' }],
     fixed: [],
@@ -1172,9 +1261,20 @@ export function resetOne(remap: KeyRemap, actionId: string): KeyRemap {
   return next;
 }
 
-/** RESET ALL. An empty overlay is a real value on the wire, not a missing field. */
+/**
+ * RESET ALL. An empty overlay is a real value on the wire, not a missing field.
+ *
+ * IT IS NOT QUITE EMPTY ANY MORE, AND THAT IS NOT AN ACCIDENT. The overlay
+ * carries `KEYMAP_GEN_ID`, which is the stamp that says "this file has already
+ * been through the upgrade rules" — see `migrateStoredKeymap`. Returning a bare
+ * `{}` here would UNSTAMP the player, and the next key they chose that happened
+ * to be a retired default would be taken off them again on the following load:
+ * RESET ALL would quietly reopen the one hole the stamp exists to close. It is
+ * still "every action back to its shipped key", because `compileKeymap` reads
+ * `ACTIONS` and nothing in `ACTIONS` answers to this id.
+ */
 export function resetAll(): KeyRemap {
-  return {};
+  return { [KEYMAP_GEN_ID]: [KEYMAP_GEN] };
 }
 
 // ---------------------------------------------------------------------------
@@ -1274,6 +1374,96 @@ function claim<T>(
  */
 /**
  * ═══════════════════════════════════════════════════════════════════════════
+ * THE KEYS A ROW USED TO SHIP WITH. READ ONLY BY `migrateStoredKeymap`.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Nothing in ToME corresponds to this, and nothing could: upstream's binder
+ * writes through `t.k.default` BY REFERENCE (KeyBinder.lua:96-97), so by the time
+ * a session has rebound anything the shipped defaults no longer exist to compare
+ * against. Keeping a copy of what we USED to ship is only possible because
+ * `ACTIONS` is never mutated here.
+ *
+ * ═══ IT IS AN UPGRADE LEDGER, NOT A HISTORY ═══
+ * A row belongs here for exactly as long as a stored map in the wild can still
+ * hold it. It is deliberately NOT "every key this action ever had": each entry
+ * costs a key a player can no longer keep across one load, so an entry that is
+ * no longer repairing anything is an entry that is only taking choices away.
+ *
+ * TODAY IT IS THE vi RING AND NOTHING ELSE. `move_*` shipped h/j/k/l/y/u/b/n from
+ * M2 until the WASD ruling, and those eight are what a returning player's file
+ * can be holding. The arrows are NOT here and must not be: they were `fixed`,
+ * which is outside the overlay entirely (`ActionDef.fixed` — "they are never
+ * serialised"), so no stored map has ever contained one.
+ */
+export const RETIRED_DEFAULTS: ReadonlyMap<string, readonly string[]> = new Map([
+  ['move_north', ['key:k']],
+  ['move_northeast', ['key:u']],
+  ['move_east', ['key:l']],
+  ['move_southeast', ['key:n']],
+  ['move_south', ['key:j']],
+  ['move_southwest', ['key:b']],
+  ['move_west', ['key:h']],
+  ['move_northwest', ['key:y']],
+]);
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE STAMP THAT MAKES THE UPGRADE RULES RUN ONCE PER PLAYER INSTEAD OF FOR EVER
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * ═══ THE BUG THIS EXISTS FOR, WHICH SHIPPED AND WAS FOUND BY REVIEW ═══
+ * `migrateStoredKeymap` cannot tell "this string is here because it WAS the old
+ * default" from "the player typed it into the capture field ten milliseconds
+ * ago" — the two are the same four bytes. And the migration does not run once:
+ * it runs on every `keybinds` frame, and the server ECHOES one after every
+ * accepted `set_keybinds` (`sendKeybinds`). So a returning roguelike player who
+ * opened the Keys screen and put K back on north saw the status line accept it,
+ * saw the row revert to `W --` one round trip later, and then had the binding
+ * deleted from their character file by the write-back that was supposed to be
+ * the mitigation. Six of the eight vi letters behaved that way on exactly the
+ * one row each of them wanted, and no message was printed. Measured, not
+ * reasoned: `applyCapture` -> `migrateStoredKeymap` round trip, every letter.
+ *
+ * That contradicts the ruling this whole pass was built on — *"players can
+ * always rebind them later"* — and it contradicted this file's own docblock.
+ *
+ * ═══ WHY A STAMP AND NOT A SESSION FLAG ═══
+ * "Only migrate the first `keybinds` frame of the session" fixes the echo and
+ * nothing else: the player's `k` is in storage when they log in tomorrow, the
+ * first frame of THAT session migrates it away, and the bug is now annual
+ * instead of instant. The question being asked is about the FILE — "has this
+ * stored map already been through the rules?" — so the answer has to live in
+ * the file.
+ *
+ * ═══ WHY IT LIVES IN THE OVERLAY ITSELF ═══
+ * The overlay is the only per-player keybind state that persists, and it is a
+ * `Record<string, readonly string[]>` whose ids are deliberately NOT validated
+ * against `ACTIONS` at any layer: `SetKeybindsSchema` takes any id (protocol.ts),
+ * `parseKeybinds` keeps an unknown one VERBATIM (saves.ts:1801) precisely so a
+ * build that drops an action does not throw a player's other rows away, and
+ * `compileKeymap` walks `ACTIONS` and so never looks at an id it does not own.
+ * A reserved id therefore rides through every layer untouched with no wire
+ * change, no schema bump and no new field to keep in sync. It costs one of
+ * `KEYBIND_MAX_ACTIONS` (35 actions, 40 allowed).
+ *
+ * THE LEADING UNDERSCORE IS THE GUARD. Every `ActionDef.id` in this file is
+ * lowercase letters and underscores with a LETTER first; a test pins that, so
+ * this id cannot collide with a future action by accident.
+ *
+ * ═══ THE NUMBER IS A GENERATION, AND BUMPING IT IS THE UPGRADE SWITCH ═══
+ * `'1'` is every file written before this stamp existed — it is never written,
+ * only inferred from the absence of a stamp. `'2'` is the WASD ruling. The next
+ * time a shipped default MOVES, the author of that change adds its old key to
+ * `RETIRED_DEFAULTS` and bumps this by one, and every stored map in the world is
+ * migrated exactly once more. Leaving it alone is what keeps a player's
+ * deliberate choices theirs.
+ */
+export const KEYMAP_GEN_ID = '_keymap_gen';
+/** See `KEYMAP_GEN_ID`. A generation, as a string, because the wire carries strings. */
+export const KEYMAP_GEN = '2';
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
  * A STORED KEYMAP CAN HOLD A KEY THE DEFAULTS HAVE SINCE GIVEN AWAY.
  * ═══════════════════════════════════════════════════════════════════════════
  * Keybinds persist server-side, deliberately: nobody should reconfigure them
@@ -1283,19 +1473,122 @@ function claim<T>(
  * gets the Case Log with no explanation. Reported from play as a map that
  * "won't open properly".
  *
- * The rule this applies is narrow on purpose: a stored binding is only dropped
- * when it holds a key that action NO LONGER DEFAULTS TO and another action now
- * does. That is exactly the upgrade case and nothing else — a player who
- * deliberately bound the log to `m` after this shipped is expressing a
- * preference and keeps it, because their remap will also have moved the world
- * map off `m` and the conflict will not exist.
+ * The rule this applies is narrow on purpose: a stored binding is only reset
+ * when it holds a key that action NO LONGER DEFAULTS TO and another action's
+ * LIVE default — the one that action actually resolves to for THIS player —
+ * does. That is exactly the upgrade case and nothing else.
  *
- * IT DROPS RATHER THAN REWRITES. Moving the stored binding to the new default
- * would be inventing a preference nobody expressed; dropping it falls back to
- * the action's own default, which is the value the player would get on a fresh
- * clone and the one the Keys screen shows.
+ * ═══════════════════════════════════════════════════════════════════════════
+ * AND SINCE THE WASD RULING THERE IS A SECOND RULE, WHICH IS THE UPGRADE PATH
+ * FOR A DEFAULT THAT MOVED WITHOUT ANOTHER ACTION TAKING THE OLD KEY.
+ * ═══════════════════════════════════════════════════════════════════════════
+ * Rule one cannot see the case the movement change creates. A returning player
+ * with `move_south: ['key:j']` stored is holding a key that NOTHING now defaults
+ * to — the vi ring was retired, not reassigned — so rule one keeps it, and that
+ * player's south stays on `j` while everybody else's is on `s`. Worse for the
+ * pass this shipped with: `j` is the Journal's key, and a stored `j` on
+ * move_south is read by `directionFor` BEFORE anything reaches `uiByKey`, so the
+ * one player who had rebound movement is the one player for whom the Journal key
+ * silently walks them south instead.
+ *
+ * The author's ruling is the rule, verbatim: *"players can always rebind them
+ * later"*, which is only true if a stored value that is merely the OLD DEFAULT is
+ * treated as "never expressed a preference" rather than as a choice. So
+ * `RETIRED_DEFAULTS` names, per action, the key strings this build used to ship,
+ * and a stored slot equal to one of them is reset to the shipped default.
+ * ANYTHING ELSE SURVIVES UNTOUCHED — `move_north: ['key:t']` is a preference and
+ * it is kept, exactly as a preference on any other action is.
+ *
+ * IT RESETS RATHER THAN REWRITES, AND IT RESETS TO `SLOT_DEFAULT` AND NOT TO
+ * `SLOT_NONE`. Moving the stored binding to the new default would be inventing a
+ * preference nobody expressed; the word for "no override in this slot" is
+ * `SLOT_DEFAULT`, and it is what makes the sentence above — "falls back to the
+ * action's own default" — true. THIS USED TO WRITE `SLOT_NONE`, which is
+ * DELIBERATELY EMPTY: `resolveSlot` returns `undefined` for it, so a `toggle_log`
+ * migrated off `m` ended up with NO key at all rather than with `v`. That is this
+ * file's own "never brick" rule broken by the one function whose whole job is to
+ * repair a stored map, and it would have been far louder here — a movement row
+ * reset to `none` is a direction a player cannot walk in.
+ *
+ * ONE-SHOT, AND THE STAMP IS WHAT MAKES THAT TRUE. `KEYMAP_GEN_ID` records in
+ * the player's own overlay that these rules have already run against it, and the
+ * first line of this function refuses to run them twice. The caller writes the
+ * result back (`main.ts`'s `keybinds` case), so the stamp — and the repaired
+ * map with it — reaches storage on the first load after the upgrade and every
+ * load after that is a no-op.
+ *
+ * THE WRITE-BACK ALONE WAS NOT ENOUGH AND MADE IT WORSE, which is the whole
+ * story in `KEYMAP_GEN_ID`: the server echoes a `keybinds` frame after every
+ * accepted `set_keybinds`, so a player who deliberately bound a retired key had
+ * it stripped by the echo and then ERASED FROM THEIR FILE by the write-back.
+ * Read that docblock before touching either half.
  */
 export function migrateStoredKeymap(actions: readonly ActionDef[], remap: KeyRemap): KeyRemap {
+  /**
+   * ═══ ALREADY UPGRADED: NOT ONE RULE RUNS ═══
+   * Both rules answer a question about a map written by an OLDER BUILD, and
+   * neither can tell such a value apart from a choice the player made on the
+   * Keys screen five seconds ago. Once the stamp is in the file the honest
+   * answer to "is this the old default, or is it what they picked?" is always
+   * the second one.
+   */
+  if (remap[KEYMAP_GEN_ID]?.[0] === KEYMAP_GEN) return remap;
+
+  /**
+   * ═══ RUN TO A FIXED POINT, WHICH IS WHAT MAKES THE WRITE-BACK SAFE ═══
+   * One pass is not idempotent, and the case is reachable rather than theoretical:
+   * `{ move_south: ['key:j'], toggle_log: ['key:s'] }`. Rule two resets `j`, so
+   * move_south goes back to `s` — and only THEN is toggle_log's `s` a collision
+   * for rule one to see. A single pass would leave that map changing again on the
+   * next load, and since the caller writes the result back, "changes again next
+   * load" means a `set_keybinds` frame every session for ever.
+   *
+   * IT TERMINATES BY COUNTING. Every change replaces a stored key string with
+   * `SLOT_DEFAULT`, which `tidy` then drops, so the number of stored key strings
+   * strictly decreases on any pass that changes anything. The bound is the number
+   * of slots in the map; the `+ 1` is the confirming pass that changes nothing.
+   */
+  let current = remap;
+  let budget = 1;
+  for (const slots of Object.values(remap)) budget += slots.length;
+  for (let i = 0; i < budget; i += 1) {
+    const next = migrateOnce(actions, current);
+    if (sameRemap(next, current)) break;
+    current = next;
+  }
+  // STAMPED ON THE WAY OUT, ALWAYS — including when nothing needed repairing.
+  // An untouched `{}` is exactly the map that must be stamped: the player who
+  // has never opened the Keys screen is the one most likely to open it TOMORROW
+  // and choose a retired letter, and an unstamped file would take it off them.
+  // Adding the stamp also makes `sameRemap` answer false on that first load,
+  // which is what gets it written back.
+  return { ...current, [KEYMAP_GEN_ID]: [KEYMAP_GEN] };
+}
+
+/**
+ * Two overlays with the same actions and the same slot strings in each.
+ *
+ * EXPORTED FOR THE CALLER, not for the loop above: `main.ts` sends a corrected
+ * map only when `migrateStoredKeymap` actually changed one, and "changed" has to
+ * be asked with the same notion of equality the fixed point stops on, or the two
+ * disagree and the write-back either fires for ever or never fires at all.
+ */
+export function sameRemap(a: KeyRemap, b: KeyRemap): boolean {
+  const ak = Object.keys(a);
+  const bk = Object.keys(b);
+  if (ak.length !== bk.length) return false;
+  for (const id of ak) {
+    const left = a[id];
+    const right = b[id];
+    if (left === undefined || right === undefined) return false;
+    if (left.length !== right.length) return false;
+    for (let i = 0; i < left.length; i += 1) if (left[i] !== right[i]) return false;
+  }
+  return true;
+}
+
+/** One pass of the two rules. See `migrateStoredKeymap`, which runs it to a fixed point. */
+function migrateOnce(actions: readonly ActionDef[], remap: KeyRemap): KeyRemap {
   const defaultOwner = new Map<string, string>();
   for (const action of actions) {
     for (const b of action.defaults) {
@@ -1304,31 +1597,89 @@ export function migrateStoredKeymap(actions: readonly ActionDef[], remap: KeyRem
   }
 
   const out: Record<string, readonly string[]> = {};
-  let dropped = 0;
+  let reset = 0;
   for (const [actionId, slots] of Object.entries(remap)) {
-    const kept = slots.map((slot) => {
+    const mine = actions.find((a) => a.id === actionId);
+    const retired = RETIRED_DEFAULTS.get(actionId) ?? [];
+    /** Which slots this pass sent back to their shipped default. See below. */
+    const freed: number[] = [];
+    const kept = slots.map((slot, slotIndex) => {
       if (typeof slot !== 'string' || !slot.startsWith('key:')) return slot;
       const key = slot.slice(4).toLowerCase();
+      const stillMine =
+        mine?.defaults.some((b) => b.kind === 'key' && b.value.toLowerCase() === key) === true;
+      // RULE TWO FIRST, because it is the cheaper question and the two overlap:
+      // this action's OWN retired default, which nothing else has to have taken.
+      if (!stillMine && retired.some((old) => old.toLowerCase() === `key:${key}`)) {
+        reset += 1;
+        freed.push(slotIndex);
+        return SLOT_DEFAULT;
+      }
+      // RULE ONE. Held by somebody else's default now, and not by this action's.
       const owner = defaultOwner.get(key);
-      // Held by somebody else's default now, and not by this action's own.
-      if (owner !== undefined && owner !== actionId) {
-        const mine = actions.find((a) => a.id === actionId);
-        const stillMine = mine?.defaults.some(
-          (b) => b.kind === 'key' && b.value.toLowerCase() === key,
-        );
-        if (stillMine !== true) {
-          dropped += 1;
-          return SLOT_NONE;
+      if (owner !== undefined && owner !== actionId && !stillMine) {
+        // ...AND ONLY IF THAT OWNER STILL ANSWERS TO IT FOR THIS PLAYER. The
+        // collision is what this rule repairs, and there is none when the owner
+        // has itself been rebound away: the docblock always claimed such a
+        // player "is expressing a preference and keeps it", and before this line
+        // existed they did not — `defaultOwner` is built from the shipped table,
+        // so their own deliberate bind was reset on every load.
+        const ownerAction = actions.find((a) => a.id === owner);
+        const ownerKeeps =
+          ownerAction !== undefined &&
+          resolve(ownerAction, remap).some(
+            (b) => b !== undefined && b.kind === 'key' && b.value.toLowerCase() === key,
+          );
+        if (ownerKeeps) {
+          reset += 1;
+          return SLOT_DEFAULT;
         }
       }
       return slot;
     });
-    out[actionId] = kept;
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * A FREED SLOT MUST NOT LAND ON A KEY THE PLAYER IS ALREADY HOLDING.
+     * ═══════════════════════════════════════════════════════════════════════
+     * The population this is for is the one most likely to exist in the wild,
+     * and it was found by review rather than reasoned about: WASD was free
+     * before the ruling, so "I will keep hjkl and ADD wasd in the second slot"
+     * is exactly what a player did. That map is
+     * `move_north: ['key:k', 'key:w']`. Rule two frees slot 0, slot 0 now falls
+     * back to the SHIPPED default — which is `w` — and the row reads `W  W`: a
+     * second key they deliberately configured is gone and the screen advertises
+     * the redundancy where it used to show their choice.
+     *
+     * So when a freed slot's fallback is a key another slot still spells out,
+     * that other slot is the one that is now saying nothing, and it goes back to
+     * its own default too. `['key:k','key:w']` becomes `[]` — pure defaults,
+     * `W  --`, which is what the player asked for minus only the letter the
+     * ruling retired.
+     *
+     * IT CANNOT RUN AWAY WITH ITSELF. `ActionDef.defaults` is one binding in
+     * every row of this table, so `defaults[1]` is `undefined` and the only
+     * pair this can ever match is (freed slot 0, explicit slot 1). It also only
+     * ever replaces a key string with `SLOT_DEFAULT`, so the fixed point above
+     * still counts down.
+     */
+    for (const i of freed) {
+      const fallback = mine?.defaults[i];
+      if (fallback === undefined || fallback.kind !== 'key') continue;
+      const cell = `key:${fallback.value.toLowerCase()}`;
+      for (let j = 0; j < kept.length; j += 1) {
+        if (j === i) continue;
+        const other = kept[j];
+        if (typeof other !== 'string' || other.toLowerCase() !== cell) continue;
+        kept[j] = SLOT_DEFAULT;
+        reset += 1;
+      }
+    }
+    out[actionId] = tidy(kept);
   }
-  if (dropped > 0) {
+  if (reset > 0) {
     console.warn(
-      `keymap: dropped ${dropped} stored binding(s) that a newer default now owns; ` +
-        'those actions fall back to their defaults. Rebind them on the Keys screen if you want them back.',
+      `keymap: reset ${reset} stored binding(s) that held a key this build has moved on from; ` +
+        'those slots fall back to their shipped defaults. Rebind them on the Keys screen if you want them back.',
     );
   }
   return out;
@@ -1677,8 +2028,8 @@ export function labelForBinding(binding: Binding | undefined): string {
  *
  * With `slot`, one column — ToME's `b1`/`b2` (KeyBinder.lua:218-219), '--' when
  * that slot is empty. Without one, everything the action answers to including
- * the frozen floor, so the row can show a player that the arrows still work
- * after they rewrote `k`.
+ * the frozen floor, so the row can show a player that the numpad still works
+ * after they rewrote `w`.
  *
  * W4's Keys screen and W5's hint line both read this rather than hard-coding a
  * mnemonic, because a hard-coded 'press C' is a lie the moment somebody rebinds.

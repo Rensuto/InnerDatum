@@ -38,6 +38,12 @@ import type { KeyHandlers, LiveKeymap } from '../../../src/client/input/keys.ts'
  *   THE TEXT-ENTRY GUARD A keydown whose target is an INPUT is dropped whole, or
  *                        typing "j" in the command line walks your character
  *                        south and hitting space mid-sentence ends your turn.
+ *                        (SINCE v12 "j" OPENS THE JOURNAL instead of walking
+ *                        south — the guard is unchanged and so is the sentence's
+ *                        point: a typed letter that reaches the dispatcher does
+ *                        SOMETHING, and the something got worse rather than
+ *                        better. A player typing "journal" into the log would
+ *                        open and close the panel three times.)
  *
  * v8 moves a key (the Case Log from `c` to `m`) and adds one (`c` opens the
  * character sheet), which is precisely the kind of edit that quietly drops a row
@@ -152,12 +158,25 @@ type Call =
   | { readonly kind: 'slot'; readonly slot: number }
   | { readonly kind: 'cancel' }
   | { readonly kind: 'ui'; readonly command: UiCommand }
-  | { readonly kind: 'scroll'; readonly steps: number; readonly alternate: boolean };
+  | { readonly kind: 'scroll'; readonly steps: number; readonly alternate: boolean }
+  /**
+   * AN ARROW. A DIRECTION THAT IS NOT A MOVE, AND THE DISTINCTION IS THE POINT.
+   *
+   * `onNavigate` carries the same `Dir` as `onMove`, so a recorder that folded
+   * the two into one row would make every assertion below about the arrows
+   * vacuous — "an arrow does not move the body" would pass against a handler
+   * that moved it. Two rows, one comparison, and `{ kind: 'move' }` on an arrow
+   * press is a failure the diff spells out.
+   */
+  | { readonly kind: 'nav'; readonly dir: Dir };
 
 function recorder(calls: Call[]): KeyHandlers {
   return {
     onMove: (dir) => {
       calls.push({ kind: 'move', dir });
+    },
+    onNavigate: (dir) => {
+      calls.push({ kind: 'nav', dir });
     },
     onCommand: (command) => {
       calls.push({ kind: 'command', command });
@@ -277,10 +296,13 @@ describe('the modifier policy', () => {
     }
   });
 
-  it('does NOT drop shift — a shift-holding player still means H as "move west"', () => {
-    expect(press({ key: 'h', shiftKey: true }).calls).toEqual([{ kind: 'move', dir: Dir.W }]);
+  it('does NOT drop shift — a shift-holding player still means A as "move west"', () => {
+    // WAS `h`, WHICH IS UNBOUND SINCE THE WASD RULING. The rule under test is
+    // the modifier policy and not the letter, so the letter moved with the
+    // default rather than the assertion being deleted.
+    expect(press({ key: 'a', shiftKey: true }).calls).toEqual([{ kind: 'move', dir: Dir.W }]);
     // ...and the same key with capslock on arrives as a capital.
-    expect(press({ key: 'H' }).calls).toEqual([{ kind: 'move', dir: Dir.W }]);
+    expect(press({ key: 'A' }).calls).toEqual([{ kind: 'move', dir: Dir.W }]);
   });
 });
 
@@ -299,7 +321,7 @@ describe('the text-entry guard', () => {
   });
 
   it('still dispatches for a target that is not a text field', () => {
-    expect(press({ key: 'j' }, new FakeElement('CANVAS')).calls).toEqual([
+    expect(press({ key: 's' }, new FakeElement('CANVAS')).calls).toEqual([
       { kind: 'move', dir: Dir.S },
     ]);
   });
@@ -352,20 +374,22 @@ describe('v9 puts the talent panel on G, and takes nothing away', () => {
     expect(press({ key: 'g' }).calls).toEqual([{ kind: 'ui', command: UiCommand.ShowTalents }]);
   });
 
-  it('l is STILL Dir.E, which is why the talent panel could not have it', () => {
-    // The only in-tree evidence for `l` is dialog-local (CharacterSheet.lua:99's
-    // "[L]evelup" label and :289's `c == 'l'` branch), and it is moot regardless:
-    // KEY_TO_DIR binds `l` east and `directionFor` is consulted FIRST, an order
-    // keys.ts calls load-bearing. This is the assertion that would fail if
-    // somebody "fixed" the mnemonic by taking the letter.
-    expect(press({ key: 'l' }).calls).toEqual([{ kind: 'move', dir: Dir.E }]);
-    expect(press({ key: 'l' }).calls).not.toContainEqual({
-      kind: 'ui',
-      command: UiCommand.ShowTalents,
-    });
-    // Shift cannot rescue it either: the handler lowercases and deliberately does
-    // not exclude Shift, so a capital L is still a step east.
-    expect(press({ key: 'L', shiftKey: true }).calls).toEqual([{ kind: 'move', dir: Dir.E }]);
+  it('`d` is Dir.E now, and `l` does nothing at all', () => {
+    // ═══ THIS TEST USED TO READ "l is STILL Dir.E" ═══
+    // It asserted that the vi east key beat the dialog-local "[L]evelup"
+    // mnemonic (CharacterSheet.lua:99's label and :289's `c == 'l'` branch),
+    // because `directionFor` is consulted FIRST. EAST IS `d` since the WASD
+    // ruling and `l` is bound to nothing, so the obstacle is gone — but the
+    // talent panel did NOT take the letter, and this is the assertion that says
+    // so deliberately rather than by omission: moving a shipped default twice in
+    // one pass is a change nobody asked for, and `g` still opens the panel.
+    expect(press({ key: 'd' }).calls).toEqual([{ kind: 'move', dir: Dir.E }]);
+    expect(press({ key: 'l' }).calls).toEqual([]);
+    expect(press({ key: 'g' }).calls).toEqual([{ kind: 'ui', command: UiCommand.ShowTalents }]);
+    // Shift cannot rescue `l` either, and it does not have to: the handler
+    // lowercases and deliberately does not exclude Shift, so a capital D is
+    // still a step east.
+    expect(press({ key: 'D', shiftKey: true }).calls).toEqual([{ kind: 'move', dir: Dir.E }]);
   });
 
   it('g takes nothing from the sheet or the Case Log', () => {
@@ -379,19 +403,15 @@ describe('v9 puts the talent panel on G, and takes nothing away', () => {
 // ---------------------------------------------------------------------------
 
 describe('every row that already worked still works', () => {
+  // ═══ THIS LIST LOST THE ARROWS AND THE vi RING, AND GAINED W/A/S/D ═══
+  // It used to open with ArrowUp/Down/Left/Right and h/j/k/l/y/u/b/n. Both sets
+  // were ruled off movement; the numpad rows are untouched, which is the half
+  // the ruling explicitly kept — *"then numpad for all directional movements"*.
   const MOVES: readonly (readonly [KeyInit, Dir])[] = [
-    [{ key: 'ArrowUp' }, Dir.N],
-    [{ key: 'ArrowDown' }, Dir.S],
-    [{ key: 'ArrowLeft' }, Dir.W],
-    [{ key: 'ArrowRight' }, Dir.E],
-    [{ key: 'k' }, Dir.N],
-    [{ key: 'j' }, Dir.S],
-    [{ key: 'h' }, Dir.W],
-    [{ key: 'l' }, Dir.E],
-    [{ key: 'y' }, Dir.NW],
-    [{ key: 'u' }, Dir.NE],
-    [{ key: 'b' }, Dir.SW],
-    [{ key: 'n' }, Dir.SE],
+    [{ key: 'w' }, Dir.N],
+    [{ key: 's' }, Dir.S],
+    [{ key: 'a' }, Dir.W],
+    [{ key: 'd' }, Dir.E],
     [{ key: '2', code: 'Numpad2' }, Dir.S],
     [{ key: '4', code: 'Numpad4' }, Dir.W],
     [{ key: '6', code: 'Numpad6' }, Dir.E],
@@ -484,6 +504,20 @@ describe('every row that already worked still works', () => {
     // bindings table in the reference clone. ONE key for one combined screen is
     // the port: `SHOW_EQUIPMENT = "SHOW_INVENTORY"` (class/Game.lua:2192).
     ['i', UiCommand.ShowInventory],
+    /**
+     * v12. THE JOURNAL, ON THE LETTER THE WASD RULING FREED IN THIS SAME PASS.
+     *
+     * Ruled: *"case notes should actually be 'Journal' which will serve as a
+     * quest log/ similar"* and *"we can put journal to the J key"*. `j` was
+     * `move_south`'s vi default until an hour before this row existed — this
+     * file's own header still records typing "j" as the thing that "walks your
+     * character south", which is the sentence this row retires.
+     *
+     * THE VERB IS UPSTREAM'S (`SHOW_QUESTS`, modules/tome/class/Game.lua:2234);
+     * the LETTER is the author's ruling, because this clone ships no
+     * `data/keybinds` to read a default out of.
+     */
+    ['j', UiCommand.ShowJournal],
   ];
 
   for (const [key, command] of UI_ROWS) {
@@ -534,7 +568,7 @@ describe('every row that already worked still works', () => {
 // ---------------------------------------------------------------------------
 
 describe('what the keymap deliberately does NOT do', () => {
-  it('names exactly nine UI verbs', () => {
+  it('names exactly ten UI verbs', () => {
     // A ninth member has to be added here on purpose, which is the point: the
     // exhaustive switch in main.ts breaks at lint time, and this breaks at test
     // time with the list of what the game claims to have. v9 added
@@ -547,11 +581,17 @@ describe('what the keymap deliberately does NOT do', () => {
     // (*"remove the (zoom) option"*), which is the first time this list has
     // shrunk — a removal that left them here would be two verbs the Keys screen
     // advertises and nothing answers.
+    //
+    // AND NINE BECAME TEN: `show_journal` (*"we can put journal to the J
+    // key"*). It is a `UiCommand` and not a `TurnCommand` for this list's own
+    // rule — it opens a screen and spends no turn, which is why `pickup` is
+    // still not here.
     expect(Object.values(UiCommand).slice().sort()).toEqual([
       'respawn',
       'revive',
       'say',
       'show_inventory',
+      'show_journal',
       'show_sheet',
       'show_talents',
       'show_world_map',
@@ -618,6 +658,39 @@ describe('what the keymap deliberately does NOT do', () => {
 
     expect(beside).toHaveLength(1);
     expect(event.defaultPrevented).toBe(true);
+  });
+
+  it('still lets every ARROW reach the listeners beside this one', () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * THE ARROW LANE MAKES THE SAME PROMISE AND NOTHING WAS ASSERTING IT.
+     * ═══════════════════════════════════════════════════════════════════════
+     * `ARROW_NAV`'s branch says in as many words: no `stopPropagation`, because
+     * "an arrow must still stop a walk". main.ts's travel-cancel listener sits
+     * beside this handler on the same target, and the two run in registration
+     * order — so `stopImmediatePropagation()` in that branch is the ONE call
+     * that actually severs it, and it survived sixty mutants and two thousand
+     * tests. An arrow would silently stop cancelling a walk: the player presses
+     * Left, the selection that is not open does nothing, and their character
+     * keeps walking the route they just tried to abandon.
+     *
+     * The Tab twin above is the same test for the same reason; this is the pair
+     * it was always missing.
+     */
+    for (const key of ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight']) {
+      const target = new EventTarget();
+      const beside: KeyboardEvent[] = [];
+      const binding = bindGameKeys(target, recorder([]));
+      target.addEventListener('keydown', (e) => beside.push(e as KeyboardEvent));
+      const event = new FakeKeyboardEvent({ key });
+      target.dispatchEvent(event);
+      binding.dispose();
+
+      expect(`${key}: ${String(beside.length)}`).toBe(`${key}: 1`);
+      // ...and it is still PREVENTED, which is the other half and the reason the
+      // distinction is worth a test: the Discord iframe must not scroll.
+      expect(`${key}: ${String(event.defaultPrevented)}`).toBe(`${key}: true`);
+    }
   });
 
   it('leaves a BOUND Tab to its binding, which still prevents its own default', () => {
@@ -716,18 +789,25 @@ describe('a rebind reaches an already-registered listener', () => {
   });
 
   it('the frozen floor survives a rebind of the mnemonic key', () => {
-    // Decision (c)'s permanent movement floor, seen from the dispatcher: the vi
-    // letter moves, the arrows and the numpad do not, so "I bound every movement
-    // key to the same key" is unreachable rather than merely refused.
-    const live = createLiveKeymap({ move_north: ['key:w'] });
+    // Decision (c)'s permanent movement floor, seen from the dispatcher: the
+    // letter moves, the numpad does not, so "I bound every movement key to the
+    // same key" is unreachable rather than merely refused.
+    //
+    // ═══ THE FIXTURE MOVED OFF `key:w` BECAUSE `w` IS THE DEFAULT NOW ═══
+    // Binding north to its own default would test nothing. `t` is unbound.
+    // AND THE ARROW PRESS IS GONE FROM THE EXPECTATION, not from the send: it
+    // is still pressed, and it must now produce NOTHING from `onMove`.
+    const live = createLiveKeymap({ move_north: ['key:t'] });
     const run = session(live);
-    run.send({ key: 'w', code: 'KeyW' });
-    run.send({ key: 'k' });
+    run.send({ key: 't', code: 'KeyT' });
+    run.send({ key: 'w' });
     run.send({ key: 'ArrowUp' });
     run.send({ key: '8', code: 'Numpad8' });
     expect(run.calls).toEqual([
       { kind: 'move', dir: Dir.N },
-      { kind: 'move', dir: Dir.N },
+      // `w` IS GONE TOO. The rebind shadows slot 0, so the shipped default is
+      // not a second key — that is `resolve`'s per-slot rule, not a floor.
+      { kind: 'nav', dir: Dir.N },
       { kind: 'move', dir: Dir.N },
     ]);
     run.dispose();
@@ -756,5 +836,195 @@ describe('a rebind reaches an already-registered listener', () => {
       { kind: 'slot', slot: 0 },
     ]);
     run.dispose();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// THE WASD RULING, DRIVEN THROUGH THE REAL `keydown` HANDLER
+// ---------------------------------------------------------------------------
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * EVERY ASSERTION HERE GOES THROUGH `bindGameKeys`, NOT THROUGH A TABLE.
+ * ═══════════════════════════════════════════════════════════════════════════
+ * test/client/input/keymap.test.ts already pins the compiled tables. That is
+ * the wrong end for this ruling: a second key-to-direction map somewhere in the
+ * dispatch would leave every one of those assertions true while the body still
+ * walked on `h`. So these dispatch a real event at a real listener and assert
+ * what the HANDLERS saw — which is the only place the two halves meet.
+ */
+describe('WASD moves the body and nothing else does', () => {
+  const CARDINALS: readonly (readonly [string, Dir])[] = [
+    ['w', Dir.N],
+    ['a', Dir.W],
+    ['s', Dir.S],
+    ['d', Dir.E],
+  ];
+
+  for (const [letter, dir] of CARDINALS) {
+    it(`${letter} steps ${dir}, and swallows the press`, () => {
+      const seen = press({ key: letter, code: `Key${letter.toUpperCase()}` });
+      expect(seen.calls).toEqual([{ kind: 'move', dir }]);
+      expect(seen.prevented).toBe(true);
+    });
+  }
+
+  /**
+   * ALL EIGHT, AND ON `code` — which is what the ruling kept by name: *"then
+   * numpad for all directional movements"*. Each is sent TWICE, once with the
+   * NumLock-on `event.key` (a digit) and once with the NumLock-off spelling
+   * (an arrow, Home, End, PgUp, PgDn, Clear). Both must step, and the NumLock-off
+   * half is the one this pass could have broken: those spellings are now the
+   * SELECTION keys, and only `directionFor` reading `event.code` FIRST keeps the
+   * numpad ahead of them.
+   */
+  const NUMPAD: readonly (readonly [string, string, string, Dir])[] = [
+    ['Numpad8', '8', 'ArrowUp', Dir.N],
+    ['Numpad9', '9', 'PageUp', Dir.NE],
+    ['Numpad6', '6', 'ArrowRight', Dir.E],
+    ['Numpad3', '3', 'PageDown', Dir.SE],
+    ['Numpad2', '2', 'ArrowDown', Dir.S],
+    ['Numpad1', '1', 'End', Dir.SW],
+    ['Numpad4', '4', 'ArrowLeft', Dir.W],
+    ['Numpad7', '7', 'Home', Dir.NW],
+  ];
+
+  for (const [padCode, lockOn, lockOff, dir] of NUMPAD) {
+    it(`${padCode} steps ${dir} with NumLock either way`, () => {
+      expect(press({ key: lockOn, code: padCode }).calls).toEqual([{ kind: 'move', dir }]);
+      expect(press({ key: lockOff, code: padCode }).calls).toEqual([{ kind: 'move', dir }]);
+    });
+  }
+
+  it('Numpad5 still holds, in both NumLock states', () => {
+    // The middle of the ring, and the ruling names it. It is a COMMAND and not a
+    // move, so a diagonal that had swallowed it would show up here as a `move`.
+    expect(press({ key: '5', code: 'Numpad5' }).calls).toEqual([
+      { kind: 'command', command: TurnCommand.Hold },
+    ]);
+    expect(press({ key: 'Clear', code: 'Numpad5' }).calls).toEqual([
+      { kind: 'command', command: TurnCommand.Hold },
+    ]);
+  });
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * AN ARROW DOES NOT MOVE THE BODY. THE WHOLE RULING IN ONE ASSERTION.
+   * ═══════════════════════════════════════════════════════════════════════════
+   * *"i want to remove the other directional keys from the keyboard"*. The
+   * arrows left `move_*`'s `fixed` list so the dialogue window, the menus and
+   * the roster could have them — and `onNavigate` carries the SAME `Dir` as
+   * `onMove`, so "it still produced a direction" proves nothing at all. What is
+   * asserted is the HANDLER: `nav`, never `move`.
+   */
+  for (const [arrow, dir] of [
+    ['ArrowUp', Dir.N],
+    ['ArrowDown', Dir.S],
+    ['ArrowLeft', Dir.W],
+    ['ArrowRight', Dir.E],
+  ] as const) {
+    it(`${arrow} selects rather than steps`, () => {
+      const seen = press({ key: arrow });
+      expect(seen.calls).toEqual([{ kind: 'nav', dir }]);
+      expect(seen.calls).not.toContainEqual({ kind: 'move', dir });
+      // SWALLOWED ANYWAY, and that is not incidental: unprevented, an arrow
+      // scrolls the Discord activity iframe and drags the canvas out of view.
+      // Taking the arrows off movement makes this the ONLY thing stopping it.
+      expect(seen.prevented).toBe(true);
+    });
+  }
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * A vi KEY DOES NOT MOVE THE BODY FROM ANY PATH.
+   * ═══════════════════════════════════════════════════════════════════════════
+   * The failure this pass was most likely to ship, and it is
+   * `test-the-join-not-the-halves` exactly: a second key-to-direction map left
+   * behind anywhere in the dispatch would keep `h` walking west from a path the
+   * Keys screen cannot see, while every table assertion elsewhere stayed green.
+   * So all eight are pressed at the real listener and must produce NOTHING —
+   * not a move, not a nav, not a command, not a swallow.
+   */
+  it('h/k/l and y/u/b/n reach no handler at all', () => {
+    // SEVEN, NOT EIGHT. It was all eight; `j` left this list the moment the
+    // Journal took it (*"we can put journal to the J key"*), and the case below
+    // is what replaces it. The point of the eight was that NO vi letter still
+    // reaches the DIRECTION tables from any path, and that is still what is
+    // asserted — `j` is checked against `move` by name one test down.
+    for (const letter of ['h', 'k', 'l', 'y', 'u', 'b', 'n']) {
+      const seen = press({ key: letter, code: `Key${letter.toUpperCase()}` });
+      expect(seen.calls).toEqual([]);
+      // AND NOT SWALLOWED. An unbound key must still reach main.ts's
+      // travel-cancel listener, which is the rule that keeps "any keyboard input
+      // cancels the walk" reachable.
+      expect(seen.prevented).toBe(false);
+    }
+  });
+
+  it('j opens the Journal and never walks south', () => {
+    // THE ONE vi LETTER THAT IS BOUND AGAIN, AND TO SOMETHING THAT IS NOT A
+    // DIRECTION. This is the join `test-the-join-not-the-halves` is about from
+    // the other side: `directionFor` reads its tables BEFORE `uiByKey`, so a
+    // stored or shipped `j` on `move_south` anywhere would win this press and
+    // the Journal key would silently walk the player instead.
+    const seen = press({ key: 'j', code: 'KeyJ' });
+    expect(seen.calls).toEqual([{ kind: 'ui', command: UiCommand.ShowJournal }]);
+    expect(seen.calls).not.toContainEqual({ kind: 'move', dir: Dir.S });
+    // SWALLOWED, like every bound key — see `lets an unmapped key sail past`.
+    expect(seen.prevented).toBe(true);
+  });
+
+  it('a capital vi letter does not move either, which shift could have rescued', () => {
+    // Every key-side lookup lowercases and deliberately does not exclude Shift,
+    // so `H` is `h` — the property that used to make a shift-holding player
+    // still mean "west" is the property that now makes `H` mean nothing.
+    for (const letter of ['H', 'K', 'L']) {
+      expect(press({ key: letter, shiftKey: true }).calls).toEqual([]);
+    }
+    // AND `J` IS THE JOURNAL WITH SHIFT HELD, for exactly that lowercasing rule
+    // — not a direction, which is what this case has always been about.
+    expect(press({ key: 'J', shiftKey: true }).calls).toEqual([
+      { kind: 'ui', command: UiCommand.ShowJournal },
+    ]);
+  });
+
+  it('a player who binds an arrow back to a direction gets the step', () => {
+    // `ARROW_NAV` is the LAST lookup in the dispatch, so it loses every argument
+    // it could have. This is what makes *"players can always rebind them later"*
+    // true of the arrows and not only of the letters.
+    const live = createLiveKeymap({ move_north: ['key:arrowup'] });
+    const run = session(live);
+    run.send({ key: 'ArrowUp' });
+    // ...and the other three are still selection keys, so rebinding one does not
+    // quietly take the whole cluster back.
+    run.send({ key: 'ArrowDown' });
+    expect(run.calls).toEqual([
+      { kind: 'move', dir: Dir.N },
+      { kind: 'nav', dir: Dir.S },
+    ]);
+    run.dispose();
+  });
+
+  it('a player who binds a vi letter back to a direction gets the step', () => {
+    const live = createLiveKeymap({ move_west: ['key:h'] });
+    const run = session(live);
+    run.send({ key: 'h', code: 'KeyH' });
+    expect(run.calls).toEqual([{ kind: 'move', dir: Dir.W }]);
+    run.dispose();
+  });
+
+  it('a caller with no `onNavigate` still swallows the arrow rather than scrolling', () => {
+    // `onNavigate` is optional, like `onTab`. A caller with no selection surfaces
+    // has nothing to do with an arrow — but the iframe still scrolls if the press
+    // is not prevented, so the swallow cannot be conditional on the handler.
+    const calls: Call[] = [];
+    const { onNavigate: _drop, ...withoutNav } = recorder(calls);
+    const target = new EventTarget();
+    const binding = bindGameKeys(target, withoutNav);
+    const event = new FakeKeyboardEvent({ key: 'ArrowUp' });
+    target.dispatchEvent(event);
+    binding.dispose();
+    expect(calls).toEqual([]);
+    expect(event.defaultPrevented).toBe(true);
   });
 });

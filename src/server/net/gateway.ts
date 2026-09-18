@@ -16329,11 +16329,24 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
      * reserved band the Margin cannot spend (ui/caselog.ts), so a hint repeated
      * on every find would spend that band on something the player learned the
      * first time. The deviation is the surface, not the intent.
+     *
+     * ═══ IT NAMES THE `JOURNAL` ROW AND `Escape`, AND DELIBERATELY NOT `J` ═══
+     * The screen this points at was called CASE NOTES and is the Journal now
+     * (*"case notes should actually be 'Journal'"*), so the old sentence named a
+     * thing the menu no longer has. Its replacement names the ROW LABEL, which
+     * is a constant, and `Escape`, which is the one key in this game that cannot
+     * be rebound (`keymap.ts`'s `cancel` row is `rebindable: false`).
+     *
+     * THE SERVER MUST NOT NAME `J` HERE even though that is the shipped default.
+     * Keybinds are the CLIENT's and they persist per player, so a line written
+     * on this side would be wrong for anyone who rebound it — the same lie
+     * `MenuRow.keyLabel` exists to avoid on the row itself, and this side cannot
+     * even read the keymap to get it right.
      */
     if (firstEver) {
       broadcastRecordLine(
         home,
-        'Case notes are kept in the menu — press Escape to read them again.',
+        'What you read is kept in your journal — press Escape and open JOURNAL.',
       );
     }
     // AND THE ARCHIVE EACH OF THEM CAN RE-READ IT IN — upstream's own line,

@@ -2037,6 +2037,34 @@ describe('what you put on changes how much of you there is', () => {
     expect(alexBody.knownLore ?? [], 'a stranger on the next tile learned it').not.toContain(
       LORE_IDS[0],
     );
+
+    /**
+     * 4. AND THE ONE-TIME HINT POINTS AT A SCREEN THAT EXISTS.
+     *
+     * Upstream's `learnLore` ends by telling the player where to read it again,
+     * and ours says it once. The sentence named `Case notes` and `the menu`
+     * until the Journal landed (*"case notes should actually be 'Journal'"*),
+     * and a hint naming a row the menu no longer has is worse than no hint: the
+     * player opens the menu, reads nine rows, finds nothing called that.
+     *
+     * IT NAMES `Escape` AND NOT `J`, and that is asserted rather than assumed.
+     * This side cannot read the client's keymap and keybinds persist per player,
+     * so a literal key here would be wrong for anyone who rebound it — while
+     * Escape is `rebindable: false` in keymap.ts and always true.
+     */
+    const lines = ren
+      .all('log')
+      .flatMap((frame) => (frame['lines'] as { readonly text: string }[] | undefined) ?? [])
+      .map((line) => line.text);
+    const hint = lines.find((text) => text.includes('Escape'));
+    expect(hint, 'the first note taught nothing about where to read it again').toBeDefined();
+    expect(hint).toContain('JOURNAL');
+    expect(hint, 'the hint still names a screen this build removed').not.toContain('Case notes');
+    // A WORD SPLIT RATHER THAN A REGEX, so `JOURNAL` cannot be mistaken for the
+    // bare letter and the assertion says what it means.
+    const words = (hint ?? '').split(/[^A-Za-z]+/);
+    expect(words, 'the server hard-coded a rebindable key into a log line').not.toContain('J');
+    expect(words, 'the hint names the row a player is looking for').toContain('JOURNAL');
   });
   /**
    * ═══════════════════════════════════════════════════════════════════════════

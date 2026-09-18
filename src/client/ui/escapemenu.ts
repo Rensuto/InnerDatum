@@ -1,6 +1,10 @@
 /**
- * THE ESCAPE MENU: six entries that all do something, and the Keys screen
- * nested inside it.
+ * THE ESCAPE MENU: ten entries that all do something, with the Keys screen and
+ * the Journal nested inside it.
+ *
+ * (It said "six entries", and it was six. `rootRows` is the authority and it
+ * answers ten — the count in this sentence is prose and nothing checks it, which
+ * is precisely why it is worth correcting when the file is open.)
  *
  * ═══════════════════════════════════════════════════════════════════════════
  * IT IS A DOCK PANEL, NOT A MODAL, AND THAT IS THE WHOLE DESIGN
@@ -313,12 +317,13 @@ const KEYS_FILL_W = 0.62;
  * pointing the next reader at ninety pixels that are no longer there to find.
  *
  * ═══ WHERE THE BUDGET ACTUALLY STANDS, MEASURED ═══
- * `ACTIONS` is 36 now (rest and auto-explore joined it), and at 1280x720 the
- * keys screen still fits on ONE PAGE, which is the property this sizing exists
- * for. At 1024x600 it pages at two, and no cap can fix that: the panel is bound
- * by the BAND between the top HUD and the hotbar — 518 pixels there against
- * about 620 of content — rather than by `KEYS_MAX_H`. Raising the cap would move
- * nothing.
+ * This said `ACTIONS` WAS 36 (rest and auto-explore joined it); it went to 34
+ * when the two zoom rows left and to 35 when the Journal joined. Re-measured at
+ * 35: 1280x720 still fits on ONE PAGE (`35 keys`, no pager), which is the
+ * property this sizing exists for. At 1024x600 it pages at two (`1–29 of 35`),
+ * and no cap can fix that: the panel is bound by the BAND between the top HUD
+ * and the hotbar — 518 pixels there — rather than by `KEYS_MAX_H`. Raising the
+ * cap would move nothing.
  *
  * So the next action that joins the table costs a row and nothing is being held
  * in reserve for it. If 1280x720 ever starts paging, the fix is fewer rows or a
@@ -351,6 +356,23 @@ const FONT_META = 'bold 10px ui-monospace, Consolas, monospace';
 /** ToME calls these two screens exactly this (GameMenu.lua:31, KeyBinder.lua:34). */
 const TITLE_ROOT = 'GAME MENU';
 const TITLE_KEYS = 'KEY BINDINGS';
+/**
+ * THE THIRD SCREEN HAS A NAME OF ITS OWN NOW, AND IT USED TO WEAR THE ROOT'S.
+ *
+ * `drawHeader` asked one question — "is this the Keys screen?" — so the archive
+ * opened under the title `GAME MENU`, which named the surface rather than the
+ * screen. That was survivable while the screen was one list of found paper; it
+ * is not survivable for a screen a KEY opens directly, because a player who
+ * presses `j` and reads `GAME MENU` has been told their key did the wrong thing.
+ *
+ * `JOURNAL`, NOT `QUEST LOG`. Upstream titles its dialog *"Quest Log for
+ * "..actor.name* (`engine/dialogs/ShowQuests.lua:32`) and that is the right word
+ * for a dialog holding ONLY quests. Ours holds quests AND the notes, which is
+ * the author's own word for it: *"case notes should actually be 'Journal' which
+ * will serve as a quest log/ similar"*. The name is not per-character either —
+ * see `character-names-are-discord`.
+ */
+const TITLE_JOURNAL = 'JOURNAL';
 
 /** The two per-row controls, in the bracketed-letter grammar. */
 const CLEAR_LABEL = '[X]';
@@ -387,7 +409,7 @@ const NEXT_LABEL = '>';
 /** The marker on the row the pointer is over. A shape, so hover survives greyscale. */
 const HOVER_MARK = '▸';
 /** What a locked row says before its reason. A WORD, per the header. */
-const LOCKED_WORD = 'LOCKED';
+export const LOCKED_WORD = 'LOCKED';
 
 /**
  * THE ARMED PROMPT, AND IT STATES BOTH OUTS.
@@ -405,7 +427,9 @@ const NOT_SAVED = 'not saved: this session is not signed in';
 const KEYS_HINT = 'press a key column to rebind it';
 
 // ---------------------------------------------------------------------------
-// The two screens
+// The three screens. It said TWO, and the Journal is the third — it existed as
+// `Notes` when that heading was written, which is how a count in a heading goes
+// stale without anything moving.
 // ---------------------------------------------------------------------------
 
 /**
@@ -422,17 +446,106 @@ export const MenuScreen = {
   /** Every action, its two keys, and the controls that change them. */
   Keys: 'keys',
   /**
-   * EVERY CASE NOTE THIS CHARACTER HAS READ — the port of `ShowLore.lua`.
+   * THE JOURNAL: what this character has AGREED TO DO, and what they have READ.
+   *
+   * ═══ IT WAS `Notes`, AND THE SCREEN GREW A SECOND HALF ═══
+   * Ruled: *"case notes should actually be 'Journal' which will serve as a quest
+   * log/ similar"*. The old member held one list — the port of `ShowLore.lua` —
+   * and that list is still here, under a `NOTES` heading and unchanged. What is
+   * new is a `QUESTS` heading above it, which is the SHAPE of
+   * `engine/dialogs/ShowQuests.lua` on this surface.
    *
    * A SCREEN ON THIS SURFACE AND NOT A PANEL OF ITS OWN, which is upstream's
-   * own placement: `learnLore` tells the player *"You can read all your
-   * collected lore in the game menu, by pressing Escape"*. One rect, one
-   * geometry, one hit test — the header's rule, and the reason `Keys` is here
-   * rather than in a second modal.
+   * own placement for the notes half: `learnLore` tells the player *"You can
+   * read all your collected lore in the game menu, by pressing Escape"*. It is
+   * NOT upstream's placement for the quests half — `SHOW_QUESTS`
+   * (`modules/tome/class/Game.lua:2234`) registers a second dialog — and that is
+   * a deliberate divergence: one rect, one geometry, one hit test is this
+   * surface's own rule, and it is the reason `Keys` is here rather than in a
+   * modal of its own.
+   *
+   * THE STRING MOVED AND NOTHING PERSISTS IT. `menuScreen` is client module
+   * state that resets on every open (`openMenu`), so this value has never
+   * reached a save file or the wire. The stored KEYBIND id is a different thing
+   * and it did not move: `show_journal` is a new action, and `toggle_log`'s note
+   * in keymap.ts records the rule both follow.
    */
-  Notes: 'notes',
+  Journal: 'journal',
 } as const;
 export type MenuScreen = (typeof MenuScreen)[keyof typeof MenuScreen];
+
+/**
+ * THE TITLE IN THE HEADER, FOR EVERY SCREEN, IN ONE PLACE.
+ *
+ * It was a ternary inside `drawEscapeMenu` that asked about ONE of the three
+ * screens, so the third fell through to the root's title and the archive opened
+ * under the word `GAME MENU`. A `switch` on the union is what makes a fourth
+ * screen a compile error here instead of a silently mislabelled panel.
+ *
+ * EXPORTED so the test can read the title without a canvas: what a header SAYS
+ * is a fact about the screen, and asserting it through a stubbed `fillText` call
+ * order would be testing the painter instead.
+ */
+export function menuTitle(screen: MenuScreen): string {
+  switch (screen) {
+    case MenuScreen.Keys:
+      return TITLE_KEYS;
+    case MenuScreen.Journal:
+      return TITLE_JOURNAL;
+    case MenuScreen.Root:
+      return TITLE_ROOT;
+  }
+}
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE JOURNAL'S TWO HEADINGS, AS THE ONLY TWO STRINGS THAT MAY BE ONE.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `MenuRow`'s `Section` used to carry a `KeyGroup` and nothing else, because the
+ * Keys screen was the only screen with sections in it. Widening that field to
+ * `string` would have let any row anywhere become a heading by typo; naming the
+ * two members keeps the property the narrow type had — a heading is one of a
+ * closed set, and a third one is a deliberate edit here.
+ *
+ * ORDER: QUESTS FIRST. Upstream's journal IS the quest log
+ * (`engine/dialogs/ShowQuests.lua`) and the lore is a separate dialog
+ * (`modules/tome/dialogs/ShowLore.lua`), so the half that carries the name goes
+ * at the top. It is also the half that answers the question a player opens this
+ * screen mid-fight to ask.
+ */
+export const JournalSection = {
+  Quests: 'QUESTS',
+  Notes: 'NOTES',
+} as const;
+export type JournalSection = (typeof JournalSection)[keyof typeof JournalSection];
+
+/**
+ * ONE QUEST, AS THIS SCREEN NEEDS IT.
+ *
+ * ═══ THE SHAPE IS `ShowQuests.lua:89`'S LIST ROW, MINUS WHAT WE CANNOT DRAW ═══
+ * Upstream builds `{ name=q.name, status=q.status_text[q.status], desc=..., ...
+ * }` per quest and puts the first two in two columns (`:38-41`, "Quest" and
+ * "Status"). Those two are here. `desc` is NOT: upstream opens it in a second
+ * pane beside the list, and this surface is one narrow column with no scroll —
+ * the notes half already unfolds in place for that reason, and a fold over
+ * paper nothing can write yet would be a control with nothing behind it.
+ *
+ * `status` IS A WORD, ALREADY CHOSEN BY WHOEVER PRODUCES THE LIST. Upstream's
+ * four are `active`, `completed`, `done` and `failed`
+ * (`engine/Quest.lua:31-36`), and a union here would be this client inventing a
+ * vocabulary for a server feature that does not exist yet — the brief design
+ * names its states `offered`/`open`/`closed`/`failed`, which is a reconciliation
+ * for the lane that ships them and not for this one.
+ *
+ * `id` IS CARRIED AND NOT DRAWN, so a later fold has a key to open by and so a
+ * list can be keyed without one being invented at that point.
+ */
+export type JournalQuestView = {
+  readonly id: string;
+  readonly name: string;
+  readonly status: string;
+};
 
 /**
  * WHAT AN ENTRY DOES WHEN IT IS PRESSED.
@@ -453,8 +566,8 @@ export type MenuScreen = (typeof MenuScreen)[keyof typeof MenuScreen];
 export type MenuEffect =
   | { readonly kind: 'resume' }
   | { readonly kind: 'keys' }
-  /** Open the archive. See `MenuScreen.Notes`. */
-  | { readonly kind: 'notes' }
+  /** Open the Journal. See `MenuScreen.Journal`. */
+  | { readonly kind: 'journal' }
   /**
    * READ ONE, or fold it away again if it is the one already open.
    *
@@ -538,11 +651,11 @@ export type MenuEffect =
 // Rows
 // ---------------------------------------------------------------------------
 
-/** The six kinds of line the surface can hold, across both screens. */
+/** The six kinds of line the surface can hold, across all three screens. */
 export const MenuRowKind = {
   /** A root entry: a label, the key that also does it, and an effect. */
   Entry: 'entry',
-  /** A group heading on the Keys screen, with a rule under it. Never a target. */
+  /** A heading on the Keys or Journal screen, with a rule under it. Never a target. */
   Section: 'section',
   /** One action: name, two key columns, and the controls that change them. */
   Action: 'action',
@@ -613,7 +726,12 @@ export type MenuRow =
         readonly value: string;
       };
     }
-  | { readonly kind: typeof MenuRowKind.Section; readonly label: KeyGroup }
+  /**
+   * A HEADING. `KeyGroup` on the Keys screen, `JournalSection` on the Journal —
+   * two closed sets and not `string`, so a heading stays something a reader can
+   * enumerate rather than anything a typo can produce. See `JournalSection`.
+   */
+  | { readonly kind: typeof MenuRowKind.Section; readonly label: KeyGroup | JournalSection }
   | {
       readonly kind: typeof MenuRowKind.Action;
       readonly actionId: string;
@@ -622,15 +740,20 @@ export type MenuRow =
        * The two slots AS A PLAYER READS THEM, '--' for empty — ToME's b1/b2
        * columns (KeyBinder.lua:218-219), whose `formatKeyString` opens with
        * `if not ks then return "--" end` (KeyBind.lua:158-160). NEVER the stored
-       * form: a row reading `key:h` would be leaking a serialisation.
+       * form: a row reading `key:w` would be leaking a serialisation.
        */
       readonly slots: readonly [string, string];
       /**
        * The PERMANENT FLOOR, as one string, or ''.
        *
-       * A player who rewrote `k` must be able to SEE that the arrows and the
-       * numpad still move them, or they will report the rebind as having broken
-       * movement. `bindingsFor` composes the same list for the dispatcher.
+       * A player who rewrote `w` must be able to SEE that the numpad still
+       * moves them, or they will report the rebind as having broken movement.
+       * `bindingsFor` composes the same list for the dispatcher.
+       *
+       * IT USED TO SAY "the arrows and the numpad". The arrows left movement's
+       * floor with the WASD ruling — they select rather than walk now — so this
+       * string names the numpad alone, and on a diagonal it names the numpad and
+       * nothing else at all.
        */
       readonly fixed: string;
       /** True for `cancel` and the four hotbar digits. See `lockReason`. */
@@ -650,7 +773,33 @@ export type MenuRow =
       /** Which page the player asked for. Clamped by the geometry, never here. */
       readonly page: number;
     }
-  | { readonly kind: typeof MenuRowKind.Note; readonly text: string };
+  | {
+      readonly kind: typeof MenuRowKind.Note;
+      readonly text: string;
+      /**
+       * THIS NOTE LABELS THE ROWS UNDER IT, so the orphan rule must carry it.
+       *
+       * A lore category is deliberately a `Note` and not a `Section` — see
+       * `journalRows`, which argues it — and the orphan rule in `place` only ever
+       * asked about `Section`. So a category could be the LAST row on the panel
+       * with nothing beneath it and `N more — panel too small` directly under,
+       * which is `ALDERBROOK` labelling the message that says its contents were
+       * dropped. Seen on a rendered sheet at two viewports.
+       *
+       * `place`'s existing rule, unchanged in substance: a heading carries the
+       * first row after it or it goes with them.
+       */
+      readonly heading?: boolean;
+      /**
+       * A PLACEHOLDER FOR AN EMPTY SECTION, WHICH IS THE FIRST THING TO GO.
+       *
+       * See `escapeMenuGeometry`'s `dropEmptySections`. It is the only kind of
+       * row on this surface that carries no information a player came for, so
+       * when the panel cannot hold everything it is dropped in preference to a
+       * row that does.
+       */
+      readonly placeholder?: boolean;
+    };
 
 /** A capture waiting for exactly one keypress. See `applyCapture`. */
 export type ArmedCapture = {
@@ -729,6 +878,25 @@ export type EscapeMenuView = {
   readonly notes?: readonly LoreView[];
   /** Which one is unfolded, or null. At most one, so the panel never pages. */
   readonly openNote?: string | null;
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * WHAT THIS CHARACTER HAS AGREED TO DO. The Journal's other half.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * ═══ REAL, AND EMPTY UNTIL SOMETHING PRODUCES ONE ═══
+   * No frame carries a quest today and no code in this client fills this field,
+   * so the QUESTS section renders its empty state for every player. It is a
+   * FIELD rather than a hard-coded `[]` because the section has to be provably
+   * able to draw a quest before anything ships one — a section that could only
+   * ever be empty is a heading, not a section, and the test for it would be
+   * testing the fixture (memory `tests-true-of-the-fixture`).
+   *
+   * Optional and absent means "none", which is the same picture as `[]` here:
+   * unlike `notes`, there is no launcher to grey and therefore no third state to
+   * distinguish. When a producer lands it will want the notes rule instead
+   * (absent = no frame yet), and this comment is the note to change it then.
+   */
+  readonly quests?: readonly JournalQuestView[];
   /**
    * ═══════════════════════════════════════════════════════════════════════════
    * WHICH ROOT ROW IS ONE PRESS FROM HAPPENING — or null.
@@ -893,7 +1061,12 @@ function entryRow(
 // back UP one when the ZOOM row left it. They are constants and not literals
 // precisely so that this is a one-line change and not a hunt through main.ts and
 // the tests -- which is exactly what it was both times.
-export const ROW_CASE_NOTES = 7;
+// RENAMED WITH THE ROW, NOT LEFT BEHIND. It was `ROW_CASE_NOTES`, and a
+// constant still named after a screen that no longer exists is how a reader
+// ends up grepping for a thing this build does not have — `check-the-symbol-
+// exists`, from the other direction. The NUMBER did not move: the row is still
+// the eighth, because the rename added no row.
+export const ROW_JOURNAL = 7;
 export const ROW_LEAVE_PARTY = 8;
 export const ROW_SWITCH_CHARACTER = 9;
 
@@ -1032,18 +1205,40 @@ function rootRows(view: EscapeMenuView): readonly MenuRow[] {
       null,
     ),
     /**
-     * THE ARCHIVE. Greyed until there is something in it, with the reason on the
-     * row — the same treatment `RESET PANELS` gets, and for the same argument:
-     * a row that vanished would teach nothing about why, and a player who has
-     * never found a note should still learn that notes exist.
+     * ═══════════════════════════════════════════════════════════════════════
+     * THE JOURNAL. It was `CASE NOTES`, and it is no longer greyed when empty.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * ═══ THE COUNT SUFFIX SURVIVED THE RENAME, AND IT COUNTS NOTES ═══
+     * `JOURNAL (3)` on the same rule every counted row here follows (see
+     * `talentsLabel`): the number only while there is one. It is the NOTES
+     * count and not a total, because the quests half has no producer yet — a
+     * total would be the notes count wearing a name that promises more.
+     * WHOEVER SHIPS BRIEFS OWNS THIS LINE: `journalCount` is the one place that
+     * decides, so adding quests to it is one edit and not a hunt.
+     *
+     * ═══ IT USED TO BE GREYED WITH `nothing found yet`, AND THE KEY IS WHY
+     *     THAT HAD TO STOP ═══
+     * The old argument was sound for an ARCHIVE: a row that vanished would teach
+     * nothing, so it stayed and said why it was dead. But this screen now has a
+     * KEY on it (`show_journal`, `j`), and a key cannot be greyed. A player who
+     * pressed `j`, read the Journal, closed it and then found the menu row for
+     * the same screen greyed out would have two controls for one panel
+     * disagreeing about whether the panel exists — which is the exact failure
+     * `membership-is-not-a-rank` names, one level up from a list.
+     *
+     * AND THE SCREEN IS NOW WORTH OPENING EMPTY, which the archive was not. It
+     * answers *"what am I doing?"*, and that question has an answer from the
+     * first minute of the first evening even when the answer is "nothing yet".
+     * Both sections say so in their own words — see `journalRows`.
      */
     entryRow(
-      ROW_CASE_NOTES,
-      { kind: 'notes' },
-      `CASE NOTES${(view.notes ?? []).length > 0 ? ` (${String((view.notes ?? []).length)})` : ''}`,
-      '',
-      (view.notes ?? []).length > 0,
-      (view.notes ?? []).length > 0 ? null : 'nothing found yet',
+      ROW_JOURNAL,
+      { kind: 'journal' },
+      `JOURNAL${journalCount(view) > 0 ? ` (${String(journalCount(view))})` : ''}`,
+      labelFor('show_journal', keymap),
+      true,
+      null,
     ),
     // GREYED, NOT DROPPED. Everybody is always in a party — a solo player is a
     // party of one — so leaving alone is a no-op the server would refuse, which
@@ -1202,15 +1397,41 @@ function keysRows(view: EscapeMenuView): readonly MenuRow[] {
 /**
  * THE SURFACE, AS AN ORDERED LIST OF LINES. Pure, and the whole port lives here.
  *
- * ONE function for both screens, because there is one surface. The geometry
+ * ONE function for all three screens, because there is one surface. The geometry
  * below pulls the Status and Footer rows out of the list rather than being told
  * which screen it is looking at, which is what lets it take no context at all.
  */
 /**
  * ═══════════════════════════════════════════════════════════════════════════
- * `ShowLore`, AS ROWS — the archive, and one note unfolded inside it.
+ * THE EMPTY STATES, AND THE RULE THEY ARE WRITTEN UNDER.
  * ═══════════════════════════════════════════════════════════════════════════
  *
+ * AN EMPTY SECTION SAYS WHAT BELONGS IN IT, IN THE PRESENT TENSE, AND PROMISES
+ * NOTHING. `QUESTS` has no producer in this build — nothing in this client can
+ * put a row in it — so the temptation is a line like "coming soon" or "once
+ * briefs ship". Both are dated the moment they are written and neither is a
+ * thing a player can act on; memory `deferral-notes-rot` is what happens to that
+ * sentence six weeks later, on a screen, where a player reads it.
+ *
+ * So it describes the SECTION, which is true today: this is where what you agree
+ * to is listed. It names no feature, no version and no date. When the first
+ * brief lands, nothing here has to change for it to have been honest.
+ *
+ * ONE ROW, NOT TWO, AND THE REASON IS PIXELS RATHER THAN PROSE. It was two
+ * lines; this surface has no scroll and a twelve-pixel row is a note body line
+ * somebody loses at the floor viewport — see `escapeMenuRect`'s `tall`, which
+ * carries the measurement. The dash is doing the work the second line did.
+ */
+const QUESTS_EMPTY = 'Nothing on hand — work you take on is listed here.';
+/** Unchanged from the Case Notes screen, and still exactly right. */
+const NOTES_EMPTY = 'Nothing written down yet.';
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE JOURNAL, AS ROWS: `ShowQuests`'s list over `ShowLore`'s archive.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * ═══ THE NOTES HALF IS THE PORT IT ALWAYS WAS ═══
  * Upstream lists the party's known lore and opens the one you pick in its own
  * dialog. Ours unfolds it IN PLACE, under the row, because this surface is one
  * rect with one hit test and a second dialog would be the thing `MenuScreen`
@@ -1220,19 +1441,69 @@ function keysRows(view: EscapeMenuView): readonly MenuRow[] {
  * table and filters, so the archive reads the same way for everybody rather than
  * in whatever order a particular party happened to find things.
  *
- * THE CATEGORY IS A HEADING ROW, not a `Section`: `MenuRow`'s `Section` carries a
- * `KeyGroup`, which is the keybind screen's vocabulary and has no business
- * learning what a lore category is.
+ * THE CATEGORY IS STILL A `Note` ROW AND NOT A `Section`, and now it has to be:
+ * the two SECTION headings are the structure of this screen, and a lore category
+ * promoted to the same weight would make `THE INDEX` read as a third peer of
+ * `QUESTS` and `NOTES` rather than as a shelf inside one of them.
+ *
+ * ═══ THE QUESTS HALF IS `ShowQuests.lua`'S TWO COLUMNS ON ONE LINE ═══
+ * `:38-41` is a two-column list — "Quest" and "Status" — and `:89` fills them
+ * from `q.name` and `q.status_text[q.status]`. Ours writes both on one `Note`
+ * row, because the panel is one narrow column.
+ *
+ * NOT AN `Entry` ROW, DELIBERATELY. An `Entry` is a CONTROL: it lights under the
+ * pointer, it answers a click and it carries a `MenuEffect`. A quest row has
+ * nothing to do when pressed in this build — upstream's press opens the
+ * description pane this surface has no room for — and a control that answers
+ * nothing is this file's own worst failure mode, stated in `runMenuEffect`'s
+ * neighbourhood and in `GameMenu.lua:125-133`'s dead "highscores" row. Text is
+ * the honest kind for a row that is information.
+ *
+ * IN THE ORDER GIVEN, which is the producer's business exactly as `LORE` order
+ * is. Upstream sorts by `q.gained_turn` when the game has a clock and by name
+ * when it does not (`:92-96`); whatever lands here will have made that choice
+ * before this function sees it, and a second sort in the painter would be two
+ * opinions about one order.
  */
-function notesRows(view: EscapeMenuView): readonly MenuRow[] {
-  const notes = view.notes ?? [];
+function journalRows(view: EscapeMenuView): readonly MenuRow[] {
   const rows: MenuRow[] = [];
+
+  rows.push({ kind: MenuRowKind.Section, label: JournalSection.Quests });
+  const quests = view.quests ?? [];
+  for (const quest of quests) {
+    /**
+     * THE STATUS IS TRIMMED FIRST AND THE NAME SECOND, which is the opposite of
+     * what one string did.
+     *
+     * `${name} — ${status}` is fitted to the column by `fitText`, which cuts
+     * from the RIGHT — so a long quest name took the status with it and the row
+     * became a name with no state at all. Upstream keeps them in two columns
+     * that cannot eat each other (`ShowQuests.lua:38-41`), and the status is the
+     * only thing this row exists to say: "Ashes of Alderbrook" is a name a
+     * player already knows, "done" is the answer they opened the Journal for.
+     *
+     * So the NAME is clipped here, in characters, leaving the status whole. The
+     * budget is the wrap width this panel already sizes itself by
+     * (`NOTE_WRAP_CHARS`), minus the separator and the longest status word
+     * upstream has (`Quest.lua:31-36`: "completed").
+     */
+    const room = NOTE_WRAP_CHARS - quest.status.length - 3;
+    const name =
+      quest.name.length > room ? `${quest.name.slice(0, Math.max(1, room - 1))}…` : quest.name;
+    rows.push({ kind: MenuRowKind.Note, text: `${name} — ${quest.status}` });
+  }
+  if (quests.length === 0) {
+    rows.push({ kind: MenuRowKind.Note, text: QUESTS_EMPTY, placeholder: true });
+  }
+
+  rows.push({ kind: MenuRowKind.Section, label: JournalSection.Notes });
+  const notes = view.notes ?? [];
   let heading: string | null = null;
   let index = 0;
   for (const note of notes) {
     if (note.category !== heading) {
       heading = note.category;
-      rows.push({ kind: MenuRowKind.Note, text: note.category.toUpperCase() });
+      rows.push({ kind: MenuRowKind.Note, text: note.category.toUpperCase(), heading: true });
     }
     const open = view.openNote === note.id;
     rows.push(
@@ -1252,10 +1523,23 @@ function notesRows(view: EscapeMenuView): readonly MenuRow[] {
     if (open)
       for (const line of wrapNote(note.text)) rows.push({ kind: MenuRowKind.Note, text: line });
   }
-  if (rows.length === 0) {
-    rows.push({ kind: MenuRowKind.Note, text: 'Nothing written down yet.' });
+  if (notes.length === 0) {
+    rows.push({ kind: MenuRowKind.Note, text: NOTES_EMPTY, placeholder: true });
   }
   return rows;
+}
+
+/**
+ * WHAT THE LAUNCHER'S SUFFIX COUNTS. The ONE place that decides.
+ *
+ * NOTES ONLY, and that is a statement about this build rather than about the
+ * word "journal": a quest cannot exist yet, so a total and this number are the
+ * same number, and the one that will still be right the day they differ is the
+ * one whose name says what it counted. Whoever ships briefs adds the term HERE
+ * and the row, the tests and any future reader all move together.
+ */
+function journalCount(view: EscapeMenuView): number {
+  return (view.notes ?? []).length;
 }
 
 /**
@@ -1285,7 +1569,7 @@ function wrapNote(text: string): readonly string[] {
 
 export function escapeMenuRows(view: EscapeMenuView): readonly MenuRow[] {
   if (view.screen === MenuScreen.Keys) return keysRows(view);
-  if (view.screen === MenuScreen.Notes) return notesRows(view);
+  if (view.screen === MenuScreen.Journal) return journalRows(view);
   return rootRows(view);
 }
 
@@ -1546,6 +1830,18 @@ export function escapeMenuRect(options: {
    * every existing caller keeps the rect it had. See the note on `KEYS_FILL_W`.
    */
   readonly screen?: MenuScreen;
+  /**
+   * WHAT IS ACTUALLY IN IT, from `escapeMenuRows`. OPTIONAL, and a caller that
+   * omits it gets the size this function gave before the parameter existed.
+   *
+   * It is the character sheet's `pages` in miniature and for the same reason —
+   * `charSheetRect` is handed every page so the panel is the size of its
+   * contents rather than the size of its ceiling. Without it the Journal grew to
+   * the top of its range whatever it held: an EMPTY journal was a 360x704 box
+   * around ninety pixels of rows at 1920x1080, which reads as a broken panel
+   * rather than as an empty one.
+   */
+  readonly rows?: readonly MenuRow[];
 }): PanelRect | null {
   const { width, height, top } = options;
   const bottom = Math.min(options.bottom, height);
@@ -1569,6 +1865,33 @@ export function escapeMenuRect(options: {
   const roomy = options.screen === MenuScreen.Keys;
 
   /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE JOURNAL GROWS DOWN AND NOT ACROSS, AND IT IS A MEASURED FIX.
+   * ═══════════════════════════════════════════════════════════════════════════
+   * The Journal gained two SECTION rows and an empty-quests line on top of the
+   * archive it already drew, which is 48 pixels off a body that was 212 tall.
+   * Measured against the five notes this build ships, in three categories, with
+   * ONE unfolded: 166 pixels before, 214 after. It went over at EVERY viewport,
+   * and the screen has no pager — it would have degraded to `3 more — panel too
+   * small` on a 1280x720 monitor, which is a correct message about a wrong
+   * layout.
+   *
+   * SO IT TAKES THE KEYS SCREEN'S HEIGHT RULE AND NOT ITS WIDTH RULE. Height,
+   * because a list of things you have read grows downward for ever and this is
+   * the same argument `KEYS_FILL_H` already makes. NOT width, because a note's
+   * body is wrapped at a FIXED `NOTE_WRAP_CHARS` — this panel sizes itself from
+   * row counts and never measures text — so a 560-pixel Journal would be a
+   * 58-character column with 200 pixels of air beside it.
+   *
+   * AT 640x320, THE DECLARED FLOOR, IT STILL DOES NOT ALL FIT with a note open,
+   * and nothing here can fix that: the band is 260 pixels and `h` is clamped
+   * into it. That case degrades the way this surface already degrades — the
+   * `N more — panel too small` line in `escapeMenuGeometry`, which is the
+   * footerless screen's honest answer and is tested.
+   */
+  const tall = roomy || options.screen === MenuScreen.Journal;
+
+  /**
    * NEVER SMALLER THAN THE COMPACT PANEL, WHICH THE FIRST VERSION OF THIS GOT
    * WRONG AND THE PROBE CAUGHT.
    *
@@ -1578,14 +1901,41 @@ export function escapeMenuRect(options: {
    * viewport with the least room to spare — the same shape as the rule in this
    * client that a fix which makes a row taller can delete a row. So the fill is
    * a FLOOR-RAISING rule, not a replacement: it can only ever hand this screen
-   * more than the root would have had.
+   * more than the root would have had. That is why the Journal can borrow the
+   * height half of it with no case to check: at worst it is handed the 252 it
+   * had.
    */
   const wantW = roomy
     ? Math.max(PANEL_W, Math.min(KEYS_MAX_W, Math.floor(width * KEYS_FILL_W)))
     : PANEL_W;
-  const wantH = roomy
-    ? Math.max(PANEL_MAX_H, Math.min(KEYS_MAX_H, Math.floor(band * KEYS_FILL_H)))
-    : PANEL_MAX_H;
+  /**
+   * AS TALL AS ITS CONTENTS, AND NEVER TALLER — inside the range above.
+   *
+   * The two bounds are unchanged: `PANEL_MAX_H` is still the floor this screen
+   * can never drop below and the fill is still the ceiling it can never pass.
+   * What is new is that a panel with four rows in it asks for four rows.
+   *
+   * ═══ THE JOURNAL ONLY, AND THAT IS NOT TIMIDITY ═══
+   * The Keys screen EARNS the fill: it is the one surface here with more rows
+   * than fit, it has a pager drawn on a footer, and a player on that screen is
+   * scanning a long list — every pixel it is given is a key they do not have to
+   * page to. The Journal is the opposite: it is usually four rows, and at
+   * 1920x1080 the fill made an EMPTY one a 360x704 box around about ninety
+   * pixels of parchment, which reads as broken rather than as empty. Sizing the
+   * Keys screen from its contents as well would shrink it at exactly the
+   * viewports where everything already fits — no rows gained, a working screen
+   * changed — so it is left alone, and a test pins that its rect does not move
+   * when the rows are passed.
+   *
+   * ROWS THAT ARE NOT GIVEN MEAN "FILL", which is what every caller that does
+   * not pass them had.
+   */
+  const ceilingH = Math.min(KEYS_MAX_H, Math.floor(band * KEYS_FILL_H));
+  const fitted =
+    options.screen === MenuScreen.Journal && options.rows !== undefined
+      ? options.rows.reduce((sum, row) => sum + rowHeight(row), 0) + HEADER_H + INSET * 2
+      : ceilingH;
+  const wantH = tall ? Math.max(PANEL_MAX_H, Math.min(ceilingH, fitted)) : PANEL_MAX_H;
 
   // Clamped so a growing panel can never be wider than the space it is centred
   // in, nor narrower than the floor the two guards above just accepted.
@@ -1790,7 +2140,15 @@ function place(
     // so they are separate: a heading is only pushed to the next page when
     // something has already been placed on this one, or a section whose first
     // row cannot fit anywhere would push pages forever.
-    if (row.kind === MenuRowKind.Section && placed.length > 0) {
+    //
+    // IT READS `heading`, NOT A KIND. The Journal's lore categories are `Note`
+    // rows on purpose (`journalRows` argues it) and they label the rows under
+    // them exactly as a `Section` does, so asking about the KIND let a category
+    // be the last row on the panel with `N more — panel too small` directly
+    // beneath it. Both kinds answer the same question now.
+    const labels =
+      row.kind === MenuRowKind.Section || (row.kind === MenuRowKind.Note && row.heading === true);
+    if (labels && placed.length > 0) {
       const next = rows[index + 1];
       if (next !== undefined && cursor + h + rowHeight(next) > bottom) break;
     }
@@ -1857,6 +2215,63 @@ function countActions(rows: readonly MenuRow[], from: number, to: number): numbe
 }
 
 /**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * AN EMPTY SECTION IS THE FIRST THING TO GO WHEN THE PANEL IS SHORT.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * ═══ THE REGRESSION THIS REPAIRS, MEASURED THROUGH THE REAL HIT TEST ═══
+ * The Journal added a `QUESTS` heading, a `NOTES` heading and one empty-quests
+ * line to the screen Case Notes used to be — 48 pixels — on a surface with NO
+ * PAGER AND NO SCROLL. At 640x320, the DECLARED FLOOR, that turned "5 of the 5
+ * notes reachable" into 3, and 3 into 1 with a fight on. The old screen needed a
+ * 184-pixel band to show everything and the new one needed 232, so every window
+ * under about 352 logical pixels tall lost rows a player could previously read.
+ * A rename is not allowed to cost content.
+ *
+ * ═══ AND THE RULE IS THE ONE HONEST ONE ═══
+ * The row that goes is the one carrying no information a player came for: the
+ * placeholder under a section with nothing in it, and — because a heading with
+ * neither contents nor placeholder is worse than no heading — the heading with
+ * it. A section with REAL rows is never touched, so `QUESTS` appears the instant
+ * there is a quest, at every viewport, which is the deliverable.
+ *
+ * ALL OR NOTHING, AND ONLY WHEN IT DOES NOT FIT. The pairs are cheap to
+ * identify and expensive to rank — dropping "the least useful one first" would
+ * mean this function had an opinion about which empty section matters — so it
+ * asks one question, once. And it never returns an empty body: if EVERY section
+ * is empty the whole panel is four rows and could not have overflowed anyway,
+ * but the guard is written down rather than argued.
+ *
+ * WHY NOT A PAGER. This screen has never had one. The footer that carries PREV
+ * and NEXT also carries RESET ALL, which belongs to the Keys screen and to
+ * nothing else, so giving the Journal a pager means giving it a control that
+ * either lies or has to be made optional across four call sites. That is a
+ * change worth making the day quests are real and the list is long; it is not
+ * what the floor viewport needs today.
+ */
+function dropEmptySections(rows: readonly MenuRow[], room: number): MenuRow[] {
+  const wants = rows.reduce((sum, row) => sum + rowHeight(row), 0);
+  if (wants <= room) return [...rows];
+  const out: MenuRow[] = [];
+  for (let i = 0; i < rows.length; i += 1) {
+    const row = rows[i];
+    if (row === undefined) continue;
+    const next = rows[i + 1];
+    if (
+      row.kind === MenuRowKind.Section &&
+      next !== undefined &&
+      next.kind === MenuRowKind.Note &&
+      next.placeholder === true
+    ) {
+      i += 1;
+      continue;
+    }
+    out.push(row);
+  }
+  return out.length === 0 ? [...rows] : out;
+}
+
+/**
  * EVERYTHING INSIDE THE PANEL, IN ONE PASS. The painter's only source of truth
  * about where a row lands, and the owner of the paging policy.
  *
@@ -1879,12 +2294,13 @@ function escapeMenuGeometry(rect: PanelRect, rows: readonly MenuRow[]): EscapeMe
 
   let statusLine: Extract<MenuRow, { kind: typeof MenuRowKind.Status }> | null = null;
   let footerLine: Extract<MenuRow, { kind: typeof MenuRowKind.Footer }> | null = null;
-  const body: MenuRow[] = [];
+  const full: MenuRow[] = [];
   for (const row of rows) {
     if (row.kind === MenuRowKind.Status) statusLine = row;
     else if (row.kind === MenuRowKind.Footer) footerLine = row;
-    else body.push(row);
+    else full.push(row);
   }
+  const body = dropEmptySections(full, bottom - top);
 
   // ROOM FOR A STRIP MEANS ROOM FOR THE STRIP AND ONE ROW. A panel that spent
   // its whole height on the footer would be a screen with controls and nothing
@@ -1997,6 +2413,36 @@ function escapeMenuGeometry(rect: PanelRect, rows: readonly MenuRow[]): EscapeMe
  */
 export function escapeMenuPaging(rect: PanelRect, rows: readonly MenuRow[]): MenuPaging {
   return escapeMenuGeometry(rect, rows).paging;
+}
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE ENTRY INDICES A KEYBOARD MAY LAND ON: THE ONES THAT ARE ACTUALLY DRAWN.
+ * ═══════════════════════════════════════════════════════════════════════════
+ * The selection used to be walked over the whole ROW LIST, and the geometry
+ * truncates — `N more — panel too small`. So on a short panel the arrows and
+ * WASD could move the marker onto a row nobody can see, and Enter then unfolded
+ * an invisible note or ran the effect of a row that is not on the screen. A
+ * control that answers nothing visible is this file's worst failure mode, stated
+ * in `runMenuEffect`'s neighbourhood; here it was the keyboard reaching past the
+ * edge of the panel.
+ *
+ * SAME GEOMETRY AS THE PAINTER AND THE HIT TEST, so the keyboard can reach
+ * exactly what the pointer can reach and not one row more. That is the whole
+ * reason this is a window onto `escapeMenuGeometry` rather than a filter the
+ * caller writes: a second opinion about which rows are on screen is the bug.
+ *
+ * IN READING ORDER, because that is the order a selection walks.
+ */
+export function escapeMenuVisibleEntries(
+  rect: PanelRect,
+  rows: readonly MenuRow[],
+): readonly number[] {
+  const out: number[] = [];
+  for (const placed of escapeMenuGeometry(rect, rows).placed) {
+    if (placed.row.kind === MenuRowKind.Entry && placed.row.enabled) out.push(placed.row.index);
+  }
+  return out;
 }
 
 // ---------------------------------------------------------------------------
@@ -2403,8 +2849,8 @@ function drawRow(
       const nameUsed = Math.ceil(ctx.measureText(name).width);
 
       // THE ANNOTATION IS THE PERMANENT FLOOR, right-aligned in the name column:
-      // a player who rewrote `k` can see that the arrows and the numpad still
-      // walk them north, which is otherwise the thing they report as broken.
+      // a player who rewrote `w` can see that the numpad still walks them north,
+      // which is otherwise the thing they report as broken.
       // A locked row has no annotation here — its floor is already in the
       // columns and its second line carries the reason instead.
       drawAnnotation(ctx, row.fixed, rect, columns.nameW, nameUsed, PALETTE.GREY_HI);
@@ -2413,11 +2859,22 @@ function drawRow(
       // Never a colour alone (ui/partypanel.ts:78-92) and never the word alone:
       // "LOCKED" tells a player they cannot, and only the reason stops them
       // filing it as a bug. Full width, because that is where it fits.
-      if (row.locked) {
+      //
+      // ═══ AND ONLY WHEN THE ROW WAS PAID FOR IT ═══
+      // `rowHeight` above buys the extra ten pixels for `row.reason !== null`,
+      // NOT for `row.locked` — a row whose reason its GROUP already states has
+      // nothing to put on line two, which is what `sharedLockReason` is for.
+      // This gate asked the other question, so since the hotbar's reason moved
+      // to its group, talent slots 2–9 painted the word `LOCKED ·` into the ten
+      // pixels belonging to the NEXT row: eight overprinted names and a stray
+      // `LOCKED ·` across the `Log` group heading. Found by a rendered contact
+      // sheet, two rows under the new Journal row; it predates this run and is
+      // the most visible thing on the screen this run changed.
+      if (row.locked && row.reason !== null) {
         ctx.font = FONT_BODY;
         ctx.fillStyle = PALETTE.ORANGE;
         ctx.fillText(
-          fitText(ctx, `${LOCKED_WORD} · ${row.reason ?? ''}`, rect.w),
+          fitText(ctx, `${LOCKED_WORD} · ${row.reason}`, rect.w),
           rect.x,
           rect.y + ROW_H + (LOCKED_ROW_H - ROW_H) / 2,
         );
@@ -2502,7 +2959,7 @@ export function drawEscapeMenu(options: EscapeMenuDrawOptions): void {
   ctx.rect(rect.x, rect.y, rect.w, rect.h);
   ctx.clip();
 
-  drawHeader(ctx, sprites, screen === MenuScreen.Keys ? TITLE_KEYS : TITLE_ROOT, rect, FONT_META);
+  drawHeader(ctx, sprites, menuTitle(screen), rect, FONT_META);
 
   const geometry = escapeMenuGeometry(rect, rows);
   for (const placed of geometry.placed) drawRow(ctx, placed, hovered);

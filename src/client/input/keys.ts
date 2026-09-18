@@ -2,11 +2,22 @@
  * Keyboard input: a keydown becomes a direction or a turn verb, and either one
  * becomes an intent on the wire.
  *
- * THREE KEY SETS FOR MOVEMENT, because a roguelike that only reads the arrow
- * keys will be described as broken by every player who has touched one before:
- *   - arrows, for everyone else;
- *   - vi keys hjkl + the diagonals yubn, which is the roguelike standard;
- *   - the numpad, which is what the diagonals were invented to replace.
+ * TWO KEY SETS FOR MOVEMENT SINCE THE WASD RULING, AND THIS PARAGRAPH USED TO
+ * NAME THREE. It read: "THREE KEY SETS FOR MOVEMENT, because a roguelike that
+ * only reads the arrow keys will be described as broken by every player who has
+ * touched one before: arrows, for everyone else; vi keys hjkl + the diagonals
+ * yubn, which is the roguelike standard; the numpad, which is what the diagonals
+ * were invented to replace." The author ruled otherwise —
+ * *"we would prefer WASD for basic movements, then numpad for all directional
+ * movements. i want to remove the other directional keys from the keyboard.
+ * players can always rebind them later"* — and the standard is
+ * *"we just want the game to feel intuitive"*:
+ *   - W/A/S/D, the four cardinals, which need explaining to nobody at the table;
+ *   - the numpad, which is all eight plus Numpad5 for "stay put".
+ * The vi ring is UNBOUND, not forbidden: the Keys screen is one press of Escape
+ * away and `h` is free. The ARROWS left movement too and did not become unbound
+ * — see `ARROW_NAV`, which gives them to the surfaces that select rather than
+ * walk, LAST in the dispatch so that rebinding one to a direction still works.
  *
  * TWO TURN VERBS, added in M2 with the Warrant Clock:
  *   - SPACE or ENTER commits — "I have finished deciding, resolve my turn".
@@ -37,10 +48,12 @@
  * which is the correct price for keeping one authority.
  *
  * IT ALSO DOES NOT KNOW ABOUT MODES, and that is why targeting did not change
- * this file's shape. While a talent is being aimed, an arrow key moves the
+ * this file's shape. While a talent is being aimed, a movement key moves the
  * CURSOR and Enter CONFIRMS instead of committing the turn — but the key still
  * reports itself as `onMove(Dir.N)` and `TurnCommand.Commit`, and main.ts routes
- * it. Naming the KEY here and its MEANING there is what keeps one keymap for two
+ * it. (An ARROW reaches the same cursor by the other door, `onNavigate`, for the
+ * reason that handler's docblock gives: it carries the same `Dir` and must never
+ * reach the step.) Naming the KEY here and its MEANING there is what keeps one keymap for two
  * modes; a `targeting: boolean` parameter on `bindGameKeys` would put half the
  * mode's logic in the input layer and the other half in the caller.
  *
@@ -151,7 +164,11 @@
 
 import { compileKeymap, ACTIONS, type Keymap, type KeyRemap } from './keymap.ts';
 
-import type { Dir } from '../../shared/coords.ts';
+// A VALUE IMPORT, WHERE THIS WAS `import type`. `ARROW_NAV` below needs the
+// members themselves, not just the type. `shared/coords.ts` is pure and imports
+// nothing from this layer, so there is no cycle to create — unlike `./keymap.ts`
+// above, whose type-only import IS load-bearing and says so on the line.
+import { Dir } from '../../shared/coords.ts';
 
 /** Called with the direction the player asked to move in. */
 export type MoveIntent = (dir: Dir) => void;
@@ -273,6 +290,28 @@ export const UiCommand = {
    * A second member for equipment would be a deviation wearing a port's clothes.
    */
   ShowInventory: 'show_inventory',
+  /**
+   * Open — or put away — the JOURNAL (v12).
+   *
+   * ═══ IT IS THE SCREEN THAT USED TO BE CALLED `CASE NOTES` ═══
+   * Ruled: *"case notes should actually be 'Journal' which will serve as a quest
+   * log/ similar"* and *"we can put journal to the J key"*. The panel gained a
+   * QUESTS section beside the notes it already held, which is what makes
+   * "journal" the honest word for it — a screen holding only lore is an archive,
+   * and a screen holding what you have agreed to do as well is a journal.
+   *
+   * ═══ IT IS UPSTREAM'S OWN VERB, WHICH IS WHY IT IS A `UiCommand` AT ALL ═══
+   * `SHOW_QUESTS` is a real virtual action — `modules/tome/class/Game.lua:2234`
+   * registers it and it opens `engine/dialogs/ShowQuests.lua`. Ours opens a
+   * SCREEN of the escape menu rather than a second dialog, for the reason
+   * `MenuScreen` exists, but the verb is the port.
+   *
+   * ONE KEY THAT TOGGLES, for the reason `ShowSheet`, `ShowTalents` and
+   * `ShowInventory` above give: nothing in main.ts's cancel chain backs out of a
+   * menu SCREEN, so the key that opened this one is the key that has to put it
+   * away.
+   */
+  ShowJournal: 'show_journal',
   /** The full-screen region map. Shows the OVERWORLD and only the overworld. */
   ShowWorldMap: 'show_world_map',
   /**
@@ -339,6 +378,39 @@ export type KeyHandlers = {
    * lane a modifier picks is a fact about a panel, and panels are main.ts's.
    */
   readonly onScroll: (steps: number, alternate: boolean) => void;
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * AN ARROW KEY, WHICH NO LONGER MOVES THE BODY. Optional.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Ruled by the author with the WASD change: *"i want to remove the other
+   * directional keys from the keyboard"*, and the arrows went with the vi ring —
+   * out of `move_*`'s `fixed` list in keymap.ts, which is what frees them for the
+   * surfaces that SELECT rather than walk. The dialogue window's answer list is
+   * the one that asked for them.
+   *
+   * ═══ IT IS A DIRECTION AND IT IS NOT A MOVE, AND THAT IS THE WHOLE POINT ═══
+   * `onMove` and this handler carry the same `Dir`, so main.ts's selection
+   * surfaces take one argument from either. What differs is where the chain
+   * STOPS: `onMove` falls through to `socket.send({t:'move'})`, and the caller of
+   * this one must not. A single handler with a boolean would have put that
+   * distinction in a parameter nobody reads at the call site; two handlers make
+   * "an arrow moved my character" a compile-visible mistake rather than a
+   * behavioural one.
+   *
+   * ═══ LAST IN THE DISPATCH, SO A REAL BINDING ALWAYS WINS ═══
+   * The eight keymap lookups come first. A player who puts `arrowup` back on
+   * `move_north` from the Keys screen gets the step, and this is never called —
+   * which is what makes "players can always rebind them later" true of the
+   * arrows too. It is also why the numpad is unaffected: with NumLock off
+   * Numpad8 reports `key === 'ArrowUp'`, and `directionFor` reads `event.code`
+   * and runs FIRST.
+   *
+   * OPTIONAL, like `onTab`, because a caller that has no selection surfaces has
+   * nothing to do with an arrow. The press is still swallowed either way — see
+   * the dispatch, which `preventDefault`s unconditionally.
+   */
+  readonly onNavigate?: (dir: Dir) => void;
 };
 
 export type KeyBinding = {
@@ -482,6 +554,48 @@ function commandFor(event: KeyboardEvent, keymap: Keymap): TurnCommand | undefin
 }
 
 /**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE FOUR ARROWS, AS A DIRECTION FOR THE SURFACES THAT SELECT RATHER THAN WALK.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * ═══ YES, THIS IS A SECOND KEY-TO-DIRECTION MAP, AND THAT IS THE ONE THING
+ *     THIS FILE HAS ALWAYS REFUSED TO HAVE ═══
+ * `keymap.ts` owns every key that reaches the game and this module "no longer
+ * owns any key". A private table here is exactly the shape that rule exists to
+ * forbid — a path to a direction the Keys screen cannot see, cannot list and
+ * cannot rebind. So the four properties that make it safe are stated, and each
+ * one is pinned by a test in `test/client/input/keys.test.ts`:
+ *
+ *   1. IT CANNOT MOVE THE BODY. It calls `onNavigate`, never `onMove`, and
+ *      main.ts's `onNavigate` has no `socket.send` in it at all. The two are
+ *      separate handlers precisely so that this is a fact about the TYPE rather
+ *      than a fact about a caller's discipline.
+ *   2. IT IS LAST. Every one of the eight keymap lookups runs first, so a player
+ *      who binds `arrowup` to `move_north` on the Keys screen gets the step and
+ *      this table is never consulted. It loses every argument it could have.
+ *   3. IT IS FOUR ROWS AND IT IS CLOSED. Not "the keys the keymap did not
+ *      claim" — the four `event.key` spellings the browser gives the arrow
+ *      cluster, and nothing else can ever be added without moving this comment.
+ *   4. IT IS NOT THE NUMPAD. With NumLock off Numpad8 reports `key ===
+ *      'ArrowUp'`, and `directionFor` reads `event.code` and runs FIRST, so the
+ *      numpad keeps stepping in every NumLock state.
+ *
+ * WHY IT IS NOT FOUR MORE `ACTIONS` ROWS INSTEAD. That was the alternative and it
+ * was rejected on two counts: `ACTIONS` is 34 rows against a wire cap of 40
+ * (`KEYBIND_MAX_ACTIONS`, shared/protocol.ts), and four `nav_*` rows would put
+ * four controls on the Keys screen that do nothing a player can point at — "move
+ * the selection in a window that is not open" is not a keybinding anybody has an
+ * opinion about. The arrows are meant to be FREE here, which is what the ruling
+ * asked for; a free key does not need a row.
+ */
+const ARROW_NAV: ReadonlyMap<string, Dir> = new Map([
+  ['arrowup', Dir.N],
+  ['arrowdown', Dir.S],
+  ['arrowleft', Dir.W],
+  ['arrowright', Dir.E],
+]);
+
+/**
  * Bind the game keys on `target` (normally `window`).
  *
  * ═══ THE DISPOSER IS FOR TEARDOWN. IT IS NOT HOW A MODAL SUSPENDS INPUT ═══
@@ -621,6 +735,33 @@ export function bindGameKeys(
 
     const command = commandFor(event, keymap);
     if (command === undefined) {
+      /**
+       * ═════════════════════════════════════════════════════════════════════
+       * THE ARROWS, WHICH MOVEMENT NO LONGER OWNS. AFTER EVERYTHING.
+       * ═════════════════════════════════════════════════════════════════════
+       *
+       * Reached only when the keymap had no meaning for this press, so a bound
+       * arrow never gets here — see `ARROW_NAV`, property 2.
+       *
+       * `preventDefault` IS UNCONDITIONAL AND IT IS NOT OPTIONAL. The old
+       * `dir` branch above says why in its own words: "the arrows are the reason
+       * this call exists: unprevented, they scroll the activity iframe, and the
+       * canvas drifts out of view while the player wonders why walking north
+       * moves the whole page". Taking the arrows off movement does not make that
+       * stop being true — it makes it the ONLY thing standing between a Discord
+       * activity and a scrolled-away canvas. So the press is swallowed whether or
+       * not a surface wanted it, exactly as an unbound Tab is.
+       *
+       * NO `stopPropagation`, for `stealsFocusFromTheMap`'s reason: main.ts's
+       * travel-cancel listener rides the same event, and an arrow must still stop
+       * a walk.
+       */
+      const nav = ARROW_NAV.get(lower);
+      if (nav !== undefined) {
+        event.preventDefault();
+        handlers.onNavigate?.(nav);
+        return;
+      }
       // LAST, after every lookup, so this can only ever see an UNBOUND Tab.
       // No handler call and no `stopPropagation`: the press still means nothing
       // and still reaches main.ts's travel cancel. See `stealsFocusFromTheMap`.

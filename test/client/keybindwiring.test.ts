@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest';
 
 import { bindGameKeys, createLiveKeymap } from '../../src/client/input/keys.ts';
 import { createTravel, TravelStart } from '../../src/client/input/travel.ts';
+import { DRAGGABLE_PANELS, DraggablePanel } from '../../src/client/ui/drag.ts';
 import { applyCapture, CaptureKind } from '../../src/client/ui/escapemenu.ts';
 import { TileCode } from '../../src/shared/protocol.ts';
 import type { KeyHandlers } from '../../src/client/input/keys.ts';
@@ -197,9 +198,21 @@ describe('the menu is a PANEL, and its rect is where that is decided', () => {
     // assertions above still read `top: band.top` and `bottom: band.bottom` off
     // the same literal, so a pass that "tidied" this into
     // `escapeMenuRect(width, height)` still fails exactly as before.
+    //
+    // ═══ AND IT CARRIES THE ROWS NOW, WHICH IS THE THIRD FIELD ═══
+    // WAS `/return menuOpen \? escapeMenuRect\(\{ \.\.\.options, screen:
+    // menuScreen \}\) : null;/` — one line. The Journal is sized to its
+    // CONTENTS (`escapeMenuRect`'s `rows`), so the resolver has to be handed
+    // them, and it is handed them HERE for the reason `screen` is: one resolver
+    // for the painter and the hit test. The claim is unchanged — the band is
+    // still spread, the rows are still built from `escapeMenuRows`, and a pass
+    // that tidied this into `escapeMenuRect(width, height)` still fails.
+    expect(producer).toMatch(/return menuOpen[\s\S]{0,40}\? escapeMenuRect\(\{/);
+    expect(producer).toMatch(/\.\.\.options,\s+screen: menuScreen,/);
     expect(producer).toMatch(
-      /return menuOpen \? escapeMenuRect\(\{ \.\.\.options, screen: menuScreen \}\) : null;/,
+      /rows: escapeMenuRows\(escapeMenuView\(liveUiScale, liveUiScalePercent\)\),/,
     );
+    expect(producer).toMatch(/\}\)\s+: null;/);
 
     // ...and the picker, one line below it, still is not derived that way — so
     // this test fails if somebody makes the two the same in EITHER direction.
@@ -1261,12 +1274,50 @@ describe('the keybinds frame', () => {
     // after the travel-cancel listener and invert the Escape precedence.
     const start = at("case 'keybinds':");
     const body = CODE.slice(start, CODE.indexOf("case 'pong':", start));
-    expect(body).toContain('setKeymap(migrateStoredKeymap(ACTIONS, msg.binds));');
-    // MIGRATED ON THE WAY IN, not stored migrated. Keybinds persist
-    // server-side, so a save written before an action existed can still hold a
-    // key that a newer default now owns — `toggle_log` kept `m` after the world
-    // map took it, and the returning player pressed M and got the Case Log.
-    // The drop happens here, at the one door those bindings come through.
+    expect(body).toContain('const migrated = migrateStoredKeymap(ACTIONS, msg.binds);');
+    expect(body).toContain('setKeymap(migrated);');
+    // MIGRATED ON THE WAY IN. Keybinds persist server-side, so a save written
+    // before an action existed can still hold a key that a newer default now
+    // owns — `toggle_log` kept `m` after the world map took it, and the
+    // returning player pressed M and got the Case Log; `move_south` kept `j`
+    // after WASD, and `j` is the Journal. The repair happens here, at the one
+    // door those bindings come through.
+    //
+    // ...AND IT IS WRITTEN BACK, ONCE, WHICH IS WHAT MAKES IT AN UPGRADE. The
+    // send cannot happen in this switch — `applyServerMessage` is module scope
+    // and the socket lives in `boot`'s closure — so the corrected map is parked
+    // on `keymapRepair` exactly as `storedUiScale` parks an interface step, and
+    // `onMessage` drains it through `commitRemap`. Without the write-back the
+    // rule would re-run every load and silently undo the next deliberate rebind
+    // to a retired key.
+    //
+    // ═══ WHOLE STATEMENTS, NOT PREFIXES — THREE MUTANTS LIVED IN THE GAP ═══
+    // This arm is the ONLY test of the migration-on-load path and it is a source
+    // scrape, so every assertion has to be a statement a broken body cannot also
+    // satisfy. It used to assert the prefix `keymapRepair = msg.persisted &&
+    // !sameRemap(migrated, msg.binds)`, which stops before the `?`: a mutated
+    // `... ? null : null` passed, the corrected map was never written back, and
+    // the migration re-ran every session — the exact failure the write-back
+    // exists to prevent. It asked only that `commitRemap(repair);` appeared
+    // within 200 characters of the drain's `if`: deleting `keymapRepair = null;`
+    // passed, and `commitRemap` then fired on EVERY subsequent server frame, a
+    // `set_keybinds` and a character-file write per received message for the
+    // rest of the session. And `toContain('setKeymap(migrated);')` is
+    // presence-only: a second `setKeymap(msg.binds);` after it passed, and the
+    // live tables then compiled from the RAW stored map.
+    expect(body).toContain(
+      'keymapRepair = msg.persisted && !sameRemap(migrated, msg.binds) ? migrated : null;',
+    );
+    // ONE `setKeymap` IN THIS ARM, so nothing can write the raw map after it.
+    expect(body.match(/setKeymap\(/g) ?? []).toHaveLength(1);
+    const drain = CODE.slice(at('if (keymapRepair !== null) {'), at('if (targeting !== null'));
+    expect(drain).toContain('keymapRepair = null;');
+    expect(drain).toContain('commitRemap(repair);');
+    // CLEARED BEFORE THE SEND, which the docblock promises in as many words and
+    // which is what stops a failing `commitRemap` becoming a frame per message.
+    expect(drain.indexOf('keymapRepair = null;')).toBeLessThan(
+      drain.indexOf('commitRemap(repair);'),
+    );
     expect(body).toContain('keybindsPersisted = msg.persisted;');
     expect(body).not.toContain('bindGameKeys');
   });
@@ -1712,6 +1763,32 @@ describe('the ui-size row changes the setting rather than owning it', () => {
     expect(body).toContain('lit.steppers !== undefined');
   });
 
+  it('walks only the entries that are actually on the panel', () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * THE SELECTION USED TO STEP PAST THE EDGE OF THE PANEL.
+     * ═══════════════════════════════════════════════════════════════════════
+     * `enabledEntryIndices` was a filter over the whole ROW LIST while the
+     * geometry truncates — the panel prints `N more — panel too small` and this
+     * surface has no pager for the Journal — so on a short window the marker
+     * stepped onto a note that is not drawn and Enter unfolded it, invisibly.
+     * The pointer could never reach those rows, so the keyboard and the mouse
+     * disagreed about what the panel contained. Both go through the ONE geometry
+     * now, which is the same rule `rectFor` states for the rect itself.
+     */
+    const start = at('function enabledEntryIndices(');
+    const body = CODE.slice(start, CODE.indexOf('\n  }\n', start));
+    expect(body).toContain('escapeMenuVisibleEntries(rect, rows)');
+    // THE RECT COMES FROM `hudLayout`, the one resolver the painter reads — not
+    // from a second copy of the arithmetic.
+    expect(body).toContain('hudLayout(logicalW, logicalH).menu');
+    // ...and a panel that is not on screen offers nothing, rather than offering
+    // rows behind it.
+    expect(body).toContain('if (rect === null) return [];');
+    // AND THE OLD SHAPE IS GONE: a bare walk of `rows` here is the bug.
+    expect(body).not.toContain('for (const row of rows)');
+  });
+
   it('mirrors the step, the percentage and the cap from one writer', () => {
     /**
      * THREE FACTS ABOUT ONE SETTING THAT GO STALE AT DIFFERENT MOMENTS: the
@@ -1800,8 +1877,22 @@ describe('reset-panels puts all four back', () => {
      */
     const start = at("case 'reset-panels':");
     const arm = CODE.slice(start, CODE.indexOf("      case 'ui-scale': {", start));
-    expect(arm).toContain('for (const panel of DRAGGABLE_PANELS)');
-    expect(arm).toContain('panelOffsets[panel] = NO_OFFSET');
+    /**
+     * ═══ TWO WHOLE STATEMENTS, BECAUSE TWO PREFIXES WERE SATISFIED BY ONE ═══
+     * This asserted `toContain('for (const panel of DRAGGABLE_PANELS)')` and
+     * `toContain('panelOffsets[panel] = NO_OFFSET')` — two assertions that a
+     * mutant satisfied with two DIFFERENT statements. Narrowing the offsets loop
+     * to `DRAGGABLE_PANELS.filter((p) => p !== DraggablePanel.Menu)` left the
+     * first string in the SIZES loop below it and the second in the mutated
+     * line's own tail, and the whole suite passed while a dragged Journal stayed
+     * dragged under a row that had just said "panels put back". The membership
+     * test further down could not see it either: `DRAGGABLE_PANELS` still
+     * CONTAINED the menu. That is `membership-is-not-a-rank` twice in one arm.
+     */
+    expect(arm).toContain('for (const panel of DRAGGABLE_PANELS) panelOffsets[panel] = NO_OFFSET;');
+    expect(arm).toContain('for (const panel of DRAGGABLE_PANELS) panelSizes[panel] = null;');
+    // ...AND NEITHER LIST IS NARROWED ON ITS WAY INTO THE LOOP.
+    expect(arm).not.toMatch(/DRAGGABLE_PANELS\s*\./);
   });
 
   it('leaves the menu open and says something happened', () => {
@@ -1817,5 +1908,344 @@ describe('reset-panels puts all four back', () => {
     // Not from a "has been dragged" flag kept beside them, which is a second
     // copy of the same fact and the one that would go stale.
     expect(CODE).toContain('panelsMoved: DRAGGABLE_PANELS.some(');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 7. THE ARROWS, WHICH MOVEMENT NO LONGER OWNS
+// ---------------------------------------------------------------------------
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * `onNavigate` IS `onMove` WITH THE SERVER CUT OFF, AND THAT IS STRUCTURAL.
+ * ═══════════════════════════════════════════════════════════════════════════
+ * Ruled: *"i want to remove the other directional keys from the keyboard"*. The
+ * arrows left `move_*`'s frozen floor and landed on a handler that steers
+ * SELECTIONS. The two handlers carry the same `Dir`, so the only thing making
+ * "an arrow does not move the body" true is that this one contains no send —
+ * and that is a property of a function body, which is what this file asserts.
+ */
+describe('the arrow-key lane', () => {
+  /** `onNavigate`'s body, from its opening line to the handler after it. */
+  function navBody(): string {
+    const start = at('onNavigate: (dir) => {');
+    return CODE.slice(start, CODE.indexOf('onTab:', start));
+  }
+
+  it('sends no move and no revive from its own body', () => {
+    const body = navBody();
+    // The two verbs `onMove` ends with. A `move` frame here is the ruling
+    // reversed; a `revive` frame is the two-stage verb being completed by a key
+    // that cannot answer its prompt.
+    expect(body).not.toContain("t: 'move'");
+    expect(body).not.toContain("t: 'revive'");
+    expect(body).not.toContain('reviveArmed = false');
+  });
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * AND THE SAME OF EVERYTHING IT CALLS, WHICH IS THE PROPERTY THAT MATTERS.
+   * ═══════════════════════════════════════════════════════════════════════════
+   * This block used to assert `expect(body).not.toContain('socket.send')` and
+   * call that "sends NOTHING to the server". Review measured the CALL SET
+   * instead of the text and the claim was false one call deep: Left or Right
+   * with the UI SIZE row lit goes `onNavigate` -> `moveMenuSelection` ->
+   * `runMenuEffect({kind:'ui-scale'})` -> `applyUiScale` -> `set_ui_scale`. That
+   * frame is wanted — it is how the keyboard reaches a setting the pointer
+   * already reaches — so the CLAIM was wrong, not the code.
+   *
+   * The guarantee anybody actually cares about is "an arrow never moves the
+   * body", and four `not.toContain`s over one function body cannot see a
+   * `{t:'move'}` in a callee. So this walks the transitive callee set from
+   * `onNavigate` and asserts it of every function in it: memory
+   * `test-the-join-not-the-halves`, applied to a scrape.
+   */
+  it('reaches no move frame through ANY function it calls, however deep', () => {
+    /**
+     * A REAL BODY, MATCHED BY BRACES. A slice "to the next line starting with
+     * `}`" is worthless in this file — almost every handler lives inside
+     * `boot`'s closure, so such a slice runs to the end of the closure and
+     * swallows `onMove` itself. Strings and comments are skipped because a brace
+     * inside either is not a brace.
+     */
+    function bodyFrom(open: number): string {
+      let depth = 0;
+      let i = open;
+      while (i < CODE.length) {
+        const ch = CODE[i];
+        const two = CODE.slice(i, i + 2);
+        if (two === '//') {
+          i = CODE.indexOf('\n', i);
+          if (i === -1) break;
+          continue;
+        }
+        if (two === '/*') {
+          const close = CODE.indexOf('*/', i + 2);
+          i = close === -1 ? CODE.length : close + 2;
+          continue;
+        }
+        if (ch === "'" || ch === '"' || ch === '`') {
+          i += 1;
+          while (i < CODE.length && CODE[i] !== ch) i += CODE[i] === '\\' ? 2 : 1;
+          i += 1;
+          continue;
+        }
+        if (ch === '{') depth += 1;
+        else if (ch === '}') {
+          depth -= 1;
+          if (depth === 0) return CODE.slice(open, i + 1);
+        }
+        i += 1;
+      }
+      throw new Error('unbalanced braces from ' + String(open));
+    }
+
+    /** Every named function in the file, by name, with its real body. */
+    const bodies = new Map<string, string>();
+    const decl =
+      /(?:function\s+([A-Za-z_$][\w$]*)\s*\([^)]*\)[^{]*\{|(?:const|let)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:async\s+)?\([^)]*\)[^{=]*=>\s*\{|^\s{4}([A-Za-z_$][\w$]*)\s*:\s*\([^)]*\)\s*=>\s*\{)/gm;
+    for (let m = decl.exec(CODE); m !== null; m = decl.exec(CODE)) {
+      const name = m[1] ?? m[2] ?? m[3];
+      if (name === undefined) continue;
+      const open = CODE.indexOf('{', m.index + m[0].length - 1);
+      if (open === -1) continue;
+      if (!bodies.has(name)) bodies.set(name, bodyFrom(open));
+    }
+    bodies.set('onNavigate', navBody());
+
+    // THE EXTRACTOR IS ITSELF CHECKED, or a regex that matched nothing would
+    // make every assertion below vacuous.
+    expect(bodies.get('onMove')).toContain("t: 'move'");
+    expect(bodies.get('moveMenuSelection')).not.toContain("t: 'move'");
+
+    const seen = new Set<string>(['onNavigate']);
+    const queue = ['onNavigate'];
+    const visited: string[] = [];
+    while (queue.length > 0) {
+      const name = queue.shift();
+      if (name === undefined) continue;
+      const body = bodies.get(name);
+      if (body === undefined) continue;
+      visited.push(name);
+      // THE ASSERTION, on every body in the transitive set.
+      expect(`${name} sends a move frame: ${String(body.includes("t: 'move'"))}`).toBe(
+        `${name} sends a move frame: false`,
+      );
+      const calls = /([A-Za-z_$][\w$]*)\s*\(/g;
+      for (let c = calls.exec(body); c !== null; c = calls.exec(body)) {
+        const callee = c[1];
+        if (callee === undefined || seen.has(callee) || !bodies.has(callee)) continue;
+        seen.add(callee);
+        queue.push(callee);
+      }
+    }
+    // THE WALK ACTUALLY WALKED, and it reached the callee that DOES send a frame
+    // — `applyUiScale` by way of `runMenuEffect` — which is the one this test
+    // exists to have looked at and passed.
+    expect(visited).toContain('moveMenuSelection');
+    expect(visited).toContain('runMenuEffect');
+    expect(visited.length).toBeGreaterThan(8);
+    // ...and it never reached `onMove`, which is the shortest statement of the
+    // whole property.
+    expect(visited).not.toContain('onMove');
+  });
+
+  it('routes to the same surfaces in the same order as onMove', () => {
+    // A DIFFERENT ORDER IS A DIFFERENT GAME depending on which hand you used.
+    // Both chains put the two undismissible screens first, the conversation
+    // above the menu and the menu above targeting; `onMove` alone continues past
+    // them to the body.
+    const body = navBody();
+    const order = [
+      'roster !== null',
+      'classOptions !== null',
+      'dialogueView !== null',
+      'menuOpen && !reviveArmed',
+      'targeting !== null && targeting.active()',
+      // AND THE LOG LAST, which is the ordering argument in one line: the panel
+      // is open almost always, so a branch any higher would take the arrows
+      // away from every surface under it.
+      'hudLayout(navW, navH).log',
+    ];
+    let cursor = -1;
+    for (const gate of order) {
+      const found = body.indexOf(gate);
+      expect(found).toBeGreaterThan(cursor);
+      cursor = found;
+    }
+  });
+
+  it('keeps the revive arm gate, so neither hand answers a prompt the other cannot', () => {
+    // `onMove` lets a direction fall PAST an open menu while a revive is armed,
+    // because the key is answering "press a direction". An arrow can never reach
+    // that frame, so if it took the menu selection instead the same prompt would
+    // mean two things. The identical gate is the honest answer.
+    expect(navBody()).toContain('menuOpen && !reviveArmed');
+  });
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE LOG WAS THE THIRD THING THE RULING NAMED AND THE ONLY ONE LEFT OUT.
+   * ═══════════════════════════════════════════════════════════════════════════
+   * *"the arrow keys come OUT of movement's `fixed` list so they are free for
+   * the dialogue window's selection, the log and menus"*. Two of the three were
+   * wired. With nothing else open all four arrows fell off the end of this chain
+   * doing nothing, in front of a panel that had just grown a three-tab strip
+   * with no keyboard route at all.
+   */
+  it('gives the log the arrows when nothing else wants them', () => {
+    const body = navBody();
+    // THE RECT, NOT THE FLAG: `logVisible` is true on a viewport too narrow to
+    // dock the panel, and a key that scrolled a box nobody can see is worse than
+    // a key that does nothing.
+    // THE WHOLE GATE, not its parts: `if (false && logRect !== null ...)` keeps
+    // every string below it and would otherwise pass while the branch is dead.
+    expect(body).toContain('const logRect = hudLayout(navW, navH).log;');
+    expect(body).toContain('if (logRect !== null && caseLog !== null) {');
+    expect(body).not.toContain('if (logVisible)');
+    // VERTICAL SCROLLS, HORIZONTAL TURNS THE TAB.
+    expect(body).toContain('caseLog.scroll(delta.y < 0 ? SCROLL_STEP : -SCROLL_STEP);');
+    expect(body).toContain('LOG_TABS.indexOf(caseLog.activeTab())');
+    expect(body).toContain('caseLog.selectTab(next)');
+    // ONE STEP SIZE FOR THE PANEL, shared with `onScroll` — two would be two
+    // opinions about how far "down" is.
+    expect(body).not.toMatch(/scroll\(\s*\d/);
+    // CLAMPED, NOT WRAPPED: a row of three buttons has ends.
+    expect(body).toContain('Math.min(Math.max(0, at + delta.x), LOG_TABS.length - 1)');
+    expect(body).not.toContain('% LOG_TABS.length');
+  });
+
+  it('is handed to bindGameKeys, not merely declared', () => {
+    // The handler is optional, so a declaration that never reached the call site
+    // would compile, pass every unit test in keys.test.ts, and leave the arrows
+    // doing nothing in the actual game.
+    const start = at('bindGameKeys(window, {');
+    const block = CODE.slice(start, CODE.indexOf('onCommand:', start));
+    expect(block).toContain('onNavigate: (dir) => {');
+  });
+});
+// ---------------------------------------------------------------------------
+// 8. THE JOURNAL — one screen, two ways in, and the panel it lives inside
+// ---------------------------------------------------------------------------
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE KEY AND THE MENU ROW MUST BE ONE ACT, NOT TWO THAT AGREE TODAY.
+ * ═══════════════════════════════════════════════════════════════════════════
+ * Ruled: *"case notes should actually be 'Journal' which will serve as a quest
+ * log/ similar"*, *"we can put journal to the J key"*.
+ *
+ * `Game.lua:2307-2308` is upstream making exactly this decision the right way:
+ * its menu row triggers the VIRTUAL ACTION rather than reimplementing the open.
+ * Two routes that each call `showMenuScreen` would pass every test in
+ * escapemenu.test.ts and still drift the day one of them learns to close.
+ */
+describe('the Journal opens by one route, from the key and from the row', () => {
+  /** `showJournal`'s body, from its opening line to the function after it. */
+  function journalBody(): string {
+    const start = at('function showJournal(): void {');
+    return CODE.slice(start, CODE.indexOf('function showMenuScreen(', start));
+  }
+
+  it('is reached from the menu row and from the UI verb, and by nothing else', () => {
+    // BOTH ARMS CALL THE SAME FUNCTION. If either one reached
+    // `showMenuScreen(MenuScreen.Journal)` directly it would be a second opener,
+    // and the first thing to go wrong is the toggle: `j` would close a Journal
+    // the row could only ever open.
+    const row = CODE.slice(at("case 'journal':"), at("      case 'note':"));
+    expect(row).toContain('showJournal()');
+    expect(row).not.toContain('showMenuScreen(');
+
+    const verb = CODE.slice(at('case UiCommand.ShowJournal:'), at('case UiCommand.ToggleLog:'));
+    expect(verb).toContain('showJournal()');
+    expect(verb).not.toContain('showMenuScreen(');
+
+    // ...AND `showJournal` IS THE ONLY PLACE THE SCREEN IS NAMED AT ALL. Three
+    // matches, all three inside it: the `if` that recognises it is already up,
+    // the swap for a menu open on another screen, and the open from closed. A
+    // fourth is a second opener somewhere else in the file.
+    expect(CODE.match(/MenuScreen\.Journal/g) ?? []).toHaveLength(3);
+    expect(journalBody().match(/MenuScreen\.Journal/g) ?? []).toHaveLength(3);
+  });
+
+  it('toggles: the same key that opened it puts it away', () => {
+    // `UiCommand.ShowSheet`'s note is the argument in full — nothing in
+    // `onCancel`'s chain backs out of a menu SCREEN, so the key that opened it
+    // is the key that has to close it. A `j` that only opened would be the one
+    // screen key in this client needing a different key to shut it.
+    const body = journalBody();
+    expect(body).toContain('menuOpen && menuScreen === MenuScreen.Journal');
+    expect(body).toContain('closeMenu()');
+  });
+
+  it('swaps screens without closing when the menu is already up on another one', () => {
+    // THE MIDDLE STATE IS THE MENU ROW'S OWN. Pressing `JOURNAL` on the root
+    // must not close the menu and reopen it — that is a flicker and a lost
+    // `menuPage` — so the open-on-something-else case swaps rather than reopens.
+    const body = journalBody();
+    const swap = body.indexOf('showMenuScreen(MenuScreen.Journal)');
+    const open = body.indexOf('openMenu(MenuScreen.Journal)');
+    expect(swap).toBeGreaterThan(-1);
+    expect(open).toBeGreaterThan(swap);
+  });
+
+  it('opens folded, every time', () => {
+    // `openNoteId` is cleared on the way IN rather than on the way out, so a
+    // Journal reopened after a session that ended mid-note is still a list
+    // first — `showMenuScreen`'s own rule for the arm, one level up.
+    expect(journalBody()).toContain('openNoteId = null');
+  });
+});
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE JOURNAL IS THE MENU PANEL. That is what makes RESET PANELS honest.
+ * ═══════════════════════════════════════════════════════════════════════════
+ * `RESET PANELS` and `panelsMoved` both walk `DRAGGABLE_PANELS` (section 6
+ * above pins both). So the whole of "the Journal drags, and the row that puts
+ * panels back puts it back" is: the Journal has NO rect of its own, it is drawn
+ * in `layout.menu`, and `layout.menu` is a `DraggablePanel.Menu` that is in that
+ * list. A Journal with its own geometry would be a panel the row silently
+ * skipped while still claiming to have put everything back —
+ * `membership-is-not-a-rank`.
+ */
+describe('the Journal drags with the menu, and RESET PANELS covers it', () => {
+  it('is a member of the list both the reset and the predicate walk', () => {
+    // THE REAL LIST, IMPORTED — not a string in main.ts. This is the membership
+    // assertion, and it is the one that fails if somebody splits the Journal out
+    // into a panel of its own without adding it here.
+    expect(DRAGGABLE_PANELS).toContain(DraggablePanel.Menu);
+  });
+
+  it('has no rect of its own: one geometry call, one draw call, both the menu', () => {
+    // ONE `escapeMenuRect` AND ONE `drawEscapeMenu` IN THE WHOLE FILE. A second
+    // of either is how a screen ends up drawn in one place and clicked in
+    // another — `escapeMenuRect`'s own docblock — and it is also how the Journal
+    // would escape the drag offset without anything else changing.
+    expect(CODE.match(/escapeMenuRect\(/g) ?? []).toHaveLength(1);
+    expect(CODE.match(/drawEscapeMenu\(/g) ?? []).toHaveLength(1);
+
+    const draw = CODE.slice(at('drawEscapeMenu({'), at('if (layout.hotbar !== null)'));
+    expect(draw).toContain('rect: layout.menu');
+    expect(draw).toContain('screen: menuScreen');
+  });
+
+  it('gets its rect through movePanel, which is where the drag offset is applied', () => {
+    // `movePanel` is the ONE copy of "add the offset, clamp into the band"
+    // (ui/drag.ts). A rect built without it is a panel that cannot be dragged
+    // and that `RESET PANELS` would claim to have reset.
+    const start = at('menu: movePanel(');
+    expect(CODE.slice(start, start + 240)).toContain('DraggablePanel.Menu');
+    // AND THE SCREEN AND THE ROWS ARE PASSED THROUGH, so the hit test and the
+    // painter agree about the size of whichever screen is up — including the
+    // Journal, whose size is a function of what is IN it.
+    //
+    // WAS `toContain('escapeMenuRect({ ...options, screen: menuScreen })')`.
+    expect(CODE).toContain('screen: menuScreen,');
+    expect(CODE).toContain(
+      'rows: escapeMenuRows(escapeMenuView(liveUiScale, liveUiScalePercent)),',
+    );
+    // ...and there is still exactly ONE geometry call in the whole client.
+    expect(CODE.match(/escapeMenuRect\(/g) ?? []).toHaveLength(1);
   });
 });

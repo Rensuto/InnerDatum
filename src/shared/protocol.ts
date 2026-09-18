@@ -4576,10 +4576,20 @@ const SetKeybindsSchema = z.strictObject({
    * own shape (`saveRemap` writes only remapped virtuals) and is what lets a
    * shipped change to a DEFAULT reach every player who never touched it.
    *
-   * AN EMPTY ARRAY IS A REAL VALUE — "cleared, both slots" — and is NOT the same
-   * as the action being absent. `.min(1)` on the key string rather than on the
-   * array is deliberate: an empty STRING is not a key anybody pressed, an empty
-   * LIST is a decision somebody made.
+   * AN EMPTY ARRAY IS A REAL VALUE and is NOT the same as the action being
+   * absent. `.min(1)` on the key string rather than on the array is deliberate:
+   * an empty STRING is not a key anybody pressed, an empty LIST is a decision
+   * somebody made.
+   *
+   * IT MEANS "NO OVERRIDE IN EITHER SLOT", NOT "CLEARED". This sentence used to
+   * say "cleared, both slots", and that is not what either reader does with it:
+   * `resolveSlot` (client/input/keymap.ts) answers an ABSENT slot with the
+   * action's shipped default, and persist/saves.ts round-trips the empty array
+   * without comment. So `[]` restores the defaults — which is exactly what
+   * `tidy` writes when a migration frees a slot, and the migration now puts one
+   * on the wire routinely. "Deliberately empty" is the reserved word `'none'`
+   * IN a slot, and the two must not be confused: one is a row with its shipped
+   * key back, the other is a row with no key at all.
    */
   binds: z
     .record(

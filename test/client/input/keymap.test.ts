@@ -18,11 +18,16 @@ import {
   pressesFor,
   resetAll,
   resetOne,
+  migrateStoredKeymap,
+  KEYMAP_GEN,
+  KEYMAP_GEN_ID,
   resolve,
   resolveAction,
+  RETIRED_DEFAULTS,
+  sameRemap,
   setBinding,
 } from '../../../src/client/input/keymap.ts';
-import { KEYBIND_MAX_ACTIONS } from '../../../src/shared/protocol.ts';
+import { KEYBIND_ACTION_MAX_CHARS, KEYBIND_MAX_ACTIONS } from '../../../src/shared/protocol.ts';
 import { Dir } from '../../../src/shared/coords.ts';
 import { TurnCommand, UiCommand } from '../../../src/client/input/keys.ts';
 import type { ActionDef, Binding, KeyRemap } from '../../../src/client/input/keymap.ts';
@@ -72,21 +77,21 @@ function sorted<V>(rows: readonly (readonly [string, V])[]): readonly (readonly 
 // ---------------------------------------------------------------------------
 
 describe('the defaults compile to the seven tables keys.ts used to declare', () => {
-  it('KEY_TO_DIR — the arrows and the vi keys, on lowercased `event.key`', () => {
+  it('KEY_TO_DIR — W/A/S/D and nothing else on lowercased `event.key`', () => {
+    // ═══ FOUR ROWS, WHERE THIS USED TO HAVE TWELVE ═══
+    // It asserted the four arrows and the eight vi letters. The author ruled
+    // both sets off: *"we would prefer WASD for basic movements, then numpad for
+    // all directional movements. i want to remove the other directional keys
+    // from the keyboard"*. THE DIAGONALS HAVE NO LETTER AT ALL — the numpad map
+    // below is the whole of them — and the arrows are not merely absent from
+    // this table, they are absent from the keymap entirely: keys.ts's
+    // `ARROW_NAV` moves a SELECTION with them, never a body.
     expect(entries(DEFAULT_KEYMAP.dirByKey)).toEqual(
       sorted([
-        ['arrowup', Dir.N],
-        ['arrowdown', Dir.S],
-        ['arrowleft', Dir.W],
-        ['arrowright', Dir.E],
-        ['k', Dir.N],
-        ['j', Dir.S],
-        ['h', Dir.W],
-        ['l', Dir.E],
-        ['y', Dir.NW],
-        ['u', Dir.NE],
-        ['b', Dir.SW],
-        ['n', Dir.SE],
+        ['w', Dir.N],
+        ['s', Dir.S],
+        ['a', Dir.W],
+        ['d', Dir.E],
       ]),
     );
   });
@@ -165,6 +170,11 @@ describe('the defaults compile to the seven tables keys.ts used to declare', () 
         ['p', UiCommand.ToggleParty],
         ['g', UiCommand.ShowTalents],
         ['i', UiCommand.ShowInventory],
+        // v12. THE JOURNAL, ON THE LETTER THE WASD RULING FREED IN THIS SAME
+        // PASS (*"we can put journal to the J key"*). It is the FIRST row this
+        // table has gained on a letter another action shipped with, which is
+        // why `migrateStoredKeymap` had to exist before this row did.
+        ['j', UiCommand.ShowJournal],
       ]),
     );
   });
@@ -204,7 +214,25 @@ describe('the action registry', () => {
     expect(ACTIONS.map((action) => action.order)).toEqual(ACTIONS.map((_, index) => index + 1));
   });
 
-  it('names 34 actions, and stays under the cap the wire was sized for', () => {
+  it('puts every row in the group its screen prints it under', () => {
+    // `order` was pinned and `group` was not, so moving `show_journal` from
+    // `Screens` to `Turn` survived the whole suite — the Journal row simply
+    // appeared in the wrong block of the Keys screen, under a heading that is
+    // about taking a turn. The screen groups by whatever the table says, which
+    // is exactly why the table needs asserting somewhere.
+    const groups = new Map(ACTIONS.map((action) => [action.id, action.group]));
+    expect(groups.get('show_journal')).toBe('Screens');
+    expect(groups.get('show_sheet')).toBe('Screens');
+    expect(groups.get('toggle_log')).toBe('Log');
+    expect(groups.get('move_north')).toBe('Movement');
+    expect(groups.get('rest')).toBe('Turn');
+    // ...and every row belongs to a group the screen actually renders a heading
+    // for, so a typo cannot hide a row off the bottom of the list.
+    const known = new Set(ACTIONS.map((action) => action.group));
+    expect([...known].sort()).toEqual(['Hotbar', 'Log', 'Movement', 'Screens', 'Turn']);
+  });
+
+  it('names 35 actions, and stays under the cap the wire was sized for', () => {
     // src/shared/protocol.ts justifies the wire cap with an enumeration, and if
     // the table outgrows it a complete keymap starts getting refused as
     // `bad_message` with nobody able to guess why. THE SECOND ASSERTION IS THE
@@ -215,8 +243,10 @@ describe('the action registry', () => {
     // auto-explore (Game.lua:2064); 36 -> 34 when `zoom_out` and `zoom_in` went
     // with the control (*"remove the (zoom) option"*) -- the only time this
     // number has gone DOWN, and the rows below them were renumbered so `order`
-    // stays definition order.
-    expect(ACTIONS).toHaveLength(34);
+    // stays definition order; 34 -> 35 when the Journal joined the Screens
+    // group (*"case notes should actually be 'Journal'"*), which renumbered the
+    // twelve Hotbar and Log rows below it for that same reason.
+    expect(ACTIONS).toHaveLength(35);
     expect(ACTIONS.length).toBeLessThanOrEqual(KEYBIND_MAX_ACTIONS);
   });
 
@@ -251,11 +281,18 @@ describe('the action registry', () => {
 describe('an empty remap resolves to the defaults', () => {
   it('resolves both slots from `defaults` and nothing else', () => {
     expect(resolve(def('say'), {})).toEqual([key('enter'), undefined]);
-    expect(resolve(def('move_north'), {})).toEqual([key('k'), undefined]);
+    expect(resolve(def('move_north'), {})).toEqual([key('w'), undefined]);
+    // A DIAGONAL SHIPS WITH BOTH SLOTS EMPTY. WASD has no diagonal and the vi
+    // ring went with the cardinals, so the numpad `fixed` row below is the whole
+    // of north-east — and the slots stay open for a player who wants a letter.
+    expect(resolve(def('move_northeast'), {})).toEqual([undefined, undefined]);
   });
 
   it('the frozen floor is compiled in as well as the two slots', () => {
-    expect(bindingsFor(def('move_north'), {})).toEqual([key('k'), key('arrowup'), code('Numpad8')]);
+    // ONE FROZEN BINDING NOW, NOT TWO: the arrows left movement's floor with the
+    // ruling, and the numpad is the whole of it.
+    expect(bindingsFor(def('move_north'), {})).toEqual([key('w'), code('Numpad8')]);
+    expect(bindingsFor(def('move_northeast'), {})).toEqual([code('Numpad9')]);
   });
 });
 
@@ -279,7 +316,7 @@ describe('composition is PER SLOT, which is the property ToME lacks', () => {
   it('an absent action falls back to its defaults, so the store stays sparse', () => {
     const remap = setBinding({}, 'say', 0, key(';'));
     expect(Object.keys(remap)).toEqual(['say']);
-    expect(resolve(def('move_north'), remap)).toEqual([key('k'), undefined]);
+    expect(resolve(def('move_north'), remap)).toEqual([key('w'), undefined]);
   });
 
   it("an EMPTY array is 'no override in either slot', not 'cleared'", () => {
@@ -340,15 +377,17 @@ describe('a write never mutates the registry', () => {
   it('every mutator leaves ACTIONS deeply identical', () => {
     const before = structuredClone(ACTIONS);
     let remap: KeyRemap = {};
-    remap = setBinding(remap, 'move_north', 0, key('w'));
+    remap = setBinding(remap, 'move_north', 0, key('t'));
     remap = setBinding(remap, 'move_north', 1, code('Numpad8'));
     remap = clearBinding(remap, 'say', 0);
     expect(resetOne(remap, 'move_north')).toEqual({ say: [SLOT_NONE] });
-    expect(resetAll()).toEqual({});
+    // WAS `toEqual({})`. RESET ALL keeps the migration stamp and nothing else —
+    // see the test below, which argues why dropping it would be a bug.
+    expect(resetAll()).toEqual({ [KEYMAP_GEN_ID]: [KEYMAP_GEN] });
     expect(structuredClone(ACTIONS)).toEqual(before);
     // ...and the shipped defaults are still the shipped defaults afterwards,
     // which is the half of the bug a shallow object comparison would miss.
-    expect(resolve(def('move_north'), {})).toEqual([key('k'), undefined]);
+    expect(resolve(def('move_north'), {})).toEqual([key('w'), undefined]);
     expect(resolve(def('say'), {})).toEqual([key('enter'), undefined]);
   });
 
@@ -380,9 +419,32 @@ describe('reset', () => {
     expect(resetOne(remap, 'move_north')).toBe(remap);
   });
 
-  it('resetAll is an empty overlay, which is a real value and not a missing one', () => {
-    expect(resetAll()).toEqual({});
-    expect(compileKeymap(ACTIONS, resetAll())).toEqual(DEFAULT_KEYMAP);
+  it('resetAll is the shipped defaults, and it does NOT unstamp the player', () => {
+    // WAS `expect(resetAll()).toEqual({})`, and that is now the bug rather than
+    // the rule. The stamp records that the one-time upgrade rules have already
+    // run against this player's file (`KEYMAP_GEN_ID`); an overlay without it is
+    // a file those rules will run against again, so a bare `{}` here would mean
+    // RESET ALL quietly re-armed them — and the next key the player chose that
+    // happened to be a retired default would be taken off them on the following
+    // load. The reset is still total: every ACTION is back to its shipped key,
+    // which the second assertion is.
+    expect(resetAll()).toEqual({ [KEYMAP_GEN_ID]: [KEYMAP_GEN] });
+    // EVERY COMPILED TABLE IS THE SHIPPED ONE. The overlay it was compiled from
+    // rides on the result (`Keymap.remap`), so that one field is the stamp and
+    // the eight tables are `DEFAULT_KEYMAP`'s, cell for cell.
+    expect(compileKeymap(ACTIONS, resetAll())).toEqual({
+      ...DEFAULT_KEYMAP,
+      remap: { [KEYMAP_GEN_ID]: [KEYMAP_GEN] },
+    });
+    // ...and the stamp is not an action, so nothing on the Keys screen can see
+    // it and no compiled table holds a row for it.
+    expect(actionById(KEYMAP_GEN_ID)).toBeUndefined();
+    // ...and a key bound AFTER a RESET ALL survives the next load. This is the
+    // whole point, driven end to end: `k` was north's shipped key until the WASD
+    // ruling, so it is exactly the value the upgrade rule would have eaten.
+    const afterReset = setBinding(resetAll(), 'move_north', 1, key('k'));
+    expect(sameRemap(migrateStoredKeymap(ACTIONS, afterReset), afterReset)).toBe(true);
+    expect(compileKeymap(ACTIONS, afterReset).dirByKey.get('k')).toBe(Dir.N);
   });
 });
 
@@ -465,9 +527,9 @@ describe('a locked action refuses every write', () => {
       expect(resolveAction({ key: 'Escape', code: 'Escape' }, keymap)).toBe('cancel');
       expect(keymap.dirByKey.get('escape')).toBeUndefined();
       expect(keymap.dirByCode.get('Escape')).toBeUndefined();
-      // ...AND NORTH IS NOT BRICKED EITHER: `k` is back, standing behind the
+      // ...AND NORTH IS NOT BRICKED EITHER: `w` is back, standing behind the
       // override the resolver refused.
-      expect(keymap.dirByKey.get('k')).toBe(Dir.N);
+      expect(keymap.dirByKey.get('w')).toBe(Dir.N);
     }
 
     // The same refusal at the write end, so the Keys screen never stores a
@@ -606,7 +668,10 @@ describe('labelFor never shows the stored form', () => {
   });
 
   it('names a slot the way a player reads it', () => {
-    expect(labelFor('move_north', DEFAULT_KEYMAP, 0)).toBe('K');
+    expect(labelFor('move_north', DEFAULT_KEYMAP, 0)).toBe('W');
+    // A DIAGONAL'S TWO SLOTS ARE BOTH EMPTY and the row still draws: '--' is
+    // `formatKeyString`'s own first line (KeyBind.lua:158-160).
+    expect(labelFor('move_northeast', DEFAULT_KEYMAP, 0)).toBe('--');
     expect(labelFor('commit', DEFAULT_KEYMAP, 0)).toBe('Space');
     // Slot 1 is empty: Enter left `commit` for `say`. An unbound slot reads as
     // a dash rather than as nothing, so the Keys screen has something to draw.
@@ -620,9 +685,13 @@ describe('labelFor never shows the stored form', () => {
   });
 
   it('without a slot it shows the frozen floor too, so the row is honest', () => {
-    // A player who rewrote `k` needs to see that the arrows and the numpad still
-    // work, or they will report the rebind as having broken movement.
-    expect(labelFor('move_north', DEFAULT_KEYMAP)).toBe('K / Up / Num8');
+    // A player who rewrote `w` needs to see that the numpad still works, or they
+    // will report the rebind as having broken movement. THE ARROWS ARE NOT IN
+    // THIS STRING ANY MORE and that is the point of asserting it: they left
+    // movement's frozen floor with the WASD ruling, so a row that still named
+    // them would be telling the player a key works that does not.
+    expect(labelFor('move_north', DEFAULT_KEYMAP)).toBe('W / Num8');
+    expect(labelFor('move_northeast', DEFAULT_KEYMAP)).toBe('Num9');
     expect(labelFor('cancel', DEFAULT_KEYMAP)).toBe('Esc');
   });
 
@@ -702,5 +771,608 @@ describe('a slot bound by code', () => {
     // by key and 5-6 by code, which is the pair this branch exists for.
     expect(keymap.slotByCode.get('Digit5')).toBe(4);
     expect(keymap.slotByCode.get('Digit6')).toBe(5);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// THE WASD RULING, AND THE UPGRADE PATH FOR EVERY KEYMAP ALREADY ON DISK
+// ---------------------------------------------------------------------------
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE SHIPPED MOVEMENT DEFAULTS, ASSERTED AS A WHOLE TABLE.
+ * ═══════════════════════════════════════════════════════════════════════════
+ * Ruled verbatim: *"we would prefer WASD for basic movements, then numpad for
+ * all directional movements. i want to remove the other directional keys from
+ * the keyboard. players can always rebind them later"*.
+ *
+ * ROW BY ROW RATHER THAN BY SPOT CHECK, because the failure this guards is a
+ * copy-paste: four cardinals that all read `w` compile, run, and are only wrong
+ * under somebody's fingers.
+ */
+describe('movement ships as W/A/S/D plus the numpad, and nothing else', () => {
+  const CARDINALS: readonly (readonly [string, string, Dir, string])[] = [
+    ['move_north', 'w', Dir.N, 'Numpad8'],
+    ['move_west', 'a', Dir.W, 'Numpad4'],
+    ['move_south', 's', Dir.S, 'Numpad2'],
+    ['move_east', 'd', Dir.E, 'Numpad6'],
+  ];
+
+  for (const [id, letter, dir, pad] of CARDINALS) {
+    it(`${id} defaults to ${letter} and freezes ${pad}`, () => {
+      expect(resolve(def(id), {})).toEqual([key(letter), undefined]);
+      expect(def(id).fixed).toEqual([code(pad)]);
+      expect(DEFAULT_KEYMAP.dirByKey.get(letter)).toBe(dir);
+      expect(DEFAULT_KEYMAP.dirByCode.get(pad)).toBe(dir);
+    });
+  }
+
+  const DIAGONALS: readonly (readonly [string, Dir, string])[] = [
+    ['move_northeast', Dir.NE, 'Numpad9'],
+    ['move_southeast', Dir.SE, 'Numpad3'],
+    ['move_southwest', Dir.SW, 'Numpad1'],
+    ['move_northwest', Dir.NW, 'Numpad7'],
+  ];
+
+  for (const [id, dir, pad] of DIAGONALS) {
+    it(`${id} has no letter at all, and ${pad} is the whole of it`, () => {
+      expect(def(id).defaults).toEqual([]);
+      expect(bindingsFor(def(id), {})).toEqual([code(pad)]);
+      expect(DEFAULT_KEYMAP.dirByCode.get(pad)).toBe(dir);
+    });
+  }
+
+  it('NOT q/e/z/c — the letters the author was told this pass would not take', () => {
+    // Asked about and refused in writing: a laptop with no numpad is answered by
+    // a chord, not by four more letters. `z` is auto-explore, `c` is the
+    // character sheet and `e` is revive, so three of the four are not even free.
+    for (const letter of ['q', 'e', 'z', 'c']) {
+      expect(DEFAULT_KEYMAP.dirByKey.get(letter)).toBeUndefined();
+    }
+  });
+
+  it('the vi ring is unbound as a DIRECTION, not reassigned to one', () => {
+    for (const letter of ['h', 'j', 'k', 'l', 'y', 'u', 'b', 'n']) {
+      expect(DEFAULT_KEYMAP.dirByKey.get(letter)).toBeUndefined();
+    }
+    // SEVEN OF THE EIGHT REACH NOTHING AT ALL, which is what "unbound" means.
+    for (const letter of ['h', 'k', 'l', 'y', 'u', 'b', 'n']) {
+      expect(
+        resolveAction({ key: letter, code: `Key${letter.toUpperCase()}` }, DEFAULT_KEYMAP),
+      ).toBeUndefined();
+    }
+    // `j` IS THE EXCEPTION AND IT IS THE POINT. This case used to assert that
+    // `j` reached nothing either, "because it is the one another action is
+    // waiting for". The action landed: the Journal holds it now, and what still
+    // has to be true is that it is the JOURNAL and not a step.
+    expect(resolveAction({ key: 'j', code: 'KeyJ' }, DEFAULT_KEYMAP)).toBe('show_journal');
+  });
+
+  it('the arrows are not in the keymap at all — not as a default, not as a floor', () => {
+    for (const arrow of ['arrowup', 'arrowdown', 'arrowleft', 'arrowright']) {
+      expect(DEFAULT_KEYMAP.dirByKey.get(arrow)).toBeUndefined();
+      expect(resolveAction({ key: arrow, code: '' }, DEFAULT_KEYMAP)).toBeUndefined();
+    }
+    // AND NO ROW STILL DECLARES ONE. `fixed` is outside the overlay, so an arrow
+    // left on one action would be a key no screen can clear and no test above
+    // would name.
+    for (const action of ACTIONS) {
+      for (const binding of [...action.defaults, ...action.fixed]) {
+        expect(binding.value.toLowerCase().startsWith('arrow')).toBe(false);
+      }
+    }
+  });
+
+  it('Numpad5 still holds, which the ruling kept by name', () => {
+    expect(DEFAULT_KEYMAP.commandByCode.get('Numpad5')).toBe(TurnCommand.Hold);
+    expect(resolveAction({ key: 'Clear', code: 'Numpad5' }, DEFAULT_KEYMAP)).toBe('hold');
+  });
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * *"PLAYERS CAN ALWAYS REBIND THEM LATER"* — THE HALF THAT HAD TO BE CHECKED
+   * RATHER THAN ASSUMED, BECAUSE THE CONFLICT DETECTOR COULD HAVE REFUSED IT.
+   * ═══════════════════════════════════════════════════════════════════════════
+   * `conflictsFor` expands a `key` binding into every physical key that can
+   * report that character, and the numpad reports 'ArrowUp' for Numpad8 with
+   * NumLock off. So "put Up back on north" runs straight into `move_north`'s own
+   * frozen Numpad8 — and would be refused, leaving the ruling's promise false
+   * for the one set of keys it took away, if the detector did not skip a holder
+   * that IS the candidate's own action.
+   */
+  it('a player can put the arrows and the vi ring back where they were', () => {
+    // `move_south`/`j` IS NOT IN THIS LIST AND ITS ABSENCE IS THE NEXT CASE.
+    // It was here, and it left when the Journal took `j` — which is not a hole
+    // in the ruling but the conflict detector doing its job on a key that now
+    // has an owner. The case below asserts the refusal NAMES that owner.
+    const BACK: readonly (readonly [string, string])[] = [
+      ['move_north', 'arrowup'],
+      ['move_south', 'arrowdown'],
+      ['move_west', 'arrowleft'],
+      ['move_east', 'arrowright'],
+      ['move_north', 'k'],
+      ['move_west', 'h'],
+      ['move_east', 'l'],
+      ['move_northwest', 'y'],
+      ['move_northeast', 'u'],
+      ['move_southwest', 'b'],
+      ['move_southeast', 'n'],
+    ];
+    for (const [action, value] of BACK) {
+      expect(conflictsFor({ action, binding: key(value) }, DEFAULT_KEYMAP)).toEqual([]);
+      const written = setBinding({}, action, 1, key(value));
+      expect(resolve(def(action), written)[1]).toEqual(key(value));
+      expect(compileKeymap(ACTIONS, written).dirByKey.get(value)).toBe(
+        (def(action).effect as { readonly dir: Dir }).dir,
+      );
+    }
+  });
+
+  it('...but an arrow on the WRONG direction is refused, and honestly', () => {
+    // Up on `move_west` really would be eaten: with NumLock off Numpad8 reports
+    // 'ArrowUp', and `directionFor` reads `event.code` FIRST, so north keeps it.
+    // The screen names north rather than letting the bind appear to take.
+    const clash = conflictsFor({ action: 'move_west', binding: key('arrowup') }, DEFAULT_KEYMAP);
+    expect(clash.map((c) => c.holder)).toEqual(['move_north']);
+  });
+
+  it('...and `j` back onto south is refused by NAME, because the Journal holds it', () => {
+    // ═══ THE ONE KEY THE RULING TOOK AWAY AND DID NOT GIVE BACK ═══
+    // *"players can always rebind them later"* is true of seven of the vi ring;
+    // `j` is the eighth and it has an owner now. That is not the promise broken
+    // — a player who wants south on `j` clears the Journal's slot first, which
+    // is the ordinary two-step every occupied key in this screen takes — but a
+    // SILENT take would be: `directionFor` runs before `uiByKey`, so a bind that
+    // "worked" would have stolen the Journal key with nothing said.
+    const clash = conflictsFor({ action: 'move_south', binding: key('j') }, DEFAULT_KEYMAP);
+    expect(clash.map((c) => c.holder)).toEqual(['show_journal']);
+
+    // AND IT REALLY IS RELEASABLE, so the refusal is a queue and not a wall.
+    const freed = compileKeymap(ACTIONS, { show_journal: [SLOT_NONE] });
+    expect(conflictsFor({ action: 'move_south', binding: key('j') }, freed)).toEqual([]);
+  });
+});
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE MIGRATION. KEYBINDS PERSIST SERVER-SIDE, SO EVERY MAP ALREADY WRITTEN IS
+ * A MAP THIS BUILD HAS TO ACCEPT.
+ * ═══════════════════════════════════════════════════════════════════════════
+ * STORAGE IS OVERRIDES ONLY, and that is the fact the whole rule rests on: the
+ * overlay is SPARSE (`KeyRemap`, and `writeSlot`/`tidy` keep it so), so a player
+ * who never opened the Keys screen has NO entry for `move_north` and simply gets
+ * `w`. The only maps needing repair are the ones somebody actually wrote.
+ */
+describe('a stored keymap written before the WASD ruling', () => {
+  /**
+   * WHAT A MIGRATED MAP LOOKS LIKE ON DISK: the repaired overlay PLUS the stamp.
+   *
+   * Every `toEqual` below used to compare against the bare map — `expect(
+   * migrated).toEqual(mine)` — which was right until `migrateStoredKeymap`
+   * started recording that it had run. It has to record it: without the stamp
+   * the rules run on EVERY `keybinds` frame, the server echoes one after every
+   * accepted `set_keybinds`, and a player who deliberately bound a retired key
+   * had it stripped on the echo and then deleted from their character file by
+   * the write-back. See `KEYMAP_GEN_ID`.
+   */
+  const stamped = (map: KeyRemap): KeyRemap => ({ ...map, [KEYMAP_GEN_ID]: [KEYMAP_GEN] });
+
+  /** What a player who had rebound the vi ring to itself has on disk. */
+  const OLD_DEFAULTS: KeyRemap = {
+    move_north: ['key:k'],
+    move_south: ['key:j'],
+    move_west: ['key:h'],
+    move_east: ['key:l'],
+    move_northwest: ['key:y'],
+  };
+
+  it('moves to the new defaults, slot by slot', () => {
+    const migrated = migrateStoredKeymap(ACTIONS, OLD_DEFAULTS);
+    const keymap = compileKeymap(ACTIONS, migrated);
+    expect(keymap.dirByKey.get('w')).toBe(Dir.N);
+    expect(keymap.dirByKey.get('a')).toBe(Dir.W);
+    expect(keymap.dirByKey.get('s')).toBe(Dir.S);
+    expect(keymap.dirByKey.get('d')).toBe(Dir.E);
+    // ...and the retired letters answer to nothing.
+    for (const letter of ['k', 'j', 'h', 'l', 'y']) {
+      expect(keymap.dirByKey.get(letter)).toBeUndefined();
+    }
+  });
+
+  it('resets to `default` and NOT to `none`, which would leave a direction dead', () => {
+    // ═══ THIS IS THE BUG THE OLD MIGRATION SHIPPED WITH ═══
+    // It wrote `SLOT_NONE` while its own docblock promised the slot "falls back
+    // to the action's own default". `SLOT_NONE` is DELIBERATELY EMPTY —
+    // `resolveSlot` answers `undefined` for it — so a migrated row ended with no
+    // key at all. Harmless-looking for `toggle_log`; for `move_south` it is a
+    // direction the player cannot walk in, on a map, with no explanation.
+    const migrated = migrateStoredKeymap(ACTIONS, OLD_DEFAULTS);
+    expect(migrated.move_south).not.toContain(SLOT_NONE);
+    expect(resolve(def('move_south'), migrated)).toEqual([key('s'), undefined]);
+    // AND THE ENTRY IS TIDIED AWAY ENTIRELY, so the store goes back to sparse.
+    expect(migrated.move_south).toEqual([]);
+  });
+
+  it("frees `j`, so the Journal's key cannot be swallowed by a stale step", () => {
+    // ═══ THE ONE THAT WOULD HAVE BEEN FOUND IN PLAY, NOT IN A TEST ═══
+    // `directionFor` reads the direction tables BEFORE `uiByKey` — keys.ts calls
+    // that order load-bearing — so a surviving `move_south: ['key:j']` does not
+    // merely coexist with a Journal on `j`, it TAKES it. The one player who had
+    // rebound movement would be the one player for whom the new panel silently
+    // walks them south.
+    //
+    // ═══ DRIVEN AGAINST THE SHIPPED TABLE NOW, AND IT USED TO BE A FIXTURE ═══
+    // This case was written an hour before the panel existed, against a
+    // synthetic `toggle_journal` row appended to `ACTIONS`, so that the RULE
+    // could be tested without waiting on it. The row landed as `show_journal`,
+    // and a test still asserting against its own invented row would be
+    // `tests-true-of-the-fixture` written down: it would pass for ever whatever
+    // the real table did. `ACTIONS` is the subject.
+    const migrated = migrateStoredKeymap(ACTIONS, OLD_DEFAULTS);
+    const keymap = compileKeymap(ACTIONS, migrated);
+    expect(keymap.dirByKey.get('j')).toBeUndefined();
+    expect(resolveAction({ key: 'j', code: 'KeyJ' }, keymap)).toBe('show_journal');
+
+    // AND THE MIGRATION IS WHAT DID IT, not the compile: the SAME stored map
+    // handed straight to `compileKeymap` walks the player south on the Journal
+    // key. This is the line that fails if rule two is ever weakened.
+    const unmigrated = compileKeymap(ACTIONS, OLD_DEFAULTS);
+    expect(unmigrated.dirByKey.get('j')).toBe(Dir.S);
+    expect(resolveAction({ key: 'j', code: 'KeyJ' }, unmigrated)).toBe('move_south');
+  });
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE OTHER HALF OF ADDING A ROW ON AN OCCUPIED-LOOKING LETTER: `j` STORED ON
+   * SOMETHING THAT IS NOT MOVEMENT.
+   * ═══════════════════════════════════════════════════════════════════════════
+   * Rule two only knows about keys an action USED to ship. A player who went to
+   * the Keys screen and put `j` on the log themselves is holding a key no
+   * `RETIRED_DEFAULTS` entry names — and `compileKeymap` settles a collision by
+   * `order`, so the Journal (23) would win over `toggle_log` (33) and that
+   * player's deliberate bind would be a dead key with nothing saying so.
+   *
+   * Rule one is what answers it, and this is the first time the shipped table
+   * has moved a default onto a letter another action could already be holding.
+   */
+  it('gives a deliberate `j` bind back its own default rather than leaving it dead', () => {
+    const migrated = migrateStoredKeymap(ACTIONS, { toggle_log: ['key:j'] });
+    // RESET, NOT REWRITTEN: the slot falls back to `v`, which is what
+    // `SLOT_DEFAULT` means. Moving it to some other letter would be inventing a
+    // preference nobody expressed.
+    expect(resolve(def('toggle_log'), migrated)[0]).toEqual(key('v'));
+    const keymap = compileKeymap(ACTIONS, migrated);
+    expect(keymap.uiByKey.get('v')).toBe(UiCommand.ToggleLog);
+    expect(keymap.uiByKey.get('j')).toBe(UiCommand.ShowJournal);
+  });
+
+  it('...but keeps it when the player moved the Journal off `j` themselves', () => {
+    // NO COLLISION, NOTHING TO REPAIR. `ownerKeeps` asks whether the owner still
+    // RESOLVES to that key for THIS player, not whether the shipped table says
+    // it does — so a player who rebound the Journal to `x` and the log to `j`
+    // has expressed two preferences and keeps both. Byte-identical, because
+    // "keeps it" has to mean the stored map is not rewritten at all.
+    const stored: KeyRemap = { toggle_log: ['key:j'], show_journal: ['key:x'] };
+    const migrated = migrateStoredKeymap(ACTIONS, stored);
+    // WAS `toEqual(stored)`. The stamp is the only difference; see `stamped`.
+    expect(migrated).toEqual(stamped(stored));
+    const keymap = compileKeymap(ACTIONS, migrated);
+    expect(keymap.uiByKey.get('j')).toBe(UiCommand.ToggleLog);
+    expect(keymap.uiByKey.get('x')).toBe(UiCommand.ShowJournal);
+  });
+
+  it('leaves a DELIBERATE rebind exactly where the player put it', () => {
+    // The other half of the ruling, and the half a blunt "reset every movement
+    // action" would have broken: a stored key that was never a default of this
+    // action is a preference, and preferences survive upgrades.
+    const mine: KeyRemap = {
+      move_north: ['key:t'],
+      move_southwest: [SLOT_DEFAULT, 'key:x'],
+      say: ['key:q'],
+    };
+    const migrated = migrateStoredKeymap(ACTIONS, mine);
+    // WAS `toEqual(mine)` / `sameRemap(migrated, mine) === true`. The stamp is
+    // the only difference, and it is what makes the NEXT load leave this alone.
+    expect(migrated).toEqual(stamped(mine));
+    expect(sameRemap(migrateStoredKeymap(ACTIONS, migrated), migrated)).toBe(true);
+    const keymap = compileKeymap(ACTIONS, migrated);
+    expect(keymap.dirByKey.get('t')).toBe(Dir.N);
+    expect(keymap.dirByKey.get('x')).toBe(Dir.SW);
+    // ...and `w` is NOT also north: slot 0 was overwritten, which is `resolve`'s
+    // per-slot rule rather than anything the migration did.
+    expect(keymap.dirByKey.get('w')).toBeUndefined();
+  });
+
+  it('only resets a retired key on the action that used to ship it', () => {
+    // `k` was north's. On `rest` it is somebody's own choice and it stays —
+    // otherwise `RETIRED_DEFAULTS` would be a blocklist of eight letters nobody
+    // could ever use again.
+    const migrated = migrateStoredKeymap(ACTIONS, { rest: ['key:k'] });
+    // WAS `toEqual({ rest: ['key:k'] })`.
+    expect(migrated).toEqual(stamped({ rest: ['key:k'] }));
+    expect(compileKeymap(ACTIONS, migrated).commandByKey.get('k')).toBe(TurnCommand.Rest);
+  });
+
+  it('repairs a key another action now defaults to — the world-map case', () => {
+    // The rule that was already here: a save written before the world map still
+    // says `toggle_log: ['key:m']`, both land in `uiByKey`, the later action
+    // wins, and the returning player presses M and gets the log.
+    const migrated = migrateStoredKeymap(ACTIONS, { toggle_log: ['key:m'] });
+    const keymap = compileKeymap(ACTIONS, migrated);
+    expect(keymap.uiByKey.get('m')).toBe(UiCommand.ShowWorldMap);
+    // ...AND THE LOG STILL HAS A KEY, which is what `SLOT_NONE` used to cost it.
+    expect(keymap.uiByKey.get('v')).toBe(UiCommand.ToggleLog);
+  });
+
+  it('...but not when the owner has itself been rebound away', () => {
+    // There is no collision to repair when the player has moved the world map
+    // off `m` themselves. The docblock always claimed such a player "keeps it";
+    // before `ownerKeeps` existed they did not, because the owner was read off
+    // the SHIPPED table and never off this player's own map.
+    const mine: KeyRemap = { toggle_log: ['key:m'], show_world_map: ['key:o'] };
+    const migrated = migrateStoredKeymap(ACTIONS, mine);
+    // WAS `toEqual(mine)`.
+    expect(migrated).toEqual(stamped(mine));
+    const keymap = compileKeymap(ACTIONS, migrated);
+    expect(keymap.uiByKey.get('m')).toBe(UiCommand.ToggleLog);
+    expect(keymap.uiByKey.get('o')).toBe(UiCommand.ShowWorldMap);
+  });
+
+  it('runs to a fixed point, so the caller never writes back twice', () => {
+    // Rule two frees `s` by resetting `j`, and only THEN is the stored `s` on
+    // another action a collision rule one can see. One pass would leave this map
+    // changing again next load — and since `main.ts` writes the result back,
+    // that is a `set_keybinds` frame every session for ever.
+    const chained: KeyRemap = { move_south: ['key:j'], toggle_log: ['key:s'] };
+    const once = migrateStoredKeymap(ACTIONS, chained);
+    expect(migrateStoredKeymap(ACTIONS, once)).toEqual(once);
+    const keymap = compileKeymap(ACTIONS, once);
+    expect(keymap.dirByKey.get('s')).toBe(Dir.S);
+    expect(keymap.uiByKey.get('v')).toBe(UiCommand.ToggleLog);
+  });
+
+  it('is idempotent on a map it has already repaired', () => {
+    const once = migrateStoredKeymap(ACTIONS, OLD_DEFAULTS);
+    expect(sameRemap(migrateStoredKeymap(ACTIONS, once), once)).toBe(true);
+  });
+
+  it('touches nothing for the player who never opened the Keys screen', () => {
+    // The common case, and the reason storage being OVERRIDES ONLY matters: an
+    // empty overlay needs no migration and gets the new defaults for free.
+    // WAS `toEqual({})` and `sameRemap(..., {}) === true`. An empty overlay
+    // still needs NOTHING repaired — and it is the map that most needs the
+    // stamp, because the player who has never opened the Keys screen is the one
+    // most likely to open it tomorrow and choose a retired letter.
+    expect(migrateStoredKeymap(ACTIONS, {})).toEqual(stamped({}));
+    const once = migrateStoredKeymap(ACTIONS, {});
+    expect(sameRemap(migrateStoredKeymap(ACTIONS, once), once)).toBe(true);
+  });
+
+  it('leaves a `code:` slot and an unknown action id alone', () => {
+    // The migration reads key-side strings only. A numpad override and an id
+    // this build no longer binds both round-trip, which is what lets a
+    // renamed-then-restored action come back.
+    const odd: KeyRemap = { ui_toggle_lore: ['key:k'], commit: ['code:NumpadAdd'] };
+    // WAS `toEqual(odd)`.
+    expect(migrateStoredKeymap(ACTIONS, odd)).toEqual(stamped(odd));
+  });
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE BUG THIS BLOCK EXISTS FOR: A REBIND MADE TODAY IS NOT AN OLD DEFAULT.
+   * ═══════════════════════════════════════════════════════════════════════════
+   * Rule two resets a slot holding a key `RETIRED_DEFAULTS` names for that
+   * action. Four bytes of `key:k` on `move_north` are the same four bytes
+   * whether the file was written in M2 or five seconds ago, and this ran on
+   * EVERY `keybinds` frame — including the echo the server sends after every
+   * accepted `set_keybinds`. So the returning roguelike player who put K back on
+   * north watched the status line accept it, watched the row revert to `W --`
+   * one round trip later, and had the binding deleted from their character file
+   * by the write-back that was supposed to be the mitigation.
+   *
+   * The old suite could not see it: its "deliberate rebind survives" case used
+   * `t`, `x` and `q` — three keys no `RETIRED_DEFAULTS` row names — which is
+   * `tests-true-of-the-fixture` exactly. And nothing ran a map through the
+   * migration TWICE WITH A COMMIT IN BETWEEN, which is what an echo is.
+   */
+  describe('the stamp, which is what makes it an upgrade and not a standing rule', () => {
+    it('leaves a stamped map completely alone, retired keys and all', () => {
+      // EVERY letter of the vi ring, put back deliberately, on its own action.
+      const deliberate: KeyRemap = {
+        move_north: [SLOT_DEFAULT, 'key:k'],
+        move_south: [SLOT_DEFAULT, 'key:j'],
+        move_west: [SLOT_DEFAULT, 'key:h'],
+        move_east: [SLOT_DEFAULT, 'key:l'],
+        move_northeast: [SLOT_DEFAULT, 'key:u'],
+        move_northwest: [SLOT_DEFAULT, 'key:y'],
+        move_southwest: [SLOT_DEFAULT, 'key:b'],
+        move_southeast: [SLOT_DEFAULT, 'key:n'],
+        [KEYMAP_GEN_ID]: [KEYMAP_GEN],
+      };
+      expect(migrateStoredKeymap(ACTIONS, deliberate)).toBe(deliberate);
+      const keymap = compileKeymap(ACTIONS, deliberate);
+      expect(keymap.dirByKey.get('k')).toBe(Dir.N);
+      expect(keymap.dirByKey.get('y')).toBe(Dir.NW);
+      // ...and WASD is still there, because these went in the SECOND slot.
+      expect(keymap.dirByKey.get('w')).toBe(Dir.N);
+    });
+
+    it('survives the echo: bind, migrate, migrate again, still bound', () => {
+      // THE ROUND TRIP, NOT A SINGLE CALL. `main.ts` migrates every `keybinds`
+      // frame and the server echoes one after every accepted `set_keybinds`, so
+      // "the player kept it" means the SECOND migration is a no-op too.
+      const live = migrateStoredKeymap(ACTIONS, {});
+      const bound = setBinding(live, 'move_north', 1, key('k'));
+      const echo = migrateStoredKeymap(ACTIONS, bound);
+      expect(sameRemap(echo, bound)).toBe(true);
+      expect(compileKeymap(ACTIONS, echo).dirByKey.get('k')).toBe(Dir.N);
+      // ...and the login after that.
+      expect(sameRemap(migrateStoredKeymap(ACTIONS, echo), echo)).toBe(true);
+    });
+
+    it('upgrades a file stamped with an OLDER generation', () => {
+      // THE STAMP IS COMPARED, NOT MERELY PRESENT — which is what makes bumping
+      // `KEYMAP_GEN` the upgrade switch. A build that changes a shipped default
+      // adds the old key to `RETIRED_DEFAULTS` and bumps the number, and every
+      // stored map in the world is migrated exactly once more. If this only
+      // asked "is there a stamp?", that bump would do nothing.
+      const older: KeyRemap = { move_south: ['key:j'], [KEYMAP_GEN_ID]: ['1'] };
+      expect(KEYMAP_GEN).not.toBe('1');
+      const migrated = migrateStoredKeymap(ACTIONS, older);
+      expect(migrated).toEqual(stamped({ move_south: [] }));
+      expect(compileKeymap(ACTIONS, migrated).uiByKey.get('j')).toBe(UiCommand.ShowJournal);
+    });
+
+    it('still repairs a file written before the stamp existed', () => {
+      // The other side of the same coin: absence of the stamp IS generation one.
+      expect(OLD_DEFAULTS[KEYMAP_GEN_ID]).toBeUndefined();
+      const migrated = migrateStoredKeymap(ACTIONS, OLD_DEFAULTS);
+      expect(migrated[KEYMAP_GEN_ID]).toEqual([KEYMAP_GEN]);
+      expect(compileKeymap(ACTIONS, migrated).dirByKey.get('k')).toBeUndefined();
+    });
+
+    it('is an id no action can ever own', () => {
+      // The leading underscore is the guard, so it has to be a guard: every
+      // shipped id starts with a LETTER, which is what makes `_keymap_gen`
+      // unable to collide with an action somebody adds later.
+      expect(KEYMAP_GEN_ID.startsWith('_')).toBe(true);
+      for (const action of ACTIONS) expect(action.id).toMatch(/^[a-z][a-z0-9_]*$/);
+      // ...and it fits the wire, with room to spare on both caps.
+      expect(KEYMAP_GEN_ID.length).toBeLessThanOrEqual(KEYBIND_ACTION_MAX_CHARS);
+      expect(ACTIONS.length + 1).toBeLessThanOrEqual(KEYBIND_MAX_ACTIONS);
+    });
+
+    it('does not shadow, hide or rename any action row', () => {
+      // The stamp rides in the same record as the bindings, so the one thing
+      // that must never happen is it being read AS one.
+      const stampedOnly = migrateStoredKeymap(ACTIONS, {});
+      expect(compileKeymap(ACTIONS, stampedOnly)).toEqual({
+        ...DEFAULT_KEYMAP,
+        remap: stampedOnly,
+      });
+    });
+  });
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE POPULATION MOST LIKELY TO EXIST: hjkl KEPT, wasd ADDED BESIDE IT.
+   * ═══════════════════════════════════════════════════════════════════════════
+   * W/A/S/D were free before the ruling, so "I will keep the vi keys and put
+   * WASD in the other slot" is what a player did with two slots and four spare
+   * letters. Rule two frees slot 0, slot 0 falls back to the SHIPPED default —
+   * which is now `w` — and the row reads `W  W`: a second key they deliberately
+   * configured is gone and the screen advertises the redundancy in its place.
+   */
+  it('never leaves a freed slot duplicating a key the player still holds', () => {
+    const both: KeyRemap = {
+      move_north: ['key:k', 'key:w'],
+      move_west: ['key:h', 'key:a'],
+      move_south: ['key:j', 'key:s'],
+      move_east: ['key:l', 'key:d'],
+    };
+    const migrated = migrateStoredKeymap(ACTIONS, both);
+    // PURE DEFAULTS. Both slots said `w`; one of them was saying nothing.
+    expect(migrated).toEqual(
+      stamped({ move_north: [], move_west: [], move_south: [], move_east: [] }),
+    );
+    for (const [id, letter, dir] of [
+      ['move_north', 'w', Dir.N],
+      ['move_west', 'a', Dir.W],
+      ['move_south', 's', Dir.S],
+      ['move_east', 'd', Dir.E],
+    ] as const) {
+      expect(resolve(def(id), migrated)).toEqual([key(letter), undefined]);
+      expect(compileKeymap(ACTIONS, migrated).dirByKey.get(letter)).toBe(dir);
+    }
+  });
+
+  it('does not collapse a slot that is a genuinely different key', () => {
+    // The guard on the rule above: only a slot saying the SAME thing as the
+    // freed one goes. A second key the player can actually press is a second
+    // key, and it stays.
+    const mixed: KeyRemap = { move_north: ['key:k', 'key:t'] };
+    const migrated = migrateStoredKeymap(ACTIONS, mixed);
+    expect(migrated).toEqual(stamped({ move_north: [SLOT_DEFAULT, 'key:t'] }));
+    const live = compileKeymap(ACTIONS, migrated);
+    expect(live.dirByKey.get('w')).toBe(Dir.N);
+    expect(live.dirByKey.get('t')).toBe(Dir.N);
+    expect(live.dirByKey.get('k')).toBeUndefined();
+  });
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * `sameRemap` IS THE WRITE-BACK'S GATE, AND ITS VALUE COMPARISON WAS UNTESTED.
+   * ═══════════════════════════════════════════════════════════════════════════
+   * Every call in this file was `toBe(true)`, and every migration fixture used
+   * ONE-SLOT arrays — where a reset changes the LENGTH, which a comparison that
+   * only checked ids and lengths can still see. Deleting the value loop survived
+   * the whole suite. A repair in slot 0 with slot 1 occupied keeps the length,
+   * and that map is the one that then gets no write-back at all.
+   */
+  it('sameRemap is FALSE when only a slot string moved', () => {
+    expect(
+      sameRemap({ move_south: [SLOT_DEFAULT, 'key:t'] }, { move_south: ['key:j', 'key:t'] }),
+    ).toBe(false);
+  });
+
+  it('repairs slot 0 of a two-slot entry, and says the map changed', () => {
+    const stored: KeyRemap = { toggle_log: ['key:m', 'key:t'] };
+    const migrated = migrateStoredKeymap(ACTIONS, stored);
+    expect(migrated.toggle_log).toEqual([SLOT_DEFAULT, 'key:t']);
+    // THE GATE ITSELF. `main.ts` sends the corrected map only when this is
+    // false, so a `true` here is a player whose file keeps the stale binding.
+    expect(sameRemap(migrated, stored)).toBe(false);
+  });
+
+  it('runs the chained case to a fixed point with both entries two slots wide', () => {
+    // The existing fixed-point test uses one-slot entries, so it cannot fail for
+    // a `sameRemap` that stopped comparing values. This one can: pass one
+    // repairs `move_south`, pass two is the only place `toggle_log`'s `s`
+    // becomes a collision, and both lengths stay at two throughout.
+    const chained: KeyRemap = { move_south: ['key:j', 'key:t'], toggle_log: ['key:s', 'key:0'] };
+    const migrated = migrateStoredKeymap(ACTIONS, chained);
+    expect(migrated.move_south).toEqual([SLOT_DEFAULT, 'key:t']);
+    expect(migrated.toggle_log).toEqual([SLOT_DEFAULT, 'key:0']);
+    expect(sameRemap(migrateStoredKeymap(ACTIONS, migrated), migrated)).toBe(true);
+    const keymap = compileKeymap(ACTIONS, migrated);
+    expect(keymap.dirByKey.get('s')).toBe(Dir.S);
+    expect(keymap.uiByKey.get('v')).toBe(UiCommand.ToggleLog);
+  });
+
+  /**
+   * THE `!stillMine` GUARD, WHICH TODAY'S TABLE CANNOT REACH.
+   *
+   * No action's CURRENT default is also in its `RETIRED_DEFAULTS` row, so
+   * dropping `!stillMine` from rule two is an equivalent mutant against the
+   * shipped table — measured, not assumed. It is still real insurance: a ledger
+   * row that named a LIVE default would reset the shipped key on every load, and
+   * this guard is the only thing that stops it. `migrateStoredKeymap` takes
+   * `actions` as a parameter precisely so a synthetic table can ask.
+   */
+  it('never resets a key the action still defaults to, even if the ledger names it', () => {
+    const stillK: readonly ActionDef[] = ACTIONS.map((action) =>
+      action.id === 'move_north' ? { ...action, defaults: [key('k')] } : action,
+    );
+    expect(RETIRED_DEFAULTS.get('move_north')).toEqual(['key:k']);
+    const stored: KeyRemap = { move_north: ['key:k'] };
+    expect(migrateStoredKeymap(stillK, stored)).toEqual(stamped(stored));
+  });
+
+  it('names the vi ring and nothing else, and no arrow', () => {
+    // `RETIRED_DEFAULTS` is an UPGRADE LEDGER: every row costs a player a key
+    // they cannot keep across one load, so it must hold only what a stored map
+    // can actually contain. The arrows were `fixed` — outside the overlay, never
+    // serialised — so no save has ever held one and no row may claim otherwise.
+    expect([...RETIRED_DEFAULTS.keys()].sort()).toEqual(
+      ACTIONS.filter((a) => a.effect.kind === 'move')
+        .map((a) => a.id)
+        .sort(),
+    );
+    for (const [, keys] of RETIRED_DEFAULTS) {
+      for (const stored of keys) {
+        expect(stored.startsWith('key:')).toBe(true);
+        expect(stored.includes('arrow')).toBe(false);
+      }
+    }
   });
 });

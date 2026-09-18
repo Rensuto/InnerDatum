@@ -11,13 +11,17 @@ import {
   ESCAPE_MENU_MIN_W,
   escapeMenuDragAt,
   escapeMenuHitAt,
+  LOCKED_WORD,
   escapeMenuPaging,
   escapeMenuRect,
   escapeMenuRows,
+  escapeMenuVisibleEntries,
   MenuHitKind,
   MenuRowKind,
   MenuScreen,
+  menuTitle,
   MenuTone,
+  ROW_JOURNAL,
   ROW_LEAVE_PARTY,
   ROW_SWITCH_CHARACTER,
 } from '../../src/client/ui/escapemenu.ts';
@@ -25,6 +29,7 @@ import {
   ACTIONS,
   compileKeymap,
   DEFAULT_KEYMAP,
+  KEYMAP_GEN_ID,
   labelFor,
   resetAll,
   resetOne,
@@ -34,6 +39,7 @@ import { HEADER_H } from '../../src/client/ui/panel.ts';
 import { PartyAction } from '../../src/shared/protocol.ts';
 import { UI_SCALE_MAX, UI_SCALE_MIN } from '../../src/shared/version.ts';
 import type { EscapeMenuView, MenuHit, MenuRow } from '../../src/client/ui/escapemenu.ts';
+import type { PanelRect } from '../../src/client/ui/panel.ts';
 import type { KeyRemap } from '../../src/client/input/keymap.ts';
 
 /**
@@ -234,7 +240,10 @@ describe('the root screen', () => {
       'CHARACTER SHEET',
       'TALENTS',
       'INVENTORY',
-      'CASE NOTES',
+      // WAS `CASE NOTES`. Ruled: *"case notes should actually be 'Journal'
+      // which will serve as a quest log/ similar"*. The row index did not move
+      // and neither did the count suffix rule — see `the journal screen` below.
+      'JOURNAL',
       'LEAVE PARTY',
       'SWITCH CHARACTER',
     ]);
@@ -258,8 +267,9 @@ describe('the root screen', () => {
       { kind: 'ui', command: UiCommand.ShowSheet },
       { kind: 'ui', command: UiCommand.ShowTalents },
       { kind: 'ui', command: UiCommand.ShowInventory },
-      // THE ARCHIVE — `ShowLore`, on the surface upstream's own text names.
-      { kind: 'notes' },
+      // THE JOURNAL — `ShowQuests`'s list over `ShowLore`'s archive, on the
+      // surface upstream's own text names. WAS `{ kind: 'notes' }`.
+      { kind: 'journal' },
       { kind: 'party', action: PartyAction.Leave },
       // NOT A `ui` COMMAND, and the distinction is load-bearing: every UiCommand
       // opens a panel over a live world and this one ENDS the world. Folding it
@@ -314,7 +324,9 @@ describe('the root screen', () => {
       'CHARACTER SHEET',
       'TALENTS (2)',
       'INVENTORY',
-      'CASE NOTES',
+      // WAS `CASE NOTES`; the fixture has no notes, so there is no suffix here
+      // either way and this row is only proving that nothing MOVED.
+      'JOURNAL',
       'LEAVE PARTY',
       'SWITCH CHARACTER',
     ]);
@@ -374,19 +386,24 @@ describe('escapeMenuHitAt on the root screen', () => {
       if (hit === null || hit.kind !== MenuHitKind.Entry) continue;
       if (seen[seen.length - 1] !== hit.index) seen.push(hit.index);
     }
-    // SEVEN OF THE TEN, and the three GAPS are the point of the scan. Each
+    // EIGHT OF THE TEN, and the two GAPS are the point of the scan. Each
     // missing index is a row that is DRAWN and refuses the pointer, which is
     // what "greyed" means here structurally rather than merely visually:
     //
     //    3  RESET PANELS   — the fixture has moved nothing
-    //    7  CASE NOTES     — the fixture has found nothing
     //    9  SWITCH CHARACTER — `canSwitchCharacter` is absent (not signed in)
     //
+    // IT WAS SEVEN, AND `7 CASE NOTES — the fixture has found nothing` WAS THE
+    // THIRD GAP. The Journal is never greyed: it has a KEY on it now
+    // (`show_journal`), a key cannot be greyed, and two controls for one panel
+    // disagreeing about whether the panel opens is the failure the row's own
+    // note names. It opens on an empty archive and says so in words instead.
+    //
     // The fixture IS in a party, so LEAVE PARTY at 8 answers. UI SIZE at 2 CAN
-    // be a fourth gap — it greys on a window with no room for a second interface
+    // be a third gap — it greys on a window with no room for a second interface
     // factor — but the fixture leaves `uiScaleFixed` absent, which reads as a
     // window that has room. `the ui-size row` below scans the greyed case.
-    expect(seen).toEqual([0, 1, 2, 4, 5, 6, 8]);
+    expect(seen).toEqual([0, 1, 2, 4, 5, 6, 7, 8]);
   });
 
   it('answers the × in the header and nothing else up there', () => {
@@ -511,13 +528,21 @@ describe('the keys screen', () => {
 
   it('shows both columns as a player reads them, and `--` for an empty slot', () => {
     // KeyBind.lua:158-160's own first line is `if not ks then return "--" end`.
-    // NEVER the stored form: a row reading `key:h` leaks a serialisation.
+    // NEVER the stored form: a row reading `key:w` leaks a serialisation.
     const north = actionRows(keysRows()).find((row) => row.actionId === 'move_north');
-    expect(north?.slots[0]).toBe('K');
+    expect(north?.slots[0]).toBe('W');
     expect(north?.slots[1]).toBe('--');
-    // ...and the PERMANENT FLOOR is on the row too, so a player who rewrote `k`
-    // can see that the arrows and the numpad still walk them north.
-    expect(north?.fixed).toBe('Up / Num8');
+    // ...and the PERMANENT FLOOR is on the row too, so a player who rewrote `w`
+    // can see that the numpad still walks them north. IT USED TO READ
+    // 'Up / Num8': the arrows left movement's floor with the WASD ruling, and a
+    // row still naming them would promise a key that no longer walks.
+    expect(north?.fixed).toBe('Num8');
+    // A DIAGONAL SHIPS WITH BOTH SLOTS EMPTY AND ITS NUMPAD KEY ON THE ROW. That
+    // is the whole of north-east, and the screen has to say so — otherwise the
+    // only place the ruling is visible is a file no player opens.
+    const northeast = actionRows(keysRows()).find((row) => row.actionId === 'move_northeast');
+    expect(northeast?.slots).toEqual(['--', '--']);
+    expect(northeast?.fixed).toBe('Num9');
   });
 
   it('marks every locked action, and a reason is reachable for each', () => {
@@ -909,21 +934,35 @@ describe('reset', () => {
     // mutated — the trap KeyBinder.lua:96-103 falls into by storing
     // `t.k.default` by reference and then writing through it, which is why
     // upstream has no reset button at all.
-    const rebound: KeyRemap = { say: ['key:q'], move_north: ['key:w'] };
+    // `key:t`, WHERE THIS READ `key:w`: `w` is north's shipped default now, so
+    // the row would have drawn 'W' whether the overlay was honoured or ignored.
+    const rebound: KeyRemap = { say: ['key:q'], move_north: ['key:t'] };
     expect(labelFor('say', compileKeymap(ACTIONS, rebound), 0)).toBe('Q');
 
     const after = resetOne(rebound, 'say');
     expect(labelFor('say', compileKeymap(ACTIONS, after), 0)).toBe('Enter');
     // ...and it leaves everything else exactly where the player put it.
-    expect(labelFor('move_north', compileKeymap(ACTIONS, after), 0)).toBe('W');
+    expect(labelFor('move_north', compileKeymap(ACTIONS, after), 0)).toBe('T');
   });
 
   it('puts EVERYTHING back, and an empty overlay is a real value', () => {
     // `binds: {}` on the wire is RESET ALL and is not a missing field.
-    expect(resetAll()).toEqual({});
+    //
+    // WAS `expect(resetAll()).toEqual({})`. The overlay keeps the migration
+    // stamp and nothing else — an overlay WITHOUT it is one the one-time upgrade
+    // rules will run against again, so a bare `{}` here would mean RESET ALL
+    // silently re-armed them. See `KEYMAP_GEN_ID`. Nothing an ACTION owns
+    // survives, which is what the labels below assert.
+    expect(Object.keys(resetAll())).toEqual([KEYMAP_GEN_ID]);
     const km = compileKeymap(ACTIONS, resetAll());
     expect(labelFor('say', km, 0)).toBe('Enter');
-    expect(labelFor('move_north', km, 0)).toBe('K');
+    // RESET ALL RESTORES THE *NEW* DEFAULTS, which is the half of the WASD
+    // ruling a player reaches for when they have made a mess of the screen.
+    expect(labelFor('move_north', km, 0)).toBe('W');
+    expect(labelFor('move_west', km, 0)).toBe('A');
+    expect(labelFor('move_south', km, 0)).toBe('S');
+    expect(labelFor('move_east', km, 0)).toBe('D');
+    expect(labelFor('move_northeast', km, 0)).toBe('--');
   });
 });
 
@@ -1087,7 +1126,9 @@ describe('drawing', () => {
     expect(pager).toMatch(/^\d+–\d+ of \d+$/);
     expect(pager).toContain(` of ${String(ACTIONS.length)}`);
     // The permanent floor is on the row, so a rebind cannot look like a break.
-    expect(texts.some((t) => t.includes('Up / Num8'))).toBe(true);
+    // 'Up / Num8' until the arrows left movement; 'Num8' is the whole floor now.
+    expect(texts.some((t) => t.includes('Num8'))).toBe(true);
+    expect(texts.some((t) => t.includes('Up'))).toBe(false);
   });
 
   it('marks a locked row with the WORD and the reason, not with a colour', () => {
@@ -1104,6 +1145,45 @@ describe('drawing', () => {
     // Not truncated: the whole point of the taller locked row is that the reason
     // survives, and `fitText` here measures at the real six pixels a character.
     expect(locked.some((t) => !t.endsWith('…'))).toBe(true);
+  });
+
+  it('paints the LOCKED line only on a row that was given space for one', () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * `rowHeight` PAYS FOR `reason !== null`; THE PAINTER ASKED `locked`.
+     * ═══════════════════════════════════════════════════════════════════════
+     * Two questions about one row, and they stopped agreeing the day
+     * `sharedLockReason` moved the hotbar's explanation up to its GROUP: nine of
+     * the ten locked rows then had `reason: null`, were allotted `ROW_H`, and
+     * painted `LOCKED · ` into the ten pixels belonging to the row BELOW. Talent
+     * slots 2–9 rendered as the word overprinted on their own names and a stray
+     * `LOCKED ·` landed across the `Log` group heading — found on a rendered
+     * contact sheet, two rows under the new Journal row.
+     *
+     * The count IS the assertion: ten locked rows, one reason, one line.
+     */
+    const rows = keysRows();
+    const withReason = rows.filter(
+      (row) => row.kind === MenuRowKind.Action && row.locked && row.reason !== null,
+    ).length;
+    const lockedRows = rows.filter((row) => row.kind === MenuRowKind.Action && row.locked).length;
+    // THE FIXTURE IS THE HAZARD ITSELF: if every locked row carried a reason the
+    // two questions would agree and this test could not fail.
+    expect(lockedRows).toBeGreaterThan(withReason);
+
+    const pages = escapeMenuPaging(roomyRect(), rows).pageCount;
+    const texts: string[] = [];
+    for (let page = 0; page < pages; page += 1) {
+      texts.push(...paint(view({ screen: MenuScreen.Keys, page })).texts);
+    }
+    const locked = texts.filter((t) => t.startsWith(LOCKED_WORD));
+    expect(locked).toHaveLength(withReason);
+    // ...and no line was ever painted with a missing reason after the dot,
+    // which is the shape the bug printed.
+    for (const line of locked) {
+      expect(line).toMatch(/^LOCKED · \S/);
+      expect(line).not.toContain('null');
+    }
   });
 
   it('paints the armed prompt only while something is armed, with a marker', () => {
@@ -1263,7 +1343,7 @@ describe('the escape menu is sized for the screen it is showing', () => {
 
   it('ellipsises nothing on either screen at any viewport', () => {
     const bad: string[] = [];
-    for (const screen of [MenuScreen.Root, MenuScreen.Keys, MenuScreen.Notes]) {
+    for (const screen of [MenuScreen.Root, MenuScreen.Keys, MenuScreen.Journal]) {
       for (const [w, h] of VIEWPORTS) {
         for (const text of paintAt(w, h, screen)) {
           if (text.includes('…')) bad.push(`${String(screen)} ${String(w)}x${String(h)}: ${text}`);
@@ -1274,7 +1354,7 @@ describe('the escape menu is sized for the screen it is showing', () => {
   });
 
   it('never draws outside the window it is centred in', () => {
-    for (const screen of [MenuScreen.Root, MenuScreen.Keys, MenuScreen.Notes]) {
+    for (const screen of [MenuScreen.Root, MenuScreen.Keys, MenuScreen.Journal]) {
       for (const [w, h] of VIEWPORTS) {
         const rect = rectAt(w, h, screen);
         expect(rect?.x ?? -1, `${String(screen)} ${String(w)} left`).toBeGreaterThanOrEqual(0);
@@ -1290,7 +1370,7 @@ describe('the escape menu is sized for the screen it is showing', () => {
     // The growth rule must not have widened what the panel ACCEPTS — a keys
     // screen that opened into a band the root refuses would draw over the
     // hotbar.
-    for (const screen of [MenuScreen.Root, MenuScreen.Keys, MenuScreen.Notes]) {
+    for (const screen of [MenuScreen.Root, MenuScreen.Keys, MenuScreen.Journal]) {
       expect(
         escapeMenuRect({ width: 640, height: 400, top: 0, bottom: 10, screen }),
         String(screen),
@@ -1794,22 +1874,564 @@ describe('the ui-size row', () => {
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════
- * `ShowLore` — the archive, on the surface upstream's own text names.
+ * THE JOURNAL — `ShowQuests`'s list over `ShowLore`'s archive, on one surface.
  * ═══════════════════════════════════════════════════════════════════════════
  *
- * `learnLore` tells the player *"You can read all your collected lore in the game
- * menu, by pressing Escape"*, so this screen is the port and the escape menu is
- * where it belongs. Upstream opens the note you pick in a second dialog; ours
- * unfolds it in place, because this surface is one rect with one hit test.
+ * IT WAS `the case notes screen`, and every assertion in it is still here.
+ * Ruled: *"case notes should actually be 'Journal' which will serve as a quest
+ * log/ similar"*. The notes half is untouched — `learnLore` tells the player
+ * *"You can read all your collected lore in the game menu, by pressing
+ * Escape"*, so that half is the port and the escape menu is where it belongs,
+ * and ours unfolds in place because this surface is one rect with one hit test.
+ *
+ * What is new is a QUESTS section above it, whose SHAPE is
+ * `engine/dialogs/ShowQuests.lua` and which no producer fills in this build.
+ * The cases below are therefore mostly about what an EMPTY section says.
  */
-describe('the case notes screen', () => {
+describe('the Journal screen', () => {
   const NOTES = [
     { id: 'a', category: 'the index', name: 'Intake Form', text: 'One two three.' },
     { id: 'b', category: 'the index', name: 'A Ledger Page', text: 'Four five six.' },
     { id: 'c', category: 'alderbrook', name: 'Canal Survey', text: 'Seven eight nine.' },
   ];
   const notesView = (over: Partial<EscapeMenuView> = {}) =>
-    view({ screen: MenuScreen.Notes, notes: NOTES, ...over });
+    view({ screen: MenuScreen.Journal, notes: NOTES, ...over });
+  const sections = (rows: readonly MenuRow[]) =>
+    rows.flatMap((row) => (row.kind === MenuRowKind.Section ? [row.label] : []));
+  const lines = (rows: readonly MenuRow[]) =>
+    rows.flatMap((row) => (row.kind === MenuRowKind.Note ? [row.text] : []));
+
+  it('is titled JOURNAL, and the other two screens keep their own titles', () => {
+    // THE HEADER USED TO ASK ONE QUESTION — "is this the Keys screen?" — so this
+    // screen opened under `GAME MENU`. Harmless while the only way in was a row
+    // of the game menu; a lie the moment a KEY opens it, because a player who
+    // pressed `j` and read `GAME MENU` has been told the key missed.
+    expect(menuTitle(MenuScreen.Journal)).toBe('JOURNAL');
+    expect(menuTitle(MenuScreen.Root)).toBe('GAME MENU');
+    expect(menuTitle(MenuScreen.Keys)).toBe('KEY BINDINGS');
+  });
+
+  it('has exactly two sections, QUESTS first', () => {
+    // ORDER IS THE CLAIM. Upstream's journal IS the quest log
+    // (`engine/dialogs/ShowQuests.lua`) and the lore is a dialog of its own
+    // (`modules/tome/dialogs/ShowLore.lua`), so the half that carries the name
+    // goes at the top — and it is the half a player opens this mid-fight to
+    // read. Asserted on a FULL journal and on an empty one, because an empty
+    // section that quietly dropped its heading would leave one section looking
+    // like the whole screen.
+    expect(sections(escapeMenuRows(notesView()))).toEqual(['QUESTS', 'NOTES']);
+    expect(sections(escapeMenuRows(notesView({ notes: [], quests: [] })))).toEqual([
+      'QUESTS',
+      'NOTES',
+    ]);
+  });
+
+  it('lists a quest by name and status, as text rather than as a control', () => {
+    // ═══ REAL, AND NOT A HARD-CODED EMPTY LIST ═══
+    // Nothing in this build produces a quest, so the section could have been a
+    // heading and two dead lines. It is not: handed rows it draws them, which is
+    // what makes the empty state below a STATE rather than the only behaviour.
+    // The shape is `ShowQuests.lua:89`'s list row and `:38-41`'s two columns.
+    const rows = escapeMenuRows(
+      notesView({
+        quests: [
+          { id: 'q1', name: 'The one that kept its name', status: 'active' },
+          { id: 'q2', name: 'Walk the surveyor out', status: 'done' },
+        ],
+      }),
+    );
+    expect(lines(rows)).toContain('The one that kept its name — active');
+    expect(lines(rows)).toContain('Walk the surveyor out — done');
+    // NOT AN `Entry`. An Entry is a CONTROL — it lights, it answers a click and
+    // it carries an effect — and a quest row has nothing to do when pressed in
+    // this build. The three entries here are the three NOTES and nothing else.
+    expect(entryRows(rows).map((row) => row.label)).toEqual([
+      '+ Intake Form',
+      '+ A Ledger Page',
+      '+ Canal Survey',
+    ]);
+  });
+
+  it('says QUESTS is empty without promising anything about when it will not be', () => {
+    // ═══ THE EMPTY STATE MUST NOT LIE ABOUT WHAT WILL APPEAR HERE ═══
+    // The temptation is "coming soon" or a feature name. Both are dated the
+    // moment they are written and neither is something a player can act on;
+    // `deferral-notes-rot` is what they become. So the line describes the
+    // SECTION, in the present tense, and this asserts the absence of the
+    // shapes that would make it a promise.
+    const rows = escapeMenuRows(notesView({ quests: [] }));
+    // ONE ROW, NOT TWO. It was two lines and the second cost a note-body line at
+    // the floor viewport — see `escapeMenuRect`'s `tall`, which measures it.
+    const empty = lines(rows).filter((text) => text.startsWith('Nothing on hand'));
+    expect(empty).toHaveLength(1);
+    const said = lines(rows).join(' ').toLowerCase();
+    for (const promise of ['soon', 'will be', 'not implemented', 'todo', 'wip', 'later']) {
+      expect(said, `the empty state promised: ${promise}`).not.toContain(promise);
+    }
+    // ...AND IT STILL SAYS WHAT THE SECTION HOLDS, or the heading is a word with
+    // nothing under it and a player learns nothing from opening the screen.
+    expect(said).toContain('work you take on');
+  });
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE ROW BUDGET, WHICH THE TWO SECTIONS SPENT AND THE PANEL HAD TO GET BACK.
+   * ═══════════════════════════════════════════════════════════════════════════
+   * Two `Section` rows and an empty-quests line are 48 pixels off a 212-pixel
+   * body. Measured against the archive this build ships — five notes, three
+   * categories, one unfolded — that is 166 pixels before and 214 after, so the
+   * screen went over at EVERY viewport and this surface has no pager. The fix is
+   * the height half of the Keys screen's growth rule, and these two cases are
+   * what stop it being quietly taken away again.
+   */
+  it('is at least as tall as the root, and taller wherever the band allows', () => {
+    const at = (w: number, h: number, screen: MenuScreen) =>
+      escapeMenuRect({ width: w, height: h, top: 20, bottom: h - 40, screen });
+    let grewSomewhere = false;
+    for (const [w, h] of [
+      [640, 320],
+      [640, 400],
+      [772, 480],
+      [1024, 600],
+      [1280, 720],
+    ] as const) {
+      const journal = at(w, h, MenuScreen.Journal)?.h ?? 0;
+      const root = at(w, h, MenuScreen.Root)?.h ?? 0;
+      // NEVER SMALLER. `KEYS_FILL_H` is a floor-RAISING rule, so the worst case
+      // is the 252 this screen had — which is exactly what happens at the floor.
+      expect(journal, `${String(w)}x${String(h)}`).toBeGreaterThanOrEqual(root);
+      if (journal > root) grewSomewhere = true;
+      // AND NOT WIDER. A note body wraps at a fixed character count, so a
+      // 560-pixel Journal is a 58-character column with air beside it.
+      expect(at(w, h, MenuScreen.Journal)?.w).toBe(at(w, h, MenuScreen.Root)?.w);
+    }
+    expect(grewSomewhere, 'the Journal never grew at any viewport').toBe(true);
+  });
+
+  it('says what did not fit rather than dropping it, when it cannot all fit', () => {
+    // THE FLOOR VIEWPORT IS A 260-PIXEL BAND and nothing in the rect arithmetic
+    // can beat that, so a long note unfolded there still overflows. What must
+    // never happen is the silent drop: `escapeMenuGeometry` reserves the last
+    // line for the count, and this is the Journal asking for it.
+    const many = Array.from({ length: 24 }, (_, i) => ({
+      id: `n${String(i)}`,
+      category: 'the index',
+      name: `Note number ${String(i)}`,
+      text: 'body',
+    }));
+    const rect = escapeMenuRect({
+      width: 640,
+      height: 320,
+      top: 20,
+      bottom: 280,
+      screen: MenuScreen.Journal,
+    });
+    expect(rect).not.toBeNull();
+    const texts: string[] = [];
+    // A CONTEXT THAT MEASURES — six pixels a character, which is what the 10px
+    // monospace actually measures. A stub answering zero would make everything
+    // fit and this case would pass on a panel one pixel tall.
+    const ctx = new Proxy(
+      {},
+      {
+        get: (_target, prop: string) => {
+          if (prop === 'measureText') return (text: string) => ({ width: text.length * 6 });
+          if (prop === 'fillText')
+            return (text: string) => {
+              texts.push(text);
+            };
+          if (prop === 'canvas') return undefined;
+          return () => {};
+        },
+        set: () => true,
+      },
+    ) as unknown as CanvasRenderingContext2D;
+    drawEscapeMenu({
+      ctx,
+      sprites: { sprite: () => undefined },
+      rect: rect ?? { x: 0, y: 0, w: 0, h: 0 },
+      screen: MenuScreen.Journal,
+      rows: escapeMenuRows(notesView({ notes: many })),
+      hoveredClose: false,
+      hovered: null,
+    });
+    expect(texts.some((text) => text.includes('panel too small'))).toBe(true);
+  });
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * A CONTEXT THAT MEASURES AND REMEMBERS WHERE EACH LINE LANDED.
+   * ═══════════════════════════════════════════════════════════════════════════
+   * The block above records the STRINGS. Three of the cases below are about
+   * geometry — a heading with nothing under it, a `Section` row that takes no
+   * space, a panel sized to the wrong thing — and none of them can be asked of a
+   * list of strings. Six pixels a character is what the 10px monospace measures;
+   * a stub answering zero would make every case fit and every assertion vacuous.
+   */
+  function painted(rect: PanelRect, rows: readonly MenuRow[], screen: MenuScreen) {
+    const lines: { text: string; x: number; y: number }[] = [];
+    const ctx = new Proxy(
+      {},
+      {
+        get: (_target, prop: string) => {
+          if (prop === 'measureText') return (text: string) => ({ width: text.length * 6 });
+          if (prop === 'fillText')
+            return (text: string, x: number, y: number) => {
+              lines.push({ text, x, y });
+            };
+          if (prop === 'canvas') return undefined;
+          return () => {};
+        },
+        set: () => true,
+      },
+    ) as unknown as CanvasRenderingContext2D;
+    drawEscapeMenu({
+      ctx,
+      sprites: { sprite: () => undefined },
+      rect,
+      screen,
+      rows,
+      hoveredClose: false,
+      hovered: null,
+    });
+    return lines;
+  }
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE RENAME IS NOT ALLOWED TO COST A PLAYER A ROW THEY COULD READ BEFORE.
+   * ═══════════════════════════════════════════════════════════════════════════
+   * Measured through the real painter against the screen this one replaced: at
+   * 640x320, the DECLARED FLOOR, the Case Notes screen showed 5 of its 5 notes
+   * and the first Journal showed 3, because two `Section` rows and an empty
+   * quests line are 48 pixels off a body of 212 — and this surface has no pager
+   * and no scroll. In combat it was 3 before and 1 after. Every window under
+   * about 352 logical pixels tall was in the gap.
+   *
+   * The row that goes is the one carrying nothing a player came for.
+   */
+  it('drops the EMPTY quests section rather than a note, at the floor viewport', () => {
+    const five = Array.from({ length: 5 }, (_, i) => ({
+      id: `n${String(i)}`,
+      category: i < 2 ? 'the index' : 'alderbrook',
+      name: `Note number ${String(i)}`,
+      text: 'One two three four five.',
+    }));
+    // THE REAL BAND AT THE FLOOR: `panelBand` is `H - 120` with the fight over,
+    // so 640x320 is 200 pixels and not the 260 a naive `bottom - 40` suggests.
+    // One note is UNFOLDED, which is how the archive was measured and is the
+    // state a player reading their journal is actually in.
+    const rows = escapeMenuRows(notesView({ notes: five, openNote: 'n0' }));
+    const rect = escapeMenuRect({
+      width: 640,
+      height: 320,
+      top: 20,
+      bottom: 220,
+      screen: MenuScreen.Journal,
+      rows,
+    });
+    expect(rect).not.toBeNull();
+    const texts = painted(rect ?? { x: 0, y: 0, w: 0, h: 0 }, rows, MenuScreen.Journal).map(
+      (line) => line.text,
+    );
+    // EVERY NOTE IS REACHABLE. This is the regression, stated as the thing a
+    // player does: open the Journal at the smallest supported window and read
+    // what is in it.
+    const shown = texts.map((text) => text.trim());
+    for (const note of five) {
+      expect(shown, note.name).toContain(note.id === 'n0' ? `- ${note.name}` : `+ ${note.name}`);
+    }
+    // ...and nothing says "N more", because nothing was dropped that matters.
+    expect(texts.some((text) => text.includes('panel too small'))).toBe(false);
+    // WHAT WENT: the empty section, HEADING AND PLACEHOLDER TOGETHER. A heading
+    // with neither contents nor placeholder is worse than no heading.
+    expect(texts).not.toContain('QUESTS');
+    expect(texts.some((text) => text.includes('work you take on'))).toBe(false);
+    // ...and the section that HAS something is untouched.
+    expect(texts).toContain('NOTES');
+  });
+
+  it('keeps QUESTS at the same viewport the moment there is a quest in it', () => {
+    // The other half, and the deliverable: the section is dropped for being
+    // EMPTY, never for being quests.
+    const five = Array.from({ length: 5 }, (_, i) => ({
+      id: `n${String(i)}`,
+      category: 'the index',
+      name: `Note number ${String(i)}`,
+      text: 'One two three four five.',
+    }));
+    const rows = escapeMenuRows(
+      notesView({ notes: five, quests: [{ id: 'q', name: 'Ashes', status: 'active' }] }),
+    );
+    const rect = escapeMenuRect({
+      width: 640,
+      height: 320,
+      top: 20,
+      bottom: 220,
+      screen: MenuScreen.Journal,
+      rows,
+    });
+    const texts = painted(rect ?? { x: 0, y: 0, w: 0, h: 0 }, rows, MenuScreen.Journal).map(
+      (line) => line.text,
+    );
+    expect(texts).toContain('QUESTS');
+    expect(texts).toContain('Ashes — active');
+  });
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * AS TALL AS WHAT IT HOLDS. AN EMPTY PANEL MUST NOT READ AS A BROKEN ONE.
+   * ═══════════════════════════════════════════════════════════════════════════
+   * The growth rule was borrowed from the Keys screen, which EARNS it by always
+   * filling. This screen does not: rendered at 1920x1080 an empty Journal was a
+   * 360x704 box around about ninety pixels of rows — roughly 590 pixels of blank
+   * parchment — and at the Activity viewport 360x295 for the same four rows.
+   */
+  it('sizes itself to its contents, between the compact floor and the fill ceiling', () => {
+    const opts = { width: 1280, height: 720, top: 20, bottom: 680 } as const;
+    const empty = escapeMenuRect({
+      ...opts,
+      screen: MenuScreen.Journal,
+      rows: escapeMenuRows(view({ screen: MenuScreen.Journal })),
+    });
+    const many = Array.from({ length: 80 }, (_, i) => ({
+      id: `n${String(i)}`,
+      category: 'the index',
+      name: `Note number ${String(i)}`,
+      text: 'body',
+    }));
+    const full = escapeMenuRect({
+      ...opts,
+      screen: MenuScreen.Journal,
+      rows: escapeMenuRows(notesView({ notes: many })),
+    });
+    const root = escapeMenuRect({ ...opts, screen: MenuScreen.Root });
+    const ceiling = escapeMenuRect({ ...opts, screen: MenuScreen.Journal });
+    expect(empty?.h ?? 0).toBeLessThan(full?.h ?? 0);
+    // NEVER BELOW THE COMPACT PANEL and never above what the band allows: the
+    // two bounds the growth rule already had are unchanged.
+    expect(empty?.h ?? 0).toBe(root?.h ?? 0);
+    expect(full?.h ?? 0).toBe(ceiling?.h ?? 0);
+    // AND THE KEYS SCREEN DOES NOT MOVE. It earns the fill — it is the one
+    // surface with more rows than fit and a pager on a footer, and every pixel
+    // is a key the player does not have to page to. Sizing it from its contents
+    // would shrink it at exactly the viewports where everything already fits: no
+    // rows gained, a working screen changed.
+    expect(
+      escapeMenuRect({
+        ...opts,
+        screen: MenuScreen.Keys,
+        rows: escapeMenuRows(view({ screen: MenuScreen.Keys })),
+      })?.h,
+    ).toBe(escapeMenuRect({ ...opts, screen: MenuScreen.Keys })?.h);
+  });
+
+  /**
+   * A LORE CATEGORY IS A HEADING, AND THE ORPHAN RULE ONLY KNEW ABOUT SECTIONS.
+   *
+   * `journalRows` makes a category a `Note` on purpose, so `place`'s rule — "a
+   * heading carries the first row after it" — did not apply to it. Seen on a
+   * rendered sheet at two viewports: `ALDERBROOK` as the last row on the panel
+   * with `7 more — panel too small` directly underneath, which is a heading
+   * labelling the message that says its contents were dropped.
+   */
+  it('never leaves a category heading as the last row with nothing under it', () => {
+    const notes = Array.from({ length: 14 }, (_, i) => ({
+      id: `n${String(i)}`,
+      // A NEW CATEGORY EVERY OTHER NOTE, so a heading lands near the cut at
+      // several different panel heights rather than at one lucky one.
+      category: `shelf ${String(Math.floor(i / 2))}`,
+      name: `Note number ${String(i)}`,
+      text: 'body',
+    }));
+    const rows = escapeMenuRows(notesView({ notes }));
+    const headings = new Set(
+      rows.flatMap((row) =>
+        row.kind === MenuRowKind.Note && row.heading === true ? [row.text] : [],
+      ),
+    );
+    expect(headings.size).toBe(7);
+    for (let h = 180; h <= 420; h += 12) {
+      const rect = escapeMenuRect({
+        width: 640,
+        height: h + 60,
+        top: 20,
+        bottom: h + 20,
+        screen: MenuScreen.Journal,
+        rows,
+      });
+      if (rect === null) continue;
+      const texts = painted(rect, rows, MenuScreen.Journal).map((line) => line.text);
+      // TRIMMED: entry labels are painted with the row's own indent.
+      const body = texts
+        .map((text) => text.trim())
+        .filter(
+          (text) => headings.has(text) || text.startsWith('+ ') || text.includes('panel too small'),
+        );
+      const last = body[body.length - 1];
+      const cut = last !== undefined && last.includes('panel too small') ? body.length - 2 : -1;
+      const tail = cut >= 0 ? body[cut] : last;
+      expect(tail === undefined || !headings.has(tail), `band ${String(h)}: ${String(tail)}`).toBe(
+        true,
+      );
+    }
+  });
+
+  /**
+   * THE STATUS IS THE ONLY THING A QUEST ROW EXISTS TO SAY.
+   *
+   * `${name} — ${status}` went through `fitText`, which cuts from the RIGHT, so
+   * a long quest name took the status with it — the column upstream keeps in a
+   * pane of its own (`ShowQuests.lua:38-41`). "Ashes of Alderbrook" is a name
+   * the player already knows; "done" is what they opened the Journal for.
+   */
+  it('keeps a quest status even when the name is far too long for the column', () => {
+    const rows = escapeMenuRows(
+      notesView({
+        quests: [
+          {
+            id: 'q',
+            name: 'The Exceedingly Long And Overwrought Matter Of The Alderbrook Canal Survey Commission',
+            status: 'completed',
+          },
+        ],
+      }),
+    );
+    const line = rows.flatMap((row) =>
+      row.kind === MenuRowKind.Note && row.text.includes('completed') ? [row.text] : [],
+    );
+    expect(line).toHaveLength(1);
+    expect(line[0]?.endsWith(' — completed')).toBe(true);
+    // ...and the whole thing still fits the column this panel wraps note bodies
+    // at, so the painter has nothing left to cut.
+    expect((line[0] ?? '').length).toBeLessThanOrEqual(58);
+  });
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * A SECTION HEADING OCCUPIES SPACE, WHICH THE WHOLE SIZING CASE RESTS ON.
+   * ═══════════════════════════════════════════════════════════════════════════
+   * The argument for every pixel this screen was given — "two `Section` rows and
+   * an empty-quests line are 48 pixels off a body of 212" — is only true if
+   * `rowHeight` charges for a `Section`. Making it return zero left the row list
+   * correct, the rect correct and the overflow line correct, and painted both
+   * headings on top of the first row beneath them. Nothing could see it, because
+   * every assertion on this screen was about STRINGS.
+   */
+  it('lays each heading above the rows it labels, with real space between them', () => {
+    const rows = escapeMenuRows(
+      notesView({ quests: [{ id: 'q', name: 'Ashes', status: 'active' }] }),
+    );
+    const rect = escapeMenuRect({
+      width: 1280,
+      height: 720,
+      top: 20,
+      bottom: 680,
+      screen: MenuScreen.Journal,
+      rows,
+    });
+    expect(rect).not.toBeNull();
+    const lines = painted(rect ?? { x: 0, y: 0, w: 0, h: 0 }, rows, MenuScreen.Journal);
+    const y = (text: string) => lines.find((line) => line.text.trim() === text)?.y;
+    const order = ['QUESTS', 'Ashes — active', 'NOTES', 'THE INDEX', '+ Intake Form'];
+    const seen = order.map((text) => y(text));
+    for (const [i, value] of seen.entries()) {
+      expect(value, order[i]).toBeDefined();
+    }
+    for (let i = 1; i < seen.length; i += 1) {
+      // STRICTLY BELOW. A zero-height heading puts these two on the same
+      // baseline, which is the mutant.
+      expect(seen[i] ?? 0, `${String(order[i - 1])} -> ${String(order[i])}`).toBeGreaterThan(
+        seen[i - 1] ?? 0,
+      );
+    }
+  });
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE KEYBOARD MAY NOT REACH A ROW THE POINTER CANNOT.
+   * ═══════════════════════════════════════════════════════════════════════════
+   * `moveMenuSelection` walked the whole ROW LIST while the geometry truncates,
+   * so on a short window the marker stepped onto a note that is not drawn and
+   * Enter unfolded it, invisibly. The pointer could never land there —
+   * `escapeMenuHitAt` answers from the placed rows — so the two hands disagreed
+   * about what the panel contained. Both read this one function now.
+   */
+  it('offers the keyboard exactly the entries the hit test can answer for', () => {
+    const many = Array.from({ length: 24 }, (_, i) => ({
+      id: `n${String(i)}`,
+      category: 'the index',
+      name: `Note number ${String(i)}`,
+      text: 'body',
+    }));
+    const rows = escapeMenuRows(notesView({ notes: many }));
+    const rect = escapeMenuRect({
+      width: 640,
+      height: 320,
+      top: 20,
+      bottom: 220,
+      screen: MenuScreen.Journal,
+      rows,
+    });
+    expect(rect).not.toBeNull();
+    const panel = rect ?? { x: 0, y: 0, w: 0, h: 0 };
+    const visible = escapeMenuVisibleEntries(panel, rows);
+    // THE FIXTURE IS THE HAZARD: the panel must genuinely be too small, or
+    // "visible" and "every row" are the same list and nothing is being asked.
+    const all = rows.flatMap((row) =>
+      row.kind === MenuRowKind.Entry && row.enabled ? [row.index] : [],
+    );
+    expect(all.length).toBeGreaterThan(visible.length);
+    expect(visible.length).toBeGreaterThan(0);
+
+    // EVERY OFFERED INDEX IS SOMEWHERE ON THE PANEL, asked of the real hit test
+    // by sweeping the column the rows occupy.
+    const reachable = new Set<number>();
+    for (let y = panel.y; y < panel.y + panel.h; y += 1) {
+      const hit = escapeMenuHitAt(panel, rows, panel.x + panel.w / 2, y);
+      if (hit?.kind === MenuHitKind.Entry) reachable.add(hit.index);
+    }
+    expect([...visible].sort((a, b) => a - b)).toEqual([...reachable].sort((a, b) => a - b));
+    // ...and it is in READING ORDER, which is the order a selection walks.
+    expect(visible).toEqual([...visible].sort((a, b) => a - b));
+  });
+
+  it('keeps the EMPTY quests section wherever there is room for it', () => {
+    // The other side of the drop rule, and the deliverable itself: the section
+    // is dropped for not FITTING, never for being empty. A rule that dropped it
+    // whenever it could would delete the ruling — the empty state is the whole
+    // point of shipping `QUESTS` before there is a quest to put in it.
+    const rows = escapeMenuRows(notesView());
+    const rect = escapeMenuRect({
+      width: 1280,
+      height: 720,
+      top: 20,
+      bottom: 680,
+      screen: MenuScreen.Journal,
+      rows,
+    });
+    const texts = painted(rect ?? { x: 0, y: 0, w: 0, h: 0 }, rows, MenuScreen.Journal).map(
+      (line) => line.text,
+    );
+    expect(texts).toContain('QUESTS');
+    expect(texts.some((text) => text.includes('work you take on'))).toBe(true);
+    // ...and on a completely empty journal, where BOTH sections are placeholders
+    // and dropping them would leave a panel with nothing in it at all.
+    const bare = escapeMenuRows(view({ screen: MenuScreen.Journal }));
+    const bareRect = escapeMenuRect({
+      width: 1280,
+      height: 720,
+      top: 20,
+      bottom: 680,
+      screen: MenuScreen.Journal,
+      rows: bare,
+    });
+    const bareTexts = painted(bareRect ?? { x: 0, y: 0, w: 0, h: 0 }, bare, MenuScreen.Journal).map(
+      (line) => line.text,
+    );
+    expect(bareTexts).toContain('QUESTS');
+    expect(bareTexts).toContain('NOTES');
+  });
 
   it('lists every note, under a heading per category', () => {
     const rows = escapeMenuRows(notesView());
@@ -1818,14 +2440,17 @@ describe('the case notes screen', () => {
       '+ A Ledger Page',
       '+ Canal Survey',
     ]);
-    // THE HEADINGS ARE `Note` ROWS, not `Section`: a `Section` carries a
-    // `KeyGroup`, which is the keybind screen's vocabulary and has no business
-    // learning what a lore category is.
-    const headings = rows.flatMap((row) => (row.kind === MenuRowKind.Note ? [row.text] : []));
+    // THE CATEGORY HEADINGS ARE `Note` ROWS, not `Section` — and now they HAVE
+    // to be: the two `Section` rows are the structure of this screen, so a lore
+    // category promoted to that weight would read as a third peer of QUESTS and
+    // NOTES rather than as a shelf inside one of them.
+    const headings = lines(rows);
     expect(headings).toContain('THE INDEX');
     expect(headings).toContain('ALDERBROOK');
     // ONE HEADING PER RUN, not one per note — two notes share `the index`.
     expect(headings.filter((h) => h === 'THE INDEX')).toHaveLength(1);
+    // AND NEITHER CATEGORY BECAME A SECTION.
+    expect(sections(rows)).not.toContain('THE INDEX');
   });
 
   /**
@@ -1849,8 +2474,52 @@ describe('the case notes screen', () => {
   it('says so plainly when nothing has been found', () => {
     const rows = escapeMenuRows(notesView({ notes: [] }));
     expect(entryRows(rows)).toHaveLength(0);
-    expect(rows.flatMap((row) => (row.kind === MenuRowKind.Note ? [row.text] : []))).toContain(
-      'Nothing written down yet.',
-    );
+    expect(lines(rows)).toContain('Nothing written down yet.');
+    // AND THE NOTES HEADING SURVIVES THE EMPTINESS, so an archive with nothing
+    // in it is still visibly one of the journal's two halves rather than a
+    // stray sentence under QUESTS.
+    expect(sections(rows)).toEqual(['QUESTS', 'NOTES']);
+  });
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE LAUNCHER: the row a player reads, and the suffix that survived.
+   * ═══════════════════════════════════════════════════════════════════════════
+   */
+  it('reads JOURNAL on its row, with the count only while there is one', () => {
+    const rowAt = (over: Partial<EscapeMenuView>) =>
+      entryRows(escapeMenuRows(view(over)))[ROW_JOURNAL];
+    // THE SUFFIX RULE IS `TALENTS (2)`'S, and it counts NOTES — the quests half
+    // has no producer, and a "total" would be this number wearing a name that
+    // promised more. `journalCount` is the one place that decides.
+    expect(rowAt({ notes: NOTES })?.label).toBe('JOURNAL (3)');
+    expect(rowAt({ notes: [] })?.label).toBe('JOURNAL');
+    expect(rowAt({})?.label).toBe('JOURNAL');
+    expect(rowAt({ notes: NOTES.slice(0, 1) })?.label).toBe('JOURNAL (1)');
+  });
+
+  it('is never greyed, because a key opens the same screen and a key cannot be', () => {
+    // ═══ IT USED TO GREY ON AN EMPTY ARCHIVE, WITH `nothing found yet` ═══
+    // That was right for a row that was the ONLY way in. `show_journal` is on
+    // `j` now, so greying it would leave two controls for one panel disagreeing
+    // about whether the panel exists — `membership-is-not-a-rank`, one level up
+    // from a list. And the screen is worth opening empty: it answers "what am I
+    // doing?", which has an answer from the first minute.
+    for (const notes of [[], NOTES]) {
+      const row = entryRows(escapeMenuRows(view({ notes })))[ROW_JOURNAL];
+      expect(row?.enabled).toBe(true);
+      expect(row?.reason).toBeNull();
+      expect(row?.effect).toEqual({ kind: 'journal' });
+    }
+  });
+
+  it('prints the LIVE journal key on its row, never a hard-coded J', () => {
+    // Every other screen row here reads its key off the keymap; a printed "J"
+    // would be a lie the moment somebody rebinds. Asserted BOTH ways, because a
+    // row that ignored the keymap would pass a default-only check.
+    const shipped = entryRows(escapeMenuRows(view()))[ROW_JOURNAL];
+    expect(shipped?.keyLabel).toBe(labelFor('show_journal', DEFAULT_KEYMAP));
+    const rebound = compileKeymap(ACTIONS, { show_journal: ['key:x'] });
+    expect(entryRows(escapeMenuRows(view({ keymap: rebound })))[ROW_JOURNAL]?.keyLabel).toBe('X');
   });
 });
