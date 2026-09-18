@@ -577,6 +577,61 @@ export function gainExp(level: number, xp: number, award: number, expMod = 1): E
 }
 
 /**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * `ActorLevel:forceLevelup(lev)` — engine/interface/ActorLevel.lua:137-147.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * ```lua
+ * --- Forces an actor to levelup to "lev"
+ * function _M:forceLevelup(lev)
+ *     while self.level < lev do
+ *         -- At max level, if any
+ *         if self.max_level and self.level >= self.max_level then break end
+ *         self.level = self.level + 1
+ *         self.exp = 0
+ *         self:levelup()
+ *     end
+ * end
+ * ```
+ *
+ * Pure, and it returns an `ExpGain` so that **the caller cannot tell it apart
+ * from `gainExp`**. That is the whole design of this function: the four things
+ * a level owes a character — the talent point, the generic, the attribute
+ * points and at ten a whole discipline — are paid out of `levelsGained` by
+ * `applyPendingLevels`, and a second path that set `level` without going
+ * through that number would be a character who arrived at floor 3 of the
+ * Undermost three levels up and four points short. Upstream avoids the same
+ * trap the same way: `forceLevelup` calls `levelup()` once per level rather
+ * than assigning the level and moving on.
+ *
+ * ═══ THREE PROPERTIES THAT MUST SURVIVE ═══
+ *
+ * 1. IT IS A FLOOR AND NEVER A SET. `while self.level < lev` — a character
+ *    already at or over `to` is untouched, and nobody is ever levelled DOWN.
+ *    This is what makes it safe to run on every arrival: walking back down to
+ *    floor 2 at level 9 does nothing at all.
+ * 2. `self.exp = 0` IS INSIDE THE LOOP (:143). Progress into the current level
+ *    is discarded, not carried — a forced level is a gift and does not also
+ *    bank the eleven experience you had towards the next one.
+ * 3. THE CAP STOPS IT (:141). `max_level` there, `MAX_CHARACTER_LEVEL` here.
+ *
+ * @param level the character's current level.
+ * @param xp its current PER-LEVEL xp, returned UNTOUCHED when no level is
+ *   forced. `self.exp = 0` is inside the loop (:143), so a floor that levels
+ *   nobody must not quietly empty the bar of everybody who walks across it.
+ * @param to the level the floor insists on.
+ */
+export function forceLevelup(level: number, xp: number, to: number): ExpGain {
+  let nextLevel = level;
+  // ActorLevel.lua:139-146, in its order: the cap check is INSIDE the loop and
+  // before the increment, so a character at the cap gains nothing and one below
+  // it climbs exactly as far as the cap.
+  while (nextLevel < to && nextLevel < MAX_CHARACTER_LEVEL) nextLevel += 1;
+  const levelsGained = nextLevel - level;
+  return { level: nextLevel, xp: levelsGained === 0 ? xp : 0, levelsGained };
+}
+
+/**
  * Talent points granted on REACHING `level`. One per level, two on every fifth.
  *
  * Actor.lua:3749-3752, the surviving half of `Actor:levelup()`:

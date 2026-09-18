@@ -99,6 +99,40 @@ describe('the grade sees what is actually in the room', () => {
     if (watcher === undefined) return;
     expect(dangerWord({ ...gentlest, boss: watcher })).toBe('grim');
   });
+
+  it('says so for a boss DRAWN on the map as well as one placed from the spec', () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * THE TUTORIAL PUBLISHED TO THE WORLD MAP AS `quiet`, HOLDING A WARDEN.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * `populateDelve` places `spec.boss`; the Undermost's warden is painted onto
+     * the last floor by glyph instead, because upstream's last level of Escape
+     * from Reknor is a static map with its bodies drawn on it
+     * (`data/maps/zones/reknor-escape-last.lua:34-35`). So the one shortcut this
+     * function has for "there is a set piece in here" could not see it, and the
+     * gentlest word the game owns went out on a marker for a room with a rank-4
+     * body in it.
+     *
+     * It did not matter while the Undermost was on no map. Item 7 put a mouth on
+     * the moor six tiles from Alderbrook's gate, `gateway.ts` sends
+     * `dangerWord(spec)` on every `SiteView`, and a grade nobody could read
+     * became a grade on a thing players click.
+     *
+     * BOTH HALVES, so neither can drift back: the flag on the spec, and the
+     * branch that reads it.
+     */
+    const undermost = specFor('site:undermost');
+    expect(undermost).toBeDefined();
+    if (undermost === undefined) return;
+    expect(undermost.boss, 'the warden is drawn, not placed').toBeUndefined();
+    expect(undermost.drawnBoss, 'the Undermost stopped declaring its warden').toBe(true);
+    expect(dangerWord(undermost)).toBe('grim');
+
+    // AND THE FLAG IS WHAT DOES IT, not the population underneath it: the same
+    // spec without it is the quietest thing on the map.
+    expect(dangerWord({ ...undermost, drawnBoss: undefined })).toBe('quiet');
+  });
 });
 
 describe('the grade and the townsfolk agree', () => {

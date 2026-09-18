@@ -125,15 +125,26 @@ describe('a party wipe puts the floor back as itself', () => {
 
       // THE FLOOR'S OWN NAMES. `populateDelve` mints `delve_<n>` and
       // `delve_boss`; the test encounter mints `mon_<template>`.
-      for (const id of after.monsters) expect(id, siteId).toMatch(/^delve_(\d+|boss)$/);
+      //
+      // AND THE ONE DRAWN FLOOR MINTS ITS OWN. The Undermost's last floor
+      // places its fight by glyph rather than rolling it
+      // (`populateUndermostHall`), so its names are `undermost_warden_<n>` and
+      // `undermost_picket_<n>`. They are in this pattern for the reason the
+      // other two are: a body that came back under a name nothing here knows
+      // is a re-seed that ran the wrong populator.
+      for (const id of after.monsters) {
+        expect(id, siteId).toMatch(/^(delve_(\d+|boss)|undermost_(warden|picket)_\d+)$/);
+      }
       // A POPULATED FLOOR COMES BACK POPULATED, AND AN EMPTY ONE STAYS EMPTY.
       expect(after.monsters.length > 0, `${siteId} floor ${String(floor)}`).toBe(
         before.monsters.length > 0,
       );
-      // AND THE BOSS WITH IT.
-      expect(after.monsters.includes('delve_boss'), siteId).toBe(
-        before.monsters.includes('delve_boss'),
-      );
+      // AND THE BOSS WITH IT — either kind of boss. A party that clears the
+      // Undermost's hall by DYING in it would be a party that walked out past
+      // an empty doorway.
+      const bossOf = (ids: readonly string[]): number =>
+        ids.filter((id) => id === 'delve_boss' || id.startsWith('undermost_warden_')).length;
+      expect(bossOf(after.monsters), siteId).toBe(bossOf(before.monsters));
 
       // NOTHING THAT IS THE FLOOR RATHER THAN ON IT. `resetFloor` took the items
       // and left the traps and props; putting hostiles back must not re-roll

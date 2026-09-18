@@ -35,10 +35,27 @@ describe('the Watcher', () => {
      * tier; one, in a room whose blurb already described it, is a place people
      * tell each other about. If a second ever lands, this fails and somebody has
      * to argue for it next to the first.
+     *
+     * ═══ A SECOND LANDED, AND HERE IS THE ARGUMENT ═══
+     * `UNDERMOST_WARDEN` is upstream's Brotoq, who holds the last door of the
+     * escape a new character wakes into. It does not touch the rule above: the
+     * rule is about ROOMS, and the room count below is unchanged at one. The
+     * warden is not in a room at all — it is drawn onto the tutorial's last
+     * floor by glyph (`UNDERMOST_GARRISON`, `content/undermost.ts`), which is
+     * how upstream places it too (`defineTile("O", "FLOOR", nil, "BROTOQ")`,
+     * data/maps/zones/reknor-escape-last.lua:35).
+     *
+     * And it is the one set piece that is not a difficulty tier by
+     * construction: every character in the game meets it exactly once, on the
+     * way out of the place they were born, and the alternative — which is what
+     * shipped for months — is a tutorial whose last floor was measured at ZERO
+     * monsters and ZERO turns.
      */
     const bosses = MONSTER_TEMPLATES.filter((t) => t.rank === ActorRank.Boss);
-    expect(bosses.map((t) => t.id)).toEqual(['index_watcher']);
+    expect(bosses.map((t) => t.id)).toEqual(['index_watcher', 'undermost_warden']);
 
+    // STILL ONE ROOM. `DelveSpec.boss` is the ROOM's field and the warden does
+    // not use it; if a second room ever grows one, this still fails.
     const rooms = [...SITES.keys()].filter((id) => specFor(id)?.boss !== undefined);
     expect(rooms).toEqual(['site:redaction:watchers_altar']);
   });
@@ -107,7 +124,13 @@ describe('the Watcher', () => {
     expect(perTurn(watcher)).toBeLessThan(Math.max(...kiters.map(perTurn)) + 0.001);
     // AND IT IS THE BIGGEST THING IN THE GAME BY A MARGIN, which is where the
     // fight length actually comes from.
-    const others = MONSTER_TEMPLATES.filter((t) => t.id !== 'index_watcher');
+    //
+    // AGAINST THE ORDINARY ROSTER. The other boss is bigger still — 150 before
+    // a level of `rankLifeAdjust` lands, against this one's 220 — and that is
+    // not a hole in the claim, it is the claim: this creature is more than
+    // twice anything a room will ever ROLL, and the only thing larger is the
+    // other body in the game that is placed by hand.
+    const others = MONSTER_TEMPLATES.filter((t) => t.rank !== ActorRank.Boss);
     expect(watcher.maxHp).toBeGreaterThan(Math.max(...others.map((t) => t.maxHp)) * 2);
   });
 

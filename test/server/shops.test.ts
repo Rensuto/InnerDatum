@@ -17,6 +17,7 @@ import {
   priceOf,
   SHELF_CAP,
   restock,
+  shelfPool,
   sellPrice,
   ShopShelf,
   stockLevelFor,
@@ -132,6 +133,18 @@ describe('the spread', () => {
      * ours are 5 to 12, so it floored away.
      */
     for (const item of ITEMS) {
+      /**
+       * AND A QUEST ARTEFACT IS THE SECOND DELIBERATE REFUSAL. `cost = 0,
+       * quest=true` (data/general/objects/quest-artifacts.lua:321), and
+       * upstream's rod refuses even to be DROPPED (:357-362). Selling the way
+       * out of a delve for a handful of coin is the shape of bug this case
+       * exists to catch everywhere else, so the exemption is on the field
+       * production reads and is asserted below rather than skipped in silence.
+       */
+      if (item.quest === true) {
+        expect(sellPrice(item.id), `${item.id} is for sale`).toBe(0);
+        continue;
+      }
       // Money is the one deliberate refusal and is asserted separately above.
       expect(sellPrice(item.id), `${item.id} cannot be sold at all`).toBeGreaterThan(0);
     }
@@ -209,6 +222,57 @@ describe('stock', () => {
     const rng = createRng('stock-terminates');
     const stock = restock(rng, [], 10_000);
     expect(stock.length).toBeLessThanOrEqual(NB_FILL);
+  });
+
+  it('never puts a quest artefact on any shelf, on any of the five', () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════════
+     * `cost = 0, quest=true` — quest-artifacts.lua:321, and upstream never sells it.
+     * ═══════════════════════════════════════════════════════════════════════════
+     *
+     * THE `Outfitter` BRANCH IS WHY THIS EXISTS. `shelfPool` builds it as
+     * `item.use === undefined` — "everything that is not a draught" — which is a
+     * pool a new item joins BY DEFAULT and silently. The Knot of Elsewhere is
+     * the way out of a delve; a shop that stocked one would sell an escape for
+     * coin and, worse, would sell the thing the tutorial's boss was holding to
+     * anybody who never went down there.
+     *
+     * DRIVEN THROUGH `restock`, not read off a filter: the filter is the thing
+     * under test, and a case that asserted `shelfPool` directly would pass with
+     * `rollStockItem` reaching past it. Every shelf, every band, deep enough
+     * that a rare surfaces — `SHELF_CAP` per shelf, forty draws each.
+     */
+    const quest = new Set(ITEMS.filter((item) => item.quest === true).map((item) => item.id));
+    expect(quest.size, 'no quest artefact exists, so this case proves nothing').toBeGreaterThan(0);
+    /**
+     * ═══ AND THE FILTER ITSELF, BECAUSE THE DRIVEN HALF PASSES WITHOUT IT ═══
+     * `FOR_SALE` was mutated to the whole catalogue and every assertion below
+     * stayed green: `rollStockItem` discards anything that draws no ego refs and
+     * the Knot has no slot, so the fill loop throws it away sixty-four times.
+     * That is an accident of the artefact having no `use` YET — `shops.ts` says
+     * so itself — and it expires the day it gets one, because a quest item with
+     * a `use` takes the draught branch and skips the ego roll entirely.
+     *
+     * So both halves are stated: the pool the filter builds, and the stock the
+     * roller returns. The first is the rule; the second is the consequence, and
+     * on its own it has been proving something else.
+     */
+    for (const shelf of Object.values(ShopShelf)) {
+      for (const item of shelfPool(shelf)) {
+        expect(quest.has(item.id), `${String(shelf)} may draw ${item.id}`).toBe(false);
+      }
+    }
+    for (const shelf of Object.values(ShopShelf)) {
+      for (let level = 1; level <= MAX_CHARACTER_LEVEL; level += 7) {
+        for (let batch = 0; batch < 40; batch += 1) {
+          const rng = createRng(`quest-shelf:${shelf}:${String(level)}:${String(batch)}`);
+          for (const id of restock(rng, [], level, SHELF_CAP, shelf)) {
+            const base = parseItemId(id)?.base ?? id;
+            expect(quest.has(base), `${String(shelf)} stocked ${id}`).toBe(false);
+          }
+        }
+      }
+    }
   });
 
   it('is a pure function of its seed', () => {

@@ -647,6 +647,29 @@ export type Item = {
   readonly wielder: Wielder;
   /**
    * ═══════════════════════════════════════════════════════════════════════════
+   * A THING THE STORY GAVE YOU — `cost = 0, quest = true`.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * The Rod of Recall carries both (data/general/objects/quest-artifacts.lua:321)
+   * and refuses to be dropped at :357-362 — *"You cannot bring yourself to drop
+   * the %s"*. Between them they say one thing: this object is not part of the
+   * economy. It cannot be sold, it is not stocked, and nothing rolls it.
+   *
+   * ═══ THREE READERS, AND THEY ARE THREE DIFFERENT DOORS INTO THE SAME ROOM ═══
+   * `priceOf` (content/shops.ts) answers 0, which is what `sellPrice` and the
+   * shop's own refusal already key on; `shelfPool` (same file) never puts one on
+   * a shelf; and `idsOfTier` (content/monsters.ts) leaves it out of the drop
+   * pool every creature in the game draws from. Miss any one of the three and a
+   * unique becomes a rare that happens to have a name — and the tier field
+   * cannot say this, because the tier is what the thing is WORTH to a player,
+   * not whether it is for sale.
+   *
+   * THE `on_drop` REFUSAL HAS NO PORT YET: dropping is the gateway's, and this
+   * lane does not own it. See the report.
+   */
+  readonly quest?: boolean;
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
    * WHAT SWINGING IT DOES — ToME's object `combat` table, and only a weapon
    * carries one.
    * ═══════════════════════════════════════════════════════════════════════════
@@ -902,6 +925,7 @@ export const PENDING_ICON_IDS: readonly string[] = Object.freeze([
   'item_brass_lantern',
   'item_alchemists_lamp',
   'item_dwarven_lantern',
+  'item_knot_of_elsewhere',
 ]);
 
 // ---------------------------------------------------------------------------
@@ -1638,6 +1662,69 @@ const LIGHT_SOURCES: readonly Item[] = [
 ];
 
 /**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE KNOT OF ELSEWHERE — what the Undermost's warden is holding.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Upstream's Rod of Recall (data/general/objects/quest-artifacts.lua:314-369)
+ * is a boss drop and nothing else: `NPC:onDie` at tome/class/NPC.lua:393-406
+ * gives it to THE FIRST BODY OF RANK 4 OR OVER that a character kills in the
+ * campaign, once, latched by `GameState:allowRodRecall` (class/GameState.lua:93-96).
+ * The warden is that body here.
+ *
+ * ═══ AND THE LATCH IS NOT PORTED, WHICH THIS DOCBLOCK USED TO ARGUE AWAY ═══
+ * It said: *"every character in the game meets one boss on the way out of the
+ * place it was born, and it is the same one"* — which was true while the
+ * Undermost was `noWayBack` and on no map. It is a marked, walkable,
+ * re-populating destination NOW (item 7, the same changeset), `lingerMs` is the
+ * ordinary five minutes, and `realm-wipe.test.ts` puts the warden back after a
+ * wipe. MEASURED: three visits, three instances, three wardens, three Knots.
+ * Upstream's uniqueness is `allowRodRecall`, a ONE-SHOT PER CHARACTER, and
+ * nothing here carries it.
+ *
+ * It is inert today because the Knot has no `use` and cannot be sold — see
+ * below. It stops being inert the day the button lands, and on that day this is
+ * a five-minute farm from the town gate. The latch is a per-character flag, so
+ * it belongs beside `filed` in `CharacterFile` and is read on the drop path;
+ * both of those are `persist/` and `gateway.ts`, which this lane does not own.
+ * Written down here rather than left as a premise the next lane inherits.
+ *
+ * ═══ THE NAME IS OURS, AND THE REGISTER IS THE REASON ═══
+ * The rest of this world is bureaucratic on purpose — the Watchman, the Case
+ * Log, a Writ of Seizure. The artefact must not be: it is not a rod, a permit
+ * or a transfer order, it is a thing that was never made. Void-eldritch, not
+ * filing.
+ *
+ * ═══ WHAT IT IS NOT YET, STATED HERE RATHER THAN DISCOVERED ═══
+ * IT CARRIES NO `use`. Pulling it is a twenty-turn wind-up
+ * (`quest-artifacts.lua:326`, `:336` — forty upstream turns, which is twenty of
+ * ours through `tomeCooldownToTurns`), an effect that counts down and then
+ * yanks the party out to the overworld cell they walked in from
+ * (data/timed_effects/other.lua:3331-3355). Every one of those pieces lives on
+ * the far side of `gateway.ts` — a new `ItemUseKind`, a new `EffectDef`, the
+ * rest clause at `Player.lua:1066-1077`, and the crossing itself — and this lane
+ * does not own that file. So the object, the drop and the rules that keep it out
+ * of the economy are here, and the button is reported rather than half-built.
+ * An item with a `use` nothing implements would be worse than one without.
+ */
+export const KNOT_OF_ELSEWHERE_ID = 'item_knot_of_elsewhere';
+
+const QUEST_ARTEFACTS: readonly Item[] = [
+  {
+    id: KNOT_OF_ELSEWHERE_ID,
+    name: 'Knot of Elsewhere',
+    // NO SLOT: it is held and pulled, never worn. `Item.slot`, and upstream's
+    // rod is an inventory object too.
+    icon: 'item_knot_of_elsewhere',
+    // RARE, which is what it is WORTH, and `quest` is what keeps it out of the
+    // rare pool. The two fields answer different questions — see `Item.quest`.
+    tier: 'rare',
+    wielder: {},
+    quest: true,
+  },
+];
+
+/**
  * WHAT EVERY CHARACTER IS GIVEN AT BIRTH, by id: upstream's `resolvers.equip` in
  * the base birth descriptor hands each one a brass lantern
  * (data/birth/descriptors.lua:75-77). The gateway gives it once per character;
@@ -1661,6 +1748,7 @@ export const ITEMS: readonly Item[] = Object.freeze([
   ...TWO_HANDED_AND_OFFHAND,
   ...VITALS,
   ...LIGHT_SOURCES,
+  ...QUEST_ARTEFACTS,
 ]);
 
 /** Everything a player can drink. The shop and the inventory both ask. */

@@ -26,6 +26,7 @@ import { inBounds, step } from '../shared/coords.ts';
 import { bound } from '../shared/scale.ts';
 import { HEAL_FACTOR_MAX, HEAL_FACTOR_MIN, healingFactor } from './engine/derived.ts';
 import { REST_MAX_TURNS, RestStop, restBonus, restCheck } from '../shared/rest.ts';
+import { forceLevelup } from '../shared/progression.ts';
 import { tileAt } from '../shared/level.ts';
 import { airOf, breathes } from '../shared/terrain.ts';
 import type { RestResult, RestView } from '../shared/rest.ts';
@@ -2016,6 +2017,69 @@ export function createTurnEngine(opts: TurnEngineOptions): ReapingTurnEngine {
     };
   };
 
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE FLOOR LEVELS WHOEVER WALKS ONTO IT — `on_enter`, for the one zone.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * ```lua
+   * on_enter = function(lev, old_lev, new_zone)
+   *     if lev == 2 then game.player:forceLevelup(2) ... end
+   *     if lev == 3 then game.player:forceLevelup(3) ... end
+   * end,
+   * ```
+   * — data/zones/reknor-escape/zone.lua:83-95, and the rule it calls is
+   * `forceLevelup` in `shared/progression.ts`.
+   *
+   * ═══ IN `join`, BECAUSE `join` IS WHAT ARRIVING MEANS HERE ═══
+   * Upstream's hook fires on entering a LEVEL. Every way of entering one here —
+   * the hello path, crossing into a realm, taking a stair down, coming back up —
+   * ends with the destination realm's `engine.join(actorId)`, and it ends with
+   * it AFTER `carryAcross` has put the character's own level back on the new
+   * body. Anywhere earlier and the copy would overwrite the gift.
+   *
+   * ═══ IDEMPOTENT, AND THAT IS LOAD-BEARING RATHER THAN TIDY ═══
+   * `forceLevelup` is a floor and never a set (`while self.level < lev`), so a
+   * reconnect, a rejoin after a dropped socket, or walking back down to floor 2
+   * at level 9 all do nothing at all. That is what makes it safe to hang off a
+   * function that is called on every arrival AND on every reconnection.
+   *
+   * ═══ THE POINTS GO THROUGH `pendingLevels`, LIKE A KILL'S DO ═══
+   * A level owes a talent point, a generic, three attribute points and, at ten,
+   * a discipline. `applyPendingLevels` (engine/scheduler.ts) is the one place
+   * that pays them, off `pendingLevels`, on the base clock — so a forced level
+   * banks exactly as an earned one does. Writing `level` alone would produce a
+   * character three levels up and nine points short.
+   *
+   * ═══ AND THE HEAL, WHICH IS UPSTREAM'S AND IS NOT OURS ELSEWHERE ═══
+   * `Actor:levelup()` ends with `self:resetToFull()` (tome/class/Actor.lua:3832)
+   * — every level-up in ToME is a full heal. This codebase deliberately does not
+   * do that on an EARNED level (the note beside the hit-point ceiling in
+   * `main.ts` argues it from Actor.lua:3823, which is nine lines earlier and
+   * does not tell the whole story — see the report). Changing that is a
+   * game-wide retune and is not this. What IS this: a forced level is the zone
+   * handing you a bigger body on arrival, and arriving at the next floor of the
+   * intro on the hit points you limped off the last one with would make the
+   * staging worthless. `onSheetDirty` first, because the ceiling is recomposed
+   * from the new level and healing to the old one is healing to the wrong
+   * number.
+   */
+  const levelUpOnArrival = (actor: Actor): void => {
+    const to = world.forceLevel;
+    if (to === undefined || !isPlayer(actor)) return;
+    const forced = forceLevelup(actor.level, actor.xp, to);
+    if (forced.levelsGained === 0) return;
+    actor.level = forced.level;
+    actor.xp = forced.xp;
+    actor.pendingLevels += forced.levelsGained;
+    opts.onSheetDirty?.(actor.id);
+    // `if self.dead then return end` — tome/class/Actor.lua:3676, the first line
+    // of `resetToFull` itself. The LEVEL still lands on a body that is down; the
+    // heal does not, because standing somebody's hit points back up without
+    // standing THEM up is a body reading 89/89 on the floor.
+    if (actor.alive) actor.hp = actor.maxHp;
+  };
+
   const requireLiveActor = (actorId: string): Actor | undefined => {
     const actor = world.getActor(actorId);
     if (actor === undefined || !actor.alive) return undefined;
@@ -2045,7 +2109,14 @@ export function createTurnEngine(opts: TurnEngineOptions): ReapingTurnEngine {
       // stale Standing By is the part that actually matters — a player who
       // dropped and came back must rejoin the quorum, not stay excluded.
       const actor = world.getActor(actorId);
-      if (actor !== undefined) barrier.reconnect(actor);
+      if (actor !== undefined) {
+        barrier.reconnect(actor);
+        // AND THE FLOOR TAKES ITS TURN — see `levelUpOnArrival`. After the
+        // barrier, because a body that is not in the quorum yet is a body the
+        // pump has not seen, and a level is a fact about the character rather
+        // than about the turn.
+        levelUpOnArrival(actor);
+      }
     },
 
     leave(actorId: string): void {

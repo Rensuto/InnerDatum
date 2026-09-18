@@ -335,7 +335,7 @@ describe('it is wilderness, not a town', () => {
 describe('every settlement can be reached on foot', () => {
   const reach = reachableFrom(OVERWORLD.view, ALDERBROOK);
 
-  it('places all seventeen sites, three hidden and one on another map', () => {
+  it('places all eighteen sites, three hidden, one on another map and one you woke in', () => {
     /**
      * THIRTEEN OF THESE ARE ON YOUR MAP FROM THE FIRST FRAME. The last three are
      * `SiteDef.hidden` and appear only once your own fog holds their cell — see
@@ -353,6 +353,14 @@ describe('every settlement can be reached on foot', () => {
      * like any other. It obeys the same constraint as the hidden three and for
      * the same reason: `E` carries the TileCode of the `h` it replaced, so the
      * count below moved and `reach.size === 9327` did not.
+     *
+     * AND THE EIGHTEENTH IS THE ONE PLACE EVERY CHARACTER HAS ALREADY BEEN.
+     * `site:undermost` is the cave a new character wakes at the bottom of, and
+     * until now it was built with a comment reading "ON NO MAP. Nothing leads
+     * here" — so the only room the whole player base shares was the only room
+     * that did not exist once you left it. `J` at (109,62) is its mouth, six
+     * tiles off Alderbrook's gate, carrying the TileCode of the `j` it replaced
+     * like every glyph before it. It is NOT hidden: you have been inside it.
      */
     expect([...OVERWORLD.sites.values()].sort()).toEqual([
       'site:alderbrook',
@@ -369,6 +377,7 @@ describe('every settlement can be reached on foot', () => {
       'site:saints_rest',
       'site:the_weir',
       'site:threadneedle_row',
+      'site:undermost',
       'site:underworks',
       'site:watchers_altar',
       'site:wayfarers_camp',

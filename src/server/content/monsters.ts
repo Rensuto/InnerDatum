@@ -271,7 +271,21 @@ import type { ItemTier } from './items.ts';
  * source order by specification, so this is stable as long as `ITEMS` is.
  */
 function idsOfTier(tier: ItemTier): readonly string[] {
-  return Object.freeze(ITEMS.filter((item) => item.tier === tier).map((item) => item.id));
+  /**
+   * AND NEVER A QUEST ARTEFACT. `Item.quest` is `cost = 0, quest = true`
+   * (data/general/objects/quest-artifacts.lua:321) and upstream's rod is handed
+   * over by `NPC:onDie` (tome/class/NPC.lua:393-406), by name, once per
+   * campaign — it is not in any table anything rolls against. Leaving it in
+   * this pool would make the way out of a delve something a husk drops.
+   *
+   * IT DOES NOT MOVE ANY EXISTING SEED. `ITEMS` is append-only for exactly this
+   * reason (see its own note) and the artefacts are appended last, so removing
+   * them takes entries off the END of a tier's array and every index a past
+   * seed drew is the item it always was.
+   */
+  return Object.freeze(
+    ITEMS.filter((item) => item.tier === tier && item.quest !== true).map((item) => item.id),
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -308,6 +322,41 @@ export type MonsterTemplate = {
   readonly sprite: string;
   /** Drives the under-token ring. Actor.lua:1198-1204. */
   readonly rank: ActorRank;
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * HOW OFTEN A FLOOR ROLLS THIS ONE, AND FROM WHAT DEPTH — upstream's two
+   * fields, `rarity` and `level_range`, verbatim off the entity we ported.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `Zone:computeRarities` (engine/Zone.lua:205-262) is the whole of ToME's
+   * answer to "what lives on this floor": every candidate is weighted
+   * `floor(10000 / rarity)`, divided by `3 x levelsBelow` under depth and by
+   * `levelsAbove` over it, and `pickEntity` walks the cumulative list once.
+   * `content/rarity.ts` has carried that arithmetic since the loot pass; this
+   * pair is what a MONSTER needs to enter it.
+   *
+   * ═══ WHY A ROSTER COULD NOT ESCALATE WITHOUT THEM ═══
+   * `populateDelve` walked its roster as a CYCLE — `roster[i % roster.length]`
+   * — so a floor's composition was fixed by the array's length and order and
+   * could not change with depth by any amount. Upstream's floors escalate
+   * because these two numbers move the weights as `base_level + level.level - 1`
+   * rises: the giant brown ant is `{1, 15}` and fades out of a deep zone, the
+   * ghoulking is `{15, nil}` and fades IN. That is the mechanism, and it is two
+   * fields plus a function we already had.
+   *
+   * ═══ ABSENT MEANS "NEVER ROLLED", WHICH IS ALSO UPSTREAM'S ═══
+   * `Zone.lua:214` reads `if e[rarity_field] and e.level_range and ...` — an
+   * entity missing either is skipped, and `tome/data/general/npcs/crystal.lua:73`
+   * says it out loud with `rarity = false` on the wisp, a creature that exists
+   * only to be summoned. `INDEX_WATCHER` is the same kind of thing here: a
+   * guardian that `populateDelve` PLACES, never draws, so it carries neither.
+   *
+   * `levelRange[1]` may be `undefined`, because most of ToME's bestiary is
+   * `level_range = {n, nil}` — see `RarityCandidate` in content/rarity.ts.
+   */
+  readonly rarity?: number;
+  readonly levelRange?: readonly [number, number | undefined];
 
   // --- vitals ---------------------------------------------------------------
   /** Hit points at level 1. The BASE of a curve — see `lifeRating`. */
@@ -731,6 +780,16 @@ export const INDEX_HUSK: MonsterTemplate = Object.freeze({
     'Slow, hollow, and hungry for contact.',
   sprite: 'enemy_index_husk_s',
   rank: ActorRank.Normal,
+  /**
+   * WHAT ROLLS IT — the giant brown ant's own two fields.
+   *
+   * `level_range = {1, 15}` and `rarity = 1` (ant.lua:56-57). THE ONLY CEILING IN
+   * OUR ROSTER, and it is the one that matters: the husk is the body a shallow
+   * floor is full of, and past level 15 its weight is divided by every level
+   * over — so a deep floor stops being husks without anybody writing a rule.
+   */
+  rarity: 1,
+  levelRange: [1, 15] as const,
 
   // DEVIATION 1 OF 7 (see the file header). Upstream is
   // ant.lua:59 `max_life = resolvers.rngavg(15,30)`, i.e. a mean of 22.5 — so 25
@@ -1045,6 +1104,14 @@ export const INDEX_WRAITH: MonsterTemplate = Object.freeze({
     'should be. It keeps its distance and throws a dark that drags at your legs.',
   sprite: 'enemy_index_wraith_s',
   rank: ActorRank.Normal,
+  /**
+   * WHAT ROLLS IT — the losgoroth's own two fields.
+   *
+   * `level_range = {1, nil}` and `rarity = 1` (losgoroth.lua:61-62). Open-ended:
+   * upstream's void terror is as likely on floor one as on floor forty.
+   */
+  rarity: 1,
+  levelRange: [1, undefined] as const,
   // `no_breath = 1` — npcs/losgoroth.lua:48, on BASE_NPC_LOSGOROTH. Deep water does not drown it.
   noBreath: true,
 
@@ -1602,6 +1669,17 @@ export const INDEX_HUSK_ELITE: MonsterTemplate = Object.freeze({
     'before it moves, and goes for whoever is standing on their own.',
   sprite: 'enemy_index_husk_elite_s',
   rank: ActorRank.Elite,
+  /**
+   * WHAT ROLLS IT — the ghoulking's own two fields.
+   *
+   * `level_range = {15, nil}` and `rarity = 6` (ghoul.lua:90-91) — the ghoulking's
+   * own two numbers, from the entity every other number on this template is a
+   * delta of. IT IS A DEEP, RARE BODY UPSTREAM and it was one entry in three of a
+   * cycle here, which is a third of every room in the Outer Index. Under
+   * `computeRarities` it is ~0.5% of a level-10 roster and ~8% of a level-15 one.
+   */
+  rarity: 6,
+  levelRange: [15, undefined] as const,
 
   // DEVIATION 1 OF 7 — see this template's header. Upstream's ladder holds
   // `max_life = resolvers.rngavg(90,100)` across ALL THREE ghoul tiers
@@ -1842,6 +1920,14 @@ export const INDEX_EIDOLON: MonsterTemplate = Object.freeze({
     'way a misremembered thing moves — too quickly, and only ever towards you.',
   sprite: 'enemy_index_eidolon_s',
   rank: ActorRank.Normal,
+  /**
+   * WHAT ROLLS IT — the wolf's own two fields.
+   *
+   * `level_range = {1, nil}` and `rarity = 1` (canine.lua:50-51). The base wolf is
+   * ToME's commonest early predator and stays legal for ever.
+   */
+  rarity: 1,
+  levelRange: [1, undefined] as const,
 
   // canine.lua:52 `max_life = resolvers.rngavg(40,70)` = 55.
   maxHp: resolveRngAvg(40, 70),
@@ -1989,6 +2075,13 @@ export const INDEX_CAIRN: MonsterTemplate = Object.freeze({
     'distance, and it has never needed to hurry.',
   sprite: 'enemy_index_cairn_s',
   rank: ActorRank.Normal,
+  /**
+   * WHAT ROLLS IT — the red crystal's own two fields.
+   *
+   * `level_range = {1, nil}` and `rarity = 1` (crystal.lua:99-100).
+   */
+  rarity: 1,
+  levelRange: [1, undefined] as const,
   // `no_breath = 1` — npcs/crystal.lua:48, on BASE_NPC_CRYSTAL. Deep water does not drown it.
   noBreath: true,
 
@@ -2247,6 +2340,13 @@ export const INDEX_GLUT: MonsterTemplate = Object.freeze({
     'that were left, and it closes the distance the way a tide does.',
   sprite: 'enemy_index_glut_s',
   rank: ActorRank.Normal,
+  /**
+   * WHAT ROLLS IT — the forest troll's own two fields.
+   *
+   * `level_range = {1, nil}` and `rarity = 1` (troll.lua:57-58).
+   */
+  rarity: 1,
+  levelRange: [1, undefined] as const,
 
   // troll.lua:59 `max_life = resolvers.rngavg(50,70)` = 60. Fourth of six — see
   // the table above; the armour and the regen are what make it feel like more.
@@ -2456,11 +2556,29 @@ export const INDEX_INSPECTOR: MonsterTemplate = Object.freeze({
    * and every point of threat is bought with `dam`/`atk`/`apr`/`def`/armour.
    */
   rank: ActorRank.Elite,
+  /**
+   * WHAT ROLLS IT — the snow cat's own two fields.
+   *
+   * `level_range = {3, nil}` and `rarity = 4` (feline.lua:44-45). Four, so it is a
+   * quarter as likely as anything at 1 once it is in depth at all.
+   */
+  rarity: 4,
+  levelRange: [3, undefined] as const,
 
   // feline.lua:46 `max_life = resolvers.rngavg(40,80)` = 60.
   maxHp: resolveRngAvg(40, 80),
   hpRegen: 0,
 
+  /**
+   * ═══ AND `combat_physspeed = 2` IS NOT PORTED — THE DIVERGENCE RUNS THE
+   * OTHER WAY HERE, WHICH IS WHY IT IS EASY TO MISS ═══
+   * `feline.lua:34` is `combat_physspeed = 2, -- Double attack per turn`, and
+   * `combatSpeed` divides by it (Combat.lua:1411). Every other unported
+   * `physspeed` in this file makes OUR creature faster than upstream's; this one
+   * makes it SLOWER — the snow cat swings twice a turn and the Disgraced
+   * Inspector swings once. Left unported for the same reason, and the
+   * `global_speed_base` below is what carries her being quick.
+   */
   // feline.lua:30 `global_speed_base = 1.25`, VERBATIM — the fastest thing in
   // the game, ahead of INDEX_EIDOLON's 1.2. Whoever it chose does not get away.
   globalSpeed: 1.25,
@@ -2570,6 +2688,16 @@ export const INDEX_INSPECTOR: MonsterTemplate = Object.freeze({
  * strength-driven melee swing and this creature's damage is an ORB, which takes
  * no stats at all.
  *
+ * ═══ `physspeed = 2` IS NOT PORTED, AND IT WAS NOT LABELLED EITHER ═══
+ * `INDEX_GLUT` states this divergence and this template, which quotes the same
+ * boilerplate line above, did not. `combatSpeed` is `(weapon.physspeed ?? 1) /
+ * combat_physspeed` (Combat.lua:1411) — an ENERGY COST — so an unported
+ * `physspeed` of 2 means this creature swings TWICE AS OFTEN as upstream's.
+ * Deliberate for the same reason the glut's is (a body at double cadence in a
+ * turn-based co-op game is a body nobody can trade with), and said here because
+ * an unlabelled divergence is indistinguishable from a missed line. It moves
+ * nothing today: this creature's damage is an orb.
+ *
  * `rank`, THE ORB AND THE RANGES ARE OURS. `damageMin`/`damageMax` 12-16 is
  * INDEX_WRAITH's orb, taken deliberately rather than tuned: this creature is not
  * a bigger gun, it is the same gun that you cannot walk away from. What upstream
@@ -2599,6 +2727,13 @@ export const INDEX_INQUISITOR: MonsterTemplate = Object.freeze({
     'decide about but you.',
   sprite: 'enemy_high_inquisitor_s',
   rank: ActorRank.Elite,
+  /**
+   * WHAT ROLLS IT — the elven mage's own two fields.
+   *
+   * `level_range = {2, nil}` and `rarity = 2` (elven-caster.lua:58-59).
+   */
+  rarity: 2,
+  levelRange: [2, undefined] as const,
 
   // elven-caster.lua:60 `max_life = resolvers.rngavg(70, 80)` = 75.
   maxHp: resolveRngAvg(70, 80),
@@ -3083,6 +3218,13 @@ export const INDEX_RIBBON: MonsterTemplate = Object.freeze({
   sprite: 'enemy_index_ribbon_s',
   // `rank = 1` (aquatic_critter.lua:36). See the region header.
   rank: ActorRank.Normal,
+  /**
+   * WHAT ROLLS IT — the giant eel's own two fields.
+   *
+   * `level_range = {1, nil}` and `rarity = 1` (aquatic_critter.lua:47-48).
+   */
+  rarity: 1,
+  levelRange: [1, undefined] as const,
   // `can_breath={water=1}` (aquatic_critter.lua:38).
   canBreath: { water: 1 },
 
@@ -3168,6 +3310,13 @@ export const INDEX_INKWELL: MonsterTemplate = Object.freeze({
   sprite: 'enemy_index_inkwell_s',
   // `rank = 1` (aquatic_critter.lua:36). See the region header.
   rank: ActorRank.Normal,
+  /**
+   * WHAT ROLLS IT — the squid's own two fields.
+   *
+   * `level_range = {1, nil}` and `rarity = 1` (aquatic_critter.lua:94-95).
+   */
+  rarity: 1,
+  levelRange: [1, undefined] as const,
   // `can_breath={water=1}` (aquatic_critter.lua:38).
   canBreath: { water: 1 },
 
@@ -3231,6 +3380,15 @@ export const INDEX_STRONGBOX: MonsterTemplate = Object.freeze({
   sprite: 'enemy_index_strongbox_s',
   // `rank = 2` (aquatic_critter.lua:72) — `Normal`, which IS upstream's rank 2.
   rank: ActorRank.Normal,
+  /**
+   * WHAT ROLLS IT — the dragon turtle's own two fields.
+   *
+   * `level_range = {1, nil}` and `rarity = 5` (aquatic_critter.lua:70-71). FIVE IS
+   * WHY `WEIR` USED TO BE ELEVEN ENTRIES LONG: the cycle spelled 5:5:1 out in
+   * repeats because there was nowhere to write the weight down. There is now.
+   */
+  rarity: 5,
+  levelRange: [1, undefined] as const,
   // `can_breath={water=1}` (aquatic_critter.lua:38), from the base.
   canBreath: { water: 1 },
 
@@ -3279,6 +3437,241 @@ export const INDEX_STRONGBOX: MonsterTemplate = Object.freeze({
   },
 });
 
+/**
+ * Combat Accuracy at rank 1 — `getAttack = combatTalentScale(t, 10, 50, 0.75)`,
+ * data/talents/techniques/combat-training.lua:169, whose own comment says the
+ * scale is chosen to "match values at 1 and 5 for old formula": 10 and 50.
+ *
+ * It is a PASSIVE TALENT upstream and `combatAttackBase` folds it into the same
+ * sum as `weapon.atk` (Combat.lua:1343). A monster template here has no passive
+ * channel, so a creature whose upstream entry carries the talent carries the
+ * number instead. Named rather than written as a bare `+ 10`, because the next
+ * creature ported off a `[T_WEAPON_COMBAT]={base=1}` line needs to find it.
+ */
+const WEAPON_COMBAT_RANK_1 = 10;
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE UNDERMOST WARDEN — WHOEVER KEEPS THE LAST DOOR. Upstream's Brotoq.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Ported from data/zones/reknor-escape/npcs.lua:30-78. Upstream's escape ends
+ * in a hall held by Brotoq the Reaver, drawn onto the last level by hand
+ * (data/maps/zones/reknor-escape-last.lua:35). Every character meets him once,
+ * on the way to the surface, and never again.
+ *
+ * ═══ THE FOUR NUMBERS, VERBATIM ═══
+ *   `rank = 4` (npcs.lua:40) — a boss, so `rankLevelAdjust` is +3 and
+ *   `rankLifeAdjust` compounds every level of life on top of that.
+ *   `max_life = 150, life_rating = 15, fixed_rating = true` (npcs.lua:39).
+ *   `stats = { str=20, dex=10, cun=12, mag=20, con=12 }` (npcs.lua:44).
+ *   `inc_damage = {all=-55}` (npcs.lua:47) — and THIS is the line that makes
+ *   the whole encounter possible.
+ *
+ * ═══ WHY A BOSS IN A LEVEL-1 ZONE IS NOT A DELETION ═══
+ * `getRankLevelAdjust` puts a rank-4 body three levels over its floor before
+ * anything else happens, and `rankLifeAdjust` then multiplies its life. A body
+ * built that way, standing in front of a character four minutes old, would be
+ * arithmetic rather than a fight. Upstream's answer is not to shrink it — it is
+ * the biggest thing in the zone and it should be — but to take FIFTY-FIVE PER
+ * CENT off everything it deals. The fight is long, it is frightening, and it
+ * cannot one-shot anybody. That is a deliberate shape, it is fifteen years old,
+ * and it is why this template's damage row is the lowest in the game.
+ *
+ * ═══ WHAT COULD NOT CROSS ═══
+ * Upstream's six talents are four blight ones (Virulent Disease, Corrupted
+ * Strength, Carrier, Acid Blood — npcs.lua:60-67) with no port, plus Rend and
+ * Weapons Mastery. The melee half is stood in for by the two the Overwritten
+ * Husk already carries, which are this engine's closest pair: a reach-1.5
+ * opener and a follow-up. The weapon is the Fake Skullcleaver's
+ * (data/zones/reknor-escape/objects.lua:32-38 — `dam = 16`, `apr = 3`,
+ * `dammod = {str=1}`); its crit and its life drain (:35, :37) are not ported.
+ */
+export const UNDERMOST_WARDEN: MonsterTemplate = Object.freeze({
+  // The Overwritten Husk's pair, and the same argument: `MeleeChaser` at
+  // `attackRange: 1` against two 1.5-reach talents both reach.
+  talents: ['talent:breaching_blow', 'talent:bear_down'],
+  /**
+   * `autolevel = "warriormage"` — data/zones/reknor-escape/npcs.lua:70, and the
+   * scheme itself is `learnStats{ MAG, MAG, WIL, STR, STR, DEX }`
+   * (data/autolevel_schemes.lua:57-59), written out in full rather than reduced
+   * to the two stats it leads with.
+   *
+   * ═══ THE `DEX` AT THE END IS NOT DECORATION, AND DROPPING IT DISARMED HIM ═══
+   * `combatAttack` is `4 + combat_atk + weapon.atk + (getDex - 10)`
+   * (Combat.lua:1343, :1355-1357) and this creature authors NO `combat` table
+   * upstream — Brotoq's accuracy is his equipment's and his stats'. So every
+   * point of accuracy he has comes from the last entry in this list. Measured
+   * with a two-entry `['str','mag']` approximation: at dex 10 his attack is 4,
+   * a level-3 character's defence is over 20, and `hitChance` at that gap is
+   * ZERO. He swung for forty turns and dealt four points of damage.
+   */
+  autoStats: ['mag', 'mag', 'wil', 'str', 'str', 'dex'],
+  id: 'undermost_warden',
+  displayName: 'The Undermost Warden',
+  description:
+    'Whatever the Index left standing at the last door. It was a foreman once, by the harness, ' +
+    'and something a long way under the rock has told it that nobody leaves.',
+  sprite: 'enemy_undermost_warden',
+  rank: ActorRank.Boss,
+  /**
+   * NEITHER `rarity` NOR `levelRange`, which is how upstream marks a body that
+   * is never rolled (engine/Zone.lua:214). Brotoq carries `level_range = {7,
+   * nil}` because he is also legal Infinite-Dungeon furniture
+   * (`allow_infinite_dungeon`, npcs.lua:31); here he is placed by the drawn
+   * floor, by glyph, exactly as the static map places him (`defineTile("O",
+   * "FLOOR", nil, "BROTOQ")`, reknor-escape-last.lua:35) — and a placed body
+   * takes its level from `actorAdjustLevel` like every other body in the room,
+   * not from a rolling filter. The Watcher carries neither field for the same
+   * reason.
+   */
+
+  maxHp: 150,
+  lifeRating: 15,
+  hpRegen: 0,
+
+  globalSpeed: 1,
+  speedFactor: 1,
+
+  profile: AiProfile.MeleeChaser,
+  /**
+   * IT SEES THE HALL IT IS STANDING IN. `infravision = 10` (npcs.lua:43) is
+   * upstream's own number and it is also `DEFAULT_SIGHT_RADIUS`, which matters
+   * here more than anywhere else in the game: the Undermost is unlit, so a
+   * party arrives at the near end of a dark hall and the thing at the far end
+   * of it is already awake.
+   */
+  aggroRange: DEFAULT_SIGHT_RADIUS,
+  preferredRange: 1,
+  minRange: 0,
+  attackRange: 1,
+  huntsIsolated: false,
+  shoulderAfter: 0,
+  /**
+   * NO `opensDoors`, AND THE TEMPTING LINE IS A DIFFERENT ONE. Brotoq carries
+   * `move_others=true` (npcs.lua:46) — he walks THROUGH his own guards rather
+   * than queueing behind them — and no `open_door` at all: he is a standalone
+   * entity with no family base, and `open_door` upstream is written on family
+   * bases (`doors.test.ts` asserts exactly that, per template, with the family
+   * cited). `move_others` has no port; there is nothing on this floor to open.
+   */
+
+  // `ai_state = { talent_in=3 }` — npcs.lua:71, verbatim.
+  talentIn: 3,
+
+  /**
+   * AND IT IS HOLDING THE WAY OUT.
+   *
+   * `resolvers.drops{chance=100, nb=1, ...}` (npcs.lua:57) — a boss pays, and
+   * pays certainly. The first entry of `pick` is what `populateUndermostHall`
+   * hands over guaranteed; see `KNOT_OF_ELSEWHERE_ID`, which is placed ahead of
+   * the rolled rare rather than instead of it.
+   */
+  drops: { chance: 100, pick: idsOfTier('rare') },
+
+  combat: {
+    // npcs.lua:44, verbatim. `cun` has no channel on this sheet.
+    stats: { str: 20, dex: 10, mag: 20, con: 12 },
+    // Upstream authors neither `combat_armor` nor `combat_def` on Brotoq; its
+    // armour is worn (npcs.lua:52) and equipment resolvers are not ported.
+    mods: { armour: 0, def: 0 },
+    // The Fake Skullcleaver — objects.lua:33-36.
+    weapon: { dam: 16, atk: 0, apr: 3, damMod: { str: 1 } },
+    // npcs.lua:47. THE LINE THE ENCOUNTER RESTS ON — see the header.
+    increase: { all: -55 },
+    range: 1.5,
+    minRange: 0,
+    damageType: DamageType.Physical,
+  },
+});
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE WARDEN'S PICKETS — and upstream's guards do not exist.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * The drawn hall flanks its guardian with two `ORC_GUARD`
+ * (data/maps/zones/reknor-escape-last.lua:34), and NO ENTITY OF THAT NAME IS
+ * DEFINED ANYWHERE IN THE REFERENCE TREE — grepped, both the engine and the
+ * module. So upstream ships Brotoq alone in that hall, and the two flanking
+ * glyphs place nothing at all.
+ *
+ * The pickets are ours, and they are here because the intro's premise is an
+ * exit held by a boss AND A SMALL HORDE. Their numbers are upstream's base orc
+ * (data/general/npcs/orc.lua:22-46), which is what `ORC_GUARD` would have been
+ * built from: `combat = { dam=resolvers.rngavg(5,12), atk=2, apr=6 }` (:28),
+ * `life_rating = 11` (:36), `rank = 2` (:37), `stats = { str=20, dex=8, mag=6,
+ * con=16 }` (:44), `open_door = true` (:40) and a drop one time in five (:31).
+ * The base names no starting life, so `maxHp` is the one number here that is
+ * ours — the husk's own 25 plus the orc's heavier frame.
+ */
+export const UNDERMOST_PICKET: MonsterTemplate = Object.freeze({
+  // `autolevel = "warrior"` (orc.lua:42) = `learnStats{ STR, STR, DEX }`
+  // (data/autolevel_schemes.lua:25-27), in full — see the warden on the `dex`.
+  autoStats: ['str', 'str', 'dex'],
+  id: 'undermost_picket',
+  displayName: 'Undermost Picket',
+  description:
+    'A miner in a torn safety harness who did not climb out when the others did. Where the face ' +
+    'was there is a knot of something the light will not land on.',
+  sprite: 'enemy_undermost_picket_s',
+  rank: ActorRank.Normal,
+  // PLACED, NEVER ROLLED — see the warden's note on the two absent fields.
+
+  maxHp: 30,
+  lifeRating: 11,
+  hpRegen: 0,
+
+  globalSpeed: 1,
+  speedFactor: 1,
+
+  profile: AiProfile.MeleeChaser,
+  // `infravision = 10` — orc.lua:33.
+  aggroRange: DEFAULT_SIGHT_RADIUS,
+  preferredRange: 1,
+  minRange: 0,
+  attackRange: 1,
+  huntsIsolated: false,
+  shoulderAfter: 0,
+  // orc.lua:40.
+  opensDoors: true,
+
+  // orc.lua:31 — `resolvers.drops{chance=20, nb=1, {} }`.
+  drops: { chance: 20, pick: idsOfTier('common') },
+
+  combat: {
+    // orc.lua:44, verbatim.
+    stats: { str: 20, dex: 8, mag: 6, con: 16 },
+    // The base authors neither, and its armour is worn.
+    mods: { armour: 0, def: 0 },
+    /**
+     * orc.lua:28 — `combat = { dam=resolvers.rngavg(5,12), atk=2, apr=6 }`.
+     * `physspeed=2` is a cadence this engine spends differently and is not
+     * ported; every other number on that line is upstream's.
+     *
+     * ═══ AND THE TEN THAT COMES WITH BEING AN ORC ═══
+     * `atk` here is upstream's `weapon.atk`, which is ONE TERM of
+     * `combatAttackBase` (Combat.lua:1343). Every orc in ToME also carries
+     * `[T_WEAPON_COMBAT]={base=1, ...}` (orc.lua:45) and that talent's whole
+     * body is `getAttack = combatTalentScale(t, 10, 50, 0.75)`
+     * (data/talents/techniques/combat-training.lua:169) — TEN at rank 1 — which
+     * :1343 adds into the same sum. A monster sheet here has no passive-talent
+     * channel to put it in, so the two terms are summed into the one field the
+     * sheet has. Ported as `atk: 2` alone, a picket's accuracy is 2 against a
+     * level-3 character's defence of 20-plus, and `hitChance` calls that 5%.
+     */
+    weapon: {
+      dam: resolveLevelup(resolveRngAvg(5, 12)),
+      atk: 2 + WEAPON_COMBAT_RANK_1,
+      apr: 6,
+      damMod: { str: 0.6 },
+    },
+    range: 1.5,
+    minRange: 0,
+    damageType: DamageType.Physical,
+  },
+});
+
 export const MONSTER_TEMPLATES: readonly MonsterTemplate[] = Object.freeze([
   INDEX_HUSK,
   INDEX_WRAITH,
@@ -3292,6 +3685,8 @@ export const MONSTER_TEMPLATES: readonly MonsterTemplate[] = Object.freeze([
   INDEX_RIBBON,
   INDEX_INKWELL,
   INDEX_STRONGBOX,
+  UNDERMOST_WARDEN,
+  UNDERMOST_PICKET,
 ]);
 
 /** Their ids, same order. */

@@ -21,7 +21,16 @@
 import { describe, expect, it } from 'vitest';
 
 import { EffectId, createMvpEffectState } from '../../src/server/content/effects.ts';
-import { DELVES, dangerWord, delveHeadroom, specFor } from '../../src/server/content/delve.ts';
+import {
+  DELVES,
+  dangerWord,
+  delveHeadroom,
+  delveLevel,
+  nbNpcFor,
+  specFor,
+} from '../../src/server/content/delve.ts';
+import { computeRarities, pickEntity, rarityShare } from '../../src/server/content/rarity.ts';
+import { createRng } from '../../src/shared/rng.ts';
 import {
   INDEX_CAIRN,
   INDEX_INKWELL,
@@ -99,31 +108,81 @@ describe('the Weir`s roster', () => {
   const roster = specFor('site:the_weir')?.roster ?? [];
 
   it('is the three, weighted 5:5:1 — `floor(10000 / rarity)` at rarities 1, 1 and 5', () => {
-    const count = (t: MonsterTemplate): number => roster.filter((r) => r === t).length;
-    expect(roster).toHaveLength(11);
-    expect([count(INDEX_RIBBON), count(INDEX_INKWELL), count(INDEX_STRONGBOX)]).toEqual([5, 5, 1]);
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * THREE ENTRIES, AND THE WEIGHT IS WRITTEN DOWN NOW INSTEAD OF SPELLED OUT.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * This asserted `toHaveLength(11)` and a 5 / 5 / 1 count of REPEATED
+     * ENTRIES, because `populateDelve` walked its roster as a cycle and a cycle
+     * has no other way to carry a weight. The roster is a rarity-weighted
+     * candidate list now (`computeRarities` / `pickEntity`,
+     * `engine/Zone.lua:205-262`), so the same ratio is stated where upstream
+     * states it — `rarity = 1` on the giant eel (`aquatic_critter.lua:48`), 1 on
+     * the squid (`:95`) and 5 on the dragon turtle (`:71`).
+     *
+     * The assertion is therefore on the COMPUTED SHARES rather than on the
+     * array's shape, which is the thing that actually decides what stands in the
+     * room. `10000 : 10000 : 2000` is 45.45% : 45.45% : 9.09%.
+     */
+    expect(roster).toHaveLength(3);
+    expect([...roster]).toEqual([INDEX_RIBBON, INDEX_INKWELL, INDEX_STRONGBOX]);
+    expect(roster.map((t) => t.rarity)).toEqual([1, 1, 5]);
+
+    const spec = specFor('site:the_weir');
+    if (spec === undefined) throw new Error('no Weir spec');
+    const shares = rarityShare(
+      computeRarities(
+        roster.filter(
+          (t): t is MonsterTemplate & { rarity: number; levelRange: readonly [number, number] } =>
+            t.rarity !== undefined && t.levelRange !== undefined,
+        ),
+        delveLevel(spec),
+      ),
+    );
+    expect(shares.map((r) => Math.round(r.percent * 100) / 100)).toEqual([45.45, 45.45, 9.09]);
   });
 
-  it('gives a room of n bodies round(n / 11) turtles at every size, because the cycle is walked in order', () => {
+  it('puts one body in eleven under a shell, at every room size the Weir places', () => {
     /**
-     * `populateDelve` takes `roster[i % roster.length]` for body i. So a room of
-     * n holds whatever the first n steps of the cycle hold, and the turtle's
-     * POSITION decides the small rooms. The Weir places 4-6 alone and 8-12 for
-     * three; its twin 6-8 and 12-16. Checked well past both.
+     * WHAT THE OLD CYCLE TEST WAS REALLY ABOUT: a room of n must hold about
+     * `n / 11` turtles. It checked that by walking the eleven-entry array, which
+     * asserted the fixture's shape rather than the rule. This draws, with the
+     * real seeded generator, the way the placer does — so it fails if a rarity
+     * moves, if `computeRarities` changes, or if `pickEntity` stops being a
+     * single cumulative walk.
+     *
+     * SIX HUNDRED DRAWS, because a 9.09% share needs enough of them to be a
+     * measurement rather than a coin. The band is wide enough to survive the
+     * seed and narrow enough to fail a 5 / 5 / 1 that has become 1 / 1 / 1.
      */
-    for (let n = 1; n <= 40; n += 1) {
-      let turtles = 0;
-      let eels = 0;
-      for (let i = 0; i < n; i += 1) {
-        if (roster[i % roster.length] === INDEX_STRONGBOX) turtles += 1;
-        if (roster[i % roster.length] === INDEX_RIBBON) eels += 1;
-      }
-      expect(turtles, `a room of ${String(n)}`).toBe(Math.round(n / 11));
-      // Eel and squid never more than one apart.
-      expect(Math.abs(eels - (n - turtles - eels)), `a room of ${String(n)}`).toBeLessThanOrEqual(
-        1,
-      );
+    const spec = specFor('site:the_weir');
+    if (spec === undefined) throw new Error('no Weir spec');
+    const list = computeRarities(
+      roster.filter(
+        (t): t is MonsterTemplate & { rarity: number; levelRange: readonly [number, number] } =>
+          t.rarity !== undefined && t.levelRange !== undefined,
+      ),
+      delveLevel(spec),
+    );
+    const rng = createRng('weir-weights');
+    const drawn = new Map<string, number>();
+    const draws = 600;
+    for (let i = 0; i < draws; i += 1) {
+      const picked = pickEntity(rng, `weir.${String(i)}`, list);
+      if (picked === undefined) continue;
+      drawn.set(picked.id, (drawn.get(picked.id) ?? 0) + 1);
     }
+    const turtles = drawn.get(INDEX_STRONGBOX.id) ?? 0;
+    const eels = drawn.get(INDEX_RIBBON.id) ?? 0;
+    const squid = drawn.get(INDEX_INKWELL.id) ?? 0;
+    expect(
+      turtles / draws,
+      `one in eleven is a turtle, got ${String(turtles)}/600`,
+    ).toBeGreaterThan(0.05);
+    expect(turtles / draws).toBeLessThan(0.14);
+    // Eel and squid split the rest evenly, so neither is half again the other.
+    expect(Math.max(eels, squid) / Math.max(1, Math.min(eels, squid))).toBeLessThan(1.5);
   });
 
   it('holds no cairn on either map, and the cairn keeps the three rooms that still share DROWNED', () => {
@@ -134,9 +193,15 @@ describe('the Weir`s roster', () => {
   });
 
   it('keeps its bands and its level: 4-6 bodies at level 6, and the twin 6-8 at 10', () => {
-    expect(specFor('site:the_weir')).toMatchObject({ monsters: [4, 6], levelRange: [6, 6] });
+    /**
+     * `nb_npc = {20, 25}` — `data/zones/lake-nur/zone.lua:54`, the zone the Weir
+     * is built as. The twin inherits it: `redactedSpec` used to add +2 to a band
+     * of two to ten, which on a band of twenty to twenty-five would be noise
+     * dressed as a rule, and the twin is four LEVELS worse instead.
+     */
+    expect(specFor('site:the_weir')).toMatchObject({ nbNpc: [20, 25], levelRange: [6, 6] });
     expect(specFor('site:redaction:the_weir')).toMatchObject({
-      monsters: [6, 8],
+      nbNpc: [20, 25],
       levelRange: [10, 10],
     });
     expect(specFor('site:redaction:the_weir')?.roster).toBe(roster);
@@ -162,7 +227,20 @@ describe('the Weir`s roster', () => {
     const { canBreath: _water, ...dry } = INDEX_RIBBON;
     const wet = { ...dry, id: 'fixture_breather', canBreath: { water: 1 } };
     expect(dangerWord({ ...weir, roster: [wet] })).toBe('restless');
-    expect(dangerWord({ ...weir, roster: [dry] })).toBe('quiet');
+    /**
+     * ═══ AND THE TERM IS STILL WORTH THREE, SHOWN WHERE IT CROSSES ═══
+     * `dangerWord` grades on `delveLevel` now rather than on the headcount, so
+     * these two rooms no longer SWING on the water: the Weir is 6 + 3 = 9 with
+     * it and 6 without, both `restless`, and the twin is 13 and 10, both
+     * `dangerous`. That is honest and it is not the same as the term being
+     * dead — it is worth three levels, and three levels crosses a cut one step
+     * further out. Asserted at the level where it does, so the day somebody
+     * deletes the term this fails rather than passing by coincidence.
+     */
+    expect(dangerWord({ ...weir, roster: [dry] })).toBe('restless');
+    const deeper = { ...weir, levelRange: [7, 7] as const };
+    expect(dangerWord({ ...deeper, roster: [dry] })).toBe('restless');
+    expect(dangerWord({ ...deeper, roster: [wet] })).toBe('dangerous');
   });
 });
 
@@ -197,9 +275,14 @@ describe('the Weir, populated', () => {
       const spec = specFor(siteId);
       if (spec === undefined) throw new Error(`no spec for ${siteId}`);
       for (const party of [ALONE, THREE_STRONG]) {
-        const low = Math.round(spec.monsters[0] * delveHeadroom(party));
-        const high = Math.round(spec.monsters[1] * delveHeadroom(party));
         for (let floor = 1; floor <= floorsOfSite(siteId); floor += 1) {
+          // THE BAND THE PLACER ITSELF USES — `nbNpcFor`, per floor, so this asks
+          // one question rather than re-deriving three quarters of it. Neither
+          // Weir carries a per-floor override or the area formula, so it is the
+          // zone's `nb_npc` at `NB_NPC_SCALE`.
+          const stated = nbNpcFor(spec, floor);
+          const low = Math.round(stated[0] * delveHeadroom(party));
+          const high = Math.round(stated[1] * delveHeadroom(party));
           for (let s = 0; s < 10; s += 1) {
             const at = `${siteId} floor ${String(floor)} party ${String(party.size)} seed ${String(s)}`;
             const { bodies } = open(siteId, `weir-pop:${String(s)}`, floor, party);

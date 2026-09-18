@@ -972,3 +972,31 @@ Each line gives the issue, then the fix. (v) marks a finding the second reviewer
 - icon_status_invisible: the figure runs edge to edge. Fix: leave a 4-6 px margin.
 - icon_status_weakened: the arm is hard to parse. Fix: a clean flexed arm with a clear elbow and fist.
 - icon_status_taunted: the ring touches the tile edges. Fix: shrink it slightly.
+
+## The Undermost's mouth on the overworld
+
+**Wired, not yet drawn.** The intro cave is a place on the moor now — glyph `J`
+at (109,62), six tiles off Alderbrook's gate — and every other site on that map
+draws its own 32x32 silhouette. Until this lands the cell draws the generic
+`stair` family marker.
+
+| Id | Size | What it is |
+|---|---|---|
+| `tile_ow_landmark_undermost` | 32x32 | A torn hole in a field: cropped turf, a shored-up timber collar half fallen in, and a black shaft going down out of sight. No building, no headgear, nothing industrial — this is not a mine, it is where somebody was put.
+
+It must read at 32x32 against FIELD and must not be mistakable for the Hollow
+Mine's or the Underworks' silhouette, which are both worked places.
+
+## The Knot of Elsewhere
+
+**Wired, not yet drawn.** The Undermost's warden holds it, and it is the port of
+upstream's Rod of Recall. Until the icon lands the inventory draws a letter
+(`PENDING_ICON_IDS`, `src/server/content/items.ts`).
+
+| Id | Size | What it is |
+|---|---|---|
+| `item_knot_of_elsewhere` | 64x64 | A loop of something that is not string, tied by something that was not hands: a closed knot of dark, faintly iridescent cord whose ends do not meet anywhere you can see, with a thin fringe of the background showing THROUGH the strands where they cross.
+
+Not a rod, not a key, not a scroll — nothing manufactured and nothing
+bureaucratic. It must read as a single closed shape at 64x64 and must not be
+mistakable for the rope, cord or belt icons.

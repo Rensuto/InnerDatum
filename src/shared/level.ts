@@ -120,6 +120,39 @@ export type AuthoredMap = {
    * both. Absent for a map no zone table built (`shared/mapgen/zones.ts`).
    */
   readonly lighting?: SiteLighting;
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * A FLOOR THAT LEVELS WHOEVER WALKS ONTO IT — upstream's `on_enter`.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * ```lua
+   * on_enter = function(lev, old_lev, new_zone)
+   *     if lev == 2 then
+   *         game.player:forceLevelup(2)
+   *         local norgan = game.party:findMember{type="squadmate"}
+   *         if norgan then norgan:forceLevelup(2) end
+   *     end
+   *     if lev == 3 then game.player:forceLevelup(3) ... end
+   * end,
+   * ```
+   * — data/zones/reknor-escape/zone.lua:83-95.
+   *
+   * It is the escape from Reknor's own staging and the reason ToME can put
+   * fifty bodies in front of a new character: the zone does not get harder as
+   * you climb, YOU DO, one level per floor, on arrival, before the first turn.
+   * A number here is "nobody stands on this floor under level N", and
+   * `forceLevelup` in `shared/progression.ts` is the rule.
+   *
+   * ═══ ON THE LEVEL, LIKE THE LIGHTING ABOVE, AND FOR THE SAME REASON ═══
+   * Upstream's is keyed on `lev` inside one zone's `on_enter`, so one answer
+   * per SITE cannot hold "2 on the second floor and 3 on the third". A site's
+   * `map(seed, ground, floor)` already knows which floor it is building; this is
+   * the field it says so in.
+   *
+   * ABSENT EVERYWHERE ELSE. No other zone in ToME force-levels anybody, and a
+   * floor with no number here levels nobody.
+   */
+  readonly forceLevel?: number;
   readonly vaults?: readonly {
     readonly id: string;
     readonly at: TileXY;
@@ -574,7 +607,7 @@ const ALDERBROOK_ROWS: readonly string[] = [
   'XXss;;aaaaaaXXXXXXXXXaaaaaaw;;;;;;;;;;;;;;;;;;;;;;;;;;;e;;;;peppppppppppppppppppppppppppppjjjjjjwwrrjjj.jjjjjjjjjjjjjjjjjjjjjeeeeeejj.b....tt.jjeeeeeeeeeeeeeeeeeeeeeeeeXX',
   'XXss;;aaaaaaXXXXXXXXXaaaaaww;;;;;;;;;;;;;;;;;p;;;;;;;;;ep;;;eeppppppppppppppppppppppppppppjjjjjjjwwrrrr...............................ww...tt..jeeeeeeeeeeeeeeeeeeeeeeeeXX',
   'XXss;;aaaaaaXXXXIaaaaaaaaaw;;;;;;;;;;;;;;;;;;ppp;;;ppeeeeeeeepppppppppppppppppppppppppppppjjjjjjjjwkkkk.ykkyyjjjjjjjjjjjjjjjjjeeeeejjjjwjjjjjj..eeeeeeeeeeeeeeeeeeeeeeeeXX',
-  'XXsss;aaaaaaXXXXXXXXXaaaaaw;;;;;;;;;;;;;;;;;;;ppppeeeeeppppppppppppppppppppppppppppppppppjjjjjjjjwwkkooooo.yyjjjjjjjjjjjjjjjjssseeejjjjwwjjjjjj.eeeeeeeeeeeeeeeeeeeeeeeeXX',
+  'XXsss;aaaaaaXXXXXXXXXaaaaaw;;;;;;;;;;;;;;;;;;;ppppeeeeeppppppppppppppppppppppppppppppppppjjjjjjjjwwkkooooo.yyJjjjjjjjjjjjjjjjssseeejjjjwwjjjjjj.eeeeeeeeeeeeeeeeeeeeeeeeXX',
   'XXwss;aaaaaaXXXXXXXXXaaaaww;;;;;;;;;;;;;;;;;;;ppppeppepppppppppppppppppppppppppppppppppppjjjjjjjjwykkooooo.kkjjjjjjjjjjjjjjjjsssssseeeeeweeeeee...eeeeeeeeeeeeeeeeeeeeeeXX',
   'XXwsssaaaaaaaXXXXXXXaaaaawa;;;;;;;;;;;;;;;;;;;;pppeppeppppppppppppppppppppppppppppppppppjjjjjjjjwwykkooOoo.kkjjjjjjjjjjjjjjjsssssssssssewweeeeeee.eeeeeeeeeeeeeeeeeeeeesXX',
   'XXwwss;aaaaaaaaaaaaaaaaaaw;;;;;;;;;;;;;;;;;;;;;peeeppepppppppppppppp............................b....ooooo.rrjjjjjjjjjjjjjjssssssssssssssweeeeeee.eeeeeeeeeeeeeeeeeeeeesXX',
@@ -624,6 +657,19 @@ const ALDERBROOK_ROWS: readonly string[] = [
  * loudly. `redaction.ts` re-exports it, so it is still where a reader looks.
  */
 export const REDACTION_SITE_ID = 'site:redaction';
+
+/**
+ * WHERE EVERY CHARACTER WAKES — `site:undermost`, and the same file for the
+ * same reason as `REDACTION_SITE_ID` above.
+ *
+ * The site itself is built in `server/world/realms.ts`, which re-exports this
+ * as `UNDERMOST_SITE_ID` so there is still one name for it where the rest of
+ * the server looks. The spelling has to live HERE because two `src/shared/`
+ * modules need it and neither may import from `src/server/`: the legend below,
+ * which puts its mouth on the overworld, and `shared/redaction.ts`, which has
+ * to refuse to copy it.
+ */
+export const BIRTHPLACE_SITE_ID = 'site:undermost';
 
 /** The legend. Every character is a real TileCode; nothing defaults. */
 const ALDERBROOK_LEGEND: Readonly<Record<string, Glyph>> = {
@@ -791,6 +837,45 @@ const ALDERBROOK_LEGEND: Readonly<Record<string, Glyph>> = {
   K: { tile: TileCode.HILLS, site: 'site:cairnfoot' },
   V: { tile: TileCode.PLAINS, site: 'site:barrow_end' },
   Z: { tile: TileCode.SHORE, site: 'site:the_weir' },
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * AND THE HOLE EVERY CHARACTER CLIMBS OUT OF — (109,62), six tiles from the gate.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * The Undermost was built OUTSIDE `AUTHORED_SITES` with a comment reading
+   * *"ON NO MAP. Nothing leads here; a new character is put here"*, so the one
+   * place every character in the game has been was the one place that was not a
+   * place: you woke in it, you climbed out of it, and then it did not exist.
+   *
+   * ═══ WHY IT IS ALMOST IN THE TOWN, WHICH IS THE OPPOSITE OF THE OTHER THREE ═══
+   * Cairnfoot, Barrow End and the Weir were each placed at the FURTHEST
+   * walkable ground from any existing marker, because a place you find should
+   * be somewhere you went looking. This one is placed by the same measurement
+   * read backwards, and the reason is mechanical rather than aesthetic: a
+   * character leaving the Undermost for the first time has never entered a realm
+   * from the overworld, so the gateway has no cell to put them back on and drops
+   * them at the world's own spawn — Alderbrook's gate at (103,64). Put the mouth
+   * anywhere else and a new character's first act is to be teleported away from
+   * the hole they just climbed out of. At six tiles it is the first thing on
+   * their minimap, they are standing beside it, and the city they were told
+   * about while they were down there is the other way.
+   *
+   * ═══ `J` IS THE `j` IT REPLACES ═══
+   * FIELD, unchanged, like every other site glyph in this table — the cell walks
+   * and blocks exactly as it did, so `overworld.test.ts`'s walkable count holds
+   * bit for bit and adding a destination stays a data change. The letter is the
+   * capital of the ground it stands on because the Undermost's own initials are
+   * all spoken for: U is the Underworks, N the Hollow Mine, D the Drowned
+   * Chapel, M is MOUNTAIN, O and S and T are taken.
+   *
+   * ═══ AND IT IS STILL A ONE-WAY CLIMB ═══
+   * `SiteDef.noWayBack` stays. See `UNDERMOST_SITE`.
+   *
+   * THE SPELLING LIVES IN THIS FILE, for `REDACTION_SITE_ID`'s reason exactly:
+   * `src/shared/` may not import from `src/server/`, and `realms.ts` takes its
+   * `UNDERMOST_SITE_ID` from here rather than the other way round.
+   */
+  J: { tile: TileCode.FIELD, site: BIRTHPLACE_SITE_ID },
 };
 
 const ALDERBROOK = parseMap(ALDERBROOK_ROWS, ALDERBROOK_LEGEND);

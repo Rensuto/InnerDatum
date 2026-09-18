@@ -661,6 +661,12 @@ describe('the bestiary actually has hands — `open_door` on the templates', () 
     ['index_inspector', 'humanoid_random_boss.lua'],
     // `elven-caster.lua:42` `open_door = true` on BASE_NPC_ELVEN_CASTER.
     ['index_inquisitor', 'elven-caster.lua'],
+    // `orc.lua:40` `open_door = true` on BASE_NPC_ORC, which is the entity the
+    // Undermost's pickets are built from end to end. THEIR WARDEN DOES NOT GET
+    // IT: Brotoq is a standalone entity with no family base
+    // (data/zones/reknor-escape/npcs.lua:30-78) and upstream writes `open_door`
+    // on bases, so the guards can work a door and the thing they guard cannot.
+    ['undermost_picket', 'orc.lua'],
   ]);
 
   it('is not empty of door-openers, which is the whole failure this missed', () => {
@@ -684,7 +690,7 @@ describe('the bestiary actually has hands — `open_door` on the templates', () 
       ).toBe(cited !== undefined);
     }
     // AND THE SHARE MATCHES UPSTREAM'S, arrived at independently: 28 of 69 npc
-    // families there, four of nine here. A roster that gave it to everybody
+    // families there, five of eleven here. A roster that gave it to everybody
     // would pass the assertion above and delete the distinction.
     expect(MONSTER_TEMPLATES.filter((t) => t.opensDoors === true)).toHaveLength(OPENERS.size);
   });

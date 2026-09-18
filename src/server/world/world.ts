@@ -369,6 +369,20 @@ export type World = {
   readonly lit: Uint8Array;
   /**
    * ═══════════════════════════════════════════════════════════════════════════
+   * THE LEVEL A BODY IS BROUGHT UP TO ON ARRIVING HERE — upstream's `on_enter`.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `AuthoredMap.forceLevel` carries the whole argument and the citation; this
+   * is where the engine can reach it. `TurnEngine.join` is the one reader, and
+   * it is the one reader because `join` is what every way of arriving in a realm
+   * ends with — the hello path, a stair down, a stair up — after `carryAcross`
+   * has put the character's own level back on the body.
+   *
+   * Absent for every floor in the game but two.
+   */
+  readonly forceLevel?: number;
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
    * WHAT EACH CHARACTER REMEMBERS OF THIS LEVEL, one bitset a character.
    * ═══════════════════════════════════════════════════════════════════════════
    *
@@ -1664,6 +1678,9 @@ export function createWorld(
     ...(reseedFloor === undefined ? {} : { reseedFloor }),
     level,
     lit,
+    // ABSENT RATHER THAN 0 when the map says nothing, so a floor that levels
+    // nobody is byte-identical to how it was before this field existed.
+    ...(authored.forceLevel === undefined ? {} : { forceLevel: authored.forceLevel }),
     memoryOf,
     hasMemoryOf: (actorId: string): boolean => memory.has(actorId),
     setMemoryOf: (actorId: string, bits: Uint8Array): void => {

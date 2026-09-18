@@ -63,9 +63,14 @@ import { ZONES, siteLighting, zoneFloor, zoneLevel } from '../../shared/mapgen/z
 import type { SiteLighting } from '../../shared/light.ts';
 import type { Ground } from '../../shared/level.ts';
 import { TileCode } from '../../shared/protocol.ts';
-import { REDACTION_SITE_ID, makeOverworld, parseMap } from '../../shared/level.ts';
+import {
+  BIRTHPLACE_SITE_ID,
+  REDACTION_SITE_ID,
+  makeOverworld,
+  parseMap,
+} from '../../shared/level.ts';
 import type { Glyph } from '../../shared/level.ts';
-import { UNDERMOST_LAST_FLOOR } from '../content/undermost.ts';
+import { UNDERMOST_LAST_FLOOR, populateUndermostHall } from '../content/undermost.ts';
 import { makeRedaction } from '../../shared/redaction.ts';
 import { ActorKind } from '../../shared/protocol.ts';
 // `DELVES` IS GONE FROM THIS IMPORT, as it went from gateway.ts one commit
@@ -195,8 +200,18 @@ export const STAIRS_DOWN_SITE_ID = 'stairs:down';
  */
 export const EXIT_SITE_ID = 'exit:out';
 
-/** Where a new character wakes. Not on any map; see `UNDERMOST_SITE`. */
-export const UNDERMOST_SITE_ID = 'site:undermost';
+/**
+ * Where a new character wakes, and a cell on the overworld — see
+ * `UNDERMOST_SITE`.
+ *
+ * THE SPELLING IS `shared/level.ts`'s, re-exported here rather than written
+ * twice. Two `src/shared/` modules need it (the overworld legend, which puts
+ * its mouth on the map, and `shared/redaction.ts`, which refuses to copy it)
+ * and neither may import from `src/server/`, so the constant lives there and
+ * the server's name for it points at the same string. This is exactly what
+ * `redaction.ts` does with `REDACTION_SITE_ID`.
+ */
+export const UNDERMOST_SITE_ID = BIRTHPLACE_SITE_ID;
 
 /** How many floors a site has: a delve's own depth, and one for anything else. */
 export function floorsOfSite(siteId: string): number {
@@ -1780,12 +1795,24 @@ const REDACTED_SITES: readonly (readonly [string, SiteDef])[] = [
   ];
 });
 
-/** What the Undermost's last floor is made of: the cave's own two codes. */
+/**
+ * What the Undermost's last floor is made of: the cave's own two codes.
+ *
+ * `W` AND `p` ARE ORDINARY GROUND, and that is upstream's shape rather than a
+ * shortcut: `defineTile(char, grid, obj, actor)`
+ * (engine/generator/map/Static.lua:103-108) names a GRID and, separately, an
+ * actor to stand on it, so a guardian's tile is floor with something on it. The
+ * something is `UNDERMOST_GARRISON` in `content/undermost.ts`, and
+ * `undermost.test.ts` walks the drawn rows against both tables so a glyph can
+ * never reach one without the other.
+ */
 const UNDERMOST_LEGEND: Readonly<Record<string, Glyph>> = {
   '#': { tile: TileCode.CRAG },
   '.': { tile: TileCode.SOOT },
   '@': { tile: TileCode.SOOT, spawn: true },
   '>': { tile: TileCode.SOOT, site: EXIT_SITE_ID },
+  W: { tile: TileCode.SOOT },
+  p: { tile: TileCode.SOOT },
 };
 
 /**
@@ -1798,7 +1825,37 @@ const UNDERMOST_LEGEND: Readonly<Record<string, Glyph>> = {
  * with the way out at its far end (:72-79) and no random population (:79). Here
  * the first two are caves and the last is `UNDERMOST_LAST_FLOOR`.
  *
- * ON NO MAP. Nothing leads here; a new character is put here.
+ * ═══════════════════════════════════════════════════════════════════════════
+ * AND IT IS ON THE MAP NOW. It said "ON NO MAP. Nothing leads here".
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `site:undermost` is a cell on the overworld — glyph `J` at (109,62), the
+ * fields six tiles off Alderbrook's gate. See `ALDERBROOK_LEGEND` in
+ * `shared/level.ts` for why it is that close and not, like the other three
+ * additions, as far from everything as the map allows.
+ *
+ * The one place every character in this game has ever been was the only place
+ * that was not a place: you woke in it, you climbed out of it, and then it
+ * stopped existing. It is somewhere you can walk back to now, and it fills up
+ * again while you are away like every other delve does — `lingerMs` is the
+ * ordinary five minutes, so a party that leaves and comes back tomorrow finds a
+ * cave generated afresh with a new warden holding the last door.
+ *
+ * ═══ AND IT IS STILL A ONE-WAY CLIMB — `noWayBack` STAYS ═══
+ * Upstream replaces the first level's up stair with floor
+ * (data/zones/reknor-escape/zone.lua:67-69) and that is the whole premise: the
+ * only way out is forward, past whatever is holding the last door. Dropping the
+ * flag to make the new overworld cell a two-way door would have put a SKIP
+ * button on the intro — a character four minutes old could step off the tile it
+ * woke on and be in the city with no levels, no gear and no idea — and would
+ * have cost the tutorial the one thing it is for. A party that walks back in
+ * later is walking into the same climb on purpose, and the way out is drawn on
+ * the last floor where it always was.
+ *
+ * ═══ STILL THE BIRTHPLACE, AND STILL NOT IN THE CASE FILE ═══
+ * `birthplace` is unchanged, so a new character is still put here rather than
+ * walking here, and `world/casefile.ts` still excludes it: being a place on the
+ * map does not make the room you woke up in a case you closed.
  */
 const UNDERMOST_SITE: SiteDef = {
   id: UNDERMOST_SITE_ID,
@@ -1809,10 +1866,35 @@ const UNDERMOST_SITE: SiteDef = {
   birthplace: true,
   lingerMs: INSTANCE_LINGER_MS,
   ...lightingFor(SiteShape.Cave),
-  map: (seed, _ground, floor = 1) =>
-    floor >= floorsOfSite(UNDERMOST_SITE_ID)
+  map: (seed, _ground, floor = 1) => ({
+    ...(floor >= floorsOfSite(UNDERMOST_SITE_ID)
       ? parseMap(UNDERMOST_LAST_FLOOR, UNDERMOST_LEGEND)
-      : makeSiteMap(seed, SiteShape.Cave, { floor: TileCode.SOOT, wall: TileCode.CRAG }),
+      : makeSiteMap(seed, SiteShape.Cave, { floor: TileCode.SOOT, wall: TileCode.CRAG })),
+    /**
+     * ═════════════════════════════════════════════════════════════════════════
+     * AND THE CLIMB LEVELS YOU — data/zones/reknor-escape/zone.lua:83-95.
+     * ═════════════════════════════════════════════════════════════════════════
+     *
+     * `if lev == 2 then game.player:forceLevelup(2) end` and the same for 3.
+     * It is the escape's own staging and the reason ToME can put fifty bodies
+     * in front of a four-minute-old character: the zone does not get harder as
+     * you climb, YOU DO, one level per floor, on arrival, before the first turn.
+     * See `AuthoredMap.forceLevel` and `forceLevelup`.
+     *
+     * `floor` IS THE NUMBER, and that is upstream's line rather than a
+     * coincidence worth hiding: its `lev` is the level number and so is ours.
+     * Floor 1 is absent because upstream's `on_enter` says nothing about level 1
+     * — a character wakes there at whatever level it was born.
+     *
+     * ═══ WHAT THIS DOES NOT DO: BRING BACK 50-60 ═══
+     * `DELVES` holds `site:undermost` at `{20, 30}` on floors 1-2 rather than
+     * reknor-escape's own 50-60, and its note names the two things that pay for
+     * that band: this, and NORGAN, who walks with the player and is levelled
+     * beside them (`zone.lua:86-87`, :92-93). Half of the pair has landed. The
+     * escort has not, so the row stays where the density pass measured it.
+     */
+    ...(floor >= 2 ? { forceLevel: floor } : {}),
+  }),
   populate: (
     world: World,
     built: AuthoredMap,
@@ -1821,9 +1903,62 @@ const UNDERMOST_SITE: SiteDef = {
     floor = 1,
     scope?: PopulationScope,
   ): void => {
+    /**
+     * ═════════════════════════════════════════════════════════════════════════
+     * AND THE LAST FLOOR IS POPULATED, WHICH IT WAS NOT.
+     * ═════════════════════════════════════════════════════════════════════════
+     *
+     * This read `if (spec === undefined || floor >= floorsOf(spec)) return;`, so
+     * the Undermost's third floor was never handed to `populateDelve` AT ALL —
+     * no monsters, no litter, no lore note, and no boss on the one floor in the
+     * game where upstream puts its set piece. Measured: 0.0 foes, 0 turns, 100%
+     * hp, cleared 3/3 by all four classes. The intro was four bodies and an
+     * empty hall.
+     *
+     * ═══ THE GUARD WAS THE RIGHT FACT IN THE WRONG PLACE ═══
+     * Upstream's last level of the escape from Reknor genuinely places nothing
+     * random: `levels[3].generator.actor.nb_npc = {0, 0}`
+     * (`data/zones/reknor-escape/zone.lua:79`) because it is a STATIC map with
+     * Brotoq and his guard drawn onto it. That is a statement about the COUNT,
+     * and it lives in the spec's `nbNpcByFloor` now, where `populateDelve` can
+     * see it. Returning early instead skipped the floor's litter and its note as
+     * well, and — the part that mattered — skipped the `spec.boss` branch, which
+     * `populateDelve` only ever runs on the last floor.
+     *
+     * SO FLOOR 3 STILL ROLLS NO ORDINARY BODIES, faithfully, and it now gets
+     * everything else — including the fight the floor is drawn around.
+     */
     const spec = specFor(UNDERMOST_SITE_ID);
-    if (spec === undefined || floor >= floorsOf(spec)) return;
+    if (spec === undefined) return;
     populateDelve(world, built, forArea(spec, built), party, floor, scope);
+    /**
+     * ═════════════════════════════════════════════════════════════════════════
+     * AND THE WAY OUT IS HELD. Upstream's last level, in one line.
+     * ═════════════════════════════════════════════════════════════════════════
+     *
+     * `nb_npc = {0, 0}` on that level (data/zones/reknor-escape/zone.lua:79) is
+     * not "the level is empty" — it is "nothing here is ROLLED", because the
+     * bodies are drawn onto the map (data/maps/zones/reknor-escape-last.lua:34-35).
+     * The line above rolls the nothing; this line places the drawn ones.
+     *
+     * NOT BEHIND `spec.boss`, deliberately. `populateDelve`'s boss branch puts
+     * ONE body on the cell furthest from the door and that is right for a room
+     * whose generator chose its own shape; this floor was drawn by hand so that
+     * the fight could be composed — a warden, a picket at the hall's mouth and
+     * two more beside him — and a spec field cannot say where four bodies
+     * stand. See `DelveSpec.boss`, whose own note says a second boss must be
+     * argued for: this is the argument, and it is that the set piece belongs to
+     * the map rather than to the room.
+     *
+     * ═══ UNCONDITIONAL IN `scope`, WHICH IS WHAT A WIPE NEEDS ═══
+     * `PopulationScope.Hostiles` is the re-seed after a party wipes, and
+     * everything here IS hostiles. `resetFloor` has already reaped the old ones,
+     * so this is the pass that puts the warden back — without it a party could
+     * clear the hall by dying in it.
+     */
+    if (floor >= floorsOf(spec)) {
+      populateUndermostHall(world, UNDERMOST_LAST_FLOOR, party, delveLevel(spec, party), floor);
+    }
   },
 };
 

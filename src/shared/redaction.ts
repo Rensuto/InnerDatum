@@ -3,7 +3,12 @@
 // Inner Datum — the dark territory: Alderbrook, overwritten.
 
 import { tileIndex } from './coords.ts';
-import { ALDERBROOK_REGIONS, REDACTION_SITE_ID, makeOverworld } from './level.ts';
+import {
+  ALDERBROOK_REGIONS,
+  BIRTHPLACE_SITE_ID,
+  REDACTION_SITE_ID,
+  makeOverworld,
+} from './level.ts';
 import { TileCode, isSafeGround, isWalkable } from './protocol.ts';
 import type { AuthoredMap } from './level.ts';
 import type { TileXY } from './coords.ts';
@@ -375,6 +380,20 @@ export function makeRedaction(): AuthoredMap {
      * is the arrival tile, which `markersFor` already draws as *The way out*.
      */
     if (siteId === REDACTION_SITE_ID) continue;
+    /**
+     * AND THE HOLE YOU WOKE IN, WHICH THERE IS EXACTLY ONE OF.
+     *
+     * The Undermost became a cell on the Alderbrook rows when it stopped being
+     * a prologue that vanishes, so the erasure found it and copied it like any
+     * other door. A second Undermost is not a second place: `SiteDef.birthplace`
+     * is what the gateway reads to decide where a NEW CHARACTER is put, and two
+     * sites carrying it is a question with no answer. The general rule, and it
+     * is the honest one: A MAP DOES NOT CONTAIN A SECOND PLACE TO BE BORN.
+     *
+     * The ground is untouched — the cell is FIELD on both maps and walks the
+     * same. What the Index took was the way down.
+     */
+    if (siteId === BIRTHPLACE_SITE_ID) continue;
     // The cell the room ENDED UP in, which is the original unless it moved.
     const key = `${String(i % w)},${String(Math.floor(i / w))}`;
     sites.set(key, `${REDACTION_SITE_ID}:${siteId.replace('site:', '')}`);
@@ -438,6 +457,20 @@ const LANDMARK_ID_BY_SITE: Readonly<Record<string, string>> = {
   'site:cairnfoot': 'tile_ow_landmark_cairnfoot',
   'site:barrow_end': 'tile_ow_landmark_barrow_end',
   'site:the_weir': 'tile_ow_landmark_the_weir',
+  /**
+   * THE HOLE EVERY CHARACTER CLIMBS OUT OF, and the one row here whose art is
+   * not drawn yet. The Undermost became a cell on the moor when it stopped
+   * being a prologue that vanishes (`ALDERBROOK_LEGEND`, glyph `J`), and a
+   * place on the map needs its own silhouette or it borrows somebody else's:
+   * with no row at all `landmarkIdFor` falls through to the Redaction's gate,
+   * which is the wrong picture and the one place on the map where the wrong
+   * picture would be read as a second door onto the dark territory.
+   *
+   * Until the 32x32 lands (see ASSETS-REQUIRED.md) the id resolves to nothing
+   * and the client draws the `stair` family marker, which is what it drew
+   * before this row existed. Naming it now is what makes the art a drop-in.
+   */
+  [BIRTHPLACE_SITE_ID]: 'tile_ow_landmark_undermost',
   [REDACTION_SITE_ID]: 'tile_ow_landmark_redaction',
 };
 

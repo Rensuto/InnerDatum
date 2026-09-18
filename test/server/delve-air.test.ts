@@ -20,7 +20,7 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { floorsOf, populateDelve, specFor } from '../../src/server/content/delve.ts';
+import { floorsOf, nbNpcFor, populateDelve, specFor } from '../../src/server/content/delve.ts';
 import type { DelveSpec } from '../../src/server/content/delve.ts';
 import {
   INDEX_HUSK,
@@ -65,7 +65,7 @@ function underworks(): DelveSpec {
 }
 
 function rosterOf(roster: readonly MonsterTemplate[]): DelveSpec {
-  return { ...underworks(), monsters: [10, 10], roster, traps: undefined, boss: undefined };
+  return { ...underworks(), nbNpc: [10, 10], roster, traps: undefined, boss: undefined };
 }
 
 function codesUnder(world: World): number[] {
@@ -96,7 +96,9 @@ describe('Grid.lua:102-109 — nobody is born under water', () => {
         halfAndHalf(TileCode.POND_WATER, [WET_ROOM]),
         rosterOf([INDEX_HUSK]),
       );
-      expect(husks.placed).toBe(10);
+      // THE BAND THE PLACER USES, not the one the fixture states: `nbNpcFor`
+      // applies `NB_NPC_SCALE` to it (see `DelveSpec.nbNpc`).
+      expect(husks.placed).toBe(nbNpcFor(rosterOf([INDEX_HUSK]), 1)[1]);
       expect(husks.under).not.toContain(TileCode.POND_WATER);
     }
   });
@@ -217,14 +219,9 @@ describe('every body lands where the placer aimed it', () => {
             }
             return body;
           };
-          const placed = populateDelve(
-            world,
-            map,
-            { ...rosterOf([template]), monsters: [n, n] },
-            undefined,
-            1,
-          );
-          expect(placed, 'precondition: the whole band was placed').toBe(n);
+          const spec = { ...rosterOf([template]), nbNpc: [n, n] as const };
+          const placed = populateDelve(world, map, spec, undefined, 1);
+          expect(placed, 'precondition: the whole band was placed').toBe(nbNpcFor(spec, 1)[1]);
           expect(
             moved,
             `${template.id} on ${String(right)}, ${String(n)} bodies, seed ${String(s)}`,

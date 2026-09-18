@@ -40,7 +40,14 @@ import {
   worthExp,
 } from '../src/shared/progression.ts';
 import { createRng } from '../src/shared/rng.ts';
-import { dangerWord, partyHint, specFor } from '../src/server/content/delve.ts';
+import {
+  dangerWord,
+  delveLevel,
+  nbNpcFor,
+  partyHint,
+  specFor,
+} from '../src/server/content/delve.ts';
+import { computeRarities, rarityShare } from '../src/server/content/rarity.ts';
 import { SITES } from '../src/server/world/realms.ts';
 import { fileableCount, isFileable } from '../src/server/world/casefile.ts';
 
@@ -174,11 +181,21 @@ for (const [id, def] of SITES) {
   if (def.kind !== 'inner') continue;
   const spec = specFor(id);
   if (spec === undefined) continue;
-  const [lo, hi] = spec.monsters;
+  // THE BAND THE PLACER USES — `nbNpcFor`, which is the zone's own `nb_npc`
+  // (`engine/generator/actor/Random.lua:126`) at `NB_NPC_SCALE`. 2500 cells is
+  // what a generated site reports and only Gearford Ward reads it.
+  const [lo, hi] = nbNpcFor(spec, 1, 2500);
   const bodies = Math.round((lo + hi) / 2);
-  // The roster is a CYCLE `populateDelve` walks, so the ranks repeat in order.
+  // The roster is a rarity-weighted list now, so the mix is the list's shares
+  // rather than a cycle's order (`engine/Zone.lua:205-262`).
+  const weighted = computeRarities(
+    spec.roster.filter((t) => t.rarity !== undefined && t.levelRange !== undefined),
+    delveLevel(spec),
+  );
   let xp = 0;
-  for (let i = 0; i < bodies; i += 1) xp += worthExp(1, spec.roster[i % spec.roster.length].rank);
+  for (const { e, percent } of rarityShare(weighted)) {
+    xp += worthExp(1, e.rank) * bodies * (percent / 100);
+  }
   if (spec.boss !== undefined) xp += worthExp(1, spec.boss.rank);
   payouts.push({ name: id.replace('site:', ''), bodies, xp });
 }

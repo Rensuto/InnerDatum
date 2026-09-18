@@ -465,8 +465,26 @@ describe('the ego roll costs the loot stream nothing', () => {
 // ---------------------------------------------------------------------------
 
 describe('the three authored drop tables', () => {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE TIER, MINUS WHAT THE STORY GAVE YOU. `Item.quest`.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * The tier IS the table for everything a shop stocks and a body drops, and
+   * `quest` is the one subtraction. Upstream makes the same one and makes it
+   * twice over: the Rod of Recall carries `cost = 0, quest = true`
+   * (data/general/objects/quest-artifacts.lua:321) and is handed to the player
+   * BY NAME in `NPC:onDie` — `makeEntityByName(..., "ROD_OF_RECALL")`,
+   * tome/class/NPC.lua:394 — never rolled off a table. A unique in a drop pool
+   * is a unique that stops being one the second time a husk dies.
+   *
+   * WRITTEN AS THE SAME PREDICATE `idsOfTier` USES rather than as a literal
+   * list: the promise this file is about is that authoring an item puts it in a
+   * table without a second list being edited, and a hard-coded exclusion here
+   * would be exactly that second list.
+   */
   const tierIds = (tier: string): readonly string[] =>
-    ITEMS.filter((item) => item.tier === tier).map((item) => item.id);
+    ITEMS.filter((item) => item.tier === tier && item.quest !== true).map((item) => item.id);
 
   it('are the three tiers verbatim — the tier IS the drop table', () => {
     // content/items.ts authored `tier` to be the table, so that adding an item
@@ -482,7 +500,18 @@ describe('the three authored drop tables', () => {
     // the catalogue. The three tiers partition the catalogue, so the union of the
     // three tables must be every id.
     const reachable = new Set(MONSTER_TEMPLATES.flatMap((t) => t.drops?.pick ?? []));
-    expect([...reachable].sort()).toEqual(ITEMS.map((item) => item.id).sort());
+    expect([...reachable].sort()).toEqual(
+      ITEMS.filter((item) => item.quest !== true)
+        .map((item) => item.id)
+        .sort(),
+    );
+    // AND THE ONE THAT IS NOT IN ANY TABLE IS REACHABLE ANOTHER WAY — placed on
+    // the Undermost's warden by `populateUndermostHall`, which is upstream's own
+    // route for it. An artefact nothing dropped AND nothing placed would be the
+    // unreachable content this case is about.
+    expect(ITEMS.filter((item) => item.quest === true).map((item) => item.id)).toEqual([
+      'item_knot_of_elsewhere',
+    ]);
   });
 
   it('passes validateTemplate on every shipped template', () => {

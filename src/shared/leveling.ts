@@ -228,6 +228,55 @@ export function rankStatAdjust(rank: number): number {
 }
 
 /**
+ * ════════════════════════════════════════════════════════════════════════════
+ * HOW FAR OVER ITS FLOOR A BODY IS BORN — `tome/class/Actor.lua:1714-1725`.
+ * ════════════════════════════════════════════════════════════════════════════
+ *
+ * ```lua
+ * function _M:getRankLevelAdjust()
+ *     if self.rank == 1 then return -1
+ *     elseif self.rank == 2 then return 0
+ *     elseif self.rank == 3 then return 1
+ *     elseif self.rank == 3.2 then return 1
+ *     elseif self.rank == 3.5 then return 2
+ *     elseif self.rank == 4 then return 3
+ *     elseif self.rank == 5 then return 4
+ *     elseif self.rank >= 10 then return 8
+ *     else return 0 end
+ * ```
+ *
+ * ═══ THIS IS HOW UPSTREAM MAKES ONE BODY DANGEROUS ═══
+ * Seventy-four of ToME's eighty-nine zone files carry the same line, verbatim:
+ *
+ * ```lua
+ * actor_adjust_level = function(zone, level, e)
+ *     return zone.base_level + e:getRankLevelAdjust() + level.level-1 + rng.range(-1,2) end
+ * ```
+ *
+ * — `tome/data/zones/trollmire/zone.lua:30`, and seventy-nine occurrences of it
+ * across those files. Every
+ * body generated in a zone is levelled to that number, and the rank term is the
+ * whole of the difference between the husk beside you and the elite behind it:
+ * an elite is born TWO levels over its floor and a boss THREE, before its rank
+ * multiplies the life those levels buy (`rankLifeAdjust`). That is why upstream
+ * can put thirty bodies on a floor and still have you notice one of them.
+ *
+ * SAME SHAPE AS `rankStatAdjust`: equality tests with a fall-through to 0, so an
+ * unlisted rank gains nothing rather than being swept up by the nearest bound.
+ */
+export function rankLevelAdjust(rank: number): number {
+  if (rank === 1) return -1;
+  if (rank === 2) return 0;
+  if (rank === 3) return 1;
+  if (rank === 3.2) return 1;
+  if (rank === 3.5) return 2;
+  if (rank === 4) return 3;
+  if (rank === 5) return 4;
+  if (rank >= 10) return 8;
+  return 0;
+}
+
+/**
  * Every stat point a body of this level has been granted by levelling.
  *
  * For a PLAYER this is bookkeeping the spend path already does — see

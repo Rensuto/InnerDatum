@@ -18,6 +18,8 @@ import {
   monsterInit,
   validateTemplate,
   INDEX_GLUT,
+  UNDERMOST_PICKET,
+  UNDERMOST_WARDEN,
 } from '../../src/server/content/monsters.ts';
 import {
   resolveLevelup,
@@ -264,6 +266,14 @@ describe('the roster is well formed', () => {
       'index_ribbon/melee_chaser/normal',
       'index_inkwell/melee_chaser/normal',
       'index_strongbox/melee_chaser/normal',
+      // AND THE TWO DRAWN ONTO THE TUTORIAL'S LAST FLOOR. Not rolled into
+      // anything: `UNDERMOST_GARRISON` puts them on their glyphs, which is
+      // upstream's own mechanism for a hand-drawn level
+      // (engine/generator/map/Static.lua:103-108). The one place in the game
+      // every single character has to walk through, and until they landed it
+      // was measured at zero bodies and zero turns.
+      'undermost_warden/melee_chaser/boss',
+      'undermost_picket/melee_chaser/normal',
     ]);
     expect(monsterById('index_wraith')).toBe(INDEX_WRAITH);
     expect(monsterById('index_glut')).toBe(INDEX_GLUT);
@@ -524,6 +534,8 @@ describe('the adopted ToME entries survive the port', () => {
       ['index_ribbon', 'Index Throat', 'enemy_index_ribbon_s'],
       ['index_inkwell', 'Index Clutch', 'enemy_index_inkwell_s'],
       ['index_strongbox', 'Index Carapace', 'enemy_index_strongbox_s'],
+      ['undermost_warden', 'The Undermost Warden', 'enemy_undermost_warden'],
+      ['undermost_picket', 'Undermost Picket', 'enemy_undermost_picket_s'],
     ]);
     expect(INDEX_HUSK.description).toContain('half-erased citizen, overwritten from the inside');
     expect(INDEX_WRAITH.description).toContain('An absence given shape');
@@ -1293,6 +1305,28 @@ describe('the balance table the wraith’s retune rests on', () => {
       ['index_ribbon', 7.035, 7.035, 7.035],
       ['index_inkwell', 7.035, 7.035, 7.035],
       ['index_strongbox', 11.557, 11.557, 11.557],
+      /**
+       * ═══════════════════════════════════════════════════════════════════════
+       * AND THE WARDEN IS THE LOWEST ROW IN THE GAME. UPSTREAM PUT IT THERE.
+       * ═══════════════════════════════════════════════════════════════════════
+       *
+       * `inc_damage = {all=-55}` — data/zones/reknor-escape/npcs.lua:47, on a
+       * rank-4 body that `actorAdjustLevel` starts three levels over its floor
+       * and `rankLifeAdjust` then gives four hundred hit points to. Fifty-five
+       * per cent off everything it deals is how a level-7 guardian stands in a
+       * level-1 zone in front of a character four minutes old without the
+       * encounter being arithmetic. It is the first boss anybody meets and it
+       * is a long fight rather than a sharp one, which is the same sentence the
+       * Watcher's row above makes and this one makes harder.
+       *
+       * THE PICKETS SIT ABOVE THE HUSK, on upstream's base orc
+       * (data/general/npcs/orc.lua:28, `dam=resolvers.rngavg(5,12)`) behind
+       * Strength 20 (:44) — the orc is a heavier body than the ant the husk is
+       * built from, and the three of them are what makes the hall a fight the
+       * warden alone would not be.
+       */
+      ['undermost_warden', 2.374, 3.053, 3.663],
+      ['undermost_picket', 7.161, 7.161, 8.115],
     ]);
   });
 
@@ -2250,6 +2284,70 @@ describe('the roster carries the immunities its upstream counterparts carry', ()
     for (const template of [INDEX_HUSK_ELITE, INDEX_GLUT]) {
       expect(refuses(template, EffectId.Bleeding)).toBe(false);
       expect(refuses(template, EffectId.Confused)).toBe(false);
+    }
+  });
+});
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE AUTOLEVEL SCHEME, VERBATIM — the bug that DISARMED THE WARDEN.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * SURVIVED THE MUTATION AUDIT: the warden's
+ * `autoStats: ['mag', 'mag', 'wil', 'str', 'str', 'dex']` replaced by the
+ * two-entry `['str', 'mag']` approximation it shipped as in the d3b draft.
+ * Nothing in the tree noticed, and that approximation was measured at
+ * `hitChance(0, def 20+) = 0.0%` — a boss that cannot land a blow, clearing in
+ * forty turns for four points of damage.
+ *
+ * ═══ WHY AN APPROXIMATION IS NOT A ROUNDING ERROR HERE ═══
+ * `data/autolevel_schemes.lua` writes all thirteen schemes out in full. A
+ * two-entry summary keeps whichever stats the writer thought the creature was
+ * ABOUT, and what it drops is whatever is at the end of the list — which for
+ * `warriormage` is `STAT_DEX`, and `dex` is the whole of a body's accuracy
+ * (`combatAttack` is `4 + mods.atk + weapon.atk + (dex - 10)`).
+ *
+ * SO IT IS PINNED AGAINST THE FILE, name for name and in order. `spreadStatPoints`
+ * walks the list round-robin, so the ORDER decides the ratio and a reordering is
+ * as real a change as a substitution.
+ */
+describe('a creature grows the stats its upstream scheme names, in that order', () => {
+  const SCHEMES: ReadonlyMap<string, readonly string[]> = new Map([
+    // autolevel_schemes.lua:25-27 `learnStats{ STR, STR, DEX }`.
+    ['warrior', ['str', 'str', 'dex']],
+    // autolevel_schemes.lua:57-59 `learnStats{ MAG, MAG, WIL, STR, STR, DEX }`.
+    ['warriormage', ['mag', 'mag', 'wil', 'str', 'str', 'dex']],
+  ]);
+
+  it('gives the Undermost warden Brotoq`s whole warriormage scheme', () => {
+    // `autolevel = "warriormage"` — data/zones/reknor-escape/npcs.lua:69.
+    expect(UNDERMOST_WARDEN.autoStats).toEqual(SCHEMES.get('warriormage'));
+    // AND THE ONE AT THE END IS THE ONE THAT MATTERS. A scheme that has lost its
+    // `dex` is a boss whose accuracy never grows, which is what the draft shipped.
+    expect(UNDERMOST_WARDEN.autoStats?.at(-1), 'the warden stopped growing dex').toBe('dex');
+  });
+
+  it('gives the picket the orc`s warrior scheme', () => {
+    // `autolevel = "warrior"` — data/general/npcs/orc.lua:38.
+    expect(UNDERMOST_PICKET.autoStats).toEqual(SCHEMES.get('warrior'));
+  });
+
+  it('never leaves a body growing fewer stats than its scheme states', () => {
+    /**
+     * THE GENERAL FORM, so the next template that quotes a six-entry scheme in
+     * its docblock and writes two cannot pass. Every `autoStats` in the file is
+     * either one of the schemes above, verbatim, or a LABELLED pair — and a pair
+     * is only allowed where the template's own comment says it is growing into
+     * what it already leads with rather than porting a scheme.
+     */
+    for (const template of MONSTER_TEMPLATES) {
+      const grown = template.autoStats;
+      if (grown === undefined) continue;
+      expect(grown.length, `${template.id} grows nothing`).toBeGreaterThan(0);
+      for (const [name, scheme] of SCHEMES) {
+        if (grown.length !== scheme.length) continue;
+        expect(grown, `${template.id} is a mangled ${name}`).toEqual(scheme);
+      }
     }
   });
 });

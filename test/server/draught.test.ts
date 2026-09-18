@@ -40,9 +40,28 @@ describe('there is something to drink', () => {
     // healing apart. See the note on `DRAUGHTS`.
     expect(drinkable[0]?.id).toBe('item_draught_mending');
     for (const item of ITEMS) {
-      // Every item is one thing or the other, and never both: a slot means worn,
-      // a `use` means drunk, and nothing sensible is in the middle.
+      /**
+       * Every item is one thing or the other, and never both: a slot means
+       * worn, a `use` means drunk, and nothing sensible is in the middle.
+       *
+       * ═══ EXCEPT A QUEST ARTEFACT, WHICH IS A THIRD KIND AND SAYS SO ═══
+       * The Knot of Elsewhere is held and pulled: no slot, and no `use` YET,
+       * because pulling it is twenty turns of wind-up and a crossing that live
+       * on the far side of `gateway.ts`. `Item.quest` is the field production
+       * reads to keep it out of the shops and the drop pools, so it is the
+       * field this exempts on — never the id, which would exempt the next one
+       * by accident and only this one on purpose.
+       *
+       * IT IS AN EXEMPTION AND NOT A HOLE: the case below asserts that a quest
+       * artefact is exactly that shape, so an ordinary item that lost its slot
+       * still lands here.
+       */
+      if (item.quest === true) continue;
       expect(item.slot === undefined, `${item.id}`).toBe(item.use !== undefined);
+    }
+    for (const item of ITEMS.filter((i) => i.quest === true)) {
+      expect(item.slot, `${item.id} is worn`).toBeUndefined();
+      expect(item.wielder, `${item.id} contributes something worn`).toEqual({});
     }
   });
 

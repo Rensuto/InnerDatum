@@ -7,6 +7,7 @@ import { createPartyState } from '../../src/server/engine/party.ts';
 import { createTurnEngine } from '../../src/server/turn-engine.ts';
 import { createRealms } from '../../src/server/world/realms.ts';
 import { REDACTED_KINDS, ROAMER_KINDS, kindsFor } from '../../src/server/world/roamers.ts';
+import { ActorRank } from '../../src/shared/protocol.ts';
 import { REDACTION_SITE_ID } from '../../src/shared/level.ts';
 import { Ground } from '../../src/shared/level.ts';
 
@@ -149,9 +150,21 @@ describe('the Index Glut', () => {
      * orb with no accuracy roll at all, so its swing is what happens after the
      * party has already won the positioning. Comparing a melee creature's
      * accuracy against a kiter's vestigial one measures nothing.
+     *
+     * ═══ AND NARROWER AGAIN, FOR THE SECOND TIME AND THE SAME REASON ═══
+     * A BOSS IS OUT OF IT TOO. `UNDERMOST_WARDEN` carries `atk: 0`, and that is
+     * not a lower accuracy than this creature's — it is an EMPTY FIELD. Brotoq
+     * authors no `combat` table at all (data/zones/reknor-escape/npcs.lua:30-78);
+     * every point of accuracy he has comes from `4 + (getDex - 10)` inside
+     * `combatAttack` (Combat.lua:1343, :1355), which is why his `autoStats` end
+     * in `dex`. Reading his blank weapon line as a number and comparing it to a
+     * troll's authored 2 is the same category error the paragraph above refuses
+     * for the Inquisitor. The Watcher is already outside this comparison —
+     * it is the `projSpeed` filter that takes it — and a rank filter is the
+     * general form of the rule rather than a second special case.
      */
     const atkOf = (t: (typeof MONSTER_TEMPLATES)[number]): number => t.combat.weapon?.atk ?? 0;
-    const melee = others.filter((t) => t.projSpeed === undefined);
+    const melee = others.filter((t) => t.projSpeed === undefined && t.rank !== ActorRank.Boss);
     expect(melee.length).toBeGreaterThan(2);
     expect(Math.min(...melee.map(atkOf))).toBeGreaterThan(atkOf(glut));
   });
@@ -168,6 +181,10 @@ describe('the Index Glut', () => {
       'index_inquisitor',
       'index_watcher',
       'index_wraith',
+      // And the second boss, which is the biggest body in the game at 150
+      // before a single level of `rankLifeAdjust` lands on it
+      // (data/zones/reknor-escape/npcs.lua:39).
+      'undermost_warden',
     ]);
   });
 });

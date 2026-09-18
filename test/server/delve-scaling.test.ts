@@ -443,38 +443,46 @@ describe('the room somebody drew is worth the detour', () => {
   });
 });
 
-describe('bodies are spread across the room, not dropped in a heap', () => {
+describe('bodies are drawn independently, as upstream draws them', () => {
   /**
    * ═══════════════════════════════════════════════════════════════════════════
-   * THE COMMENT DESCRIBED THE INTENDED CODE; THE CODE DID THE OPPOSITE.
+   * THIS TEST ASSERTED THE OPPOSITE OF UPSTREAM, AND IT WAS RIGHT TO BE REPLACED.
    * ═══════════════════════════════════════════════════════════════════════════
    *
-   * `populateDelve` places bodies at `offset + i * stride` through the candidate
-   * list, and its note says the offset is "drawn once so two delves are not laid
-   * out identically" and that spreading exists because "an independent draw
-   * clusters". The draw was INSIDE the loop, so every body landed at a fresh
-   * uniform position and `stride` was decorative.
+   * It read *"leaves a gap between bodies on a floor with room to spread them"*
+   * and refused more than five pairs within two tiles over forty floors. The
+   * placer it guarded walked `offset + i * stride` through the candidate list —
+   * an even comb — and the note above it called a cluster by the door *"the one
+   * arrangement this file exists to avoid"*.
    *
-   * MEASURED over sixty floors of `site:gearford_ward` on an open map:
+   * `engine/generator/actor/Random.lua:112-117` is the whole of upstream's
+   * placement:
    *
-   *     per body   48 pairs within 2 tiles   mean nearest-pair gap 2.55
-   *     hoisted     0 pairs within 2 tiles   mean nearest-pair gap 4.78
+   * ```lua
+   * local x, y = rng.range(self.area.x1, self.area.x2), rng.range(self.area.y1, self.area.y2)
+   * while (not m:canMove(x, y) or ... .special) and tries < 100 do ... end
+   * ```
    *
-   * That is not cosmetic. `delveHeadroom` tunes how many bodies are in the room;
-   * clustering silently decides how many of them you meet AT ONCE, which is the
-   * number that actually kills a party.
+   * Each body, independently, uniformly, over the whole map. That is Poisson,
+   * and Poisson CLUMPS — the 48 clustered pairs the old note reported as a bug
+   * are what a floor of upstream's looks like. The comb was ours, it was not
+   * measured against anything, and it is what made every delve open onto an
+   * empty room: measured at HEAD over six seeds of each of the twelve sites,
+   * **0.00 monsters could see the arrival tile in eleven of twelve**.
    *
-   * ═══ ASSERTED ON AN OPEN FLOOR, DELIBERATELY ═══
-   * A cramped or broken floor has few candidates and a stride of one, where
-   * bodies genuinely cannot be spread and crowding is the map's fault rather
-   * than the placer's. The claim is about the PLACER, so it is made where the
-   * placer is free.
+   * ═══ SO THE RULE IS INVERTED, AND IT IS STILL A RULE ═══
+   * A comb is not a distribution a uniform draw can produce. Over forty open
+   * floors holding this many bodies, independent draws put a measurable number
+   * of pairs within two tiles of each other; the comb put zero, every time, by
+   * construction. Asserting that the clumping is THERE is what fails the day
+   * somebody reintroduces a stride.
    */
-  it('leaves a gap between bodies on a floor with room to spread them', () => {
+  it('clumps, because each body is drawn on its own', () => {
     const spec = specFor('site:gearford_ward');
     if (spec === undefined) throw new Error('no spec for gearford_ward');
 
     let crowded = 0;
+    let bodiesSeen = 0;
     const floors = 40;
     for (let n = 0; n < floors; n += 1) {
       const world = createWorld(`delve-spread-${String(n)}`);
@@ -488,6 +496,7 @@ describe('bodies are spread across the room, not dropped in a heap', () => {
 
       const bodies = world.allActors().filter((actor) => actor.kind === ActorKind.Monster);
       expect(bodies.length, `${String(n)}: the fixture placed nothing`).toBeGreaterThan(1);
+      bodiesSeen += bodies.length;
 
       for (let i = 0; i < bodies.length; i += 1) {
         for (let j = i + 1; j < bodies.length; j += 1) {
@@ -499,11 +508,11 @@ describe('bodies are spread across the room, not dropped in a heap', () => {
       }
     }
 
-    // Zero, measured. Asserted with a little air so a future roster change that
-    // legitimately packs a floor tighter does not read as this bug coming back.
+    // MEASURED: the comb produced 0 over these forty floors and the independent
+    // draw produces tens. Ten is a floor with air under it, not a target.
     expect(
       crowded,
-      `${String(crowded)} pairs of bodies within two tiles over ${String(floors)} floors — the offset is being drawn per body again`,
-    ).toBeLessThan(5);
+      `${String(crowded)} pairs within two tiles over ${String(floors)} floors of ${String(bodiesSeen)} bodies — the comb is back`,
+    ).toBeGreaterThan(10);
   });
 });

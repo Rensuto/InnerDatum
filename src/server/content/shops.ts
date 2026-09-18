@@ -111,6 +111,14 @@ export function priceOf(id: string): number {
   if (parsed === undefined) return 0;
   const base = itemById(parsed.base);
   if (base === undefined) return 0;
+  /**
+   * AND A QUEST ARTEFACT IS WORTH NOTHING TO A SHOP — `cost = 0`,
+   * quest-artifacts.lua:321, verbatim, and it is the same zero money returns
+   * two lines up for the same reason: it is not a price, it is a refusal.
+   * `sellPrice` reads this and the buy path refuses a zero outright, so one
+   * `return` closes both counters.
+   */
+  if (base.quest === true) return 0;
 
   /**
    * ═══════════════════════════════════════════════════════════════════════════
@@ -359,11 +367,48 @@ export type ShopShelf = (typeof ShopShelf)[keyof typeof ShopShelf];
  * stock up" a sentence a player can act on, and it is the difference between an
  * item existing and an item being part of how you play.
  */
-function shelfPool(shelf: ShopShelf): readonly Item[] {
-  if (shelf === ShopShelf.Apothecary) return ITEMS.filter((item) => item.use !== undefined);
-  if (shelf === ShopShelf.Outfitter) return ITEMS.filter((item) => item.use === undefined);
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * AND NOTHING ON ANY SHELF IS A QUEST ARTEFACT — `quest = true`.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `quest-artifacts.lua:321` is `cost = 0, quest=true` and upstream's rod is
+ * never sold anywhere. FILTERED ONCE, HERE, rather than inside each of the five
+ * branches below: a shelf added tomorrow inherits the rule instead of having to
+ * remember it, and the branch that forgot would be the one shelf that sold the
+ * way out of a delve for gold.
+ *
+ * The `Outfitter` branch is the one that made this necessary — it is
+ * `item.use === undefined`, i.e. "everything that is not a draught", which is a
+ * pool a new item joins by default.
+ *
+ * ═══ AND IT IS REDUNDANT TODAY. MEASURED, AND KEPT ANYWAY, ON PURPOSE ═══
+ * Mutated away and the shelves stayed clean: `rollStockItem` discards anything
+ * that draws no ego refs (`refs.length === 0`, below), and the Knot of
+ * Elsewhere has no slot, so every ego filter refuses it and the fill loop
+ * throws it away sixty-four times. That is an ACCIDENT of the artefact having
+ * no `use` yet, and it expires the moment it gets one: a quest item with a
+ * `use` takes the draught branch, which exists precisely to skip the ego roll,
+ * and lands on the apothecary shelf. The shelf test drives `restock` rather
+ * than this filter, so it will catch that day either way — this line is what
+ * stops it being a bug first and a test failure second.
+ */
+const FOR_SALE: readonly Item[] = ITEMS.filter((item) => item.quest !== true);
+
+/**
+ * WHAT A GIVEN SHELF MAY DRAW FROM. Exported so `FOR_SALE` can be stated as a
+ * test rather than inferred from a shelf that happens to be clean: the mutation
+ * audit deleted that filter and every shelf case stayed green, because
+ * `rollStockItem` throws the Knot away for an unrelated reason (see above). A
+ * rule whose only evidence is a coincidence downstream of it is a rule that gets
+ * to be wrong the day the coincidence ends — which is the day the Knot gets a
+ * `use`. Same argument as `engine/pools.ts#maxLifeOf`, same shape of bug.
+ */
+export function shelfPool(shelf: ShopShelf): readonly Item[] {
+  if (shelf === ShopShelf.Apothecary) return FOR_SALE.filter((item) => item.use !== undefined);
+  if (shelf === ShopShelf.Outfitter) return FOR_SALE.filter((item) => item.use === undefined);
   if (shelf === ShopShelf.Reliquary) {
-    return ITEMS.filter(
+    return FOR_SALE.filter(
       (item) =>
         item.slot === Slot.Ring ||
         item.slot === Slot.Trinket ||
@@ -372,7 +417,7 @@ function shelfPool(shelf: ShopShelf): readonly Item[] {
     );
   }
   if (shelf === ShopShelf.Caravan) {
-    return ITEMS.filter(
+    return FOR_SALE.filter(
       (item) =>
         item.slot === Slot.Feet ||
         item.slot === Slot.Cloak ||
@@ -380,7 +425,7 @@ function shelfPool(shelf: ShopShelf): readonly Item[] {
         item.slot === Slot.Lite,
     );
   }
-  return ITEMS;
+  return FOR_SALE;
 }
 
 function rollStockItem(rng: Rng, level: number, shelf: ShopShelf): string | undefined {

@@ -177,9 +177,15 @@ describe('the item catalogue', () => {
     //
     // ═══ AND THE THREE LANTERNS, ALSO AHEAD OF THEIR ART ═══
     // Upstream's `lites.lua:30-70`, for the LITE slot they are the only items in.
-    expect(ITEMS).toHaveLength(37);
+    //
+    // ═══ AND ONE QUEST ARTEFACT, WHICH IS NEITHER WORN NOR DRUNK ═══
+    // The Knot of Elsewhere — upstream's Rod of Recall
+    // (data/general/objects/quest-artifacts.lua:314-369) — is held, and the
+    // warden of the Undermost is holding it. `Item.quest`.
+    expect(ITEMS).toHaveLength(38);
     expect(ITEMS.filter((item) => item.slot !== undefined)).toHaveLength(36);
     expect(ITEMS.filter((item) => item.use !== undefined)).toHaveLength(1);
+    expect(ITEMS.filter((item) => item.quest === true)).toHaveLength(1);
     // ═══ ONE ICON PER ITEM — DRAWN OR COMMISSIONED ═══
     // This read "23 drawn icons still, and 26 items", and had already gone stale
     // before the art arrived: the catalogue grew past it while eleven commissioned
@@ -189,7 +195,7 @@ describe('the item catalogue', () => {
     // ahead of its art, and is what `PENDING_ICON_IDS` exists to allow. Pinning
     // the drawn count alone would make that legitimate step a test failure.
     expect(MANIFEST_ITEM_ICONS.length + PENDING_ICON_IDS.length).toBe(ITEMS.length);
-    expect(ITEM_CATALOGUE.size).toBe(37);
+    expect(ITEM_CATALOGUE.size).toBe(38);
   });
 
   it('names only icons that exist in the committed manifest', () => {
@@ -276,6 +282,10 @@ describe('the item catalogue', () => {
     // AND THE ONLY THINGS WITHOUT ONE ARE THE THINGS YOU DRINK, which is the
     // other half of the same rule and the one that catches a dropped `slot:`.
     for (const item of ITEMS) {
+      // A QUEST ARTEFACT IS THE THIRD KIND — see `Item.quest`, and the case in
+      // `draught.test.ts` that pins its shape. Exempted on the field production
+      // reads, never on an id.
+      if (item.quest === true) continue;
       if (item.slot === undefined)
         expect(item.use, `${item.id} is neither worn nor drunk`).toBeDefined();
     }
@@ -379,7 +389,15 @@ describe('the item catalogue', () => {
     // two rings both add their armour; two weapons do not add their damage, so
     // a weapon could never have ridden that field. The rule is unchanged:
     // everything must do something, and this is the third field it can do it in.
+    //
+    // ═══ AND A QUEST ARTEFACT IS THE FOURTH, AND THE ONLY ONE THAT IS INERT ═══
+    // Its `wielder` is `{}` and it has no `use` yet, and that is the honest
+    // state rather than a gap: pulling it is a twenty-turn wind-up and a
+    // crossing, both of which live behind `gateway.ts`. What it DOES today is
+    // be the thing the tutorial's boss was holding, which is a fact about the
+    // world rather than a number on a sheet. `Item.quest` is what says so.
     const inert = ITEMS.filter((item) => {
+      if (item.quest === true) return false;
       if (item.use !== undefined) return false;
       if (item.combat !== undefined) return false;
       const stats = Object.keys(item.wielder.stats ?? {}).length;
@@ -389,7 +407,7 @@ describe('the item catalogue', () => {
     expect(inert).toEqual([]);
     // …and the things that are not worn all do something when they are drunk.
     for (const item of ITEMS) {
-      if (item.slot !== undefined) continue;
+      if (item.slot !== undefined || item.quest === true) continue;
       expect(item.use?.amount ?? 0, `${item.id} does nothing when used`).toBeGreaterThan(0);
     }
     // ...and a weapon's whole mechanic is its damage, so it must have one.
@@ -412,9 +430,15 @@ describe('the item catalogue', () => {
     // and a party that can buy the good one on every visit has no decision to
     // make about drinking it.
     const byTier = (tier: string): Item[] => ITEMS.filter((item) => item.tier === tier);
+    //
+    // THE ARTEFACT IS RARE AND IS NOT IN THE RARE DROP TABLE, which is the one
+    // place in this file where the tier and the table stop being the same list:
+    // `idsOfTier` drops a `quest` item, because upstream hands its rod over by
+    // name in `NPC:onDie` (tome/class/NPC.lua:394) rather than rolling for it.
+    // The case in `loot.test.ts` is where that difference is stated.
     expect(byTier('common')).toHaveLength(12);
     expect(byTier('uncommon')).toHaveLength(15);
-    expect(byTier('rare')).toHaveLength(10);
+    expect(byTier('rare')).toHaveLength(11);
     expect(byTier('common').length + byTier('uncommon').length + byTier('rare').length).toBe(
       ITEMS.length,
     );

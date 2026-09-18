@@ -46,8 +46,16 @@ import {
 import { talentRuntimeFor } from '../src/server/main.ts';
 import { ActorKind, ErasedReason } from '../src/shared/protocol.ts';
 import { canRoute, canWalk } from '../src/shared/level.ts';
-import { growTo, dressFor, spendPointsTo } from './grown.mjs';
+import {
+  bearBirthKit,
+  growTo,
+  dressFor,
+  levelOnTheFloor,
+  rememberWhatProbesSee,
+  spendPointsTo,
+} from './grown.mjs';
 import { areEnemies } from '../src/server/engine/actor.ts';
+import { canAttack } from '../src/server/engine/combat.ts';
 import { moneyAmountOf } from '../src/server/content/money.ts';
 import { itemById } from '../src/server/content/items.ts';
 import { parseItemId } from '../src/server/content/resolve.ts';
@@ -62,6 +70,7 @@ import {
   takeShot,
 } from './fightlib.mjs';
 import { BIRTH_INSCRIPTIONS, talentsFor } from '../src/server/content/inscriptions.ts';
+import { accept, createPartyState, invite, MAX_PARTY_SIZE } from '../src/server/engine/party.ts';
 
 const RUNS = Number(process.argv[2] ?? 8);
 
@@ -71,9 +80,9 @@ const RUNS = Number(process.argv[2] ?? 8);
  * ═══ EVERY NUMBER THIS TOOL EVER PRINTED WAS A LEVEL-1 BODY WEARING NOTHING ═══
  * The bodies below were built the way every probe here builds one: `addPlayer`,
  * the class combat sheet, `sheetForClass`. That is a character with four birth
- * talents at rank 1 and an empty paper doll. A NEW character also wears the
- * brass lantern the gateway's `grantBirthKit` hands out, which moves no combat
- * number, so this is still exactly right for the opening ambush.
+ * talents at rank 1 and an empty paper doll, plus the brass lantern every
+ * character is born wearing (`bearBirthKit`) — which is NOT a cosmetic detail
+ * and was missing for as long as this tool has existed. See `grown.mjs`.
  *
  * It is the wrong body for a DELVE. This tool sent it into all sixteen,
  * including the ones a party reaches after twenty levels and a lot of gear, and
@@ -90,7 +99,41 @@ const TURN_CAP = 900;
 /** The three classes, so a party is a real party rather than one body tripled. */
 const PARTY = CLASSES.slice(0, 3);
 
-function run(site, size, seed) {
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * ONE RUN, AND IT IS EXPORTED BECAUSE A SECOND TOOL NEEDS THE SAME ONE.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `tools/delve-density.mjs` asks a different question of the same fight — per
+ * CLASS and per FLOOR rather than per site — and the one thing that must not
+ * happen is a second copy of this driver. Every lesson in this file's header
+ * and in `fightlib.mjs` was learned once and would have to be learned again in
+ * a duplicate.
+ *
+ * `opts` is what the second question needs and nothing else:
+ *
+ *   `party`    which classes are in the room, in order. Defaults to `PARTY`, so
+ *              a bare call is exactly the run this tool has always made.
+ *   `level`    what level to grow each body to. Defaults to the CLI's `LEVEL`.
+ *   `floor`    which floor of the site to open, from 1.
+ *   `strength` the `PartyStrength` the FLOOR is built for — `delveHeadroom`
+ *              reads its `size`, and `delveLevel` its `level`. See the call.
+ *   `turnCap`  how long before a run is called a stall.
+ *   `xp`       what is already in the experience bar. A descent carries a
+ *              part-filled level down from the floor above.
+ *   `equipped`  the paper doll to wear instead of rolling a fresh one. See the
+ *              call — a descent carries its gear rather than re-rolling it.
+ *   `lantern`  false rebuilds the BLIND body every number here was measured on
+ *              before `bearBirthKit` existed. It is the before-picture switch,
+ *              and it is here rather than in a note because "the fix moved the
+ *              numbers" is a claim somebody has to be able to re-run. Nothing
+ *              but `delve-density.mjs --blind` passes it.
+ */
+export function run(site, size, seed, opts = {}) {
+  const party = opts.party ?? PARTY;
+  const level = opts.level ?? LEVEL;
+  const floor = opts.floor ?? 1;
+  const turnCap = opts.turnCap ?? TURN_CAP;
   const downed = createDownedState();
   // THE STATUS TABLE. Without it the Overwritten Husk's bleed never lands and
   // this tool measures a fight the game does not have.
@@ -113,6 +156,64 @@ function run(site, size, seed) {
    * exists.
    */
   const talentEngine = createContentTalentEngine();
+  /**
+   * ═════════════════════════════════════════════════════════════════════════
+   * THE BODIES THE LEVELLING SEAM HAS TO FIND, KEYED BY ID.
+   * ═════════════════════════════════════════════════════════════════════════
+   *
+   * `engineFor` runs inside `createRealms`, which is BEFORE a single body
+   * exists, so the seam below cannot close over the bodies themselves. It
+   * closes over this map and the map is filled a few lines later — the same
+   * shape main.ts uses for `refreshPassives`, which is declared a hundred lines
+   * after the call that installs it and is wrapped in an arrow for exactly this
+   * reason ("a temporal dead zone and the server refuses to boot").
+   */
+  const born = new Map();
+  /**
+   * ═════════════════════════════════════════════════════════════════════════
+   * AND THE SEAM ITSELF — WHAT A LEVEL GAINED MID-FLOOR IS WORTH.
+   * ═════════════════════════════════════════════════════════════════════════
+   *
+   * `awardExperience` has always fired in this probe, because this probe has
+   * always driven the real pump: a body's `level` and `xp` moved with every
+   * kill. NOTHING SPENT WHAT THAT LEVEL PAID. `applyPendingLevels` banked the
+   * talent point and the three attribute points into `unspentPoints` /
+   * `unspentStatPoints`, and in production a player spends them and
+   * `refreshPassives` resizes the body; a probe has no player and wired no
+   * refresh, so every row this tool has printed is a character whose level
+   * counted up and whose Strength, talents and hit-point ceiling did not.
+   *
+   * See `levelOnTheFloor` in grown.mjs. Installed in BOTH places main.ts hangs
+   * `refreshPassives`, because they catch different events and the tool needs
+   * both: `onSheetDirty` is the forced level on arrival and an effect that
+   * grants stats, `onActBase` is once per base turn, which is what catches a
+   * level gained in the middle of a pump.
+   */
+  const refreshBody = (actorId) => {
+    const m = born.get(actorId);
+    if (m === undefined) return;
+    levelOnTheFloor(m.body, m.cls, m.sheet, effects);
+  };
+  /**
+   * ═════════════════════════════════════════════════════════════════════════
+   * AND THEY ARE IN A PARTY, WHICH DECIDES WHO GETS PAID FOR A KILL.
+   * ═════════════════════════════════════════════════════════════════════════
+   *
+   * `awardExperience` pays `membersOf(run.ctx.parties, killerId)`; with no party
+   * table it pays the killer ALONE. So every multi-body row this tool has
+   * printed levelled only whoever landed each blow — DECISIONS.md D12 is a full
+   * share to every member, and the whole design consequence of it ("everyone is
+   * always the same level") was absent from the measurement.
+   *
+   * A SOLO ROW IS BYTE-IDENTICAL: `partyOf` mints a party of one on demand and
+   * `membersOf` returns `[self]`, which is the no-table answer.
+   *
+   * `MAX_PARTY_SIZE` IS 4 AND THIS TOOL MEASURES FIVE. A sixth body cannot join
+   * and would then be paid alone, so past the cap the table is left out
+   * altogether and every body earns its own kills — the old behaviour, applied
+   * deliberately at the one size where the real game would refuse the party.
+   */
+  const parties = size <= MAX_PARTY_SIZE ? createPartyState() : undefined;
   const realms = createRealms({
     seed,
     engineFor: (world) =>
@@ -120,15 +221,42 @@ function run(site, size, seed) {
         world,
         downed,
         effects,
+        ...(parties === undefined ? {} : { parties }),
+        onSheetDirty: refreshBody,
         talents: createTalentBook(talentEngine, world),
-        talentRuntime: talentRuntimeFor(talentEngine, world),
+        talentRuntime: talentRuntimeFor(
+          talentEngine,
+          world,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          refreshBody,
+        ),
       }),
   });
-  const realm = realms.open(site, seed);
+  /**
+   * ═════════════════════════════════════════════════════════════════════════
+   * THE FLOOR IS BUILT FOR THE PARTY WALKING INTO IT, AND THIS PASSED NOBODY.
+   * ═════════════════════════════════════════════════════════════════════════
+   *
+   * `open(site, partyId)` leaves `party` undefined, which `populateDelve`
+   * defaults to `LONE_BEGINNER`. So every "A PARTY OF THREE" row this tool has
+   * ever printed fought a room sized for ONE person: `delveHeadroom(3)` is
+   * x2.0, and none of it was ever applied. Three bodies against a solo
+   * population is not the game, and it is the direction that flatters.
+   *
+   * SIZE ONLY BY DEFAULT, never level: `delveLevel` reads `.level` and the
+   * classic rows are level-1 bodies, so the floor stays the floor it was.
+   * `opts.strength` is what the density tool overrides when it wants the floor
+   * built for the party that would actually be standing in it.
+   */
+  const strength = opts.strength ?? { level, size };
+  const realm = realms.open(site, seed, strength, undefined, undefined, floor);
 
   const bodies = [];
   for (let i = 0; i < size; i += 1) {
-    const cls = PARTY[i % PARTY.length];
+    const cls = party[i % party.length];
     const p = realm.world.addPlayer(`p${i}`, `P${i}`);
     // THE COMBAT SHEET. See the header.
     p.combat = cls.combat;
@@ -136,22 +264,83 @@ function run(site, size, seed) {
     p.maxHp = cls.maxHp;
     p.hp = cls.maxHp;
     p.hpRegen = cls.hpRegen;
-    realm.engine.join(p.id);
-    realm.engine.setConnected(p.id, true);
     // THE SHEET IS WHAT MAKES THE BOOK ANSWER: without one `loadoutOf` is empty
     // and every talent is refused as "no such talent in this loadout".
     // GROWN FIRST, THEN DRESSED, THEN THE SHEET — see tools/grown.mjs for why
     // the order is `monsters.ts`'s: a pool sized before the stats exist cannot
     // include the Constitution they bought.
-    growTo(p, cls, LEVEL);
-    if (LEVEL > 1) dressFor(p, LEVEL, realm.world.lootRng.fork(`delve.dress.p${String(i)}`));
+    growTo(p, cls, level);
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * WHAT IT IS WEARING — ROLLED FRESH, OR CARRIED DOWN THE STAIRS.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * `dressFor` rolls one item per slot at this level's band, which is the
+     * right answer for a ONE-FLOOR row: it asks "is this room fair to somebody
+     * who got here", and somebody who got here has gear.
+     *
+     * IT IS THE WRONG ANSWER FOR A DESCENT. `delve-climb.mjs` walks one
+     * character down three floors, and re-rolling the doll on each one would
+     * hand a level-1 body that walked into the intro wearing a lantern a full
+     * suit of armour the moment it crossed into floor 2 — which is the gear
+     * cliff the balance readings kept finding, manufactured by the probe. So a
+     * caller that is carrying a character passes the doll it already had.
+     */
+    if (opts.equipped !== undefined) p.equipped = { ...opts.equipped };
+    else if (level > 1) dressFor(p, level, realm.world.lootRng.fork(`delve.dress.p${String(i)}`));
     const sheet = sheetForClass(cls);
-    spendPointsTo(sheet, cls, LEVEL);
+    spendPointsTo(sheet, cls, level);
     talentEngine.attach(p.id, sheet);
-    // THE DOLL FOLDED INTO THE SHEET. Without this the gear is worn and
-    // contributes nothing, which is the 'correct value with no reader' this
-    // repository keeps shipping.
-    if (LEVEL > 1) recomposeCombat(p, effects, resolveItem);
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * AND THE LANTERN, WHICH IS WHY HALF THIS TABLE WAS FICTION.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * AFTER `dressFor`, never before: `dressFor` assigns `body.equipped = worn`
+     * outright, so a kit granted first is thrown away. `bearBirthKit` skips a
+     * slot that is already filled, so a dressed body keeps the lantern the loot
+     * table rolled it and a bare one gets the brass lantern the gateway hands
+     * every new character.
+     *
+     * IT ALSO DOES THE `recomposeCombat` THIS BLOCK USED TO GUARD ON `level > 1`.
+     * Unconditional now, and it has to be: the doll is non-empty at every level
+     * the moment the lantern is on it.
+     *
+     * MEASURED on the five dark caves before it existed — `visionOf` from the
+     * arrival tile saw ONE TILE, its own, because `computeVision`'s `lite <= 0`
+     * branch is exactly that (class/Player.lua:653) and a cave lights nothing.
+     * Every `no_los` refusal past a neighbour was then charged to the class.
+     */
+    if (opts.lantern === false) recomposeCombat(p, effects, resolveItem);
+    else bearBirthKit(p, effects);
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * AND ONLY NOW DOES IT ARRIVE. `join` WAS THE FIRST THING AND HAD TO MOVE.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * `join` runs `levelUpOnArrival` — the port of reknor-escape's `on_enter`,
+     * which force-levels whoever walks onto floors 2 and 3 of the intro. It was
+     * being called on a LEVEL-1 body before `growTo` had run, so on the tutorial
+     * it banked two or three levels' worth of `pendingLevels` and then `growTo`
+     * set the level again on top: the body was paid the same points twice, once
+     * by `spendPointsTo` and once by `applyPendingLevels`.
+     *
+     * Built first, arrives second. `forceLevelup` is a FLOOR and never a set
+     * (progression.ts), so a body already grown to the floor's own level gains
+     * nothing here, which is exactly what a returning player gets — and the
+     * seam above is registered before the arrival, so the forced level's own
+     * `onSheetDirty` can find this body.
+     */
+    /**
+     * AND WHAT IS ALREADY IN THE BAR. A descent carries a part-filled level
+     * from the floor above; without this every floor of a delve would start at
+     * `xp = 0` and the third one would be measuring a character that had killed
+     * nothing, which is the whole thing this probe was just fixed to stop doing.
+     */
+    if (opts.xp !== undefined) p.xp = opts.xp;
+    born.set(p.id, { body: p, cls, sheet });
+    realm.engine.join(p.id);
+    realm.engine.setConnected(p.id, true);
     bodies.push({
       body: p,
       attacks: classStrikes(cls),
@@ -159,6 +348,26 @@ function run(site, size, seed) {
       // `sheetForClass` joins, because an inscription is in neither `ClassDef`.
       helps: selfHelp(cls, undefined, talentsFor(BIRTH_INSCRIPTIONS)),
     });
+  }
+
+  /**
+   * WHAT LEVEL EACH BODY WALKED IN AT, so the run can report what the FLOOR
+   * paid rather than what the probe was grown to. See `levelsGained` below.
+   */
+  const arrivedAt = bodies.map(({ body: b }) => b.level);
+
+  /**
+   * ONE PARTY, FORMED THE WAY A PARTY IS FORMED — invite, accept. There is no
+   * back door into `PartyState` and there should not be: `accept` is what moves
+   * a member between rows and clears the offer, and a hand-built table would be
+   * a second opinion about what being in a party means.
+   */
+  if (parties !== undefined && bodies.length > 1) {
+    const lead = bodies[0].body.id;
+    for (const { body: b } of bodies.slice(1)) {
+      invite(parties, lead, b.id, 0);
+      accept(parties, b.id, lead, 0);
+    }
   }
 
   /**
@@ -217,7 +426,9 @@ function run(site, size, seed) {
   let turns = 0;
   let worst = 1;
   let wipes = 0;
-  const tally = { shot: 0, moved: 0, held: 0, revived: 0 };
+  /** Hit points actually taken off the party, summed over the run. See below. */
+  let damage = 0;
+  const tally = { shot: 0, bumped: 0, moved: 0, held: 0, revived: 0 };
   if (process.env.DELVE_DIAG === 'roster') {
     const n = hostiles().length;
     console.log(`  [roster] ${site.name ?? site.id} size=${String(size)} monsters=${String(n)}`);
@@ -268,7 +479,7 @@ function run(site, size, seed) {
    */
   const lastOrder = new Map();
   const lastVerb = new Map();
-  for (; turns < TURN_CAP; turns += 1) {
+  for (; turns < turnCap; turns += 1) {
     const foes = livingHostiles();
     const up = bodies.filter((m) => m.body.alive && !isDowned(downed, m.body.id));
     if (foes.length === 0 || up.length === 0) break;
@@ -403,7 +614,75 @@ function run(site, size, seed) {
        * lets the resource come back, which is the whole shape of "lethal at
        * range and helpless in a doorway".
        */
+      /**
+       * ═══════════════════════════════════════════════════════════════════════
+       * BUT A HUSK ON YOUR SHOULDER IS NOT A DISTANCE YOU ARE KEEPING.
+       * ═══════════════════════════════════════════════════════════════════════
+       *
+       * The paragraph above is right about the Inspector at six tiles and it was
+       * applied to every body at every range, including one standing IN CONTACT
+       * with its full remaining resource spent. The result is not a player
+       * waiting, it is a player watching:
+       *
+       *   Blackwood floor 1, level 15, three runs each, HEAD
+       *     class          outcome   turns   held   dmg taken   hp low
+       *     The Alchemist  wipe x3     900  554-630  2485-5524    0-1%
+       *     The Redactor   wipe x2     900  672-716  1998-2717    0-1%
+       *     The Watchman   clear x3 175-214   21-34      17-71   95-99%
+       *
+       * Six hundred of nine hundred turns spent holding, four hundred of them
+       * drinking an infusion, and the run ends as a wipe. The Alchemist and the
+       * Redactor have NO dead zone (`minRange: 0` on every talent they own) and
+       * a bump-attack costs no resource at all — so the one thing a real player
+       * does when the flasks run out was the one thing this driver could not do,
+       * and it was never in the tally because nothing ever incremented it.
+       *
+       * ═══ AND THE ENGINE IS ASKED, NOT RE-IMPLEMENTED — BY THE RIGHT CALL ═══
+       * The Inspector genuinely cannot swing at contact: `scheduler.ts:2725-2761`
+       * runs `canAttack` on the occupant of the tile stepped into and refuses her
+       * bump with `TooClose`, saying in as many words that a melee exemption
+       * would be "the whole class's counterplay deleted by accident". So the
+       * DRIVER ASKS `canAttack` TOO, which is literally the function the bump is
+       * about to be judged by. Null means swing. ANYTHING ELSE MEANS HOLD,
+       * exactly as before — the Inspector's rows are unchanged by this edit, by
+       * construction, and that is deliberate.
+       *
+       * NOT `submitMove`'s RETURN VALUE, which was the first attempt and is a
+       * trap: `submitMove` reports whether the INTENT was accepted (`no_actor` is
+       * its only refusal) and the dead zone is judged at RESOLUTION, inside the
+       * pump. Measured — the Inspector "bumped" 875 times in 900 turns, dealt
+       * nothing, took nothing and stalled at 100% health, because every one of
+       * those was an intent accepted and then thrown away.
+       *
+       * ═══ AND THE DEAD ZONE IS LEFT ALONE, HAVING BEEN TRIED ═══
+       * Backing a body out of contact when `canAttack` refuses looks like the
+       * obvious other half and it makes the measurement WORSE: the Inspector
+       * retreats one tile, the husk closes one tile, and she paces to the turn
+       * cap. Measured, The Underworks at level 3, three runs — `clear` in 175-208
+       * turns became `stall` at 900 with 895 moves and 3 shots, and Blackwood's
+       * wipes became stalls at 100% health. A body that survives by never
+       * fighting is not a reading about the floor. Her escape is `fog_step`, a
+       * blink this driver does not press; until it does, holding is the honest
+       * measurement of a class in a bind and the bind is real.
+       */
       if (gap !== null && attacks.length > 0) {
+        const contact = living.find(
+          (f) => Math.max(Math.abs(f.x - b.x), Math.abs(f.y - b.y)) === 1,
+        );
+        const into =
+          contact === undefined
+            ? undefined
+            : STEPS.find(([dx, dy]) => b.x + dx === contact.x && b.y + dy === contact.y);
+        if (
+          contact !== undefined &&
+          into !== undefined &&
+          canAttack(b, contact, realm.world) === null
+        ) {
+          tally.bumped += 1;
+          lastVerb.set(b.id, `bump:${into[2]}`);
+          realm.engine.submitMove(b.id, into[2]);
+          continue;
+        }
         tally.held += 1;
         realm.engine.hold(b.id);
         continue;
@@ -662,6 +941,19 @@ function run(site, size, seed) {
      * so it is read here rather than inferred from the wreckage.
      */
     const pumped = realm.engine.pump();
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * AND THEN EVERYBODY REMEMBERS WHERE THEY HAVE BEEN — the gateway's
+     * `rememberWhatPlayersSee`, which an in-process probe never ran.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * `playerLineClear` is TWO terms, seen and REMEMBERED, and without this the
+     * second was empty for the whole run: a body could not draw a line back
+     * down the corridor it had just walked up, which a real player can. AFTER
+     * the pump for the gateway's own reason — the tile a body stands on is only
+     * decided when its intent resolves.
+     */
+    rememberWhatProbesSee(realm.world);
     if (
       process.env.DELVE_DIAG === 'stuck' &&
       turns % (Number(process.env.DELVE_EVERY) || 150) === 0 &&
@@ -740,7 +1032,25 @@ function run(site, size, seed) {
             : `  nearest ${String(nearest.f.name ?? nearest.f.id)} ${String(Math.round(nearest.f.hp))}hp at gap ${String(nearest.d)}`),
       );
     }
-    for (const { body: b } of bodies) worst = Math.min(worst, b.hp / b.maxHp);
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * WHAT THE ROOM TOOK OUT OF THEM, WHICH THE LOW-WATER MARK CANNOT SAY.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * `worst` is one instant — the deepest any body ever got — and a floor that
+     * grinds you from full to half four times over reads identically to one
+     * that took you to half once. Damage is the integral, so it is summed turn
+     * by turn against what each body had last turn, and a heal simply
+     * contributes nothing (the drop is clamped at zero rather than netted).
+     * That is what "how much did this floor hurt" means to a player.
+     */
+    for (const m of bodies) {
+      const b = m.body;
+      worst = Math.min(worst, b.hp / b.maxHp);
+      const before = m.was ?? b.maxHp;
+      if (b.hp < before) damage += before - b.hp;
+      m.was = b.hp;
+    }
   }
 
   /**
@@ -800,7 +1110,7 @@ function run(site, size, seed) {
    * health is not a difficulty reading — it is the driver failing to finish, and
    * the only way to tell which is to look at what it left alive.
    */
-  if (['1', '3'].includes(process.env.DELVE_DIAG ?? '') && foesLeft > 0 && turns >= TURN_CAP) {
+  if (['1', '3'].includes(process.env.DELVE_DIAG ?? '') && foesLeft > 0 && turns >= turnCap) {
     const me = bodies[0]?.body;
     /**
      * REACHABLE, OR JUST FAR? A stall where every survivor is unroutable is a
@@ -829,7 +1139,66 @@ function run(site, size, seed) {
     console.log(`  [diag] stalled with ${String(foesLeft)} left: ${far.slice(0, 8).join(' ')}`);
   }
   const downCount = bodies.filter(({ body: b }) => !b.alive || isDowned(downed, b.id)).length;
+  /**
+   * DEAD IS NOT DOWNED, AND ONLY ONE OF THEM IS A DEATH. `downCount` counts both
+   * because a party that is all on the floor has lost the room either way; this
+   * counts the bodies the room actually killed, which is the number a player
+   * means by "how many times did we die in there".
+   */
+  const deaths = bodies.filter(({ body: b }) => !b.alive).length;
+  /**
+   * THE FLOOR ITSELF, so a density can be worked out from a row rather than
+   * re-derived by whoever reads it. `canWalk` is the same predicate the placer
+   * uses to decide where a body may stand (`roomFor`), so "monsters per hundred
+   * walkable tiles" compares like with like across a 34x30 ruin and a 50x50 cave.
+   */
+  let walkable = 0;
+  for (let y = 0; y < realm.world.level.h; y += 1) {
+    for (let x = 0; x < realm.world.level.w; x += 1) {
+      if (canWalk(realm.world.level, x, y)) walkable += 1;
+    }
+  }
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * WHAT THE FLOOR PAID IN LEVELS — the acceptance test for the whole density
+   * question, and the one number nothing here has ever reported.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * The author's ruling: *"the goal is to level up before encountering the boss
+   * at the end. you are not meant to get to the end of the dungeon without
+   * leveling at least twice."* A delve is a curve, so a row that says how many
+   * bodies were in the room and not how much the room paid is answering half a
+   * question.
+   *
+   * `arrivedAt` is read after the build and before the first turn; `level` here
+   * is read after the last one. Both are the body's own field, written by
+   * `awardExperience` and `forceLevelup`, so this is a report and not a second
+   * opinion.
+   */
+  const levelIn = arrivedAt;
+  const levelOut = bodies.map(({ body: b }) => b.level);
+  const xpOut = bodies.map(({ body: b }) => b.xp);
   return {
+    deaths,
+    damage,
+    levelIn,
+    levelOut,
+    xpOut,
+    /** What each body is wearing at the end, so a descent can carry it down. */
+    equippedOut: bodies.map(({ body: b }) => ({ ...b.equipped })),
+    /** Levels gained by the body that gained the fewest — the honest floor. */
+    levelsGained: Math.min(...levelOut.map((l, i) => l - (levelIn[i] ?? l))),
+    unspentPoints: bodies.map(({ body: b }) => b.unspentPoints),
+    /**
+     * WHAT THE TURNS WERE SPENT ON. `moved` against `shot` is the walking share
+     * of a floor, and it is the number that decides whether "more monsters"
+     * costs clock time: bodies placed a stride apart are met one at a time with
+     * a walk between each, and that walk is most of a delve.
+     */
+    orders: { ...tally },
+    walkable,
+    w: realm.world.level.w,
+    h: realm.world.level.h,
     // A WIPE ANYWHERE IN THE RUN OUTRANKS THE ENDING. The party may well be
     // standing in a quiet room at the end — the reset put them there.
     outcome: wipes > 0 || downCount === bodies.length ? 'wipe' : foesLeft === 0 ? 'clear' : 'stall',
@@ -860,48 +1229,60 @@ const delves = [...SITES.values()].filter((s) => s.kind === RealmKind.Inner);
 const label = (site) =>
   site.id.startsWith('site:redaction:') ? `${site.name} (redacted)` : site.name;
 
-for (const size of [1, 3]) {
-  console.log(`\n${size === 1 ? 'ALONE' : 'A PARTY OF THREE'} — ${RUNS} runs each\n`);
-  console.log(
-    `${'delve'.padEnd(32)} ${'clear'.padStart(6)} ${'wipe'.padStart(5)} ${'stall'.padStart(5)}  ${'turns'.padStart(5)}  ${'hp low'.padStart(6)}  ${'downed'.padStart(6)}  ${'gold'.padStart(5)}  ${'items'.padStart(5)}  ${'worn'.padStart(4)}  ${'sells for'.padStart(9)}  ${'foes'.padStart(4)}  ${'drop/foe'.padStart(8)}`,
-  );
-  for (const site of delves) {
-    const rs = Array.from({ length: RUNS }, (_u, i) =>
-      run(site, size, `delve-run:${site.id}:${size}:${i}`),
-    );
-    const clears = rs.filter((r) => r.outcome === 'clear');
-    const avg = (xs) => (xs.length === 0 ? 0 : xs.reduce((a, b) => a + b, 0) / xs.length);
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE TABLE ONLY PRINTS WHEN THIS FILE IS THE ONE THAT WAS RUN.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `run` is exported, and an export nobody may import without also running
+ * twenty-seven delves twice is not an export. `import.meta.main` is Node's own
+ * answer (24.2+, and this repo is on 24.19), so `node tools/delve-run.mjs`
+ * prints exactly what it always printed and `import { run }` costs nothing.
+ */
+if (import.meta.main) {
+  for (const size of [1, 3]) {
+    console.log(`\n${size === 1 ? 'ALONE' : 'A PARTY OF THREE'} — ${RUNS} runs each\n`);
     console.log(
-      `${label(site).padEnd(32)} ${`${clears.length}/${RUNS}`.padStart(6)} ` +
-        `${String(rs.filter((r) => r.outcome === 'wipe').length).padStart(5)} ` +
-        `${String(rs.filter((r) => r.outcome === 'stall').length).padStart(5)}  ` +
-        `${String(Math.round(avg(rs.map((r) => r.turns)))).padStart(5)}  ` +
-        `${`${Math.round(100 * avg(rs.map((r) => r.worst)))}%`.padStart(6)}  ` +
-        `${avg(rs.map((r) => r.downCount))
-          .toFixed(1)
-          .padStart(6)}  ` +
-        // THE PAY, AVERAGED OVER THE RUNS THAT ACTUALLY CLEARED. A stalled run
-        // left half the room alive, so its floor is not what the room is worth.
-        `${(clears.length === 0 ? 0 : avg(clears.map((r) => r.gold))).toFixed(0).padStart(5)}  ` +
-        `${(clears.length === 0 ? 0 : avg(clears.map((r) => r.items))).toFixed(1).padStart(5)}  ` +
-        `${(clears.length === 0 ? 0 : avg(clears.map((r) => r.wearable))).toFixed(1).padStart(4)}  ` +
-        `${(clears.length === 0 ? 0 : avg(clears.map((r) => r.worth))).toFixed(0).padStart(9)}  ` +
-        `${avg(rs.map((r) => r.roster))
-          .toFixed(1)
-          .padStart(4)}  ` +
-        `${(clears.length === 0
-          ? 0
-          : avg(clears.map((r) => (r.roster === 0 ? 0 : r.items / r.roster)))
-        )
-          .toFixed(2)
-          .padStart(8)}`,
+      `${'delve'.padEnd(32)} ${'clear'.padStart(6)} ${'wipe'.padStart(5)} ${'stall'.padStart(5)}  ${'turns'.padStart(5)}  ${'hp low'.padStart(6)}  ${'downed'.padStart(6)}  ${'gold'.padStart(5)}  ${'items'.padStart(5)}  ${'worn'.padStart(4)}  ${'sells for'.padStart(9)}  ${'foes'.padStart(4)}  ${'drop/foe'.padStart(8)}`,
     );
+    for (const site of delves) {
+      const rs = Array.from({ length: RUNS }, (_u, i) =>
+        run(site, size, `delve-run:${site.id}:${size}:${i}`),
+      );
+      const clears = rs.filter((r) => r.outcome === 'clear');
+      const avg = (xs) => (xs.length === 0 ? 0 : xs.reduce((a, b) => a + b, 0) / xs.length);
+      console.log(
+        `${label(site).padEnd(32)} ${`${clears.length}/${RUNS}`.padStart(6)} ` +
+          `${String(rs.filter((r) => r.outcome === 'wipe').length).padStart(5)} ` +
+          `${String(rs.filter((r) => r.outcome === 'stall').length).padStart(5)}  ` +
+          `${String(Math.round(avg(rs.map((r) => r.turns)))).padStart(5)}  ` +
+          `${`${Math.round(100 * avg(rs.map((r) => r.worst)))}%`.padStart(6)}  ` +
+          `${avg(rs.map((r) => r.downCount))
+            .toFixed(1)
+            .padStart(6)}  ` +
+          // THE PAY, AVERAGED OVER THE RUNS THAT ACTUALLY CLEARED. A stalled run
+          // left half the room alive, so its floor is not what the room is worth.
+          `${(clears.length === 0 ? 0 : avg(clears.map((r) => r.gold))).toFixed(0).padStart(5)}  ` +
+          `${(clears.length === 0 ? 0 : avg(clears.map((r) => r.items))).toFixed(1).padStart(5)}  ` +
+          `${(clears.length === 0 ? 0 : avg(clears.map((r) => r.wearable))).toFixed(1).padStart(4)}  ` +
+          `${(clears.length === 0 ? 0 : avg(clears.map((r) => r.worth))).toFixed(0).padStart(9)}  ` +
+          `${avg(rs.map((r) => r.roster))
+            .toFixed(1)
+            .padStart(4)}  ` +
+          `${(clears.length === 0
+            ? 0
+            : avg(clears.map((r) => (r.roster === 0 ? 0 : r.items / r.roster)))
+          )
+            .toFixed(2)
+            .padStart(8)}`,
+      );
+    }
   }
-}
 
-console.log(
-  `\nA STALL IS THE DRIVER, NOT THE ROOM: it walks at the nearest body and\n` +
-    `bump-attacks, so a party carrying the Inspector — which deliberately cannot\n` +
-    `shoot adjacent — will stand next to something and do nothing. Read stalls as\n` +
-    `"this driver cannot finish", never as "this delve cannot be cleared".`,
-);
+  console.log(
+    `\nA STALL IS THE DRIVER, NOT THE ROOM: it walks at the nearest body and\n` +
+      `bump-attacks, so a party carrying the Inspector — which deliberately cannot\n` +
+      `shoot adjacent — will stand next to something and do nothing. Read stalls as\n` +
+      `"this driver cannot finish", never as "this delve cannot be cleared".`,
+  );
+}

@@ -78,6 +78,25 @@ export const PLACE_BLURBS: ReadonlyMap<string, string> = new Map<string, string>
 
   /**
    * ═══════════════════════════════════════════════════════════════════════════
+   * THE ONE PLACE EVERY CHARACTER HAS BEEN, AND IT HAD NOTHING TO SAY.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `blurbFor` answered `undefined` for the Undermost, so `announceArrival` said
+   * nothing when a party walked back in. That was invisible while the cave was
+   * on no map and nobody could walk back in; item 7 put a marked mouth on the
+   * moor six tiles from Alderbrook's gate, and it is now a thing players click.
+   *
+   * WRITTEN FOR THE RETURN AND NOT FOR THE WAKING. The waking has its own line
+   * (`UNDERMOST_WAKING`); this is what the hole looks like from the outside once
+   * you know what climbed out of it.
+   */
+  [
+    'site:undermost',
+    'The hole you came up out of. It has not closed, and the cold coming off it is not the weather.',
+  ],
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
    * THE THREE NOBODY IS TOLD ABOUT — AND THEY WERE THE ONLY SITES WITH NO LINE.
    * ═══════════════════════════════════════════════════════════════════════════
    *

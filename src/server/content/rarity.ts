@@ -74,8 +74,24 @@ export const RARITY_SCALE = 10000;
 export type RarityCandidate = {
   /** Lower is commoner. `genprob = floor(max / rarity)`. */
   readonly rarity: number;
-  /** `[low, high]`. Outside it, the weight is divided — see the header. */
-  readonly levelRange: readonly [number, number];
+  /**
+   * `[low, high]`. Outside it, the weight is divided — see the header.
+   *
+   * ═══ `high` IS OPTIONAL BECAUSE UPSTREAM'S IS ═══
+   * `Zone.lua:219` reads `elseif e.level_range[2] and lev > e.level_range[2]`,
+   * and that `and` is load-bearing: most of ToME's bestiary is authored
+   * `level_range = {n, nil}` — the giant brown ant is one of the few with a
+   * ceiling at all (`tome/data/general/npcs/ant.lua:56`) while the wolf
+   * (`canine.lua:50`), the losgoroth (`losgoroth.lua:61`), the forest troll
+   * (`troll.lua:57`) and every aquatic critter (`aquatic_critter.lua:47`) are
+   * open-ended. An open-ended entity is NEVER divided from above; it stays at
+   * full weight for ever and is displaced only by things that out-weigh it.
+   *
+   * This used to be a required pair, so a port of those rows had to invent a
+   * ceiling, and an invented ceiling is a difficulty decision disguised as a
+   * type. `undefined` is the row upstream actually wrote.
+   */
+  readonly levelRange: readonly [number, number | undefined];
 };
 
 /** One row of the computed list: a candidate and its CUMULATIVE weight. */
@@ -128,8 +144,9 @@ export function computeRarities<T extends RarityCandidate>(
     if (level < low) {
       // UNDER-DEPTH: divided by 3 × the gap. Zone.lua:218.
       max = RARITY_SCALE / (OOD_FACTOR * (low - level));
-    } else if (level > high) {
-      // OVER-DEPTH: divided by the gap alone — three times gentler. Zone.lua:219.
+    } else if (high !== undefined && level > high) {
+      // OVER-DEPTH: divided by the gap alone — three times gentler. Zone.lua:219,
+      // whose `e.level_range[2] and` is this `high !== undefined`.
       max = RARITY_SCALE / (level - high);
     }
 

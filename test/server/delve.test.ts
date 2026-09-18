@@ -4,6 +4,7 @@ import {
   DELVES,
   specFor,
   dangerWord,
+  delveLevel,
   forArea,
   partyHint,
   populateDelve,
@@ -347,11 +348,23 @@ describe('the map has a gradient now', () => {
     // one: nothing.
     const easy = gentlest();
     const hard = worst();
-    // A SPREAD WIDE ENOUGH TO BE A DECISION. The worst room's FLOOR is above the
-    // gentlest room's CEILING, for bodies and for loot alike — so the two are
-    // not merely different, they do not overlap, and walking further out is
-    // always more of both.
-    expect(hard.monsters[0]).toBeGreaterThan(easy.monsters[1]);
+    /**
+     * A SPREAD WIDE ENOUGH TO BE A DECISION — AND IT IS NOT THE HEADCOUNT NOW.
+     *
+     * This asserted `hard.monsters[0] > easy.monsters[1]`, which held while the
+     * counts were authored on a scale of two to ten. They are upstream's
+     * `nb_npc` now, and upstream's density is a fact about the ZONE rather than
+     * about danger: the Hollow Mine is `ardhungol` and packs 70-80 bodies at
+     * level 9, Blackwood is `trollmire` and holds 20-30 at level 15. Asserting
+     * the old inequality would now be asserting that a cavern is scarier than a
+     * forest.
+     *
+     * WHAT THE GRADIENT IS MADE OF is the level every body in the room is born
+     * at — `delveLevel`, which `actor_adjust_level` feeds and `rankLifeAdjust`
+     * compounds — and the loot the room pays. Both still have to be strictly
+     * ordered, and `dangerWord` reads the first of them.
+     */
+    expect(delveLevel(hard)).toBeGreaterThan(delveLevel(easy));
     expect(hard.litter[0]).toBeGreaterThan(easy.litter[1]);
   });
 
@@ -513,12 +526,15 @@ describe('bands for the floor they are spread over', () => {
   it('leaves a band alone on the size it was tuned on and grows it with the area', () => {
     const underworks = specFor('site:underworks');
     if (underworks === undefined) throw new Error('no spec for the Underworks');
-    const spec: DelveSpec = { ...underworks, monsters: [4, 6], litter: [2, 3], traps: [1, 2] };
+    const spec: DelveSpec = { ...underworks, nbNpc: [4, 6], litter: [2, 3], traps: [1, 2] };
     expect(forArea(spec, tuned)).toEqual(spec);
 
     expect(built.view.w * built.view.h, 'precondition: an upstream-sized site').toBe(2500);
     const wide = forArea(spec, built);
-    expect(wide.monsters, 'the fight a delve was tuned to be').toEqual(spec.monsters);
+    // `nb_npc` IS NOT AN AREA BAND. Upstream states it per zone LEVEL and the
+    // levels are a fixed size (`engine/generator/actor/Random.lua:126`); the one
+    // zone that scales with area says so itself and carries `nbNpcPerArea`.
+    expect(wide.nbNpc, 'the count a zone states for its own level').toEqual(spec.nbNpc);
     expect(wide.litter).toEqual([5, 7]);
     expect(wide.traps).toEqual([2, 5]);
     expect(wide.roster).toBe(spec.roster);
@@ -544,8 +560,11 @@ describe('bands for the floor they are spread over', () => {
       expect(ground, siteId).toBeLessThanOrEqual(wide.litter[1] + 1);
 
       const monsters = realm.world.allActors().filter((a) => a.kind === ActorKind.Monster).length;
-      expect(monsters, `${siteId} is not the fight it was tuned to be`).toBeLessThanOrEqual(
-        spec.monsters[1],
+      // THE BAND'S OWN CEILING, PLUS WHATEVER THE ROOM'S BOSS ADDS. `forArea`
+      // does not touch `nbNpc` and a lone party is `delveHeadroom` 1.0, so the
+      // count placed is `rng.range(nb_npc[1], nb_npc[2])` and nothing else.
+      expect(monsters, `${siteId} is not the fight its zone states`).toBeLessThanOrEqual(
+        spec.nbNpc[1] + (spec.boss === undefined ? 0 : 1),
       );
       expect(monsters, siteId).toBeGreaterThanOrEqual(1);
     }

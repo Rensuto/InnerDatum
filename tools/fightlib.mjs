@@ -296,15 +296,52 @@ export function firingSpot(attacks, self, foes, level, walkable, radius = 6) {
  * three wrong answers in this repo; leaving it a distance is what makes one
  * function serve a truncheon and a revolver.
  */
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * AND THE BUTTON THAT ANSWERS A CROWD, WHICH `shape === 'single'` THREW AWAY.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `single` was the whole filter, and the sibling reader's note defends it —
+ * *"an area talent wants a different question about where to aim it"*. It does
+ * not. `checkTargeting` (engine/talents.ts:2825-2850) runs range, dead zone and
+ * line of sight on a ball and a cross exactly as on a single, and only the
+ * `Single` branch below asks anything more; so aiming one at a foe's own tile is
+ * a legal, ordinary shot that happens to catch its neighbours too. `takeShot`
+ * already submits `{x, y}` of a body, so nothing else had to change.
+ *
+ * THE THREE TALENTS IT HAD NEVER PRESSED, one per class that owns one:
+ * `scattershot` (ball 5), `alchemic_vial` (cross 4), `expunge` (ball 5). Those
+ * are the three classes' entire answer to being surrounded, and a probe
+ * measuring how many monsters a floor should hold with the anti-crowd buttons
+ * disabled is measuring its own filter. It matters here and nowhere else in this
+ * repo's history, because the question being asked of it is DENSITY.
+ *
+ * ═══ AND IT IS SPENT ON A CROWD, NOT ON A BODY — MEASURED, BOTH WAYS ═══
+ * The first version sorted area ahead of single and made the Inspector WORSE:
+ * The Underworks at level 3 went 3/3 to 1/3, because `scattershot` costs several
+ * times a revolver shot and she spent her Focus blowing a hole around one husk.
+ * So the order is unchanged (range, descending) and the RULE is the player's
+ * one: `takeShot` declines an area talent aimed at a lone foe. See `AREA_MINIMUM`.
+ *
+ * ═══ AND IT CANNOT HURT THE PARTY ═══
+ * engine/talents.ts:344 — *"Player AoE never damages allies (§ 10)"* — so this
+ * is safe in the three-body table as well as the solo rows, and no aim rule is
+ * needed to keep a ball off a friend.
+ */
+const AREA_SHAPES = new Set(['ball', 'cross']);
+
 export function classStrikes(cls, known) {
   return (cls.loadout ?? [])
     .filter((t) => known === undefined || known.has(t.id))
-    .filter((t) => t.targeting?.shape === 'single')
+    .filter((t) => t.targeting?.shape === 'single' || AREA_SHAPES.has(t.targeting?.shape))
     .filter((t) => t.targeting?.affinity !== 'ally')
     .map((t) => ({
       id: t.id,
       range: t.targeting.range ?? 1,
       minRange: t.targeting.minRange ?? 0,
+      // `radius` is a Cross and Ball field (engine/talents.ts:1345) and is what
+      // decides whether an aim is worth the reagents. Absent on a single.
+      ...(AREA_SHAPES.has(t.targeting.shape) ? { radius: t.targeting.radius ?? 1 } : {}),
     }))
     .sort((a, b) => b.range - a.range);
 }
@@ -395,11 +432,36 @@ export async function bestShot(attacks, self, foes, tryShot, level) {
   return { fired: false, gap };
 }
 
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * HOW MANY BODIES AN AREA TALENT HAS TO CATCH BEFORE IT IS WORTH PRESSING.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * TWO. One is what the single-target button is for, and the area button costs
+ * several times as much: measured, an Inspector who reached for `scattershot`
+ * first went from 3/3 to 1/3 on The Underworks because her Focus was gone by the
+ * third husk. Two is also the only threshold that needs no tuning — it is the
+ * definition of "a crowd" rather than a number chosen against a table.
+ */
+const AREA_MINIMUM = 2;
+
 export function takeShot(engine, actorId, attacks, self, foes, onRefusal, level) {
   let gap = null;
   for (const attack of attacks) {
     const shootable = reachable(attack, self, foes, level);
     if (shootable === undefined) continue;
+    /**
+     * A BALL AIMED AT ONE BODY IS A SINGLE-TARGET SHOT AT FOUR TIMES THE PRICE.
+     * The aim is the foe's own tile (below), so the catch is everything living
+     * inside `radius` of it — Euclidean, because `ballTiles` cuts a circle
+     * (engine/talents.ts:3438, *"a CIRCULAR cut, not a square"*).
+     */
+    if (attack.radius !== undefined) {
+      const caught = foes.filter(
+        (f) => f.alive !== false && sightDistance(shootable.f, f) <= attack.radius,
+      ).length;
+      if (caught < AREA_MINIMUM) continue;
+    }
     gap = shootable.d;
     const shot = engine.submitTalent(actorId, attack.id, { x: shootable.f.x, y: shootable.f.y });
     if (shot?.ok !== false) return { fired: true, gap };

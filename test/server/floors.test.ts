@@ -6,7 +6,7 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import Fastify from 'fastify';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { floorsOf, specFor } from '../../src/server/content/delve.ts';
+import { floorsOf, nbNpcFor, specFor } from '../../src/server/content/delve.ts';
 import { createDownedState } from '../../src/server/engine/downed.ts';
 import { createPartyState } from '../../src/server/engine/party.ts';
 import { wsGateway } from '../../src/server/net/gateway.ts';
@@ -153,6 +153,8 @@ describe('the floors of one delve', () => {
       sites: new Map(),
     };
     const gearford: SiteDef = { ...site(GEARFORD), map: () => corridor };
+    const gearfordSpec = specFor(GEARFORD);
+    if (gearfordSpec === undefined) throw new Error('no spec for Gearford Ward');
     const realms = makeRealms('stair-join');
     const onStair = (realm: Realm): string[] => {
       const at = stairsDownOf(realm);
@@ -192,7 +194,19 @@ describe('the floors of one delve', () => {
       bodies += world.allActors().filter((a) => a.kind === ActorKind.Monster).length;
       expect(onStair(realm), `floor ${String(n)}: a wipe put a body on the stair`).toEqual([]);
     }
-    expect(bodies, 'precondition: the reseed put nobody back').toBeGreaterThan(100);
+    /**
+     * ═══ THE FLOOR'S OWN BAND, NOT A ROUND NUMBER ═══
+     * This read `> 100` — about three and a half bodies a floor, which was the
+     * Gearford band when it was `6-8` and authored. Gearford is the one zone
+     * upstream scales with AREA (`nbNpcPerArea`, `infinite-dungeon/zone.lua:255-256`)
+     * and this fixture is a 60x5 corridor, so the honest precondition is the
+     * band the placer itself computes for 300 cells.
+     */
+    const band = nbNpcFor(gearfordSpec, 1, corridor.view.w * corridor.view.h);
+    expect(bodies, 'precondition: the reseed put nobody back').toBeGreaterThan(0);
+    expect(bodies / 30, 'the reseed put back more than the floor holds').toBeLessThanOrEqual(
+      band[1],
+    );
   });
 
   it('counts every floor a party has open as one zone, and an ambush as a zone of one', () => {

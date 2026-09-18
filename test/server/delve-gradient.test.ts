@@ -106,6 +106,23 @@ function delvesByDistance(): readonly Row[] {
      */
     const def = SITES.get(siteId);
     if (def?.hidden === true) continue;
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * AND THE PLACE YOU WOKE UP IN IS NOT A DESTINATION — same argument.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * The Undermost is six tiles from Alderbrook's gate, which makes it the
+     * nearest delve on the map by a wide margin, and it is `grim`: it holds the
+     * warden. Counted here it breaks both cases above, and it SHOULD — a gradient
+     * that ran from `grim` at the gate outwards would be a map that lies.
+     *
+     * It is not on the ladder. `SiteDef.birthplace` is a one-way cave a
+     * character wakes at the bottom of and climbs out of once; the marker exists
+     * so it is somewhere you have BEEN, not somewhere the moor is offering.
+     * `casefile.ts#isFileable` refuses it for the same reason, and the first case
+     * has never been able to name it.
+     */
+    if (def?.birthplace === true) continue;
     const weight = ['quiet', 'restless', 'dangerous', 'grim'].indexOf(dangerWord(spec));
     rows.push({ id: siteId, steps: steps ?? 0, weight });
   }

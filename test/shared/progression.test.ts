@@ -8,6 +8,7 @@ import {
   TALENT_MAX_LEVEL,
   XP_WORTH_MULT,
   expChart,
+  forceLevelup,
   gainExp,
   pointsForLevel,
   rankWorth,
@@ -536,5 +537,87 @@ describe('a floor recovers while nobody is standing on it', () => {
     // would propagate into `hp` and make a monster unkillable.
     expect(reentryHealFraction(Number.NaN)).toBe(0);
     expect(reentryHealFraction(Number.POSITIVE_INFINITY)).toBe(0);
+  });
+});
+
+describe('forceLevelup — engine/interface/ActorLevel.lua:137-147', () => {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE ZONE HANDS YOU LEVELS, AND `gainExp` IS THE SHAPE IT HANDS THEM IN.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * ```lua
+   * function _M:forceLevelup(lev)
+   *     while self.level < lev do
+   *         if self.max_level and self.level >= self.max_level then break end
+   *         self.level = self.level + 1
+   *         self.exp = 0
+   *         self:levelup()
+   *     end
+   * end
+   * ```
+   *
+   * Its one caller in this port is the Undermost — `on_enter` in
+   * data/zones/reknor-escape/zone.lua:83-95 levels the player to 2 on the second
+   * floor and 3 on the third, which is how upstream can put fifty bodies in
+   * front of a character four minutes old. `AuthoredMap.forceLevel` carries the
+   * number and `TurnEngine.join` applies it; `test/server/undermost.test.ts`
+   * drives that join. This is the rule alone.
+   */
+
+  it('climbs to the floor and stops', () => {
+    expect(forceLevelup(1, 0, 3)).toEqual({ level: 3, xp: 0, levelsGained: 2 });
+    expect(forceLevelup(1, 0, 2)).toEqual({ level: 2, xp: 0, levelsGained: 1 });
+  });
+
+  it('is a floor and never a set — nobody is levelled down', () => {
+    /**
+     * `while self.level < lev` (:139). A level-9 character walking back onto
+     * floor 3 of the intro is untouched, which is the property that makes it
+     * safe to run on EVERY arrival and every reconnection rather than on a
+     * first visit somebody would have to remember.
+     */
+    expect(forceLevelup(9, 11, 3)).toEqual({ level: 9, xp: 11, levelsGained: 0 });
+    expect(forceLevelup(3, 4, 3)).toEqual({ level: 3, xp: 4, levelsGained: 0 });
+  });
+
+  it('spends the progress into the level, but only when it gives one', () => {
+    /**
+     * `self.exp = 0` is INSIDE the loop (:143). A forced level is a gift and
+     * does not also bank the experience you had towards the next one — and a
+     * floor that levels nobody must not quietly empty the bar of everybody who
+     * walks across it, which is what a `xp: 0` outside the loop would do.
+     */
+    expect(forceLevelup(1, 950, 2).xp).toBe(0);
+    expect(forceLevelup(4, 950, 2).xp).toBe(950);
+  });
+
+  it('stops at the cap, like `max_level` does', () => {
+    // :140-141 — the cap check is inside the loop and before the increment, so
+    // a character at the cap gains nothing and one below it climbs to it.
+    expect(forceLevelup(MAX_CHARACTER_LEVEL, 0, MAX_CHARACTER_LEVEL + 10)).toEqual({
+      level: MAX_CHARACTER_LEVEL,
+      xp: 0,
+      levelsGained: 0,
+    });
+    expect(forceLevelup(MAX_CHARACTER_LEVEL - 2, 0, MAX_CHARACTER_LEVEL + 10).level).toBe(
+      MAX_CHARACTER_LEVEL,
+    );
+  });
+
+  it('counts every level it gave, because the points are paid out of that count', () => {
+    /**
+     * `levelsGained` IS THE RECEIPT. `applyPendingLevels` pays the talent point,
+     * the generic, the three attribute points and — at ten — the discipline out
+     * of `pendingLevels`, once per level crossed. A version that returned only
+     * the new level would type-check, pass every case above, and produce a
+     * character three levels up and nine points short.
+     */
+    expect(forceLevelup(1, 0, 1).levelsGained).toBe(0);
+    expect(forceLevelup(1, 0, 10).levelsGained).toBe(9);
+    // AND IT AGREES WITH `gainExp`'s OWN SHAPE, which is why it returns one: a
+    // caller cannot tell a level earned from a level given, and must not.
+    const earned = gainExp(1, 0, expChart(2));
+    expect(Object.keys(forceLevelup(1, 0, 2)).sort()).toEqual(Object.keys(earned).sort());
   });
 });

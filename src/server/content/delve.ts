@@ -69,6 +69,10 @@ import {
   INDEX_WATCHER,
 } from './monsters.ts';
 import { ActorRank } from '../../shared/protocol.ts';
+import { RANK_VALUE, rankLevelAdjust } from '../../shared/leveling.ts';
+import { computeRarities, pickEntity } from './rarity.ts';
+import type { RarityCandidate } from './rarity.ts';
+import type { Rng } from '../../shared/rng.ts';
 import { REDACTION_SITE_ID } from '../../shared/level.ts';
 import { embellish } from './encounter.ts';
 import { canWalk, tileAt } from '../../shared/level.ts';
@@ -97,30 +101,320 @@ import type { World } from '../world/world.ts';
 // could land wholly inside ground the populator was about to discard.
 
 /**
- * How far over its room a set piece stands.
+ * ═══════════════════════════════════════════════════════════════════════════
+ * HOW FAR OVER ITS ROOM A SET PIECE STANDS — AND IT IS NO LONGER A CONSTANT.
+ * ═══════════════════════════════════════════════════════════════════════════
  *
- * SMALL ON PURPOSE, because RANK is already doing the heavy lifting: a rank-4
- * body gains life half again as fast per level as the rank-2 husks around it,
- * so two levels is a wide gap here rather than a token one. Upstream puts a
- * boss a little over its zone for the same reason — a set piece that is exactly
- * as tough as the population is not a set piece.
+ * This was a hand-picked `2`, argued as *"rank is already doing the heavy
+ * lifting… upstream puts a boss a little over its zone for the same reason"*.
+ * The reasoning was right and the number was ours. Upstream states it exactly,
+ * for every body on every floor and not only for the boss:
+ *
+ * ```lua
+ * actor_adjust_level = function(zone, level, e)
+ *     return zone.base_level + e:getRankLevelAdjust() + level.level-1 + rng.range(-1,2) end
+ * ```
+ *
+ * — `tome/data/zones/trollmire/zone.lua:30`, and seventy-nine occurrences of that
+ * line across seventy-four of ToME's eighty-nine zone files. `getRankLevelAdjust`
+ * (`tome/class/Actor.lua:1714-1725`, ported as `rankLevelAdjust`) is +3 for a
+ * rank-4 boss, +2 for a rank-3.5 elite and 0 for the rank-2 rank and file. So
+ * the boss is THREE over its floor rather than two, the elites beside it are
+ * two over, and neither number is authored here any more.
+ *
+ * KEPT AS AN EXPORT because `test/server/boss-fight.test.ts` states the boss's
+ * life against it, and because the value is worth being able to name. It is
+ * DERIVED now — change `rankLevelAdjust` and this follows.
  */
-export const BOSS_LEVELS_ABOVE_ROOM = 2;
+export const BOSS_LEVELS_ABOVE_ROOM = rankLevelAdjust(RANK_VALUE[ActorRank.Boss]);
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE LEVEL EVERY BODY IN A ROOM IS BORN AT — `actor_adjust_level`, applied.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `zone.base_level + e:getRankLevelAdjust() + level.level - 1 + rng.range(-1,2)`,
+ * the line quoted above. Four terms, and until now this file had two of them:
+ * `delveLevel(spec, party) + floor - 1`.
+ *
+ * ═══ THE RANK TERM IS HOW UPSTREAM MAKES ONE BODY DANGEROUS ═══
+ * Not by putting twenty more in the room. An elite is born two levels over the
+ * floor and a boss three, and `rankLifeAdjust` then multiplies the life those
+ * levels buy — so the thing with the ring under it is genuinely a different
+ * creature rather than the same creature with a bigger number typed in.
+ *
+ * ═══ THE JITTER IS NOT DECORATION ═══
+ * `rng.range(-1, 2)` is asymmetric: it can take one level off and add two, mean
+ * +0.5. So a floor holds bodies at three different levels and leans UP. A room
+ * of identical bodies reads as a spawn table; a room where one of them is
+ * visibly harder than its neighbours reads as a place. It costs one labelled
+ * draw per body.
+ *
+ * THE FLOOR OF 1 IS OURS. `rng.range(-1,2)` on a base_level-1 zone can ask for
+ * level 0, and a level-0 body divides through the life curve as one that never
+ * levelled — harmless-looking rather than loud. Upstream never meets it because
+ * no ToME zone has `base_level` 1 with a rank-1 resident; the Undermost does.
+ */
+export function actorAdjustLevel(
+  rng: Rng,
+  label: string,
+  baseLevel: number,
+  rank: ActorRank,
+  floor: number,
+): number {
+  const jitter = rng.int(label, -1, 2);
+  return Math.max(1, baseLevel + rankLevelAdjust(RANK_VALUE[rank]) + floor - 1 + jitter);
+}
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE ONE NUMBER THAT IS NOT UPSTREAM'S, AND IT IS HERE SO THERE IS ONLY ONE.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Every `nbNpc` in `DELVES` is its zone's own `nb_npc`, read off the zone file
+ * with the line cited beside it. This is the single factor they are all taken
+ * at, and it exists because `nb_npc` is the one piece of the pipeline that
+ * genuinely cannot cross at face value.
+ *
+ * ═══ WHY IT CANNOT CROSS, MEASURED ═══
+ * A count is only meaningful against what one body costs to kill and what it
+ * costs you to be near. Ported at 1.00 and measured with `tools/delve-density.mjs`
+ * — every class, alone, at the floor's own level, on every floor of every delve:
+ *
+ *     The Drowned Chapel, level 1, 21 bodies   Watchman 0/2   538 damage taken
+ *     The Undermost,      level 1, 55 bodies   every class 0/2
+ *     The Underworks,     level 3, 46 bodies   Watchman 1/2, everyone else 0/2
+ *
+ * The beginner room the first case NAMES BY GRADE to a four-minute-old
+ * character became unsurvivable, and so did the room every character wakes up
+ * in. That is not difficulty, it is deletion — the exact failure the previous
+ * area-scaling attempt produced and the reason this pass was told to measure.
+ *
+ * ═══ AND THE CAUSE IS NOT THE COUNT ═══
+ * ToME puts 20-30 bodies in front of a LEVEL-1 character in four of its tier-1
+ * zones (`trollmire/zone.lua:197`, `heart-gloom/zone.lua:76`,
+ * `rhaloren-camp/zone.lua:53`, `ruins-kor-pul/zone.lua:55` — all `level_range =
+ * {1, 5}`), and its level-1 characters live. Ours do not, because a body here
+ * costs far more turns to kill and deals far more per turn relative to what a
+ * level-1 character has. The count is upstream's; the per-body arithmetic is
+ * not, and this factor is the receipt for that gap rather than a decision about
+ * how crowded a room should be.
+ *
+ * ═══ WHY ONE GLOBAL FACTOR RATHER THAN A BAND PER SITE ═══
+ * Because the RATIOS are the tuning. Ardhungol is 3.5x the Glass Archive's
+ * original, the escape from Reknor is the densest thing in the first tier, the
+ * Maze is denser than the forest it sits under — fifteen years of somebody
+ * deciding that, and per-site bands would throw all of it away and put us back
+ * where this file started, with twelve numbers somebody picked. One factor keeps
+ * every relative decision upstream made and admits the one thing we know is
+ * different, in one place, with the measurement that set it written above it.
+ *
+ * ═══ ITS VALUE IS A MEASUREMENT, NOT A TASTE ═══
+ * THE LARGEST FACTOR AT WHICH THE ROOM THE FIRST CASE NAMES IS STILL BEATABLE BY
+ * WALKING INTO IT. Swept against `test/server/first-room.test.ts`, which opens
+ * the quiet rooms with the real generator and the real placer and fights the
+ * pack that can see the arrival tile:
+ *
+ *     0.60  the Undermost leaves a beginner  7 of 72 hp
+ *     0.50  the Undermost leaves a beginner  7 of 72 hp
+ *     0.45  the Undermost leaves a beginner  7 of 72 hp
+ *     0.40  passes                                        <- here
+ *     0.35  passes
+ *
+ * At 0.40 no delve in the game is less crowded than it was, which is the other
+ * bound worth stating: a factor low enough to keep the beginner room also has to
+ * be high enough that the author's complaint — *"too little enemies"* — is
+ * actually answered. Against HEAD's authored bands, by midpoint:
+ *
+ *     Blackwood Outskirts  8-10 ->  8-12   1.1x      the Underworks   4-6 -> 16-20  3.6x
+ *     The Glass Archive     3-5 ->   5-6   1.4x      The Hollow Mine  6-8 -> 28-32  4.3x
+ *     Barrow End            5-7 ->  8-12   1.7x      The Drowned Chapel 2-2 -> 8-12 5.0x
+ *     The Watcher's Altar   5-7 ->  8-12   1.7x      The Undermost    2-2 ->  8-12  5.0x
+ *     Gearford Ward         6-8 -> 10-14   1.7x      The Outer Index  3-4 -> 20-24  6.3x
+ *     The Weir              4-6 ->  8-10   1.8x
+ *     Cairnfoot             4-6 ->  8-12   2.0x
+ *
+ * Median 1.9x, and `test/server/monster-scaling.test.ts` holds the floor of it:
+ * no site may be less crowded than the row above.
+ *
+ * ═══ AND THE DRIVEN PROBE IS WHAT SAYS WHETHER IT IS PLAYABLE ═══
+ * `tools/delve-density.mjs` fights every class through every floor of every
+ * delve. Read its per-class column before moving this: at HEAD it was Watchman
+ * 98%, Alchemist 54%, Inspector 46%, Redactor 17% — three of the four classes
+ * were already losing most floors BEFORE any density change, and this factor
+ * cannot fix that.
+ *
+ * ═══ IT IS MEANT TO REACH 1.00 ═══
+ * Not by raising it. By fixing what it is paying for: one rolled item per slot
+ * erases 50-69% of incoming damage from level 3 on, a body takes ~35 player
+ * turns to kill, and monster hit points reach 180-516 while the damage that
+ * answers them does not keep up. Every point of that closed is a point this can
+ * rise by, and the day it is 1.00 this constant deletes itself.
+ */
+export const NB_NPC_SCALE = 0.4;
+
+/** How a floor's bodies are scattered over it — upstream's `OnSpots` fields. */
+export type SpotSpec = {
+  /** `nb_spots`. engine/generator/actor/OnSpots.lua:36. */
+  readonly nbSpots: number;
+  /** `spot_radius`, default 5. engine/generator/actor/OnSpots.lua:31. */
+  readonly spotRadius: number;
+  /** `on_spot_chance`, default 70. engine/generator/actor/OnSpots.lua:30. */
+  readonly onSpotChance: number;
+};
 
 /** What lives in one delve, and how much of it. */
 export type DelveSpec = {
   /**
-   * How many bodies. A BAND, not a number, so two visits to the same kind of
-   * place are not the same room — and the band is per site, so the Outer Index
-   * is not the Wayfarers' road.
+   * ═══════════════════════════════════════════════════════════════════════════
+   * HOW MANY BODIES — `nb_npc`, READ OFF THE ZONE EACH DELVE IS A PORT OF.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * This field was called `monsters` and every value in it was authored here:
+   * 2-2 for the Drowned Chapel, 8-10 for Blackwood. Measured against the
+   * upstream zone each site is built as (`shared/mapgen/zones.ts` names them,
+   * generator and level size included) the shortfall ran from 2.8x to 27.5x,
+   * median ~5x, and the direction of the error was not even consistent — our
+   * density ranged 0.10 to 1.45 bodies per 100 walkable tiles because the bands
+   * were per-site constants while the floors vary from 276 to 2064 walkable
+   * tiles. Density was an accident of which generator a site drew.
+   *
+   * ═══ SO IT IS `nb_npc` NOW, AND THE NAME IS UPSTREAM'S ON PURPOSE ═══
+   * `engine/generator/actor/Random.lua:126` is
+   * `for i = current, rng.range(self.nb_npc[1], self.nb_npc[2]) do generateOne()`
+   * — one body per count, no area term, no headcount term. Every row below cites
+   * the zone file and line it was read from, so `npm run check:citations`
+   * verifies the numbers exist rather than taking this comment's word for it.
+   *
+   * ═══ AND THE FLOORS ARE ALREADY UPSTREAM'S SIZE, WHICH IS WHY IT TRANSFERS ═══
+   * `shared/sitemap.ts` builds each site at its zone's own `width`/`height`, so
+   * the ground a count is spread over here is the ground it was tuned on there.
+   * `forArea` still scales LITTER and TRAPS off a 34x30 baseline — those bands
+   * are ours — and deliberately does not touch this one.
    */
-  readonly monsters: readonly [number, number];
+  readonly nbNpc: readonly [number, number];
   /**
-   * The roster, in the order the placer walks it. The FIRST entry is the most
-   * common: the placer cycles, so putting the elite first would make a delve
-   * mostly elites.
+   * `levels[n].generator.actor.nb_npc` — the zone's override for one floor
+   * (`engine/Zone.lua:833-843` deep-merges it over the base table). Indexed by
+   * floor from 1; a floor with no entry uses `nbNpc`.
+   *
+   * THREE OF OUR TWELVE ZONES CARRY ONE AND EXACTLY ONE IS REACHABLE. Ardhungol's
+   * third level drops from 70-80 to 20-25 on a 20x20 (`ardhungol/zone.lua:70`)
+   * and the Maze's second from 50-60 to 10-12 (`maze/zone.lua:186`), but
+   * `shared/mapgen/zones.ts` maps our floors onto those zones' earlier levels and
+   * repeats the last entry, so neither override is ever read — stated in the row
+   * it belongs to rather than left for somebody to discover.
+   *
+   * The one that IS read is the escape from Reknor's last, `{0, 0}`
+   * (`reknor-escape/zone.lua:79`), because its bodies are drawn on a static map
+   * instead. That is also the answer to "the tutorial's final floor is empty":
+   * the floor is meant to hold no ROLLED population, and the bug was that
+   * `populate` returned before placing anything at all — no boss, no litter, no
+   * note.
+   */
+  readonly nbNpcByFloor?: ReadonlyMap<number, readonly [number, number]>;
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE ONE ZONE THAT SCALES ITS COUNT WITH AREA, AND ITS OWN CONSTANT.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `tome/data/zones/infinite-dungeon/zone.lua:255-256`:
+   *
+   * ```lua
+   * local enemy_count = layout.enemy_count or math.ceil(vx * vy * 34/4900)
+   * data.generator.actor.nb_npc = {enemy_count-5, enemy_count+5}
+   * ```
+   *
+   * — and the "building" layout, which Gearford Ward is built as, overrides the
+   * numerator to 60 (`:161`, commented *"more room for enemies and more cover on
+   * this map"*). This field is that numerator; the `±5` band is upstream's and
+   * is not authored per site.
+   *
+   * IT IS THE EXCEPTION THAT PROVES THE RULE. A previous attempt scaled EVERY
+   * delve's count by floor area and made nearly every one unclearable. Upstream
+   * area-scales in exactly one zone, the one whose floor size is itself rolled
+   * per level (`infiniteDungeonSize`, `shared/mapgen/building.ts`) — everywhere
+   * else `nb_npc` is a flat band on a fixed level size.
+   */
+  readonly nbNpcPerArea?: number;
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE ROSTER — a zone's `npcs.lua` list, WEIGHTED, no longer a cycle.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * It used to be walked as `roster[i % roster.length]`, which made the array's
+   * LENGTH AND ORDER the whole of the composition rule: three entries filled a
+   * room of seven with one of each, a floor could not change what was in it as
+   * you descended, and `WEIR` had to spell 5:5:1 out in eleven repeated entries
+   * because there was nowhere to write a weight down.
+   *
+   * It is upstream's candidate list now. `computeRarities` weights each member
+   * by its own `rarity` and `levelRange` against the floor's level and
+   * `pickEntity` draws one per body (`engine/Zone.lua:205-262`, `:318-330`) —
+   * the same two functions the loot path has used since the item pass.
+   *
+   * ORDER IS STILL SEED CONTRACT (the cumulative array is walked in it), but it
+   * no longer decides anything about composition.
+   *
+   * ═══ AND NO PER-FAMILY `rarity(add)` IS APPLIED — A LABELLED DIVERGENCE ═══
+   * A ToME zone tunes its roster by re-weighting whole FAMILIES as it loads them
+   * (`tome/data/zones/trollmire/npcs.lua:21-30`: `rarity(5)` on rodents,
+   * `rarity(0)` on canines, `rarity(4, 35)` on the catch-all — `engine/Entity.lua:1182`
+   * is `ceil(rarity * mult + add)`). Ours are three-entry hand-authored lists
+   * rather than eight family loads, and there is no honest correspondence for
+   * most of them, so every member keeps its source entity's own `rarity`
+   * unmodified — which is `rarity(0)`, upstream's own no-op and the commonest
+   * line in those files.
    */
   readonly roster: readonly MonsterTemplate[];
+  /**
+   * HOW THE BODIES ARE SCATTERED. Absent is `mod.class.generator.actor.Random`,
+   * which draws each body uniformly over the whole map and independently of
+   * every other (`Random.lua:112-117`) — eleven of our twelve zones.
+   *
+   * Present is `OnSpots`: pick `nb_spots` spots, and each body has
+   * `on_spot_chance` percent of being born within `spot_radius` of one of them
+   * (`engine/generator/actor/OnSpots.lua:30-38, 43-56`). ONE of our twelve uses
+   * it — the Trollmire, which Blackwood Outskirts is built as.
+   */
+  readonly spots?: SpotSpec;
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * HOW FAR OUT OF DEPTH A BODY MAY BE — `filters = { {max_ood=2} }`.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `engine/Zone.lua:306`:
+   *
+   * ```lua
+   * if filter.max_ood and resolvers.current_level and e.level_range and
+   *    resolvers.current_level + filter.max_ood < e.level_range[1] then ... return false end
+   * ```
+   *
+   * A HARD REFUSAL ON TOP OF THE WEIGHT. `computeRarities` already makes an
+   * under-depth candidate rare — divided by `3 x levelsBelow` — but rare is not
+   * never, and a zone that does not want its floor-one player meeting a
+   * floor-fifteen body says so with this instead of hoping the division is
+   * enough. Six of our twelve zones carry it: heart-gloom (`zone.lua:77`),
+   * rhaloren-camp (`:54`), scintillating-caves (`:54`), trollmire (`:198`),
+   * reknor-escape (`:51`) at 2, and infinite-dungeon (`:89`) at 6.
+   *
+   * ABSENT IS NO FILTER, which is upstream's own default and what the other six
+   * zones do: NONE of halfling-ruins, orc-breeding-pit, ardhungol, maze,
+   * old-forest or lake-nur passes a filter to its ACTOR generator at all.
+   *
+   * ═══ FOUR OF THE SIX LINES ABOVE POINTED AT `nb_npc + 2`, AND TWO SENTENCES
+   * HERE WERE INVENTED OUTRIGHT. `check:citations` PASSED ALL OF THEM. ═══
+   * The four `max_ood` lines were each one line low — a guessed offset, not a
+   * read — and this paragraph used to say old-forest "passes an empty one
+   * (`old-forest/zone.lua:59`)" and lake-nur "a `special_rarity` one
+   * (`lake-nur/zone.lua:56`)". `:59` is old-forest's `guardian` line and its
+   * `filters = { {} }` at `:65` belongs to the OBJECT generator; `:56` is
+   * lake-nur's `object = {`, and the `special_rarity` filter at `:91` is inside
+   * the FLOODED variant, which our Weir is not built from. The conclusion —
+   * neither zone gets a `maxOod` — was right, which is exactly why nobody
+   * checked. `tools/check-citations.mjs` can only prove a cited line EXISTS.
+   */
+  readonly maxOod?: number;
   /**
    * Things lying on the floor before anybody arrives.
    *
@@ -144,15 +438,39 @@ export type DelveSpec = {
    * AND ONE THING THAT IS PUT THERE RATHER THAN ROLLED.
    * ═══════════════════════════════════════════════════════════════════════════
    *
-   * `roster` is a cycle and `monsters` is a count, so everything else in a delve
-   * is a die falling — which is right for the population of a room and wrong for
-   * the reason a room exists. A boss is not a heavier entry in a list; it is the
-   * thing the door was for.
+   * `roster` is a weighted draw and `nbNpc` is a count, so everything else in a
+   * delve is a die falling — which is right for the population of a room and
+   * wrong for the reason a room exists. A boss is not a heavier entry in a list;
+   * it is the thing the door was for. It carries no `rarity` and no `levelRange`
+   * for exactly that reason, which is upstream's own way of marking an entity
+   * that is never rolled (`engine/Zone.lua:214`, `crystal.lua:73`).
    *
    * ABSENT ON EVERY SPEC BUT ONE, which is what keeps it meaning anything: a
    * boss in each of the rooms is a difficulty tier, not a set piece.
    */
   readonly boss?: MonsterTemplate;
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THERE IS A BOSS IN HERE AND IT IS NOT IN `boss` — the Undermost's warden.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `populateDelve` places `spec.boss` on the furthest tile from the door; the
+   * Undermost's warden is DRAWN ON THE MAP instead, by glyph, because upstream's
+   * last level of Escape from Reknor is a static map with its bodies painted on
+   * it (`data/maps/zones/reknor-escape-last.lua:34-35`). That is the right
+   * mechanism and it is not changing.
+   *
+   * WHAT IT BROKE IS THE GRADE. `dangerWord`'s one shortcut for "this room has a
+   * set piece" is `spec.boss !== undefined`, so the tutorial published to the
+   * world map as `quiet` — the gentlest word the game owns — for a room holding
+   * a rank-4 body with four hundred and thirty hit points. That did not matter
+   * while the Undermost was on no map; item 7 put a marker on it.
+   *
+   * A FLAG AND NOT A SECOND `boss` FIELD, because the alternative is handing
+   * `DELVES` a template that `populateDelve` would then also place: two wardens,
+   * one of them in the wrong room.
+   */
+  readonly drawnBoss?: true;
   /**
    * ═══════════════════════════════════════════════════════════════════════════
    * WHAT LEVEL THE THINGS IN HERE ARE. ToME's `zone.base_level`, one number.
@@ -176,7 +494,7 @@ export type DelveSpec = {
    * follow the people; the threat of the place does not.
    *
    * ═══ AND NOT A BAND, WHICH THE REST OF THIS TABLE IS ═══
-   * `monsters` and `litter` are bands because a room's POPULATION should vary.
+   * `nbNpc` and `litter` are bands because a room's POPULATION should vary.
    * A level is not population — a band here would mean a labelled draw inside
    * the placement loop, and this file's own note six lines into
    * `populateDelve` states what that costs: every later draw from the seed
@@ -207,7 +525,15 @@ export type DelveSpec = {
 };
 
 /** The common roster. Husks with a wraith or two behind them. */
-const RANK_AND_FILE: readonly MonsterTemplate[] = [INDEX_HUSK, INDEX_HUSK, INDEX_WRAITH];
+/**
+ * TWO ENTRIES, AND IT WAS THREE — `[HUSK, HUSK, WRAITH]`. The second husk was
+ * how a CYCLE said "twice as many husks as wraiths"; the list is weighted now
+ * (`computeRarities`), and upstream's own weights are `rarity = 1` on the giant
+ * brown ant (`ant.lua:57`) and `rarity = 1` on the losgoroth
+ * (`losgoroth.lua:62`) — one to one. The duplicate would double a weight nobody
+ * wrote down.
+ */
+const RANK_AND_FILE: readonly MonsterTemplate[] = [INDEX_HUSK, INDEX_WRAITH];
 /** Where the Index has thinned. Fewer bodies, and the ones there are bite. */
 const DEEP: readonly MonsterTemplate[] = [INDEX_WRAITH, INDEX_HUSK_ELITE, INDEX_HUSK];
 
@@ -265,8 +591,11 @@ const THICKET: readonly MonsterTemplate[] = [INDEX_EIDOLON, INDEX_HUSK, INDEX_HU
  *
  * He needs twenty-one turns and dies in fourteen, WITH the Wraith's -30%
  * physical resistance already counted in his favour. It is not close, and it is
- * not a roll: `populateDelve` walks the roster as a CYCLE, so three monsters in
- * a three-entry roster is one of each, every time. The Wraith was guaranteed.
+ * not a roll: `populateDelve` walked the roster as a CYCLE then, so three monsters
+ * in a three-entry roster was one of each, every time. The Wraith was guaranteed.
+ * (The roster is a rarity-weighted draw now and this room's is two entries, so a
+ * wraith is no longer even a candidate here — the fix below is what removed it,
+ * and the draw is what stops the next one being guaranteed.)
  *
  * ═══ AND THIS IS THE ROOM THE GAME NOW SENDS EVERY NEW PLAYER TO BY NAME ═══
  * That is what changed. When the grade was one label among seventeen markers,
@@ -281,7 +610,14 @@ const THICKET: readonly MonsterTemplate[] = [INDEX_EIDOLON, INDEX_HUSK, INDEX_HU
  * shooter and its identity — *things that shoot, and one of them barely there* —
  * and the Wraith stays in the eight rooms that are graded for it.
  */
-const DROWNED: readonly MonsterTemplate[] = [INDEX_CAIRN, INDEX_HUSK, INDEX_HUSK];
+/**
+ * TWO ENTRIES NOW. The second husk was the cycle's way of saying "mostly husks",
+ * and the argument above it — a beginner must not be guaranteed a wraith — is
+ * carried by the ROSTER not containing one, not by the repeat. Upstream weights
+ * the red crystal and the giant brown ant the same (`crystal.lua:100`,
+ * `ant.lua:57`, both `rarity = 1`), so the room is half and half.
+ */
+const DROWNED: readonly MonsterTemplate[] = [INDEX_CAIRN, INDEX_HUSK];
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════
@@ -305,45 +641,47 @@ const DROWNED: readonly MonsterTemplate[] = [INDEX_CAIRN, INDEX_HUSK, INDEX_HUSK
  * three are 72% of it here and 56% on the twin: see the region header above
  * `INDEX_RIBBON`.
  *
- * `populateDelve` does not draw a creature, it walks this list as a CYCLE
- * (`roster[i % roster.length]`). So the weighting is the list's length and
- * order: eleven entries, five of each and one turtle.
+ * ═══ AND THE LIST NO LONGER HAS TO SPELL THAT OUT ═══
+ * `populateDelve` used to walk this as a CYCLE (`roster[i % roster.length]`), so
+ * the weighting WAS the list's length and order: eleven entries, five of each and
+ * one turtle, with the turtle sixth so that a room of `n` held `round(n / 11)` of
+ * them. Every one of those decisions was a workaround for having nowhere to write
+ * a weight down.
  *
- * ═══ THE TURTLE IS SIXTH, AND THAT IS WHAT MAKES THE WEIGHT HOLD AT THIS SIZE ═══
- * A cycle of eleven never reaches its end on a Weir floor alone (4-6 bodies),
- * so WHERE the turtle sits decides whether a room has one. Sixth gives a room of
- * `n` bodies exactly `round(n / 11)` turtles: none at 4 or 5, one from 6 to 16,
- * two from 17. That is the nearest whole number to upstream's expectation at
- * every size the Weir places — 4-6 alone, 8-12 for three, 6-8 and 12-16 on the
- * twin. First would put one in every room; last would put none in any room
- * short of eleven.
- *
- * Eel and squid alternate around it, so any room holds as near half of each as
- * its size allows. The eel leads because it leads the file.
+ * `computeRarities` reads each creature's own `rarity` now and `pickEntity` draws
+ * from the cumulative list, so three entries carry the same 5 : 5 : 1 and carry it
+ * where upstream put it. `test/server/weir-roster.test.ts` asserts the computed
+ * shares — 45.45% : 45.45% : 9.09% — and draws six hundred bodies to check them.
  */
-const WEIR: readonly MonsterTemplate[] = [
-  INDEX_RIBBON,
-  INDEX_INKWELL,
-  INDEX_RIBBON,
-  INDEX_INKWELL,
-  INDEX_RIBBON,
-  INDEX_STRONGBOX,
-  INDEX_INKWELL,
-  INDEX_RIBBON,
-  INDEX_INKWELL,
-  INDEX_RIBBON,
-  INDEX_INKWELL,
-];
+/**
+ * THREE ENTRIES, AND IT WAS ELEVEN. The eleven spelled 5 : 5 : 1 out in repeats
+ * because a CYCLE has no other way to carry a weight — the docblock above says
+ * so in as many words, and works out where the turtle has to sit for a room of
+ * four to six to hold the right number of them. None of that is needed now:
+ * `computeRarities` reads `rarity` off each creature (`aquatic_critter.lua:48`,
+ * `:95`, `:71` — 1, 1 and 5) and `engine/Zone.lua:217-221` turns those into
+ * 10000 : 10000 : 2000, which is the same 5 : 5 : 1 stated where it came from.
+ */
+const WEIR: readonly MonsterTemplate[] = [INDEX_RIBBON, INDEX_INKWELL, INDEX_STRONGBOX];
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════
- * THE EIGHT, AND THEY ARE MEANT TO BE TOLD APART
+ * THE TWELVE, AND THEY ARE MEANT TO BE TOLD APART
  * ═══════════════════════════════════════════════════════════════════════════
  *
- * Read down the `monsters` column and the map acquires a difficulty gradient it
- * did not have: Blackwood is a walk, the Outer Index is not. That gradient is
- * the entire reason a player picks one marker over another, and until now every
+ * The map acquires a difficulty gradient it did not have: Blackwood is a walk for
+ * somebody who has earned it, the Outer Index is not. That gradient is the entire
+ * reason a player picks one marker over another, and before there was one every
  * marker was worth exactly the same as every other one — nothing.
+ *
+ * ═══ AND IT IS THE `levelRange` COLUMN, NOT THE COUNT ═══
+ * It used to be read down the `monsters` column, which worked while every band
+ * in this table was authored here. The bands are their zones' own `nb_npc` now,
+ * and upstream's density is a fact about the ZONE rather than about danger:
+ * Ardhungol packs 70-80 bodies and the Trollmire 20-30, and the Trollmire is the
+ * gentler place. What orders the map is the level every body in a room is born at
+ * — `delveLevel`, which `actor_adjust_level` feeds and `rankLifeAdjust` compounds
+ * — and `dangerWord` reads that column now.
  */
 /**
  * ═══════════════════════════════════════════════════════════════════════════
@@ -441,7 +779,14 @@ export const DELVES: ReadonlyMap<string, DelveSpec> = new Map<string, DelveSpec>
    */
   [
     'site:drowned_chapel',
-    { monsters: [2, 2], roster: DROWNED, litter: [1, 2], levelRange: [1, 1] },
+    {
+      // halfling-ruins, levels 1-3. `nb_npc = {20, 30}` —
+      // data/zones/halfling-ruins/zone.lua:50.
+      nbNpc: [20, 30],
+      roster: DROWNED,
+      litter: [1, 2],
+      levelRange: [1, 1],
+    },
   ],
   //     NOT ON ANY MAP. Where a new character wakes: upstream's Escape from
   //     Reknor, `level_range = {1, 5}` and three levels
@@ -449,40 +794,165 @@ export const DELVES: ReadonlyMap<string, DelveSpec> = new Map<string, DelveSpec>
   //     Drowned Chapel's band exactly: at a third foe the worst roll left a
   //     level-1 body a quarter of its life, under the margin every character's
   //     first room has to leave (test/server/first-room.test.ts).
-  ['site:undermost', { monsters: [2, 2], roster: DROWNED, litter: [1, 2], levelRange: [1, 1] }],
+  [
+    'site:undermost',
+    {
+      // reknor-escape. `nb_npc = {50, 60}` — data/zones/reknor-escape/zone.lua:50.
+      // THE DENSEST ZONE IN THE WHOLE OF ToME'S FIRST TIER, and it is the one a
+      // character wakes up in: you are meant to run for the stairs, not clear it.
+      nbNpc: [50, 60],
+      // `filters = { {max_ood=2} }` — reknor-escape/zone.lua:51.
+      maxOod: 2,
+      /**
+       * ═══════════════════════════════════════════════════════════════════════
+       * AND THE FIRST TWO FLOORS ARE POPULATED LIKE AN ORDINARY TIER-1 ZONE.
+       * ═══════════════════════════════════════════════════════════════════════
+       *
+       * `{20, 30}`, which is the band EVERY other `level_range = {1, 5}` zone in
+       * ToME carries: the Trollmire (`trollmire/zone.lua:197`), the Heart of the
+       * Gloom (`heart-gloom/zone.lua:76`), the Rhaloren camp
+       * (`rhaloren-camp/zone.lua:53`) and the Ruins of Kor'Pul
+       * (`ruins-kor-pul/zone.lua:55`). Not the escape from Reknor's own 50-60.
+       *
+       * ═══ BECAUSE THE TWO THINGS THAT PAY FOR 50-60 ARE NOT PORTED ═══
+       * Upstream's escape is the only tier-1 zone at that density and it does
+       * not hand a lone level-1 character to it. `reknor-escape/zone.lua:85-95`:
+       *
+       * ```lua
+       * on_enter = function(lev, old_lev, new_zone)
+       *     if lev == 2 then
+       *         game.player:forceLevelup(2)
+       *         local norgan = game.party:findMember{type="squadmate"}
+       *         if norgan then norgan:forceLevelup(2) end
+       * ```
+       *
+       * The player is force-levelled on each descent, and NORGAN WALKS WITH THEM
+       * and is levelled too. We have neither: `forceLevelup` is unported and
+       * there is no escort. Measured with the count its own zone states, a
+       * level-1 character is killed by the pack that can see the arrival tile
+       * before it has read the room (`test/server/first-room.test.ts`).
+       *
+       * ═══ THIS IS THE ROW THAT REVERTS ═══
+       * The day `forceLevelup` and the escort land — which is the tutorial lane's
+       * work, and the same pair `docs/wip/d3b` is waiting on — this override
+       * comes out and the Undermost carries `nbNpc` like everything else.
+       */
+      // And `levels[3].generator.actor.nb_npc = {0, 0}` — reknor-escape/zone.lua:79.
+      // The last level is a STATIC map with its bodies drawn on it
+      // (`data/maps/zones/reknor-escape-last.lua`), so nothing is rolled there.
+      // Ours is `UNDERMOST_LAST_FLOOR` and its bodies are the tutorial lane's.
+      nbNpcByFloor: new Map<number, readonly [number, number]>([
+        [1, [20, 30]],
+        [2, [20, 30]],
+        [3, [0, 0]],
+      ]),
+      roster: DROWNED,
+      litter: [1, 2],
+      levelRange: [1, 1],
+      // THE WARDEN IS DRAWN ON THE MAP, NOT PLACED FROM HERE — `drawnBoss`.
+      // `content/undermost.ts` paints him on a glyph of the last floor; this
+      // field is what lets `dangerWord` know he is there, and it is the whole
+      // reason the tutorial no longer publishes to the world map as `quiet`.
+      drawnBoss: true,
+    },
+  ],
   //     19 steps.
   [
     'site:underworks',
-    { monsters: [4, 6], roster: RANK_AND_FILE, litter: [2, 3], levelRange: [3, 3], traps: [1, 2] },
+    {
+      // orc-breeding-pit, level 2 on every floor (`shared/mapgen/zones.ts`).
+      // `nb_npc = {40, 50}` — data/zones/orc-breeding-pit/zone.lua:47.
+      nbNpc: [40, 50],
+      roster: RANK_AND_FILE,
+      litter: [2, 3],
+      levelRange: [3, 3],
+      traps: [1, 2],
+    },
   ],
   // ─── worked places: more of them, and more to carry home ────────────────
   //     41 steps.
   [
     'site:watchers_altar',
-    { monsters: [5, 7], roster: RANK_AND_FILE, litter: [2, 4], levelRange: [7, 7], traps: [1, 2] },
+    {
+      // rhaloren-camp. `nb_npc = {20, 30}` — data/zones/rhaloren-camp/zone.lua:53.
+      nbNpc: [20, 30],
+      // `filters = { {max_ood=2} }` — rhaloren-camp/zone.lua:54.
+      maxOod: 2,
+      roster: RANK_AND_FILE,
+      litter: [2, 4],
+      levelRange: [7, 7],
+      traps: [1, 2],
+    },
   ],
   //     61 steps.
   [
     'site:hollow_mine',
-    { monsters: [6, 8], roster: RANK_AND_FILE, litter: [2, 4], levelRange: [9, 9], traps: [2, 3] },
+    {
+      // ardhungol, levels 1-2. `nb_npc = {70, 80}` — data/zones/ardhungol/zone.lua:50,
+      // the densest band in our twelve. Its `levels[3]` drop to {20, 25}
+      // (ardhungol/zone.lua:70) is NOT reachable here: `zones.ts` gives this site
+      // two level entries, so floors 3 and 4 repeat ardhungol level 2.
+      nbNpc: [70, 80],
+      roster: RANK_AND_FILE,
+      litter: [2, 4],
+      levelRange: [9, 9],
+      traps: [2, 3],
+    },
   ],
   // ─── quiet and wrong: fewer bodies, harder ones ─────────────────────────
   //     90 steps. The roster changes here, which is the real threshold on the
   //     map: from this marker outward, things bite.
   [
     'site:outer_index',
-    { monsters: [3, 4], roster: DEEP, litter: [3, 4], levelRange: [10, 10], traps: [2, 3] },
+    {
+      // maze, the DEFAULT layout (`zones.ts`). `nb_npc = {50, 60}` —
+      // data/zones/maze/zone.lua:160. Its `levels[2]` {10, 12} (maze/zone.lua:186)
+      // is not reachable: every floor here is maze level 1.
+      nbNpc: [50, 60],
+      roster: DEEP,
+      litter: [3, 4],
+      levelRange: [10, 10],
+      traps: [2, 3],
+    },
   ],
   //     77 steps.
   [
     'site:glass_archive',
-    { monsters: [3, 5], roster: DEEP, litter: [2, 3], levelRange: [11, 11], traps: [2, 3] },
+    {
+      // scintillating-caves, the TWISTED layout (`zones.ts`), which is 30x30 and
+      // the smallest floor in the game. `nb_npc = {12, 16}` —
+      // data/zones/scintillating-caves/zone.lua:53.
+      nbNpc: [12, 16],
+      // `filters = { {max_ood=2} }` — scintillating-caves/zone.lua:54.
+      maxOod: 2,
+      roster: DEEP,
+      litter: [2, 3],
+      levelRange: [11, 11],
+      traps: [2, 3],
+    },
   ],
   // ─── the far end ────────────────────────────────────────────────────────
   //     109 steps.
   [
     'site:gearford_ward',
-    { monsters: [6, 8], roster: DEEP, litter: [3, 5], levelRange: [13, 13], traps: [2, 3] },
+    {
+      // infinite-dungeon, the "building" layout (`zones.ts`). The base table is
+      // `nb_npc = {29, 39}` (data/zones/infinite-dungeon/zone.lua:88) but
+      // `alter_level_data` overwrites it per floor from the floor's own area
+      // (:255-256) with the building layout's own numerator (:161) — see
+      // `nbNpcPerArea`. The band below is the base table, used if a floor ever
+      // reports no area.
+      nbNpc: [29, 39],
+      nbNpcPerArea: 60,
+      // `filters = { {max_ood=6} }` — infinite-dungeon/zone.lua:89. Six, not two:
+      // the one zone in the game that is meant to hand you something well over
+      // your head.
+      maxOod: 6,
+      roster: DEEP,
+      litter: [3, 5],
+      levelRange: [13, 13],
+      traps: [2, 3],
+    },
   ],
   // ─── and the three nobody is told about ─────────────────────────────────
   //     All three sit in the MIDDLE band by distance (47-62 steps), which is
@@ -508,13 +978,44 @@ export const DELVES: ReadonlyMap<string, DelveSpec> = new Map<string, DelveSpec>
   //     shooter the Drowned Chapel teaches you on. This is a change of BESTIARY,
   //     not of difficulty — the room now belongs to its own name and stops
   //     being The Underworks with a different floor colour.
-  ['site:cairnfoot', { monsters: [4, 6], roster: DROWNED, litter: [3, 4], levelRange: [6, 6] }],
+  [
+    'site:cairnfoot',
+    {
+      // heart-gloom. `nb_npc = {20, 30}` — data/zones/heart-gloom/zone.lua:76.
+      nbNpc: [20, 30],
+      // `filters = { {max_ood=2} }` — heart-gloom/zone.lua:77.
+      maxOod: 2,
+      roster: DROWNED,
+      litter: [3, 4],
+      levelRange: [6, 6],
+    },
+  ],
   //     47 steps, in the clearing inside the southern wood — so it draws on the
   //     wood's own roster, which is the same rule Blackwood follows.
-  ['site:barrow_end', { monsters: [5, 7], roster: THICKET, litter: [3, 5], levelRange: [5, 5] }],
+  [
+    'site:barrow_end',
+    {
+      // old-forest. `nb_npc = {20, 30}` — data/zones/old-forest/zone.lua:58.
+      nbNpc: [20, 30],
+      roster: THICKET,
+      litter: [3, 5],
+      levelRange: [5, 5],
+    },
+  ],
   //     71 steps, on the beach behind the wood. What lives in the Lake of Nur's
   //     water lives here — see `WEIR`.
-  ['site:the_weir', { monsters: [4, 6], roster: WEIR, litter: [3, 4], levelRange: [6, 6] }],
+  [
+    'site:the_weir',
+    {
+      // lake-nur, level 2 on every floor (`zones.ts`). `nb_npc = {20, 25}` —
+      // data/zones/lake-nur/zone.lua:54. Its level 1 is {0, 0} (:76) and its
+      // level 3 {30, 35} (:106); neither is reachable from here.
+      nbNpc: [20, 25],
+      roster: WEIR,
+      litter: [3, 4],
+      levelRange: [6, 6],
+    },
+  ],
   //     106 steps, and the worst room on the moor. NOT the furthest — Gearford
   //     Ward is 109 — which the note here claimed until the walk was measured.
   //     THE TREES START HERE, which `places.ts` has said since before there was
@@ -523,7 +1024,22 @@ export const DELVES: ReadonlyMap<string, DelveSpec> = new Map<string, DelveSpec>
   //     end of the road should feel like.
   [
     'site:blackwood_outskirts',
-    { monsters: [8, 10], roster: THICKET, litter: [4, 6], levelRange: [15, 15] },
+    {
+      // trollmire, the DEFAULT layout (`zones.ts`). `nb_npc = {20, 30}` —
+      // data/zones/trollmire/zone.lua:197.
+      nbNpc: [20, 30],
+      // `filters = { {max_ood=2} }` — trollmire/zone.lua:198.
+      maxOod: 2,
+      // AND THE ONE ZONE IN OUR TWELVE THAT CLUSTERS. `class =
+      // "mod.class.generator.actor.OnSpots"` with `nb_spots = 2,
+      // on_spot_chance = 35` — trollmire/zone.lua:196 and :199. `spot_radius`
+      // is not set, so it is OnSpots' own default of 5
+      // (engine/generator/actor/OnSpots.lua:31).
+      spots: { nbSpots: 2, spotRadius: 5, onSpotChance: 35 },
+      roster: THICKET,
+      litter: [4, 6],
+      levelRange: [15, 15],
+    },
   ],
 ]);
 
@@ -582,10 +1098,11 @@ export function dangerWord(spec: DelveSpec): string {
    * be right by coincidence. This is not a behaviour change; it is the same
    * question asked in a way that survives the next creature.
    *
-   * PRESENCE, NOT A SUM. `roster` is a CYCLE that `populateDelve` walks, not a
-   * headcount — three entries fill a room of seven — so "can an elite appear
-   * here" is the question these weights were always answering. A per-entry sum
-   * was tried and it moved three rooms, including the Drowned Chapel from
+   * PRESENCE, NOT A SUM, AND THE DRAW MAKES THAT MORE TRUE RATHER THAN LESS.
+   * `roster` is a rarity-weighted candidate list, so "can an elite appear here"
+   * is exactly what membership answers and HOW OFTEN is a function of the floor's
+   * level rather than of the array. A per-entry sum was tried back when the list
+   * was a cycle and it moved three rooms, including the Drowned Chapel from
    * `quiet` to `restless`; that room is the first marker most players ever walk
    * to and Merrow's own directions call it *"close and it is quiet"*. Making
    * the map disagree with the townsfolk to fix a rounding error is a bad trade.
@@ -653,13 +1170,59 @@ export function dangerWord(spec: DelveSpec): string {
    * party", and a scale a player has learned should not grow a step the day the
    * content does.
    */
-  if (spec.boss !== undefined) return 'grim';
+  // OR A BOSS DRAWN ON THE MAP RATHER THAN PLACED — see `DelveSpec.drawnBoss`.
+  // The question is "is there a set piece in this room", and where the placer
+  // got it from is not a fact about the room.
+  if (spec.boss !== undefined || spec.drawnBoss === true) return 'grim';
 
-  const weight = spec.monsters[1] + elite + ranged + underwater;
+  /**
+   * ═════════════════════════════════════════════════════════════════════════
+   * THE GRADE IS THE LEVEL NOW, NOT THE HEADCOUNT — AND IT HAD TO MOVE.
+   * ═════════════════════════════════════════════════════════════════════════
+   *
+   * This read `spec.monsters[1] + elite + ranged + underwater` against
+   * thresholds of 7 / 9 / 12, and it worked because the counts were authored on
+   * a scale of two to ten. They are upstream's `nb_npc` now — twelve to eighty —
+   * and on that scale every room in the game is `grim`, which is the same as no
+   * grade at all.
+   *
+   * ═══ AND THE COUNT WAS NEVER THE GRADIENT ANYWAY ═══
+   * Under upstream's numbers the Hollow Mine holds 70-80 bodies and Blackwood
+   * Outskirts 20-30, while Blackwood is six levels deeper. Density is a fact
+   * about the ZONE a delve is built as — a cavern packs more than a forest — and
+   * has never been a fact about how dangerous the place is. The thing that
+   * actually decides that is the level everything in the room is born at, which
+   * is `delveLevel` and which this table has carried in `levelRange` since the
+   * curve pass.
+   *
+   * ═══ THE CUTS ARE READ OFF THE SHIPPED TABLE, NOT INVENTED ═══
+   * `delveLevel` over the twelve runs 1, 1, 3, 5, 6, 6, 7, 9, 10, 11, 13, 15,
+   * and the three roster terms add on top exactly as they did. Cutting at
+   * 4 / 9 / 16 gives:
+   *
+   *     quiet      the Drowned Chapel (3), the Undermost (3)
+   *     restless   the Underworks (5), Barrow End (8), Cairnfoot (8),
+   *                the Weir (9), the Watcher's Altar (9)
+   *     dangerous  the Hollow Mine (11), the Outer Index (15),
+   *                the Glass Archive (16)
+   *     grim       Gearford Ward (18), Blackwood Outskirts (18)
+   *
+   * The `quiet` pair is exactly the pair that was quiet before, which is the one
+   * that must not move: `first-room.test.ts` and the first case both read this
+   * function to decide where a four-minute-old character is sent.
+   *
+   * ═══ TWO ROOMS SWAP, AND BOTH SWAPS ARE CORRECTIONS ═══
+   * Barrow End falls from `dangerous` to `restless` and the Outer Index rises
+   * from `restless` to `dangerous`. Under the old formula a LEVEL-5 room graded
+   * worse than a LEVEL-10 one because it held seven bodies against four — which
+   * is the count speaking about danger again, and it was wrong about it. The
+   * order now runs with the walk, which is what the gradient was authored to be.
+   */
+  const weight = delveLevel(spec) + elite + ranged + underwater;
 
-  if (weight <= 7) return 'quiet';
+  if (weight <= 4) return 'quiet';
   if (weight <= 9) return 'restless';
-  if (weight <= 12) return 'dangerous';
+  if (weight <= 16) return 'dangerous';
   return 'grim';
 }
 
@@ -708,22 +1271,50 @@ export function partyHint(spec: DelveSpec): string | null {
  * the door by the rule that certified the level: eight neighbours, a shut door
  * passable (`shared/mapgen/connectivity.ts`).
  *
- * ═══ AND NEVER ON A STAIR ═══
+ * ═══ AND NEVER ON A STAIR, OR ON THE ARRIVAL ═══
  * Upstream marks a stair's cell `special` (`engine/generator/map/Roomer.lua:53`)
  * and its actor, object and trap generators all skip special cells
  * (`engine/generator/actor/Random.lua:114`, `object/Random.lua:50`,
  * `trap/Random.lua:47`). A cell in `sites` is the stair down or the way out,
- * and nothing is put on one.
+ * and a cell in `spawns` is where a party lands; nothing is put on either. The
+ * arrival half was missing and could not fire while a ring eight cells wide
+ * already covered it.
+ *
+ * ═══════════════════════════════════════════════════════════════════════════
+ * AND `DOOR_CLEARANCE` IS OURS, AND IT IS NOT WHY THE ROOMS WERE EMPTY.
+ * ═══════════════════════════════════════════════════════════════════════════
+ * Upstream has no ring at all — `Random.lua:112-117` draws uniformly over the
+ * whole map and refuses only the `special` cell — and at HEAD, measured over six
+ * seeds of each of the twelve delves, **0.00 monsters could see the arrival tile
+ * in eleven of twelve sites** against a sight radius of 10. The obvious suspect
+ * was this ring. It was the wrong suspect: the nearest body stood 13 to 37 tiles
+ * out, far beyond eight, because the placer COMBED the bodies evenly across the
+ * whole floor. With the comb replaced by upstream's independent draw and the
+ * counts raised to the zone's own `nb_npc`, the nearest body is 8 to 17 tiles
+ * out and something is in sight of the arrival on most floors — with the ring
+ * still in place.
+ *
+ * SO IT STAYS, AND IT IS A DELIBERATE DIVERGENCE. A body born in melee with the
+ * arrival tile is not tension: a new character wakes in the Undermost with a
+ * brass lantern, no tutorial and no escort, where upstream's player reaches the
+ * escape from Reknor through character creation with Norgan beside them
+ * (`reknor-escape/zone.lua:88-94`). Eight cells is a turn to read the room.
  */
 function roomFor(world: World, map: AuthoredMap, door: TileXY): TileXY[] {
   const level = world.level;
   const reached = reachableSet(level, door);
+  const spawns = new Set(map.spawns.map((t) => `${String(t.x)},${String(t.y)}`));
   const out: TileXY[] = [];
   for (let y = 1; y < level.h - 1; y += 1) {
     for (let x = 1; x < level.w - 1; x += 1) {
       if (!canWalk(level, x, y)) continue;
       if (reached[y * level.w + x] !== 1) continue;
       if (map.sites.has(`${String(x)},${String(y)}`)) continue;
+      // `special`, upstream's own word for it: a stair cell and an arrival cell
+      // are refused by every generator it has (`actor/Random.lua:114`,
+      // `object/Random.lua:50`, `trap/Random.lua:47`). Nothing is born on one at
+      // any clearance.
+      if (spawns.has(`${String(x)},${String(y)}`)) continue;
       if (Math.max(Math.abs(x - door.x), Math.abs(y - door.y)) < DOOR_CLEARANCE) continue;
       out.push({ x, y });
     }
@@ -819,11 +1410,15 @@ export function delveHeadroom(party: PartyStrength): number {
  * The Underworks is husks on both maps and the Drowned Chapel is cairns on
  * both, because that is what those places ARE.
  *
- * What changed is how much of it there is. +2 monsters, and +1 litter at both
- * ends — harder, and paying for it. A player who has cleared the Underworks and
- * walks fourteen tiles into the Sedge to find another one should meet a room
- * they recognise and cannot handle the same way, and should come out with more
- * than they went in for. Danger with no upside is a place you visit once.
+ * What changed is how HARD it is, and it is no longer the count. The twin used to
+ * carry +2 bodies; that was half again on a band of two to ten and would be noise
+ * on a band of twenty to thirty, so what it carries now is the four LEVELS it
+ * always also carried — which `actor_adjust_level` puts on every body in the room
+ * and `rankLifeAdjust` compounds. The litter is still +1 at both ends: a player
+ * who has cleared the Underworks and walks fourteen tiles into the Sedge to find
+ * another one should meet a room they recognise and cannot handle the same way,
+ * and should come out with more than they went in for. Danger with no upside is a
+ * place you visit once.
  *
  * ═══ IT IS APPLIED BEFORE PARTY SCALING, WHICH IS WHAT MAKES IT WORK ═══
  * `populateDelve` rolls this range and THEN multiplies by `delveHeadroom`, so
@@ -864,7 +1459,19 @@ const REDACTED_TOWN: DelveSpec = {
    * in the street now, and the litter is generous because a town that nobody
    * has walked out of still has everything people left in it.
    */
-  monsters: [5, 7],
+  /**
+   * AND ITS COUNT IS A TOWN'S, WHICH UPSTREAM HAS A ZONE FOR.
+   *
+   * `data/zones/infinite-dungeon/zone.lua:143-151` is the "town" layout — built
+   * streets and buildings, like this — and it takes the zone's default
+   * numerator, `enemy_count = ceil(vx * vy * 34/4900)` at `:255`, because it
+   * carries no `enemy_count` of its own. So the band is that formula against
+   * this floor's own area, and it is the same mechanism Gearford Ward uses with
+   * a different numerator. The flat pair below is the base table's `{29, 39}`
+   * (`:88`), used only if a floor reports no area.
+   */
+  nbNpc: [29, 39],
+  nbNpcPerArea: 34,
   roster: DEEP,
   litter: [3, 5],
   /**
@@ -899,7 +1506,23 @@ export function redactedSpec(originalId: string): DelveSpec | undefined {
   // reads it when it decides whether to attach a `populate` hook at all.
   if (spec === undefined) return REDACTED_TOWN;
   return {
-    monsters: [spec.monsters[0] + 2, spec.monsters[1] + 2],
+    /**
+     * THE COUNT IS ITS TWIN'S, UNCHANGED — AND THAT IS A CHANGE.
+     *
+     * This read `[spec.monsters[0] + 2, spec.monsters[1] + 2]`, argued as *"a
+     * consistent half-again across the whole range"* against bands of two to
+     * ten. The bands are upstream's `nb_npc` now, twelve to eighty, and +2 on
+     * those is between 3% and 17% — a constant that used to mean something and
+     * would now be noise dressed as a rule. The twin is four levels worse than
+     * its original (`levelRange` below), which is upstream's own way of saying
+     * "the same place, further in": `actor_adjust_level` puts every body in it
+     * four levels up, and `rankLifeAdjust` compounds that.
+     */
+    nbNpc: spec.nbNpc,
+    ...(spec.nbNpcByFloor === undefined ? {} : { nbNpcByFloor: spec.nbNpcByFloor }),
+    ...(spec.nbNpcPerArea === undefined ? {} : { nbNpcPerArea: spec.nbNpcPerArea }),
+    ...(spec.spots === undefined ? {} : { spots: spec.spots }),
+    ...(spec.maxOod === undefined ? {} : { maxOod: spec.maxOod }),
     roster: spec.roster,
     litter: [spec.litter[0] + 1, spec.litter[1] + 1],
     /**
@@ -977,6 +1600,45 @@ export function specFor(siteId: string): DelveSpec | undefined {
  */
 export function delveLevel(spec: DelveSpec, party: PartyStrength = LONE_BEGINNER): number {
   return zoneBaseLevel(spec.levelRange, spec.levelScheme ?? ZoneLevelScheme.Fixed, party.level);
+}
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * HOW MANY BODIES THIS FLOOR IS FOR — the zone's `nb_npc`, for one player.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `engine/Zone.lua:833-843` merges `levels[n]` over the zone's own table, so a
+ * floor's band is its override if it has one; `infinite-dungeon/zone.lua:255-256`
+ * computes the band from the floor's own area instead, which `nbNpcPerArea`
+ * carries. Then `NB_NPC_SCALE`, which is the one number here that is not
+ * upstream's and has its own argument written above it.
+ *
+ * EXPORTED so the probes and the tests ask the same question the placer does,
+ * rather than re-deriving three quarters of it and drifting.
+ *
+ * `area` is the floor's cell count, needed only by the one zone that scales
+ * with it; absent falls back to that zone's base table.
+ */
+export function nbNpcFor(spec: DelveSpec, floor: number, area?: number): readonly [number, number] {
+  const perArea =
+    spec.nbNpcPerArea === undefined || area === undefined
+      ? undefined
+      : Math.ceil((area * spec.nbNpcPerArea) / 4900);
+  const stated: readonly [number, number] =
+    perArea !== undefined
+      ? // CLAMPED AT ZERO, WHICH UPSTREAM IS NOT. `infinite-dungeon/zone.lua:256`
+        // is a bare `enemy_count-5`, and on a floor small enough to make that
+        // negative `rng.range(-2, 8)` would still place bodies — Lua's own
+        // range simply runs from the lower number. Ours would hand
+        // `Math.max(1, ...)`'s successor a negative floor. Labelled rather than
+        // silent, because it is the only divergence in this function.
+        [Math.max(0, perArea - 5), perArea + 5]
+      : (spec.nbNpcByFloor?.get(floor) ?? spec.nbNpc);
+  // APPLIED TO THE BAND, NOT TO THE DRAW: a scaled draw would be a different
+  // number of random values taken and would move every later draw on the floor.
+  // `{0, 0}` stays `{0, 0}` under any factor, which is what keeps the escape
+  // from Reknor's static last level empty of rolled bodies.
+  return [Math.round(stated[0] * NB_NPC_SCALE), Math.round(stated[1] * NB_NPC_SCALE)];
 }
 
 /**
@@ -1183,38 +1845,125 @@ export function populateDelve(
     if (inRoom.length > 0) break;
   }
 
-  const rolled = world.rng.int('delve.count', spec.monsters[0], spec.monsters[1]);
   /**
    * ═══════════════════════════════════════════════════════════════════════════
-   * ONE OFFSET FOR THE FLOOR — AND IT USED TO BE ONE PER BODY.
+   * HOW MANY — `nb_npc` FOR THIS FLOOR, WHICH MAY BE THE ZONE'S OVERRIDE.
    * ═══════════════════════════════════════════════════════════════════════════
    *
-   * The draw was INSIDE the loop below, which made `stride` decorative: every
-   * body landed at a fresh uniform position, which is precisely the "drawn
-   * independently" the note down there says this arrangement exists to prevent.
-   * The comment described the intended code and the code did the opposite.
+   * `engine/Zone.lua:833-843` deep-merges `levels[n]` over the zone's own table,
+   * so a floor's band is its override if it has one and the zone's otherwise.
+   * `infinite-dungeon/zone.lua:255-256` goes further and computes the band from
+   * the floor's own area; `nbNpcPerArea` is that, and it is the only zone in the
+   * twelve that does it.
    *
-   * MEASURED over sixty floors of `site:gearford_ward` on an open map:
-   *
-   *     per body   48 pairs within 2 tiles   mean nearest-pair gap 2.55
-   *     hoisted     0 pairs within 2 tiles   mean nearest-pair gap 4.78
-   *
-   * Forty-eight clustered pairs is not a cosmetic difference. A party that
-   * opens a door onto three bodies standing together is in a fight the roster
-   * numbers never described — `delveHeadroom` tunes HOW MANY are in the room,
-   * and clustering silently decides how many of them you meet at once.
+   * ONE DRAW, SAME LABEL, SAME POSITION as the `delve.count` this replaces, so a
+   * floor's later draws are where they were.
    */
-  const offset = world.rng.int('delve.offset', 0, candidates.length - 1);
-  const wanted = Math.max(1, Math.round(rolled * delveHeadroom(party)));
+  const band = nbNpcFor(spec, floor, map.view.w * map.view.h);
+  const rolled = world.rng.int('delve.count', band[0], band[1]);
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * WHICH BODIES — `computeRarities` ONCE FOR THE FLOOR, `pickEntity` PER BODY.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `Zone:makeEntity` (engine/Zone.lua:380-427) builds a probability list from
+   * the zone's npc list at `resolvers.current_level = base_level + level.level - 1`
+   * and draws one entity from it per body. That level is exactly the one the
+   * bodies are then born at, below.
+   *
+   * COMPUTED ONCE because the list is pure over the floor — upstream rebuilds it
+   * per call and gets the same answer — and because `pickEntity` is one draw
+   * whatever the list length, so the seed cost is one label per body and nothing
+   * else.
+   *
+   * AN EMPTY LIST IS A REAL OUTCOME, not an error: it is what a roster whose
+   * every member is far out of depth produces, and `Zone.lua:243`'s
+   * `genprob > 0` is the same rule. The loop below places nobody and the
+   * caller's log line says so.
+   */
+  const roomLevel = delveLevel(spec, party) + floor - 1;
+  const weighted = computeRarities(
+    spec.roster.filter(
+      // `Zone.lua:214` — an entity with no `rarity` or no `level_range` is not a
+      // candidate at all. `INDEX_WATCHER` is ours: a guardian, placed below.
+      (t): t is MonsterTemplate & RarityCandidate =>
+        t.rarity !== undefined && t.levelRange !== undefined,
+    ),
+    roomLevel,
+    // `checkFilter`'s `max_ood` — engine/Zone.lua:306, and `computeRarities`
+    // takes a filter for exactly this (`Zone.lua:214`'s `not filter or filter(e)`).
+    spec.maxOod === undefined
+      ? undefined
+      : (e) => roomLevel + (spec.maxOod ?? 0) >= e.levelRange[0],
+  );
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * WHERE THEY STAND — AND THE STRIDE IS GONE, WHICH WAS THE WHOLE PROBLEM.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * This placed each body at `(offset + i * stride) % candidates.length`, an
+   * even comb across the floor, under a note calling a cluster by the door *"the
+   * one arrangement this file exists to avoid"*. Upstream's is the exact
+   * opposite and is deliberate:
+   *
+   * ```lua
+   * -- engine/generator/actor/Random.lua:112-117
+   * local x, y = rng.range(self.area.x1, self.area.x2), rng.range(self.area.y1, self.area.y2)
+   * while (not m:canMove(x, y) or ... .special) and tries < 100 do ... end
+   * ```
+   *
+   * Every body is drawn INDEPENDENTLY AND UNIFORMLY over the whole map. That is
+   * Poisson, and Poisson clumps: the measurement that justified the comb —
+   * *"per body: 48 pairs within 2 tiles; hoisted: 0"* — measured the difference
+   * and read it backwards. Forty-eight clustered pairs is what a floor of
+   * upstream's looks like, and it is what "I opened a door onto five things" is
+   * made of.
+   *
+   * ═══ AND ONE ZONE CLUSTERS ON PURPOSE, HARDER ═══
+   * `OnSpots` picks `nb_spots` spots up front and gives each body
+   * `on_spot_chance` percent of being born within `spot_radius` of one of them
+   * (`engine/generator/actor/OnSpots.lua:30-38`, `:43-56`). The Trollmire, which
+   * Blackwood Outskirts is built as, sets `nb_spots = 2, on_spot_chance = 35`
+   * (`trollmire/zone.lua:199`). Reknor-escape's table carries the same two
+   * fields and they are DEAD there: its class is `engine.generator.actor.Random`
+   * (`reknor-escape/zone.lua:48`, with the `mod.class` line commented out on the
+   * next), and the engine's Random never reads them — only `OnSpots` does. Ours
+   * does the same, so the spots exist only when the spec carries them.
+   *
+   * ═══ THE SPOTS ARE DRAWN GROUND, AND THAT IS A LABELLED DIVERGENCE ═══
+   * Upstream's are `level:pickSpot(...)` (`engine/Level.lua:253-259`), a random
+   * entry from the list the MAP generator recorded — room centres, stairs,
+   * guardian spots. Our generated maps keep no such list, so a spot here is a
+   * uniformly drawn placeable tile. Same shape (a few anchors, bodies clustered
+   * round them) with a weaker notion of "interesting place".
+   */
+  const spots: TileXY[] = [];
+  if (spec.spots !== undefined) {
+    for (let i = 0; i < spec.spots.nbSpots; i += 1) {
+      const at = candidates[world.rng.int(`delve.spot.${String(i)}`, 0, candidates.length - 1)];
+      if (at !== undefined) spots.push(at);
+    }
+  }
+
+  /**
+   * A ZERO ROLL PLACES NOBODY, and the `Math.max(1, ...)` this replaces made
+   * that impossible: the escape from Reknor's static last level is
+   * `nb_npc = {0, 0}` (`reknor-escape/zone.lua:79`) and one body was born on it
+   * anyway. Upstream's loop is `for i = 1, rng.range(nb_npc[1], nb_npc[2])`
+   * (`engine/generator/actor/Random.lua:126`) — zero iterations at zero. The
+   * floor of one survives for every other roll, so a band that rounds to a
+   * single body still puts one down.
+   */
+  const wanted = rolled === 0 ? 0 : Math.max(1, Math.round(rolled * delveHeadroom(party)));
   let placed = 0;
   for (let i = 0; i < wanted; i += 1) {
-    const template = spec.roster[i % spec.roster.length];
+    /**
+     * ONE DRAW FROM THE WEIGHTED LIST — `Zone.lua:318-330`, through `pickEntity`.
+     * The roster is no longer walked as a cycle, so what a floor holds is what
+     * its own level makes likely.
+     */
+    const template = pickEntity(world.rng, `delve.pick.${String(i)}`, weighted);
     if (template === undefined) continue;
-    // SPREAD ACROSS THE WHOLE CANDIDATE LIST rather than drawn independently:
-    // an independent draw clusters, and a cluster next to the door is the one
-    // arrangement this file exists to avoid. The offset is drawn once (above
-    // the loop) so two delves are not laid out identically.
-    const stride = Math.max(1, Math.floor(candidates.length / Math.max(1, wanted)));
     /**
      * ═══════════════════════════════════════════════════════════════════════
      * ONE BODY STANDS IN THE DRAWN ROOM — upstream's guarded vault, in small.
@@ -1227,13 +1976,7 @@ export function populateDelve(
      *
      * TAKEN FROM THE COUNT, NOT ADDED TO IT. `delveHeadroom` tunes how many
      * bodies are in the room and that number is unchanged — this decides where
-     * ONE of them stands. A guard on top of the roster would be a silent
-     * difficulty rise on every floor in the game, which is the thing the commit
-     * before this one was about.
-     *
-     * AND IT IS THE ONE DELIBERATE EXCEPTION TO THE SPREAD above. The stride
-     * exists so bodies do not clump; this puts one body somewhere specific for
-     * a reason, and one is the whole of it.
+     * ONE of them stands.
      *
      * BOTH LISTS ARE THIS BODY'S SHARE (`breathableFor`). A guarded room that is
      * all water to it hands the guard to the floor; a floor that is all water to
@@ -1243,35 +1986,67 @@ export function populateDelve(
     const guarded = breathableFor(world, inRoom, template);
     const room = breathableFor(world, candidates, template);
     const share = i === 0 && guarded.length > 0 ? guarded : room;
+    if (share.length === 0) continue;
     /**
      * ═══════════════════════════════════════════════════════════════════════
-     * THE NEXT FREE TILE IN THIS BODY'S SHARE, NOT THE ONE ALREADY STOOD ON.
+     * THE DRAW, AND THEN THE NEXT FREE TILE — `Random.lua:113-117`'s retry loop.
      * ═══════════════════════════════════════════════════════════════════════
      *
-     * The guard is aimed into `guarded` and everybody after it into `room`, so
-     * the two indexings can name one tile. The body was then handed to
-     * `world.addMonster`, whose ring search takes the nearest free tile of ANY
-     * kind: a bubble nothing may be born on (`tome/class/Grid.lua:102-109`,
-     * which `breathableFor` ports), or ground inside `DOOR_CLEARANCE`.
-     * MEASURED over 200 seeds of both Weirs, four floors, parties of 1, 3 and
-     * 6: 151 of 61,884 bodies were moved that way and 13 were born on a
-     * bubble; the Drowned Chapel and Blackwood moved 16 of 27,416. None of
-     * either now.
-     *
-     * So a taken tile steps on through the same list, which holds only ground
-     * this body may be born on. No draw is added, and a body whose aim was free
-     * lands exactly where it always did. Only a share with no free tile left
-     * falls back to the aim and the ring search, as every body did before.
+     * Upstream redraws up to 100 times and gives up; walking on from the aim
+     * through this body's own share is the same refusal with no extra draws and
+     * no failure mode, and the share holds only ground this body may be born on
+     * (a bubble nothing may be born on is `tome/class/Grid.lua:102-109`, which
+     * `breathableFor` ports).
      */
-    const aim = (offset + i * stride) % share.length;
-    let at = share[aim];
-    for (let step = 0; step < share.length; step += 1) {
-      const tile = share[(aim + step) % share.length];
+    const onSpot =
+      spec.spots !== undefined &&
+      spots.length > 0 &&
+      // `rng.percent(on_spot_chance)` — engine/generator/actor/OnSpots.lua:44.
+      world.rng.int(`delve.onspot.${String(i)}`, 1, 100) <= spec.spots.onSpotChance;
+    const radius = spec.spots?.spotRadius ?? 0;
+    const anchor = onSpot
+      ? spots[world.rng.int(`delve.spotpick.${String(i)}`, 0, spots.length - 1)]
+      : undefined;
+    const near =
+      anchor === undefined
+        ? share
+        : share.filter(
+            (t) => Math.max(Math.abs(t.x - anchor.x), Math.abs(t.y - anchor.y)) <= radius,
+          );
+    // `util.findFreeGrid` finding nothing inside the radius is
+    // engine/generator/actor/OnSpots.lua:58's
+    // "No more free space for spawning": upstream returns and places nobody. We
+    // fall back to the whole floor, which keeps the count honest.
+    const from = near.length > 0 ? near : share;
+    const aim = world.rng.int(`delve.at.${String(i)}`, 0, from.length - 1);
+    let at: TileXY | undefined;
+    for (let step = 0; step < from.length; step += 1) {
+      const tile = from[(aim + step) % from.length];
       if (tile !== undefined && world.actorAt(tile.x, tile.y) === undefined) {
         at = tile;
         break;
       }
     }
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * A FLOOR WITH NOWHERE LEFT PLACES NOBODY — `Random.lua:118`, exactly.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * ```lua
+     * if tries < 100 then
+     *     self.zone:addEntity(self.level, m, "actor", x, y)
+     * ```
+     *
+     * Upstream redraws a hundred times and, if every one of them was refused,
+     * DROPS THE BODY. There is no fallback and no ring search.
+     *
+     * This used to fall back to the aim even when the walk above found every
+     * tile taken, and hand that occupied tile to `world.addMonster`, whose ring
+     * search then threw `no free tile within 8`. It could not fire while the
+     * bands were two to ten on a fifty-by-fifty floor. At upstream's counts it
+     * fires the moment a floor is narrow: a twenty-one cell corridor asked for
+     * sixteen bodies crashes generation.
+     */
     if (at === undefined) continue;
 
     // Qualified by realm — `delve_0` was the same string in every party's copy
@@ -1282,9 +2057,21 @@ export function populateDelve(
     // so every body in it was level 1 — see `DelveSpec.level`.
     const actor = world.addMonster(
       qualified(world, `delve_${String(i)}`),
-      // ONE LEVEL A FLOOR DOWN, upstream's `base_level + level.level - 1`
-      // (engine/Zone.lua:195).
-      monsterInit(template, at, delveLevel(spec, party) + floor - 1),
+      // `actor_adjust_level` — the zone's own line, all four of its terms. See
+      // `actorAdjustLevel`. This used to be the first and third only, so every
+      // body on a floor was exactly the same level and an elite was an ordinary
+      // body with a ring under it.
+      monsterInit(
+        template,
+        at,
+        actorAdjustLevel(
+          world.rng,
+          `delve.level.${String(i)}`,
+          delveLevel(spec, party),
+          template.rank,
+          floor,
+        ),
+      ),
     );
     /**
      * THE SAME DROP ROLL THE OVERWORLD USES — AND NOW THE SAME EGO ROLL TOO.
@@ -1357,16 +2144,36 @@ export function populateDelve(
       // a monster id — and therefore do not share the process-wide status,
       // Downed and talent tables that key off one. See `World.id`.
       /**
-       * TWO LEVELS ABOVE THE ROOM IT IS IN. Upstream puts a boss a little over
-       * its zone for the same reason: a set piece that is exactly as tough as
-       * the population is not a set piece, and its RANK is already doing the
-       * heavy lifting — a rank-4 body gains life half again as fast per level as
-       * the rank-2 husks around it, so two levels is a wide gap here and not a
-       * token one.
+       * ABOVE THE ROOM IT IS IN, BY ITS RANK — `getRankLevelAdjust`, which is
+       * THREE for a rank-4 boss. (This comment said TWO for as long as the
+       * number was hand-picked; it has been derived since `rankLevelAdjust`
+       * landed, and a stale constant in a sentence is how a derived number
+       * quietly becomes two numbers again.)
+       *
+       * Upstream puts a boss a little over its zone for the same reason: a set
+       * piece that is exactly as tough as the population is not a set piece, and
+       * its RANK is already doing the heavy lifting — a rank-4 body gains life
+       * half again as fast per level as the rank-2 husks around it.
        */
       const boss = world.addMonster(
         qualified(world, 'delve_boss'),
-        monsterInit(spec.boss, far, delveLevel(spec, party) + floor - 1 + BOSS_LEVELS_ABOVE_ROOM),
+        // THE SAME LINE EVERY OTHER BODY GETS. `actor_adjust_level` already
+        // carries the set piece's promotion in `getRankLevelAdjust`: rank 4 is
+        // +3, which is where `BOSS_LEVELS_ABOVE_ROOM` now comes from. The jitter
+        // is upstream's too and applies to a guardian exactly as it does to the
+        // rank and file — `Zone:addEntity` (engine/Zone.lua:747-751) levels every
+        // actor through the one function.
+        monsterInit(
+          spec.boss,
+          far,
+          actorAdjustLevel(
+            world.rng,
+            'delve.level.boss',
+            delveLevel(spec, party),
+            spec.boss.rank,
+            floor,
+          ),
+        ),
       );
       /**
        * AND IT IS HOLDING SOMETHING, GUARANTEED.

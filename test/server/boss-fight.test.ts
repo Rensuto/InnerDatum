@@ -306,9 +306,19 @@ describe('fighting the Watcher', () => {
       spec === undefined ? 1 : delveLevel(spec) + floorsOfSite('site:redaction:watchers_altar') - 1;
     expect(roomLevel, 'the redacted altar is still a level-1 room').toBeGreaterThan(1);
     expect(boss.maxHp, 'the boss did not grow with its room').toBeGreaterThan(INDEX_WATCHER.maxHp);
-    expect(boss.maxHp).toBe(
-      monsterInit(INDEX_WATCHER, { x: 1, y: 1 }, roomLevel + BOSS_LEVELS_ABOVE_ROOM).maxHp,
-    );
+    /**
+     * ═══ A BAND, BECAUSE THE LEVEL CARRIES UPSTREAM'S JITTER NOW ═══
+     * `actor_adjust_level` is `base_level + getRankLevelAdjust() + level.level-1
+     * + rng.range(-1, 2)` (`tome/data/zones/trollmire/zone.lua:30` and seventy-eight
+     * more), and `populateDelve` applies all four terms to a guardian exactly as
+     * `engine/Zone.lua:747-751` does. So the boss is `BOSS_LEVELS_ABOVE_ROOM`
+     * (which is `getRankLevelAdjust(4)` = 3) over its floor, PLUS a draw of -1
+     * to +2. Pinning one level would be pinning one seed.
+     */
+    const at = (level: number): number =>
+      monsterInit(INDEX_WATCHER, { x: 1, y: 1 }, level).maxHp ?? 0;
+    expect(boss.maxHp).toBeGreaterThanOrEqual(at(roomLevel + BOSS_LEVELS_ABOVE_ROOM - 1));
+    expect(boss.maxHp).toBeLessThanOrEqual(at(roomLevel + BOSS_LEVELS_ABOVE_ROOM + 2));
 
     /**
      * ═══ AND THE BODY IN THE ROOM IS ITS OWN, NOT ONLY THE ONE ITS TEMPLATE NAMES ═══

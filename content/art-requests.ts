@@ -1296,18 +1296,6 @@ export const ENEMY_ART_COMMISSION: readonly ArtRequest[] = [
  * each must read as one individual rather than a bigger member of a family.
  */
 export const BOSS_ART_COMMISSION: readonly ArtRequest[] = [
-  large(
-    { id: 'enemy_undermost_warden' },
-    'The intro cave, last floor',
-    `${ZONES}/reknor-escape/npcs.lua`,
-    'The boss at the cave mouth: a huge overseer in a riveted mining harness with a skull-splitting felling axe, eyes gone to static.',
-  ),
-  actor(
-    { id: 'enemy_undermost_picket_s' },
-    'The intro cave, last floor',
-    `${ZONES}/reknor-escape/npcs.lua`,
-    "The warden's pickets: miners in torn safety harnesses with picks, heads gone to a knot of black void.",
-  ),
   actor(
     { id: 'enemy_the_rat_registrar_s' },
     "Saint's Rest",

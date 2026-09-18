@@ -45,9 +45,15 @@
  * THE DOOR TO THE OTHER MAP CANNOT BE FILED. It is a crossing, not a room —
  * the same reason it carries no danger grade. You do not clear a coastline.
  *
- * NOR CAN THE BIRTHPLACE. A new character is put there once and leaves by the
- * only way out (`SiteDef.birthplace`); nobody walks back into it. Counting it
- * would put a room in every file that a player can never go back and close.
+ * NOR CAN THE BIRTHPLACE, and the reason given here used to be *"nobody walks
+ * back into it"*. They can now — item 7 put a marked mouth on the moor and a
+ * party can walk in and climb out as often as they like. The PREDICATE is still
+ * right and does double duty, keeping the Undermost out of the denominator and
+ * out of `firstCase`'s picker; only the argument for it has moved. It is that a
+ * birthplace is where you START rather than somewhere the moor is offering, and
+ * it is one-way (`SiteDef.noWayBack`) — you cannot file a room by arriving at
+ * the bottom of it. Counting it would put a room in every file that a player
+ * did not choose to open.
  *
  * What is left is exactly the set a player would call *destinations*: the rooms
  * that were authored onto a map and have something in them.
