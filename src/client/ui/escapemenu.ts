@@ -418,9 +418,11 @@ export type MenuEffect =
   /**
    * READ ONE, or fold it away again if it is the one already open.
    *
-   * The id rides the effect for `MenuItem.topic`'s reason: one verb with a
+   * The id rides the effect for `MenuItem.groundId`'s reason: one verb with a
    * payload keeps the caller's switch total, where one effect per note would
-   * make the union grow with the content.
+   * make the union grow with the content. (It named `MenuItem.topic` until the
+   * townsfolk questions moved into the conversation window and that field went
+   * with them; the argument is the same one, and `groundId` still makes it.)
    */
   | { readonly kind: 'note'; readonly id: string }
   /**

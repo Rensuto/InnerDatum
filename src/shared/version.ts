@@ -660,6 +660,51 @@
  * ═══════════════════════════════════════════════════════════════════════════
 
 
+ * 26 -> 27 (THE CONVERSATION). Talking to somebody stops being one line and
+ * becomes a window: `ServerMsg` gains `DialogueMsg`, `ClientMsg` gains
+ * `dialogue_choose` and `dialogue_close`, and a bare `talk` — one with no
+ * `topic` — now OPENS that window as well as saying what it always said.
+ *
+ * ═══ WHY THIS FORCES A BUMP, WHERE THE TWO NEW VERBS ALONE WOULD NOT ═══
+ * The inbound half is free and `TalkSchema`'s own note has the argument: an
+ * older client never SENDS a verb it does not know, so nothing it already sends
+ * changes shape. The outbound half would usually be free too — `SettingsMsg`
+ * and `VisionMsg.sight` are the worked cases — because a client drops an unknown
+ * `t` and draws what it drew before.
+ *
+ * IT IS NOT FREE HERE, AND THE REASON IS THE SERVER-SIDE STATE THE FRAME
+ * REPORTS. A v26 client's `talk` opens a conversation it cannot name and cannot
+ * draw, and the server PARKS ITS BODY for the duration (`standingOrder`, so the
+ * party's barrier stops waiting on it — see net/gateway.ts's dialogue block).
+ * The player sees the Margin greeting they always saw and nothing else, while
+ * their body has silently stopped being something the quorum waits for and their
+ * screen offers no way to end it. That is `18 -> 19`'s rule exactly — an older
+ * client holding a picture the server has stopped believing — rather than an
+ * addition it can ignore. A mismatch instead closes the socket with
+ * `version_mismatch` and costs a page reload in an Activity, where clients are
+ * served fresh on launch.
+ *
+ * The park is not left to heal itself either: any turn verb from that socket
+ * closes the conversation and releases the body (`unparkOnCommand`). That is the
+ * backstop, not the argument — a backstop that needs the player to guess at a
+ * keypress is exactly the confidently-wrong state this number exists to prevent.
+ *
+ * CONSIDERED AND NOT BUMPED FOR, though they ride the same number: `TopicId` and
+ * `TOPIC_LABEL` are untouched, `talk` WITH a topic answers exactly as it did,
+ * and `DialogueScope` is a new const with no existing reader. None of those
+ * would have moved the number on their own.
+ *
+ * `SCHEMA_VERSION` STAYS 1, considered rather than carried along. A conversation
+ * is not persisted and deliberately so: it is keyed by SOCKET, it closes on
+ * disconnect, and one open across a server restart is simply gone — which is
+ * honest, where a resumed half-finished conversation would be a saved pointer
+ * into content that may no longer exist. The one thing a story answer writes is
+ * overworld fog, which already had its own save reason (`explored`) and its own
+ * shape on disk.
+ *
+ * ═══════════════════════════════════════════════════════════════════════════
+
+
  * 25 -> 26 (ONLY WHAT YOU CAN SEE). Dressing stops being part of the map:
  * `ServerMsg` gains `PropsMsg`, `RealmMsg.props` narrows from "every prop on
  * this floor" to "the props this viewer can see from where they are standing",
@@ -1125,7 +1170,7 @@
  * path rather than read from disk. When that changes it will be an OPTIONAL
  * field and docs/data-schemas.md:48-49 applies unchanged.
  */
-export const PROTOCOL_VERSION = 26;
+export const PROTOCOL_VERSION = 27;
 
 /**
  * Bumped whenever a persisted save file's shape changes. Every bump needs a

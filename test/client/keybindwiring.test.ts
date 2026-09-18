@@ -287,6 +287,25 @@ describe('the menu is a PANEL, and its rect is where that is decided', () => {
       // completed, so there is no turn for it to be part of. See the second
       // exemption in the gateway's pre-handshake gate.
       'delete_character',
+      // THE ANSWER, v27, and the second half of the pair below. It names an
+      // OPTION ID and the NODE it was offered on — never a row number, and never
+      // a subject: whose conversation it is comes from the session, exactly as
+      // `choose_class` argues. `sayDialogue` is its only constructor.
+      //
+      // IT IS SENT FOR A LIVE ROW ONLY. A greyed story row consumes its press and
+      // puts the server's reason — which names the lead — up as a notice, because
+      // sending it anyway would earn a `refused` from the server, which is the
+      // same outcome plus a round trip and an error code on screen.
+      'dialogue_choose',
+      // THE WAY OUT OF A CONVERSATION, v27, and listed here for `follow`'s
+      // reason rather than exempted from the rule. It IS a frame the barrier can
+      // be made to wait for — the opposite way round from every other entry:
+      // while a window is open the SERVER has parked this body (`closeDialogue`
+      // in net/gateway.ts), so the barrier is not waiting, and this frame is
+      // what ends that. Escape sends it and nothing else; the local copy is
+      // cleared by the server's `view: null` and never by this client deciding.
+      //
+      'dialogue_close',
       'drop',
       'equip',
       // NOT THE KEYS SCREEN'S. `follow` is the party pane's, added because a
@@ -689,6 +708,92 @@ describe('the six keyboard gates', () => {
     );
   });
 
+  /**
+   * ═══════════════════════════════════════════════════════════════════════
+   * v27 — THE CONVERSATION'S DIGIT GATE SITS ABOVE `setTalentPage`, NOT MERELY
+   * ABOVE `activateSlot`.
+   * ═══════════════════════════════════════════════════════════════════════
+   *
+   * `setTalentPage` is the FIRST statement of `onSlot` and it is a WRITE. A gate
+   * placed under it would let `2` in a conversation flip the action bar to page
+   * two on the way past — and the page is a mode every later read resolves
+   * through, so the bar would still be flipped after the conversation ended,
+   * pointing four keys at four different talents. The order is the whole fix and
+   * it is invisible at the call site, which is why it is pinned here.
+   */
+  it('gates the conversation ABOVE setTalentPage in onSlot', () => {
+    const body = handlerBody('onSlot: (slot, shifted) => {');
+    expect(at('if (dialogueView !== null) {', body)).toBeLessThan(at('setTalentPage(', body));
+    // AND IT IS THE DIGIT AS DRAWN, one-based, bounded by ui/dialogue.ts rather
+    // than by a length read here: `slot` is zero-based everywhere else in this
+    // handler, so passing it straight through would be off by one on every row.
+    expect(body).toContain('slot + 1');
+    /**
+     * AND IT IS RESOLVED THROUGH THE LAID-OUT ROWS, WHICH IS WHY THE LAYOUT IS
+     * REBUILT IN A KEY HANDLER.
+     *
+     * The first version indexed `dialogueView.options`, and on a band that could
+     * place two of twenty answers `4` fired the fourth OPTION — a row that was
+     * never drawn, and for a party lead a story row that commits the run. The
+     * selection goes in with it because the selection is what PAGES the list, so
+     * the rows this reads are the rows on the screen.
+     */
+    expect(body).toContain('dialogueGeometry(dialogueView, box, dialogueSelected)');
+    expect(body).toContain('dialogueAnswerForDigit(');
+  });
+
+  it('swallows every turn verb in a conversation, and makes Enter the answer', () => {
+    // Commit, Hold, Rest, Explore and Pickup all reach `unparkOnCommand` on the
+    // server, which hands the body back AND CLOSES THE CONVERSATION. Letting one
+    // through would end a conversation with a key that looks like it ends a turn.
+    // It costs the other five players nothing because the body is ALREADY
+    // parked, so `barrier.ts`'s `isBlocking` has stopped counting it.
+    const body = handlerBody('onCommand: (command) => {');
+    const gate = at('if (dialogueView !== null) {', body);
+    expect(gate).toBeGreaterThan(at('if (classOptions !== null) {', body));
+    expect(body).toContain('if (command === TurnCommand.Commit) sayDialogue(dialogueSelected);');
+    // Above the menu's Enter gate, which would otherwise consume the key first.
+    expect(gate).toBeLessThan(at('if (menuOpen && command === TurnCommand.Commit', body));
+  });
+
+  it('routes the arrows to the answer list instead of the body', () => {
+    // The body is parked, so a step could not be acted on anyway — it would
+    // arrive as a turn verb and close the window mid-sentence.
+    const body = handlerBody('onMove: (dir) => {');
+    const gate = at('if (dialogueView !== null) {', body);
+    expect(gate).toBeGreaterThan(at('if (classOptions !== null) {', body));
+    expect(gate).toBeLessThan(at('if (menuOpen && !reviveArmed) {', body));
+    expect(gate).toBeLessThan(at("socket.send({ v: PROTOCOL_VERSION, t: 'move', dir });", body));
+  });
+
+  it('makes `say` the ACCEPT key in a conversation, because Enter IS `say`', () => {
+    // NOT SYMMETRY WITH THE MENU ABOVE — a fact about the keymap. `commit` gave
+    // Enter up to `say` and kept Space, and keymap.ts records at that binding
+    // that the UI table is consulted BEFORE the command table. So an ungated
+    // Enter in a conversation never reaches `onCommand` at all: it would open
+    // the chat box over a window whose own hint line has just said "Enter say".
+    const body = handlerBody('onUi: (command) => {');
+    expect(body).toContain('if (dialogueView !== null && command === UiCommand.Say) {');
+    expect(body).toContain('sayDialogue(dialogueSelected);');
+    // EVERY OTHER UI VERB GOES THROUGH. A blanket return would take the panels
+    // away from somebody who is only reading their own sheet.
+    expect(body).not.toContain('if (dialogueView !== null) return;');
+    // AND ONE KEY MEANS ONE THING: both routes call the same sender, so Enter
+    // here and Space through `onCommand` cannot drift apart.
+    expect(handlerBody('onCommand: (command) => {')).toContain('sayDialogue(dialogueSelected)');
+  });
+
+  it('leaves the chat row reachable while a conversation is open', () => {
+    // THE OPPOSITE OF THE CHOOSER AND THE MENU, deliberately. Both of those put
+    // `#cmd` out of reach because a focused field under them is a trap; this is
+    // a dock panel over a live world, the composer is visible, and this is six
+    // friends in a voice channel — a conversation must not mute one of them.
+    // The keyboard route is spent on the answer list, and the mouse still opens
+    // the box.
+    expect(CODE).toContain('setCommandLineReachable(classOptions === null && !menuOpen);');
+    expect(CODE).not.toContain('dialogueView === null && classOptions === null');
+  });
+
   it('takes `say` and nothing else in onUi, because #cmd is out of reach', () => {
     // The row is `disabled` while the menu is open (`syncCommandLineReach`), so
     // `openCommandLine` would focus nothing and the key would silently do
@@ -768,6 +873,28 @@ describe('the mouse layer', () => {
     const start = at('function overPanel(clientX: number, clientY: number): boolean {');
     const body = CODE.slice(start, CODE.indexOf('canvas.addEventListener', start));
     expect(body).toContain('inRect(layout.menu, point.x, point.y)');
+  });
+
+  it('lists the conversation window in overPanel, and swallows a press on it', () => {
+    // WORSE THAN THE OTHER FIVE IF OMITTED. An unswallowed press on the window's
+    // own padding falls through to the travel branch, and travel is a TURN VERB,
+    // and a turn verb reaches `unparkOnCommand` — so a misclick on a margin
+    // would not merely walk the party, it would END THE CONVERSATION it landed
+    // on and walk the body away from the person it was talking to.
+    const start = at('function overPanel(clientX: number, clientY: number): boolean {');
+    const body = CODE.slice(start, CODE.indexOf('canvas.addEventListener', start));
+    expect(body).toContain('inRect(layout.dialogue, point.x, point.y)');
+
+    // BOTH BUTTONS, and a press on no row still returns — a right-click inside
+    // the window would otherwise open a verb menu on the tile behind it. It sits
+    // below the token menu and above the right-click branch.
+    const mousedown = CODE.slice(at("canvas.addEventListener('mousedown'"));
+    const gate = at(
+      'if (layout.dialogue !== null && dialogueView !== null && point !== null) {',
+      mousedown,
+    );
+    expect(gate).toBeGreaterThan(at('if (tokenMenu !== null && tokenMenu.visible()) {', mousedown));
+    expect(gate).toBeLessThan(at('if (event.button !== 0) {', mousedown));
   });
 
   it('guards the wheel against the menu, as an occlusion guard', () => {

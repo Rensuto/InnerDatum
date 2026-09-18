@@ -4,13 +4,7 @@ import { describe, expect, it } from 'vitest';
 
 import { MapVerb } from '../../src/client/ui/contextmenu.ts';
 import { TileLoot, verbsFor } from '../../src/client/ui/verbs.ts';
-import {
-  ActorKind,
-  ActorRank,
-  PartyAction,
-  TOPIC_LABEL,
-  TopicId,
-} from '../../src/shared/protocol.ts';
+import { ActorKind, ActorRank, PartyAction } from '../../src/shared/protocol.ts';
 import type { MenuItem } from '../../src/client/ui/contextmenu.ts';
 import type { VerbContext, VerbTarget } from '../../src/client/ui/verbs.ts';
 import type { ActorView } from '../../src/shared/protocol.ts';
@@ -256,52 +250,55 @@ describe('verbsFor — every label fits the box', () => {
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════
- * EVERY QUESTION THE TOWNSFOLK CAN ANSWER HAS A ROW TO ASK IT WITH.
+ * ONE ROW FOR A PERSON, AND THE FOUR QUESTIONS ARE NOT IN THIS MENU ANY MORE.
  * ═══════════════════════════════════════════════════════════════════════════
  *
- * `TOPIC_ROWS` was a hand-written list of TWO, against a `TopicId` of four —
- * under a comment claiming the opposite: "The ids and labels are
- * content/townsfolk.ts's — imported rather than retyped, so a topic added there
- * appears here." Only the LABELS were imported. The rows were retyped, so the
- * two topics added later never grew a button.
+ * This described `TOPIC_ROWS` and asserted one `Ask` row per `TopicId`, because
+ * the list had once been TWO hand-typed entries against a `TopicId` of four and
+ * 30 of 51 authored answers were unreachable from any client as a result.
  *
- * WHAT THAT COST, counted from the content: 51 authored answers across ten
- * people, of which 30 had no way to be asked for. Both level-gated `later`
- * rumours and — since `handleTalk` is the only caller of `regionNamedIn` — the
- * entire rumour-marks-your-map mechanic, which had therefore never fired for
- * any player.
+ * The author ruled the questions into the conversation window on 2026-09-17 —
+ * *"right click should instead give generic option to talk to npc instead which
+ * opens dialogue interaction window"* — so the assertion that replaces it is the
+ * one that can catch the same class of bug from the other side: the menu offers
+ * EXACTLY three rows and nothing may creep back into it. A menu that grew a
+ * fourth row would be the second place in this client that decides what a person
+ * can be asked, and server/content/chats.ts is the first.
  *
- * The server half was green the whole time: `test/server/rumour-gate.test.ts`
- * passes because it writes `{t:'talk', topic:'rumour'}` straight onto the
- * socket, which no client could produce. A probe that speaks the protocol
- * directly cannot see a missing button.
- *
- * ASSERTED FROM `TopicId`, not from a list of four strings — a fifth topic must
- * fail this until it has a row, which is the whole point.
+ * ASSERTED AS AN EXACT LIST, never `toContain`: the failure being guarded is a
+ * row ADDED, and an existential assertion cannot see one.
  */
-describe('the ask rows cover every topic that exists', () => {
-  it('offers one row per TopicId when adjacent to a townsperson', () => {
-    const townsfolk: ActorView = {
-      ...actor('npc_merrow', 'Merrow the Carter', ActorKind.Monster),
-      faction: 'townsfolk',
-    };
+describe('a person offers three rows, and the questions are in the window', () => {
+  const MERROW: ActorView = {
+    ...actor('npc_merrow', 'Merrow the Carter', ActorKind.Monster),
+    faction: 'townsfolk',
+  };
 
-    const items = verbsFor(ctxFor({ kind: 'hostile', actor: townsfolk }, { adjacent: true })).items;
-    const asked = items.flatMap((item) => (item.topic === undefined ? [] : [item.topic]));
-
-    expect([...asked].sort()).toEqual([...Object.values(TopicId)].sort());
+  it('offers exactly talk, walk up to and inspect', () => {
+    const items = verbsFor(ctxFor({ kind: 'hostile', actor: MERROW }, { adjacent: true })).items;
+    expect(actionsOf(items)).toEqual([MapVerb.Talk, MapVerb.Travel, MapVerb.Inspect]);
+    expect(items.map((item) => item.label)).toEqual(['Talk to', 'Walk up to', 'Inspect']);
   });
 
-  it('labels each row from the shared table, so the words cannot drift', () => {
-    const townsfolk: ActorView = {
-      ...actor('npc_merrow', 'Merrow the Carter', ActorKind.Monster),
-      faction: 'townsfolk',
-    };
+  it('offers the same three out of reach, with Talk to greyed', () => {
+    // GREYED RATHER THAN DROPPED, which is this file's ordinary rule: one more
+    // step really does make it work, so the row teaches something. `Attack` is
+    // ABSENT on a townsfolk for the opposite reason, and that pair is the whole
+    // distinction — see the `hostile` arm of ui/verbs.ts.
+    const items = verbsFor(ctxFor({ kind: 'hostile', actor: MERROW }, { adjacent: false })).items;
+    expect(actionsOf(items)).toEqual([MapVerb.Talk, MapVerb.Travel, MapVerb.Inspect]);
+    expect(items.map((item) => item.enabled)).toEqual([false, true, true]);
+  });
 
-    const items = verbsFor(ctxFor({ kind: 'hostile', actor: townsfolk }, { adjacent: true })).items;
-    for (const topic of Object.values(TopicId)) {
-      const row = items.find((item) => item.topic === topic);
-      expect(row?.label, topic).toBe(TOPIC_LABEL[topic]);
+  it('carries no topic on any row, on anybody, at any range', () => {
+    // THE FIELD IS GONE FROM `MenuItem`, so this reads it off the row as unknown
+    // rather than by name: if somebody puts `topic` back and starts filling it,
+    // this fails, and the type does not have to still exist for it to.
+    for (const adjacent of [true, false]) {
+      const items = verbsFor(ctxFor({ kind: 'hostile', actor: MERROW }, { adjacent })).items;
+      for (const item of items) {
+        expect(Object.prototype.hasOwnProperty.call(item, 'topic')).toBe(false);
+      }
     }
   });
 });

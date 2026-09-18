@@ -944,6 +944,53 @@ export const TOPIC_LABEL: Readonly<Record<TopicId, string>> = {
   [TopicId.Rumour]: 'Ask what is out there',
 };
 
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * WHOSE ANSWER AN OPTION IS. THE CO-OP RULE, ON THE WIRE BECAUSE IT IS DRAWN.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Ruled by the author, 2026-09-17, verbatim: *"the other players should be able
+ * to interact with npcs and have dialogue interactions, but story driving
+ * conversations should only be applicable to the host to protect their
+ * playthrough"*, and *"shop options and other interactions will still occur
+ * through the dialogue interaction box"*.
+ *
+ * So TALKING IS NOT A PRIVILEGE and CHOOSING SOMETIMES IS. Every option a
+ * conversation offers declares which of the two it is:
+ *
+ *   `personal` — ANYBODY may pick it. Topics, rumours, lore, directions,
+ *     flavour, leaving, and SHOPPING and other services. Shopping is personal
+ *     even though the shelf is realm-wide stock shared by everyone standing in
+ *     the room: buying a coat is not a decision about the party's story, and
+ *     each buyer spends their own purse.
+ *   `story` — THE PARTY LEAD ALONE. Anything that commits the run: accepting,
+ *     declining or abandoning a brief, a one-time world offer, a faction or
+ *     site decision, anything that writes shared run state or fires a world
+ *     event.
+ *
+ * ═══ ABSENT IS `story`, AND THAT DIRECTION IS THE WHOLE POINT ═══
+ * An option authored with no scope is treated as `story` by the server. Failing
+ * closed costs a content author one word and costs a party nothing; failing open
+ * would mean the next person who adds an option that commits the run hands every
+ * socket in the realm the ability to commit it, silently, and nothing would ever
+ * say so. `test/server/chats.test.ts` drives an option with no scope and watches
+ * a non-lead be refused it.
+ *
+ * ═══ IT IS SENT, NOT INFERRED ═══
+ * `DialogueOptionView` carries the scope AND an `enabled`/`reason` pair, and the
+ * two are not the same fact: scope is what KIND of answer this is, `enabled` is
+ * whether THIS viewer may give it. A client that derived one from the other
+ * would be a second copy of the lead rule, and the two would disagree the first
+ * time leadership changed mid-conversation.
+ */
+export const DialogueScope = {
+  /** Anybody in the room may pick it. */
+  Personal: 'personal',
+  /** The party lead alone. See the header. */
+  Story: 'story',
+} as const;
+export type DialogueScope = (typeof DialogueScope)[keyof typeof DialogueScope];
+
 export type ActorView = {
   id: string;
   name: string;
@@ -3320,6 +3367,28 @@ const ACTOR_ID_MAX_CHARS = 64;
  * frame that costs the sender nothing must not be a way to make the server do
  * work. Talking spends no turn and pumps nothing — a town has no clock running
  * anyway, which is a fact the reply logic depends on rather than ignores.
+ *
+ * ═══════════════════════════════════════════════════════════════════════════
+ * AND SINCE v27, A BARE `talk` OPENS A CONVERSATION RATHER THAN SAYING ONE LINE
+ * ═══════════════════════════════════════════════════════════════════════════
+ * `talk` WITH a `topic` is unchanged and is still the one-line Margin answer
+ * this schema was written for. `talk` with NO topic used to be a greeting in the
+ * Margin; it now opens the dialogue window — the server replies with a
+ * `dialogue` frame and the player answers with `dialogue_choose`.
+ *
+ * ONE VERB AND NOT A SECOND `dialogue_open`, because every check an open needs
+ * is already written here and written once: the target is an ID rather than a
+ * tile, it is re-resolved against the world, it must be a living townsfolk, and
+ * it must be within Chebyshev 1. A second verb would be a second copy of all
+ * four, and the day one of them moved the two would disagree.
+ *
+ * ═══ AND THAT IS WHAT FORCES THE v26 -> v27 BUMP ═══
+ * This schema's own "no version bump" argument above is about the INBOUND
+ * direction and it still holds for the frame itself. What does not hold any more
+ * is the reply: a v26 client sending a bare `talk` is answered with a `dialogue`
+ * frame it cannot name, so it draws NOTHING, while the server has opened a
+ * conversation for it and parked its body. Silence plus a state change the
+ * client cannot see is exactly the case src/shared/version.ts bumps for.
  */
 const TalkSchema = z.strictObject({
   v: envelopeVersion,
@@ -3336,6 +3405,61 @@ const TalkSchema = z.strictObject({
    * to say something nobody wrote.
    */
   topic: z.string().min(1).max(32).optional(),
+});
+
+/**
+ * Longest node or option id a conversation may name. Authored ids are words —
+ * `greet`, `topic:rumour`, `route:party` — and 64 matches `ACTOR_ID_MAX_CHARS`
+ * so there is one number to remember rather than two.
+ */
+const CHAT_ID_MAX_CHARS = 64;
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * `dialogue_choose` — "I say THAT one." The v27 verb.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * ═══ IT NAMES NO SPEAKER AND NO PLAYER ═══
+ * Whose conversation this is comes from the SESSION, exactly as `choose_class`
+ * argues above: the server holds at most one open dialogue per socket, and
+ * `strictObject` rejects a smuggled `actorId` rather than sanitising it into a
+ * legal frame. There is no id here a forged value could reach into.
+ *
+ * ═══ AN OPTION ID, NEVER AN INDEX ═══
+ * The server re-builds the option list at the moment of the pick — conditions
+ * re-evaluated against the world as it is NOW, not as it was when the frame went
+ * out — and looks the id up in it. An index would name a row in a list the
+ * client redrew, and six people moving around a town is exactly the situation
+ * where the two lists differ. `shop_buy` names an item id for the same reason.
+ *
+ * ═══ AND A `nodeId`, WHICH IS THE STALENESS CHECK ═══
+ * Frames cross. A pick that names a node the conversation has already left is a
+ * click on a screen that has since been replaced, and applying it would commit
+ * the player to an answer to a question they are no longer being asked. The
+ * server refuses it and leaves the conversation exactly where it was.
+ */
+const DialogueChooseSchema = z.strictObject({
+  v: envelopeVersion,
+  t: z.literal('dialogue_choose'),
+  /** WHICH QUESTION the player believes they are answering. */
+  nodeId: z.string().min(1).max(CHAT_ID_MAX_CHARS),
+  /** WHICH ANSWER, by its authored id. */
+  optionId: z.string().min(1).max(CHAT_ID_MAX_CHARS),
+});
+
+/**
+ * `dialogue_close` — "never mind". Carries nothing, for `respawn`'s reason: the
+ * conversation being closed is the one this socket has open, and there is only
+ * ever one.
+ *
+ * IT IS NOT THE ONLY WAY OUT and must never be treated as one — a conversation
+ * also ends on a terminal option, on any turn verb from the same socket, on the
+ * speaker leaving or dying, on crossing a realm boundary, and on disconnect. See
+ * `closeDialogue` in net/gateway.ts, which is the single writer.
+ */
+const DialogueCloseSchema = z.strictObject({
+  v: envelopeVersion,
+  t: z.literal('dialogue_close'),
 });
 
 /**
@@ -4545,6 +4669,8 @@ export const ClientMsg = z.discriminatedUnion('t', [
   SaySchema,
   PointSchema,
   TalkSchema,
+  DialogueChooseSchema,
+  DialogueCloseSchema,
   ReviveSchema,
   RespawnSchema,
   ChooseClassSchema,
@@ -4584,6 +4710,8 @@ export type ClientRest = z.infer<typeof RestSchema>;
 export type ClientSay = z.infer<typeof SaySchema>;
 export type ClientPoint = z.infer<typeof PointSchema>;
 export type ClientTalk = z.infer<typeof TalkSchema>;
+export type ClientDialogueChoose = z.infer<typeof DialogueChooseSchema>;
+export type ClientDialogueClose = z.infer<typeof DialogueCloseSchema>;
 export type ClientRevive = z.infer<typeof ReviveSchema>;
 export type ClientRespawn = z.infer<typeof RespawnSchema>;
 export type ClientChooseClass = z.infer<typeof ChooseClassSchema>;
@@ -5843,6 +5971,98 @@ export type InspectedMsg = {
   t: 'inspected';
   targetId: string;
   view: InspectView | null;
+};
+
+// ---------------------------------------------------------------------------
+// v27 — THE CONVERSATION. WHAT SOMEBODY IS SAYING, AND WHAT YOU MAY SAY BACK.
+// ---------------------------------------------------------------------------
+
+/**
+ * One row of the answer list.
+ *
+ * ═══ `enabled` AND `reason` ARE A DELIBERATE EXCEPTION, WRITTEN DOWN ═══
+ * `client/ui/verbs.ts` states the house rule that a row which is NEVER enabled
+ * for this player is a lie with a tooltip on it, and that such a row should not
+ * be drawn at all. A story option shown to a non-lead breaks that rule on
+ * purpose, and the exception is earned rather than assumed: the answer IS
+ * available to the party, it simply is not available THROUGH THIS PLAYER, and
+ * that is the fact the row exists to teach. Hiding it would tell five people
+ * that the conversation has three answers when it has four, and the one who can
+ * give the fourth is sitting in the same voice channel.
+ *
+ * So `reason` NAMES THE LEAD — "Only Dalt can answer for the party" — rather
+ * than saying "unavailable". A greyed row whose reason names a person is an
+ * instruction to turn to that person; a greyed row with no reason is a bug
+ * report.
+ */
+export type DialogueOptionView = {
+  /** Stable and authored. `dialogue_choose` names this, never a row number. */
+  readonly id: string;
+  readonly label: string;
+  /** What KIND of answer this is. See `DialogueScope`. */
+  readonly scope: DialogueScope;
+  /** May THIS viewer give it. Not derivable from `scope` — see `DialogueScope`. */
+  readonly enabled: boolean;
+  /** Why not, naming who can. Absent when `enabled`. */
+  readonly reason?: string;
+};
+
+/** The conversation as one player is currently being shown it. */
+export type DialogueView = {
+  /** The body being talked to. The client re-checks nothing; the server did. */
+  readonly speakerId: string;
+  readonly speakerName: string;
+  /**
+   * A 64x64 portrait asset KEY, when one exists for this person.
+   *
+   * ABSENT IS THE ORDINARY STATE and the panel is designed for it: the fallback
+   * order is portrait, then the speaker's own 48x64 map sprite, then initials on
+   * a plate. Never a missing-asset box — `client/main.ts`'s
+   * `NEEDED_ASSET_PREFIXES` rule is that a prefix invented for art that does not
+   * exist is how a feature ships demanding a PNG of every clone.
+   */
+  readonly portrait?: string;
+  /** The speaker's map sprite, which is the fallback above. Always present. */
+  readonly sprite: string;
+  /** Which question is on screen. `dialogue_choose` echoes it back. */
+  readonly nodeId: string;
+  /** What they just said. */
+  readonly text: string;
+  /**
+   * ALREADY FILTERED by every condition. A row the viewer may not pick is either
+   * absent (its condition failed) or present with `enabled: false` (it is a
+   * story answer and they are not the lead). The client never evaluates a
+   * condition and cannot pick a row it was not sent.
+   */
+  readonly options: readonly DialogueOptionView[];
+};
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * `dialogue` — THE WINDOW, TO THE ONE PLAYER STANDING THERE.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * ═══ A `ViewerMsg`, FOR `ClassOptionsMsg`'S EXACT STATED REASON ═══
+ * Nothing in it is secret. It is here because WHETHER A SOCKET IS IN A
+ * CONVERSATION IS TRUE FOR EXACTLY ONE PERSON, and for everybody else the
+ * correct frame is NO FRAME AT ALL. Handed to the room it would put a talking
+ * head over the map for five people who are mid-fight. Membership in `ViewerMsg`
+ * makes `broadcast(dialogueMsg)` a compile error rather than a rule to remember.
+ *
+ * ═══ EVERY PLAYER GETS ONE OF THESE, AND THAT IS THE RULING ═══
+ * The frame is per-socket, not per-lead. Six people may each have a conversation
+ * open at once, including with the same person — `handleTalk` gates on adjacency
+ * and nothing else. What the lead alone may do is ANSWER a `story` option, and
+ * that rule lives on the option rather than on the window.
+ *
+ * ═══ `null` CLOSES IT ═══
+ * `InspectedMsg`'s shape exactly. One frame type opens, replaces and closes,
+ * so a client cannot hold a window the server has forgotten.
+ */
+export type DialogueMsg = {
+  v: typeof PROTOCOL_VERSION;
+  t: 'dialogue';
+  view: DialogueView | null;
 };
 
 // ---------------------------------------------------------------------------
@@ -7239,6 +7459,7 @@ export type ServerMsg =
   | CooldownsMsg
   | ResourceMsg
   | InspectedMsg
+  | DialogueMsg
   | ClassOptionsMsg
   | RosterMsg
   | ProgressMsg
@@ -7544,6 +7765,12 @@ export type ViewerMsg =
   | TurnMsg
   | PartyStateMsg
   | InspectedMsg
+  // ═══ AND THE CONVERSATION, WHICH IS TRUE FOR THE ONE PERSON HAVING IT ═══
+  // `class_options`' argument, one system later: nothing in a `dialogue` frame
+  // is secret, and it is here because WHETHER A SOCKET IS IN A CONVERSATION is
+  // true for exactly one socket. Handed to the room it would put a talking head
+  // over the map for five people who are mid-fight. See `DialogueMsg`.
+  | DialogueMsg
   | ClassOptionsMsg
   // YOUR characters, and nobody else's. Membership here makes
   // `broadcast(rosterMsg)` a compile error rather than a rule to remember — and

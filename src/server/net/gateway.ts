@@ -153,6 +153,14 @@ import { monsterById } from '../content/monsters.ts';
 import type { MonsterTemplate } from '../content/monsters.ts';
 import type { Combatant, PrimaryStats } from '../engine/derived.ts';
 import { STANDING_LEVEL, isShopkeeperSpec, specForActorId } from '../content/townsfolk.ts';
+import { portraitKeyFor } from '../content/townsfolk.ts';
+import type { TownsfolkSpec } from '../content/townsfolk.ts';
+// ═══ THE CONVERSATION GRAPH, AND ONLY THESE THREE ENTRY POINTS ═══
+// `visibleOptions` is the security model (see its own note) and it is the
+// only way options leave that file, so the gateway cannot read an
+// unresolved `scope` and cannot re-implement "absent means story".
+import { chatFor, nodeOf, visibleOptions } from '../content/chats.ts';
+import type { ChatCtx } from '../content/chats.ts';
 import { healActor } from '../engine/damage.ts';
 import type { ClientUse, TopicId } from '../../shared/protocol.ts';
 import type { DamageType } from '../../shared/damagetype.ts';
@@ -221,7 +229,7 @@ import { applyZoneEffectsIn } from '../world/zone-effects.ts';
  * stated reason: `partyIdOf` is a two-line lookup over a table this process
  * already owns, it returns a string, it draws no RNG and it queues nothing.
  */
-import { membersOf, partyIdOf, sameParty } from '../engine/party.ts';
+import { isLeader, membersOf, partyIdOf, partyOf, sameParty } from '../engine/party.ts';
 import { loreById, loreIdOfNote } from '../content/lore.ts';
 // The sentinel a character file carries before it has ever been told what class
 // it is. Imported rather than re-typed as a literal — see `classFor`, where the
@@ -302,7 +310,7 @@ import { roamerAt, tickRoamers } from '../world/roamers.ts';
 import { groundAt, regionAt } from '../../shared/level.ts';
 import { canWalk, tileAt } from '../../shared/level.ts';
 import { findPath } from '../../shared/path.ts';
-import { isSafeGround } from '../../shared/protocol.ts';
+import { DialogueScope, isSafeGround } from '../../shared/protocol.ts';
 import { landmarkIdFor } from '../../shared/redaction.ts';
 import type { Ground } from '../../shared/level.ts';
 import { fogFromBase64, fogHas, fogToBase64, revealDiscExcept } from '../../shared/fog.ts';
@@ -329,6 +337,8 @@ import type {
   ClientParty,
   ClientPoint,
   ClientTalk,
+  ClientDialogueChoose,
+  DialogueOptionView,
   ClientRevive,
   ClientSay,
   ClientSetHotbar,
@@ -8122,7 +8132,24 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    * barrier: from their first keypress on, the party waits for them like anybody
    * else, which is the correct answer for somebody who is demonstrably there.
    */
-  const unparkOnCommand = (session: Session): void => {
+  /**
+   * ═══ AND SINCE v27 IT ALSO ENDS A CONVERSATION, WITH TWO EXCEPTIONS ═══
+   * A body cannot both talk and act. Every verb that reaches this function is
+   * somebody deciding to do something with their body instead of finishing a
+   * sentence — a step, a swing, a commit, a rest, a pickup — so the window comes
+   * down and the park with it. It is also the safety net for a client that
+   * cannot draw the window at all: one keypress and they are back in play.
+   *
+   * `keepDialogue` IS FOR THE SHOP VERBS AND ONLY THEM. `handleShopBuy` and
+   * `handleShopSell` call this too, and the author's ruling is that *"shop
+   * options and other interactions will still occur through the dialogue
+   * interaction box"* — so buying a coat off the shelf the conversation just
+   * opened must not close the conversation that opened it. It is an argument the
+   * caller passes rather than a list this function keeps, because the exception
+   * belongs where it is taken.
+   */
+  const unparkOnCommand = (session: Session, keepDialogue = false): void => {
+    if (!keepDialogue) closeDialogue(session);
     const { world } = realmFor(session);
     const actorId = session.actorId;
     if (actorId === null || !classChoiceOwed.has(actorId)) return;
@@ -11117,6 +11144,18 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     to.engine.join(actorId);
     to.engine.setConnected(actorId, true);
     session.realmId = to.id;
+    // AND ANY CONVERSATION IS OVER, BECAUSE THE PERSON IS NOT HERE. The window
+    // names a body in the realm they just left; leaving it up would offer
+    // answers to somebody standing on another map. Placed AFTER the routing
+    // moves so the unpark finds the body where it now is.
+    //
+    // SECOND LINE OF DEFENCE, said plainly rather than left to look load-bearing:
+    // every path into a crossing today runs `unparkOnCommand` first — a step, or
+    // a `follow` — and that has already closed it. What this pins is the RULE
+    // (a window may not outlive its realm) rather than a case that can currently
+    // happen, so a future crossing that does not come from a turn verb cannot
+    // reintroduce one.
+    closeDialogue(session);
     // AND THEIR PARTY'S MAPS ARE NOW WRONG. See `refreshPartySites`.
     refreshPartySites(actorId);
     sendRealm(session);
@@ -11488,6 +11527,18 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     // resolves through `realmFor`, so a frame sent while this still said the old
     // realm would be addressed to the room they just left.
     session.realmId = to.id;
+    // AND ANY CONVERSATION IS OVER, BECAUSE THE PERSON IS NOT HERE. The window
+    // names a body in the realm they just left; leaving it up would offer
+    // answers to somebody standing on another map. Placed AFTER the routing
+    // moves so the unpark finds the body where it now is.
+    //
+    // SECOND LINE OF DEFENCE, said plainly rather than left to look load-bearing:
+    // every path into a crossing today runs `unparkOnCommand` first — a step, or
+    // a `follow` — and that has already closed it. What this pins is the RULE
+    // (a window may not outlive its realm) rather than a case that can currently
+    // happen, so a future crossing that does not come from a turn verb cannot
+    // reintroduce one.
+    closeDialogue(session);
     // AND THEIR PARTY'S MAPS ARE NOW WRONG. See `refreshPartySites`.
     refreshPartySites(actorId);
 
@@ -11731,7 +11782,10 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       sendError(session.socket, ErrorCode.NotAuthenticated, 'send hello before shopping');
       return;
     }
-    unparkOnCommand(session);
+    // KEEPING THE WINDOW OPEN, and `unparkOnCommand`'s own note says why: the
+    // shelf is reached by an option INSIDE the conversation, so a purchase must
+    // not close the conversation that put it there.
+    unparkOnCommand(session, true);
 
     const full = opts.realms?.get(realm.id);
     const shop = full?.shop;
@@ -11842,7 +11896,8 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       sendError(session.socket, ErrorCode.NotAuthenticated, 'send hello before shopping');
       return;
     }
-    unparkOnCommand(session);
+    // See `handleShopBuy` directly above: the counter lives inside the window.
+    unparkOnCommand(session, true);
 
     const full = opts.realms?.get(realm.id);
     if (full === undefined || full.shop === undefined) {
@@ -12762,6 +12817,26 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    * frame: a batch of twenty lines is one `JSON.stringify` and one draw, and the
    * client appends them in order. Silence when nothing happened — an idle pump
    * must not cost a frame.
+   *
+   * ═══════════════════════════════════════════════════════════════════════════
+   * AND THE ONE THING THAT DOES NOT COME THROUGH HERE: A CONVERSATION.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `recordDialogue`, further down this file, writes a dialogue exchange into
+   * the same lane and DELIBERATELY DOES NOT OBEY THE RULE BELOW. It is named
+   * here because this is where a reader comes looking for the naming rule, and a
+   * rule with an undocumented exception is a rule somebody will "fix".
+   *
+   * The rule below is about SIGHTINGS: a line naming a body the viewer cannot
+   * see is not sent, and an unseen side reads "something", so the log cannot
+   * leak where a monster is. A story exchange is not a sighting. It is a
+   * conversation the party is having and the lead is standing in, and "something
+   * says: the road stops west of the Sedge" would be worse than useless to the
+   * four people reading along. So it names its speaker to every party member
+   * whatever their fog says. Two other things follow from that and are also
+   * deliberate: it is scoped to the PARTY rather than to the realm, and it does
+   * not come through a pump at all — there is no `TurnEvent` for somebody
+   * talking, which is the same reason `broadcastRecordLine` exists.
    */
   const recordTo = (session: Session, realm: PumpTarget, result: PumpResult): void => {
     // WHAT THIS VIEWER HELD BEFORE THE PUMP, OR CAN SEE NOW. Upstream asks the
@@ -13943,6 +14018,593 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       broadcastMargin(realm, line, session.connId);
     }
     if (isShopkeeperSpec(spec)) sendShopIfAny(session);
+
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * AND THE WINDOW, WHEN NOBODY NAMED A QUESTION. THE v27 HALF OF THIS VERB.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * A bare `talk` is "I walk up to you", and since v27 that opens a
+     * conversation rather than producing one line and stopping. `talk` WITH a
+     * topic is untouched above — it is still the one-line Margin answer, still
+     * how `tools/` drives a townsperson, and still what `rumour-gate.test.ts`
+     * measures.
+     *
+     * ═══ EVERYTHING ABOVE STILL RUNS, AND THAT IS DELIBERATE ═══
+     * The greeting still reaches the asker and the room (12-second suppressed),
+     * and a shopkeeper still puts her shelf up. None of it is replaced, so the
+     * town keeps its ambient half-heard conversation — `game-design.md`'s "the
+     * voice channel is the game" — and no existing client or probe loses a line
+     * it was reading. The window is ADDED to that, not swapped for it.
+     *
+     * ═══ AND IT IS WHY v26 -> v27 IS A BUMP ═══
+     * A v26 client cannot name the `dialogue` frame, so it draws nothing while
+     * the server has opened a conversation for it and PARKED ITS BODY. Silence
+     * plus an invisible state change is what `src/shared/version.ts` bumps for.
+     *
+     * `text2` is the greeting here by construction: `answer` is undefined when
+     * no topic was named, and the map-marker suffix is appended only on
+     * `rumour`, which is a topic.
+     */
+    if (msg.topic === undefined && !isMonster(me)) {
+      openDialogue(session, me, them, spec, text2);
+    }
+  };
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE DIALOGUE WINDOW. EVERYBODY MAY TALK; THE LEAD ANSWERS FOR THE PARTY.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Ruled by the author, 2026-09-17, verbatim: *"the other players should be
+   * able to interact with npcs and have dialogue interactions, but story driving
+   * conversations should only be applicable to the host to protect their
+   * playthrough"* and *"shop options and other interactions will still occur
+   * through the dialogue interaction box"*.
+   *
+   * Two rules, and keeping them apart is the whole design:
+   *
+   *   OPENING IS NOT A PRIVILEGE. Any player standing next to somebody may talk
+   *     to them. `handleTalk` gates on adjacency and a living townsfolk, exactly
+   *     as it always did, and on NOTHING about parties. Six people may each have
+   *     a conversation open at once, including with the same person — the state
+   *     below is keyed by SOCKET.
+   *   ANSWERING SOMETIMES IS. An option's `scope` says whether it commits the
+   *     run (see `shared/protocol.ts#DialogueScope`). A `story` option sent by a
+   *     non-lead is refused here, mutates nothing, and is answered with a
+   *     sentence naming who can.
+   *
+   * ═══ THE WORLD DOES NOT STOP WHILE ANYBODY TALKS ═══
+   * `client/main.ts` records this being got wrong once, in this exact shape:
+   * *"parties scope the BARRIER; they do not scope the WORLD CLOCK. One player
+   * who owes a decision parks the level's tick loop, and every monster on the
+   * floor stops acting for everybody."* Five other people are mid-turn. So the
+   * talker's BODY is parked (`parkForClassChoice` — `engine/barrier.ts`'s
+   * `isBlocking` reads `standingOrder === null`, so a parked body never blocks
+   * the quorum, never starts a Bell and never parks the tick loop) and nothing
+   * else changes. The body is not safe and not removed; it simply does not act.
+   * That is ToME's situation (`engine/Game.lua:375-384`) minus the free pause
+   * single-player gets for nothing.
+   *
+   * ═══ WHAT THE OTHERS SEE — AND IT IS NOT A SECOND WINDOW ═══
+   * See `recordDialogue`. A STORY exchange is the party's business and goes to
+   * every member's Case Log; a PERSONAL one goes to the asker's log alone.
+   */
+  type OpenDialogue = {
+    readonly speakerId: string;
+    /**
+     * Chosen ONCE, when the window opened, and held. Re-sending the entry node
+     * — which a lead change does — must not walk somebody through "we have not
+     * met" a second time, and the greeting counter is shared with `greetOnBump`.
+     */
+    readonly greeting: string;
+    nodeId: string;
+    /**
+     * EXACTLY THE OPTION IDS LAST SENT for `nodeId`.
+     *
+     * The second half of the validation and not the first: a pick is checked
+     * against this AND against the list rebuilt at the moment it arrives. This
+     * set answers "was this ever on their screen"; the rebuild answers "is it
+     * still true". A client that only had to satisfy the rebuild could answer a
+     * question it was never asked; one that only had to satisfy this could
+     * answer with a condition that has since stopped holding.
+     */
+    offered: ReadonlySet<string>;
+    /**
+     * ═══ WAS THIS BODY ALREADY PARKED WHEN THE WINDOW OPENED? ═══
+     * `standingOrder` is ONE field and the class chooser is the other writer of
+     * it. A player who owes a class choice is parked from `hello` onward, and if
+     * they open a conversation and close it again, releasing unconditionally
+     * would hand the barrier a body whose owner is still reading a modal — the
+     * exact overreach `test/server/reap-broadcast.test.ts` caught in the other
+     * direction.
+     *
+     * SO THE PARK IS RESTORED, NOT CLEARED. `classChoiceOwed` is the wrong thing
+     * to ask: it stays populated for the whole life of an anonymous socket even
+     * after `unparkOnCommand` has handed the body back, so a guard on it would
+     * leave every anonymous player parked forever after one conversation — which
+     * is what it did, and what `dialogue.test.ts`'s park case caught.
+     */
+    readonly wasParked: boolean;
+  };
+
+  /**
+   * KEYED BY SOCKET, which is the author's ruling ("state is keyed by session,
+   * not by realm") and also the honest shape: a dropped connection closes the
+   * conversation, so there is nothing for a re-attached body to inherit. It is
+   * deliberately NOT `classChoiceOwed`'s per-actor shape — that one survives a
+   * drop because the CHOICE is still owed afterwards, and a half-finished
+   * conversation is not.
+   */
+  const dialogues = new Map<string, OpenDialogue>();
+
+  /** Everyone whose barrier this player shares, including them. */
+  const partyMembersOf = (actorId: string): readonly string[] =>
+    opts.parties === undefined ? [actorId] : membersOf(opts.parties, actorId);
+
+  /**
+   * Is this player their party's lead?
+   *
+   * TRUE WITH NO PARTY TABLE, and that is not a loophole. `partyOf` mints a
+   * party of one on first sight and a party of one is led by its only member, so
+   * a build with no `opts.parties` — every pre-parties fixture — is a world of
+   * soloists, each of whom leads themselves. Answering `false` there would mean
+   * nobody could ever take a story option in those builds.
+   */
+  const isPartyLead = (actorId: string): boolean =>
+    opts.parties === undefined || isLeader(opts.parties, actorId);
+
+  /** The lead's name, for the sentence on a greyed row. */
+  const leadNameFor = (actorId: string): string => {
+    if (opts.parties === undefined) return 'the party lead';
+    const leadId = partyOf(opts.parties, actorId).leaderId;
+    return homeOf(leadId).world.getActor(leadId)?.name ?? 'the party lead';
+  };
+
+  /** Every live socket belonging to one of these actors. */
+  const sessionsOf = (actorIds: readonly string[]): Session[] => {
+    const wanted = new Set(actorIds);
+    const out: Session[] = [];
+    for (const session of sessions.values()) {
+      if (session.actorId !== null && wanted.has(session.actorId)) out.push(session);
+    }
+    return out;
+  };
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * WHERE A CONVERSATION'S LINES GO. THE OTHER HALF OF THE HOST RULING.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * The author, 2026-09-17: the party follows the host's playthrough in the log.
+   * So the split is by the SCOPE OF THE ANSWER and not by who is talking:
+   *
+   *   STORY — the whole party's Case Log. The line that was answered, the
+   *     answer, and what it produced. That IS how five people follow a
+   *     playthrough they are not driving, and it is the only reason a story
+   *     option is worth having in a co-op game rather than a solo one.
+   *   PERSONAL — the asker's log and nobody else's. Six players asking a
+   *     shopkeeper about the roads would otherwise push the party's own
+   *     conversation off the band, and the Margin lane exists (`ui/caselog.ts`)
+   *     precisely so machine output can never bury human speech.
+   *
+   * ═══ A DELIBERATE EXCEPTION TO `recordTo`'s NAMING RULE, WRITTEN DOWN HERE ═══
+   * `recordTo` will not name a body the viewer cannot see: a line naming nobody
+   * in their seen set is not sent, and an unseen side reads "something". That
+   * rule is about SIGHTINGS — it stops the log leaking where a monster is. This
+   * is not a sighting. It is a conversation the party is having, the lead is
+   * standing in it, and "something says: the road stops west of the Sedge" would
+   * be worse than useless to the four people reading along. So a story line
+   * names its speaker to every party member, whatever their fog says, and it
+   * goes out through `sendMargin` rather than through the pump's `recordTo` — it
+   * is not a turn event and has no `TurnEvent` to carry it, which is the same
+   * reason `broadcastRecordLine` exists.
+   */
+  const recordDialogue = (
+    session: Session,
+    scope: DialogueScope,
+    lines: readonly { readonly text: string; readonly speaker?: string }[],
+  ): void => {
+    const actorId = session.actorId;
+    const audience =
+      scope === DialogueScope.Story && actorId !== null
+        ? sessionsOf(partyMembersOf(actorId))
+        : [session];
+    for (const to of audience) {
+      // EACH RECIPIENT'S OWN CLOCK, not the speaker's. A party member may be two
+      // realms away — the whole point of sending it to them — and `LogLine`'s
+      // `gameTurn` is what draws the turn separators in THEIR log. Stamping a
+      // town's frozen clock onto a line arriving in the middle of somebody's
+      // fight would file it under a turn they are nowhere near.
+      for (const line of lines) sendMargin(to, realmFor(to), line);
+    }
+  };
+
+  /**
+   * The seams a chat action may reach. See `content/chats.ts#ChatCtx` — that is
+   * the whole list, and every one of them is a function that already existed.
+   */
+  const chatCtxFor = (
+    session: Session,
+    me: PlayerActor,
+    them: Actor,
+    open: OpenDialogue,
+  ): ChatCtx => ({
+    speakerId: them.id,
+    speakerName: them.name,
+    askerLevel: me.level,
+    greeting: open.greeting,
+    // ═══ THE SAME REVEAL `handleTalk` HAS ALWAYS DONE, AIMED AT ONE PERSON ═══
+    // At the OVERWORLD's fog explicitly: the conversation is inside a town,
+    // which has a memory of its own, and the country a rumour names is out on
+    // the moor. See the essay in `handleTalk`.
+    revealToSelf: (x, y) => {
+      const moor = opts.realms?.overworld;
+      if (moor === undefined) return false;
+      const moved = markCountry(moor, me.id, x, y);
+      if (moved) queueSave('explored');
+      return moved;
+    },
+    // ═══ AND THE SAME THING FOR EVERY MEMBER, WHICH IS WHY IT IS `story` ═══
+    // One click writes onto five other characters. That is the definition the
+    // ruling gives of an answer the host owns.
+    revealToParty: (x, y) => {
+      const moor = opts.realms?.overworld;
+      if (moor === undefined) return 0;
+      let moved = 0;
+      for (const memberId of partyMembersOf(me.id)) {
+        if (markCountry(moor, memberId, x, y)) moved += 1;
+      }
+      if (moved > 0) queueSave('explored');
+      return moved;
+    },
+    openShop: () => {
+      sendShopIfAny(session);
+    },
+  });
+
+  /**
+   * Everything a send or a pick needs, re-resolved from the world as it is NOW.
+   *
+   * `undefined` means the conversation cannot continue — the speaker died, the
+   * player walked out of the realm, somebody stepped away. Every caller closes
+   * on it rather than guessing.
+   */
+  type DialogueStanding = {
+    readonly realm: PumpTarget;
+    readonly me: PlayerActor;
+    readonly them: Actor;
+    readonly spec: TownsfolkSpec;
+    readonly ctx: ChatCtx;
+  };
+
+  const dialogueStanding = (session: Session, open: OpenDialogue): DialogueStanding | undefined => {
+    const actorId = session.actorId;
+    if (actorId === null) return undefined;
+    const realm = realmFor(session);
+    const me = realm.world.getActor(actorId);
+    if (me === undefined || isMonster(me) || !me.alive) return undefined;
+    const them = realm.world.getActor(open.speakerId);
+    if (them === undefined || !isMonster(them) || !them.alive) return undefined;
+    if (them.faction !== Faction.Townsfolk) return undefined;
+    // ═══ STILL WITHIN REACH, AND CHECKED ON EVERY FRAME ═══ `handleTalk` checks
+    // it once, on the click. A conversation lasts, and a body can be pushed,
+    // teleported or walked away between two frames of it.
+    if (Math.max(Math.abs(me.x - them.x), Math.abs(me.y - them.y)) > 1) return undefined;
+    const spec = specForActorId(them.id);
+    if (spec === undefined) return undefined;
+    return { realm, me, them, spec, ctx: chatCtxFor(session, me, them, open) };
+  };
+
+  /**
+   * Take the window off this socket's screen and hand the body back.
+   *
+   * ═══ IT PUTS THE PARK BACK AS IT FOUND IT ═══
+   * See `OpenDialogue.wasParked`. This is the one place in the file that does
+   * not release a standing order unconditionally, and the reason is that it is
+   * the one place that did not necessarily set it.
+   */
+  const closeDialogue = (session: Session): void => {
+    const open = dialogues.get(session.connId);
+    if (open === undefined) return;
+    dialogues.delete(session.connId);
+    const actorId = session.actorId;
+    if (actorId !== null && !open.wasParked) {
+      const body = realmFor(session).world.getActor(actorId);
+      if (body !== undefined) releaseFromClassChoice(body);
+    }
+    send(session.socket, { v: PROTOCOL_VERSION, t: 'dialogue', view: null });
+  };
+
+  /**
+   * Build the window this socket should be looking at and send it.
+   *
+   * ONE FUNCTION FOR OPEN, ADVANCE AND RE-SEND, for `engine/dialogs/Chat.lua:113-118`'s
+   * reason: upstream's `regen` REPLACES the whole dialog on a node change rather
+   * than mutating it in place. A second path that patched one field would be a
+   * second place the option list is built, and the two would disagree the first
+   * time a condition moved.
+   */
+  const sendDialogue = (session: Session, open: OpenDialogue): void => {
+    const standing = dialogueStanding(session, open);
+    if (standing === undefined) {
+      closeDialogue(session);
+      return;
+    }
+    const { me, them, spec, ctx } = standing;
+    const chat = chatFor(spec);
+    const node = nodeOf(chat, open.nodeId) ?? nodeOf(chat, chat.entry);
+    if (node === undefined) {
+      closeDialogue(session);
+      return;
+    }
+    open.nodeId = node.id;
+
+    const offered = visibleOptions(node, ctx);
+    open.offered = new Set(offered.map((o) => o.id));
+
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * A NON-LEAD SEES THE STORY ROWS, GREYED, WITH THE LEAD'S NAME ON THEM.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * `client/ui/verbs.ts` states the house rule that a row which can never be
+     * enabled for this player is a lie with a tooltip on it. THE EXCEPTION IS
+     * EARNED HERE and is written out rather than assumed: the answer IS
+     * available to the party, it is simply not available through this player,
+     * and that is the fact the row exists to teach. Hiding it would tell five
+     * people the conversation has three answers when it has four — and the one
+     * who can give the fourth is in the same voice channel.
+     *
+     * SO THE REASON NAMES A PERSON. "Only Dalt can answer for the party" is an
+     * instruction to turn to somebody; "unavailable" is a bug report.
+     */
+    const lead = isPartyLead(me.id);
+    const leadName = lead ? '' : leadNameFor(me.id);
+    const options: DialogueOptionView[] = offered.map((option) =>
+      option.scope === DialogueScope.Personal || lead
+        ? { id: option.id, label: option.label, scope: option.scope, enabled: true }
+        : {
+            id: option.id,
+            label: option.label,
+            scope: option.scope,
+            enabled: false,
+            reason: `Only ${leadName} can answer for the party`,
+          },
+    );
+
+    send(session.socket, {
+      v: PROTOCOL_VERSION,
+      t: 'dialogue',
+      view: {
+        speakerId: them.id,
+        speakerName: them.name,
+        portrait: portraitKeyFor(spec),
+        sprite: spec.sprite,
+        nodeId: node.id,
+        text: node.text(ctx),
+        options,
+      },
+    });
+  };
+
+  /**
+   * Somebody walked up and said hello. Open the window.
+   *
+   * A SECOND `talk` REPLACES THE FIRST rather than stacking — upstream's
+   * `replaceDialog` (`engine/dialogs/Chat.lua:113-118`) is the same move — so a
+   * double-click cannot leave a conversation nobody can see behind one they can.
+   *
+   * ═══ AND THE REPLACEMENT IS A REAL CLOSE, NOT AN OVERWRITTEN MAP ENTRY ═══
+   * This line is a fix and the bug it fixes shipped for a day: replacing the
+   * entry alone left the FIRST conversation's park in place while the second
+   * `OpenDialogue` recorded `wasParked: true` — it read `standingOrder` on a
+   * body its own predecessor had just parked. From there `closeDialogue`'s
+   * restore-don't-clear rule declined to release, for ever, and no keypress
+   * recovered it: `unparkOnCommand` releases only a body whose owner is still in
+   * `classChoiceOwed`, which is nobody who has chosen a class. The body held
+   * `StandingOrder.Hold` for the rest of the session, so `engine/barrier.ts`'s
+   * `isBlocking` stopped counting it and the party never waited for that player
+   * again — `handleChooseClass`'s own words for the same state: *"they would
+   * never block, the party would never wait for them, and every key they pressed
+   * would land on a body that had already braced"*.
+   *
+   * It is reachable from the shipped client with two right-clicks: `MapVerb.Talk`
+   * sends a bare `talk` with no "already talking" gate, and the window's own
+   * mousedown gate swallows only presses INSIDE the panel.
+   *
+   * Closing FIRST rather than carrying the flag forward, because the flag is a
+   * derived fact and the close is the thing that is actually true: the previous
+   * conversation is over, so it hands its body back, and the open below then
+   * reads a `standingOrder` that once again means what it says.
+   */
+  const openDialogue = (
+    session: Session,
+    me: PlayerActor,
+    them: Actor,
+    spec: TownsfolkSpec,
+    greeting: string,
+  ): void => {
+    closeDialogue(session);
+    const open: OpenDialogue = {
+      speakerId: them.id,
+      greeting,
+      nodeId: chatFor(spec).entry,
+      offered: new Set<string>(),
+      // READ BEFORE THE PARK, obviously, and the reason it is read at all is on
+      // the field.
+      wasParked: me.standingOrder !== null,
+    };
+    dialogues.set(session.connId, open);
+    // THE BODY IS PARKED IN THE SAME BREATH, for `parkForClassChoice`'s own
+    // stated reason: one unanswered modal must not be able to stop the clock for
+    // five other people. See the header.
+    parkForClassChoice(me);
+    sendDialogue(session, open);
+  };
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE ANSWER. THIS IS WHERE THE HOST RULING IS ENFORCED, NOT IN THE UI.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Order matters and each step refuses for a different reason:
+   *
+   *   1. A conversation must be open on this socket.
+   *   2. `nodeId` must be the node that is open. A pick naming a node the
+   *      conversation has already left is a click on a replaced screen, and
+   *      applying it would commit somebody to an answer to a question they are
+   *      not being asked. Refused; the conversation stays where it is.
+   *   3. The speaker must still be there and still within reach.
+   *   4. The option must have been OFFERED for this node (`open.offered`) and
+   *      must STILL pass its condition, against the world as it is now. The
+   *      second half is the one with teeth: upstream can evaluate a condition
+   *      once because nothing moves between its draw and its click, and six
+   *      people move.
+   *   5. Only then, the scope: a `story` option from a non-lead is refused with
+   *      the sentence, NOTHING is mutated, and the window is left open so they
+   *      can pick something they may pick.
+   */
+  const handleDialogueChoose = (session: Session, msg: ClientDialogueChoose): void => {
+    const open = dialogues.get(session.connId);
+    if (open === undefined) {
+      sendError(session.socket, ErrorCode.BadMessage, 'you are not talking to anybody');
+      return;
+    }
+    if (msg.nodeId !== open.nodeId) {
+      /**
+       * NOT AN ERROR THE PLAYER CAUSED and not one they can act on — their
+       * screen has already been replaced by the frame that crossed theirs. The
+       * window stands; the refusal is for the log.
+       *
+       * ═══ IT IS A CROSSED-FRAMES CHECK AND NOT A REPLAY DEFENCE ═══
+       * Measured, with five identical frames: it stops you ANSWERING A QUESTION
+       * YOU ARE NOT BEING ASKED, and it does not stop you answering the same
+       * question twenty times a second. An option that returns to the node it is
+       * standing on — `shop` does, deliberately — never moves `nodeId`, so every
+       * repeat validates. That is harmless for the shelf (personal, idempotent,
+       * and the socket is rate-limited) and would not be for a payment, a
+       * recruit or a one-time offer that lands the lead back at `greet`.
+       *
+       * SO THE RULE LIVES WHERE SUCH AN OPTION WOULD BE WRITTEN, in
+       * `content/chats.ts`: an option that returns to its own node is personal
+       * and idempotent, or it carries a `cond` that stops passing once it has
+       * fired. `chats.test.ts` asserts it of every shipped option, so the first
+       * story option authored with a self-return fails there rather than being
+       * noticed in play. The alternative — an epoch on `OpenDialogue`, echoed on
+       * the view and required to match — is the general fix and is a wire change
+       * this build has no caller for yet.
+       */
+      sendError(session.socket, ErrorCode.BadMessage, 'that answer was to an older question');
+      return;
+    }
+    const standing = dialogueStanding(session, open);
+    if (standing === undefined) {
+      sendError(session.socket, ErrorCode.OutOfRange, 'there is nobody there to talk to');
+      closeDialogue(session);
+      return;
+    }
+    const { realm, me, them, spec, ctx } = standing;
+    const chat = chatFor(spec);
+    const node = nodeOf(chat, open.nodeId);
+    if (node === undefined) {
+      closeDialogue(session);
+      return;
+    }
+
+    // THE LIST REBUILT NOW, not the list we sent. See step 4 in the header.
+    const live = visibleOptions(node, ctx);
+    const option = live.find((o) => o.id === msg.optionId);
+    if (option === undefined || !open.offered.has(msg.optionId)) {
+      sendError(session.socket, ErrorCode.BadMessage, 'that is not something you can say');
+      return;
+    }
+
+    if (option.scope === DialogueScope.Story && !isPartyLead(me.id)) {
+      /**
+       * REFUSED, AND THE SENTENCE IS THE SERVER'S OWN — `ErrorCode.Refused` is
+       * for exactly the refusals where the server holds the whole fact and the
+       * client cannot improve on it, and the lead's NAME is a fact only the
+       * server has. Nothing is mutated and the window is not closed.
+       *
+       * IT IS ALSO SAID IN THEIR OWN LOG, because an error line is a red flash
+       * at the top of the screen and the thing worth remembering — who to ask —
+       * belongs where they can scroll back to it. THEIR log and nobody else's:
+       * a refusal is not the party's business.
+       */
+      const leadName = leadNameFor(me.id);
+      sendError(session.socket, ErrorCode.Refused, `only ${leadName} can answer for the party`);
+      sendMargin(session, realm, { text: `Only ${leadName} can answer for the party.` });
+      return;
+    }
+
+    const spoken = node.text(ctx);
+    // `engine/dialogs/Chat.lua:96-103` — a returned id overrides `jump`; `:104-110` —
+    // no jump at all ends the conversation.
+    const returned = option.action?.(ctx);
+    const next = returned ?? option.jump;
+
+    const lines: { text: string; speaker?: string }[] = [
+      { text: spoken, speaker: them.name },
+      { text: option.label, speaker: me.name },
+    ];
+
+    if (next === undefined) {
+      recordDialogue(session, option.scope, lines);
+      closeDialogue(session);
+      return;
+    }
+
+    open.nodeId = next;
+    sendDialogue(session, open);
+    // THE OUTCOME, READ OFF THE NODE THEY LANDED ON rather than written twice.
+    // `sendDialogue` may have closed the window — the speaker stepped away while
+    // the action ran — and then there is no outcome line to give.
+    const after = dialogues.get(session.connId);
+    if (after !== undefined) {
+      const arrived = nodeOf(chat, after.nodeId);
+      const restanding = dialogueStanding(session, after);
+      if (arrived !== undefined && restanding !== undefined) {
+        lines.push({ text: arrived.text(restanding.ctx), speaker: them.name });
+      }
+    }
+    recordDialogue(session, option.scope, lines);
+  };
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * LEADERSHIP MOVED. RE-ASK, APPLY NOTHING.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * A party's lead changes when somebody leaves, is kicked, or the badge is
+   * handed on (`engine/party.ts` — "leadership passes the way it would at a
+   * table"). Everybody with a window open may have just gained or lost the right
+   * to answer half of it, and their screens say otherwise.
+   *
+   * NOTHING IS APPLIED RETROACTIVELY — a story option the old lead did not take
+   * is simply not taken — and nothing is closed: the window is RE-SENT, so the
+   * story rows flip enabled or greyed for whoever leads now. Closing would be
+   * the cheaper rule and the wrong one: it would punish the four people reading
+   * a conversation for something a fifth did in the party pane.
+   *
+   * IT RE-SENDS EVERY OPEN WINDOW rather than working out whose party changed.
+   * There is at most one per socket and a party change is a keypress-rate event;
+   * deciding which parties moved would be a second model of the party table
+   * living in the gateway.
+   */
+  const resendDialogues = (): void => {
+    for (const [connId, open] of [...dialogues]) {
+      const session = sessions.get(connId);
+      if (session === undefined) {
+        dialogues.delete(connId);
+        continue;
+      }
+      sendDialogue(session, open);
+    }
+  };
+
+  const handleDialogueClose = (session: Session): void => {
+    closeDialogue(session);
   };
 
   const handleSay = (session: Session, msg: ClientSay): void => {
@@ -16698,6 +17360,12 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     // entitled to know why the person beside them stopped being waited for.
     broadcastRecordLine(realm, result.notice);
 
+    // ═══ AND EVERY OPEN CONVERSATION IS RE-ASKED ═══ Joining, leaving or being
+    // kicked can move the lead badge (`engine/party.ts`), and the lead badge is
+    // what decides which rows of a conversation are answerable. Nothing is
+    // applied retroactively and nothing is closed — see `resendDialogues`.
+    resendDialogues();
+
     /**
      * ═════════════════════════════════════════════════════════════════════════
      * AND THE REASON TO HAVE DONE IT, SAID ONCE, AT THE MOMENT IT BECOMES TRUE.
@@ -17260,6 +17928,25 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       case 'talk':
         handleTalk(session, msg);
         return;
+      // ═══ AND THE TWO THAT ANSWER THE WINDOW `talk` OPENS ═══
+      // NON-PUMPING, in the same group and for the same reason: picking an
+      // answer costs no energy, queues no intent and draws no RNG, so a frame
+      // that costs the sender nothing must not be a way to make the server
+      // advance the world. Six people standing at a counter clicking rows are by
+      // definition not moving.
+      //
+      // NEITHER NAMES A SUBJECT. Whose conversation it is comes from the
+      // session, exactly as `choose_class` argues — the server holds at most one
+      // open window per socket. `dialogue_choose` names a NODE and an OPTION,
+      // both authored ids, both re-validated against the list the server rebuilds
+      // at that instant. See `handleDialogueChoose`, where the host ruling is
+      // enforced.
+      case 'dialogue_choose':
+        handleDialogueChoose(session, msg);
+        return;
+      case 'dialogue_close':
+        handleDialogueClose(session);
+        return;
       // ALSO NON-PUMPING, and for the reason the `ping` case gives below: an
       // inspect changes nothing — no energy, no intent, no RNG draw — so a
       // frame that costs the sender nothing must not be a way to make the
@@ -17565,6 +18252,14 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       // list and stop being pinged even if everything after them fails.
       clearInterval(heartbeat);
       sessions.delete(session.connId);
+      // AND ITS CONVERSATION, which is keyed by this connection. Outside the
+      // guard with the other two for their reason: a dead socket must leave
+      // every table it is in even if everything after this throws. There is
+      // nobody left to send a closing frame to, so `closeDialogue` is not the
+      // right call here — but the PARK it owns still has to come off, and that
+      // is the block inside the guard below.
+      const openWhenLost = dialogues.get(session.connId);
+      dialogues.delete(session.connId);
 
       guard('ws close handler threw', () => {
         const actorId = session.actorId;
@@ -17580,6 +18275,32 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
         if (connByActor.get(actorId) !== session.connId) {
           request.log.info({ conn: session.connId, actorId, code }, 'ws superseded socket closed');
           return;
+        }
+
+        /**
+         * ═══════════════════════════════════════════════════════════════════
+         * AND THE CONVERSATION'S PARK COMES OFF WITH IT.
+         * ═══════════════════════════════════════════════════════════════════
+         *
+         * DELETING THE TABLE ENTRY IS NOT CANCELLING THE EFFECT IT OWNED, which
+         * is this project's `map-delete-is-not-cancel` note word for word, and
+         * the line above used to claim the disconnect path would sort the park
+         * out "through the ordinary body handling". Nothing in it writes
+         * `standingOrder`: `setConnected(false)`, `startGrace`, `saveNow` and
+         * the pump all leave it exactly as the window left it. So an ordinary
+         * "Discord Activity closed while a shop window was up" ended with a body
+         * parked for the rest of its life — the reconnect resumes the same body
+         * and no branch of `hello` releases a standing order, and afterwards
+         * `unparkOnCommand` is inert for anybody who has chosen a class.
+         *
+         * AFTER THE SUPERSEDED CHECK, DELIBERATELY. A stale socket closing after
+         * somebody else's successful resume must not touch the body — the live
+         * connection parks and releases it now, and this one's opinion about it
+         * is a frame old.
+         */
+        if (openWhenLost !== undefined && !openWhenLost.wasParked) {
+          const talker = realmFor(session).world.getActor(actorId);
+          if (talker !== undefined) releaseFromClassChoice(talker);
         }
 
         connByActor.delete(actorId);

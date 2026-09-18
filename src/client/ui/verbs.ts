@@ -53,7 +53,6 @@
  */
 
 import { MapVerb } from './contextmenu.ts';
-import { TOPIC_LABEL, TopicId } from '../../shared/protocol.ts';
 import { PartyAction } from '../../shared/protocol.ts';
 import type { MenuItem } from './contextmenu.ts';
 import type { TileXY } from '../../shared/coords.ts';
@@ -260,39 +259,33 @@ const DROP = 'Put it down';
 const NO_ROOM = 'their bag is full';
 const WALK_UP_TO = 'Walk up to';
 const INSPECT = 'Inspect';
-const TALK_TO = 'Talk to';
 /**
- * The questions, in menu order.
+ * ONE ROW FOR A PERSON, AND IT OPENS THE WINDOW.
  *
  * ═══════════════════════════════════════════════════════════════════════════
- * DERIVED FROM `TopicId`, WHICH THIS COMMENT USED TO CLAIM AND THE CODE DID NOT
- * DO.
+ * THE FOUR QUESTION ROWS THAT USED TO SIT BESIDE IT ARE GONE — 2026-09-17
  * ═══════════════════════════════════════════════════════════════════════════
+ * Ruled by the author: *"the ones from right click menu should be in the
+ * dialogue box instead of in the right click menu. right click should instead
+ * give generic option to talk to npc instead which opens dialogue interaction
+ * window"*.
  *
- * It said "The ids and labels are content/townsfolk.ts's — imported rather than
- * retyped, so a topic added there appears here and cannot drift". Only the
- * LABELS were imported. The row list was two hand-typed entries against a
- * `TopicId` of four, so `Roads` and `Rumour` — added later — never grew a
- * button and could not be asked for by any client.
+ * `TOPIC_ROWS` was `Object.values(TopicId)` mapped to `Ask` rows here, and the
+ * essay that stood in its place is carried forward because the bug it records
+ * is the reason this menu must not hold content: the list was TWO hand-typed
+ * entries against a `TopicId` of four, under a comment claiming it was derived.
+ * `Roads` and `Rumour` never grew a button, 30 of 51 authored answers were
+ * unreachable from any client, and the rumour-marks-your-map mechanic had never
+ * once fired for a player. The server half stayed green the whole time, because
+ * its test writes `{t:'talk', topic:'rumour'}` straight onto the socket — a
+ * frame no client could produce.
  *
- * ═══ WHAT THAT COST ═══
- * 51 authored answers across ten townsfolk, of which 30 were unreachable. Both
- * level-gated `later` rumours. And, because `handleTalk` is the only caller of
- * `regionNamedIn`, the entire rumour-marks-your-map mechanic — which had
- * therefore never once fired for a player.
- *
- * The server half stayed green throughout: its test writes
- * `{t:'talk', topic:'rumour'}` straight onto the socket, which no client could
- * produce. A probe that speaks the protocol cannot see a missing button, and
- * neither can a server test.
- *
- * `Object.values` over the const object, so a fifth topic appears here the day
- * it is authored and the claim above is finally true.
+ * The questions live in `server/content/chats.ts` now, offered as answers on a
+ * node the server builds from `townsfolk.ts` itself, so the list is derived
+ * once, on the side that owns the content, and the client cannot hold a
+ * different idea of what somebody can be asked.
  */
-const TOPIC_ROWS = Object.values(TopicId).map((topic) => ({
-  topic,
-  label: TOPIC_LABEL[topic],
-}));
+const TALK_TO = 'Talk to';
 const TRAVEL_HERE = 'Travel here';
 const POINT_HERE = 'Point here';
 const PICK_UP = 'Pick up';
@@ -595,31 +588,44 @@ export function verbsFor(ctx: VerbContext): VerbMenu {
       if (target.actor.faction === 'townsfolk') {
         /**
          * ═══════════════════════════════════════════════════════════════════
-         * ONE ROW PER QUESTION — the menu IS the dialogue.
+         * ONE ROW FOR A PERSON. THE MENU IS NOT THE DIALOGUE ANY MORE.
          * ═══════════════════════════════════════════════════════════════════
          *
-         * No new panel. The context menu already renders rows, closes on a
-         * click and greys what is out of reach, and a dialogue box would be a
-         * whole surface to lay out, theme and dismiss for something this does.
+         * It was. This block used to argue that no new panel was needed —
+         * *"the context menu already renders rows, closes on a click and greys
+         * what is out of reach"* — and offered one row per question beside
+         * `Talk to`. That argument is FALSE, and it is worth saying why, because
+         * it is the kind that stays convincing after it stops being true.
          *
-         * THE ROWS ARE THE SAME FOR EVERY TOWNSFOLK, and that is deliberate: the
-         * client does not hold the content table, so it cannot know which
-         * questions a given person answers. The server does, and it falls back
-         * to a greeting for a topic somebody has nothing to say about — which
-         * is also what a person does when asked something they cannot help with.
-         * A menu that changed shape per NPC would need the whole table on the
-         * wire to save one wasted click.
+         * A MENU RENDERS A LIST. A CONVERSATION HAS STATE. The window holds a
+         * node, a face, the line that was just said, and a set of answers that
+         * CHANGES as the conversation moves — a shelf opened, a country put on
+         * a map, a row greyed because this player is not the one who may commit
+         * the party to it. None of that is expressible as a flat list of verbs
+         * on a tile, and every one of them is a fact the server already holds.
+         *
+         * AND THE MENU COULD NEVER HOLD THE CONTENT. The client does not have
+         * the townsfolk table, so these rows were the same four for every person
+         * in the game — a shopkeeper and a mourner offered identical questions,
+         * and somebody with nothing to say about roads still had a row for it.
+         * `server/content/chats.ts` builds the answer list from the spec, so a
+         * person is offered exactly the questions they have answers to, plus the
+         * counter when there is one.
+         *
+         * SO: THREE ROWS. `Talk to` opens the window — the server answers a bare
+         * `talk` with a `dialogue` frame — and the other two are what you can do
+         * to anybody from across a room. THERE IS NO SHOP ROW HERE EITHER: the
+         * shelf is reached by an answer inside the window, on the author's
+         * ruling that *"shop options and other interactions will still occur
+         * through the dialogue interaction box"*.
+         *
+         * `Talk to` STILL GREYS OUT OF REACH, which is this file's ordinary rule
+         * rather than an exception to it: one more step really does make it work.
          */
         return {
           title: target.actor.name,
           items: [
             { action: MapVerb.Talk, label: TALK_TO, enabled: ctx.adjacent },
-            ...TOPIC_ROWS.map((row) => ({
-              action: MapVerb.Ask,
-              label: row.label,
-              enabled: ctx.adjacent,
-              topic: row.topic,
-            })),
             { action: MapVerb.Travel, label: WALK_UP_TO, enabled: true },
             { action: MapVerb.Inspect, label: INSPECT, enabled: true },
           ],

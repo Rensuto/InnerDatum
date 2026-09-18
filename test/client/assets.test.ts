@@ -290,6 +290,23 @@ describe('the fillRect overlays stay art-free', () => {
       'ui_panel_',
       'ui_marker_',
       'ui_icon_speaking',
+      // ═══ THE SEVENTEEN CONVERSATION PORTRAITS, AND THEY ARE THE FIRST KIND ═══
+      // v27. Sixteen named townsfolk plus `chr_portrait_unknown`, all seventeen
+      // VERIFIED as 64x64 rows in the manifest AND as PNGs under
+      // client/public/assets/characters/commission/ before the prefix was added
+      // — which is the only thing that separates a legitimate prefix from the
+      // invented one this assertion exists for.
+      //
+      // AND THE FALLBACK IS GOOD, which matters for the same reason `tile_ow_`'s
+      // does: ui/dialogue.ts falls from the portrait to the speaker's own 48x64
+      // body, then to the generic face, then to initials on a plate. It never
+      // reaches `blitSprite`'s violet box, so a bare clone with no assets
+      // directory draws a legible conversation window.
+      //
+      // test/client/wired-art-loading.test.ts counts all seventeen through
+      // `portraitKeyFor` — the server's own derivation — so a rename there is a
+      // missing id there rather than a silent fall through to the body sprite.
+      'chr_portrait_',
       'item_',
       'ui_inventory_cell_',
       'ui_item_frame_',

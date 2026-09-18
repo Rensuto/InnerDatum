@@ -237,6 +237,18 @@ import {
   drawClassPicker,
 } from './ui/classpicker.ts';
 import { drawRoster, rosterHitAt, RosterHitKind, rosterRect } from './ui/roster.ts';
+import {
+  DialogueAnswerKind,
+  dialogueAnswerAt,
+  dialogueAnswerForDigit,
+  dialogueFirstEnabled,
+  dialogueGeometry,
+  dialogueHitAt,
+  dialogueRect,
+  dialogueStep,
+  drawDialogue,
+} from './ui/dialogue.ts';
+import type { DialogueAnswer } from './ui/dialogue.ts';
 import { createCombatBanner, PLAYFIELD_FRAME_MAX_PX } from './ui/combatbanner.ts';
 // `isSlotDisabled` is deliberately NOT imported. Whether a slot looks dead is
 // the hotbar's business; whether a press is legal is the server's. Reading it
@@ -419,6 +431,7 @@ import type {
   InspectView,
   InventoryMsg,
   ShopMsg,
+  DialogueView,
   ItemTier,
   LevelView,
   LoadoutTalent,
@@ -572,6 +585,29 @@ const NEEDED_ASSET_PREFIXES = [
   'ui_panel_',
   'ui_marker_',
   'ui_icon_speaking',
+  /**
+   * ═══════════════════════════════════════════════════════════════════════
+   * THE SEVENTEEN CONVERSATION PORTRAITS — `chr_portrait_<person>`.
+   * ═══════════════════════════════════════════════════════════════════════
+   *
+   * VERIFIED PRESENT BEFORE ADDING, which is this array's one rule (see the v10
+   * note below): all seventeen are ids in
+   * `client/public/assets/manifest.placeholders.json` AND 64x64 PNGs under
+   * `client/public/assets/characters/commission/` — sixteen named townsfolk
+   * plus `chr_portrait_unknown`. This is NOT a prefix cast ahead of art: the
+   * paragraph below spells out what that costs, and the whole family was
+   * counted off disk rather than inferred from a naming scheme.
+   *
+   * THE KEY IS DERIVED FROM THE NAME, ON THE SERVER — `portraitKeyFor` in
+   * server/content/townsfolk.ts, which records why deriving it from the 48x64
+   * sprite instead is right ten times out of sixteen and then silently ships six
+   * ids nobody drew.
+   *
+   * A MISS STILL COSTS NOTHING. ui/dialogue.ts falls back to the speaker's own
+   * 48x64 body and then to initials on a plate, so a bare clone — which has no
+   * assets directory at all — draws a legible window with zero portrait files.
+   */
+  'chr_portrait_',
   // ═══ v10 — THREE PREFIXES FOR ART THAT IS ALREADY IN THE MANIFEST ═══
   //
   // THAT DISTINCTION IS THIS ARRAY'S ENTIRE PURPOSE and it is the one thing to
@@ -2600,6 +2636,63 @@ let inventory: InventoryMsg | null = null;
 let shop: ShopMsg | null = null;
 
 /**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE CONVERSATION THIS PLAYER IS IN, OR `null`. THE SERVER'S COPY, HELD.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `shop`'s shape and `shop`'s rule: the server sends a `dialogue` frame only to
+ * a socket that has a window open, so "no frame" is how this client knows there
+ * is no conversation — there is no second flag free to disagree with it, and
+ * `view: null` is the close.
+ *
+ * ═══ AND IT IS DRAWN, WHICH IS THE OTHER HALF OF THE `26 -> 27` BUMP ═══
+ * The panel, its hit test, its keys and the `chr_portrait_` prefix all land with
+ * this frame (ui/dialogue.ts). The version entry argues the bump from what
+ * happens when they do NOT: a client that cannot name this frame draws nothing
+ * while the server has opened a conversation for it and PARKED ITS BODY, which
+ * is silence plus an invisible state change.
+ */
+let dialogueView: DialogueView | null = null;
+
+/**
+ * WHICH ANSWER IS LIT, as an index into `dialogueView.options`, or -1.
+ *
+ * ONE SELECTION, READ BY THE KEYBOARD, THE PAINTER AND THE PAGER. ui/dialogue.ts
+ * derives which rows are on screen FROM this number rather than holding a scroll
+ * offset of its own, because a stored offset and a stored selection are two
+ * facts that disagree the moment the server replaces the frame — and it
+ * replaces it on every single answer.
+ *
+ * NEVER PARKED ON A ROW THIS PLAYER MAY NOT GIVE. `dialogueStep` skips them and
+ * `adoptDialogue` refuses to start on one, which is ruling 3 taken the strict
+ * way: a story row is SHOWN to a non-lead, with the lead's name on it, and is
+ * not selectable by any route.
+ */
+let dialogueSelected = -1;
+/** The answer under the pointer, or -1. Cleared with the window. */
+let dialogueHovered = -1;
+
+/**
+ * Take a new `dialogue` frame and decide what is lit.
+ *
+ * KEEPS THE SELECTION WHEN IT IS STILL GIVEABLE, and that is not cosmetic: a
+ * lead change re-sends every open window (`resendDialogues` in
+ * server/net/gateway.ts) so that story rows flip between greyed and live. If
+ * that reset the highlight, somebody who had arrowed down to an answer would
+ * find their selection back at the top because a person in another room handed
+ * over the party lead.
+ */
+function adoptDialogue(view: DialogueView | null): void {
+  dialogueHovered = -1;
+  if (view === null) {
+    dialogueSelected = -1;
+    return;
+  }
+  const held = view.options[dialogueSelected];
+  if (held?.enabled !== true) dialogueSelected = dialogueFirstEnabled(view);
+}
+
+/**
  * WAITING FOR A DIRECTION TO REVIVE IN.
  *
  * Only ever set when TWO OR MORE downed allies are adjacent, which is rare and
@@ -3747,6 +3840,29 @@ type HudLayout = {
    */
   readonly picker: PanelRect | null;
   /**
+   * The conversation window, or null when this client is not in one.
+   *
+   * FROM `panelBand` LIKE `sheet`, `talents`, `inventory` AND `menu`, NOT FROM
+   * THE VIEWPORT LIKE `picker`, and that one line is the co-op decision: behind
+   * this window is a live town with five friends still moving in it, and it is
+   * the band above the window they are watched in. There is no scrim for the
+   * same reason and a stronger one — a scrim would say the world had stopped,
+   * and it has not.
+   *
+   * MEASURED, SO THE CLAIM STAYS HONEST: at the 640x320 floor the window is 516
+   * pixels of 640 and covers the middle of the map, the talker's own token
+   * included — the camera is player-centred. It is docked to the RIGHT of the
+   * band (ui/dialogue.ts#dialogueRect) so that it clears the Case Log, which is
+   * where the party follows a story exchange.
+   *
+   * IT IS NULL FOR EXACTLY ONE REASON, unlike its four band-mates: there is no
+   * conversation. `dialogueRect` never refuses a band, because while the window
+   * is up the SERVER has parked this body, so a window that declined to draw
+   * would leave a player unable to act with nothing on screen saying why. It
+   * shrinks and pages instead (ui/dialogue.ts).
+   */
+  readonly dialogue: PanelRect | null;
+  /**
    * The select screen, or null when this client has a body.
    *
    * NON-NULL IS THE STRONGEST STATEMENT IN THIS TYPE: it means there is no
@@ -4114,6 +4230,11 @@ function hudLayout(width: number, height: number): HudLayout {
     // THE SAME ARGUMENT AS `picker`, one step earlier in the evening: a scrimmed
     // full-viewport modal, not band-derived, and nothing under it is pressable.
     roster: roster === null ? null : rosterRect(width, height),
+    // FROM THE BAND, AND NOT THROUGH `movePanel`: the window is not draggable in
+    // v1, which is one `ui/drag.ts` registration and one persisted layout field
+    // this feature does not need. It is docked to the foot of the band, so it
+    // rises on its own when the turn cards appear.
+    dialogue: dialogueView === null ? null : dialogueRect(dialogueView, width, band),
   };
 }
 
@@ -5760,6 +5881,31 @@ const paintHud: HudPainter = (ctx, width, height) => {
   }
 
   combatBanner?.draw({ ctx, width, top: hudTop });
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════════
+   * THE CONVERSATION, OVER THE PANELS AND UNDER THE MENU THE PLAYER JUST OPENED.
+   * ═══════════════════════════════════════════════════════════════════════
+   *
+   * ABOVE THE COMBAT BANNER because the banner is a three-second announcement
+   * and this is a surface somebody is reading and about to press. BELOW the
+   * token menu for the reason the menu's own note gives — it is the one thing
+   * here the player opened deliberately and is aiming at right now.
+   *
+   * AND BELOW THE CLASS CHOOSER, which is last and modal: a player who owes a
+   * class has no business in a conversation, and the two cannot both be up
+   * anyway (`handleTalk` needs a living body on a map).
+   */
+  if (layout.dialogue !== null && dialogueView !== null) {
+    drawDialogue({
+      ctx,
+      sprites,
+      rect: layout.dialogue,
+      view: dialogueView,
+      selected: dialogueSelected,
+      hovered: dialogueHovered,
+    });
+  }
 
   // ...EXCEPT THE TOKEN MENU, which is drawn after even the banner. It is the
   // only surface here the player opened deliberately and is about to click, and
@@ -9066,25 +9212,25 @@ async function boot(): Promise<void> {
          * The row is only enabled when `ctx.adjacent`, and the server re-checks
          * range, line of sight and faction anyway — the grey is a courtesy, the
          * server is the rule.
+         *
+         * ═══════════════════════════════════════════════════════════════════
+         * A BARE `talk` IS THE WHOLE CONVERSATION NOW, AND `Ask` IS GONE
+         * ═══════════════════════════════════════════════════════════════════
+         * There were five rows here until 2026-09-17: this one, and four
+         * `MapVerb.Ask` rows carrying a `TopicId` each. The author ruled them
+         * into the window — *"right click should instead give generic option to
+         * talk to npc instead which opens dialogue interaction window"* — so
+         * `ui/verbs.ts` offers one row and the server answers a topic-less
+         * `talk` with a `dialogue` frame instead of a Margin line.
+         *
+         * `TalkSchema.topic` IS STILL ON THE WIRE and is deliberately untouched:
+         * `talk` WITH a topic still answers in the Margin exactly as it always
+         * did, which is what keeps `test/server/rumour-gate.test.ts` and the
+         * `tools/` probes measuring what they were written to measure. Nothing
+         * in this client sends one any more.
          */
         if (targetId === null) return;
         socket.send({ v: PROTOCOL_VERSION, t: 'talk', targetId });
-        return;
-      case MapVerb.Ask:
-        /**
-         * THE SAME FRAME, WITH A SUBJECT. `talk` carries an optional `topic`
-         * from the closed `TopicId` set — a vocabulary rather than a question
-         * string, so a client cannot make a shopkeeper say something nobody
-         * wrote. The server falls back to a greeting for a topic this person has
-         * no answer to, which is also what a person does.
-         */
-        if (targetId === null) return;
-        socket.send({
-          v: PROTOCOL_VERSION,
-          t: 'talk',
-          targetId,
-          ...(item.topic === undefined ? {} : { topic: item.topic }),
-        });
         return;
     }
   }
@@ -9217,6 +9363,94 @@ async function boot(): Promise<void> {
     if (step === 0) return;
     const from = selectedCharacter ?? (step > 0 ? -1 : count);
     selectCharacter(Math.max(0, Math.min(count - 1, from + step)));
+  }
+
+  /**
+   * Move the lit answer. WRAPS, and SKIPS what this player may not give.
+   *
+   * WRAPPING IS UPSTREAM'S — `engine/ui/VariableList.lua:108-115` moves its
+   * answer list with `util.boundWrap`. It is deliberately the opposite of
+   * `moveRosterSelection` and `movePickerSelection` two functions up, which
+   * clamp: one key too many THERE plays the wrong character or picks the wrong
+   * class forever, and one key too many here moves a highlight.
+   *
+   * SKIPPING THE GREYED ROWS IS RULING 3, TAKEN THE STRICT WAY. A story answer a
+   * non-lead may not give is SHOWN, with the lead's name on it, so the party
+   * knows the answer exists and who can give it — and it is not selectable by
+   * any route, so nobody parks a highlight on something that cannot happen. The
+   * reason is drawn on the row itself, so refusing to focus it hides nothing.
+   *
+   * A CONVERSATION IS A COLUMN, so the vertical component decides and the
+   * horizontal keys do nothing. That is not `movePickerSelection`'s shape
+   * inverted for the sake of it: its cards are a ROW.
+   */
+  function moveDialogueSelection(dir: Dir): void {
+    if (dialogueView === null) return;
+    const delta =
+      dir === 'n' || dir === 'nw' || dir === 'ne'
+        ? -1
+        : dir === 's' || dir === 'sw' || dir === 'se'
+          ? 1
+          : 0;
+    if (delta === 0) return;
+    const next = dialogueStep(dialogueView, dialogueSelected, delta);
+    if (next === dialogueSelected) return;
+    dialogueSelected = next;
+    requestDraw();
+  }
+
+  /**
+   * Say row `index`. The ONLY place a `dialogue_choose` frame is constructed.
+   *
+   * ═══════════════════════════════════════════════════════════════════
+   * A GREYED ROW CONSUMES THE PRESS AND SAYS WHY. IT DOES NOT SEND.
+   * ═══════════════════════════════════════════════════════════════════
+   * The silent no-op is what this file's header calls the worst failure mode
+   * there is, and it would land on exactly the row the host rule exists for: a
+   * non-lead pressing the one answer that commits the party. So the press is
+   * eaten and the server's own sentence — which NAMES THE LEAD — goes up as a
+   * notice. Sending it anyway would earn a `refused` from the server, which is
+   * the same outcome plus a round trip and an error code in the status line.
+   *
+   * THE CLIENT IS NOT THE RULE. It refuses nothing on its own authority: it is
+   * repeating `DialogueOptionView.enabled`, which the server computed, and the
+   * server rules on every pick again when it lands (`handleDialogueChoose`
+   * re-checks the node, the reach, the conditions AND the scope).
+   *
+   * `nodeId` RIDES WITH IT because six people move and frames cross: an answer
+   * naming a node that is no longer open is refused rather than applied to
+   * whatever question replaced it.
+   */
+  function sayDialogue(index: number): void {
+    const view = dialogueView;
+    if (view === null) return;
+    const answer = dialogueAnswerAt(view, index);
+    if (answer !== null) giveDialogueAnswer(answer);
+  }
+
+  /**
+   * Give an answer the window has already decided the meaning of.
+   *
+   * THE ONE PLACE THE FRAME IS BUILT, and it takes an ANSWER rather than a row
+   * number because the two doors find their row differently: a click and the
+   * Enter key have an index into `view.options`, and a number key has a row that
+   * was PLACED (`dialogueAnswerForDigit`). What pressing it means must not
+   * depend on which of the two found it — a second `enabled ? send : refuse` is
+   * exactly how one of the four doors ends up reading a scope instead.
+   */
+  function giveDialogueAnswer(answer: DialogueAnswer): void {
+    const view = dialogueView;
+    if (view === null) return;
+    if (answer.kind === DialogueAnswerKind.Refused) {
+      showNotice(answer.reason);
+      return;
+    }
+    socket.send({
+      v: PROTOCOL_VERSION,
+      t: 'dialogue_choose',
+      nodeId: view.nodeId,
+      optionId: answer.optionId,
+    });
   }
 
   function selectCard(index: number): void {
@@ -10098,6 +10332,29 @@ async function boot(): Promise<void> {
         movePickerSelection(dir);
         return;
       }
+      /**
+       * ═══════════════════════════════════════════════════════════════════════
+       * A CONVERSATION TAKES THE ARROWS, AND THE BODY DOES NOT MOVE.
+       * ═══════════════════════════════════════════════════════════════════════
+       *
+       * ABOVE THE MENU AND BELOW THE TWO UNDISMISSIBLE SCREENS. It is not a
+       * modal — one press of Escape leaves — but it is the only surface in this
+       * list the SERVER knows about: while the window is open the body is parked
+       * (`parkForClassChoice`), so a step sent from here could not be acted on
+       * anyway and would arrive as a turn verb that CLOSES the conversation
+       * mid-sentence. The swallow is what makes the arrows mean "next answer".
+       *
+       * AND THE PARK IS WHY THIS COSTS NOBODY ELSE ANYTHING. `barrier.ts`'s
+       * `isBlocking` reads `standingOrder === null`, so a parked body never
+       * blocks the quorum, never starts a Bell and never parks the tick loop.
+       * That is the same fact that makes the class chooser safe, and this file
+       * already records what happened the one time it was assumed rather than
+       * checked.
+       */
+      if (dialogueView !== null) {
+        moveDialogueSelection(dir);
+        return;
+      }
       // ═══ THE MENU IS SECOND, AND IT IS TARGETING MODE'S SHAPE, NOT A MODAL'S ═══
       //
       // BELOW THE PICKER IN ALL SIX HANDLERS, always: that is a screen which
@@ -10178,6 +10435,33 @@ async function boot(): Promise<void> {
         // a class" — would be a verb with nowhere to go: the screen cannot be
         // left unanswered.
         if (command === TurnCommand.Commit) confirmClass();
+        return;
+      }
+      /**
+       * ═══════════════════════════════════════════════════════════════════════
+       * A CONVERSATION SWALLOWS EVERY TURN VERB, AND ENTER MEANS "SAY IT".
+       * ═══════════════════════════════════════════════════════════════════════
+       *
+       * `engine/ui/VariableList.lua:107` binds ACCEPT on the answer list, so
+       * Enter picking the lit row is the port. The swallow around it is ours and
+       * it is not the class picker's blanket refusal wearing a panel's clothes
+       * — the distinction is the park. Commit, Hold, Rest, Explore and Pickup
+       * are all turn verbs; every one of them reaches `unparkOnCommand` on the
+       * server, which hands the body back AND CLOSES THE CONVERSATION. Letting
+       * one through would end a conversation with a keystroke that looks like it
+       * ought to end a turn.
+       *
+       * IT COSTS THE OTHER FIVE NOTHING, which is the question that has to be
+       * answered every time this client eats a turn verb: the body is already
+       * parked, `barrier.ts`'s `isBlocking` ignores a parked body, and the
+       * Warrant Clock runs for everybody else exactly as it did. That is the
+       * class picker's argument and it holds here for the same mechanical
+       * reason, not by analogy.
+       *
+       * ESCAPE IS THE WAY OUT and it is one press — see `onCancel`.
+       */
+      if (dialogueView !== null) {
+        if (command === TurnCommand.Commit) sayDialogue(dialogueSelected);
         return;
       }
       // ═══════════════════════════════════════════════════════════════════════
@@ -10270,6 +10554,51 @@ async function boot(): Promise<void> {
       }
     },
     onSlot: (slot, shifted) => {
+      /**
+       * ═══════════════════════════════════════════════════════════════════════
+       * THE DIGITS ARE THE ANSWER LIST'S FIRST, ABOVE EVEN `setTalentPage`.
+       * ═══════════════════════════════════════════════════════════════════════
+       *
+       * NOT MERELY ABOVE THE HOTBAR — ABOVE THE PAGE SET. `setTalentPage` is the
+       * first statement of this handler and it is a WRITE: pressing `2` in a
+       * conversation would flip the bar to page two on the way past, and the
+       * page is a mode every later read resolves through, so the bar would stay
+       * flipped after the conversation ended. Then `activateSlot` would cast
+       * whatever is in that slot. One keypress, two wrong things.
+       *
+       * `slot` IS ZERO-BASED, so this passes `slot + 1` — the digit as it is
+       * DRAWN on the row, which is what `dialogueAnswerForDigit` is bounded by.
+       * A digit with no bracket on the screen finds nothing and does nothing,
+       * exactly as the class chooser's fourth card does.
+       *
+       * ═══ AND IT IS RESOLVED THROUGH THE LAID-OUT ROWS, NOT THE ANSWER LIST ═══
+       * Which is why the layout is rebuilt here rather than the frame indexed:
+       * on a band that could only place two of twenty answers, `4` used to fire
+       * the fourth OPTION — a row that was never drawn, and for a party lead a
+       * story row that commits the run. The class chooser's digits are bounded by
+       * `pickerCards()`, the cards that were laid out, and this is the same fact
+       * spelt the same way. The selection is passed in because it is what pages
+       * the list, so the rows this reads are the rows on the screen.
+       *
+       * AND A GREYED ROW IS NOT FIREABLE BY NUMBER. `dialogueAnswerForDigit`
+       * answers `Refused` with the lead's name rather than `Say`, so the one
+       * route round the greyed row — typing its number instead of clicking it —
+       * lands in the same place as clicking it. test/client/dialogue.test.ts
+       * drives that specific key.
+       */
+      if (dialogueView !== null) {
+        const { hudW: digitW, hudH: digitH } = renderer.metrics();
+        const box = hudLayout(digitW, digitH).dialogue;
+        const answer =
+          box === null
+            ? null
+            : dialogueAnswerForDigit(
+                dialogueGeometry(dialogueView, box, dialogueSelected),
+                slot + 1,
+              );
+        if (answer !== null) giveDialogueAnswer(answer);
+        return;
+      }
       /**
        * ═══════════════════════════════════════════════════════════════════════
        * SHIFT PICKS THE PAGE, AND IT IS SET HERE RATHER THAN READ IN THE VIEW.
@@ -10383,6 +10712,29 @@ async function boot(): Promise<void> {
       // later press reached the swallow, which is a Escape that sometimes appears
       // to do something on a screen where it must always do nothing.
       if (classOptions !== null) return;
+      /**
+       * ═══════════════════════════════════════════════════════════════════════
+       * AND A CONVERSATION ENDS, BELOW THE CHOOSER AND ABOVE EVERYTHING ELSE.
+       * ═══════════════════════════════════════════════════════════════════════
+       *
+       * Upstream's rule, unchanged: an answer with no `jump` ends the chat
+       * (`engine/dialogs/Chat.lua:104-110`), and Escape is that answer without
+       * having to find it in the list.
+       *
+       * BELOW THE CHOOSER, because a required screen must stay undismissible and
+       * a conversation is not one. ABOVE the world map and the menus, because
+       * while the window is up the SERVER has parked this body — it does not act
+       * until the conversation ends — so one press must reach the thing that is
+       * actually holding the player, not close a panel behind it.
+       *
+       * ONE PRESS, ONE THING. `dialogue_close` is sent and nothing else happens;
+       * the server answers with `view: null` and that is what clears the local
+       * copy. This client never decides it is out of a conversation.
+       */
+      if (dialogueView !== null) {
+        socket.send({ v: PROTOCOL_VERSION, t: 'dialogue_close' });
+        return;
+      }
       /**
        * ═══════════════════════════════════════════════════════════════════════
        * THE WORLD MAP CLOSES ON ESCAPE, AND IT IS HIGH IN THE CHAIN BECAUSE IT
@@ -10559,6 +10911,41 @@ async function boot(): Promise<void> {
       // — a player looking at a screen they cannot dismiss, typing into a field
       // they cannot see, on the one screen with no way around it.
       if (classOptions !== null) return;
+      /**
+       * ═══════════════════════════════════════════════════════════════════════
+       * IN A CONVERSATION, `Say` IS THE ACCEPT KEY — BECAUSE ENTER IS `Say`.
+       * ═══════════════════════════════════════════════════════════════════════
+       *
+       * THIS IS NOT A SWALLOW AND IT IS NOT SYMMETRY WITH THE MENU ABOVE. It is
+       * a fact about the keymap, and missing it would have shipped a window
+       * whose own hint line lies. `input/keymap.ts` binds Enter to `ui: say`
+       * ("we will not use the / or t button but instead just the enter key"),
+       * and it records at that binding that THE UI TABLE IS CONSULTED BEFORE THE
+       * COMMAND TABLE — which is why `commit` gave Enter up and kept Space. So
+       * an ungated Enter in a conversation never reaches `onCommand` at all: it
+       * opens the chat box, over a window that has just printed "Enter say".
+       *
+       * SO ONE KEY STILL MEANS ONE THING. Enter answers the lit row here, Space
+       * and NumpadEnter answer it through `onCommand`, and both routes call
+       * `sayDialogue`, so the two cannot drift.
+       *
+       * AND CHAT IS NOT TAKEN AWAY — the Case Log's composer is the OPPOSITE of
+       * the class chooser's case: `syncCommandLineReach` has no conversation
+       * term, so the row is visible, enabled and one mouse click away for a
+       * player who wants to type while somebody talks. This is six friends in a
+       * voice channel; a conversation must not mute one of them.
+       *
+       * EVERY OTHER UI VERB GOES THROUGH ON PURPOSE. `c`, `g`, `i`, `m` and `p`
+       * are panels, and a panel over a conversation is fine — reading your own
+       * sheet while somebody talks is exactly what a player does. Revive and
+       * respawn are ordinary play and are turn verbs: they unpark the body and
+       * close the conversation on the server, which is the right answer to "I
+       * need to act right now".
+       */
+      if (dialogueView !== null && command === UiCommand.Say) {
+        sayDialogue(dialogueSelected);
+        return;
+      }
       // ═══ THE MENU TAKES `Say` AND NOTHING ELSE, AND THAT IS NOT ASYMMETRY ═══
       //
       // `#cmd` IS OUT OF REACH WHILE THE MENU IS OPEN (`syncCommandLineReach`),
@@ -10790,13 +11177,19 @@ async function boot(): Promise<void> {
     // twenty-six rows, RESET ALL, BACK and a pager. An unswallowed click beside
     // any of them would walk the party across the room while somebody was
     // fixing their keyboard.
+    // AND THE CONVERSATION WINDOW IS THE FIFTH, for every reason above at once.
+    // It is solid, it carries a row per answer, and a press beside one of them
+    // must not reach the map — see the `1b` block in `mousedown`, where letting
+    // one through does not merely walk the party but ENDS THE CONVERSATION,
+    // because travel is a turn verb and a turn verb unparks.
     return (
       inRect(layout.pane?.rect ?? null, point.x, point.y) ||
       inRect(layout.log, point.x, point.y) ||
       inRect(layout.sheet, point.x, point.y) ||
       inRect(layout.talents, point.x, point.y) ||
       inRect(layout.inventory, point.x, point.y) ||
-      inRect(layout.menu, point.x, point.y)
+      inRect(layout.menu, point.x, point.y) ||
+      inRect(layout.dialogue, point.x, point.y)
     );
   }
 
@@ -11041,6 +11434,20 @@ async function boot(): Promise<void> {
       if (hoveredCard !== pickerHovered || hoveredChip !== originHovered) {
         pickerHovered = hoveredCard;
         originHovered = hoveredChip;
+        requestDraw();
+      }
+      // AND THE ANSWER UNDER THE POINTER. -1 when the pointer is off the window,
+      // so nothing is left lit behind a conversation that has ended. A GREYED
+      // ROW NEVER HIGHLIGHTS: ui/dialogue.ts paints the hover only on a row this
+      // player may give, so the picture cannot promise a press that `sayDialogue`
+      // will refuse.
+      const overRow =
+        layout.dialogue === null || dialogueView === null
+          ? null
+          : dialogueHitAt(dialogueView, layout.dialogue, dialogueSelected, point.x, point.y);
+      const hoveredRow = overRow?.index ?? -1;
+      if (hoveredRow !== dialogueHovered) {
+        dialogueHovered = hoveredRow;
         requestDraw();
       }
     }
@@ -12200,6 +12607,46 @@ async function boot(): Promise<void> {
       tokenMenu.close();
       if (item !== null) runMenuItem(item, targetId, targetTile);
       return;
+    }
+
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * 1b. A CONVERSATION TAKES EVERY PRESS THAT LANDS ON IT, BOTH BUTTONS.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * BELOW THE TOKEN MENU because a menu opened over the window is the newer
+     * decision and is what the player is aiming at. ABOVE THE RIGHT-CLICK
+     * BRANCH because a right-click inside the window would otherwise open a verb
+     * menu on whatever tile is behind it — a menu about a body the player cannot
+     * see, drawn over the conversation they were reading.
+     *
+     * A PRESS ON THE WINDOW BUT ON NO ROW IS STILL SWALLOWED, and here that rule
+     * has teeth beyond ui/classpicker.ts's version of it: an unswallowed click
+     * on the window's own padding would fall through to the travel branch, and
+     * travel is a TURN VERB, and a turn verb reaches `unparkOnCommand` and CLOSES
+     * THE CONVERSATION. A misclick on a margin would end the conversation it
+     * landed on and walk the body away from the person it was talking to.
+     *
+     * A GREYED ROW SWALLOWS ITS CLICK AND SAYS WHY — `sayDialogue` decides that
+     * once, for the mouse and for the digits, so the two cannot disagree about
+     * what pressing a story row as a non-lead does.
+     */
+    if (layout.dialogue !== null && dialogueView !== null && point !== null) {
+      const box = layout.dialogue;
+      if (
+        point.x >= box.x &&
+        point.x < box.x + box.w &&
+        point.y >= box.y &&
+        point.y < box.y + box.h
+      ) {
+        event.preventDefault();
+        const row =
+          event.button !== 0
+            ? null
+            : dialogueHitAt(dialogueView, box, dialogueSelected, point.x, point.y);
+        if (row !== null) sayDialogue(row.index);
+        return;
+      }
     }
 
     // ═══ 2. RIGHT-CLICK IS THE VERB MENU, ON WHATEVER IS UNDER IT ═══
@@ -13464,6 +13911,13 @@ function forgetTheWorld(): void {
   beacons = [];
   inventory = null;
   shop = null;
+  // AND THE CONVERSATION, for the reason directly above it: a window naming a
+  // body on a map that has been replaced is a window offering answers to
+  // somebody who is not there. The server closes its own copy on the same
+  // crossing (`closeDialogue`), so this is the two halves agreeing rather than
+  // this client deciding anything.
+  dialogueView = null;
+  adoptDialogue(null);
   reviveArmed = false;
   caseLog?.clear();
   setMarginText(undefined, '');
@@ -14702,6 +15156,15 @@ function applyServerMessage(msg: ServerMsg): void {
       zoomPersisted = msg.persisted;
       break;
 
+    case 'dialogue':
+      // ═══ SOMEBODY IS TALKING TO THIS PLAYER ═══ One frame opens, replaces and
+      // closes — `view: null` is the close, `InspectedMsg`'s shape — so this
+      // client cannot hold a window the server has forgotten. The server has
+      // already filtered every option by its conditions and marked the ones this
+      // player may not give; nothing here re-decides any of it.
+      dialogueView = msg.view;
+      adoptDialogue(msg.view);
+      break;
     case 'pong':
       // Liveness only; the socket's watchdog already noted the frame's arrival.
       break;

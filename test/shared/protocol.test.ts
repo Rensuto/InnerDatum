@@ -1631,3 +1631,101 @@ describe('the floor is broadcast and the bag is not', () => {
     expect(Object.values(ItemTier).sort()).toEqual(['common', 'rare', 'uncommon'].sort());
   });
 });
+
+describe('the two conversation verbs at the trust boundary', () => {
+  /** The schema's own cap, deliberately restated rather than exported. */
+  const CHAT_ID_MAX_CHARS = 64;
+
+  it('accepts a well-formed answer and narrows it', () => {
+    const parsed = parseClientMsg({
+      v: V,
+      t: 'dialogue_choose',
+      nodeId: 'topic:rumour',
+      optionId: 'route:party',
+    });
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok || parsed.msg.t !== 'dialogue_choose') return;
+    expect(parsed.msg.nodeId).toBe('topic:rumour');
+    expect(parsed.msg.optionId).toBe('route:party');
+  });
+
+  it('REFUSES an answer that names no node or no option', () => {
+    expect(parseClientMsg({ v: V, t: 'dialogue_choose', optionId: 'leave' }).ok).toBe(false);
+    expect(parseClientMsg({ v: V, t: 'dialogue_choose', nodeId: 'greet' }).ok).toBe(false);
+    // NOT EMPTY EITHER. An empty id is a lookup that finds nothing one layer
+    // later, and a frame that gets that far has already cost the server a
+    // re-resolve of both bodies and a rebuilt option list.
+    expect(parseClientMsg({ v: V, t: 'dialogue_choose', nodeId: '', optionId: 'leave' }).ok).toBe(
+      false,
+    );
+    expect(parseClientMsg({ v: V, t: 'dialogue_choose', nodeId: 'greet', optionId: '' }).ok).toBe(
+      false,
+    );
+  });
+
+  it('REFUSES an oversized id, which is where a payload would go', () => {
+    const atLimit = 'a'.repeat(CHAT_ID_MAX_CHARS);
+    const overLimit = 'a'.repeat(CHAT_ID_MAX_CHARS + 1);
+    expect(
+      parseClientMsg({ v: V, t: 'dialogue_choose', nodeId: atLimit, optionId: atLimit }).ok,
+    ).toBe(true);
+    expect(
+      parseClientMsg({ v: V, t: 'dialogue_choose', nodeId: overLimit, optionId: 'leave' }).ok,
+    ).toBe(false);
+    expect(
+      parseClientMsg({ v: V, t: 'dialogue_choose', nodeId: 'greet', optionId: overLimit }).ok,
+    ).toBe(false);
+  });
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * A CLIENT CANNOT EVEN CLAIM A SCOPE, AND THAT IS THE HOST RULING'S FLOOR.
+   * ═══════════════════════════════════════════════════════════════════════════
+   * The whole co-op rule is that the SERVER decides whether an answer commits
+   * the run. `strictObject` is what stops a patched client asserting `scope`,
+   * `enabled` or somebody else's `actorId` on the way in — rejected as a frame,
+   * never sanitised into a legal one, which is the same rule `choose_class`
+   * states above and for a stronger reason: this one names a party's story.
+   */
+  it('REFUSES a smuggled scope, permission or actor rather than stripping it', () => {
+    for (const [key, value] of [
+      ['scope', 'personal'],
+      ['enabled', true],
+      ['actorId', 'actor_someone_else'],
+      ['targetId', 'actor_someone_else'],
+      ['speakerId', 'npc_merrow'],
+    ] as const) {
+      const forged = parseClientMsg({
+        v: V,
+        t: 'dialogue_choose',
+        nodeId: 'greet',
+        optionId: 'route:party',
+        [key]: value,
+      });
+      expect(forged.ok, `${key} must be rejected`).toBe(false);
+    }
+  });
+
+  it('accepts a bare goodbye and REFUSES one carrying anything', () => {
+    expect(parseClientMsg({ v: V, t: 'dialogue_close' }).ok).toBe(true);
+    // REJECTED, NOT DEGRADED INTO A CLOSE. A junk-carrying frame is a client
+    // nobody wrote on purpose, and answering it with the action it asked for
+    // would hide that from the log — `bad_message` is the whole point of the
+    // one trust boundary.
+    expect(parseClientMsg({ v: V, t: 'dialogue_close', nodeId: 'greet' }).ok).toBe(false);
+    expect(parseClientMsg({ v: V, t: 'dialogue_close', actorId: 'actor_x' }).ok).toBe(false);
+  });
+
+  it('REFUSES both verbs from a client of the wrong version', () => {
+    expect(parseClientMsg({ t: 'dialogue_close' }).ok).toBe(false);
+    const stale = parseClientMsg({
+      v: V - 1,
+      t: 'dialogue_choose',
+      nodeId: 'greet',
+      optionId: 'leave',
+    });
+    expect(stale.ok).toBe(false);
+    if (stale.ok) return;
+    expect(stale.error).toContain('protocol version mismatch');
+  });
+});

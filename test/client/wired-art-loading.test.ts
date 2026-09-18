@@ -15,9 +15,11 @@ import {
   localDoorSpriteId,
   loneTreeSpriteId,
 } from '../../src/client/render/canvas.ts';
+import { PORTRAIT_UNKNOWN } from '../../src/client/ui/dialogue.ts';
 import { registerAllTalents } from '../../src/server/content/classes.ts';
 import { MVP_EFFECTS } from '../../src/server/content/effects.ts';
 import { MONSTER_TEMPLATES } from '../../src/server/content/monsters.ts';
+import { TOWNSFOLK, portraitKeyFor } from '../../src/server/content/townsfolk.ts';
 import { TileCode } from '../../src/shared/protocol.ts';
 
 /**
@@ -137,6 +139,22 @@ function wiredIds(): ReadonlyMap<string, string> {
   for (const template of MONSTER_TEMPLATES) add(template.sprite, `monster ${template.id}`);
   for (const talent of registerAllTalents().all()) add(talent.iconId, `talent ${talent.id}`);
   for (const effect of MVP_EFFECTS) add(effect.icon, `effect ${effect.id}`);
+  // THE CONVERSATION WINDOW'S SEVENTEEN FACES, AND THE SIXTEEN BODIES BEHIND
+  // THEM. `portraitKeyFor` is the server's own derivation — the one that builds
+  // the `DialogueView.portrait` key — so a rename there is a missing id here
+  // rather than a silent fall through to the body sprite, which is the exact
+  // failure this file exists for: the picture is finished, the id is right, and
+  // nothing admits it. The 48x64 body is walked too because it is the window's
+  // SECOND choice (ui/dialogue.ts) as well as the map's first.
+  for (const [site, specs] of TOWNSFOLK) {
+    for (const spec of specs) {
+      add(portraitKeyFor(spec), `townsfolk portrait ${site}/${spec.id}`);
+      add(spec.sprite, `townsfolk body ${site}/${spec.id}`);
+    }
+  }
+  // AND THE SEVENTEENTH, which belongs to nobody: `ui/dialogue.ts` draws it for
+  // a speaker with neither a portrait nor a body, one step before initials.
+  add(PORTRAIT_UNKNOWN, 'ui/dialogue.ts PORTRAIT_UNKNOWN');
   return named;
 }
 
@@ -165,9 +183,30 @@ describe('the art the game is wired to draw passes the load filter', () => {
       'icon_active_fire_bolt',
       'icon_status_suffocating',
       'icon_status_zone_aura_underwater',
+      // BOTH ENDS OF THE PORTRAIT SET: a named face derived from a name, the
+      // 48x64 body it falls back to, and the generic that stands in for both.
+      'chr_portrait_merrow_stitch',
+      'chr_npc_merrow_stitch_s',
+      'chr_portrait_unknown',
     ]) {
       expect(ids.has(id), `${id} was not enumerated`).toBe(true);
     }
+  });
+
+  /**
+   * SEVENTEEN, COUNTED, NOT "AT LEAST ONE".
+   *
+   * The conversation window's whole art story is one number: sixteen named
+   * townsfolk plus a generic. An existential assertion here would pass with one
+   * portrait wired and fifteen people drawing their 48x64 body instead — which
+   * is a SUPPORTED state (`dialoguePortraitSource` falls back deliberately) and
+   * therefore one nothing would ever fail on. That is the shape of every bug
+   * this file was written for.
+   */
+  it('names all seventeen conversation portraits', () => {
+    const portraits = [...wiredIds().keys()].filter((id) => id.startsWith('chr_portrait_'));
+    expect(new Set(portraits).size).toBe(17);
+    expect(portraits).toContain(PORTRAIT_UNKNOWN);
   });
 
   it('admits every one of them', () => {

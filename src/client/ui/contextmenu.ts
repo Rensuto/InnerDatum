@@ -81,23 +81,23 @@ export const MapVerb = {
    */
   Talk: 'talk',
   /**
-   * ASK ABOUT A NAMED THING. One row per topic, on the menu that already exists.
-   *
-   * A SEPARATE VERB FROM `Talk` so `runMenuItem` can carry the topic id, and NOT
-   * a second panel: the context menu already renders rows, already closes on a
-   * click, and already greys what is out of reach. A dialogue panel would be a
-   * new surface to lay out, theme and dismiss for something the menu does.
-   */
-  Ask: 'ask',
-  /**
    * HAND ONE CARRIED THING TO THE PERSON UNDER THE CURSOR.
    *
    * ═══ THE RECIPIENT LIST IS THE MENU, NOT A DIALOG ═══
    * Upstream reaches this through two nested modals: `ShowInventory` opens
    * `UseItemDialog` on an item, whose `transfer` action opens `PartySendItem`,
    * which lists the party. We have neither modal, and the reason not to build
-   * them is the one `Ask` gives four lines up: the context menu already renders
-   * rows, already closes on a click, already greys what is out of reach.
+   * them is that the context menu already renders rows, already closes on a
+   * click, and already greys what is out of reach.
+   *
+   * ═══ AND THAT ARGUMENT IS ABOUT *THIS* LIST, NOT A GENERAL ONE ═══
+   * It used to be borrowed by the townsfolk questions, which were four `Ask`
+   * rows here until 2026-09-17; they are answers inside the conversation window
+   * now, because a conversation is a THING WITH STATE — a node, a history, a
+   * face and a set of answers that changes as it goes — and a context menu has
+   * none of that. Handing a party member a coat has no state at all: one press,
+   * one frame, the menu closes. The two are not the same problem and the
+   * argument does not transfer.
    *
    * SO THE TWO CHOICES ARE THE SAME TWO, IN THE OTHER ORDER — you name the
    * PERSON by right-clicking them and the ITEM by picking a row, where upstream
@@ -160,19 +160,10 @@ export type MenuItem = {
    */
   readonly enabled: boolean;
   /**
-   * WHICH TOPIC, for an `Ask` row and nothing else.
-   *
-   * Carried on the row rather than encoded into `action` so the verb set stays
-   * a closed union the compiler can switch over exhaustively — one `Ask` verb
-   * with a payload, not one verb per question that every switch has to grow an
-   * arm for.
-   */
-  readonly topic?: string;
-  /**
    * WHICH ITEM ON THE TILE, for a `Pickup` row and nothing else — a
    * `GroundItemView.id`, or absent for "the top of the pile".
    *
-   * Carried on the row for the reason `topic` above gives: one verb with a
+   * Carried on the row rather than encoded into `action`: one verb with a
    * payload, not one verb per item, so the switch over `action` stays a closed
    * union the compiler can check.
    *

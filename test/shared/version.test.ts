@@ -40,7 +40,7 @@ describe('shared constants', () => {
     expect(Math.log2(TILE_PX) % 1).toBe(0);
   });
 
-  it('pins PROTOCOL_VERSION at 26 — only what you can see', () => {
+  it('pins PROTOCOL_VERSION at 27 — the conversation', () => {
     // AN EXPLICIT PIN, so the bump cannot be silently reverted by a merge.
     // Everything above only asserts the constants are positive integers, which
     // a revert would pass. THE JUSTIFICATION MOVES WITH THE NUMBER — a pin whose
@@ -173,10 +173,28 @@ describe('shared constants', () => {
     // every OTHER fogging pass in this file left the older client drawing LESS
     // and nothing false, and this one leaves it drawing a room the server has
     // stopped believing in.
-    expect(PROTOCOL_VERSION).toBe(26);
+    //
+    // v27 adds two INBOUND verbs and one outbound frame, and by the rule this
+    // file has applied since v5 neither of those forces a bump on its own: an
+    // older client never sends a verb it does not know, and it drops an outbound
+    // `t` it cannot name and draws what it drew before.
+    //
+    // WHAT FORCES IT IS THE STATE THE FRAME REPORTS. A bare `talk` now opens a
+    // conversation, and the server PARKS the talker's body for its duration so
+    // one unanswered window cannot stop the clock for five other people. A v26
+    // client cannot draw that window: it sees the Margin greeting it always saw,
+    // while its body has silently stopped being something the party's barrier
+    // waits for and its screen offers no way to end it. An older client holding
+    // a picture the server has stopped believing is `18 -> 19`'s rule verbatim,
+    // and it is the same shape as `25 -> 26`, where a v25 client kept furniture
+    // the server had withdrawn.
+    //
+    // A mismatch instead closes the socket with `version_mismatch` and costs a
+    // page reload, which in an Activity is what launching already does.
+    expect(PROTOCOL_VERSION).toBe(27);
   });
 
-  it('keeps the 25 -> 26 changelog entry beside the constant, and non-empty', () => {
+  it('keeps the 26 -> 27 changelog entry beside the constant, and non-empty', () => {
     // THE PROSE IS THE DELIVERABLE HERE, NOT DECORATION. Every bump in this file
     // is argued above the constant, and the argument is the only thing that
     // tells the next person whether their change forces a bump or is an addition
@@ -204,23 +222,29 @@ describe('shared constants', () => {
     // touched — a guard that proves the discipline held LAST TIME is not a
     // guard. It moves with the constant now, and the assertions below name this
     // entry's own frame.
-    const afterHeading = source.split('25 -> 26 (ONLY WHAT YOU CAN SEE)')[1] ?? '';
+    const afterHeading = source.split('26 -> 27 (THE CONVERSATION)')[1] ?? '';
     // The entry ends where the one before it begins. Entries are written newest
     // first ABOVE the constant, so cutting at the constant would read every
     // older entry too, and an assertion could pass on somebody else's prose.
-    const entry = afterHeading.split('24 -> 25 (THEMED TERRAIN)')[0] ?? '';
+    const entry = afterHeading.split('25 -> 26 (ONLY WHAT YOU CAN SEE)')[0] ?? '';
 
     expect(afterHeading).not.toBe('');
     expect(entry.length, 'the entry runs on into the constant').toBeLessThan(afterHeading.length);
     expect(entry.trim().length).toBeGreaterThan(200);
     // It must name the thing that FORCES the bump, not merely list what was
     // added — an entry that only enumerates additions is an entry arguing for
-    // NOT bumping. Here that is the new frame and the field that narrowed under
-    // it, and the half that rides the same number without forcing it has to be
-    // argued for too, or the next reader cannot tell which half did the work.
-    expect(entry).toContain('`PropsMsg`');
-    expect(entry).toContain('`RealmMsg.props`');
-    expect(entry).toContain('`beacons`');
+    // NOT bumping. Here that is the new frame, the verb whose meaning changed
+    // under it, and the server-side state an older client cannot see; the half
+    // that rides the same number without forcing it has to be argued for too, or
+    // the next reader cannot tell which half did the work.
+    expect(entry).toContain('`DialogueMsg`');
+    expect(entry).toContain('`dialogue_choose`');
+    expect(entry).toContain('`talk`');
+    // THE FORCING FACT, NAMED. Two new verbs and one new frame would not move
+    // this number; the parked body is what does, and an entry that left it out
+    // would read as an argument for NOT bumping.
+    expect(entry).toContain('PARKS ITS BODY');
+    expect(entry).toContain('CONSIDERED AND NOT BUMPED FOR');
     // And it must say what it deliberately did NOT do to the save file, because
     // the reflex when a protocol moves is to move both numbers.
     expect(entry).toContain('SCHEMA_VERSION');

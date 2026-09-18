@@ -897,6 +897,63 @@ function assertLinesFit(): void {
 }
 assertLinesFit();
 
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * WHAT THIS PERSON SAYS ABOUT THAT, TO SOMEBODY AT THAT LEVEL. ONE COPY.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `spec.later` over `spec.topics`, gated on `STANDING_LEVEL`. That expression
+ * lived in `handleTalk` alone, and it is exactly the kind of one-line join this
+ * project keeps breaking — `test/server/rumour-gate.test.ts`'s own header says
+ * the first version of it did not compile. Now that the dialogue window asks the
+ * same question, the expression is here and BOTH callers read it, so the window
+ * and the Margin can never answer the same question two different ways.
+ *
+ * THE ASKER'S LEVEL, NOT THE PARTY'S, and `handleTalk`'s note is the argument:
+ * standing is a fact about a character rather than about who they walk with, so
+ * a level-8 friend cannot have the far road pointed out to somebody on their
+ * first evening by standing next to them.
+ *
+ * A TOPIC ABSENT FROM `later` FALLS THROUGH, which is most of them.
+ */
+export function answerFor(
+  spec: TownsfolkSpec,
+  askerLevel: number,
+  topic: TopicId,
+): string | undefined {
+  const deeper = askerLevel >= STANDING_LEVEL ? spec.later : undefined;
+  return deeper?.[topic] ?? spec.topics[topic];
+}
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE 64x64 FACE FOR THE DIALOGUE WINDOW. DERIVED FROM THE NAME, NOT THE SPRITE.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Seventeen `chr_portrait_*` ids are in `manifest.placeholders.json` — one per
+ * named person plus `chr_portrait_unknown` — and every one of them is keyed on
+ * WHO THE PERSON IS: `chr_portrait_wren_colley`, not `chr_portrait_pawnbroker`.
+ *
+ * ═══ THE SPRITE IS THE WRONG SOURCE, AND IT LOOKS LIKE THE RIGHT ONE ═══
+ * Ten of the sixteen wear a 48x64 named for themselves (`chr_npc_merrow_stitch_s`),
+ * so `sprite.replace('chr_npc_', 'chr_portrait_')` produces the right id ten
+ * times out of sixteen and then quietly produces `chr_portrait_pawnbroker`,
+ * `chr_portrait_bookbinder`, `chr_portrait_mourner`, `chr_portrait_camp_cook`,
+ * `chr_portrait_registry_clerk` and `chr_portrait_alchemy_apprentice` — six ids
+ * nobody drew, for six people who have faces. Six failures out of sixteen is
+ * exactly the ratio that survives a spot check. The names are the key.
+ *
+ * ═══ THE SERVER NAMES IT; IT DOES NOT PROMISE IT ═══
+ * The assets directory is gitignored wholesale and a bare clone has none of
+ * this art, so the key is a NAME rather than an assertion that a PNG exists.
+ * The panel's fallback chain is portrait, then the 48x64 body, then initials
+ * (`client/ui/panel.ts#blitReduced` returns `false` rather than throwing), so an
+ * id with nothing behind it costs one failed lookup and draws the body instead.
+ */
+export function portraitKeyFor(spec: TownsfolkSpec): string {
+  return `chr_portrait_${spec.name.toLowerCase().replace(/[^a-z0-9]+/g, '_')}`;
+}
+
 /** Every spec authored for a site, or an empty list. */
 export function townsfolkFor(siteId: string | undefined): readonly TownsfolkSpec[] {
   if (siteId === undefined) return [];
