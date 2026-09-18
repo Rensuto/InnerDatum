@@ -574,7 +574,7 @@ export const ACTIONS = [
   // ═══════════════════════════════════════════════════════════════════════════
   {
     id: 'say',
-    name: 'Talk in the case log',
+    name: 'Talk in the log',
     group: 'Screens',
     order: 17,
     effect: { kind: 'ui', command: 'say' },
@@ -667,33 +667,17 @@ export const ACTIONS = [
     fixed: [],
     rebindable: true,
   },
-  {
-    id: 'zoom_out',
-    name: 'Zoom out',
-    group: 'Screens',
-    order: 22,
-    effect: { kind: 'ui', command: 'zoom_out' },
-    defaults: [{ kind: 'key', value: '-' }],
-    fixed: [],
-    rebindable: true,
-  },
-  {
-    id: 'zoom_in',
-    name: 'Zoom in',
-    group: 'Screens',
-    order: 23,
-    effect: { kind: 'ui', command: 'zoom_in' },
-    // `=` rather than `+`: it is the unshifted key, so it works without a
-    // modifier on every layout this game has been played on.
-    defaults: [{ kind: 'key', value: '=' }],
-    fixed: [],
-    rebindable: true,
-  },
+  // 22 AND 23 USED TO BE `zoom_out` AND `zoom_in`, and they went with the
+  // control (*"remove the (zoom) option"*). EVERY ROW BELOW IS RENUMBERED
+  // rather than left with a gap: `order` is this table's copy of ToME's
+  // monotonic `bind_order` (KeyBind.lua:38-40) and a test pins it to definition
+  // order exactly, because a copy-pasted row that silently sorted on top of its
+  // neighbour is the failure that rule exists to catch.
   {
     id: 'toggle_party',
     name: 'Party panel',
     group: 'Screens',
-    order: 24,
+    order: 22,
     effect: { kind: 'ui', command: 'toggle_party' },
     defaults: [{ kind: 'key', value: 'p' }],
     fixed: [],
@@ -720,7 +704,7 @@ export const ACTIONS = [
     id: 'hotbar_1',
     name: 'Talent slot 1',
     group: 'Hotbar',
-    order: 25,
+    order: 23,
     effect: { kind: 'slot', slot: 0 },
     defaults: [],
     fixed: [{ kind: 'key', value: '1' }],
@@ -730,7 +714,7 @@ export const ACTIONS = [
     id: 'hotbar_2',
     name: 'Talent slot 2',
     group: 'Hotbar',
-    order: 26,
+    order: 24,
     effect: { kind: 'slot', slot: 1 },
     defaults: [],
     fixed: [{ kind: 'key', value: '2' }],
@@ -740,7 +724,7 @@ export const ACTIONS = [
     id: 'hotbar_3',
     name: 'Talent slot 3',
     group: 'Hotbar',
-    order: 27,
+    order: 25,
     effect: { kind: 'slot', slot: 2 },
     defaults: [],
     fixed: [{ kind: 'key', value: '3' }],
@@ -750,7 +734,7 @@ export const ACTIONS = [
     id: 'hotbar_4',
     name: 'Talent slot 4',
     group: 'Hotbar',
-    order: 28,
+    order: 26,
     effect: { kind: 'slot', slot: 3 },
     defaults: [],
     fixed: [{ kind: 'key', value: '4' }],
@@ -797,7 +781,7 @@ export const ACTIONS = [
     id: 'hotbar_5',
     name: 'Talent slot 5',
     group: 'Hotbar',
-    order: 29,
+    order: 27,
     effect: { kind: 'slot', slot: 4 },
     defaults: [],
     fixed: [{ kind: 'code', value: 'Digit5' }],
@@ -807,7 +791,7 @@ export const ACTIONS = [
     id: 'hotbar_6',
     name: 'Talent slot 6',
     group: 'Hotbar',
-    order: 30,
+    order: 28,
     effect: { kind: 'slot', slot: 5 },
     defaults: [],
     fixed: [{ kind: 'code', value: 'Digit6' }],
@@ -843,7 +827,7 @@ export const ACTIONS = [
     id: 'hotbar_7',
     name: 'Talent slot 7',
     group: 'Hotbar',
-    order: 31,
+    order: 29,
     effect: { kind: 'slot', slot: 6 },
     defaults: [],
     fixed: [{ kind: 'code', value: 'Digit7' }],
@@ -853,7 +837,7 @@ export const ACTIONS = [
     id: 'hotbar_8',
     name: 'Talent slot 8',
     group: 'Hotbar',
-    order: 32,
+    order: 30,
     effect: { kind: 'slot', slot: 7 },
     defaults: [],
     fixed: [{ kind: 'code', value: 'Digit8' }],
@@ -863,7 +847,7 @@ export const ACTIONS = [
     id: 'hotbar_9',
     name: 'Talent slot 9',
     group: 'Hotbar',
-    order: 33,
+    order: 31,
     effect: { kind: 'slot', slot: 8 },
     defaults: [],
     fixed: [{ kind: 'code', value: 'Digit9' }],
@@ -875,9 +859,13 @@ export const ACTIONS = [
   // ═══════════════════════════════════════════════════════════════════════════
   {
     id: 'toggle_log',
-    name: 'Case Log',
+    // `LOG`, NOT `CASE LOG`. This row is a name a player READS on the Keys
+    // screen, so it moved with the panel's header; the ACTION ID did not, which
+    // is the entire point of naming actions rather than keys — every stored
+    // keybind for `toggle_log` survives the rename untouched.
+    name: 'Log',
     group: 'Log',
-    order: 34,
+    order: 32,
     effect: { kind: 'ui', command: 'toggle_log' },
     // THE KEY IS CHOSEN, NOT PORTED, AND THIS SAYS SO RATHER THAN DRESSING A
     // GUESS AS A CITATION. ToME has a SHOW_MESSAGE_LOG action and its Classic HUD
@@ -905,7 +893,7 @@ export const ACTIONS = [
     id: 'scroll_back',
     name: 'Scroll the log back',
     group: 'Log',
-    order: 35,
+    order: 33,
     // +1 is BACK IN TIME, matching what Page Up does in every document ever
     // written. Shift picks the other lane, and that is a fact about a panel
     // rather than about a key, so it is not an action here.
@@ -918,7 +906,7 @@ export const ACTIONS = [
     id: 'scroll_forward',
     name: 'Scroll the log forward',
     group: 'Log',
-    order: 36,
+    order: 34,
     effect: { kind: 'scroll', steps: -1 },
     defaults: [{ kind: 'key', value: 'pagedown' }],
     fixed: [],

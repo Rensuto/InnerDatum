@@ -40,7 +40,7 @@ describe('shared constants', () => {
     expect(Math.log2(TILE_PX) % 1).toBe(0);
   });
 
-  it('pins PROTOCOL_VERSION at 27 — the conversation', () => {
+  it('pins PROTOCOL_VERSION at 28 — the zoom is gone', () => {
     // AN EXPLICIT PIN, so the bump cannot be silently reverted by a merge.
     // Everything above only asserts the constants are positive integers, which
     // a revert would pass. THE JUSTIFICATION MOVES WITH THE NUMBER — a pin whose
@@ -191,10 +191,35 @@ describe('shared constants', () => {
     //
     // A mismatch instead closes the socket with `version_mismatch` and costs a
     // page reload, which in an Activity is what launching already does.
-    expect(PROTOCOL_VERSION).toBe(27);
+    //
+    // ════════════════════════════════════════════════════════════════════════
+    // v28 IS THE FIRST BUMP FOR A SUBTRACTION, AND SUBTRACTIONS NEVER GET THE
+    // HEARING ADDITIONS GET.
+    // ════════════════════════════════════════════════════════════════════════
+    //
+    // Every paragraph above weighs an ADDITION and asks whether an old client
+    // ignoring it would draw a lie. *"remove the (zoom) option"* takes
+    // `set_zoom` off `ClientMsg` and the REQUIRED `zoom` off `SettingsMsg`, and
+    // neither half can be ignored:
+    //
+    //   A v27 CLIENT SENDS `set_zoom` AND IS REFUSED. The one trust boundary is
+    //   `parseClientMsg`'s zod parse, so a verb no longer in the union comes
+    //   back `bad_message` — and the mouse wheel sent one per notch.
+    //
+    //   AND IT READS `msg.zoom` OFF A FRAME THAT NO LONGER HAS IT. `undefined`
+    //   reaches its renderer, `Math.trunc` makes NaN of it and the clamp takes
+    //   the bottom of the range: the returning player's map comes up at its
+    //   smallest step, every session, with no control left that moves it. That
+    //   is `1 -> 2`'s rule in its hardest form — not a field whose meaning
+    //   changed, a field that is not there.
+    //
+    // v20 IS THE PRECEDENT AND THIS IS THE SAME SHAPE: it removed three `desc`
+    // fields and bumped, because a v19 client renders `undefined` where it
+    // expects a sentence. Nothing about a removal is ever quietly ignorable.
+    expect(PROTOCOL_VERSION).toBe(28);
   });
 
-  it('keeps the 26 -> 27 changelog entry beside the constant, and non-empty', () => {
+  it('keeps the 27 -> 28 changelog entry beside the constant, and non-empty', () => {
     // THE PROSE IS THE DELIVERABLE HERE, NOT DECORATION. Every bump in this file
     // is argued above the constant, and the argument is the only thing that
     // tells the next person whether their change forces a bump or is an addition
@@ -222,11 +247,11 @@ describe('shared constants', () => {
     // touched — a guard that proves the discipline held LAST TIME is not a
     // guard. It moves with the constant now, and the assertions below name this
     // entry's own frame.
-    const afterHeading = source.split('26 -> 27 (THE CONVERSATION)')[1] ?? '';
+    const afterHeading = source.split('27 -> 28 (THE ZOOM IS GONE)')[1] ?? '';
     // The entry ends where the one before it begins. Entries are written newest
     // first ABOVE the constant, so cutting at the constant would read every
     // older entry too, and an assertion could pass on somebody else's prose.
-    const entry = afterHeading.split('25 -> 26 (ONLY WHAT YOU CAN SEE)')[0] ?? '';
+    const entry = afterHeading.split('26 -> 27 (THE CONVERSATION)')[0] ?? '';
 
     expect(afterHeading).not.toBe('');
     expect(entry.length, 'the entry runs on into the constant').toBeLessThan(afterHeading.length);
@@ -237,14 +262,18 @@ describe('shared constants', () => {
     // under it, and the server-side state an older client cannot see; the half
     // that rides the same number without forcing it has to be argued for too, or
     // the next reader cannot tell which half did the work.
-    expect(entry).toContain('`DialogueMsg`');
-    expect(entry).toContain('`dialogue_choose`');
-    expect(entry).toContain('`talk`');
-    // THE FORCING FACT, NAMED. Two new verbs and one new frame would not move
-    // this number; the parked body is what does, and an entry that left it out
-    // would read as an argument for NOT bumping.
-    expect(entry).toContain('PARKS ITS BODY');
+    expect(entry).toContain('`set_zoom`');
+    expect(entry).toContain('`SettingsMsg`');
+    // THE FORCING FACT, NAMED. This entry's hazard is the opposite of every one
+    // above it: nothing was added for an old client to ignore, something was
+    // TAKEN, and an entry that only said what was deleted would read as a
+    // tidy-up rather than as a bump.
+    expect(entry).toContain('WAS REQUIRED');
     expect(entry).toContain('CONSIDERED AND NOT BUMPED FOR');
+    // AND WHAT HAPPENS TO THE VALUE REAL PLAYERS ALREADY HAVE ON DISK. A
+    // removal with no word about the saves is the half that turns into a
+    // support question on a Friday night.
+    expect(entry).toContain('ALREADY ON DISK');
     // And it must say what it deliberately did NOT do to the save file, because
     // the reflex when a protocol moves is to move both numbers.
     expect(entry).toContain('SCHEMA_VERSION');

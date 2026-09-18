@@ -130,7 +130,7 @@ import type { SpriteSource } from '../render/assets.ts';
 import type { PanelRect } from './panel.ts';
 import type { PanelSize } from './drag.ts';
 import { HP_LOW } from '../../shared/vitals.ts';
-import { RESOURCE_H, drawResource, resourceStripH } from './resource.ts';
+import { RESOURCE_H, WIDEST_POOL_LINE_W, drawResource, resourceStripH } from './resource.ts';
 import { PURSE_GAP, drawPurse } from './purse.ts';
 import { drawXpBar, xpBarGeometry } from './xpbar.ts';
 import { drawAirBar } from './air.ts';
@@ -140,8 +140,106 @@ import type { AirView, ProgressMsg, ResourceView } from '../../shared/protocol.t
 // Geometry. See the layout note in the header before changing any of it.
 // ---------------------------------------------------------------------------
 
-/** The full pane. Same width the dock has always been, so the two match. */
-export const PARTY_PANE_W = 208;
+/**
+ * The inset every row is laid out inside — `paneGeometry`'s `x`, and the same
+ * number `partyPaneHeight` reserves top and bottom.
+ *
+ * NAMED BECAUSE THE PANE'S WIDTH IS NOW DERIVED FROM IT. It was written out as
+ * `PANEL_PAD + 3` in the two functions below; a width computed from one copy
+ * while the rows were laid out against another is the shape this file's own
+ * header warns about.
+ */
+const PANE_INSET = PANEL_PAD + 3;
+
+/**
+ * How far into the row the portrait — and therefore the pool strip under it —
+ * starts. `drawRow`'s `token.x`.
+ */
+const ROW_TOKEN_DX = 5;
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE FULL PANE, AND THE WIDTH IS DERIVED FROM WHAT A POOL ACTUALLY PRINTS.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Reported as *"the Party UI needs to be slightly widened as it can cut
+ * resourcces off. example: the redactor character has its Ink initially cut off
+ * on the party display until you manually drag to widenen it a bit to
+ * accomodate."*
+ *
+ * ═══ IT WAS 208, A NUMBER, AND THREE CLASSES OF FOUR WERE CUT ═══
+ * MEASURED against the row this pane actually draws — `drawResource` at
+ * `stacked`, starting at `token.x` with `x + w - token.x` to run in, which is
+ * 187 pixels at 208:
+ *
+ *   Resolve   10 pips, `Resolve 100/100`   wants 234   CUT by 47
+ *   Focus     10 pips, `Focus 100/100`     wants 222   CUT by 35
+ *   Ink       10 pips, `Ink 100/100`       wants 210   CUT by 23
+ *   Reagents   8 pips, `Reagents`          wants 164   fits
+ *
+ * The Redactor is the one that got reported; the Watchman — the class most
+ * people start on — was losing more of its line than the Redactor was. The pane
+ * CLIPS to its rect (`drawPartyPane`), so the overflow is not drawn over the
+ * map where somebody would see it and call it a bug: it is silently cut at the
+ * frame, which is why three classes shipped this way.
+ *
+ * ═══ THE DEFAULT WAS WRONG, NOT THE MAXIMUM ═══
+ * The grip could always reach a width that fits — the player in the report got
+ * there by dragging. What no player should have to do is discover that their
+ * own resource is being hidden by a number that was chosen before the pool
+ * strip moved into this pane at all.
+ *
+ * ═══ DERIVED, AND THE DERIVATION IS THE DEFINITION ═══
+ * `WIDEST_POOL_LINE_W` walks `ResourceKind` and measures the line `poolText`
+ * prints, in the glyph advance the row draws with. Added to the two insets and
+ * the portrait offset, that IS the pane width — so a fifth resource, a longer
+ * label or a wider figure moves this constant by itself instead of quietly
+ * losing the end of somebody's line again.
+ *
+ * ═══ SIX PIXELS WIDER THAN THE WIDEST REAL LINE, AND THAT IS THE BOUND ═══
+ * `WIDEST_POOL_LINE_W` is 240 and the widest line any class actually draws is
+ * the Watchman's 234, because the bound measures EVERY kind at the continuous
+ * shape and `Reagents` is both the longest label and the one kind that is
+ * discrete. Deriving the exact 234 instead would need each pool's authored
+ * maximum, which lives on the server (`RESOURCE_RULES`) and must not be copied
+ * into this client — `ResourceView.discrete`'s own note says why. So the client
+ * sizes from a bound it can state, and `partypanel.test.ts` walks the real
+ * class table to prove the bound holds. Six pixels is the price of not keeping
+ * a second copy of authored data in the renderer.
+ *
+ * ═══ MEASURED CONSEQUENCES, SINCE THIS IS A LAYOUT CONSTANT ═══
+ * 208 -> 261. At the 640-wide floor the pane leaves 373 clear pixels against
+ * `MAP_MIN_CLEAR_PX` 320, so the clear-map heuristic still picks Rows exactly
+ * where it did. And `mode` is `paneW >= PARTY_PANE_W`, so a pane DRAGGED
+ * narrower than 261 now takes the Portraits form where it used to take Rows —
+ * which is the honest reading of that test rather than a side effect: Rows is
+ * the form that shows the pools, and it now means "wide enough to show them".
+ */
+export const PARTY_PANE_W = PANE_INSET * 2 + ROW_TOKEN_DX + WIDEST_POOL_LINE_W;
+
+/**
+ * How wide one ROW is inside a pane this wide — `paneGeometry`'s `w`.
+ *
+ * EXPORTED, AND THE REASON IS THE CONSTANT ABOVE. `PARTY_PANE_W` is defined as
+ * "the width at which the widest pool line fits", and a test can only check
+ * that claim by asking the same two questions the painter asks. Two copies of
+ * the row inset — one in the width, one in the layout — is how a pane ends up
+ * six pixels short of what it promised.
+ */
+export function paneRowW(paneW: number): number {
+  return Math.max(0, paneW - PANE_INSET * 2);
+}
+
+/**
+ * How much room the self row's pool strip gets inside a row this wide — what
+ * `drawRow` hands `drawResource` as its `width`.
+ *
+ * The strip starts at the PORTRAIT rather than at the text, so the pips have
+ * the whole row to run in; see the call in `drawRow`.
+ */
+export function poolStripW(rowW: number): number {
+  return Math.max(0, rowW - ROW_TOKEN_DX);
+}
 /**
  * Rail, gutter and one face. Everything else is dropped.
  *
@@ -279,10 +377,12 @@ function rowHeightFor(row: PartyPaneRow, view: PartyPaneView, compact: boolean):
  *
  * `resourceStripH` is `ui/resource.ts`'s own answer, so this grows if the pips
  * ever do rather than being a number remembered in two files. TRUE is passed
- * because the pane draws the STACKED shape: the pane is 208 wide and the row was
- * written for the full-width strip along the bottom, so on one line everything
- * past the AP blocks ran off the end -- reported as "it looks like the MP is cut
- * off in the player hud".
+ * because the pane draws the STACKED shape: the row was written for the
+ * full-width strip along the bottom, so on one line everything past the AP
+ * blocks ran off the end -- reported as "it looks like the MP is cut off in the
+ * player hud". The pane was 208 wide when that was written and the width is
+ * derived now (`PARTY_PANE_W`), which answers the POOL line; this answers the
+ * BUDGET line, and the two are separate faults with separate fixes.
  */
 const RESOURCE_STRIP_H = resourceStripH(true);
 
@@ -491,7 +591,7 @@ export function partyPaneView(options: {
 
 /** How tall the pane wants to be, before the viewport has its say. */
 export function partyPaneHeight(view: PartyPaneView, mode: PartyPaneMode): number {
-  const inset = PANEL_PAD + 3;
+  const inset = PANE_INSET;
   if (mode === PartyPaneMode.Portraits) {
     const flag = view.invites.length > 0 ? BUTTON_H : 0;
     return inset * 2 + flag + view.rows.length * PARTY_ROW_COMPACT_H;
@@ -639,12 +739,15 @@ type PaneGeometry = {
  * out first.
  */
 function paneGeometry(view: PartyPaneView, layout: PartyPaneLayout): PaneGeometry {
-  const inset = PANEL_PAD + 3;
+  const inset = PANE_INSET;
   const compact = layout.mode === PartyPaneMode.Portraits;
   const { rect } = layout;
 
   const x = rect.x + inset;
-  const w = Math.max(0, rect.w - inset * 2);
+  // THROUGH `paneRowW`, which is the same function `PARTY_PANE_W` is defined
+  // against. A second expression here is how the pane comes to be narrower
+  // than the width that was derived to hold the content.
+  const w = paneRowW(rect.w);
   const bottom = rect.y + rect.h - inset;
   let y = (compact ? rect.y : rect.y + HEADER_H) + inset;
 
@@ -1081,7 +1184,10 @@ function drawRow(
     ctx.fillRect(x, y, 3, rect.h - 1);
   }
 
-  const token: PanelRect = { x: x + 5, y: y + 1, w: FACE_PX, h: FACE_PX };
+  // `ROW_TOKEN_DX`, NOT A 5. `PARTY_PANE_W` is derived from this offset — the
+  // pool strip starts here — so the two must be the same number by
+  // construction rather than by coincidence.
+  const token: PanelRect = { x: x + ROW_TOKEN_DX, y: y + 1, w: FACE_PX, h: FACE_PX };
   drawFace(ctx, sprites, row, token);
   // A body nobody is driving, and a body on the floor, are both HATCHED. The
   // hatch is the shape half of "not with us"; the word half is below.
@@ -1151,10 +1257,22 @@ function drawRow(
       // FROM THE TOKEN TO THE ROW'S EDGE. It starts under the portrait rather
       // than under the name so the pips have the full width of the row to run
       // in -- twelve reagents plus a budget does not fit beside a 32px face.
-      // Even so this is 187 pixels against the 256 the flat row wants, which is
-      // why `stacked` is set rather than the pane being widened: `MAX_PIPS` is
-      // 16, so a discrete pool alone can want 224 and NO pane width is safe.
-      width: Math.max(0, x + w - token.x),
+      //
+      // ═══ AND THE PANE IS NOW SIZED SO THIS IS ENOUGH ═══
+      // This said *"187 pixels against the 256 the flat row wants, which is why
+      // `stacked` is set rather than the pane being widened: `MAX_PIPS` is 16,
+      // so a discrete pool alone can want 224 and NO pane width is safe."* Both
+      // halves were true and the conclusion did not follow. `stacked` answers
+      // the BUDGET row, which is the 256; it does nothing for the POOL line,
+      // which is pips plus the figure and stayed on line one — and three of the
+      // four classes had that line cut at the frame. `PARTY_PANE_W` is derived
+      // from `WIDEST_POOL_LINE_W` now, so this is 240 against the 234 the
+      // widest authored pool wants. The 16-pip pool nobody has authored is
+      // still out of reach, and `partypanel.test.ts` walks the real classes.
+      //
+      // `poolStripW(w)` AND NOT `x + w - token.x`: they are the same number,
+      // and only one of them is the number `PARTY_PANE_W` was derived from.
+      width: poolStripW(w),
     });
   }
 
@@ -1436,15 +1554,28 @@ export function drawPartyPane(options: PartyPaneOptions): void {
   ctx.clip();
 
   const compact = layout.mode === PartyPaneMode.Portraits;
+  const geometry = paneGeometry(view, layout);
   if (!compact) {
     const down = view.rows.filter((row) => row.downed !== null).length;
-    // The header carries the COUNT, not the word "party" alone: "PARTY · 1" is
-    // how somebody playing alone learns the pane is right rather than broken.
-    const title = down > 0 ? `PARTY · ${down} DOWN` : `PARTY · ${view.rows.length}`;
+    /**
+     * The header carries the COUNT, not the word "party" alone: "PARTY · 1" is
+     * how somebody playing alone learns the pane is right rather than broken.
+     *
+     * ═══ AND IT SAYS "3/6" WHEN THE BOX COULD NOT HOLD THEM ALL ═══
+     * `paneGeometry` places rows while they fit and then stops — silently,
+     * which is what it should do with the pixels and the wrong thing to do with
+     * the fact. A pane squeezed by the Case Log, by a short band or by the
+     * player's own grip showed three faces and a header reading "PARTY · 6",
+     * and the three missing people were indistinguishable from three people who
+     * had left. One number a player can see, one they have.
+     */
+    const shown = geometry.rows.length;
+    const held = view.rows.length;
+    const count = shown < held ? `${shown}/${held}` : String(held);
+    const title = down > 0 ? `PARTY · ${down} DOWN` : `PARTY · ${count}`;
     drawHeader(ctx, sprites, title, rect, FONT_META);
   }
 
-  const geometry = paneGeometry(view, layout);
   for (const slot of geometry.invites) drawInvite(ctx, slot);
 
   if (compact && view.invites.length > 0) {

@@ -83,6 +83,28 @@ const MAX_PIPS = 16;
 
 const FONT = 'bold 10px ui-monospace, Consolas, monospace';
 
+/**
+ * Advance of one glyph in the 10px monospace above.
+ *
+ * The same six pixels ui/charsheet.ts:172, ui/tooltip.ts and ui/contextmenu.ts
+ * spend, and for the same reason those files give: it decides how big a BOX is
+ * and nothing else. The strings themselves go through the real context at paint
+ * time. Consolas advances 0.55em, so six is a deliberate over-estimate — the
+ * safe direction for a box, and the wrong one for positioning one string
+ * against another, which nothing here does.
+ */
+const CHAR_W = 6;
+
+/**
+ * JUST ENOUGH OF A POOL TO SAY HOW WIDE ITS LINE IS.
+ *
+ * `ResourceView`'s four budget fields are drawn on the SECOND line when the row
+ * is `stacked`, so they are no part of this question; taking a `Pick` rather
+ * than the whole view is what lets a caller ask about a pool SHAPE that no
+ * frame has sent — which is exactly what `WIDEST_POOL_LINE_W` below does.
+ */
+export type PoolShape = Pick<ResourceView, 'kind' | 'current' | 'max' | 'discrete'>;
+
 export type ResourceOptions = {
   readonly ctx: CanvasRenderingContext2D;
   readonly sprites: SpriteSource;
@@ -166,7 +188,7 @@ export function resourceLabel(kind: ResourceKind): string {
  * viewport. Above the cap the row collapses to the number alone, which is ugly
  * and honest.
  */
-export function pipCount(resource: ResourceView): { total: number; filled: number } {
+export function pipCount(resource: PoolShape): { total: number; filled: number } {
   const max = Math.max(0, Math.floor(resource.max));
   const current = Math.min(Math.max(0, resource.current), max);
 
@@ -179,6 +201,99 @@ export function pipCount(resource: ResourceView): { total: number; filled: numbe
   const perPip = max / CONTINUOUS_PIPS;
   return { total: CONTINUOUS_PIPS, filled: Math.floor(current / perPip) };
 }
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * WHAT THIS ROW PRINTS BESIDE THE PIPS. One producer, three readers.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `drawResource` built this string TWICE — once in `poolLabel` for the stacked
+ * shape and once in the tail for the flat one — with the `bare` test spelled
+ * out in both. Identical today, and the kind of pair that stops being identical
+ * the first time somebody changes one of them. The third reader is the one that
+ * made it worth extracting: `poolLineW` has to measure the string the painter
+ * will actually draw, not a string that looks like it.
+ *
+ * NO FIGURE BESIDE A DISCRETE POOL THE ROW COULD DRAW. "3/8" next to eight
+ * countable vials says the same thing twice and re-frames the pips as
+ * decoration on a fraction, which is the bar this whole file exists to avoid.
+ * A pool the row could NOT draw (`total === 0`, the `MAX_PIPS` valve) falls
+ * back to the figure rather than to nothing at all.
+ */
+export function poolText(pool: PoolShape): string {
+  const { total } = pipCount(pool);
+  const bare = pool.discrete && total > 0;
+  return bare
+    ? resourceLabel(pool.kind)
+    : `${resourceLabel(pool.kind)} ${Math.floor(pool.current)}/${Math.floor(pool.max)}`;
+}
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * HOW WIDE THE POOL LINE WANTS TO BE: every pip, the gap, and `poolText`.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * THE ARITHMETIC IS `drawResource`'s OWN, not a second estimate of it. The pip
+ * loop advances `PIP_PX + PIP_GAP` per pip, `poolLabel` then adds `PIP_GAP * 2`
+ * before the text, and the text is drawn from there. Any other answer here
+ * would be a box sized against a row nobody draws.
+ *
+ * IT IS A WANT, NOT A REQUIREMENT. The row already survives a narrower box:
+ * pips stop when the next one would not fit and the figure is skipped once the
+ * cursor is past the edge. What it does NOT survive is a box that is wide
+ * enough to start the text and too narrow to finish it — the text is drawn on
+ * the `cursor < x + width` test and then CLIPPED by the pane, which is the
+ * reported bug (`PARTY_PANE_W`).
+ */
+export function poolLineW(pool: PoolShape): number {
+  const { total } = pipCount(pool);
+  return total * (PIP_PX + PIP_GAP) + PIP_GAP * 2 + poolText(pool).length * CHAR_W;
+}
+
+/**
+ * The widest figure a pool prints. Every authored pool is 0-100 or 0-8, so
+ * three digits either side is the widest `cur/max` the row can carry, and 100
+ * is the shortest number that is three digits wide.
+ */
+const WIDEST_POOL_FIGURE = 100;
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE WIDEST POOL LINE ANY CLASS CAN PUT ON A ROW. The party pane's width.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * WALKED OVER `ResourceKind` ITSELF rather than over a list somebody typed: the
+ * union is the closed set the wire carries, so a fifth kind is included here
+ * the moment it is named, and there is no second table to forget to update. The
+ * same device `SLOT_ORDER` uses, and the opposite of a hand-typed list that
+ * claims to be `Object.values(...)`.
+ *
+ * ═══ AT THE CONTINUOUS SHAPE, WHICH IS THE WIDER ONE FOR EVERY AUTHORED POOL ═══
+ * A continuous pool is `CONTINUOUS_PIPS` pips AND the figure; a discrete one is
+ * `max` pips and the bare label. At the maxima the game actually authors —
+ * 0-100 for Resolve, Focus and Ink, a discrete 0-8 for Reagents — the
+ * continuous shape is the wider of the two for every kind, so measuring every
+ * kind as continuous is an upper bound on all four rather than a guess about
+ * which one wins.
+ *
+ * ═══ IT IS AN UPPER BOUND ON THE AUTHORED POOLS AND NOT ON EVERY POSSIBLE ONE ═══
+ * `MAX_PIPS` is 16, so a discrete pool of sixteen would want 224 pixels of pips
+ * before a single letter is drawn and would exceed this. That is stated rather
+ * than defended: no class carries one, and `partypanel.test.ts` walks the REAL
+ * class table — every class, its real kind, its real maximum — and fails the
+ * day one does. A constant derived from a shape needs a test against the world,
+ * and that is the test.
+ */
+export const WIDEST_POOL_LINE_W = Math.max(
+  ...Object.values(ResourceKind).map((kind) =>
+    poolLineW({
+      kind,
+      current: WIDEST_POOL_FIGURE,
+      max: WIDEST_POOL_FIGURE,
+      discrete: false,
+    }),
+  ),
+);
 
 /**
  * One pip. Art when there is art, a traced shape when there is not.
@@ -345,11 +460,10 @@ export function drawResource(options: ResourceOptions): void {
   const poolLabel = (): void => {
     cursor += PIP_GAP * 2;
     ctx.fillStyle = PALETTE.BONE;
-    const bare = resource.discrete && total > 0;
-    const text = bare
-      ? resourceLabel(resource.kind)
-      : `${resourceLabel(resource.kind)} ${Math.floor(resource.current)}/${Math.floor(resource.max)}`;
-    if (cursor < x + width) ctx.fillText(text, cursor, lineY + PIP_PX / 2);
+    // THROUGH `poolText`, which is also what `poolLineW` measures — see its
+    // note. A second copy of the `bare` test here is how the box comes to be
+    // sized against a string the painter does not draw.
+    if (cursor < x + width) ctx.fillText(poolText(resource), cursor, lineY + PIP_PX / 2);
   };
 
   if (stacked) {
@@ -371,16 +485,10 @@ export function drawResource(options: ResourceOptions): void {
 
   cursor += PIP_GAP * 2;
   ctx.fillStyle = PALETTE.BONE;
-  // The figure is printed unless the pips ARE the figure. A discrete pool with a
-  // drawn row says everything already, and "3/8" beside eight countable vials
-  // re-frames the pips as decoration on a fraction — the exact reading this file
-  // exists to prevent. A pool the row could not draw (`total === 0`, the
-  // `MAX_PIPS` valve) falls back to the number rather than to nothing at all.
-  const bare = resource.discrete && total > 0;
-  const label = bare
-    ? resourceLabel(resource.kind)
-    : `${resourceLabel(resource.kind)} ${Math.floor(resource.current)}/${Math.floor(resource.max)}`;
-  if (cursor < x + width) ctx.fillText(label, cursor, midY);
+  // The figure is printed unless the pips ARE the figure — `poolText` owns that
+  // rule for both shapes of this row, and owning it once is what lets
+  // `poolLineW` measure the string that is actually drawn.
+  if (cursor < x + width) ctx.fillText(poolText(resource), cursor, midY);
 
   ctx.restore();
 }

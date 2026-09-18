@@ -275,9 +275,15 @@ export const UiCommand = {
   ShowInventory: 'show_inventory',
   /** The full-screen region map. Shows the OVERWORLD and only the overworld. */
   ShowWorldMap: 'show_world_map',
-  /** One whole step of scale, out and in. See the renderer's `setZoom`. */
-  ZoomOut: 'zoom_out',
-  ZoomIn: 'zoom_in',
+  /**
+   * THERE WERE TWO MORE HERE, `ZoomOut` and `ZoomIn`, and they are gone with the
+   * control: *"remove the (zoom) option"*. Removing the row from the settings
+   * menu and leaving these would have left two bindings on the Keys screen for
+   * a setting with no readout and no other route into it, which is the orphan
+   * the removal exists to avoid. Nothing else moved: `keymap.ts` numbers its
+   * rows by `order`, so the two ids simply stopped existing and a stored bind
+   * for either is dropped on load as any unknown action id is.
+   */
   ToggleLog: 'toggle_log',
   ToggleParty: 'toggle_party',
 } as const;
@@ -326,7 +332,7 @@ export type KeyHandlers = {
   /** M4. One of the four verbs above; the caller decides what each means. */
   readonly onUi: (command: UiCommand) => void;
   /**
-   * Page Up / Page Down over the Case Log.
+   * Page Up / Page Down over the Log.
    *
    * `steps` is +1 for BACK IN TIME and -1 for forward; `alternate` is Shift, and
    * this file deliberately does not know that it selects the Margin lane. Which

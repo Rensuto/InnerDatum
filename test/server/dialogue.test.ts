@@ -609,10 +609,28 @@ describe('only the host answers for the party', () => {
     await choose(lead, topicNodeId(TopicId.Rumour), ChatOptionId.RouteParty);
     expect(lead.errors()).toEqual([]);
 
+    /**
+     * ═══ READ AS A WINDOW, BECAUSE THE MOOR’S CLOCK IS STILL RUNNING ═══
+     * This compared the filed turn against the overworld clock read at the very
+     * end of the test, and the overworld ticks on wall time: under a full
+     * parallel suite this failed once at 2163ms and passed on its own and on an
+     * immediate re-run. A test that goes red under load and green in isolation
+     * reads as a caught mutant or a broken gate, and it costs the next person a
+     * bisect. The RULE is unchanged — the line is filed under the reader’s clock
+     * and not the speaker’s — and it is still falsifiable, because the town’s
+     * frozen number is asserted to be outside the window.
+     */
+    const afterMoor = server.realms.overworld.world.turn.clock.gameTurn;
+    const inTown = town.world.turn.clock.gameTurn;
+    expect(
+      inTown >= moor && inTown <= afterMoor,
+      'the two clocks overlap; this proves nothing',
+    ).toBe(false);
     const heard = other.lines().find((l) => l.text === "Put it on the whole party's map.");
     expect(heard, 'the party could not follow the exchange').toBeDefined();
-    expect(heard?.gameTurn, 'the line was filed under the speaker’s clock').toBe(
-      server.realms.overworld.world.turn.clock.gameTurn,
+    expect(heard?.gameTurn, 'the line was filed before the exchange').toBeGreaterThanOrEqual(moor);
+    expect(heard?.gameTurn, 'the line was filed under the speaker’s clock').toBeLessThanOrEqual(
+      afterMoor,
     );
   });
 

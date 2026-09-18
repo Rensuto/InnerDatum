@@ -146,7 +146,7 @@
 import { PartyAction } from '../../shared/protocol.ts';
 import type { LoreView } from '../../shared/protocol.ts';
 import { PALETTE } from '../render/canvas.ts';
-import { UI_SCALE_MAX, UI_SCALE_MIN, ZOOM_MAX, ZOOM_MIN } from '../../shared/version.ts';
+import { UI_SCALE_MAX, UI_SCALE_MIN } from '../../shared/version.ts';
 import {
   ACTIONS,
   actionById,
@@ -237,6 +237,24 @@ const KEY_ROW_MIN_W = NAME_MIN_W + CTRL_GAP + CONTROLS_W;
 const RESET_ALL_W = 62;
 const BACK_W = 40;
 const PAGE_BTN_W = 18;
+
+/**
+ * ══════════════════════════════════════════════════════════════════════════
+ * THE UI SIZE ROW'S OWN FURNITURE: two arrows and the number between them.
+ * ══════════════════════════════════════════════════════════════════════════
+ *
+ * NARROWER THAN `CTRL_W`, which is the Keys screen's `[X]`/`[D]` button and
+ * holds three glyphs. These hold one, and they sit on a root row that is only
+ * `ENTRY_H` tall with a label already in it — so they take the width of a
+ * button rather than the width of a label.
+ *
+ * `STEP_VALUE_W` FITS `100%` AT `CHAR_W` WITH A CHARACTER TO SPARE: the widest
+ * value this can print is four characters, and the box is centred text, so a
+ * fifth would simply be clipped by `fitText` rather than pushing an arrow.
+ */
+const STEP_BTN_W = 12;
+const STEP_GAP = 3;
+const STEP_VALUE_W = CHAR_W * 5;
 
 /** The close control, top-right of the header strip. Square, so it is a target. */
 const CLOSE_PX = 13;
@@ -342,6 +360,28 @@ const ARMED_LABEL = '[?]';
 /** The footer's controls. */
 const RESET_ALL_LABEL = 'RESET ALL';
 const BACK_LABEL = 'BACK';
+/**
+ * ═══ THE TWO ARROWS ARE DRAWN, NOT TYPED, AND THAT IS WHY THIS IS A NUMBER ═══
+ *
+ * They were `'◀'` and `'▶'` handed to `drawButton`, and `drawButton` fits its
+ * label to `rect.w - 6` — six pixels on a 12-wide plate. Neither triangle is in
+ * `ui-monospace`, so the browser falls back to whatever proportional face has
+ * them and the glyph measured 8.61px: it did not fit, `fitText` could not
+ * shorten one character, and what was drawn was `◀…` at 14.11px centred in a
+ * 12px box — the triangle hanging outside the border with the ellipsis inside
+ * it, on every window where the row is live.
+ *
+ * `fitText` no longer widens a one-glyph label (ui/panel.ts), which is the
+ * general half of that bug. This is the specific half: a control whose size is
+ * fixed in this file must not depend on which font a machine happens to have.
+ * `drawCog` in ui/caselog.ts made the same choice for the same reason.
+ *
+ * FIVE BY NINE INSIDE A 12x11 PLATE: a pixel of air either side of the point,
+ * and an odd height so the tip lands on a whole pixel rather than between two.
+ */
+const STEP_ARROW_W = 5;
+const STEP_ARROW_H = 9;
+
 const PREV_LABEL = '<';
 const NEXT_LABEL = '>';
 /** The marker on the row the pointer is over. A shape, so hover survives greyscale. */
@@ -441,51 +481,38 @@ export type MenuEffect =
   | { readonly kind: 'leave-character' }
   | { readonly kind: 'ui'; readonly command: UiCommand }
   /**
-   * ═══════════════════════════════════════════════════════════════════════════
-   * STEP THE TILE SIZE — a pointer route to the one persisted preference that
-   * had none.
-   * ═══════════════════════════════════════════════════════════════════════════
+   * ══════════════════════════════════════════════════════════════════════════
+   * STEP THE INTERFACE SIZE. Asked for, and it had no route at all.
+   * ══════════════════════════════════════════════════════════════════════════
+   * *"we also need to include an option in the settings for UI scaling to lower
+   * or increase it."*
    *
-   * ═══ WHAT WAS ACTUALLY MISSING ═══
-   * Zoom is a real preference: a dedicated wire verb (`set_zoom`), a server echo
-   * (`SettingsMsg`), and storage that follows the account. It IS discoverable —
-   * `zoom_in`/`zoom_out` are rows on the Keys screen, so it is not invisible the
-   * way an audit of the options screen alone would suggest. What it had no route
-   * to was CHANGING it without a keyboard, which for a Discord Activity on a
-   * touch device means not at all. Upstream exposes it on a settings screen in
-   * two places (GraphicMode.lua:139, VideoOptions.lua:77).
+   * `hudScale` was computed by `viewLayout` from the device pixel ratio and
+   * `HUD_MAX_*`, and a player who wanted the interface bigger had no way to say
+   * so. Upstream exposes the equivalent on a settings screen in two places
+   * (GraphicMode.lua:139, VideoOptions.lua:77).
    *
-   * ═══ ONE ROW THAT CYCLES, NOT A `-` / `+` PAIR ═══
-   * `ZOOM_MIN` is -1 and `ZOOM_MAX` is +1: THREE VALUES, and shared/version.ts
-   * argues that range at length — "one step each way is a real range and no
-   * setting is useless". Cycling three things is what a press does naturally,
-   * and it costs no new row kind, no new hit kind and no new geometry, so the
-   * typed union that makes a dead row a compile error stays as it is.
+   * ═══ `delta` IS THE WHOLE VOCABULARY OF THE ROW ═══
+   * -1 and +1 are the two ARROWS: one step that way, clamped by the renderer,
+   * and the arrow at the end of the range is drawn greyed and answers no click.
+   * Asked for in those words: *"the \"UI Size\" button should be arrows that
+   * change the scaling percentage, not just smaller, larger, etc."*
+   *
+   * 0 IS THE ROW ITSELF, AND IT CYCLES. That is what the row did before the
+   * arrows existed, and it is kept because it is the KEYBOARD's copy of them:
+   * `pressMenuSelection` has exactly one act per row, so a row whose Enter
+   * clamped at the top would strand a keyboard-only player at LARGEST with no
+   * way back down. Left/Right on the lit row step like the arrows; Enter wraps.
    *
    * IT LEAVES THE MENU OPEN, unlike every other row here. The whole point is to
-   * look at the map and press again.
-   */
-  | { readonly kind: 'zoom' }
-  /**
-   * ════════════════════════════════════════════════════════════════════════════
-   * STEP THE INTERFACE SIZE. Asked for, and it had no route at all.
-   * ════════════════════════════════════════════════════════════════════════════
-   * *"we also need to include an option in the settings for UI scaling to lower
-   * or increase it."* Where ZOOM had keys and no pointer route, this had
-   * NEITHER: `hudScale` was computed by `viewLayout` from the device pixel ratio
-   * and `HUD_MAX_*`, and a player who wanted the interface bigger had no way to
-   * say so.
+   * look at the result and press again.
    *
-   * A SEPARATE ROW FROM ZOOM, WHICH IS THE POINT RATHER THAN AN OVERSIGHT. The
-   * HUD used to paint into the map's backbuffer so `=` resized the world AND the
-   * hotbar together; test/client/hudscale.test.ts is the record of splitting
-   * them. One row driving both would undo that in the interface where a player
-   * would most reasonably expect them to be separate.
-   *
-   * CYCLES, LIKE ZOOM, and leaves the menu open for its reason: the whole point
-   * is to look at the result and press again.
+   * THERE WAS A `zoom` ROW ABOVE THIS ONE and it is gone — *"remove the (zoom)
+   * option"*. It moved the MAP's magnification, which is a different factor
+   * (test/client/hudscale.test.ts is the record of splitting them), and nothing
+   * here inherits it: this row must never reach `scale`.
    */
-  | { readonly kind: 'ui-scale' }
+  | { readonly kind: 'ui-scale'; readonly delta: number }
   /**
    * ═══════════════════════════════════════════════════════════════════════════
    * PUT THE PANELS BACK — `Minimalist.lua:354-359`'s `resetPlaces`.
@@ -558,6 +585,33 @@ export type MenuRow =
       readonly enabled: boolean;
       /** Why it is greyed, in words. Null when it is not. */
       readonly reason: string | null;
+      /**
+       * ═════════════════════════════════════════════════════════════════════
+       * TWO ARROWS AND A READOUT, ON THE RIGHT OF THIS ROW. Absent on all but
+       * one of them.
+       * ═════════════════════════════════════════════════════════════════════
+       * The UI SIZE row is the only entry that carries a VALUE the player
+       * moves rather than a screen they open, so it is the only one with
+       * controls inside it. Declared on the row rather than inferred from the
+       * effect kind because the painter, `place` and the hit test all have to
+       * agree about whether this row has buttons in it, and three readings of
+       * one fact is how a button gets drawn and then ignored.
+       *
+       * `less` AND `more` ARE THE ENDS OF THE RANGE. False draws that arrow
+       * greyed and makes the hit test answer null for it — the same rule
+       * `enabled` keeps for the row, one level down, so "unpressable" stays a
+       * property of the geometry rather than a check somebody can forget.
+       *
+       * NO BOXES AT ALL ON A GREYED ROW. `place` skips them when `enabled` is
+       * false, so a window with no room for a second factor has a row that
+       * says so and nothing inside it to press.
+       */
+      readonly steppers?: {
+        readonly less: boolean;
+        readonly more: boolean;
+        /** Drawn between the arrows. "125%", already formatted. */
+        readonly value: string;
+      };
     }
   | { readonly kind: typeof MenuRowKind.Section; readonly label: KeyGroup }
   | {
@@ -699,7 +753,7 @@ export type EscapeMenuView = {
    */
   readonly confirming?: number | null;
   /**
-   * THE CURRENT ZOOM STEP, `ZOOM_MIN`..`ZOOM_MAX` — see the `zoom` effect.
+   * THE CURRENT INTERFACE STEP, `UI_SCALE_MIN`..`UI_SCALE_MAX` — see `ui-scale`.
    *
    * ON THE VIEW rather than read from the renderer, because this module draws
    * and never touches a canvas: the row is a READOUT as well as a control, and
@@ -708,10 +762,28 @@ export type EscapeMenuView = {
    *
    * ABSENT READS AS 0, the shipped default — which is what a client with no
    * `settings` frame yet is actually looking at.
+   *
+   * IT DECIDES WHICH ARROW IS GREYED and nothing else: the two ends of
+   * `UI_SCALE_MIN`..`UI_SCALE_MAX` are the ends of the control. What the step
+   * LOOKS like is `uiScalePercent`, which is a different question.
    */
-  readonly zoom?: number;
-  /** THE CURRENT INTERFACE STEP, `UI_SCALE_MIN`..`UI_SCALE_MAX` — see `ui-scale`. */
   readonly uiScale?: number;
+  /**
+   * WHAT THAT STEP ACTUALLY DREW, AS A PERCENTAGE OF THE DEFAULT ONE.
+   *
+   * ═══ IT IS MEASURED, NOT DERIVED FROM THE STEP ═══
+   * `hudScale` is a WHOLE number clamped by what the window can hold, so the
+   * step and the picture are not the same fact: on a window whose automatic
+   * factor is 2, one step up is 3 — 150% — and on a window that has no room
+   * for a second factor every step draws 100%. The caller reads it off the
+   * renderer's own answer (`setUiScale`'s RETURN, which is the clamped step),
+   * so this row prints what the player is looking at and never what was asked
+   * for. That is the whole reason it is a percentage rather than a word: a word
+   * that cycled while the screen did not move was the complaint.
+   *
+   * ABSENT READS AS 100, which is the default step drawing the default size.
+   */
+  readonly uiScalePercent?: number;
   /**
    * DOES THIS WINDOW HAVE ROOM FOR A SECOND INTERFACE FACTOR? Decides only
    * whether the UI SIZE row is greyed — `panelsMoved`'s twin, one rule up.
@@ -726,15 +798,6 @@ export type EscapeMenuView = {
    * the live row rather than a permanently greyed one.
    */
   readonly uiScaleFixed?: boolean;
-  /**
-   * DOES THIS WINDOW HAVE ROOM FOR A SECOND MAP SCALE? `uiScaleFixed`'s twin,
-   * and it is true on more windows than that one -- measured, zoom produces a
-   * single map scale on everything narrower than 1280.
-   *
-   * ABSENT READS AS FALSE, so a caller that has not been taught to measure gets
-   * the live row.
-   */
-  readonly zoomFixed?: boolean;
   /**
    * HAS ANY PANEL BEEN DRAGGED? Decides only whether RESET PANELS is greyed.
    *
@@ -788,12 +851,12 @@ function entryRow(
   keyLabel: string,
   enabled: boolean,
   reason: string | null,
-): MenuRow {
+): Extract<MenuRow, { kind: typeof MenuRowKind.Entry }> {
   return { kind: MenuRowKind.Entry, index, effect, label, keyLabel, enabled, reason };
 }
 
 /**
- * THE ROOT SCREEN. SEVEN ROWS, ALWAYS SEVEN, IN THIS ORDER.
+ * THE ROOT SCREEN. TEN ROWS, ALWAYS TEN, IN THIS ORDER.
  *
  * The count is fixed on purpose (ui/contextmenu.ts:94-102): a menu whose shape
  * changes with state moves the row the player was already reaching for. Both
@@ -801,11 +864,15 @@ function entryRow(
  * player with no account — are drawn GREYED WITH A REASON rather than dropped,
  * which is how the count stays fixed while the menu still tells the truth.
  *
- * It was six until v19. `SWITCH CHARACTER` earned the seventh because it is a
- * VERB with nowhere else to live: no other surface in this client ends a
- * session. The unspent-points count was refused a row of its own under the same
- * rule and went inside row 3's label instead, which is the distinction — a fact
+ * It was six until v19. `SWITCH CHARACTER` earned a row because it is a VERB
+ * with nowhere else to live: no other surface in this client ends a session.
+ * The unspent-points count was refused a row of its own under the same rule and
+ * went inside the TALENTS label instead, which is the distinction — a fact
  * about an existing row goes on that row, a new verb gets a row.
+ *
+ * IT WAS ELEVEN UNTIL THE ZOOM ROW WENT (*"remove the (zoom) option"*), and the
+ * three `ROW_*` constants above moved with it rather than the numbers being
+ * chased through main.ts and the tests by hand.
  */
 /**
  * ═══════════════════════════════════════════════════════════════════════════
@@ -822,37 +889,31 @@ function entryRow(
  * the confirmation would silently move to `INVENTORY` — a guard protecting the
  * wrong thing is worse than no guard, because it reads as protection.
  */
-// ALL THREE MOVED DOWN ONE when the UI SIZE row joined the settings group. They
-// are constants and not literals precisely so that this is a one-line change and
-// not a hunt through main.ts and the tests.
-export const ROW_CASE_NOTES = 8;
-export const ROW_LEAVE_PARTY = 9;
-export const ROW_SWITCH_CHARACTER = 10;
+// ALL THREE MOVED DOWN ONE when the UI SIZE row joined the settings group, and
+// back UP one when the ZOOM row left it. They are constants and not literals
+// precisely so that this is a one-line change and not a hunt through main.ts and
+// the tests -- which is exactly what it was both times.
+export const ROW_CASE_NOTES = 7;
+export const ROW_LEAVE_PARTY = 8;
+export const ROW_SWITCH_CHARACTER = 9;
 
 /**
- * How the three zoom steps read. `ZOOM_MIN`..`ZOOM_MAX` is -1..1, and the row is
- * a readout as much as a control, so the value is a WORD rather than a number —
- * "ZOOM: 0" tells a player nothing about what they are looking at.
- */
-function zoomWord(step: number): string {
-  if (step <= ZOOM_MIN) return 'SMALLER';
-  if (step >= ZOOM_MAX) return 'BIGGER';
-  return 'NORMAL';
-}
-
-/**
- * How the four interface steps read. `zoomWord`'s twin, and a WORD for its
- * reason -- the row is a readout as much as a control.
+ * How the interface size reads on its row: a PERCENTAGE, not a word.
  *
- * FOUR VALUES RATHER THAN THREE, because `UI_SCALE_*` is -1..2: the range is
- * asymmetric on purpose (`hudScale` is a divisor bounded hard at 1 below, so
- * there is only one step down that can mean anything) and the words have to say
- * which of the two large ones a player is looking at.
+ * ═══ IT WAS FOUR WORDS AND THE WORDS COULD LIE ═══
+ * SMALLER / NORMAL / LARGER / LARGEST named the STEP, and the step is not the
+ * picture: `hudScale` is a whole number clamped by what the window can hold, so
+ * on most windows two of those words drew the same interface and the row
+ * appeared to do nothing twice. A percentage cannot lie in that direction — it
+ * is measured off what the renderer settled on, so a step that changed nothing
+ * prints the same number, which is the truth rather than a fifth word for it.
+ *
+ * ROUNDED TO A WHOLE PERCENT. The factor is a ratio of two small integers, so
+ * the only values this can produce are things like 50, 100, 150, 200 and 33 —
+ * a decimal place would be noise on a readout a player glances at.
  */
-function uiScaleWord(step: number): string {
-  if (step <= UI_SCALE_MIN) return 'SMALLER';
-  if (step >= UI_SCALE_MAX) return 'LARGEST';
-  return step > 0 ? 'LARGER' : 'NORMAL';
+function uiScalePercentText(percent: number): string {
+  return `${String(Math.max(1, Math.round(percent)))}%`;
 }
 
 function rootRows(view: EscapeMenuView): readonly MenuRow[] {
@@ -887,71 +948,59 @@ function rootRows(view: EscapeMenuView): readonly MenuRow[] {
     entryRow(1, { kind: 'keys' }, 'KEY BINDINGS', '', true, null),
     /**
      * ═══ BESIDE THE OTHER PREFERENCE ROW, WHICH IS WHERE A PLAYER LOOKS ═══
-     * The five rows below it open a panel; these two change how the game is set
-     * up. Grouping them is the whole reason upstream has a settings screen at
-     * all — and two rows is not a screen, so they sit together here instead.
+     * The five rows below it open a panel; these change how the game is set up.
+     * Grouping them is the whole reason upstream has a settings screen at all —
+     * and three rows is not a screen, so they sit together here instead.
      *
-     * THE KEY IS SHOWN TOO, read off the live keymap like every other row. Zoom
-     * already has keys and they are already on the Keys screen; this row is the
-     * pointer route to the same preference, not a second way to own it.
-     */
-    /**
-     * GREYED WHERE THE WINDOW HAS NO ROOM, exactly as UI SIZE is one rule
-     * down -- and this row needed it more. Measured across six viewports:
-     * zoom yields ONE map scale on everything narrower than 1280, and
-     * SMALLER moves nothing on any of them, because `scale` floors at 1.
+     * NO KEY SHOWN, because it has none. Inventing a binding to fill the column
+     * would put a key on the Keys screen that nobody asked for. It had a
+     * NEIGHBOUR that did print one — the ZOOM row, which was a second route to
+     * `zoom_in` — and that row is gone.
      *
-     * THE KEY STILL PRINTS. `zoom_in` exists whatever this window can do,
-     * the Keys screen lists it, and blanking it here would make the row
-     * disagree with that screen. The key press says why instead -- see
-     * `applyZoom` in main.ts, which is the half UI SIZE never needed
-     * because it has no binding.
-     */
-    entryRow(
-      2,
-      { kind: 'zoom' },
-      `ZOOM: ${zoomWord(view.zoom ?? 0)}`,
-      labelFor('zoom_in', keymap),
-      view.zoomFixed !== true,
-      view.zoomFixed === true ? 'this window fits one size' : null,
-    ),
-    /**
-     * BESIDE ZOOM, WHICH IS THE ONLY PLACE IT MAKES SENSE. The two are the same
-     * KIND of preference -- how big a thing is drawn -- and the whole reason
-     * they are two rows is that they move different factors.
+     * ═══ ARROWS AND A PERCENTAGE, NOT A WORD THAT CYCLES ═══
+     * *"the \"UI Size\" button should be arrows that change the scaling
+     * percentage, not just smaller, larger, etc."* The row's own effect still
+     * cycles (`delta: 0`) because that is the keyboard's one act per row; the
+     * two arrows are `delta: -1` and `delta: +1` and clamp.
      *
-     * NO KEY SHOWN, because it has none. Zoom's row prints `zoom_in` since that
-     * binding already existed and the row is a second route to it; inventing a
-     * binding here to fill the column would put a key on the Keys screen that
-     * nobody asked for.
-     */
-    /**
      * GREYED WHERE THE WINDOW HAS NO ROOM, with the reason on the row — the
      * treatment `RESET PANELS` gets one rule down, and for the same argument:
-     * a control that does nothing when pressed reads as broken. This one would
-     * read as broken TWICE OVER, because the word on the row would still cycle
-     * SMALLER -> NORMAL -> LARGER -> LARGEST while the screen never moved.
+     * a control that does nothing when pressed reads as broken. `place` then
+     * builds no arrow boxes at all, so the greyed row has nothing in it to
+     * press.
      *
      * STILL SHOWN, and still showing the setting. The preference is stored
      * server-side and follows the player to whatever they open the game on
      * next, so a small window must say what is set — it just must not claim it
      * can change it here.
      */
-    entryRow(
-      3,
-      { kind: 'ui-scale' },
-      `UI SIZE: ${uiScaleWord(view.uiScale ?? 0)}`,
-      '',
-      view.uiScaleFixed !== true,
-      view.uiScaleFixed === true ? 'this window fits one size' : null,
-    ),
+    {
+      ...entryRow(
+        2,
+        { kind: 'ui-scale', delta: 0 },
+        'UI SIZE',
+        '',
+        view.uiScaleFixed !== true,
+        view.uiScaleFixed === true ? 'this window fits one size' : null,
+      ),
+      steppers: {
+        // THE ENDS OF THE RANGE, AND NOTHING ELSE DECIDES THEM. `UI_SCALE_MIN`
+        // and `UI_SCALE_MAX` are the control; `uiScalePercent` is the picture,
+        // and the two are separate facts on purpose -- a step that draws the
+        // same factor as its neighbour still MOVED, and the readout says so by
+        // not changing rather than by an arrow lying about the bound.
+        less: (view.uiScale ?? 0) > UI_SCALE_MIN,
+        more: (view.uiScale ?? 0) < UI_SCALE_MAX,
+        value: uiScalePercentText(view.uiScalePercent ?? 100),
+      },
+    },
     /**
-     * THE FOURTH AND LAST OF THE SETTINGS ROWS. Key bindings, zoom, interface
-     * size and putting the panels back are the four that change how the game is
-     * SET UP; the four below them open something or end something.
+     * THE THIRD AND LAST OF THE SETTINGS ROWS. Key bindings, interface size and
+     * putting the panels back are the three that change how the game is SET UP;
+     * the six below them open something or end something.
      */
     entryRow(
-      4,
+      3,
       { kind: 'reset-panels' },
       'RESET PANELS',
       '',
@@ -959,7 +1008,7 @@ function rootRows(view: EscapeMenuView): readonly MenuRow[] {
       view.panelsMoved === true ? null : 'nothing has been moved',
     ),
     entryRow(
-      5,
+      4,
       { kind: 'ui', command: UiCommand.ShowSheet },
       'CHARACTER SHEET',
       labelFor('show_sheet', keymap),
@@ -967,7 +1016,7 @@ function rootRows(view: EscapeMenuView): readonly MenuRow[] {
       null,
     ),
     entryRow(
-      6,
+      5,
       { kind: 'ui', command: UiCommand.ShowTalents },
       talentsLabel,
       labelFor('show_talents', keymap),
@@ -975,7 +1024,7 @@ function rootRows(view: EscapeMenuView): readonly MenuRow[] {
       null,
     ),
     entryRow(
-      7,
+      6,
       { kind: 'ui', command: UiCommand.ShowInventory },
       'INVENTORY',
       labelFor('show_inventory', keymap),
@@ -1614,6 +1663,39 @@ function keyColumns(rowRect: PanelRect): {
   };
 }
 
+/**
+ * WHERE THE UI SIZE ROW'S TWO ARROWS AND ITS READOUT SIT. ONE COPY OF IT.
+ *
+ * `keyColumns`' shape and for its reason: `place` fills the hit boxes from this
+ * and `drawRow` draws from this, so there is exactly one opinion about where a
+ * control is. ui/partypanel.ts:93-99 records what losing that property costs.
+ *
+ * RIGHT-ALIGNED, because the row's label is left-aligned and an Entry row's
+ * right-hand side is where its second fact has always gone (the key, or the
+ * reason it is greyed). `right` matches the 3px inset `drawRow` already uses
+ * for that text.
+ */
+function stepperColumns(rowRect: PanelRect): {
+  readonly less: PanelRect;
+  readonly value: PanelRect;
+  readonly more: PanelRect;
+} {
+  // The plate is `rect.h - 2` tall -- see `drawRow` -- so the buttons centre in
+  // that and not in the row's full height, or they would sit a pixel low.
+  const plateH = rowRect.h - 2;
+  const y = rowRect.y + Math.floor((plateH - BTN_H) / 2);
+  const right = rowRect.x + rowRect.w - 3;
+  const more: PanelRect = { x: right - STEP_BTN_W, y, w: STEP_BTN_W, h: BTN_H };
+  const value: PanelRect = {
+    x: more.x - STEP_GAP - STEP_VALUE_W,
+    y,
+    w: STEP_VALUE_W,
+    h: BTN_H,
+  };
+  const less: PanelRect = { x: value.x - STEP_GAP - STEP_BTN_W, y, w: STEP_BTN_W, h: BTN_H };
+  return { less, value, more };
+}
+
 /** One row, placed, with whatever controls it carries. */
 export type PlacedMenuRow = {
   readonly row: MenuRow;
@@ -1627,6 +1709,17 @@ export type PlacedMenuRow = {
   readonly slots: readonly PanelRect[];
   readonly clear: PanelRect | null;
   readonly reset: PanelRect | null;
+  /**
+   * THE TWO ARROWS ON THE UI SIZE ROW, AS CONTROLS. Null on every other row,
+   * and null on that row when it is GREYED — `slots`' rule exactly: a control
+   * drawn as unpressable must be unpressable, and making that structural is
+   * what stops it being a check somebody forgets.
+   *
+   * An arrow at the end of the range is present here and still answers null in
+   * the hit test, because the painter has to draw it greyed: a row that lost an
+   * arrow at the bottom of the range would change width under the pointer.
+   */
+  readonly steppers: { readonly less: PanelRect; readonly more: PanelRect } | null;
 };
 
 /** The bottom strip's controls. `prev`/`next` are null on a one-page screen. */
@@ -1711,9 +1804,20 @@ function place(
         slots: columns.slots,
         clear: columns.clear,
         reset: columns.reset,
+        steppers: null,
+      });
+    } else if (row.kind === MenuRowKind.Entry && row.steppers !== undefined && row.enabled) {
+      const columns = stepperColumns(rowRect);
+      placed.push({
+        row,
+        rect: rowRect,
+        slots: [],
+        clear: null,
+        reset: null,
+        steppers: { less: columns.less, more: columns.more },
       });
     } else {
-      placed.push({ row, rect: rowRect, slots: [], clear: null, reset: null });
+      placed.push({ row, rect: rowRect, slots: [], clear: null, reset: null, steppers: null });
     }
     cursor += h;
   }
@@ -1857,6 +1961,7 @@ function escapeMenuGeometry(rect: PanelRect, rows: readonly MenuRow[]): EscapeMe
         },
         rect: { x, y: cursor, w: innerW, h: NOTE_ROW_H },
         slots: [],
+        steppers: null,
         clear: null,
         reset: null,
       });
@@ -2053,8 +2158,45 @@ export function escapeMenuHitAt(
       continue;
     }
 
-    if (row.kind === MenuRowKind.Entry && row.enabled && inside(placed.rect)) {
-      return { kind: MenuHitKind.Entry, index: row.index, effect: row.effect };
+    if (row.kind === MenuRowKind.Entry && row.enabled) {
+      /**
+       * THE ARROWS BEFORE THE ROW THEY SIT IN, exactly as the key columns are
+       * tested before their action row: the other order leaves them drawn,
+       * pressable-looking and unreachable, because the row's own rect covers
+       * them and would answer first.
+       *
+       * ═══ AN ARROW AT THE END OF THE RANGE ANSWERS NOTHING ═══
+       * It used to do the OPPOSITE of what it drew. The note here read *"falls
+       * through to the ROW rather than answering null, and that is deliberate:
+       * the row's own effect CYCLES, so a player who presses the greyed ▶ gets
+       * the wrap they would have got from Enter"*. Driven at 1920x1080, that
+       * wrap is what it costs: ▶, ▶ took the interface 100 -> 200 -> 300%, and
+       * a third press on the GREYED ▶ took it straight back down to 100. The
+       * arrow says "no further this way" and moved it the other way, by the
+       * whole range, on the press that means "more".
+       *
+       * So the box is claimed and nothing happens, which is what a greyed
+       * control means everywhere else here (`PlacedMenuRow.slots`: a control
+       * drawn as unpressable must BE unpressable). THE CYCLE SURVIVES ON THE
+       * ROW'S ENTER — `pressMenuSelection` still gives the row one act and it
+       * still wraps, so a keyboard-only player is not stranded at the top.
+       */
+      const steppers = placed.steppers;
+      if (steppers !== null && row.steppers !== undefined) {
+        if (inside(steppers.less)) {
+          return row.steppers.less
+            ? { kind: MenuHitKind.Entry, index: row.index, effect: { kind: 'ui-scale', delta: -1 } }
+            : null;
+        }
+        if (inside(steppers.more)) {
+          return row.steppers.more
+            ? { kind: MenuHitKind.Entry, index: row.index, effect: { kind: 'ui-scale', delta: 1 } }
+            : null;
+        }
+      }
+      if (inside(placed.rect)) {
+        return { kind: MenuHitKind.Entry, index: row.index, effect: row.effect };
+      }
     }
   }
   return null;
@@ -2063,6 +2205,47 @@ export function escapeMenuHitAt(
 // ---------------------------------------------------------------------------
 // Painting
 // ---------------------------------------------------------------------------
+
+/**
+ * ONE OF THE UI SIZE ROW'S ARROWS: the same plate every button in this client
+ * wears, with a TRIANGLE drawn on it instead of a character.
+ *
+ * `dir` is -1 for the left arrow and +1 for the right. See `STEP_ARROW_W` for
+ * why it is a shape; `drawCog` in ui/caselog.ts is the precedent.
+ *
+ * THE PLATE COMES FROM `drawButton` WITH AN EMPTY LABEL rather than from four
+ * `fillRect`s written out again here. A second copy of the border arithmetic is
+ * how one button in a panel comes to look a pixel different from its neighbour.
+ */
+function drawStepArrow(
+  ctx: CanvasRenderingContext2D,
+  rect: PanelRect,
+  dir: -1 | 1,
+  opts: { readonly ink: string },
+): void {
+  if (rect.w <= 0 || rect.h <= 0) return;
+  drawButton(ctx, rect, '', opts);
+  const w = Math.min(STEP_ARROW_W, rect.w - 2);
+  const h = Math.min(STEP_ARROW_H, rect.h - 2);
+  if (w <= 0 || h <= 0) return;
+  // WHOLE PIXELS. The backbuffer is magnified nearest-neighbour, so a triangle
+  // on a half pixel is a triangle with one soft edge and one hard one.
+  const cx = Math.floor(rect.x + rect.w / 2);
+  // FLOORED, NOT ROUNDED. The plate is 11 tall, so rounding puts the centre a
+  // pixel low and the triangle's bottom point lands ON the border row.
+  const cy = Math.floor(rect.y + rect.h / 2);
+  const tip = cx + (dir === 1 ? Math.ceil(w / 2) : -Math.ceil(w / 2));
+  const base = cx - (dir === 1 ? Math.floor(w / 2) : -Math.floor(w / 2));
+  ctx.save();
+  ctx.fillStyle = opts.ink;
+  ctx.beginPath();
+  ctx.moveTo(tip, cy);
+  ctx.lineTo(base, cy - Math.floor(h / 2));
+  ctx.lineTo(base, cy + Math.floor(h / 2));
+  ctx.closePath();
+  ctx.fill();
+  ctx.restore();
+}
 
 /** The status line's marker. A SHAPE per tone, so the three survive greyscale. */
 function markerFor(tone: MenuTone): string {
@@ -2131,6 +2314,49 @@ function drawRow(
       const label = `${mark}${row.label}`;
       ctx.fillText(fitText(ctx, label, rect.w - 4), rect.x + 2, rect.y + (rect.h - 2) / 2);
 
+      /**
+       * ═══ THE ARROWS AND THE NUMBER, WHERE THE KEY WOULD OTHERWISE GO ═══
+       * One row carries them and it is the only Entry with anything inside it.
+       * Drawn from `stepperColumns`, which is also what `place` built the hit
+       * boxes from, so there is one opinion about where they are.
+       *
+       * ═══ A GREYED ROW STILL PRINTS THE NUMBER, WHICH THIS CLAIMED AND DID NOT DO
+       * The note four screens up says *"STILL SHOWN, and still showing the
+       * setting … a small window must say what is set"*, and this was gated on
+       * `row.enabled` — so on the three windows this game is actually played
+       * in, where `uiScaleFixed` is true, the row printed no percentage at all.
+       * A comment claiming behaviour the painter does not have is worse than
+       * the missing feature, because the next reader believes it.
+       *
+       * SO BOTH, AND THE REASON MOVES LEFT OF THEM. The arrows are drawn GREY
+       * (they are unpressable, and `place` builds no boxes for them), the
+       * readout is drawn grey beside them, and "this window fits one size"
+       * right-aligns against the arrows instead of against the row. Those are
+       * not two controls competing for one strip: they are one fact and the
+       * sentence explaining it.
+       */
+      const columns = row.steppers === undefined ? null : stepperColumns(rect);
+      if (row.steppers !== undefined && columns !== null) {
+        drawStepArrow(ctx, columns.less, -1, {
+          ink: row.enabled && row.steppers.less ? PALETTE.PARCHMENT : PALETTE.GREY,
+        });
+        drawStepArrow(ctx, columns.more, 1, {
+          ink: row.enabled && row.steppers.more ? PALETTE.PARCHMENT : PALETTE.GREY,
+        });
+        // THE VALUE IS TEXT, NOT A BUTTON. It is a readout and pressing it must
+        // not look like it does something the arrows do.
+        ctx.font = FONT_BODY;
+        ctx.textAlign = 'center';
+        ctx.fillStyle = row.enabled ? PALETTE.GOLD : PALETTE.GREY;
+        ctx.fillText(
+          fitText(ctx, row.steppers.value, columns.value.w),
+          columns.value.x + columns.value.w / 2,
+          columns.value.y + columns.value.h / 2,
+        );
+        ctx.textAlign = 'left';
+        if (row.enabled) return;
+      }
+
       // The key on the right — the live one. A greyed row says WHY instead,
       // because "you are a party of one" is the only thing a player can act on.
       const right = row.enabled ? row.keyLabel : (row.reason ?? '');
@@ -2140,7 +2366,9 @@ function drawRow(
         ctx.fillStyle = row.enabled ? PALETTE.GREY_HI : PALETTE.GREY;
         ctx.fillText(
           fitText(ctx, right, rect.w / 2),
-          rect.x + rect.w - 3,
+          // LEFT OF THE ARROWS WHEN THERE ARE ANY, so the sentence and the
+          // number sit side by side rather than one over the other.
+          columns === null ? rect.x + rect.w - 3 : columns.less.x - 3,
           rect.y + (rect.h - 2) / 2,
         );
         ctx.textAlign = 'left';

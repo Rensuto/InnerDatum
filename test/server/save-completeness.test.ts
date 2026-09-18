@@ -67,19 +67,22 @@ const FULL = {
   kitGranted: ['item_brass_lantern'],
   keybinds: { move_n: ['w'] },
   /**
-   * THE FOUR THIS FIXTURE NEVER MENTIONED, and whose absence made the guard at
+   * THE ONES THIS FIXTURE NEVER MENTIONED, and whose absence made the guard at
    * the foot of this file structurally unable to see them. See its note.
+   *
+   * IT WAS FOUR AND IS NOW THREE: `zoom` sat here, bounded -1..1, and the field
+   * left the character file with the control that moved it (`27 -> 28` in
+   * shared/version.ts). A `zoom` key in an existing file is ignored on load and
+   * dropped by the next save — that is the whole migration, and it is the
+   * reason nothing needed rewriting on disk.
    */
-  // BOUNDED -1..1 (`ZOOM_MIN`/`ZOOM_MAX`). A 2 here is silently dropped by
-  // `parseZoom`, which is the parser being right and the fixture being wrong.
-  zoom: 1,
   // BOUNDED -1..2 (`UI_SCALE_MIN`/`UI_SCALE_MAX`), and asymmetric on purpose:
   // `hudScale` is a divisor bounded hard at 1 below, so there is only one step
   // down that can mean anything. This guard is what caught the field being added
   // without a round trip through the save, which is exactly its job.
   uiScale: 2,
   /**
-   * WHERE THEY LEFT THEIR PANELS, and the log's size. `zoom`'s third sibling.
+   * WHERE THEY LEFT THEIR PANELS, and the log's size. `uiScale`'s sibling.
    *
    * ONLY THE PANELS THAT MOVED get an entry — the client sends it that way
    * deliberately, so the file records what the player DID and a panel added
@@ -92,6 +95,7 @@ const FULL = {
     logSize: { w: 420, h: 180 },
     partySize: { w: 240, h: 160 },
     hotbarSize: { w: 300, h: 72 },
+    minimapSize: { w: 132, h: 132 },
     hotbarStyle: { vertical: true, icon: 48, opacity: 60 },
     logStyle: { font: 13, opacity: 70, spacing: 14 },
   },

@@ -24,6 +24,8 @@
  */
 
 import { PALETTE } from '../render/canvas.ts';
+import type { HoverCard } from './panel.ts';
+import type { PanelSize } from './drag.ts';
 import { TileCode, isWalkable, isSafeGround, BeaconKind } from '../../shared/protocol.ts';
 import type { BeaconView, LevelView, RegionView, SiteView } from '../../shared/protocol.ts';
 import type { TileXY } from '../../shared/coords.ts';
@@ -1049,12 +1051,213 @@ const FILED_WORD = 'filed';
  */
 export const MINIMAP_RADIUS = 16;
 
-/** Where the minimap goes: top-right, inside the margin. */
-export function minimapRect(viewW: number): MapRect {
-  const span = MINIMAP_RADIUS * 2 + 1;
-  const cell = Math.max(1, Math.floor(Math.min(MINIMAP_MAX_W / span, MINIMAP_MAX_H / span)));
-  const size = cell * span;
-  return { x: viewW - size - MINIMAP_MARGIN, y: MINIMAP_MARGIN, w: size, h: size };
+/** How many tiles across the minimap shows. The window, in cells. */
+export const MINIMAP_SPAN = MINIMAP_RADIUS * 2 + 1;
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE GRIP MAKES THE CELLS BIGGER. IT DOES NOT SHOW MORE WORLD.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Asked for as *"the minimap ui should also be draggable and resizable like the
+ * other UIs"*, which leaves open which of the two a resize means. It is the
+ * cells, for three reasons, and the first is upstream's.
+ *
+ * ═══ UPSTREAM'S MINIMAP RESIZES BY SCALE AND ITS WINDOW IS A CONSTANT ═══
+ * `Minimalist.lua:1611-1614`:
+ *
+ *     game.minimap_scroll_x, game.minimap_scroll_y =
+ *       util.bound(game.player.x - 25, 0, map.w - 50), ...
+ *     map:minimapDisplay(50 - mm_bg_x, 30 - mm_bg_y,
+ *       game.minimap_scroll_x, game.minimap_scroll_y, 50, 50, 0.85)
+ *
+ * — a fixed FIFTY-tile window centred on the player, and `places.minimap.scale`
+ * (`:378`, `:1969-1971`) is what the handle changes. The window is not a
+ * function of the scale anywhere in that file. Ours is a fixed 33, and the same
+ * rule applies to it.
+ *
+ * ═══ AND THE SERVER ONLY DESCRIBES 20 TILES OUT ═══
+ * `MINIMAP_REVEAL_RADIUS` is `DEFAULT_SIGHT_RADIUS * 2` = 20, and `beaconsFor`
+ * sends a friendly face or a way out only inside it. `MINIMAP_RADIUS` is 16, so
+ * every tile this map draws is inside the radius the server answers for. A grip
+ * that grew the WINDOW would walk past 20 and start drawing ground the server
+ * has deliberately declined to mark — a map that gets emptier the bigger you
+ * make it, which reads as the marks being broken.
+ *
+ * ═══ AND 16 IS A DESIGNED NUMBER ═══
+ * `MINIMAP_RADIUS`'s own note: *"a slightly bigger area than the player can
+ * currently see ... that margin IS the feature"*. A radius a gesture could
+ * change is a designed number handed to the pointer.
+ *
+ * ═══ THE BOUND IS UPSTREAM'S, PORTED — `Minimalist.lua:590` ═══
+ *
+ *     self.places[id].scale = util.bound(math.max((x - self.places[id].x)
+ *       / drag.payload.bx), 0.5, 2)
+ *
+ * — half size to double size, and nothing outside it. The default box is three
+ * pixels a cell, so doubling lands exactly on six and that is the ceiling: past
+ * it the corner map is a second view of the same ground, which is what the
+ * full-screen map already is.
+ *
+ * THE FLOOR IS TIGHTER THAN UPSTREAM'S AND THAT IS THE ONE DIVERGENCE. Half of
+ * three cells is 1.5, and cells are whole pixels here (`mapPlacement`: *"a
+ * fractional cell size makes adjacent cells round to different widths"*), so
+ * the choice is one or two. At one pixel a cell the player, a boss, a friendly
+ * face and a dropped coat are each a single pixel of a different colour, and
+ * `oneMarkPerBlock` already records a three-tile gate smearing at THREE. Two is
+ * the smallest box that still answers the question the map is asked. Upstream
+ * scales a texture and can afford the halfway house; we draw cells and cannot.
+ */
+export const MINIMAP_MIN_CELL = 2;
+export const MINIMAP_MAX_CELL = 6;
+
+/**
+ * HOW BIG THE BOX IS, given what the player dragged it to — or null for the
+ * size it comes at.
+ *
+ * ═══ SQUARE, AND SNAPPED TO WHOLE CELLS ═══
+ * The window is `MINIMAP_SPAN` square, so any box that is not an exact multiple
+ * of the cell size draws the map centred inside itself with a dead margin of up
+ * to a cell either side — `mapPlacement` letterboxes, which is right for the
+ * full-screen map and wrong for a framed box whose frame is meant to be the
+ * map's own edge. Snapping means the box IS the map: no margin at any size, and
+ * the frame the player drags is the frame they get.
+ *
+ * THE COST IS A STEPPED RESIZE — five sizes, 33 pixels apart. That is visible
+ * and honest; a smooth drag that left a growing empty border would not be.
+ *
+ * NULL IS THE DEFAULT AND NOT A SIZE WRITTEN OUT, exactly as `PanelSize`'s own
+ * note requires: the untouched box stays a function of `MINIMAP_MAX_W`/`_MAX_H`
+ * and lands on the three-pixel cell it has always had.
+ *
+ * THE SHORTER SIDE DECIDES, because `mapPlacement`'s cell is
+ * `min(rect.w / span, rect.h / span)` — sizing from the longer one would draw a
+ * box the map could not fill.
+ */
+export function minimapCellFor(size: { readonly w: number; readonly h: number } | null): number {
+  const want =
+    size === null
+      ? Math.min(MINIMAP_MAX_W / MINIMAP_SPAN, MINIMAP_MAX_H / MINIMAP_SPAN)
+      : Math.min(size.w, size.h) / MINIMAP_SPAN;
+  return Math.min(MINIMAP_MAX_CELL, Math.max(MINIMAP_MIN_CELL, Math.floor(want)));
+}
+
+/**
+ * ═══ WHAT THE MINIMAP SAYS ABOUT THE CELL UNDER THE POINTER — upstream's
+ *     `desc_fct` (`Minimalist.lua:1652`) ═══
+ *
+ * It names the TILE as well as the verbs, because "walk here" is only useful if
+ * the player can tell which cell the pointer is on: the map is two to six pixels
+ * a tile, so the coordinate is the confirmation.
+ *
+ * ═══ IT LIVES HERE AND NOT IN main.ts, WHICH IS WHERE IT WAS ═══
+ * `nearestVisibleHostile`'s note in main.ts states the rule this follows:
+ * *"main.ts's closure is unreachable from `test/`, so a rule that lived here
+ * could only ever be checked by scraping the source"*. It was, and the scrape
+ * asserted only that the card function was CALLED — a mutant that answered null
+ * for every point survived the whole suite, which is a hover card that never
+ * appears on a control whose only explanation it is.
+ *
+ * `walkable` IS PASSED IN rather than answered here: `travelTargetAllowed` needs
+ * the level and this module does not have one. The refusal must be the same
+ * sentence the verb menu greys its own row with.
+ */
+export function minimapCard(
+  tile: { readonly x: number; readonly y: number },
+  walkable: boolean,
+): HoverCard {
+  return {
+    title: `${String(tile.x)},${String(tile.y)}`,
+    meta: walkable ? 'click to travel here' : 'you cannot walk there',
+    lines: ['middle-click opens the region map'],
+  };
+}
+
+/** The side of the box, in logical pixels. One producer; see `minimapCellFor`. */
+export function minimapBoxSize(size: { readonly w: number; readonly h: number } | null): number {
+  return minimapCellFor(size) * MINIMAP_SPAN;
+}
+
+/**
+ * The smallest the grip may make the box — `MINIMAP_MIN_CELL`, squared up.
+ *
+ * ITS OWN FLOOR AND NOT `DEFAULT_PANEL_FLOOR`, for the reason the party pane
+ * carries one (ui/drag.ts): the shared floor is 160x72, and a 160-wide floor on
+ * a box whose smallest legal size is 66 would snap it back out from under the
+ * pointer at the moment the player asked for the small one.
+ */
+export const MINIMAP_FLOOR: PanelSize = {
+  w: MINIMAP_MIN_CELL * MINIMAP_SPAN,
+  h: MINIMAP_MIN_CELL * MINIMAP_SPAN,
+};
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * WHERE THE MINIMAP GOES BEFORE ANYBODY DRAGS IT: top-right, inside the margin.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `size` IS WHAT THE GRIP WAS DRAGGED TO, or null for "never touched" — the
+ * same nullable this client uses for every resizable panel. The OFFSET is not
+ * applied here: `movePanel` in main.ts is the one place a panel's offset is
+ * added, and this is the unmoved rect the painter, the hit test and the settle
+ * all start from.
+ *
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE BAND IS TAKEN HERE, SO THAT THE *MOVE* NEVER HAS TO TOUCH THE SIZE.
+ * ═══════════════════════════════════════════════════════════════════════════
+ * This is the whole reason the argument exists, and it is the one thing that
+ * went wrong when the box was first made movable.
+ *
+ * The Case Log is placed with `resizeIntoBand`, which clamps the ORIGIN as
+ * though the box were at its floor size and then caps `w`/`h` to the room that
+ * leaves. That is right for a box whose height the player sets directly. It is
+ * WRONG for a square one: dragging the minimap low in the band capped its
+ * height, and the squaring then took the width down with it — so a MOVE
+ * silently halved the map. Measured, at a 1262x320 viewport with the box
+ * dragged 180 pixels down: 99x99 became 66x66, a whole cell of resolution lost
+ * to a gesture that is not supposed to resize anything. `moveIntoBand`'s own
+ * note forbids exactly that — *"a drag moves a panel, it does not resize one"*.
+ *
+ * So the size is settled HERE, against the band, before any offset exists; the
+ * box comes out square, whole-celled and small enough that `moveIntoBand` can
+ * place it without capping anything. main.ts's `movePanel` then needs no
+ * minimap branch at all — it takes the same `moveIntoBand` the character sheet
+ * takes, and `settlePanel` takes the matching `settleOffset`.
+ *
+ * NULL BAND IS "DO NOT CAP", for the callers that are asking about the box's
+ * natural size rather than about a frame on a screen — `minimapReserveH`, and
+ * the tests that pin the default placement.
+ */
+export function minimapRect(
+  viewW: number,
+  size: { readonly w: number; readonly h: number } | null = null,
+  band: { readonly top: number; readonly bottom: number } | null = null,
+): MapRect {
+  /**
+   * IN CELLS THROUGHOUT, AND THE SHORTER SIDE IS CHOSEN EXACTLY ONCE.
+   *
+   * This capped the size in PIXELS and then called `minimapBoxSize`, which
+   * takes the shorter side again — so `minimapCellFor`'s own `Math.min` was
+   * dead code reached only with two equal numbers, and a mutation to
+   * `Math.max` changed nothing anywhere. Measured, not explained away: the
+   * mutant survived the whole suite. Capping the CELL instead leaves
+   * `minimapCellFor` as the one place a box becomes a cell count, and the
+   * band cap as arithmetic on top of it.
+   */
+  const asked = minimapCellFor(size);
+  const room =
+    band === null
+      ? asked
+      : Math.min(
+          asked,
+          Math.floor((band.bottom - band.top) / MINIMAP_SPAN),
+          Math.floor(viewW / MINIMAP_SPAN),
+        );
+  // NEVER BELOW THE FLOOR, even on a viewport too small to hold it. A box that
+  // shrank to nothing on a short window is a box the player cannot find again;
+  // `moveIntoBand` pins it to the top of the band instead.
+  const box = Math.max(MINIMAP_MIN_CELL, room) * MINIMAP_SPAN;
+  return { x: viewW - box - MINIMAP_MARGIN, y: MINIMAP_MARGIN, w: box, h: box };
 }
 
 /**
@@ -1174,9 +1377,17 @@ export function doorwayLine(site: SiteView): string {
  */
 export const ZONE_LABEL_FONT = '9px ui-monospace, Consolas, monospace';
 
-/** The baseline for the zone label, inside the reserve and never past it. */
-export function zoneLabelBaseline(viewW: number): number {
-  const box = minimapRect(viewW);
+/**
+ * The baseline for the zone label, inside the reserve and never past it.
+ *
+ * ═══ IT TAKES THE BOX, NOT THE VIEWPORT, AND THAT IS THE MOVE ═══
+ * This read `minimapRect(viewW)` and computed the box a second time. The box
+ * moves and resizes now, so a second computation would leave the name of the
+ * place standing in the top-right corner while the map it names sat somewhere
+ * else — the same two-producers fault `minimapRect` already has a paragraph
+ * about, in the surface that is hardest to notice is wrong.
+ */
+export function zoneLabelBaseline(box: MapRect): number {
   // `+ 10` of the twelve. The descender of a 9px face lands inside the last two.
   return box.y + box.h + 10;
 }

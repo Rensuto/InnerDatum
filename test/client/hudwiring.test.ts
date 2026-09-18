@@ -70,6 +70,13 @@ const CODE = SOURCE.split('\n')
   })
   .join('\n');
 
+/**
+ * The minimap's press block, as its guard is actually written. Named once
+ * because three order tests read it and a stale copy of it in one of them is
+ * how an ordering assertion comes to pass while asserting nothing.
+ */
+const MINI = 'if (point !== null && layout.minimap !== null && !overFloating(point.x, point.y)) {';
+
 /** Where a snippet sits in the whole file, asserted to exist as it goes. */
 function at(snippet: string, within: string = CODE): number {
   const index = within.indexOf(snippet);
@@ -212,7 +219,7 @@ describe('overPanel answers true for the whole screen while a drag is live', () 
 // 4. FOUR PANELS MOVE. SEVEN DO NOT.
 // ---------------------------------------------------------------------------
 
-describe('hudLayout clamps exactly the four movable panels into the band', () => {
+describe('hudLayout clamps exactly the movable panels into the band', () => {
   it('has exactly ONE call to moveIntoBand, inside movePanel', () => {
     // ═══ ONE CLAMP, THE WAY ui/drag.ts DEMANDS ═══
     // "There is exactly ONE copy of this and it is this one" is that module's
@@ -231,13 +238,19 @@ describe('hudLayout clamps exactly the four movable panels into the band', () =>
     expect(fn).toContain('band: { readonly top: number; readonly bottom: number }');
   });
 
-  it('routes all four dock rects through movePanel', () => {
+  it('routes all five dock rects through movePanel', () => {
     const layout = between('function hudLayout(width: number, height: number): HudLayout {', '\n}');
     for (const [field, panel] of [
       ['sheet', 'DraggablePanel.Sheet'],
       ['talents', 'DraggablePanel.Talents'],
       ['inventory', 'DraggablePanel.Inventory'],
       ['menu', 'DraggablePanel.Menu'],
+      // THE CONVERSATION WINDOW IS THE FIFTH. It was the one band-derived rect
+      // that went straight to its `*Rect` helper — "the window is not draggable
+      // in v1" — and the author asked for it to move. If it ever leaves this
+      // list again, the × and the cogwheel keep working while the header does
+      // nothing, which reads as a broken handle rather than a missing feature.
+      ['dialogue', 'DraggablePanel.Dialogue'],
     ] as const) {
       const start = at(`${field}: movePanel(`, layout);
       // TO THE CALL'S OWN CLOSING PAREN, which is the one at this indentation.
@@ -675,7 +688,30 @@ describe('the minimap is wired to something', () => {
   it('resolves a click on it to a tile', () => {
     // A plain containment check: `between` needs two anchors in one function and
     // the mousedown handler has no stable second one this far down.
-    expect(CODE).toContain('minimapTileAt(point.x, point.y, logicalW)');
+    expect(CODE).toContain('const mapped = minimapTileAt(mini, point.x, point.y);');
+  });
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * AND THE BOX IT IS TESTED AGAINST IS THE BOX ON SCREEN.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * The map MOVES and RESIZES now, so "is it wired to anything" stopped being
+   * the whole question: a resolver that called `minimapRect(width)` for itself
+   * would be wired to the factory position while the player was looking at the
+   * box in the middle of their screen. `minimapTileAt` takes a rect, and every
+   * caller hands it `hudLayout`'s.
+   */
+  it('takes the laid-out rect rather than computing a second one', () => {
+    const head = 'function minimapTileAt(rect: PanelRect | null, px: number, py: number)';
+    expect(CODE).toContain(head);
+    const body = CODE.slice(at(head), CODE.indexOf('\n}', at(head)));
+    expect(body, 'the resolver computes its own rect again').not.toContain('minimapRect(');
+    // AND IT IS `hudLayout`'s RECT AT EVERY CALL SITE. Three of them: the press,
+    // the hover card and the middle-click into the region map.
+    expect(CODE).toContain('minimapTileAt(mini, pt.x, pt.y)');
+    expect(CODE).toContain('minimapTileAt(rect, px, py)');
+    expect(CODE).toContain('const mini = hudLayout(mw, mh).minimap;');
   });
 
   it('travels through the SAME call the verb menu uses', () => {
@@ -684,33 +720,350 @@ describe('the minimap is wired to something', () => {
      * travel rather than its own implementation of it, including the
      * interruption rules that stop travel being a way to cross a fight.
      */
-    const start = at('minimapTileAt(point.x, point.y, logicalW)');
-    const body = CODE.slice(start, start + 700);
+    const start = at('const mapped = minimapTileAt(mini, point.x, point.y);');
+    const body = CODE.slice(start, start + 1200);
     expect(body).toContain('beginTravel(mapped, false)');
     // AND IT REFUSES IN WORDS on ground you cannot walk on, rather than being a
     // dead click on the water that is drawn right there on the map.
     expect(body).toContain('travelTargetAllowed(level, mapped, hasSeenHere())');
   });
 
-  it('sits after the panel guard and before shift-click and targeting', () => {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE WALK IS THE PRESS'S DEFERRED CLICK, NOT THE PRESS.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * The box is the travel control AND the move handle, which is only honest
+   * because `DRAG_THRESHOLD_PX` separates them: a press that goes nowhere runs
+   * its `click`, a press that travels six pixels moves the box instead. Firing
+   * `beginTravel` on the mousedown itself would make every attempt to drag the
+   * map also walk the party across the room.
+   */
+  it('walks on the RELEASE of a press that never moved, not on the press', () => {
+    const start = at('const mapped = minimapTileAt(mini, point.x, point.y);');
+    const body = CODE.slice(start, start + 1200);
+    const drag = body.indexOf('{ kind: DragKind.Panel, panel: DraggablePanel.Minimap },');
+    expect(drag, 'the press no longer begins a drag').toBeGreaterThan(-1);
+    expect(body.indexOf('beginTravel(mapped, false)')).toBeGreaterThan(drag);
+  });
+
+  /**
+   * THE RECT DECIDES, NOT THE TILE. `minimapTileAt` answers null for a point
+   * inside the box but off the drawn cells — a level narrower than the window
+   * letterboxes — and those pixels must not fall through to the plain
+   * left-click at the foot of the handler and walk the party to whatever is
+   * behind that corner of the screen.
+   */
+  it('claims its whole frame, including the letterbox', () => {
+    const down = CODE.slice(at("canvas.addEventListener('mousedown'"));
+    expect(down).toContain('if (inRect(mini, point.x, point.y)) {');
+  });
+
+  it('is hit-tested where it is painted: over the docks, under the panels', () => {
     /**
-     * AFTER the panels, because one dragged over the corner is something the
-     * player put there and should win. BEFORE shift-click and the aim, because
-     * both of those read a WORLD tile through `tileAtClient` and would silently
-     * resolve a minimap click to whatever is behind that corner of the screen.
+     * ═══ THIS TEST USED TO PIN THE OPPOSITE, AND THE OPPOSITE WAS THE BUG ═══
+     *
+     * It read *"AFTER the panels, because one dragged over the corner is
+     * something the player put there and should win"* and asserted the block sat
+     * after the `overPanel` swallow. But `paintHud` draws the party pane, the
+     * Case Log and the MENU button and THEN draws the minimap over all three,
+     * and the swallow covers the first two. Driven with the box dragged on top
+     * of each of them at 1262x428: 6160 pixels of a painted minimap opened a
+     * party verb menu, every pixel of it over the log was the log's (so the box
+     * could not be moved at all), and 240 pixels over the MENU button opened the
+     * escape menu.
+     *
+     * The rule this handler states nine times is HIT-TEST ORDER MIRRORS PAINT
+     * ORDER, so that is what is asserted: under the four floating panels and the
+     * conversation window, which are drawn over it; over the log, the pane, the
+     * MENU button and the `overPanel` swallow, which are drawn under it; and
+     * still before shift-click and the aim, which read a WORLD tile through
+     * `tileAtClient` and would resolve a minimap click to whatever is behind
+     * that corner of the screen.
      */
-    const guard = at('if (overPanel(event.clientX, event.clientY)) {');
-    const mini = at('minimapTileAt(point.x, point.y, logicalW)');
-    const shift = at('if (event.shiftKey) {');
-    expect(guard).toBeLessThan(mini);
-    expect(mini).toBeLessThan(shift);
+    const down = CODE.slice(at("canvas.addEventListener('mousedown'"));
+    const mini = down.indexOf(MINI);
+    expect(mini).toBeGreaterThan(-1);
+    const guard = down.indexOf('if (overPanel(event.clientX, event.clientY)) {');
+    const log = down.indexOf('if (point !== null && layout.log !== null && ');
+    const button = down.indexOf('menuButtonHit(point.x, point.y)');
+    const shift = down.indexOf('if (event.shiftKey) {');
+    const dialogue = down.indexOf('if (layout.dialogue !== null && dialogueView !== null');
+    for (const [name, index] of [
+      ['log', log],
+      ['menu button', button],
+      ['overPanel', guard],
+      ['shift-click', shift],
+    ] as const) {
+      expect(index, `${name} is not in the mousedown chain any more`).toBeGreaterThan(-1);
+      expect(mini, `the minimap lost to the ${name}, which is painted under it`).toBeLessThan(
+        index,
+      );
+    }
+    // ...AND THE CONVERSATION WINDOW STILL WINS, because it is painted last.
+    expect(dialogue).toBeGreaterThan(-1);
+    expect(dialogue).toBeLessThan(mini);
+    // ...AND THE FOUR FLOATING PANELS WIN BY THE GUARD RATHER THAN BY ORDER:
+    // they are tested BELOW the log for their own reasons, so the block asks
+    // their rects itself.
+    expect(down.slice(mini, mini + 400)).toContain('!overFloating(point.x, point.y)');
+  });
+
+  it('gives the four floating panels one expression, and it names all four', () => {
+    // The sheet, the talent panel, the inventory and the escape menu: the set
+    // that is painted over everything in the band. Five sites read it now and
+    // two of them used to write it out for themselves.
+    const expr = between('const overFloating = (px: number, py: number): boolean =>', ';\n');
+    for (const panel of ['sheet', 'talents', 'inventory', 'menu']) {
+      expect(expr, `${panel} left the occlusion set`).toContain(`inRect(layout.${panel}, px, py)`);
+    }
   });
 
   it('says what it does, because a control nobody knows about is not one', () => {
     // Upstream registers a `desc_fct` over the zone (Minimalist.lua:1652) for
     // the same reason. Ours is a hover card, asked first because nothing else is
     // docked in that corner.
-    expect(CODE).toContain('minimapCardAt(px, py, width)');
+    expect(CODE).toContain('minimapCardAt(layout.minimap, px, py)');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// THE MINIMAP MOVES AND RESIZES
+// ---------------------------------------------------------------------------
+
+describe('the minimap is furniture the player owns', () => {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * *"the minimap ui should also be draggable and resizable like the other UIs"*
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `mapview.test.ts` drives the arithmetic — the clamp, the cell bound, and the
+   * join between the moved box and `mapTileAt`. This pins the FIVE JOINS main.ts
+   * owns, which no test can drive because they are module scope inside a file
+   * that opens a socket on import.
+   */
+  it('is one rect, built from the band its own home sits in', () => {
+    // `minimapBand` and NOT `panelBand`: the box's y is `MINIMAP_MARGIN`, which
+    // is above `panelBand.top` — and above it by 46 more the moment the turn
+    // cards appear. The shared band would refuse the box's own default place.
+    expect(CODE).toContain(
+      'minimapRect(width, panelSizes[DraggablePanel.Minimap], minimapBand(height))',
+    );
+    expect(
+      between('function hudLayout(width: number, height: number): HudLayout {', '\n}'),
+    ).toContain('minimapBand(height),');
+    /**
+     * ═══ AND THE PAINTER PAINTS INTO IT ═══
+     * A MUTANT SURVIVED ON THIS: `rect: minimapRect(width)` in the `paintMap`
+     * call passed everything, because the guard only checked that
+     * `layout.minimap` had been read. That is the whole bug this feature can
+     * have — the map drawn at the factory corner while every click is resolved
+     * against the box the player moved — and it is one word wide.
+     */
+    expect(CODE).toContain('rect: miniBox,');
+    expect(CODE).toContain('const box = miniBox;');
+  });
+
+  /**
+   * ═══ AND `movePanel` HAS NO MINIMAP BRANCH, WHICH IS THE FIX ITSELF ═══
+   * The first draft placed it with `resizeIntoBand`, whose origin clamp caps
+   * the size to the room left — so dragging the box low turned 99x99 into
+   * 66x66 and a MOVE resized the map. The size is settled inside `minimapRect`
+   * now, so this box takes the same `moveIntoBand` the character sheet takes.
+   */
+  it('is moved by the shared clamp, not by a branch of its own', () => {
+    const move = between('function movePanel(', '\n}');
+    expect(move, 'the minimap grew its own clamp again').not.toContain('DraggablePanel.Minimap');
+    expect(move).toContain('moveIntoBand(rect, panelOffsets[panel], band, width)');
+  });
+
+  it('draws its grip with the only copy of that arithmetic', () => {
+    // `drawLogGrip`/`logGripAt` are what the Case Log, the party pane and the
+    // action bar all use. caselog.ts:1387 records what a grip drawn a few
+    // pixels from where it is pressed costs: a box that can never be resized.
+    // ═══ AND THE CORNER IS PART OF THAT ARITHMETIC ═══
+    // The box is right-docked, so it grows LEFTWARDS and its grip is in the
+    // corner it grows towards. Painter and hit test must name the same corner
+    // or the ticks are drawn where nothing answers.
+    expect(CODE).toContain('drawLogGrip(ctx, miniBox, gripCornerFor(DraggablePanel.Minimap));');
+    const down = CODE.slice(at("canvas.addEventListener('mousedown'"));
+    const gripCall =
+      'if (logGripAt(mini, point.x, point.y, gripCornerFor(DraggablePanel.Minimap)))';
+    expect(down).toContain(gripCall);
+    const grip = down.indexOf(gripCall);
+    const walk = down.indexOf('const mapped = minimapTileAt(mini, point.x, point.y);');
+    // THE GRIP BEFORE THE WALK, for the Case Log's reason: the grip sits INSIDE
+    // the box, over the map, and a press there means resize.
+    expect(grip).toBeGreaterThan(-1);
+    expect(grip).toBeLessThan(walk);
+  });
+
+  it('resizes against its own floor, band and rect', () => {
+    expect(CODE).toContain('if (panel === DraggablePanel.Minimap) return MINIMAP_FLOOR;');
+    expect(CODE).toContain('if (panel === DraggablePanel.Minimap) return minimapBand(logicalH);');
+    expect(CODE).toContain('if (panel === DraggablePanel.Minimap) return layout.minimap;');
+  });
+
+  it('grips the corner it grows towards, and one function says which', () => {
+    // FOUR READERS IN FOUR SCOPES: the painter, the press, the grab and
+    // `nextSize`. A second opinion about which corner is a grip drawn where
+    // nothing answers — caselog.ts:1409's failure with the sides swapped.
+    const answer = between('function gripCornerFor(panel: DraggablePanel): GripCorner {', '\n}');
+    expect(answer).toContain('panel === DraggablePanel.Minimap');
+    expect(answer).toContain('GripCorner.BottomLeft');
+    expect(answer).toContain('GripCorner.BottomRight');
+    // ...AND IT IS THE ONLY PANEL THAT GETS THE MIRROR. Every other one grows
+    // rightwards from a top-left origin.
+    for (const panel of ['Log', 'Hotbar', 'Party']) {
+      expect(answer, `${panel} took the mirrored grip`).not.toContain(`DraggablePanel.${panel}`);
+    }
+  });
+
+  it('sizes the minimap against the BAND, never against its own left edge', () => {
+    /**
+     * ═══ THE ONE-WORD BUG THIS FEATURE CAN HAVE, FOR THE SECOND TIME ═══
+     * `resizeIntoBand` caps `w` to `width - x`, which for a RIGHT-docked box is
+     * the room its own origin leaves — 107 pixels at the default. The grip could
+     * then only ever shrink the map, and 66 was absorbing. `minimapRect` settles
+     * the size against the band and squares it before any offset exists, which
+     * is the same reason `movePanel` needs no minimap branch, so the only clamp
+     * wanted here is the one the release already applies.
+     */
+    const arm = between('} else if (subject.kind === DragKind.Resize) {', 'springInventoryTab');
+    const mini = at('if (subject.panel === DraggablePanel.Minimap) {', arm);
+    const branch = arm.slice(mini, arm.indexOf('} else {', mini));
+    expect(branch).toContain('sizeIntoBand(asked, own, sizeW, floor)');
+    expect(branch, 'the minimap went back through the origin-relative clamp').not.toContain(
+      'resizeIntoBand',
+    );
+    // ...and the gesture is measured with the corner, or the mirror is a
+    // painter-only change and the box still grows the wrong way.
+    expect(arm).toContain('gripCornerFor(subject.panel)');
+  });
+
+  it('captures the edge that does NOT move when the box is resized', () => {
+    // For a right-docked box that is its RIGHT edge. Capturing the left one and
+    // measuring from it is measuring from the end that is about to move.
+    const grab = between('resizeAtGrab:', 'click,');
+    expect(grab).toContain('const corner = gripCornerFor(subject.panel);');
+    expect(grab).toContain('corner === GripCorner.BottomLeft ? rect.x + rect.w : rect.x');
+    expect(grab).toContain('corner === GripCorner.BottomLeft ? rect.x : rect.x + rect.w');
+  });
+
+  it('saves its size and reads it back, through the server lane', () => {
+    // Browser storage is partitioned inside the Activity iframe, so the panel
+    // layout has always gone to the character file. The offset rides the
+    // existing `offsets` record; the size needed a field.
+    expect(CODE).toContain('minimapSize: panelSizes[DraggablePanel.Minimap],');
+    expect(CODE).toContain('panelSizes[DraggablePanel.Minimap] = msg.panels.minimapSize;');
+  });
+
+  /**
+   * ═══ AND THE TOP HUD STRIP NO LONGER EATS HALF OF IT ═══
+   * `overPanel` swallowed everything above `hudTop`, and the box starts eight
+   * pixels down. Out of combat that was six pixels; in combat the card strip is
+   * full-width and 46 tall, so the top FIFTY-TWO pixels of a 99-pixel map were
+   * unclickable — in the one state where what is around the corner matters.
+   * The minimap is painted OVER the bar and the cards, so hit-test order has to
+   * say the same thing.
+   */
+  it('answers the mouse above the HUD line, where it is painted', () => {
+    expect(
+      between('function overPanel(clientX: number, clientY: number): boolean {', '\n  }'),
+    ).toContain(
+      'if (point.y < layout.hudTop && !inRect(layout.minimap, point.x, point.y)) return true;',
+    );
+  });
+
+  it('is a PANEL to the pointer, which it never was', () => {
+    /**
+     * `overPanel` listed the pane, the log, the four centred panels and the
+     * conversation window — and not this box. So `mousemove` ran
+     * `targeting?.hover(tile)` and `noteHoveredActor` for the world tile BEHIND
+     * it on every pointer move across it: an `inspect` per hover-settle for
+     * whatever is under the corner of the screen, and an exhausted bucket
+     * answers `error`, which cancels the player's aim. The same gap meant a
+     * right-click on the map opened a verb menu on the tile behind it.
+     *
+     * Survivable while the box lived in one corner; it is parkable in the middle
+     * of the playfield now.
+     */
+    expect(
+      between('function overPanel(clientX: number, clientY: number): boolean {', '\n  }'),
+    ).toContain('inRect(layout.minimap, point.x, point.y) ||');
+  });
+});
+
+describe('every dock refuses a press aimed at a panel drawn over it', () => {
+  /**
+   * HIT-TEST ORDER MIRRORS PAINT ORDER, which this handler states nine times and
+   * broke for five surfaces. `paintHud` draws pane -> log -> sheet -> talents ->
+   * inventory -> escape menu, so both docks lose to all four floating panels and
+   * the pane loses to the log. Measured: 4129 pixels of a live escape menu were
+   * the Case Log's header handle, 144 were the party pane's resize grip, and
+   * 4639 pixels of the log's transcript were party rows underneath it — with
+   * ACCEPT and DECLINE 100% covered once the log was dragged up, so a click at
+   * (135,67) declined a party invite the player never saw.
+   */
+  it('guards the Case Log and the pane grip against the four floating panels', () => {
+    const down = CODE.slice(at("canvas.addEventListener('mousedown'"));
+    expect(down).toContain(
+      'if (point !== null && layout.log !== null && !overFloating(point.x, point.y)) {',
+    );
+    const grip = at('logGripAt(layout.pane.rect, point.x, point.y)', down);
+    expect(down.slice(grip - 260, grip)).toContain('!overFloating(point.x, point.y)');
+  });
+
+  it('guards the party pane against the Case Log as well, on both buttons', () => {
+    const down = CODE.slice(at("canvas.addEventListener('mousedown'"));
+    const controls = at(
+      'const hit = partyPaneHitAt(layout.party, layout.pane, point.x, point.y);',
+      down,
+    );
+    const guard = down.slice(down.lastIndexOf('if (', controls), controls);
+    expect(guard).toContain('!overFloating(point.x, point.y)');
+    expect(guard, 'the log is the one that was always missing').toContain(
+      '!inRect(layout.log, point.x, point.y)',
+    );
+    // ...AND THE RIGHT-CLICK BRANCH SAYS THE SAME THING, which is where the
+    // shipped bug was first recorded.
+    expect(down).toContain(
+      'const overSheet = overFloating(point.x, point.y) || inRect(layout.log, point.x, point.y);',
+    );
+  });
+});
+
+describe('the party pane stops where the Case Log starts', () => {
+  /**
+   * ════════════════════════════════════════════════════════════════════════════
+   * BOTH ARE LEFT-COLUMN DOCKS AND NOTHING KEPT THEM APART.
+   * ════════════════════════════════════════════════════════════════════════════
+   * The pane hangs from `band.top` to whatever its rows need and the log stands
+   * on the band floor. Measured at 1262x428 with six members and nothing
+   * dragged: the log's top edge is y=202 and the pane ran to y=317, so three
+   * rows and the pane's own bottom border were painted and then covered — and
+   * the GRIP, which lives in that bottom-right corner, was under the log with
+   * the log's hit test running first, so the pane could not be resized at all.
+   */
+  it('lays the pane out twice, and only when the two actually overlap', () => {
+    const layout = between('function hudLayout(width: number, height: number): HudLayout {', '\n}');
+    // ONE BUILDER, TWO BOTTOMS — not two copies of the call with two argument
+    // lists that will drift.
+    expect(layout).toContain('const paneAt = (bottom: number): PartyPaneLayout | null =>');
+    expect(layout).toContain('const paneFull = paneAt(band.bottom);');
+    // AGAINST THE REAL RECT, not an assumed column: the log is movable, so a
+    // player who has dragged it away must not lose pane height to it.
+    expect(layout).toContain('const paneOverLog =');
+    expect(layout).toContain('log.x < paneFull.rect.x + paneFull.rect.w');
+    expect(layout).toContain('log.y < paneFull.rect.y + paneFull.rect.h');
+    // AND NEVER BELOW ITS OWN FLOOR. A log dragged to the top of the band would
+    // otherwise take the pane off the screen entirely.
+    expect(layout).toContain('Math.max(band.top + PARTY_PANE_MIN_H, Math.min(band.bottom, log.y))');
+  });
+
+  it('builds the log before the pane, or the cap reads a rect that does not exist yet', () => {
+    const layout = between('function hudLayout(width: number, height: number): HudLayout {', '\n}');
+    expect(at('const log = placed;', layout)).toBeLessThan(at('const paneAt = ', layout));
   });
 });
 
@@ -745,14 +1098,24 @@ describe('there is a pointer route into the escape menu', () => {
     expect(CODE.slice(start, start + 200)).toContain('openMenu()');
   });
 
-  it('takes the click before anything that reads a world tile', () => {
-    // Both the minimap branch and shift-click resolve a TILE; either would walk
-    // the player somewhere because they reached for the menu.
-    const button = at('menuButtonHit(point.x, point.y)');
-    const mini = at('minimapTileAt(point.x, point.y, logicalW)');
-    const shift = at('if (event.shiftKey) {');
-    expect(button).toBeLessThan(mini);
-    expect(mini).toBeLessThan(shift);
+  it('takes the click before anything that reads a world tile, except the map drawn over it', () => {
+    /**
+     * ═══ THE MINIMAP MOVED ABOVE IT, AND THAT IS THE CORRECTION ═══
+     * This asserted `button < mini` with the reasoning *"either would walk the
+     * player somewhere because they reached for the menu"* — which pre-dates the
+     * box being movable. `menuButtonRect()` is `{0,0,40,14}` and the minimap's
+     * band starts at 8, so a box dragged to the top-left corner PAINTS over 240
+     * pixels of the button and those 240 pixels opened the escape menu. The
+     * guard belongs on the button, not on the order: shift-click is still below
+     * both, which is the part of this that was about world tiles.
+     */
+    const down = CODE.slice(at("canvas.addEventListener('mousedown'"));
+    const button = down.indexOf('menuButtonHit(point.x, point.y)');
+    const mini = down.indexOf(MINI);
+    const shift = down.indexOf('if (event.shiftKey) {');
+    expect(mini).toBeGreaterThan(-1);
+    expect(mini).toBeLessThan(button);
+    expect(button).toBeLessThan(shift);
   });
 });
 
@@ -1100,9 +1463,7 @@ describe('the wipe plate does not outlive the wipe', () => {
  */
 describe('the minimap is drawn under the panels, not over them', () => {
   it('paints before all three centred panels', () => {
-    const minimap = CODE.indexOf(
-      'if (!(worldMapOpen && overworldLevel !== null) && level !== null && currentRealmId !== null) {',
-    );
+    const minimap = CODE.indexOf('const miniBox = layout.minimap;');
     expect(minimap, 'the minimap paint arm was renamed').toBeGreaterThan(-1);
 
     for (const panel of ['drawCharSheet({', 'drawTalentPanel({', 'drawInventoryPanel({']) {
@@ -1119,7 +1480,14 @@ describe('the minimap is drawn under the panels, not over them', () => {
      * show the minimap through the world map at eight percent and burn a
      * `revealAround` and a `paintMap` every frame it is open.
      */
-    expect(CODE).toContain('!(worldMapOpen && overworldLevel !== null)');
+    /**
+     * THE GUARD MOVED INTO `minimapDrawn()` and is now the ONE predicate the
+     * painter, `unmovedPanelRect` and therefore the hit test all read — which
+     * is what the box being movable made necessary. Pinned where it lives.
+     */
+    expect(between('function minimapDrawn(): boolean {', '\n}')).toContain(
+      'if (worldMapOpen && overworldLevel !== null) return false;',
+    );
     expect(CODE).toContain("ctx.fillStyle = 'rgba(10, 8, 19, 0.92)'");
   });
 
@@ -1132,7 +1500,7 @@ describe('the minimap is drawn under the panels, not over them', () => {
      */
     expect(CODE).toContain('coveredByPanel(layout, px, py)');
     const gate = CODE.indexOf('coveredByPanel(layout, px, py)');
-    const ask = CODE.indexOf('minimapCardAt(px, py, width)');
+    const ask = CODE.indexOf('minimapCardAt(layout.minimap, px, py)');
     expect(ask, 'the minimap card is asked ungated').toBeGreaterThan(gate);
   });
 });
@@ -1215,16 +1583,14 @@ describe('a card follows the pointer between paints', () => {
     );
     const anchor = at('pointerPoint = point;', move);
     expect(at('if (pointerCardDrawn) requestDraw();', move)).toBeGreaterThan(anchor);
-    expect(at('pointerCardAt(layout, point.x, point.y, logicalW)', move)).toBeGreaterThan(anchor);
+    expect(at('pointerCardAt(layout, point.x, point.y)', move)).toBeGreaterThan(anchor);
   });
 
   it('asks the same functions the paint draws from', () => {
-    expect(paint()).toContain(
-      'hoverCardAt(layout, sheetRows, pointerPoint.x, pointerPoint.y, width)',
-    );
+    expect(paint()).toContain('hoverCardAt(layout, sheetRows, pointerPoint.x, pointerPoint.y)');
     expect(paint()).toContain('talentCardAt(layout.talents, pointerPoint.x, pointerPoint.y)');
     const ask = between('function pointerCardAt(', '\n}\n');
-    expect(ask).toContain('hoverCardAt(layout, paintedSheetRows, px, py, width)');
+    expect(ask).toContain('hoverCardAt(layout, paintedSheetRows, px, py)');
     expect(ask).toContain('talentCardAt(layout.talents, px, py)');
     expect(paint()).toContain('paintedSheetRows = sheetRows;');
   });
@@ -1288,7 +1654,7 @@ describe('the action bar is its own panel', () => {
     );
     expect(CODE).toContain('if (panel === DraggablePanel.Hotbar) return layout.hotbar;');
     expect(between('function settlePanel(subject: DragSubject): void {', '\n  }')).toContain(
-      'if (held !== null && subject.panel === DraggablePanel.Hotbar) {',
+      'subject.panel === DraggablePanel.Hotbar || subject.panel === DraggablePanel.Minimap',
     );
   });
 
@@ -1377,13 +1743,134 @@ describe('travel ends only on ground this viewer has seen', () => {
 
   it('asks it for the click, the minimap, the verb menu and auto-explore', () => {
     expect(CODE).toContain('hasSeen: hasSeenHere(),');
+    // THE MINIMAP'''S HOVER CARD ASKS THE SAME QUESTION, and the WORDS moved to
+    // ui/mapview.ts so that they could be driven rather than scraped (the card
+    // could answer null for every point with the whole suite green). What must
+    // stay here is the question, because only this closure has the level.
     expect(CODE).toContain(
-      'const walkable = level !== null && travelTargetAllowed(level, tile, hasSeenHere());',
+      'minimapCard(tile, level !== null && travelTargetAllowed(level, tile, hasSeenHere()))',
     );
     expect(CODE).toContain(
       'walkable: level !== null && travelTargetAllowed(level, tile, hasSeenHere()),',
     );
     const explore = between('function exploreLeg(): void {', 'function beginTravel(');
     expect(explore).toContain('seen: hasSeenHere(),');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// THE CONVERSATION WINDOW'S FOUR JOINS
+// ---------------------------------------------------------------------------
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE HALVES ARE GREEN AND THE JOIN IS WHERE THIS FEATURE CAN BREAK.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `mouseIntentAt` knows an adjacent townsfolk is a `Talk`, `dialogueHitAt` knows
+ * which control a point is on, and `ui/drag.ts` knows how an offset composes —
+ * all three are pure and all three have their own suites. NONE of them can see
+ * whether main.ts actually sends the frame, begins the gesture or writes the
+ * reset, and that seam is exactly the one the last pass on this feature lost a
+ * whole answer list to: thirty of fifty-one authored answers were unreachable
+ * from any client while every server test stayed green, because the test wrote
+ * the frame straight onto the socket.
+ *
+ * Source-scraped for this file's standing reason (main.ts boots on import).
+ */
+describe('the conversation window is wired to its own chrome', () => {
+  /** The `mousedown` branch that owns every press landing on the window. */
+  const BRANCH = between(
+    'if (layout.dialogue !== null && dialogueView !== null && point !== null) {',
+    'if (event.button !== 0) {',
+  );
+
+  it('opens a conversation on a left-click, through the same frame the menu sends', () => {
+    // ═══ THE INTENT DECIDES, THE HANDLER OBEYS ═══ The adjacency and the
+    // faction are `mouseIntentAt`'s to answer (mouseintent.test.ts); what this
+    // pins is that the answer reaches the socket as a `talk` naming the PERSON.
+    const arm = between('case MouseIntentKind.Talk:', 'case MouseIntentKind.Travel:');
+    expect(arm).toContain("t: 'talk', targetId: intent.targetId");
+    // AND THE RIGHT-CLICK ROW IS UNTOUCHED BESIDE IT — *"the right click option
+    // to talk should still exist"*. Two doors, one frame.
+    expect(CODE.slice(at('case MapVerb.Talk:'), at('case MapVerb.Talk:') + 400)).toContain(
+      "t: 'talk', targetId",
+    );
+  });
+
+  it('closes on the × through the same helper Escape uses', () => {
+    expect(BRANCH).toContain('case DialogueHitKind.Close:');
+    expect(BRANCH).toContain('closeDialogue();');
+    // ONE PLACE THE FRAME IS BUILT. Two would be two chances for one of them to
+    // stop checking that there is a conversation to leave.
+    expect(CODE.split("t: 'dialogue_close'").length - 1, 'one dialogue_close').toBe(1);
+    expect(between('function closeDialogue(): void {', '\n  }')).toContain("t: 'dialogue_close'");
+  });
+
+  it('starts the drag from the header, ABOVE the row hit test', () => {
+    // ═══ ORDER IS THE RULE HERE ═══ A press that begins a gesture must not also
+    // fire what is under it. `dialogueDragAt` refuses the × and the cogwheel
+    // itself, so the two orders agree — this pins that they are asked in the
+    // order that would still be safe if it did not.
+    const drag = at('if (dialogueDragAt(box, point.x, point.y)) {', BRANCH);
+    const hit = at('const hit = dialogueHitAt(', BRANCH);
+    expect(drag).toBeLessThan(hit);
+    const call = BRANCH.slice(drag, BRANCH.indexOf('return;', drag));
+    expect(call).toContain('beginDrag(');
+    expect(call).toContain('{ kind: DragKind.Panel, panel: DraggablePanel.Dialogue }');
+    // NO DEFERRED CLICK. A header has never done anything on release, and one
+    // that did would fire after the window had already been moved.
+    expect(call).toContain('null');
+  });
+
+  it('resets this one window through the store every other panel writes', () => {
+    // NOT A SECOND MECHANISM. `reset-panels` in the escape menu walks
+    // `DRAGGABLE_PANELS`; this is the same write narrowed to one key, followed
+    // by the same save — without the save the reset is undone by the next
+    // reload, which is the one outcome that would make the button read as broken.
+    const reset = BRANCH.slice(at('case DialogueHitKind.Reset:', BRANCH));
+    expect(reset).toContain('panelOffsets[DraggablePanel.Dialogue] = NO_OFFSET;');
+    expect(reset).toContain('savePanelLayout();');
+  });
+
+  it('opens the popover from the cogwheel, which nothing else did', () => {
+    /**
+     * A MUTANT SURVIVED THE WHOLE SUITE ON THIS: `dialogueSettingsOpen =
+     * !dialogueSettingsOpen;` changed to `= false;` — the cog drawn, hit-tested,
+     * placed and forever shut. Every other cog test read `dialogueGeometry().cog`
+     * or `dialogueSettingsRect()`, both pure, so the whole popover suite passed
+     * on a window where the popover could not be opened. The × has this pairing
+     * already; the cog inherited neither half of it.
+     */
+    expect(BRANCH).toContain('case DialogueHitKind.Cog:');
+    expect(BRANCH.slice(at('case DialogueHitKind.Cog:', BRANCH))).toContain(
+      'dialogueSettingsOpen = !dialogueSettingsOpen;',
+    );
+  });
+
+  it('shuts the popover when the conversation ends', () => {
+    /**
+     * ANOTHER SURVIVOR, and the line it kills carries its own reason: a popover
+     * left standing is drawn over the FIRST ANSWER of the next conversation, so
+     * the first thing said to the next person would be swallowed. A comment
+     * claiming a fix with nothing holding it is the shape this file exists for.
+     */
+    expect(between('function adoptDialogue(view: DialogueView | null): void {', '\n  }')).toContain(
+      'dialogueSettingsOpen = false;',
+    );
+  });
+
+  it('passes the popover flag to BOTH readers, so they cannot disagree', () => {
+    // The hover path and the press path read one function; a row highlighted
+    // under a menu that is covering it is a picture promising a press that the
+    // handler would swallow.
+    const calls = CODE.split('dialogueHitAt(');
+    expect(calls.length - 1, 'main.ts reads the hit test exactly twice').toBe(2);
+    for (const call of calls.slice(1)) {
+      expect(call.slice(0, call.indexOf(');')), 'a hit test without the flag').toContain(
+        'dialogueSettingsOpen',
+      );
+    }
+    expect(CODE).toContain('settingsOpen: dialogueSettingsOpen,');
   });
 });

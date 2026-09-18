@@ -241,8 +241,9 @@ body {
  *
  * `#log` is one aria-live sentence and two visual groups — see `setStatusParts`
  * in main.ts. The world group reads first and keeps the parchment; the session
- * group (socket, actor count, zoom, who else is in the Activity) is diagnostic,
- * so it is dimmed and pushed right, where it can be ignored until it matters.
+ * group (socket, actor count, interface size, who else is in the Activity) is
+ * diagnostic, so it is dimmed and pushed right, where it can be ignored until
+ * it matters.
  *
  * `margin-left: auto` MOVES PIXELS AND NOT WORDS. The DOM order is the sentence
  * order, so a screen reader still hears the world before the connection; only

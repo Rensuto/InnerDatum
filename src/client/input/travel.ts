@@ -393,6 +393,41 @@ export function isHostileBody(actor: ActorView): boolean {
 }
 
 /**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * SOMEBODY WHO LIVES HERE — the one place the client asks that question.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `ActorView.faction` is the SERVER'S `Faction` value verbatim (shared/
+ * protocol.ts:1017: *"`'townsfolk'` is the only value a client ever needs to
+ * branch on"*), and the server's rule is `engine/actor.ts#areEnemies` — a
+ * townsfolk is nobody's enemy and has none.
+ *
+ * ═══ NOTE WHAT THIS IS NOT, BECAUSE `isHostileBody` ABOVE ANSWERS TRUE FOR HER ═══
+ * A townsfolk is a `Monster` on the server, deliberately: same painter, same
+ * FOV, and only who may hit her differs. So `kind` cannot tell you, and every
+ * surface that needs to know has had to compare this string for itself. There
+ * were three copies before this function — ui/verbs.ts's `Attack`-vs-`Talk to`
+ * branch, render/canvas.ts's neutral token ring and main.ts's `neutral` flag on
+ * the hover card. The two painting ones keep theirs for now; every surface that
+ * decides what a CLICK MEANS reads this, so the mouse's two doors — the plain
+ * left-click and the right-click menu — cannot disagree about who is a person.
+ *
+ * ABSENT MEANS HOSTILE-AS-BEFORE, never "unknown": the field is omitted for
+ * every Redacted body on the wire.
+ */
+export function isTownsfolkBody(actor: ActorView): boolean {
+  return actor.faction === TOWNSFOLK_FACTION;
+}
+
+/**
+ * `Faction.Townsfolk` as it arrives. The client may not import the server's
+ * const (`shared ← client`, never `client → server` — CLAUDE.md's dependency
+ * direction), so the string is written out ONCE, here, rather than at each site
+ * that needs it.
+ */
+const TOWNSFOLK_FACTION = 'townsfolk';
+
+/**
  * The LIVING body on a tile, if any.
  *
  * CORPSES DO NOT BLOCK, matching `actorAt` in src/server/world/world.ts:290-295

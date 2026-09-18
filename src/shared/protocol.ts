@@ -234,7 +234,7 @@ import { z } from 'zod';
 
 import { DIR_ORDER } from './coords.ts';
 import type { DamageType } from './damagetype.ts';
-import { PROTOCOL_VERSION, UI_SCALE_MAX, UI_SCALE_MIN, ZOOM_MAX, ZOOM_MIN } from './version.ts';
+import { PROTOCOL_VERSION, UI_SCALE_MAX, UI_SCALE_MIN } from './version.ts';
 
 // ---------------------------------------------------------------------------
 // Shared payload shapes
@@ -4253,51 +4253,31 @@ export const KEYBIND_KEYSTRING_MAX_CHARS = 32;
  * server advance the world.
  */
 /**
- * ═══════════════════════════════════════════════════════════════════════════
- * `set_zoom` — "THIS IS HOW BIG I WANT THE TILES."
- * ═══════════════════════════════════════════════════════════════════════════
- *
- * A player said the tiles read smaller than Tales of Maj'Eyal's and the world
- * did not fill the space. Half of that was the viewport, which moved from
- * fifteen rows to ten. The other half is that ZOOM ALREADY EXISTED and did not
- * survive the tab: bound to `-` and `=`, listed on the Keys screen, on the
- * wheel — and reset to default on every reconnect, so the answer to "the tiles
- * are too small" was one a player had to re-give every session.
- *
- * ═══ IT CANNOT BE STORED IN THE BROWSER ═══
- * This game runs in a Discord Activity iframe, where storage is partitioned or
- * blocked outright. That is the same reason keybinds are server-side, and it is
- * why a preference here means a frame rather than a `localStorage` line.
- *
- * ═══ A STEP, NOT A SIZE ═══
- * The value is the same integer bias the renderer clamps, bounded by
- * `ZOOM_MIN`/`ZOOM_MAX` from `shared/version.ts` — imported rather than restated,
- * because a bound written down twice is the shape this codebase keeps being
- * bitten by. Sending pixels instead would let a client pick a fractional
- * magnification, which is the one thing this renderer will not do.
- */
-/**
  * The most slots a bar may claim. Two pages of six is twelve; this is loose on
  * purpose — see `SetHotbarSchema.slots`. It bounds a hostile frame and nothing
  * else, which is the only job a wire cap has.
  */
 const HOTBAR_SLOTS_MAX = 32;
 
-const SetZoomSchema = z.strictObject({
-  v: envelopeVersion,
-  t: z.literal('set_zoom'),
-  zoom: z.number().int().min(ZOOM_MIN).max(ZOOM_MAX),
-});
-
 /**
  * ════════════════════════════════════════════════════════════════════════════
  * `set_ui_scale` — "THIS IS HOW BIG I WANT THE INTERFACE."
  * ════════════════════════════════════════════════════════════════════════════
- * `set_zoom`'s twin in every respect, and everything its docblock argues holds
- * here unchanged: it cannot live in the browser (a Discord Activity iframe
- * partitions or blocks storage, which is why keybinds are server-side), and the
- * value is a STEP rather than a size, so a client cannot ask for a fractional
- * magnification — the one thing this renderer will not do.
+ * IT CANNOT LIVE IN THE BROWSER. This game runs in a Discord Activity iframe,
+ * where storage is partitioned or blocked outright — the same reason keybinds
+ * are server-side, and why a preference here means a frame rather than a
+ * `localStorage` line.
+ *
+ * A STEP, NOT A SIZE. The value is the integer bias the renderer clamps,
+ * bounded by `UI_SCALE_MIN`/`UI_SCALE_MAX` from `shared/version.ts` — imported
+ * rather than restated, because a bound written down twice is the shape this
+ * codebase keeps being bitten by. Sending pixels instead would let a client pick
+ * a fractional magnification, which is the one thing this renderer will not do.
+ *
+ * IT HAD A TWIN, `set_zoom`, AND THE TWIN IS GONE (`27 -> 28` in version.ts).
+ * That one moved the MAP's whole-number `scale`; this one moves `hudScale`, and
+ * the split between them is the entire subject of test/client/hudscale.test.ts.
+ * Do not let this verb grow a map term to replace the one that left.
  *
  * WHAT IT MOVES IS `hudScale`, WHICH `viewLayout` HAS ALWAYS DECIDED ALONE,
  * from the device pixel ratio and `HUD_MAX_*`. Asked for as *"an option in the
@@ -4314,9 +4294,8 @@ const SetUiScaleSchema = z.strictObject({
  * `set_panel_layout` — "THIS IS WHERE I HAVE PUT MY PANELS, AND HOW BIG."
  * ═══════════════════════════════════════════════════════════════════════════
  *
- * `set_zoom` and `set_ui_scale` above are the same shape: a preference the
- * player set with a gesture, echoed back on `settings` and written to the
- * character file. Panel positions were the one that was NOT — they lived in a
+ * `set_ui_scale` above is the same shape: a preference the player set with a
+ * gesture, echoed back on `settings` and written to the character file. Panel positions were the one that was NOT — they lived in a
  * module-scope record in main.ts and reset on every reload, so a player who
  * arranged their screen did it again every session.
  *
@@ -4468,6 +4447,30 @@ export const PanelLayoutSchema = z.strictObject({
    * `.default(null)` for the reason `logStyle` gives below.
    */
   hotbarSize: panelSizeSchema.nullable().default(null),
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * AND THE MINIMAP'S, the fourth panel with a grip.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * The box is SQUARE and snapped to whole cells when it is drawn
+   * (`minimapBoxSize`, client/ui/mapview.ts), so what is stored here is the raw
+   * size the gesture reached rather than the snapped one — a store that held
+   * the snapped value would lose the fraction on every shrink-and-grow and walk
+   * the box down a cell at a time. Null is "never resized", which is the box at
+   * three pixels a cell.
+   *
+   * A FOURTH NAMED FIELD, NOT THE RECORD, and the argument is `partySize`'s
+   * unchanged: moving `logSize` into a record means reading both shapes for a
+   * release so nobody's layout is lost, and that migration is its own change
+   * rather than a rider on a new panel. `.default(null)` for the reason
+   * `logStyle` gives below.
+   *
+   * NO VERSION BUMP. A defaulted, nullable, OPTIONAL-on-the-way-in field is
+   * precisely the shape this file's history calls *"textbook… what does NOT
+   * force a bump"*: an older save has no key and reads as "never touched this",
+   * and an older client simply never sends one.
+   */
+  minimapSize: panelSizeSchema.nullable().default(null),
   /** The action bar's cogwheel. `.default(null)` for the reason `logStyle` gives. */
   hotbarStyle: hotbarStyleSchema.nullable().default(null),
   /**
@@ -4693,7 +4696,6 @@ export const ClientMsg = z.discriminatedUnion('t', [
   SetHotbarSchema,
   UnlockTreeSchema,
   SetKeybindsSchema,
-  SetZoomSchema,
   SetUiScaleSchema,
   SetPanelLayoutSchema,
   PingSchema,
@@ -4733,7 +4735,6 @@ export type ClientInspect = z.infer<typeof InspectSchema>;
 export type ClientSetHotbar = z.infer<typeof SetHotbarSchema>;
 export type ClientUnlockTree = z.infer<typeof UnlockTreeSchema>;
 export type ClientSetKeybinds = z.infer<typeof SetKeybindsSchema>;
-export type ClientSetZoom = z.infer<typeof SetZoomSchema>;
 export type ClientSetUiScale = z.infer<typeof SetUiScaleSchema>;
 export type ClientSetPanelLayout = z.infer<typeof SetPanelLayoutSchema>;
 export type ClientPing = z.infer<typeof PingSchema>;
@@ -7585,12 +7586,12 @@ export type ServerMsg =
  */
 /**
  * ═══════════════════════════════════════════════════════════════════════════
- * THE PREFERENCES THAT ARE NOT KEYS. Two: how big the tiles are, and how big
- * the interface is.
+ * THE PREFERENCES THAT ARE NOT KEYS. How big the interface is, and where this
+ * player left their panels.
  * ═══════════════════════════════════════════════════════════════════════════
  *
  * Sent at `hello` beside `keybinds`, and echoed after every accepted
- * `set_zoom`. THE ECHO IS THE POINT, exactly as it is for `KeybindsMsg`: what
+ * `set_ui_scale`. THE ECHO IS THE POINT, as it is for `KeybindsMsg`: what
  * the player sees is what the SERVER stored, so a value the server bounced or
  * clamped cannot sit on screen as the client's own optimism.
  *
@@ -7602,40 +7603,39 @@ export type ServerMsg =
  *
  * ═══ A `ViewerMsg`, AND THE COMPILER ENFORCES IT ═══
  * There is no version of this frame that is correct for two recipients — how
- * big one player wants their tiles is true for exactly one person — so
+ * big one player wants their interface is true for exactly one person — so
  * membership here makes `broadcast(settingsMsg)` a build failure.
  *
- * ═══ NO PROTOCOL BUMP, AND THE REASON IS THE FAILURE MODE ═══
- * `PROTOCOL_VERSION` moved to 11 for `RealmMsg` because a client that ignored
- * that frame would render the wrong map, silently, while the server moved its
- * body. Ignoring THIS frame costs a returning player one keypress. An old
- * client drops an unknown `t`; an old server refuses an unknown verb and the
- * preference simply does not stick. Neither corrupts anything, and both heal on
- * the next deploy, which ships client and server together.
+ * ═══ IT COST NO BUMP TO ADD AND ONE TO SHRINK ═══
+ * Adding this frame did not move `PROTOCOL_VERSION`: an old client drops an
+ * unknown `t`, an old server refuses an unknown verb, and the preference simply
+ * does not stick. TAKING A REQUIRED FIELD OFF IT DID. `zoom` left this type at
+ * `27 -> 28`, and an older client does not ignore a key it already reads — it
+ * hands `undefined` to its renderer and clamps to the bottom of the range.
+ * version.ts carries the whole argument; the rule it lands on is that an
+ * addition may be free and a removal never is.
  */
 export type SettingsMsg = {
   v: typeof PROTOCOL_VERSION;
   t: 'settings';
-  /** The integer zoom step, as stored. `ZOOM_MIN`..`ZOOM_MAX`. */
-  zoom: number;
   /**
    * The integer INTERFACE step, as stored. `UI_SCALE_MIN`..`UI_SCALE_MAX`.
    *
-   * A SECOND FIELD AND NOT A SECOND FRAME, because this one really is the same
-   * thing as `zoom` -- a viewer-private display preference echoed from what the
-   * server stored -- where `KeybindsMsg` was not. The docblock above said
-   * "currently one" while it was one; this is what it was leaving room for.
-   *
-   * IT IS NOT THE SAME CONTROL AS `zoom`, though, and must never be folded into
-   * it: `hudScale` was split from the map's magnification precisely so that `=`
-   * stopped resizing the hotbar and every panel along with the world. See
+   * IT HAD A SIBLING ON THIS FRAME, `zoom`, the MAP's step, and it went with the
+   * control that moved it (`27 -> 28`). What is left must not quietly grow back
+   * into it: `hudScale` was split from the map's magnification precisely so that
+   * `=` stopped resizing the hotbar and every panel along with the world. See
    * `UI_SCALE_MIN` and test/client/hudscale.test.ts.
+   *
+   * THE CLIENT DRAWS A PERCENTAGE FROM THIS, off `renderer.setUiScale`'s return
+   * rather than off this number directly -- the renderer clamps to what the
+   * window can honour, and the escape menu must print what it settled on.
    */
   uiScale: number;
   /**
-   * WHERE THIS PLAYER LEFT THEIR PANELS, and how big the Case Log is.
+   * WHERE THIS PLAYER LEFT THEIR PANELS, and how big the Log is.
    *
-   * `zoom` and `uiScale`'s third sibling, on the same frame because it is the
+   * `uiScale`'s sibling, on the same frame because it is the
    * same kind of thing: a preference set with a gesture, stored on the
    * character, echoed so the client never guesses what the server kept.
    *
@@ -7647,7 +7647,7 @@ export type SettingsMsg = {
    * AN EMPTY `offsets` IS NOT AN ABSENT ONE. Empty means the player moved
    * something and put it back (which `RESET PANELS` produces); the frame is
    * absolute, so it is the honest wire value for "nothing is moved" in exactly
-   * the way `zoom: 0` is for "the default step".
+   * the way `uiScale: 0` is for "the default step".
    */
   panels: PanelLayoutView;
   /**

@@ -828,40 +828,46 @@ describe('set_keybinds, over a real socket', () => {
     expect(returned?.['persisted']).toBe(true);
   });
 
-  it('carries zoom, interface scale and the panel layout off the DISK after a restart too', async () => {
+  it('carries the interface scale and the panel layout off the DISK after a restart too', async () => {
     /**
      * ═════════════════════════════════════════════════════════════════════════
      * THE SAME LINK, FOR THE `settings` FRAME — AND IT WAS NEVER WIRED.
      * ═════════════════════════════════════════════════════════════════════════
      *
-     * The save layer carries all three (`CharacterFile.zoom`, `fileFor`,
+     * The save layer carries them (`CharacterFile.uiScale`, `fileFor`,
      * `openCharacter`), but the gateway never put them in a snapshot, never took
      * them out of a restore, and never carried them through a door. So they
      * lived on the body alone: every restart and every deploy reset a player's
-     * zoom, interface size and panel positions while `settings` said
+     * interface size and panel positions while `settings` said
      * `persisted: true`. The restart is spelled as the test above spells it —
      * a second gateway over the same `Disk`, so the body is fresh.
+     *
+     * IT WAS THREE FIELDS AND IS NOW TWO. `zoom` left the frame, the file and
+     * the snapshot with the control that moved it (`27 -> 28` in
+     * shared/version.ts); the link it rode is what the other two still need.
      */
     const layout = {
       offsets: { talents: { dx: 40, dy: -12 } },
       logSize: { w: 420, h: 180 },
       partySize: null,
       hotbarSize: null,
+      minimapSize: null,
       hotbarStyle: null,
       logStyle: null,
     };
     const first = await boot('settings-restart');
     const before = await connect(first.port);
     await before.hello('ren-handle');
-    before.send({ t: 'set_zoom', zoom: 1 });
     before.send({ t: 'set_ui_scale', uiScale: 2 });
     before.send({ t: 'set_panel_layout', layout });
     await before.settle();
 
     // ON THE DISK, which is the half that was missing.
     const file = first.disk.files.get(`${REN_ID}/chr_main`);
-    expect(file?.zoom).toBe(1);
     expect(file?.uiScale).toBe(2);
+    // AND NO `zoom` KEY IS WRITTEN ANY MORE. Nothing reads it, so writing one
+    // would be a dead field growing back on every save.
+    expect(file, 'a zoom key came back on the character file').not.toHaveProperty('zoom');
     expect(file?.panels).toEqual(layout);
     // THE PRECONDITION THE PLACEMENT RESTS ON: this player never rebound a key,
     // so `restoreKeybinds`' early return is taken — the case the restore has to
@@ -874,13 +880,15 @@ describe('set_keybinds, over a real socket', () => {
     const after = await connect(server.port);
     const welcome = await after.hello('ren-handle');
     // ON A FRESH BODY, off the file...
-    expect(bodyOf(welcome).zoom).toBe(1);
     expect(bodyOf(welcome).uiScale).toBe(2);
     expect(bodyOf(welcome).panels).toEqual(layout);
     // ...AND ON THE WIRE, in the frame the client applies.
     const settings = await after.waitFor('settings');
-    expect(settings?.['zoom']).toBe(1);
     expect(settings?.['uiScale']).toBe(2);
+    // AND THE FRAME CARRIES NO `zoom`. Removing a REQUIRED field from a frame
+    // an older client reads is what cost the protocol bump, so a field quietly
+    // coming back would be a version the server and the client disagree about.
+    expect(settings, 'zoom came back on the settings frame').not.toHaveProperty('zoom');
     expect(settings?.['panels']).toEqual(layout);
     expect(settings?.['persisted']).toBe(true);
   });

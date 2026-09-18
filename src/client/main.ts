@@ -216,6 +216,7 @@ import {
   DragKind,
   DraggablePanel,
   DRAGGABLE_PANELS,
+  GripCorner,
   PANEL_MIN_H,
   DEFAULT_PANEL_FLOOR,
   nextSize,
@@ -239,8 +240,10 @@ import {
 import { drawRoster, rosterHitAt, RosterHitKind, rosterRect } from './ui/roster.ts';
 import {
   DialogueAnswerKind,
+  DialogueHitKind,
   dialogueAnswerAt,
   dialogueAnswerForDigit,
+  dialogueDragAt,
   dialogueFirstEnabled,
   dialogueGeometry,
   dialogueHitAt,
@@ -384,10 +387,13 @@ import {
   CROSSING_INK,
   doorwayAt,
   doorwayLine,
+  MINIMAP_FLOOR,
+  MINIMAP_MARGIN,
   MINIMAP_RADIUS,
   mapTileAt,
   ZONE_LABEL_FONT,
   fitZoneLabel,
+  minimapCard,
   minimapRect,
   zoneLabelBaseline,
   paintMap,
@@ -409,13 +415,7 @@ import {
   TalentShape,
   TurnActorState,
 } from '../shared/protocol.ts';
-import {
-  PROTOCOL_VERSION,
-  UI_SCALE_MAX,
-  UI_SCALE_MIN,
-  ZOOM_MAX,
-  ZOOM_MIN,
-} from '../shared/version.ts';
+import { PROTOCOL_VERSION, UI_SCALE_MAX, UI_SCALE_MIN } from '../shared/version.ts';
 import type { Dir, TileXY } from '../shared/coords.ts';
 import type {
   ActorView,
@@ -939,6 +939,49 @@ function quietLogBand(height: number): { top: number; bottom: number } {
 /** The action bar may go anywhere under the turn HUD, down to the screen's foot. */
 function hotbarBand(height: number, hudTop: number): { top: number; bottom: number } {
   return { top: hudTop, bottom: height };
+}
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE MINIMAP'S BAND, AND ITS TOP IS ABOVE EVERY OTHER PANEL'S.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `panelBand.top` is `hudTop + DOCK_MARGIN` — below the turn bar, and below the
+ * card strip while a fight is on. The minimap's home is `MINIMAP_MARGIN`, which
+ * is ABOVE that line and always has been: the box is painted after the bar and
+ * the cards (main.ts's minimap paint block argues that order at length), so it
+ * sits over the top of them by design. Clamping it into the shared band would
+ * mean a panel whose own default position the clamp refuses — and it would jump
+ * down the screen the instant a monster joined the initiative.
+ *
+ * ═══ THE BOTTOM IS THE LOG'S, NOT THE PANEL BAND'S ═══
+ * `logBand`'s note argues it: the two prose strips are TRANSIENT — a targeting
+ * hint while aiming, a notice for four seconds — and furniture is allowed to
+ * live where they appear. The action bar is not transient, and that is the line
+ * this stops at.
+ *
+ * NO `hudTop` PARAMETER, deliberately. Every other band takes one and moves
+ * when a fight starts; this one is a constant of the viewport, which is what
+ * keeps a box the player placed from walking up and down the screen as monsters
+ * come and go — the same fault `quietLogBand` exists to prevent for the log.
+ */
+function minimapBand(height: number): { top: number; bottom: number } {
+  return { top: MINIMAP_MARGIN, bottom: height - HOTBAR_TOTAL_H - DOCK_MARGIN };
+}
+
+/**
+ * ═══ WHICH CORNER A PANEL'S GRIP IS IN. ONE ANSWER, FOUR READERS ═══
+ *
+ * The painter, the press, the grab (which measures `gripOffset` from it) and
+ * `nextSize` (which measures the size from the opposite edge) must agree, and
+ * they are in four different scopes of this file. `GripCorner` in ui/drag.ts
+ * carries the reason the minimap is the odd one out: it is docked to the RIGHT
+ * margin, so the edge that stays still while it resizes is its right one and
+ * the box grows leftwards. A bottom-right grip on it had eight pixels of
+ * travel and could only ever make the map smaller.
+ */
+function gripCornerFor(panel: DraggablePanel): GripCorner {
+  return panel === DraggablePanel.Minimap ? GripCorner.BottomLeft : GripCorner.BottomRight;
 }
 
 function panelBand(height: number, hudTop: number): { top: number; bottom: number } {
@@ -1781,6 +1824,26 @@ const panelSizes: Record<DraggablePanel, PanelSize | null> = {
   [DraggablePanel.Log]: null,
   [DraggablePanel.Party]: null,
   [DraggablePanel.Hotbar]: null,
+  /**
+   * THE CONVERSATION WINDOW MOVES BUT NEVER RESIZES, so this stays null for its
+   * whole life. It is here because the record is keyed by the whole union — the
+   * device that made the compiler name every site when the party pane grew a
+   * grip — and not because there is a size to hold: `dialogueRect` derives the
+   * height from how many answers the node carries, so a stored one would fight
+   * the content every time the conversation moved on. See ui/drag.ts.
+   */
+  [DraggablePanel.Dialogue]: null,
+  /**
+   * THE MINIMAP, WHICH IS THE THIRD PANEL WITH A GRIP. Null is "never dragged",
+   * and the box then comes at `MINIMAP_MAX_W`/`_MAX_H`'s three-pixel cell.
+   *
+   * WHAT IS STORED IS THE RAW BOX THE GESTURE REACHED, not the snapped one:
+   * `minimapBoxSize` rounds it down to a whole number of cells on every read,
+   * so the store holds what the pointer asked for and the paint holds what the
+   * map can actually fill. Storing the snapped value instead would make a
+   * shrink-then-grow lose the fraction and creep a cell smaller each time.
+   */
+  [DraggablePanel.Minimap]: null,
 };
 
 /**
@@ -2319,22 +2382,23 @@ let menuHovered: number | null = null;
 let keybindsPersisted = false;
 
 /**
- * Whether the zoom the player picked will outlive the tab. `keybindsPersisted`'s
- * twin — an anonymous socket has no character file, so its preference lives on
- * its body until recall, and the screen must be able to say so rather than let
- * somebody discover a working feature looks broken.
+ * Whether the settings the player picked will outlive the tab.
+ * `keybindsPersisted`'s twin — an anonymous socket has no character file, so its
+ * preferences live on its body until recall, and the screen must be able to say
+ * so rather than let somebody discover a working feature looks broken.
+ *
+ * ONE FLAG FOR ALL OF `SettingsMsg`, because `persisted` is a fact about the
+ * character FILE and not about one preference. It was called `zoomPersisted`
+ * while zoom was the first of them and the name outlived the control.
  */
-let zoomPersisted = false;
+let settingsPersisted = false;
 
 /**
- * The zoom step the server last told us it holds, or null before it has said.
+ * The interface step the server last told us it holds, or null before it said.
  *
  * Written by `case 'settings'` and applied by `onMessage`, for the reason that
  * case gives: the frame handler cannot see the renderer and the wrapper can.
  */
-let storedZoom: number | null = null;
-
-/** The interface step the server last told us it holds. `storedZoom`'s twin. */
 let storedUiScale: number | null = null;
 
 /**
@@ -2342,21 +2406,32 @@ let storedUiScale: number | null = null;
  * WHAT THE RENDERER SETTLED ON, LAST TIME ANYBODY ASKED IT.
  * ═══════════════════════════════════════════════════════════════════════════
  *
- * ═══ A MIRROR, AND THE SEAM IS THE SAME ONE `storedZoom` DESCRIBES ═══
- * The escape menu's ZOOM row is a readout as well as a control, and `paintHud`
- * is module scope while `renderer` belongs to `boot`'s closure — the very split
- * the note above records. So the value has to be carried rather than read.
+ * ═══ A MIRROR, AND THE SEAM IS THE SAME ONE `storedUiScale` DESCRIBES ═══
+ * The escape menu's UI SIZE row is a readout as well as a control, and
+ * `paintHud` is module scope while `renderer` belongs to `boot`'s closure — the
+ * very split the note above records. So the value has to be carried rather than
+ * read.
  *
  * ═══ WRITTEN FROM THE AUTHORITATIVE ANSWER, NEVER COMPUTED ═══
- * Both writers take `renderer.setZoom`'s RETURN, which is the clamped step the
- * renderer actually adopted. Nothing here does its own arithmetic, so this
- * cannot drift into a second opinion about the clamp — which is the failure a
- * mirror usually is.
+ * Every writer goes through `mirrorInterfaceSize`, which asks the renderer.
+ * Nothing here does its own arithmetic, so this cannot drift into a second
+ * opinion about the clamp — which is the failure a mirror usually is.
+ *
+ * IT HAD A TWIN, `liveZoom`, for the map's step; the control went and so did it.
  */
-let liveZoom = 0;
-
-/** What the renderer settled on for the INTERFACE. `liveZoom`'s twin, same seam. */
 let liveUiScale = 0;
+
+/**
+ * AND WHAT THAT STEP ACTUALLY DREW, AS A PERCENTAGE. `liveUiScale`'s twin, same
+ * seam, same single writer.
+ *
+ * A SECOND MIRROR RATHER THAN ARITHMETIC ON THE FIRST, because the step and the
+ * percentage are not the same fact: `hudScale` is a whole number clamped by
+ * what the window can hold, so two steps can draw one size. Computing this from
+ * the step here would be exactly the second opinion about the clamp the note
+ * above forbids — see `uiScalePercentFor` in render/canvas.ts.
+ */
+let liveUiScalePercent = 100;
 
 /**
  * WHETHER THIS WINDOW HAS ROOM FOR A SECOND INTERFACE FACTOR. Same seam as the
@@ -2369,12 +2444,6 @@ let liveUiScale = 0;
  * the moment the answer flips.
  */
 let liveUiScaleFixed = false;
-
-/**
- * WHETHER THIS WINDOW HAS ROOM FOR A SECOND MAP SCALE. `liveUiScaleFixed`'s
- * twin, refreshed at the same moment and for the same reason.
- */
-let liveZoomFixed = false;
 
 /**
  * PUT EVERY PIECE OF THE MENU'S STATE BACK, AND NOTHING ELSE.
@@ -2671,6 +2740,20 @@ let dialogueView: DialogueView | null = null;
 let dialogueSelected = -1;
 /** The answer under the pointer, or -1. Cleared with the window. */
 let dialogueHovered = -1;
+/**
+ * IS THE CONVERSATION WINDOW'S COGWHEEL POPOVER SHOWING?
+ *
+ * HERE RATHER THAN IN ui/dialogue.ts, which is a pure module: the popover's
+ * state is read by the painter, by the hit test AND by the press handler, and a
+ * painter that remembered it would be a second opinion about a fact the other
+ * two also need. It is the same seam `dialogueSelected` sits on, and the same
+ * one ui/caselog.ts resolves the other way — that widget is a closure with its
+ * own state, and this one is a function of its arguments.
+ *
+ * CLEARED WITH THE WINDOW (`adoptDialogue`), so a conversation that ends with
+ * the menu up does not open the next one with a menu over the first answer.
+ */
+let dialogueSettingsOpen = false;
 
 /**
  * Take a new `dialogue` frame and decide what is lit.
@@ -2686,6 +2769,11 @@ function adoptDialogue(view: DialogueView | null): void {
   dialogueHovered = -1;
   if (view === null) {
     dialogueSelected = -1;
+    // THE MENU GOES WITH THE WINDOW. A popover left standing would be drawn over
+    // the FIRST ANSWER of the next conversation, and its press handler is asked
+    // before the rows — so the first thing said to the next person would be
+    // swallowed by a menu belonging to a conversation that had ended.
+    dialogueSettingsOpen = false;
     return;
   }
   const held = view.options[dialogueSelected];
@@ -3198,6 +3286,30 @@ function lootMarkers(): readonly LootMarker[] {
  */
 /**
  * ═══════════════════════════════════════════════════════════════════════════
+ * IS THE MINIMAP ON SCREEN AT ALL? THE ONE PREDICATE, AND THERE IS ONE.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * The paint block asked this as a bare `if`, and `minimapTileAt` asked a
+ * near-copy of it three thousand lines away. They agreed, and the note under
+ * this one records what happens when a box and its hit test stop agreeing: the
+ * map was painted every frame with no caller in any mouse handler, so it
+ * answered nothing at all. Now that the box also MOVES, the two would have to
+ * agree about a condition AND a rect, so the condition is written once here and
+ * the rect once in `hudLayout`.
+ *
+ * ═══ THE WORLD MAP IS THE INTERESTING TERM ═══
+ * `worldMapOpen && overworldLevel !== null` — not `worldMapOpen` alone. The
+ * full-screen map only actually covers the screen when there is an overworld to
+ * paint into it; the flag on its own would hide the minimap behind nothing.
+ * That is the painter's own guard, moved rather than restated.
+ */
+function minimapDrawn(): boolean {
+  if (worldMapOpen && overworldLevel !== null) return false;
+  return level !== null && currentRealmId !== null;
+}
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
  * WHICH TILE THE MINIMAP IS SHOWING UNDER THIS POINT — or null.
  * ═══════════════════════════════════════════════════════════════════════════
  *
@@ -3210,16 +3322,25 @@ function lootMarkers(): readonly LootMarker[] {
  * ONE RESOLVER, USED BY THE CLICK AND BY THE HOVER, so the tile a card describes
  * and the tile a click walks to can never be two different tiles.
  *
- * IT RETURNS NULL WHENEVER THE MAP IS NOT THERE — no level, no realm, no body,
- * or the world map is open over it — which is exactly the condition the painter
- * draws under. The two must agree or a click lands on a map that is not on
- * screen.
+ * ═══ IT TAKES THE RECT NOW, AND THAT IS WHAT MAKES THE MOVE SAFE ═══
+ * It used to take the viewport width and call `minimapRect` itself. The box
+ * moves and resizes now, so that would be a SECOND producer of where it is —
+ * the box drawn at the player's corner and the click resolved against the
+ * factory position, which is the exact fault the note above this one records in
+ * its harsher form (a map that answered nothing at all). `hudLayout.minimap` is
+ * the one answer, and every caller passes it.
+ *
+ * IT RETURNS NULL WHENEVER THE MAP IS NOT THERE — and it does not re-derive
+ * that either: a null rect IS "the painter drew nothing", because
+ * `unmovedPanelRect` builds it from `minimapDrawn()`. What is left here is the
+ * pair the BOX cannot answer: no level to index, and no body to centre the
+ * window on.
  */
-function minimapTileAt(px: number, py: number, viewW: number): TileXY | null {
-  if (worldMapOpen || level === null || currentRealmId === null) return null;
+function minimapTileAt(rect: PanelRect | null, px: number, py: number): TileXY | null {
+  if (rect === null || level === null) return null;
   const me = selfId === null ? undefined : actors.get(selfId);
   if (me === undefined) return null;
-  return mapTileAt(level, minimapRect(viewW), px, py, { x: me.x, y: me.y }, MINIMAP_RADIUS);
+  return mapTileAt(level, rect, px, py, { x: me.x, y: me.y }, MINIMAP_RADIUS);
 }
 
 /**
@@ -3246,15 +3367,13 @@ function coveredByPanel(layout: HudLayout, px: number, py: number): boolean {
   return false;
 }
 
-function minimapCardAt(px: number, py: number, viewW: number): HoverCard | null {
-  const tile = minimapTileAt(px, py, viewW);
+function minimapCardAt(rect: PanelRect | null, px: number, py: number): HoverCard | null {
+  const tile = minimapTileAt(rect, px, py);
   if (tile === null) return null;
-  const walkable = level !== null && travelTargetAllowed(level, tile, hasSeenHere());
-  return {
-    title: `${String(tile.x)},${String(tile.y)}`,
-    meta: walkable ? 'click to travel here' : 'you cannot walk there',
-    lines: ['middle-click opens the region map'],
-  };
+  // THE WORDS ARE ui/mapview.ts'''s, and they live there so that they can be DRIVEN
+  // rather than scraped — see `minimapCard`. What stays here is the pair this
+  // closure is the only holder of: the level, and what this body has seen.
+  return minimapCard(tile, level !== null && travelTargetAllowed(level, tile, hasSeenHere()));
 }
 
 /**
@@ -3678,13 +3797,14 @@ function inParty(): boolean {
  * what the key does are the same fact and not two.
  */
 /**
- * @param zoom the renderer's current step. PASSED IN rather than read, because
- *   this function is module scope and the renderer belongs to `boot`'s closure —
- *   the same seam `storedZoom` above describes. A module-level MIRROR of the
- *   zoom would be a second copy of state the renderer already owns, and the two
- *   would disagree the first time anything clamped.
+ * @param uiScale the renderer's current INTERFACE step. PASSED IN rather than
+ *   read, because this function is module scope and the renderer belongs to
+ *   `boot`'s closure — the same seam `storedUiScale` above describes.
+ * @param uiScalePercent what that step actually drew, as a percentage of the
+ *   default one. A SECOND ARGUMENT rather than arithmetic here, because the
+ *   clamp belongs to the renderer: see `liveUiScalePercent`.
  */
-function escapeMenuView(zoom: number, uiScale: number): EscapeMenuView {
+function escapeMenuView(uiScale: number, uiScalePercent: number): EscapeMenuView {
   return {
     screen: menuScreen,
     // THE ARCHIVE AND WHICH PAGE OF IT IS OPEN — see `notesRows`. Both come off
@@ -3698,16 +3818,14 @@ function escapeMenuView(zoom: number, uiScale: number): EscapeMenuView {
     page: menuPage,
     armed: menuArmed,
     confirming: menuConfirm,
-    // THE ROW IS A READOUT AS WELL AS A CONTROL — see `EscapeMenuView.zoom`.
-    zoom,
-    // AND ITS TWIN. Two rows because they move two different factors; see the
-    // `ui-scale` effect in ui/escapemenu.ts.
+    // THE ROW IS A READOUT AS WELL AS A CONTROL — see `EscapeMenuView.uiScale`.
+    // The STEP decides which arrow is greyed; the PERCENT is what it drew, and
+    // they are two facts because the renderer clamps.
     uiScale,
+    uiScalePercent,
     // ONLY WHETHER THE ROW CAN DO ANYTHING HERE, never what it would do — the
     // same shape as `panelsMoved` below.
     uiScaleFixed: liveUiScaleFixed,
-    // AND ITS TWIN, which is true on more windows than that one.
-    zoomFixed: liveZoomFixed,
     // ONLY WHETHER, never which: the row is greyed or it is not.
     panelsMoved: DRAGGABLE_PANELS.some(
       (panel) => panelOffsets[panel].dx !== 0 || panelOffsets[panel].dy !== 0,
@@ -3870,6 +3988,28 @@ type HudLayout = {
    * the server sent a roster INSTEAD of the world rather than alongside it.
    */
   readonly roster: PanelRect | null;
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE MINIMAP, WHICH IS CHROME AND IS NOW FURNITURE THE PLAYER OWNS.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * NULL WHEN THE BOX IS NOT DRAWN — `minimapDrawn()`, the one predicate the
+   * painter, `unmovedPanelRect` and `minimapTileAt` all read. main.ts:3205
+   * records why that matters more here than anywhere else in this type: this
+   * map was painted every frame and hit-tested nowhere, and the repair is only
+   * safe while the drawn rect and the clicked rect are one value. They are this
+   * one.
+   *
+   * FROM `minimapBand`, NOT `panelBand` LIKE THE FIVE FLOATING PANELS. Its home
+   * is `MINIMAP_MARGIN`, which is above `panelBand.top`, and it is painted OVER
+   * the turn bar and the card strip on purpose. See `minimapBand`.
+   *
+   * IT IS THE ONLY MEMBER OF THIS TYPE THAT IS NOT A PANEL. Everything else here
+   * is something the player opened; this is standing furniture they are allowed
+   * to move. That is exactly why it LOSES to every panel in both orders — it is
+   * painted before them and hit-tested after them.
+   */
+  readonly minimap: PanelRect | null;
 };
 
 /**
@@ -3912,6 +4052,14 @@ function movePanel(
    * `settlePanel` branches on exactly this condition and must keep doing so:
    * a panel drawn by one clamp and settled by the other is two answers to
    * "where is this panel", and the settle would bank an offset never drawn.
+   */
+  /**
+   * THE MINIMAP HAS NO BRANCH HERE, AND THAT IS THE ANSWER RATHER THAN AN
+   * OVERSIGHT. Its size is settled against its band inside `minimapRect`
+   * before any offset exists, so the box that arrives is already square, whole-
+   * celled and small enough for the band — and `moveIntoBand` places it without
+   * capping anything. A `resizeIntoBand` branch here is what made a MOVE shrink
+   * the map; see `minimapRect`.
    */
   return panel === DraggablePanel.Log
     ? resizeIntoBand(rect, panelOffsets[panel], band, width)
@@ -4060,6 +4208,44 @@ function unmovedPanelRect(
      */
     case DraggablePanel.Party:
       return null;
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * THE CONVERSATION WINDOW — centred, on the floor of the band.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * NULL FOR EXACTLY ONE REASON, which is not the reason the four panels
+     * above answer null for: there is no conversation. `dialogueRect` never
+     * refuses a band — while the window is up the SERVER has parked this body,
+     * so a window that declined to draw would be a player who cannot act with
+     * nothing on screen saying why. It shrinks and pages instead.
+     *
+     * `dialogueView` RATHER THAN A PARAMETER, like `sheetVisible` and
+     * `menuOpen` above: this resolver reads module state so that the painter
+     * and the settle read ONE answer to "where would this window be".
+     */
+    case DraggablePanel.Dialogue:
+      return dialogueView === null ? null : dialogueRect(dialogueView, width, band);
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * THE MINIMAP — top-right, at whatever cell the grip was dragged to.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * NULL EXACTLY WHEN THE PAINTER DRAWS NOTHING, and the condition is copied
+     * from nowhere: `minimapDrawn()` is the one predicate, read by the paint
+     * block, by this arm and by `minimapTileAt`. main.ts:3205 records what the
+     * alternative costs — `minimapRect` was painted every frame with no caller
+     * in any mouse handler, so the map answered nothing at all. Two predicates
+     * would be the same fault wearing a fix's clothes: a click landing on a
+     * map that is not on screen, or a box that cannot be grabbed.
+     *
+     * `panelSizes` RATHER THAN A PARAMETER, like `sheetVisible` and `menuOpen`
+     * above: this resolver reads module state so the painter and the settle
+     * read ONE answer to "where would this box be".
+     */
+    case DraggablePanel.Minimap:
+      return minimapDrawn()
+        ? minimapRect(width, panelSizes[DraggablePanel.Minimap], minimapBand(height))
+        : null;
   }
 }
 
@@ -4121,14 +4307,14 @@ function hudLayout(width: number, height: number): HudLayout {
     width,
   );
   const view = partyView();
-  const pane =
+  const paneAt = (bottom: number): PartyPaneLayout | null =>
     view === null || !partyVisible
       ? null
       : partyPaneLayout({
           view,
           width,
           top: band.top,
-          bottom: band.bottom,
+          bottom,
           // WHAT THE PLAYER DRAGGED IT TO, or null. See `partyPaneLayout`: null
           // keeps the clear-map heuristic this pane has always used.
           size: panelSizes[DraggablePanel.Party],
@@ -4147,6 +4333,53 @@ function hudLayout(width: number, height: number): HudLayout {
            */
           rightReserved: 0,
         });
+  const paneFull = paneAt(band.bottom);
+  /**
+   * ═════════════════════════════════════════════════════════════════════════
+   * AND IT STOPS AT THE CASE LOG'S TOP EDGE, BECAUSE THE LOG IS PAINTED OVER IT
+   * ═════════════════════════════════════════════════════════════════════════
+   *
+   * Both are LEFT-COLUMN docks: the pane hangs from `band.top` down to whatever
+   * its rows need, the log stands on the band floor, and nothing kept them
+   * apart. Measured at 1262x428 with a six-member party and nothing dragged:
+   * the log's default top edge is y=202 and the pane ran to y=317, so rows four
+   * to six and the pane's own bottom border were painted and then covered. At
+   * the 640 floor a full party showed the self row and half of the second.
+   *
+   * THE GRIP WAS THE HALF NOBODY WOULD HAVE FOUND. `logGripRect` puts it in the
+   * pane's bottom-right corner, which in that state is under the log — and the
+   * log's hit test ran first, so the pane could not be resized at all from the
+   * moment a party filled it. ui/caselog.ts:1409 records that exact failure on
+   * the log itself: *"a DOM element cannot be hit-tested through — a full-width
+   * composer would sit on top of the resize grip and the Case Log could never be
+   * resized again"*.
+   *
+   * SO THE BOTTOM IS THE LOG'S TOP, and `paneGeometry` does the rest: it places
+   * rows while they fit and stops, which it already did. `drawPartyPane`'s title
+   * says "PARTY 3/6" when it had to stop, so the count a player reads is the one
+   * they can see AND the one they have.
+   *
+   * ONLY WHERE THE TWO ACTUALLY OVERLAP, tested against the pane's real rect
+   * rather than against an assumed column: the log is movable and resizable, so
+   * a player who has dragged it right or short has no overlap to answer for and
+   * must not lose pane height to a panel that is nowhere near it.
+   *
+   * AND NEVER BELOW `PARTY_PANE_MIN_H`. A log dragged to the top of the band
+   * would otherwise take the whole pane off the screen — `partyPaneLayout`
+   * returns null under that floor — and a party you cannot see at all is worse
+   * than a party with a corner of it behind a panel.
+   */
+  const paneOverLog =
+    paneFull !== null &&
+    log !== null &&
+    paneFull.rect.x < log.x + log.w &&
+    log.x < paneFull.rect.x + paneFull.rect.w &&
+    paneFull.rect.y < log.y + log.h &&
+    log.y < paneFull.rect.y + paneFull.rect.h;
+  const pane =
+    paneOverLog && log !== null
+      ? paneAt(Math.max(band.top + PARTY_PANE_MIN_H, Math.min(band.bottom, log.y)))
+      : paneFull;
 
   return {
     hudTop,
@@ -4230,11 +4463,32 @@ function hudLayout(width: number, height: number): HudLayout {
     // THE SAME ARGUMENT AS `picker`, one step earlier in the evening: a scrimmed
     // full-viewport modal, not band-derived, and nothing under it is pressable.
     roster: roster === null ? null : rosterRect(width, height),
-    // FROM THE BAND, AND NOT THROUGH `movePanel`: the window is not draggable in
-    // v1, which is one `ui/drag.ts` registration and one persisted layout field
-    // this feature does not need. It is docked to the foot of the band, so it
-    // rises on its own when the turn cards appear.
-    dialogue: dialogueView === null ? null : dialogueRect(dialogueView, width, band),
+    // THROUGH `movePanel`, LIKE THE FOUR ABOVE IT AND UNLIKE ITS OLD SELF. That
+    // line read "the window is not draggable in v1, which is one `ui/drag.ts`
+    // registration and one persisted layout field this feature does not need" —
+    // and the author, having played it, asked for both. The arm in
+    // `unmovedPanelRect` still decides the SHAPE and the null (it is centred and
+    // docked to the foot of the band, so it rises on its own when the turn cards
+    // appear); this slides the result by however far it has been dragged and
+    // clamps it back into the same band every other floating panel is held in.
+    dialogue: movePanel(
+      DraggablePanel.Dialogue,
+      unmovedPanelRect(DraggablePanel.Dialogue, width, height, band),
+      band,
+      width,
+    ),
+    // ═══ AND THE MINIMAP, IN ITS OWN BAND ═══
+    // The arm in `unmovedPanelRect` decides the SHAPE and the null (the box is
+    // right-docked at the margin and snapped to whole cells); this slides it by
+    // however far it has been dragged, clamps it, and squares it back up. The
+    // band is `minimapBand` and not `band`: this box's home is ABOVE
+    // `panelBand.top`, so the shared clamp would refuse its own default.
+    minimap: movePanel(
+      DraggablePanel.Minimap,
+      unmovedPanelRect(DraggablePanel.Minimap, width, height, band),
+      minimapBand(height),
+      width,
+    ),
   };
 }
 
@@ -4878,12 +5132,16 @@ function drawDragGhost(ctx: CanvasRenderingContext2D, spriteSource: SpriteSource
  * move should paint at all. One function, so the two can never disagree about
  * whether a card is under the pointer. See `pointerCardDrawn`.
  */
+/**
+ * NO `width` ANY MORE. It existed for one reader — the minimap card, which
+ * computed the box from the viewport. The box moves now and its rect comes out
+ * of `layout`, so the viewport was a parameter nothing in here could use.
+ */
 function hoverCardAt(
   layout: HudLayout,
   sheetRows: readonly SheetRow[] | null,
   px: number,
   py: number,
-  width: number,
 ): HoverCard | null {
   return (
     (layout.inventory === null
@@ -4922,7 +5180,7 @@ function hoverCardAt(
      * at the map" over a sheet the player opened is the same fault as drawing
      * the map on top of it.
      */
-    (coveredByPanel(layout, px, py) ? null : minimapCardAt(px, py, width)) ??
+    (coveredByPanel(layout, px, py) ? null : minimapCardAt(layout.minimap, px, py)) ??
     /**
      * THE PARTY PANE, AND IT IS ASKED BEFORE THE BAR FOR A REASON.
      *
@@ -4983,10 +5241,10 @@ function talentCardAt(rect: PanelRect, px: number, py: number): HoverCard | null
  * its own. The actor and floor cards open through `noteHoveredActor`, which
  * paints when the hovered tile changes.
  */
-function pointerCardAt(layout: HudLayout, px: number, py: number, width: number): boolean {
+function pointerCardAt(layout: HudLayout, px: number, py: number): boolean {
   return (
     (layout.talents !== null && talentCardAt(layout.talents, px, py) !== null) ||
-    hoverCardAt(layout, paintedSheetRows, px, py, width) !== null
+    hoverCardAt(layout, paintedSheetRows, px, py) !== null
   );
 }
 
@@ -5127,7 +5385,16 @@ const paintHud: HudPainter = (ctx, width, height) => {
    * The zone label travels with it and is therefore hidden by an open panel too,
    * which is the same rule stated once rather than twice.
    */
-  if (!(worldMapOpen && overworldLevel !== null) && level !== null && currentRealmId !== null) {
+  /**
+   * ═══ THE GUARD IS `layout.minimap`, WHICH IS `minimapDrawn()` ONCE REMOVED ═══
+   * This was the condition written out here, and a near-copy of it in
+   * `minimapTileAt`. A box that can be MOVED cannot afford two of anything:
+   * reading the rect out of the layout makes the drawn box and the clicked box
+   * the same value by construction, and a null rect is the painter's own
+   * "nothing here" rather than a second opinion about it.
+   */
+  const miniBox = layout.minimap;
+  if (miniBox !== null && level !== null && currentRealmId !== null) {
     const me = selfId === null ? undefined : actors.get(selfId);
     // THE SERVER'S MEMORY OF THIS MAP: the `realm` frame's `explored`, and every
     // window's `remembered` bits since. See `client/vision.ts`.
@@ -5135,7 +5402,11 @@ const paintHud: HudPainter = (ctx, width, height) => {
     paintMap({
       ctx,
       level,
-      rect: minimapRect(width),
+      // WHERE THE PLAYER PUT IT. Everything this call draws — terrain, memory,
+      // traps, loot, monsters, party marks and the beacons the fog spares —
+      // is placed from this one rect, so the whole marker layer follows the box
+      // without a single extra line. That is the reason it is one rect.
+      rect: miniBox,
       sites,
       self: me === undefined ? undefined : { x: me.x, y: me.y },
       framed: true,
@@ -5214,7 +5485,7 @@ const paintHud: HudPainter = (ctx, width, height) => {
      * the Case Log back on the edge of vanishing mid-fight.
      */
     if (realmName !== null) {
-      const box = minimapRect(width);
+      const box = miniBox;
       ctx.save();
       ctx.font = ZONE_LABEL_FONT;
       ctx.textAlign = 'right';
@@ -5229,9 +5500,28 @@ const paintHud: HudPainter = (ctx, width, height) => {
         // it would run under where the turn cards appear when a fight starts.
         box.w * 2,
       );
-      if (said !== '') ctx.fillText(said, box.x + box.w, zoneLabelBaseline(width));
+      if (said !== '') ctx.fillText(said, box.x + box.w, zoneLabelBaseline(box));
       ctx.restore();
     }
+
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * AND THE CORNER GRIP, LAST, SO IT IS OVER THE MAP RATHER THAN UNDER IT.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * `drawLogGrip` IS THE ONLY COPY of that arithmetic in this client — the
+     * Case Log, the party pane and the action bar all draw theirs with it, and
+     * `logGripAt` is what every one of them hit-tests with. A fourth panel with
+     * a grip drawn by a fourth function is how a grip ends up a few pixels from
+     * where it is pressed, which caselog.ts:1387 records as a box that could
+     * never be resized again.
+     *
+     * DRAWN ON THE MAP AND COSTING ABOUT NINE CELLS OF IT at the default size.
+     * That is the price of the gesture and it is paid where every other panel
+     * pays it; the alternative is a second handle outside the frame, on a box
+     * that is 99 pixels across.
+     */
+    drawLogGrip(ctx, miniBox, gripCornerFor(DraggablePanel.Minimap));
   }
 
   // THE CHARACTER SHEET, WITH THE OTHER DOCK SURFACES AND BEFORE THE HOTBAR.
@@ -5441,7 +5731,7 @@ const paintHud: HudPainter = (ctx, width, height) => {
       sprites,
       rect: layout.menu,
       screen: menuScreen,
-      rows: escapeMenuRows(escapeMenuView(liveZoom, liveUiScale)),
+      rows: escapeMenuRows(escapeMenuView(liveUiScale, liveUiScalePercent)),
       hoveredClose: menuCloseHovered,
       hovered: menuHovered,
     });
@@ -5463,7 +5753,7 @@ const paintHud: HudPainter = (ctx, width, height) => {
    * which the mousemove handler asks too.
    */
   if (pointerPoint !== null) {
-    const card = hoverCardAt(layout, sheetRows, pointerPoint.x, pointerPoint.y, width);
+    const card = hoverCardAt(layout, sheetRows, pointerPoint.x, pointerPoint.y);
     if (card !== null) {
       drawHoverCard(ctx, sprites, card, pointerPoint.x, pointerPoint.y, width, height);
       pointerCardDrawn = true;
@@ -5904,6 +6194,7 @@ const paintHud: HudPainter = (ctx, width, height) => {
       view: dialogueView,
       selected: dialogueSelected,
       hovered: dialogueHovered,
+      settingsOpen: dialogueSettingsOpen,
     });
   }
 
@@ -6538,8 +6829,7 @@ async function boot(): Promise<void> {
   renderer.resize();
   // AFTER the first layout, never before: the accessor reads the live device box
   // and answers "fixed" while that box is still 0x0.
-  liveUiScaleFixed = renderer.uiScaleFixed();
-  liveZoomFixed = renderer.zoomFixed();
+  mirrorInterfaceSize();
 
   // --- draw scheduling ------------------------------------------------------
   // One pending rAF at a time. `frameHandle` doubles as the dirty flag: nonzero
@@ -6567,7 +6857,7 @@ async function boot(): Promise<void> {
      * `parts` is what is happening in the game — where you are, what the rules
      * are right now, who you are, what you have to spend. `session` is what is
      * happening to the CONNECTION: whether the socket is up, how many bodies
-     * the client is tracking, who else is in the Activity, the zoom. That
+     * the client is tracking, who else is in the Activity, the scale. That
      * second group is diagnostic. It mattered enough to keep and never enough
      * to read first, and it used to open the bar.
      */
@@ -7483,8 +7773,7 @@ async function boot(): Promise<void> {
     // unconditionally rather than inside the branch above: it is two divisions,
     // and a mirror that updated only on the frames somebody else cared about is
     // the kind of mirror that goes stale.
-    liveUiScaleFixed = renderer.uiScaleFixed();
-    liveZoomFixed = renderer.zoomFixed();
+    mirrorInterfaceSize();
     // ═══════════════════════════════════════════════════════════════════════
     // AND THE MENU'S OWN REFUSAL IS RE-APPLIED, BECAUSE THIS IS THE OTHER
     // MOMENT ITS RECT CAN DISAPPEAR.
@@ -7545,19 +7834,14 @@ async function boot(): Promise<void> {
       applyServerMessage(msg);
       // THE ECHO, APPLIED. `case 'settings'` records what the server holds and
       // this puts it on the board — including the first one, at `hello`, which
-      // is how a returning player gets the tile size they chose last time.
+      // is how a returning player gets the interface size they chose last time.
       // Cleared as it is consumed so a later frame about something else does not
-      // re-apply a stale preference over a zoom the player has since changed.
-      if (storedZoom !== null) {
-        // MIRRORED FROM THE RETURN, like the other writer — see `liveZoom`.
-        liveZoom = renderer.setZoom(storedZoom);
-        storedZoom = null;
-      }
-      // THE SAME, FOR THE INTERFACE STEP. Separately cleared, because the two
-      // arrive on one frame but a player may have moved only one of them and a
-      // shared guard would re-apply the other over a live change.
+      // re-apply a stale preference over a size the player has since changed.
       if (storedUiScale !== null) {
-        liveUiScale = renderer.setUiScale(storedUiScale);
+        renderer.setUiScale(storedUiScale);
+        // MIRRORED FROM THE RENDERER, never from the value we just sent it: it
+        // clamps. See `liveUiScale`.
+        mirrorInterfaceSize();
         storedUiScale = null;
       }
       // RE-ANCHOR THE RING. The caster can be shoved while it is open —
@@ -9429,6 +9713,26 @@ async function boot(): Promise<void> {
   }
 
   /**
+   * LEAVE THE CONVERSATION. The ONE place `dialogue_close` is constructed.
+   *
+   * ═══ TWO DOORS, ONE ACT ═══ Escape has always sent this; the × at the top
+   * right of the window is the same act reached with the mouse, added because
+   * the author asked for *"a single (X) button a the top right to close the
+   * dialogue (escape should still work like normal)"*. Written out once so the
+   * two cannot drift — `sayDialogue`'s own note makes the identical argument
+   * about the four doors into an ANSWER, and this is the fifth door out.
+   *
+   * ONE PRESS, ONE THING, AND THE LOCAL COPY IS NOT TOUCHED. The server answers
+   * with `view: null` and that is what clears it. A client that closed its own
+   * window would be a client that has decided it is out of a conversation the
+   * server still has it parked in.
+   */
+  function closeDialogue(): void {
+    if (dialogueView === null) return;
+    socket.send({ v: PROTOCOL_VERSION, t: 'dialogue_close' });
+  }
+
+  /**
    * Give an answer the window has already decided the meaning of.
    *
    * THE ONE PLACE THE FRAME IS BUILT, and it takes an ANSWER rather than a row
@@ -9618,20 +9922,6 @@ async function boot(): Promise<void> {
         worldMapOpen = !worldMapOpen;
         requestDraw();
         return;
-      case UiCommand.ZoomOut:
-      case UiCommand.ZoomIn: {
-        const want = renderer.zoom() + (command === UiCommand.ZoomIn ? 1 : -1);
-        // `setZoom` clamps and returns what it settled on, so "already as far
-        // as it goes" is a fact this can state rather than a silent no-op —
-        // a key that appears to do nothing is indistinguishable from one that
-        // is not bound.
-        const got = applyZoom(want);
-        if (got !== want) {
-          showNotice(command === UiCommand.ZoomIn ? 'already closest' : 'already widest');
-        }
-        requestDraw();
-        return;
-      }
       case UiCommand.ShowInventory:
         // A TOGGLE, AND IT ASKS THE SERVER FOR NOTHING — the talent panel's
         // shape exactly, and for its reason: the one frame this panel is built
@@ -9665,7 +9955,7 @@ async function boot(): Promise<void> {
 
   /** The rows, as the painter builds them. One call, one answer, no cache. */
   function menuRows(): readonly MenuRow[] {
-    return escapeMenuRows(escapeMenuView(liveZoom, liveUiScale));
+    return escapeMenuRows(escapeMenuView(liveUiScale, liveUiScalePercent));
   }
 
   /**
@@ -9795,86 +10085,67 @@ async function boot(): Promise<void> {
    */
   /**
    * ═════════════════════════════════════════════════════════════════════════
-   * CHANGE THE ZOOM AND TELL THE SERVER, WHICH IS WHAT MAKES IT OUTLIVE THE TAB.
+   * ONE WRITER FOR EVERY MIRROR OF THE INTERFACE SIZE.
    * ═════════════════════════════════════════════════════════════════════════
    *
-   * `-`/`=` and the mouse wheel both used to call `renderer.setZoom` directly,
-   * which is exactly two places that would have to remember to persist. One
-   * function so the clamp, the wire and the notice are stated once —
-   * `commitRemap`'s shape for the same reason.
+   * `liveUiScale`, `liveUiScalePercent` and `liveUiScaleFixed` are three facts
+   * about one setting and they go stale at DIFFERENT moments: the step moves
+   * when the player presses an arrow, the percentage moves with the step AND
+   * with the window, and "fixed" moves with the window alone. Five call sites
+   * used to write two of them by hand, and a mirror written in five places is
+   * the mirror that drifts.
    *
-   * ONLY A REAL CHANGE GOES ON THE WIRE. `setZoom` is authoritative about the
-   * clamp and returns what it settled on, so a player holding the wheel at the
-   * end of the range sends nothing rather than a frame a second. The server
-   * dedupes as well — it has to, since it cannot trust a client — but not
-   * sending is better than being ignored.
-   *
-   * A FAILED SEND IS SAID OUT LOUD, the rule every send in this file keeps: a
-   * zoom that vanished into a closed socket looks exactly like one that was
-   * saved, and the player finds out next session when the tiles are small again.
+   * EVERY VALUE COMES OFF THE RENDERER, never off what was requested. That is
+   * the rule `liveUiScale` records: the clamp is the renderer's and this file
+   * must not hold a second opinion about it.
    */
-  function applyZoom(next: number): number {
-    const before = renderer.zoom();
-    const got = renderer.setZoom(next);
-    liveZoom = got;
-    /**
-     * ═══════════════════════════════════════════════════════════════════════
-     * THE STEP MOVED AND THE MAP DID NOT — say so, because nothing else can.
-     * ═══════════════════════════════════════════════════════════════════════
-     *
-     * `setZoom` clamps the STEP, and the step is not the picture: `scale` is
-     * `max(1, fit + step)`, so on a window whose fit is already 1 the step goes
-     * from 0 to -1 and the map stays exactly where it was. Measured across six
-     * viewports, SMALLER moves nothing on any of them and BIGGER moves nothing
-     * below 1280 wide — including the 1262x428 window this game is played in.
-     *
-     * THE MENU ROW IS GREYED FOR THIS (`EscapeMenuView.zoomFixed`) and that is
-     * not enough on its own: zoom is the one preference with KEY BINDINGS, so
-     * a player who never opens the menu presses `=` and watches nothing happen.
-     * The interface step needed no equivalent because it has no key.
-     *
-     * ONLY WHEN THE STEP ITSELF MOVED. Pressing zoom-in at the cap already
-     * changes nothing and always has; saying "too small" there would be a
-     * refusal wearing the wrong reason.
-     */
-    if (got !== before && renderer.zoomFixed()) {
-      showNotice('this window is too small to zoom');
-    }
-    if (got !== before) {
-      if (!socket.send({ v: PROTOCOL_VERSION, t: 'set_zoom', zoom: got })) {
-        showNotice('not connected — that zoom was not saved');
-      } else if (!zoomPersisted) {
-        // THE OTHER WAY IT SILENTLY DOES NOT STICK, and it is the one a player
-        // could never work out: an anonymous socket has no character file, so
-        // the server holds the value for as long as the body lives and no
-        // longer. `SettingsMsg.persisted` exists to make that sayable rather
-        // than leaving somebody to find a working feature looks broken.
-        showNotice('not signed in — that zoom will not be saved');
-      }
-    }
-    return got;
+  function mirrorInterfaceSize(): void {
+    liveUiScale = renderer.uiScale();
+    liveUiScalePercent = renderer.uiScalePercent();
+    liveUiScaleFixed = renderer.uiScaleFixed();
   }
 
   /**
-   * `applyZoom`'s twin for the interface step.
+   * ═════════════════════════════════════════════════════════════════════════
+   * CHANGE THE INTERFACE SIZE AND TELL THE SERVER, WHICH IS WHAT MAKES IT
+   * OUTLIVE THE TAB.
+   * ═════════════════════════════════════════════════════════════════════════
    *
-   * IT REPEATS THE STRUCTURE RATHER THAN SHARING IT, and deliberately: the two
-   * differ in their renderer call, their wire verb, their mirror and all three
-   * of their sentences, so a shared helper would be four parameters and a worse
-   * read. What they must NOT differ in is the shape -- clamp at the renderer,
-   * mirror the authoritative answer, and say so when it will not stick.
+   * THREE ROUTES REACH THIS AND THERE IS ONE OF IT: the two arrows on the UI
+   * SIZE row, the Left/Right keys while that row is lit, and the row's own
+   * press, which cycles. `commitRemap`'s shape and for its reason — the clamp,
+   * the wire and the notice are stated once.
+   *
+   * ONLY A REAL CHANGE GOES ON THE WIRE. `setUiScale` is authoritative about the
+   * clamp and returns what it settled on, so pressing an arrow at the end of the
+   * range sends nothing rather than a frame a press. The server dedupes as well
+   * — it has to, since it cannot trust a client — but not sending is better
+   * than being ignored.
+   *
+   * A FAILED SEND IS SAID OUT LOUD, the rule every send in this file keeps: a
+   * size that vanished into a closed socket looks exactly like one that was
+   * saved, and the player finds out next session when the interface is small
+   * again.
+   *
+   * THE STEP MOVING IS NOT THE PICTURE MOVING, and nothing here pretends
+   * otherwise. `hudScale` is a whole number clamped by what the window can hold,
+   * so a step can be adopted while the screen does not change — and the row
+   * prints a PERCENTAGE precisely so that it can say so by not changing. That is
+   * the half the removed zoom control needed a spoken notice for, because its
+   * row could only offer a word.
    */
   function applyUiScale(next: number): number {
     const before = renderer.uiScale();
     const got = renderer.setUiScale(next);
-    liveUiScale = got;
+    // ALL THREE MIRRORS, FROM THE RENDERER. See `mirrorInterfaceSize`.
+    mirrorInterfaceSize();
     if (got !== before) {
       if (!socket.send({ v: PROTOCOL_VERSION, t: 'set_ui_scale', uiScale: got })) {
         showNotice('not connected — that interface size was not saved');
-      } else if (!zoomPersisted) {
-        // THE SAME FLAG, because `SettingsMsg.persisted` is about the FILE and
-        // not about one preference: an anonymous socket has no character file,
-        // so neither step outlives the body.
+      } else if (!settingsPersisted) {
+        // `SettingsMsg.persisted` is about the FILE and not about one
+        // preference: an anonymous socket has no character file, so nothing on
+        // that frame outlives the body.
         showNotice('not signed in — that interface size will not be saved');
       }
     }
@@ -9932,6 +10203,11 @@ async function boot(): Promise<void> {
    * A player pressing along a list of six things means "next", and answering
    * with nothing at all reads as a dead key.
    *
+   * WITH ONE EXCEPTION, AND IT IS THE ROW THAT HAS ITS OWN ARROWS. See the
+   * guard in the body: on UI SIZE a horizontal key steps the SETTING rather
+   * than the selection, which is the keyboard's copy of the two buttons drawn
+   * on that row.
+   *
    * ON THE KEYS SCREEN IT PAGES INSTEAD, and that is not a fudge: that screen
    * has no selectable row to move — every control on it is a per-row button and
    * ui/escapemenu.ts deliberately offers no keyboard selection for them — so the
@@ -9945,9 +10221,39 @@ async function boot(): Promise<void> {
       pageMenu((delta.y !== 0 ? delta.y : delta.x) > 0 ? 1 : -1);
       return;
     }
-    const order = enabledEntryIndices(menuRows());
-    if (order.length === 0) return;
+    const rows = menuRows();
     const delta = step({ x: 0, y: 0 }, dir);
+    /**
+     * ═══ A ROW WITH ITS OWN LEFT AND RIGHT KEEPS THEM ═══
+     * The rows are a COLUMN, so a pure east or west key otherwise falls back to
+     * "next" — see the note above. UI SIZE is the one row with controls INSIDE
+     * it, and a horizontal key there means the thing the two arrows mean.
+     *
+     * IT IS WHAT MAKES THE ARROWS REACHABLE WITHOUT A POINTER, which this row
+     * needs more than any other on the screen: the same argument that gave the
+     * setting a pointer route in the first place applies in reverse to a
+     * keyboard, and the pair must not be the only way to move it.
+     *
+     * ENTER STILL CYCLES, and the two do not conflict: `pressMenuSelection`
+     * runs the row's own effect (`delta: 0`), which wraps, so a player who has
+     * stepped to the top with the right arrow is one Enter from the bottom
+     * rather than stuck. The effect's docblock in ui/escapemenu.ts argues it.
+     *
+     * NOTHING IS SWALLOWED WHEN THE STEP IS AT ITS END: `applyUiScale` clamps
+     * and sends nothing, and the selection does not move either, which is the
+     * same "nothing happened" a vertical key gives at the top of the list.
+     */
+    if (delta.y === 0 && delta.x !== 0 && menuHovered !== null) {
+      const lit = rows.find(
+        (row) => row.kind === MenuRowKind.Entry && row.index === menuHovered && row.enabled,
+      );
+      if (lit !== undefined && lit.kind === MenuRowKind.Entry && lit.steppers !== undefined) {
+        runMenuEffect({ kind: 'ui-scale', delta: delta.x });
+        return;
+      }
+    }
+    const order = enabledEntryIndices(rows);
+    if (order.length === 0) return;
     const move = delta.y !== 0 ? delta.y : delta.x;
     const at = menuHovered === null ? -1 : order.indexOf(menuHovered);
     // Nothing lit yet: enter the list from the end the key came from.
@@ -10043,9 +10349,9 @@ async function boot(): Promise<void> {
          * fifth panel behind the day one is added — the same reason that helper
          * exists rather than an object literal.
          *
-         * THE MENU STAYS OPEN, like the zoom row and for the same reason: the
-         * player can see the result and is one press from the row again if a
-         * drag was what they wanted after all.
+         * THE MENU STAYS OPEN, like the UI SIZE row and for the same reason:
+         * the player can see the result and is one press from the row again if
+         * a drag was what they wanted after all.
          */
         for (const panel of DRAGGABLE_PANELS) panelOffsets[panel] = NO_OFFSET;
         /**
@@ -10065,29 +10371,25 @@ async function boot(): Promise<void> {
         showNotice('panels put back');
         requestDraw();
         return;
-      case 'zoom': {
-        /**
-         * ═══ IT CYCLES, AND THE MENU STAYS OPEN ═══
-         * `ZOOM_MIN`..`ZOOM_MAX` is three values (shared/version.ts argues that
-         * range), so a press wraps rather than dead-ending at the top — and the
-         * whole point of the row is to look at the map behind the menu and press
-         * again, which closing would make impossible.
-         *
-         * IT IS `applyZoom`, THE SAME CALL THE KEYS MAKE, so this is a second
-         * ROUTE to one preference rather than a second owner of it: the clamp,
-         * the `set_zoom` frame and both "that will not be saved" warnings all
-         * come along.
-         */
-        const next = renderer.zoom() >= ZOOM_MAX ? ZOOM_MIN : renderer.zoom() + 1;
-        applyZoom(next);
-        requestDraw();
-        return;
-      }
       case 'ui-scale': {
-        // CYCLES AND LEAVES THE MENU OPEN, exactly as ZOOM does above and for
-        // the same reason -- the point is to see the result and press again.
-        // Four values here rather than three; see `UI_SCALE_MIN`.
-        const next = renderer.uiScale() >= UI_SCALE_MAX ? UI_SCALE_MIN : renderer.uiScale() + 1;
+        /**
+         * ═══ AN ARROW STEPS AND CLAMPS; THE ROW ITSELF CYCLES ═══
+         * `delta` is -1 or +1 from the two arrows and 0 from the row — see the
+         * effect's own docblock in ui/escapemenu.ts, which argues why the wrap
+         * has to survive: `pressMenuSelection` gives a row exactly one act, so a
+         * row whose Enter clamped at the top would strand a keyboard-only
+         * player at the largest size with no way back down.
+         *
+         * `applyUiScale` EITHER WAY, so this is a second ROUTE to one preference
+         * rather than a second owner of it: the clamp, the `set_ui_scale` frame
+         * and both "that will not be saved" warnings all come along.
+         *
+         * THE MENU STAYS OPEN. The whole point is to see the result and press
+         * again, which closing would make impossible.
+         */
+        const at = renderer.uiScale();
+        const next =
+          effect.delta === 0 ? (at >= UI_SCALE_MAX ? UI_SCALE_MIN : at + 1) : at + effect.delta;
         applyUiScale(next);
         requestDraw();
         return;
@@ -10730,9 +11032,31 @@ async function boot(): Promise<void> {
        * ONE PRESS, ONE THING. `dialogue_close` is sent and nothing else happens;
        * the server answers with `view: null` and that is what clears the local
        * copy. This client never decides it is out of a conversation.
+       *
+       * THROUGH `closeDialogue`, which the window's × also calls — the key and
+       * the button are one act written once.
        */
+      /**
+       * INNERMOST FIRST, AND THE POPOVER IS INNER. The author's words were
+       * *"escape should still work like normal"*, and normal is what every other
+       * layered surface in this file already does (the escape menu's head links,
+       * most explicitly): a press dismisses the thing most recently opened ON
+       * TOP, not the thing underneath it. A cog popover standing over the
+       * answers is that thing.
+       *
+       * THE ONE PRESS ARGUMENT ABOVE STILL HOLDS, and this does not weaken it:
+       * the popover is drawn by THIS client and holds nothing on the server, so
+       * dismissing it costs no frame and leaves the body parked for exactly as
+       * long as it already was. The press that follows reaches the conversation,
+       * which is still above the world map and the menus for the reason written
+       * there.
+       */
+      if (dialogueView !== null && dialogueSettingsOpen) {
+        dialogueSettingsOpen = false;
+        return;
+      }
       if (dialogueView !== null) {
-        socket.send({ v: PROTOCOL_VERSION, t: 'dialogue_close' });
+        closeDialogue();
         return;
       }
       /**
@@ -11138,7 +11462,31 @@ async function boot(): Promise<void> {
     if (layout.picker !== null) return true;
     const point = renderer.backbufferPoint(clientX, clientY);
     if (point === null) return false;
-    if (point.y < layout.hudTop) return true;
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * THE TOP HUD STRIP SWALLOWS EVERYTHING EXCEPT THE MINIMAP.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * This was `point.y < layout.hudTop` alone, and it took the minimap with
+     * it. The box starts at `MINIMAP_MARGIN` — 8 — and `hudTop` is 14 out of
+     * combat and 60 IN it, because the card strip is full-width
+     * (`drawTurnCards` panels `{x: 0, w: width}`). So the top 6 pixels of the
+     * map were unreachable while nothing was happening and the top FIFTY-TWO
+     * were unreachable the moment a fight started: over half the box, in the
+     * one state where knowing what is around the corner matters.
+     *
+     * IT IS THIS HANDLER'S OWN RULE APPLIED, not an exception to it. HIT-TEST
+     * ORDER MIRRORS PAINT ORDER, and `paintHud` draws the turn bar and the
+     * cards FIRST and the minimap over them — the minimap paint block argues
+     * that order at length. The strip was winning a press on pixels it is
+     * painted underneath.
+     *
+     * THE PANELS STILL WIN, because every one of them is tested above this call
+     * in `mousedown` and each of their rects is tested below it here — and the
+     * minimap is now tested above it too, so exempting it here is no longer what
+     * makes its top pixels reachable. The strip is simply not painted over it.
+     */
+    if (point.y < layout.hudTop && !inRect(layout.minimap, point.x, point.y)) return true;
     if (tokenMenu?.contains(point.x, point.y) === true) return true;
     if (respawnPromptHit(layout.respawn, point.x, point.y)) return true;
     if (inRect(layout.hotbar, point.x, point.y)) return true;
@@ -11182,6 +11530,19 @@ async function boot(): Promise<void> {
     // must not reach the map — see the `1b` block in `mousedown`, where letting
     // one through does not merely walk the party but ENDS THE CONVERSATION,
     // because travel is a turn verb and a turn verb unparks.
+    // ═══ AND THE MINIMAP IS THE SIXTH, WHICH IT WAS NOT AND HAD NEVER BEEN ═══
+    // Every reason above applies to it and one of them twice over. Left out of
+    // this list, `mousemove` ran `targeting?.hover(tile)` and `noteHoveredActor`
+    // for the world tile BEHIND the box on every pointer move across it — an
+    // `inspect` per hover-settle for whatever is under the corner of the screen,
+    // and an exhausted bucket answers `error`, which cancels the player's aim.
+    // It also means a RIGHT-CLICK on the map opened a verb menu on the tile
+    // behind it: "a menu about a body the player cannot see", which is the
+    // sentence step 1b already gives for the conversation window.
+    //
+    // IT WAS SURVIVABLE WHILE THE BOX LIVED IN ONE CORNER and stopped being so
+    // the moment it could be dragged — it can now be parked in the middle of
+    // the playfield, which is exactly where those two costs are worst.
     return (
       inRect(layout.pane?.rect ?? null, point.x, point.y) ||
       inRect(layout.log, point.x, point.y) ||
@@ -11189,6 +11550,7 @@ async function boot(): Promise<void> {
       inRect(layout.talents, point.x, point.y) ||
       inRect(layout.inventory, point.x, point.y) ||
       inRect(layout.menu, point.x, point.y) ||
+      inRect(layout.minimap, point.x, point.y) ||
       inRect(layout.dialogue, point.x, point.y)
     );
   }
@@ -11235,7 +11597,7 @@ async function boot(): Promise<void> {
       const { hudW: logicalW, hudH: logicalH } = renderer.metrics();
       const layout = hudLayout(logicalW, logicalH);
       // ...AND ONE THAT WOULD OPEN HERE OPENS NOW, not on the next server frame.
-      if (!pointerCardDrawn && pointerCardAt(layout, point.x, point.y, logicalW)) {
+      if (!pointerCardDrawn && pointerCardAt(layout, point.x, point.y)) {
         requestDraw();
       }
       const over = respawnPromptHit(layout.respawn, point.x, point.y);
@@ -11441,11 +11803,24 @@ async function boot(): Promise<void> {
       // ROW NEVER HIGHLIGHTS: ui/dialogue.ts paints the hover only on a row this
       // player may give, so the picture cannot promise a press that `sayDialogue`
       // will refuse.
+      // AND THE POPOVER IS PASSED, so a row UNDER an open menu does not light up
+      // as though it were pressable — the press handler reads the same flag and
+      // would swallow that click, which is exactly the pair of answers that must
+      // not disagree (ui/dialogue.ts's `dialogueHitAt` makes it a required
+      // argument for this reason).
       const overRow =
         layout.dialogue === null || dialogueView === null
           ? null
-          : dialogueHitAt(dialogueView, layout.dialogue, dialogueSelected, point.x, point.y);
-      const hoveredRow = overRow?.index ?? -1;
+          : dialogueHitAt(
+              dialogueView,
+              layout.dialogue,
+              dialogueSelected,
+              point.x,
+              point.y,
+              dialogueSettingsOpen,
+            );
+      const hoveredRow =
+        overRow !== null && overRow.kind === DialogueHitKind.Row ? overRow.row.index : -1;
       if (hoveredRow !== dialogueHovered) {
         dialogueHovered = hoveredRow;
         requestDraw();
@@ -11499,11 +11874,41 @@ async function boot(): Promise<void> {
       if (classOptions !== null) return;
       const point = renderer.backbufferPoint(event.clientX, event.clientY);
       // On the letterbox bars there is no world under the pointer and no panel
-      // either, so there is nothing to zoom TOWARD. Leave it alone.
+      // either, so there is nothing for a wheel to reach. Leave it alone.
       if (point === null) return;
 
       const { hudW: logicalW, hudH: logicalH } = renderer.metrics();
       const wheelLayout = hudLayout(logicalW, logicalH);
+      /**
+       * ══════════════════════════════════════════════════════════════════════
+       * THE CONVERSATION FIRST, AND IT PAGES — THE HINT THAT NAMED THE KEYS IS GONE
+       * ══════════════════════════════════════════════════════════════════════
+       *
+       * The window shows the answers that FIT and prints "1-4 of 20" when they
+       * do not. That strip used to be followed by *"arrows move"*; the request
+       * was to take the strip away, and taking it away left the count line as
+       * the only sign more existed with nothing naming a way to reach it. At the
+       * 640 floor IN COMBAT an ordinary five-answer greet shows "1-2 of 5", so
+       * this is not an edge case in a twenty-answer node.
+       *
+       * IT IS `moveDialogueSelection`, NOT A SECOND SCROLL POSITION. The window
+       * pages to keep the SELECTED row on screen (`dialogueGeometry` walks
+       * `first` up until it does), so the list already has exactly one thing
+       * that drives it and the wheel drives that. A scroll offset of its own
+       * would be a second opinion about which rows are shown.
+       *
+       * FIRST OF EVERY SURFACE HERE, because `paintHud` draws this window last
+       * of all but the class picker — the same order `mousedown` step 1b keeps.
+       */
+      if (
+        wheelLayout.dialogue !== null &&
+        dialogueView !== null &&
+        inRect(wheelLayout.dialogue, point.x, point.y)
+      ) {
+        event.preventDefault();
+        moveDialogueSelection(event.deltaY > 0 ? 's' : 'n');
+        return;
+      }
       // ═══ THE ESCAPE MENU FIRST, MIRRORING THE PAINT ORDER, AND IT IS AN
       //     OCCLUSION GUARD RATHER THAN A SCROLL GATE ═══
       // The same distinction the two paragraphs above draw for the talent and
@@ -11589,7 +11994,7 @@ async function boot(): Promise<void> {
        *
        * The first version returned early when `caseLog` was null — ABOVE the
        * panel guards — so before the log existed a wheel rolled over the escape
-       * menu would have zoomed the map underneath it. No log simply means no
+       * menu would have reached the world underneath it. No log simply means no
        * lane can claim the wheel, which is what the fall-through below already
        * handles; it is not a reason to skip the occlusion guards.
        */
@@ -11606,30 +12011,31 @@ async function boot(): Promise<void> {
         caseLog.composerAt(point.x, point.y) === false;
       if (!overLog) {
         /**
-         * ═══════════════════════════════════════════════════════════════════
-         * NOTHING CLAIMED THE WHEEL, SO IT ZOOMS. THE POSITION OF THIS LINE IS
-         * THE WHOLE FEATURE.
-         * ═══════════════════════════════════════════════════════════════════
+         * ══════════════════════════════════════════════════════════════════
+         * NOTHING CLAIMED THE WHEEL, SO NOTHING HAPPENS. THE POSITION OF THIS
+         * LINE STILL MATTERS.
+         * ══════════════════════════════════════════════════════════════════
          * Every `return` above is a surface saying "this wheel is mine, or I am
          * drawn over something whose it would be" — the chooser, the escape
-         * menu, the sheet, the talent panel, the inventory, and a Case Log lane
-         * just above. Reaching here means the pointer is over the WORLD, and
-         * over the world a wheel means zoom.
+         * menu, the sheet, the talent panel, the inventory, and the Log's lane
+         * just above. Reaching here means the pointer is over the WORLD.
          *
-         * Written as a fall-through rather than as its own hit test on purpose.
-         * A test of the form "is the pointer NOT over any panel" would be a
-         * second copy of that list, and the copy would be the one that went
-         * stale the next time a panel was added — silently, because the symptom
-         * is a wheel that zooms the map while it looks like it is scrolling a
-         * transcript. Here a new panel gets its guard in one place and this
-         * inherits it.
+         * THE WORLD USED TO ZOOM HERE, and the control is gone: *"remove the
+         * (zoom) option"*. Leaving the wheel bound to it while the menu row and
+         * both keys went would be exactly the orphan the removal exists to
+         * avoid — a setting with one undiscoverable route into it and no way
+         * to read what it is set to.
          *
-         * UP IS IN, which is what every map in every application does. The
-         * `-`/`=` keys and this share `setZoom`, so the clamp is stated once.
+         * THE GUARD ORDER SURVIVES THE ACT IT GUARDED, and that is not
+         * ceremony: the list above is what decides whether a wheel over a panel
+         * scrolls THAT panel, and the next surface to claim a wheel joins it
+         * here. Collapsing it to a bare early return would delete the ordering
+         * the Log's own lane test depends on.
+         *
+         * NOT `preventDefault`. There is nothing to do, so the wheel belongs to
+         * the browser; swallowing it would be this client claiming a gesture it
+         * does not use.
          */
-        event.preventDefault();
-        applyZoom(renderer.zoom() + (event.deltaY < 0 ? 1 : -1));
-        requestDraw();
         return;
       }
       event.preventDefault();
@@ -11722,6 +12128,9 @@ async function boot(): Promise<void> {
    */
   function panelFloor(panel: DraggablePanel): PanelSize {
     if (panel === DraggablePanel.Hotbar) return hotbarFloor(hotbarStyle);
+    // THE MINIMAP'S FLOOR IS ITS SMALLEST WHOLE CELL, not the shared 160x72 —
+    // see `MINIMAP_FLOOR`. Same argument the party pane's compact form makes.
+    if (panel === DraggablePanel.Minimap) return MINIMAP_FLOOR;
     return panel === DraggablePanel.Party
       ? { w: PARTY_PANE_COMPACT_W, h: PARTY_PANE_MIN_H }
       : DEFAULT_PANEL_FLOOR;
@@ -11734,6 +12143,9 @@ async function boot(): Promise<void> {
     // THE PANE IS A TOP-LEFT DOCK and lives in the ordinary panel band; the log
     // has its own, deliberately independent of the combat card strip.
     if (panel === DraggablePanel.Hotbar) return hotbarBand(logicalH, turnHudHeight(turnView()));
+    // THE MINIMAP LIVES ABOVE `panelBand.top` and stops at the action bar —
+    // `minimapBand`, which takes no `hudTop` so a fight cannot move the box.
+    if (panel === DraggablePanel.Minimap) return minimapBand(logicalH);
     return panel === DraggablePanel.Party
       ? panelBand(logicalH, turnHudHeight(turnView()))
       : quietLogBand(logicalH);
@@ -11755,6 +12167,7 @@ async function boot(): Promise<void> {
     const { hudW: logicalW, hudH: logicalH } = renderer.metrics();
     const layout = hudLayout(logicalW, logicalH);
     if (panel === DraggablePanel.Hotbar) return layout.hotbar;
+    if (panel === DraggablePanel.Minimap) return layout.minimap;
     return panel === DraggablePanel.Party ? (layout.pane?.rect ?? null) : layout.log;
   }
 
@@ -11779,8 +12192,8 @@ async function boot(): Promise<void> {
       sizeAtGrab:
         subject.kind !== DragKind.Resize
           ? null
-          : subject.panel === DraggablePanel.Hotbar
-            ? panelSizes[DraggablePanel.Hotbar]
+          : subject.panel === DraggablePanel.Hotbar || subject.panel === DraggablePanel.Minimap
+            ? panelSizes[subject.panel]
             : liveLogSize(),
       /**
        * ═══════════════════════════════════════════════════════════════════════
@@ -11794,20 +12207,30 @@ async function boot(): Promise<void> {
        * at its floor size, so the origin CANNOT move while the box is being
        * resized. A value that cannot change is a value to capture once.
        *
-       * `gripOffset` is measured from the panel's bottom-right corner, which is
-       * where `logGripRect` puts the grip — so it is zero or negative, and it is
-       * what keeps the grabbed pixel under the pointer instead of snapping the
-       * corner to it.
+       * `gripOffset` is measured from the corner `logGripRect` actually put the
+       * grip in — so it is zero or negative on a bottom-right grip and zero or
+       * positive on a bottom-left one — and it is what keeps the grabbed pixel
+       * under the pointer instead of snapping the corner to it.
+       *
+       * AND `origin.x` IS THE EDGE THAT DOES NOT MOVE, which for the minimap is
+       * its RIGHT one: the box is docked to the margin and grows leftwards, so
+       * clamping or measuring from its left edge measures from the end that is
+       * about to move. See `gripCornerFor` and `GripCorner`.
        */
       resizeAtGrab:
         subject.kind === DragKind.Resize
           ? (() => {
               const rect = panelLiveRect(subject.panel);
               if (rect === null) return null;
+              const corner = gripCornerFor(subject.panel);
+              const gripEdge = corner === GripCorner.BottomLeft ? rect.x : rect.x + rect.w;
               return {
-                origin: { x: rect.x, y: rect.y },
+                origin: {
+                  x: corner === GripCorner.BottomLeft ? rect.x + rect.w : rect.x,
+                  y: rect.y,
+                },
                 gripOffset: {
-                  dx: grabX - (rect.x + rect.w),
+                  dx: grabX - gripEdge,
                   dy: grabY - (rect.y + rect.h),
                 },
               };
@@ -11886,15 +12309,47 @@ async function boot(): Promise<void> {
       const own = panelResizeBand(subject.panel, sizeH);
       const floor = panelFloor(subject.panel);
       const asked =
-        at === null ? liveLogSize() : nextSize(at.origin, at.gripOffset, point.x, point.y, floor);
-      const landed = resizeIntoBand(
-        { x: at?.origin.x ?? DOCK_MARGIN, y: at?.origin.y ?? own.top, ...asked },
-        NO_OFFSET,
-        own,
-        sizeW,
-        floor,
-      );
-      panelSizes[subject.panel] = { w: landed.w, h: landed.h };
+        at === null
+          ? liveLogSize()
+          : nextSize(
+              at.origin,
+              at.gripOffset,
+              point.x,
+              point.y,
+              floor,
+              gripCornerFor(subject.panel),
+            );
+      if (subject.panel === DraggablePanel.Minimap) {
+        /**
+         * ══════════════════════════════════════════════════════════════
+         * NO ORIGIN-RELATIVE CLAMP FOR THE MINIMAP, WHICH IS `movePanel`'S ANSWER
+         * ══════════════════════════════════════════════════════════════
+         * `resizeIntoBand` caps `w` to `width - x`, which is right for a box
+         * docked to the LEFT and is the whole bug for one docked to the right:
+         * the minimap sits at `viewW - box - 8`, so the room right of its own
+         * origin is `box + 8` and the clamp handed back the size it already
+         * was. Dragging the grip 400 pixels stored `{w:107, h:345}` and drew
+         * 99x99 at every viewport; shrink it once and the box was pinned at its
+         * floor forever, in every future session, because `minimapSize`
+         * persists.
+         *
+         * `minimapRect` settles this size against the band and squares it to
+         * whole cells before any offset exists — which is the same reason
+         * `movePanel` needs no minimap branch. So the only clamp wanted here is
+         * the one the RELEASE already applies, and it is applied live so the
+         * store never holds a number the painter refused to draw.
+         */
+        panelSizes[subject.panel] = sizeIntoBand(asked, own, sizeW, floor);
+      } else {
+        const landed = resizeIntoBand(
+          { x: at?.origin.x ?? DOCK_MARGIN, y: at?.origin.y ?? own.top, ...asked },
+          NO_OFFSET,
+          own,
+          sizeW,
+          floor,
+        );
+        panelSizes[subject.panel] = { w: landed.w, h: landed.h };
+      }
     } else {
       springInventoryTab(point);
     }
@@ -12165,9 +12620,13 @@ async function boot(): Promise<void> {
        * wrote the smaller number down permanently.
        */
       const held = panelSizes[subject.panel];
-      if (held !== null && subject.panel === DraggablePanel.Hotbar) {
-        // THE BAR'S OWN BAND AND FLOOR: it may be one slot wide, and the log's
-        // floor would stop the grip at three.
+      if (
+        held !== null &&
+        (subject.panel === DraggablePanel.Hotbar || subject.panel === DraggablePanel.Minimap)
+      ) {
+        // THEIR OWN BANDS AND FLOORS: the bar may be one slot wide and the map
+        // may be two cells square, and the log's 160x72 floor would stop both
+        // grips short of a size the layout is perfectly willing to draw.
         panelSizes[subject.panel] = sizeIntoBand(
           held,
           panelResizeBand(subject.panel, logicalH),
@@ -12187,6 +12646,8 @@ async function boot(): Promise<void> {
     // a window which grows back restores what the player chose.
     if (unmoved === null) return;
     // THE SAME BRANCH THE PAINTER TAKES, and it has to be — see `movePanel`.
+    // The minimap is NOT listed: it takes `moveIntoBand` in the painter, so it
+    // takes `settleOffset` here, in its own band.
     const settle = subject.panel === DraggablePanel.Log ? settleResize : settleOffset;
     panelOffsets[subject.panel] = settle(
       unmoved,
@@ -12198,7 +12659,9 @@ async function boot(): Promise<void> {
         ? logBand(logicalH, turnHudHeight(turnView()))
         : subject.panel === DraggablePanel.Hotbar
           ? hotbarBand(logicalH, turnHudHeight(turnView()))
-          : band,
+          : subject.panel === DraggablePanel.Minimap
+            ? minimapBand(logicalH)
+            : band,
       logicalW,
     );
     savePanelLayout();
@@ -12215,9 +12678,9 @@ async function boot(): Promise<void> {
    * continuously for a second or more, and a frame per mousemove would put a
    * hundred writes on somebody's character file to record one decision.
    *
-   * IT IS SILENT ABOUT FAILURE, where `applyZoom` and `applyUiScale` both say so
-   * out loud. Those answer a KEYPRESS: the player pressed something and is owed
-   * a word about whether it stuck. This is the tail of a drag they have already
+   * IT IS SILENT ABOUT FAILURE, where `applyUiScale` says so out loud. That one
+   * answers a KEYPRESS: the player pressed something and is owed a word about
+   * whether it stuck. This is the tail of a drag they have already
    * watched happen — the panel is where they put it either way — and a notice
    * reading "not connected" every time somebody nudges a window would attach
    * noise to the wrong act. The next `settings` frame is the correction, exactly
@@ -12272,6 +12735,7 @@ async function boot(): Promise<void> {
         logSize: panelSizes[DraggablePanel.Log],
         partySize: panelSizes[DraggablePanel.Party],
         hotbarSize: panelSizes[DraggablePanel.Hotbar],
+        minimapSize: panelSizes[DraggablePanel.Minimap],
         // ONLY ONCE IT DIFFERS FROM THE DEFAULT, the log style's rule below.
         hotbarStyle:
           hotbarStyle.vertical !== DEFAULT_HOTBAR_STYLE.vertical ||
@@ -12467,6 +12931,28 @@ async function boot(): Promise<void> {
     const { hudW: logicalW, hudH: logicalH } = renderer.metrics();
     const layout = hudLayout(logicalW, logicalH);
 
+    /**
+     * ═══ THE FOUR PANELS THAT ARE PAINTED OVER EVERYTHING IN THE BAND ═══
+     *
+     * The character sheet, the talent panel, the inventory and the escape menu.
+     * All four are centred on the assumption that the two docks own the sides,
+     * none of them consults the pane's rect or the log's, and all four are
+     * painted AFTER both — so wherever they overlap, they are what the player
+     * can actually see.
+     *
+     * ONE EXPRESSION, because five sites need the same answer and one sentence
+     * justifies every one of them: a control the player cannot see must not be
+     * pressable. It was written out twice already (the right-click branch and
+     * step 5) and left out of three more. The hotbar and the conversation
+     * window are NOT in it: both are tested above every one of those sites, so
+     * by then they have already won or lost.
+     */
+    const overFloating = (px: number, py: number): boolean =>
+      inRect(layout.sheet, px, py) ||
+      inRect(layout.talents, px, py) ||
+      inRect(layout.inventory, px, py) ||
+      inRect(layout.menu, px, py);
+
     // ═══ -1. THE SELECT SCREEN TAKES EVERY CLICK BEFORE ANYTHING ELSE ═══
     //
     // FIRST OF ALL, ABOVE EVEN THE CLASS CHOOSER, because it is the one modal
@@ -12630,6 +13116,13 @@ async function boot(): Promise<void> {
      * A GREYED ROW SWALLOWS ITS CLICK AND SAYS WHY — `sayDialogue` decides that
      * once, for the mouse and for the digits, so the two cannot disagree about
      * what pressing a story row as a non-lead does.
+     *
+     * ═══ THE HEADER IS A HANDLE NOW, AND IT IS TESTED FIRST ═══
+     * `dialogueDragAt` refuses the × and the cogwheel itself, so the two orders
+     * agree — but the drag is asked before the controls anyway, because a press
+     * that begins a gesture must not also fire something on the way past. The
+     * gesture ends in `endDrag`, which settles the offset the clamp honoured and
+     * saves the layout, exactly like every other panel's header.
      */
     if (layout.dialogue !== null && dialogueView !== null && point !== null) {
       const box = layout.dialogue;
@@ -12640,12 +13133,65 @@ async function boot(): Promise<void> {
         point.y < box.y + box.h
       ) {
         event.preventDefault();
-        const row =
-          event.button !== 0
-            ? null
-            : dialogueHitAt(dialogueView, box, dialogueSelected, point.x, point.y);
-        if (row !== null) sayDialogue(row.index);
-        return;
+        // RIGHT-CLICK IS SWALLOWED AND DOES NOTHING, as it always has: the only
+        // alternative is a verb menu about a tile the player cannot see, drawn
+        // over the conversation they were reading.
+        if (event.button !== 0) return;
+        if (dialogueDragAt(box, point.x, point.y)) {
+          beginDrag(
+            { kind: DragKind.Panel, panel: DraggablePanel.Dialogue },
+            point.x,
+            point.y,
+            null,
+          );
+          return;
+        }
+        const hit = dialogueHitAt(
+          dialogueView,
+          box,
+          dialogueSelected,
+          point.x,
+          point.y,
+          dialogueSettingsOpen,
+        );
+        if (hit === null) return;
+        switch (hit.kind) {
+          case DialogueHitKind.Row:
+            sayDialogue(hit.row.index);
+            return;
+          case DialogueHitKind.Close:
+            // THE SAME ONE ACT ESCAPE MAKES, through the same helper: the server
+            // answers with `view: null` and THAT is what clears the local copy.
+            // This client never decides it is out of a conversation.
+            closeDialogue();
+            return;
+          case DialogueHitKind.Cog:
+            dialogueSettingsOpen = !dialogueSettingsOpen;
+            requestDraw();
+            return;
+          case DialogueHitKind.Reset:
+            /**
+             * ═══ PUT THIS ONE WINDOW BACK, AND LEAVE THE MENU UP ═══
+             *
+             * The escape menu's `reset-panels` row puts back ALL of them and
+             * says so; this is the same act narrowed to the panel whose own
+             * cogwheel was pressed, which is what the author asked the button
+             * to be. The menu stays open for that row's reason: the player can
+             * see the result and is one press from the control again.
+             *
+             * PERSISTED, like every other write to the store — otherwise the
+             * reset is undone by the next reload, which is the one outcome that
+             * would make the button read as broken.
+             */
+            panelOffsets[DraggablePanel.Dialogue] = NO_OFFSET;
+            savePanelLayout();
+            requestDraw();
+            return;
+          case DialogueHitKind.Settings:
+            // THE POPOVER'S OWN BACKGROUND. Swallowed and nothing else — see
+            // `DialogueHitKind.Settings`.
+            return;
+        }
       }
     }
 
@@ -12696,8 +13242,13 @@ async function boot(): Promise<void> {
        */
       if (event.button === 1) {
         const pt = renderer.backbufferPoint(event.clientX, event.clientY);
-        const { hudW: mw } = renderer.metrics();
-        if (pt !== null && minimapTileAt(pt.x, pt.y, mw) !== null && overworldLevel !== null) {
+        // THROUGH THE LAYOUT, because the box moves. `hudLayout` is rebuilt per
+        // call by design, so asking it here costs a rebuild and buys the one
+        // guarantee that matters: the box this press is tested against is the
+        // box on screen.
+        const { hudW: mw, hudH: mh } = renderer.metrics();
+        const mini = hudLayout(mw, mh).minimap;
+        if (pt !== null && minimapTileAt(mini, pt.x, pt.y) !== null && overworldLevel !== null) {
           worldMapOpen = true;
           requestDraw();
           return;
@@ -12807,11 +13358,14 @@ async function boot(): Promise<void> {
           const target = inventoryTargetAt(layout.inventory, point.x, point.y);
           if (target !== null && openVerbMenu(target, point.x, point.y)) return;
         }
-        const overSheet =
-          inRect(layout.sheet, point.x, point.y) ||
-          inRect(layout.talents, point.x, point.y) ||
-          inRect(layout.inventory, point.x, point.y) ||
-          inRect(layout.menu, point.x, point.y);
+        // ...AND THE CASE LOG IS THE FIFTH, WHICH IT ALWAYS WAS AND WAS NEVER
+        // LISTED. `paintHud` draws pane -> LOG -> sheet, so the log covers the
+        // pane wherever the two overlap, and they overlap by default: the pane
+        // is a top-left dock that runs down to its content's height and the log
+        // is a bottom-left one. Measured at 640x320 with a four-member party and
+        // nothing dragged at all, 4639 pixels of the log's own transcript
+        // resolved to a party row underneath it.
+        const overSheet = overFloating(point.x, point.y) || inRect(layout.log, point.x, point.y);
         const paneHit =
           overSheet || layout.pane === null || layout.party === null
             ? null
@@ -12926,6 +13480,96 @@ async function boot(): Promise<void> {
     // twenty-six rows from being rebuilt every time somebody grabs the title bar.
     /**
      * ═══════════════════════════════════════════════════════════════════════
+     * THE WHOLE BOX IS CLAIMED NOW, AND A PRESS ON IT IS THREE THINGS.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * THE GRIP FIRST, for the Case Log's reason: it sits INSIDE the box, over
+     * the map, and a press there has to mean resize rather than a walk to
+     * whatever cell is under it. Nine cells of a 99-pixel map is a real cost
+     * and it is the same cost the log pays over its own transcript.
+     *
+     * THEN A DRAG, WITH THE WALK DEFERRED AS ITS CLICK. `DRAG_THRESHOLD_PX` is
+     * Mouse.lua:177 verbatim — six pixels, Chebyshev, strictly greater — so a
+     * press that goes nowhere is still a click and still walks. That deferral
+     * is exactly what `LiveDrag.click` exists for (an inventory cell cannot
+     * equip on mousedown either), and it is what lets one surface be both the
+     * travel control upstream makes it (`Minimalist.lua:1642`) and the move
+     * handle the request asks for.
+     *
+     * ═══ THE RECT, NOT THE TILE, DECIDES WHO OWNS THE PRESS ═══
+     * `minimapTileAt` answers null for a point inside the box but off the drawn
+     * cells — a level narrower than the window letterboxes. Testing the TILE
+     * here would let those pixels fall through to the plain left-click at the
+     * foot of this handler and walk the party to whatever is behind the corner
+     * of the screen. The box owns its own frame.
+     *
+     * ═══════════════════════════════════════════════════════════════════════
+     * AND IT IS TESTED HERE, WHICH IS WHERE THE PAINT PUTS IT — IT USED TO BE LAST
+     * ═══════════════════════════════════════════════════════════════════════
+     * This block sat at the very foot of the handler, under the `overPanel`
+     * swallow and under the party pane, the Case Log and the MENU button — with
+     * a note reading *"the minimap is painted BEFORE the panels"*. It is not:
+     * `paintHud` draws the pane, the log and the MENU button and then draws the
+     * minimap OVER all three. That note described the old corner-locked box, and
+     * the box moves now. Measured with the map dragged over each of them, at
+     * 1262x428:
+     *
+     *   over the party pane   6160 of 9801 pixels opened a PARTY VERB MENU on
+     *                         whoever was underneath; 3344 more were swallowed
+     *   over the Case Log     every pixel was the log's — 1782 began a LOG DRAG
+     *                         and 8019 were swallowed, so the box could not be
+     *                         moved from any pixel of itself
+     *   over the MENU button  240 pixels opened the escape menu
+     *
+     * So it is asked where it is painted: after the hotbar, the conversation
+     * window and the four floating panels — all of which are drawn over it and
+     * all of which are tested above this line — and before the log, the pane and
+     * the MENU button, which are drawn under it.
+     *
+     * `overFloating` IS THE GUARD, AND NOT A REORDER OF THOSE FOUR. The sheet,
+     * the talent panel, the inventory and the escape menu are tested BELOW the
+     * log in this handler for their own reasons; asking their rects here is what
+     * lets this block sit above the log without also claiming pixels those four
+     * are painted on top of.
+     */
+    if (point !== null && layout.minimap !== null && !overFloating(point.x, point.y)) {
+      const mini = layout.minimap;
+      if (inRect(mini, point.x, point.y)) {
+        event.preventDefault();
+        if (logGripAt(mini, point.x, point.y, gripCornerFor(DraggablePanel.Minimap))) {
+          beginDrag(
+            { kind: DragKind.Resize, panel: DraggablePanel.Minimap },
+            point.x,
+            point.y,
+            null,
+          );
+          return;
+        }
+        const mapped = minimapTileAt(mini, point.x, point.y);
+        beginDrag(
+          { kind: DragKind.Panel, panel: DraggablePanel.Minimap },
+          point.x,
+          point.y,
+          mapped === null
+            ? null
+            : (): void => {
+                // A REFUSAL IN WORDS, not a dead click. Water and walls are on
+                // this map and pointing at one is an ordinary thing to do;
+                // `travelTargetAllowed` is the same question the verb menu
+                // greys its own row on.
+                if (level === null || !travelTargetAllowed(level, mapped, hasSeenHere())) {
+                  showNotice('you cannot walk there');
+                  return;
+                }
+                beginTravel(mapped, false);
+              },
+        );
+        return;
+      }
+    }
+
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
      * THE CASE LOG'S TWO GESTURES — grip before header, both before the rows.
      * ═══════════════════════════════════════════════════════════════════════
      *
@@ -12935,10 +13579,21 @@ async function boot(): Promise<void> {
      * CONTENT first would: the grip is over the transcript, and a press there
      * has to mean resize rather than a click into the lane under it.
      *
-     * ABOVE THE MENU, which is the same order the paint uses. See the rule this
-     * handler keeps throughout: HIT-TEST ORDER MIRRORS PAINT ORDER.
+     * ═══════════════════════════════════════════════════════════════════════
+     * AND BELOW THE FOUR FLOATING PANELS, WHICH THIS USED TO GET BACKWARDS
+     * ═══════════════════════════════════════════════════════════════════════
+     * It read *"ABOVE THE MENU, which is the same order the paint uses"*, and
+     * the paint says the opposite: the log goes down in `paintHud`'s log block
+     * and the sheet, the talent panel, the inventory and the escape menu are all
+     * drawn after it. Measured, at every viewport: 4129 pixels of a live escape
+     * menu were the Case Log's HEADER STRIP, so pressing a key row inside the
+     * overlap dragged the log out from under the menu and the row did nothing.
+     * At 640x320 the first such pixel is (140,142), which is a menu row.
+     *
+     * See the rule this handler keeps throughout: HIT-TEST ORDER MIRRORS PAINT
+     * ORDER. `overFloating` is that rule, for this block.
      */
-    if (point !== null && layout.log !== null) {
+    if (point !== null && layout.log !== null && !overFloating(point.x, point.y)) {
       /**
        * THE TABS, BEFORE THE GRIP AND BEFORE THE HEADER STRIP. They sit under
        * the header inside the panel body, so they overlap neither — the order
@@ -13030,7 +13685,16 @@ async function boot(): Promise<void> {
      * NO HEADER DRAG BESIDE IT. The pane is a dock — `unmovedPanelRect` returns
      * null for it — so there is nothing to move and no handle to offer.
      */
-    if (point !== null && layout.pane !== null && logGripAt(layout.pane.rect, point.x, point.y)) {
+    // ...AND UNDER THE FOUR FLOATING PANELS, for this handler's own rule. The
+    // grip is 144 pixels at 640x320 and at 772x367 and every one of them is
+    // inside the escape menu's rect, so pressing a menu row there began a pane
+    // resize under it.
+    if (
+      point !== null &&
+      layout.pane !== null &&
+      !overFloating(point.x, point.y) &&
+      logGripAt(layout.pane.rect, point.x, point.y)
+    ) {
       event.preventDefault();
       beginDrag({ kind: DragKind.Resize, panel: DraggablePanel.Party }, point.x, point.y, null);
       return;
@@ -13046,6 +13710,22 @@ async function boot(): Promise<void> {
       if (hit !== null) {
         event.preventDefault();
         runMenuHit(hit);
+        return;
+      }
+      /**
+       * ═══ AND EVERY OTHER PIXEL OF IT IS SWALLOWED, EXPLICITLY ═══
+       *
+       * `escapeMenuHitAt` answers null for the panel's chrome, for a greyed row
+       * and — since the interface-size arrows stopped cycling from their ends —
+       * for a greyed ARROW. Every one of those pixels is drawn over something:
+       * the map, the log, the party pane. This used to rely on `overPanel`
+       * catching them nine blocks further down, which is true today and is one
+       * reorder away from not being. Step 1b makes the same promise for the
+       * conversation window and gives the reason a press that got through would
+       * not merely misfire: travel is a turn verb.
+       */
+      if (inRect(layout.menu, point.x, point.y)) {
+        event.preventDefault();
         return;
       }
     }
@@ -13532,18 +14212,28 @@ async function boot(): Promise<void> {
       point !== null &&
       layout.pane !== null &&
       layout.party !== null &&
-      !inRect(layout.sheet, point.x, point.y) &&
-      !inRect(layout.talents, point.x, point.y) &&
-      // THE THIRD PANEL, AND THE SAME RULE: a control the player cannot see must
-      // not be pressable. With an invite pending, DECLINE sits inside the overlap
-      // on ordinary windows — that is the bug this guard was written for, and a
-      // third centred panel is a third way to reproduce it.
-      !inRect(layout.inventory, point.x, point.y) &&
-      // AND THE FOURTH, WHICH COVERS MORE OF THE PANE THAN ANY OF THE OTHER
-      // THREE — it is the widest surface in this client. Same rule, same bug:
-      // DECLINE inside the overlap is a party invite refused by a click the
-      // player thought was landing on a key row.
-      !inRect(layout.menu, point.x, point.y)
+      // THE SAME RULE FOR ALL FOUR: a control the player cannot see must not be
+      // pressable. With an invite pending, DECLINE sits inside the overlap on
+      // ordinary windows — that is the bug this guard was written for, and each
+      // centred panel is another way to reproduce it. The escape menu covers
+      // more of the pane than any of its siblings, being the widest surface in
+      // this client.
+      !overFloating(point.x, point.y) &&
+      /**
+       * ═══ AND THE CASE LOG, WHICH WAS THE ONE MISSING FROM THIS LIST ═══
+       * It is painted after the pane (`paintHud`: pane -> log -> sheet) and the
+       * two are both LEFT-COLUMN docks, so they overlap with nothing dragged and
+       * nobody doing anything unusual. Driven at 640x320 with a four-member
+       * party: 4639 pixels of the log's transcript resolved to `party:member`.
+       * Drag the log up over a pending invite and it is the bug recorded in step
+       * 4 verbatim — ACCEPT and DECLINE 100% covered, so a click at (135,67)
+       * DECLINED A PARTY INVITE THE PLAYER NEVER SAW.
+       *
+       * The pane's own rect stops at the log's top edge now (`hudLayout`), which
+       * is what makes this guard belt to that brace rather than the only thing
+       * standing between a player and that click.
+       */
+      !inRect(layout.log, point.x, point.y)
     ) {
       const hit = partyPaneHitAt(layout.party, layout.pane, point.x, point.y);
       if (hit !== null) {
@@ -13610,22 +14300,6 @@ async function boot(): Promise<void> {
       event.preventDefault();
       openMenu();
       return;
-    }
-
-    if (point !== null) {
-      const mapped = minimapTileAt(point.x, point.y, logicalW);
-      if (mapped !== null) {
-        event.preventDefault();
-        // A REFUSAL IN WORDS, not a dead click. Water and walls are on this map
-        // and pointing at one is an ordinary thing to do; `travelTargetAllowed`
-        // is the same question the verb menu greys its own row on.
-        if (level === null || !travelTargetAllowed(level, mapped, hasSeenHere())) {
-          showNotice('you cannot walk there');
-          return;
-        }
-        beginTravel(mapped, false);
-        return;
-      }
     }
 
     // SHIFT + CLICK IS `point` — "there, behind the pillar", which is the
@@ -13731,6 +14405,26 @@ async function boot(): Promise<void> {
         // attack (there is no attack intent on the wire), and no `commit`
         // follows it for the reason `tickTravel` sets out at length.
         socket.send({ v: PROTOCOL_VERSION, t: 'move', dir: intent.dir });
+        return;
+      case MouseIntentKind.Talk:
+        /**
+         * ═══════════════════════════════════════════════════════════════════
+         * THE SAME FRAME THE `Talk to` ROW SENDS, from the other button.
+         * ═══════════════════════════════════════════════════════════════════
+         *
+         * Asked for as *"if you are adjacent to a friendly npc, you should be
+         * able to click them to open the dialogue box. the right click option
+         * to talk should still exist."* — so this is an ADDITIONAL door, and
+         * `runMenuItem`'s `MapVerb.Talk` case is untouched beside it.
+         *
+         * IT IS THE SAME ONE-LINE SEND rather than a call into that case: the
+         * menu's version reads a `targetId` the menu was opened on, and this
+         * one reads the body under the pointer. Both end at a bare `talk`, the
+         * server answers with a `dialogue` frame, and the server re-checks
+         * range, line of sight and faction — the adjacency test in
+         * `mouseIntentAt` is a courtesy, not the rule.
+         */
+        socket.send({ v: PROTOCOL_VERSION, t: 'talk', targetId: intent.targetId });
         return;
       case MouseIntentKind.Travel:
         beginTravel(intent.to, intent.stopShort);
@@ -15094,25 +15788,27 @@ function applyServerMessage(msg: ServerMsg): void {
 
     case 'settings':
       // ═══════════════════════════════════════════════════════════════════════
-      // HOW BIG THIS PLAYER WANTS THEIR TILES, AS THE SERVER HOLDS IT.
+      // HOW BIG THIS PLAYER WANTS THE INTERFACE, AS THE SERVER HOLDS IT.
       // ═══════════════════════════════════════════════════════════════════════
       //
       // `keybinds` above, in miniature and for the same reasons: a `ViewerMsg`,
-      // absolute, and an ECHO rather than an acknowledgement — `setZoom` has
+      // absolute, and an ECHO rather than an acknowledgement — `setUiScale` has
       // already run locally for the instant effect, and this line runs it again
       // with whatever the server actually stored, so a value the server clamped
       // corrects itself here instead of leaving the board drawing this client's
       // optimism.
       //
-      // A player asked for tiles the size of Tales of Maj'Eyal's. Half of that
-      // was the viewport; this is the half where the answer they gave stopped
-      // dying with the tab. Discord partitions iframe storage, so the server is
-      // the only place a preference can live.
+      // Discord partitions iframe storage, so the server is the only place a
+      // preference can live. This is the half where the answer a player gave
+      // stopped dying with the tab.
+      //
+      // THE FRAME CARRIED A SECOND STEP, `zoom`, and it does not any more —
+      // see `27 -> 28` in shared/version.ts.
+      //
       // THE VALUE IS RECORDED HERE AND APPLIED IN `boot`. `applyServerMessage`
       // is module scope by construction — every case in this switch writes state
       // the draw reads, and none of them reaches into the renderer, which lives
       // in the boot closure. `onMessage` is the wrapper that can see both.
-      storedZoom = msg.zoom;
       storedUiScale = msg.uiScale;
       /**
        * ═══════════════════════════════════════════════════════════════════════
@@ -15120,7 +15816,7 @@ function applyServerMessage(msg: ServerMsg): void {
        * ═══════════════════════════════════════════════════════════════════════
        *
        * APPLIED HERE AND NOT DEFERRED like the two steps above it. Those are
-       * held in `storedZoom`/`storedUiScale` because they need the RENDERER,
+       * held in `storedUiScale` because it needs the RENDERER,
        * which belongs to `boot`'s closure and may not exist yet; a panel offset
        * is module state in this file and can be written the moment it lands.
        *
@@ -15135,6 +15831,7 @@ function applyServerMessage(msg: ServerMsg): void {
       panelSizes[DraggablePanel.Log] = msg.panels.logSize;
       panelSizes[DraggablePanel.Party] = msg.panels.partySize;
       panelSizes[DraggablePanel.Hotbar] = msg.panels.hotbarSize;
+      panelSizes[DraggablePanel.Minimap] = msg.panels.minimapSize;
       // SNAPPED, so a style saved by a build with other steps lands on ours.
       hotbarStyle =
         msg.panels.hotbarStyle === null
@@ -15149,11 +15846,11 @@ function applyServerMessage(msg: ServerMsg): void {
       caseLog?.setStyle(msg.panels.logStyle);
       /**
        * NO `requestDraw` HERE. `applyServerMessage` is module scope and the
-       * dirty flag belongs to `boot`'s closure — the seam `storedZoom`'s own
+       * dirty flag belongs to `boot`'s closure — the seam `storedUiScale`'s own
        * note describes. The caller redraws after applying a frame, which is
        * what every other branch in this switch relies on too.
        */
-      zoomPersisted = msg.persisted;
+      settingsPersisted = msg.persisted;
       break;
 
     case 'dialogue':

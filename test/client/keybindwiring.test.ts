@@ -360,20 +360,18 @@ describe('the menu is a PANEL, and its rect is where that is decided', () => {
        * which is why this carries the whole layout rather than one panel.
        */
       'set_panel_layout',
-      // AND THE INTERFACE SIZE'S, `set_zoom`'s twin below in every respect that
-      // matters here: a PREFERENCE and not an intent, so the barrier never waits
-      // for it. Asked for as "an option in the settings for UI scaling to lower
-      // or increase it" — where zoom already had keys and only wanted a pointer
-      // route, this had neither, because `hudScale` was computed by `viewLayout`
-      // alone with no way for a player to say otherwise.
+      // AND THE INTERFACE SIZE'S: a PREFERENCE and not an intent, so the barrier
+      // never waits for it. Asked for as "an option in the settings for UI
+      // scaling to lower or increase it" — `hudScale` was computed by
+      // `viewLayout` alone with no way for a player to say otherwise.
+      //
+      // IT HAD A TWIN ON THIS LIST, `set_zoom`, AND THE VERB IS GONE. That is a
+      // PROTOCOL BUMP and not a tidy-up (`27 -> 28` in shared/version.ts), so it
+      // is listed here as an absence: this array is the whole of what this
+      // client may say, and a verb removed from the schema while a caller
+      // survived would be a frame refused as `bad_message` with nobody able to
+      // guess why.
       'set_ui_scale',
-      // AND THE ZOOM'S, added deliberately and listed here so it stays a thing
-      // somebody had to decide. A player asked for tiles the size of Tales of
-      // Maj'Eyal's; the zoom that answers that already existed and died with the
-      // tab, because Discord partitions iframe storage and the server is the only
-      // place a preference can live. It is a PREFERENCE and not an intent: the
-      // barrier never waits for it, which is what this assertion is really about.
-      'set_zoom',
       // THE PANEL'S TWO, and the only frames the shop tab sends. Opening,
       // paging and browsing a shelf are told to nobody: the shelf is a
       // broadcast the server already sends, and a "I opened the shop" frame
@@ -897,6 +895,64 @@ describe('the mouse layer', () => {
     expect(gate).toBeLessThan(at('if (event.button !== 0) {', mousedown));
   });
 
+  it('pages a conversation under the wheel, before every other surface', () => {
+    /**
+     * ══════════════════════════════════════════════════════════════════════
+     * THE HINT THAT NAMED THE KEYS IS GONE, SO THE MOUSE NEEDS A ROUTE.
+     * ══════════════════════════════════════════════════════════════════════
+     * The window shows the answers that FIT and prints "1-4 of 20" when they do
+     * not; the strip under it used to read *"arrows move"*. Taking the strip
+     * away was the request; it left the count line as the only sign more existed
+     * with nothing naming a way to reach it, and four wheel notches over the
+     * list left the window's pixels byte-identical. At the 640 floor IN COMBAT
+     * an ordinary five-answer greet shows "1-2 of 5".
+     *
+     * IT IS THE SELECTION, NOT A SECOND SCROLL POSITION: `dialogueGeometry`
+     * pages to keep the selected row on screen, so the list already has exactly
+     * one thing driving it.
+     */
+    const start = at("'wheel',");
+    const body = CODE.slice(start, CODE.indexOf('{ passive: false }', start));
+    expect(body).toContain('moveDialogueSelection(');
+    const paged = at('moveDialogueSelection(', body);
+    // FIRST OF EVERY SURFACE, because the window is painted last of all but the
+    // class picker — the same order `mousedown` step 1b keeps.
+    for (const later of ['wheelLayout.menu', 'wheelLayout.sheet', 'caseLog?.bodyAt(']) {
+      expect(paged, `the wheel reached ${later} before the conversation`).toBeLessThan(
+        at(later, body),
+      );
+    }
+    // AND IT CONSUMES THE GESTURE, or the activity iframe scrolls the page and
+    // drags the canvas out of view.
+    expect(body.slice(paged - 200, paged)).toContain('event.preventDefault();');
+    // ...ONLY OVER THE WINDOW. A wheel anywhere else is not the list's.
+    expect(body.slice(paged - 300, paged)).toContain(
+      'inRect(wheelLayout.dialogue, point.x, point.y)',
+    );
+  });
+
+  it('swallows a press on the open menu that no control claimed', () => {
+    /**
+     * `escapeMenuHitAt` answers null for the panel's chrome, for a greyed row
+     * and — since the interface-size arrows stopped cycling from their ends —
+     * for a greyed ARROW. Every one of those pixels is drawn over the map, the
+     * log or the party pane. This used to rely on `overPanel` catching them nine
+     * blocks further down, which is true today and one reorder away from not
+     * being; step 1b makes the same promise for the conversation window and
+     * gives the reason a press that got through would not merely misfire.
+     */
+    const mousedown = CODE.slice(at("canvas.addEventListener('mousedown'"));
+    const block = mousedown.slice(at('if (point !== null && layout.menu !== null) {', mousedown));
+    const hit = at(
+      'const hit = escapeMenuHitAt(layout.menu, menuRows(), point.x, point.y);',
+      block,
+    );
+    const swallow = at('if (inRect(layout.menu, point.x, point.y)) {', block);
+    // AFTER the controls, or the panel would swallow its own buttons.
+    expect(hit).toBeLessThan(swallow);
+    expect(block.slice(swallow, swallow + 120)).toContain('event.preventDefault();');
+  });
+
   it('guards the wheel against the menu, as an occlusion guard', () => {
     const start = at("'wheel',");
     const body = CODE.slice(start, CODE.indexOf('{ passive: false }', start));
@@ -906,39 +962,57 @@ describe('the mouse layer', () => {
     expect(at('wheelLayout.menu', body)).toBeLessThan(at('wheelLayout.sheet', body));
   });
 
-  it('zooms only after every surface has declined the wheel', () => {
-    // THE POSITION OF THE ZOOM IS THE FEATURE. Every `return` above it is a
-    // surface saying "this wheel is mine, or I am drawn over something whose it
-    // would be" — the chooser, the escape menu, the sheet, the talent panel,
-    // the inventory, and a Case Log lane. Reaching the end means the pointer is
-    // over the WORLD, and over the world a wheel zooms.
-    //
-    // A hit test of the form "is the pointer NOT over any panel" would be a
-    // second copy of that list, and the copy is what goes stale the next time a
-    // panel is added — silently, because the symptom is a wheel that zooms the
-    // map while it looks like it is scrolling a transcript. This pins the
-    // ORDER, which is the thing that keeps the fall-through honest.
+  it('claims the wheel for the log only after every surface has declined it', () => {
+    /**
+     * THE ORDER IS THE FEATURE, AND IT OUTLIVED THE ACT IT USED TO GUARD.
+     *
+     * Every `return` above the tail is a surface saying "this wheel is mine, or
+     * I am drawn over something whose it would be" — the chooser, the escape
+     * menu, the sheet, the talent panel and the inventory. The TAIL used to
+     * zoom the map; *"remove the (zoom) option"* took that, and what is left is
+     * the Log's own lane, which must still be reached last.
+     *
+     * A hit test of the form "is the pointer NOT over any panel" would be a
+     * second copy of that list, and the copy is what goes stale the next time a
+     * panel is added — silently, because the symptom is a wheel that scrolls a
+     * transcript from over a panel drawn on top of it.
+     */
     const start = at("'wheel',");
     const body = CODE.slice(start, CODE.indexOf('{ passive: false }', start));
-    // `applyZoom` RATHER THAN `renderer.setZoom`, since the zoom became a
-    // persisted preference: the wheel and the `-`/`=` keys both go through one
-    // function so the clamp, the wire and the notice are stated once. What this
-    // test pins is unchanged — the POSITION of the zoom in the fall-through.
-    const zoom = body.indexOf('applyZoom(renderer.zoom() +');
-    expect(zoom).toBeGreaterThan(-1);
+    const log = body.indexOf('caseLog?.scroll(');
+    expect(log, 'nothing claims the wheel at all').toBeGreaterThan(-1);
     for (const guard of [
       'wheelLayout.menu',
       'wheelLayout.sheet',
       'wheelLayout.talents',
       'wheelLayout.inventory',
     ]) {
-      expect(body.indexOf(guard), `${guard} must be tested before the zoom`).toBeLessThan(zoom);
+      expect(body.indexOf(guard), `${guard} must be tested before the log`).toBeLessThan(log);
     }
-    // And the log's lanes claim it before the world does.
-    expect(body.indexOf('caseLog.laneAt(')).toBeLessThan(zoom);
-    // It suppresses the page scroll, or the activity iframe drags the canvas
-    // out of view — the same reason the log branch does.
-    expect(body.slice(0, zoom)).toContain('event.preventDefault();');
+    // The lane guard is what decides it, and it comes before the act.
+    expect(body.indexOf('caseLog.laneAt(')).toBeLessThan(log);
+    // It suppresses the page scroll where it DOES act, or the activity iframe
+    // drags the canvas out of view.
+    expect(body.slice(0, log)).toContain('event.preventDefault();');
+  });
+
+  it('does nothing at all when the pointer is over the world', () => {
+    /**
+     * THE TAIL IS A BARE `return` NOW. The wheel over the world used to zoom the
+     * map and the control is gone, so this client no longer has an opinion about
+     * that gesture — and it must not claim one: `preventDefault` on a wheel it
+     * does not use would be swallowing a browser gesture for nothing.
+     *
+     * SCANNED FOR THE ABSENCE OF THE WHOLE FEATURE, not just of one call, because
+     * a wheel binding is exactly the kind of orphan a half-removal leaves: there
+     * is no menu row and no key left, so a surviving wheel would be the only
+     * route to a setting with no readout anywhere.
+     */
+    const start = at("'wheel',");
+    const body = CODE.slice(start, CODE.indexOf('{ passive: false }', start));
+    expect(body, 'the wheel still zooms').not.toContain('applyZoom');
+    expect(body).not.toContain('renderer.setZoom');
+    expect(body).not.toContain('renderer.zoom()');
   });
 
   it('hit-tests the menu before the three panels it is painted over', () => {
@@ -961,13 +1035,32 @@ describe('the mouse layer', () => {
     // ×, a DROP or a DECLINE drawn underneath it, and the `+` version of that
     // spends an irreversible talent point.
     const mousedown = CODE.slice(at("canvas.addEventListener('mousedown'"));
-    const guards = [...mousedown.matchAll(/!inRect\(layout\.menu, point\.x, point\.y\)/g)];
-    // The inventory block, the talent block, the sheet block and the party pane.
+    /**
+     * ═══ COUNTED ACROSS BOTH SPELLINGS, BECAUSE FOUR OF THEM WERE FACTORED ═══
+     * The menu is one of four panels painted over everything in the band, and
+     * five blocks now ask the same question through `overFloating` rather than
+     * writing the four rects out apiece. What this test is for is unchanged —
+     * that every block which could reach a control UNDER the menu refuses — so
+     * it counts the guard however it is spelled and then checks that the shared
+     * expression really does name the menu.
+     */
+    const guards = [
+      ...mousedown.matchAll(/!inRect\(layout\.menu, point\.x, point\.y\)/g),
+      ...mousedown.matchAll(/!overFloating\(point\.x, point\.y\)/g),
+    ];
+    // The inventory block, the talent block, the sheet block, the party pane,
+    // the Case Log, the pane's grip and the minimap.
     expect(guards.length).toBeGreaterThanOrEqual(4);
+    expect(
+      CODE.slice(at('const overFloating = (px: number, py: number): boolean =>')),
+      'the shared occlusion expression stopped naming the escape menu',
+    ).toContain('inRect(layout.menu, px, py)');
 
     // ...and the right-click branch treats it as occlusion over the party pane
     // too, which is where DECLINE lives.
-    expect(mousedown).toContain('inRect(layout.menu, point.x, point.y);');
+    expect(mousedown).toContain(
+      'overFloating(point.x, point.y) || inRect(layout.log, point.x, point.y);',
+    );
   });
 
   it('keeps RESET ALL and every other control pointer-reachable', () => {
@@ -1030,6 +1123,64 @@ describe('the mouse layer', () => {
     expect(at('if (menuOpen) {', chain)).toBeLessThan(
       at('if (tokenMenu?.close() === true) return;', chain),
     );
+  });
+
+  it('leaves a conversation on Escape, above the world map and every menu', () => {
+    /**
+     * ═══ *"escape should still work like normal"* — AND NOTHING ASSERTED IT ═══
+     *
+     * Neutering this arm survived the entire suite: the key fell through to the
+     * world map and the escape menu while the SERVER still held the body parked,
+     * which is a character braced for the rest of the session. The test named
+     * `closes on the × through the same helper Escape uses` checks the × and the
+     * helper and says nothing at all about the key — and `git show HEAD` says it
+     * never did, so this is an inherited hole under a new mechanism.
+     *
+     * BELOW THE CHOOSER, which must stay undismissible, and ABOVE the world map
+     * and the menus: while the window is up the server does not act on this
+     * body, so one press must reach the thing actually holding the player.
+     */
+    const chain = handlerBody('onCancel: () => {');
+    expect(chain, 'Escape stopped leaving the conversation').toContain('closeDialogue();');
+    const leave = at('closeDialogue();', chain);
+    expect(at('if (classOptions !== null) return;', chain)).toBeLessThan(leave);
+    for (const later of ['if (worldMapOpen) {', 'if (menuOpen) {', 'tokenMenu?.close()']) {
+      expect(leave, `Escape reached ${later} before the conversation`).toBeLessThan(
+        at(later, chain),
+      );
+    }
+    // ...AND IT IS THE SAME ONE ACT THE × PERFORMS. One writer of the frame.
+    expect(CODE.split("t: 'dialogue_close'").length - 1, 'one dialogue_close').toBe(1);
+  });
+
+  it('dismisses the cog popover before the conversation under it', () => {
+    /**
+     * ═══ INNERMOST FIRST, WHICH IS WHAT *"work like normal"* MEANS HERE ═══
+     *
+     * Ruled by the author after the first draft closed both in one press. Every
+     * other layered surface in this client dismisses the thing most recently
+     * opened ON TOP first, and a popover standing over the answers is that
+     * thing; one press taking the whole conversation with it is the shape where
+     * a player loses a window they were mid-way through reading.
+     *
+     * IT COSTS THE PARKED BODY NOTHING, which is the objection this had to
+     * answer. The popover is drawn by this client and held nowhere else, so
+     * dismissing it sends no frame and leaves the body parked exactly as long as
+     * it already was. The NEXT press reaches the conversation, still above the
+     * world map and the menus.
+     *
+     * ORDER IS THE WHOLE RULE, so the assertion is on the order: a test that
+     * only found both arms would pass with them the wrong way round, which is
+     * precisely the bug.
+     */
+    const chain = handlerBody('onCancel: () => {');
+    expect(chain, 'Escape stopped dismissing the popover').toContain(
+      'dialogueSettingsOpen = false;',
+    );
+    expect(
+      at('dialogueSettingsOpen = false;', chain),
+      'Escape closed the conversation before the popover standing on it',
+    ).toBeLessThan(at('closeDialogue();', chain));
   });
 
   it('redraws on a hover only when something actually changed', () => {
@@ -1498,38 +1649,141 @@ describe('the menu rows that end something take two presses', () => {
   });
 });
 
-describe('the zoom row changes the setting rather than owning it', () => {
+describe('the ui-size row changes the setting rather than owning it', () => {
   /**
-   * ONE PREFERENCE, TWO ROUTES. The keys and the row must both go through
-   * `applyZoom` — that is where the clamp lives, where the `set_zoom` frame is
-   * sent, and where both "that will not be saved" warnings are said. A row that
-   * called `renderer.setZoom` directly would be a zoom that silently stopped
-   * persisting, which is precisely what the comment above `applyZoom` records
-   * having already happened once.
+   * ═════════════════════════════════════════════════════════════════════════
+   * ONE PREFERENCE, THREE ROUTES, ONE FUNCTION.
+   * ═════════════════════════════════════════════════════════════════════════
+   * The two arrows, the Left/Right keys on the lit row and the row's own press
+   * must all go through `applyUiScale` — that is where the clamp is read, where
+   * the `set_ui_scale` frame is sent, and where both "that will not be saved"
+   * warnings are said. A route that called `renderer.setUiScale` directly would
+   * be a setting that silently stopped persisting, which is what the comment
+   * above `applyUiScale` records having already happened once to its twin.
    */
-  /** The `zoom` case's own body, ending where the next case begins. */
+  /** The `ui-scale` case's own body, ending where the next case begins. */
   const arm = (): string => {
-    const start = at("case 'zoom': {");
+    const start = at("case 'ui-scale': {");
     const end = CODE.indexOf("      case '", start + 10);
-    expect(end, 'the zoom case has a neighbour below it').toBeGreaterThan(start);
+    expect(end, 'the ui-scale case has a neighbour below it').toBeGreaterThan(start);
     return CODE.slice(start, end);
   };
 
-  it('goes through applyZoom, not through the renderer', () => {
-    expect(arm()).toContain('applyZoom(next)');
-    expect(arm(), 'a direct setZoom would skip the persist and the warnings').not.toContain(
-      'renderer.setZoom(',
+  it('goes through applyUiScale, not through the renderer', () => {
+    expect(arm()).toContain('applyUiScale(next)');
+    expect(arm(), 'a direct setUiScale would skip the persist and the warnings').not.toContain(
+      'renderer.setUiScale(',
     );
   });
 
-  it('cycles rather than dead-ending at the top', () => {
-    // `ZOOM_MIN`..`ZOOM_MAX` is three values, so one row can carry all of them.
-    expect(arm()).toContain('>= ZOOM_MAX ? ZOOM_MIN :');
+  it('cycles on the row itself and steps on an arrow', () => {
+    // `delta: 0` is the row's own press and it WRAPS, which is what keeps a
+    // keyboard-only player from being stranded at the top of the range;
+    // anything else is one arrow and clamps at the renderer.
+    expect(arm()).toContain('effect.delta === 0');
+    expect(arm()).toContain('>= UI_SCALE_MAX ? UI_SCALE_MIN :');
+    expect(arm()).toContain('at + effect.delta');
   });
 
   it('leaves the menu open, unlike every other row', () => {
-    // The whole point is to look at the map behind the menu and press again.
+    // The whole point is to look at the result and press again.
     expect(arm()).not.toContain('closeMenu()');
+  });
+
+  it('reads the step off the renderer rather than off a mirror', () => {
+    // `liveUiScale` is a MIRROR for the painter, which is module scope. The ACT
+    // runs inside boot and must ask the renderer, or two copies of the clamp
+    // would disagree the first time a window had no room for a step.
+    expect(arm()).toContain('renderer.uiScale()');
+  });
+
+  it('gives the keyboard the same two steps the arrows have', () => {
+    /**
+     * WITHOUT THIS THE ARROWS ARE POINTER-ONLY. The row is selectable with the
+     * arrow keys like every other, and a horizontal key on it means what the
+     * two buttons mean — the same argument that gave the setting a pointer
+     * route in the first place, read in the other direction.
+     */
+    const start = at('function moveMenuSelection(');
+    const body = CODE.slice(start, CODE.indexOf('\n  }\n', start));
+    expect(body).toContain("runMenuEffect({ kind: 'ui-scale', delta: delta.x })");
+    // ...and only on a row that HAS steppers, or a horizontal key would stop
+    // moving the selection everywhere else on the screen.
+    expect(body).toContain('lit.steppers !== undefined');
+  });
+
+  it('mirrors the step, the percentage and the cap from one writer', () => {
+    /**
+     * THREE FACTS ABOUT ONE SETTING THAT GO STALE AT DIFFERENT MOMENTS: the
+     * step moves on a press, the percentage moves with the step AND the window,
+     * and the cap moves with the window alone. Five sites used to write two of
+     * them by hand. A mirror written in five places is the mirror that drifts.
+     */
+    expect(CODE).toContain('function mirrorInterfaceSize()');
+    const start = at('function mirrorInterfaceSize()');
+    const body = CODE.slice(start, CODE.indexOf('\n  }\n', start));
+    expect(body).toContain('liveUiScale = renderer.uiScale()');
+    expect(body).toContain('liveUiScalePercent = renderer.uiScalePercent()');
+    expect(body).toContain('liveUiScaleFixed = renderer.uiScaleFixed()');
+    // AND NOBODY ELSE WRITES THEM. A second `= renderer.uiScaleFixed()` is the
+    // drift this helper exists to prevent, so the ASSIGNMENT is counted rather
+    // than the declaration -- `let liveUiScaleFixed = false` is the opening
+    // value and not a writer.
+    expect(CODE.split('liveUiScaleFixed = renderer').length - 1, 'a second writer').toBe(1);
+    expect(CODE.split('liveUiScalePercent = renderer').length - 1).toBe(1);
+    expect(CODE.split('liveUiScale = renderer').length - 1).toBe(1);
+  });
+
+  it('hands the menu both the step and the percentage, not one derived from the other', () => {
+    // The step decides which arrow is greyed; the percentage is what the
+    // renderer settled on. Computing one from the other in main.ts would be a
+    // second opinion about a clamp that belongs to `setUiScale`.
+    expect(CODE).toContain('escapeMenuView(liveUiScale, liveUiScalePercent)');
+  });
+});
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * AND NO HALF OF THE ZOOM SURVIVES ANYWHERE IN main.ts.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * *"remove the (zoom) option"* took a menu row, two key bindings, the mouse
+ * wheel, a wire verb and a stored preference. `check:inert` catches a dead
+ * EXPORT; none of these was one. This is the scrape that catches the rest, and
+ * it is a source-text test on purpose: the failure it guards against is a
+ * surviving CALLER, which no type would complain about once the symbol is back.
+ */
+describe('the zoom is gone from the client, in every half it had', () => {
+  it('has no renderer zoom call left', () => {
+    for (const dead of [
+      'renderer.setZoom',
+      'renderer.zoom()',
+      'renderer.zoomFixed',
+      'applyZoom',
+      'liveZoom',
+      'storedZoom',
+    ]) {
+      expect(CODE, `main.ts still calls ${dead}`).not.toContain(dead);
+    }
+  });
+
+  it('sends no set_zoom frame and reads no zoom field off settings', () => {
+    expect(CODE).not.toContain("t: 'set_zoom'");
+    expect(CODE).not.toContain('msg.zoom');
+  });
+
+  it('names no zoom UI command', () => {
+    expect(CODE).not.toContain('UiCommand.ZoomIn');
+    expect(CODE).not.toContain('UiCommand.ZoomOut');
+  });
+
+  it('keeps the interface step, which is a different control', () => {
+    // THE HALF THAT STOPS THE ABOVE PASSING BY DELETING THE WRONG THING.
+    // `hudScale` was split from the map's magnification on purpose
+    // (test/client/hudscale.test.ts), and the surviving half is the one a player
+    // asked for.
+    expect(CODE).toContain("t: 'set_ui_scale'");
+    expect(CODE).toContain('renderer.setUiScale(');
   });
 });
 
@@ -1545,7 +1799,7 @@ describe('reset-panels puts all four back', () => {
      * hand-written four would be a list to keep in step with a list.
      */
     const start = at("case 'reset-panels':");
-    const arm = CODE.slice(start, CODE.indexOf("      case 'zoom': {", start));
+    const arm = CODE.slice(start, CODE.indexOf("      case 'ui-scale': {", start));
     expect(arm).toContain('for (const panel of DRAGGABLE_PANELS)');
     expect(arm).toContain('panelOffsets[panel] = NO_OFFSET');
   });
@@ -1554,7 +1808,7 @@ describe('reset-panels puts all four back', () => {
     // A control that resets four panels the player cannot see behind the menu
     // and then says nothing is indistinguishable from a dead row.
     const start = at("case 'reset-panels':");
-    const arm = CODE.slice(start, CODE.indexOf("      case 'zoom': {", start));
+    const arm = CODE.slice(start, CODE.indexOf("      case 'ui-scale': {", start));
     expect(arm).toContain('showNotice(');
     expect(arm).not.toContain('closeMenu()');
   });

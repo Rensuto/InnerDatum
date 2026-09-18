@@ -89,7 +89,8 @@ const { last } = await session(async (send, peek) => {
 
   // A DIFFERENT verb that also triggers `sendSettings`, so the frame we read
   // next is a FRESH one built from the body rather than the echo we just got.
-  send({ t: 'set_zoom', zoom: 1 });
+  // It was `set_zoom` until that verb was removed from the protocol.
+  send({ t: 'set_ui_scale', uiScale: 1 });
   await sleep(500);
 });
 

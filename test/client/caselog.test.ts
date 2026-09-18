@@ -12,6 +12,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   DEFAULT_LOG_STYLE,
+  LOG_TABS,
   LogTab,
   createCaseLog,
   logCogAt,
@@ -53,6 +54,36 @@ function line(over: Partial<LogLine> & { readonly text: string }): LogLine {
   };
 }
 
+/**
+ * A CANVAS THAT REMEMBERS WHAT IT WAS ASKED TO PRINT, and measures a fixed
+ * advance per character so `fitText` behaves. `the turn rule` below has a
+ * richer one that also records x and font; this is the same idea with only the
+ * text kept, which is all a label assertion needs.
+ */
+function painter() {
+  const printed: unknown[][] = [];
+  const state: Record<string, unknown> = { font: '10px monospace' };
+  const ctx = new Proxy(state, {
+    get: (target, prop: string) => {
+      if (prop === 'measureText') return (text: string) => ({ width: [...text].length * 6 });
+      if (prop === 'fillText')
+        return (...args: unknown[]) => {
+          printed.push(args);
+        };
+      if (prop in target) return target[prop];
+      return () => undefined;
+    },
+    set: (target, prop: string, value: unknown) => {
+      target[prop] = value;
+      return true;
+    },
+  }) as unknown as CanvasRenderingContext2D;
+  return { ctx, printed };
+}
+
+const SPRITES = { sprite: () => undefined };
+const DRAW_RECT = { x: 40, y: 60, w: 420, h: 220 };
+
 /** A log with no canvas — nothing here draws; `draw` is covered by the painter. */
 function log() {
   let changes = 0;
@@ -61,7 +92,13 @@ function log() {
       changes += 1;
     },
   });
-  return { it, changes: () => changes };
+  const { ctx, printed } = painter();
+  return {
+    it,
+    changes: () => changes,
+    ctx,
+    calls: (name: string) => (name === 'fillText' ? printed : []),
+  };
 }
 
 /**
@@ -128,11 +165,64 @@ describe('the tabs', () => {
 
     expect(depth(it), 'ALL is not showing all three').toBe(3);
 
-    it.selectTab(LogTab.Record);
-    expect(depth(it), 'the RECORD tab is not filtering').toBe(2);
+    it.selectTab(LogTab.Events);
+    expect(depth(it), 'the EVENTS tab is not filtering').toBe(2);
 
-    it.selectTab(LogTab.Margin);
-    expect(depth(it), 'the MARGIN tab is not filtering').toBe(1);
+    it.selectTab(LogTab.People);
+    expect(depth(it), 'the PEOPLE tab is not filtering').toBe(1);
+  });
+
+  /**
+   * ═════════════════════════════════════════════════════════════════════════
+   * THE BUTTON MOVED AND THE WIRE DID NOT. `LogTab`'s key is what a player
+   * reads; its VALUE is `LogLane`.
+   * ═════════════════════════════════════════════════════════════════════════
+   *
+   * *"Case Log should just be called Log, we need to change the naming
+   * convention for Record and Margin in the log UI to accomodate the change."*
+   * Record became EVENTS and Margin became PEOPLE.
+   *
+   * `visible()` filters by `line.lane === tab`, so each value IS the wire
+   * literal. Renaming one would be a protocol bump for a word nobody sees, and
+   * the ruling is that ids stay stable while what players read changes. This is
+   * that split asserted from both sides: the labels are the new words, and the
+   * values are still the old ones.
+   */
+  it('renames the buttons without touching the wire literals', () => {
+    expect(LogTab.Events).toBe(LogLane.Record);
+    expect(LogTab.People).toBe(LogLane.Margin);
+    expect(LOG_TABS).toEqual(['all', 'record', 'margin']);
+  });
+
+  it('draws the three tabs as ALL / EVENTS / PEOPLE', () => {
+    const { it, ctx, calls } = log();
+    it.draw({ ctx, sprites: SPRITES, rect: DRAW_RECT, gameTurn: 4 });
+    const printed = calls('fillText').map((c) => String(c[0]));
+    expect(printed, 'the ALL tab lost its label').toContain('ALL');
+    expect(printed, 'RECORD did not become EVENTS').toContain('EVENTS');
+    expect(printed, 'MARGIN did not become PEOPLE').toContain('PEOPLE');
+    // AND THE OLD WORDS ARE GONE FROM THE SURFACE, which is the half a
+    // rename usually leaves behind.
+    expect(printed).not.toContain('RECORD');
+    expect(printed).not.toContain('MARGIN');
+  });
+
+  it('titles the panel LOG, and keeps the turn on it', () => {
+    // *"Case Log should just be called Log"*. The turn stays: it is the one
+    // fact on this header that changes, and the scrollback is read against it.
+    const { it, ctx, calls } = log();
+    it.draw({ ctx, sprites: SPRITES, rect: DRAW_RECT, gameTurn: 12 });
+    const printed = calls('fillText').map((c) => String(c[0]));
+    expect(printed).toContain('LOG · turn 12');
+    for (const text of printed) {
+      expect(text, `the header still says CASE LOG: ${text}`).not.toContain('CASE LOG');
+    }
+  });
+
+  it('says LOG alone before the first turn has landed', () => {
+    const { it, ctx, calls } = log();
+    it.draw({ ctx, sprites: SPRITES, rect: DRAW_RECT, gameTurn: -1 });
+    expect(calls('fillText').map((c) => String(c[0]))).toContain('LOG');
   });
 
   it('goes to the bottom when the tab changes', () => {
@@ -148,7 +238,7 @@ describe('the tabs', () => {
       line({ seq: 3, text: 'c' }),
     ]);
     it.scroll(2);
-    it.selectTab(LogTab.Record);
+    it.selectTab(LogTab.Events);
     // At the bottom, so scrolling FORWARD does nothing.
     expect(it.scroll(-1), 'the tab change did not reset the view').toBe(false);
   });

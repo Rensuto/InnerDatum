@@ -6,7 +6,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { DEFAULT_VIEWPORT, viewLayout } from '../../src/client/render/canvas.ts';
-import { TILE_PX, ZOOM_MAX, ZOOM_MIN } from '../../src/shared/version.ts';
+import { TILE_PX, UI_SCALE_MAX, UI_SCALE_MIN } from '../../src/shared/version.ts';
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════
@@ -96,7 +96,7 @@ function asItShipped(deviceW: number, deviceH: number): { css: number; tilesW: n
 describe('how big a cell is', () => {
   it('is what the shipped constants say, at every window in the table', () => {
     for (const w of WINDOWS) {
-      const got = viewLayout(w.deviceW, w.deviceH, DEFAULT_VIEWPORT, 0, w.dpr);
+      const got = viewLayout(w.deviceW, w.deviceH, DEFAULT_VIEWPORT, w.dpr);
       expect((TILE_PX * got.scale) / w.dpr, `${w.name} cell`).toBe(w.css);
       expect(got.logicalW / TILE_PX, `${w.name} across`).toBe(w.tilesW);
       expect(got.logicalH / TILE_PX, `${w.name} down`).toBe(w.tilesH);
@@ -112,7 +112,7 @@ describe('how big a cell is', () => {
      */
     for (const w of WINDOWS) {
       expect(
-        (TILE_PX * viewLayout(w.deviceW, w.deviceH, DEFAULT_VIEWPORT, 0, w.dpr).scale) / w.dpr,
+        (TILE_PX * viewLayout(w.deviceW, w.deviceH, DEFAULT_VIEWPORT, w.dpr).scale) / w.dpr,
         w.name,
       ).toBeGreaterThanOrEqual(64);
     }
@@ -136,7 +136,7 @@ describe('how big a cell is', () => {
     for (const w of WINDOWS) {
       const before = asItShipped(w.deviceW, w.deviceH);
       const after =
-        (TILE_PX * viewLayout(w.deviceW, w.deviceH, DEFAULT_VIEWPORT, 0, w.dpr).scale) / w.dpr;
+        (TILE_PX * viewLayout(w.deviceW, w.deviceH, DEFAULT_VIEWPORT, w.dpr).scale) / w.dpr;
       const beforeCss = before.css / w.dpr;
       if (beforeCss < 64) {
         expect(after, `${w.name} was ${String(beforeCss)}`).toBeGreaterThan(beforeCss);
@@ -159,7 +159,7 @@ describe('how big a cell is', () => {
      * upstream recomputes — `viewport.mwidth`, the count of cells in a fixed
      * rectangle.
      */
-    const iframe = viewLayout(1248, 860, DEFAULT_VIEWPORT, 0, 1);
+    const iframe = viewLayout(1248, 860, DEFAULT_VIEWPORT, 1);
     expect(asItShipped(1248, 860).tilesW).toBe(39);
     expect(iframe.logicalW / TILE_PX).toBe(19);
   });
@@ -198,17 +198,25 @@ describe('the map never overflows the window', () => {
     [640, 320, 1],
   ];
 
-  it('draws no more map than the canvas can hold, at any zoom', () => {
+  /**
+   * IT WAS "at any zoom" AND THE MAP HAS NO ZOOM ANY MORE (*"remove the (zoom)
+   * option"*). The loop is kept and walks the INTERFACE step instead, which is
+   * the one player term `viewLayout` still takes -- and the reason to walk it
+   * HERE is precisely that it must not reach these numbers: if a tidy-up ever
+   * routes it back into `scale`, the letterbox is where it shows up, as map
+   * drawn off the side of the canvas.
+   */
+  it('draws no more map than the canvas can hold, at any interface step', () => {
     for (const [w, h, dpr] of EDGES) {
-      for (const zoom of [ZOOM_MIN, 0, ZOOM_MAX]) {
-        const got = viewLayout(w, h, DEFAULT_VIEWPORT, zoom, dpr);
+      for (const step of [UI_SCALE_MIN, 0, UI_SCALE_MAX]) {
+        const got = viewLayout(w, h, DEFAULT_VIEWPORT, dpr, step);
         expect(
           got.logicalW * got.scale,
-          `${String(w)}x${String(h)} zoom ${String(zoom)} too wide`,
+          `${String(w)}x${String(h)} step ${String(step)} too wide`,
         ).toBeLessThanOrEqual(w);
         expect(
           got.logicalH * got.scale,
-          `${String(w)}x${String(h)} zoom ${String(zoom)} too tall`,
+          `${String(w)}x${String(h)} step ${String(step)} too tall`,
         ).toBeLessThanOrEqual(h);
         // The letterbox is what centres it, and it cannot be negative if the
         // two above hold — asserted anyway, because it is the number the
@@ -228,7 +236,7 @@ describe('the map never overflows the window', () => {
      */
     const world = 100 * TILE_PX;
     for (const [w, h, dpr] of EDGES) {
-      const got = viewLayout(w, h, DEFAULT_VIEWPORT, 0, dpr);
+      const got = viewLayout(w, h, DEFAULT_VIEWPORT, dpr);
       const camY = Math.min(
         Math.max(Math.floor(TILE_PX / 2 - got.logicalH / 2), 0),
         world - got.logicalH,

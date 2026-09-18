@@ -660,6 +660,58 @@
  * ═══════════════════════════════════════════════════════════════════════════
 
 
+ * 27 -> 28 (THE ZOOM IS GONE). `ClientMsg` LOSES `set_zoom` and `SettingsMsg`
+ * LOSES its required `zoom`. Asked for in three words: *"remove the (zoom)
+ * option"*.
+ *
+ * ═══ A REMOVAL, WHICH IS THE ONE SHAPE THAT ALWAYS FORCES THIS NUMBER ═══
+ * Every argument in this file since v5 is about ADDITIONS and whether an old
+ * client ignoring one would draw a lie. Both halves here are subtractions, and
+ * a subtraction does not get that hearing:
+ *
+ *   A v27 CLIENT SENDS `set_zoom` AND IS REFUSED. The one trust boundary is
+ *   `parseClientMsg`'s zod parse, so a verb no longer in the union comes back
+ *   `bad_message`. The mouse wheel sent one of those per notch.
+ *
+ *   `SettingsMsg.zoom` WAS REQUIRED, AND A v27 CLIENT READS IT. It applies
+ *   `msg.zoom` to its renderer on the `hello` settings frame; with the key
+ *   gone that is `undefined` reaching `setZoom`, which `Math.trunc`es to NaN
+ *   and clamps to `ZOOM_MIN` -- so the returning player's map comes up at the
+ *   smallest step it can reach, every session, with no control that moved it.
+ *   That is `1 -> 2`'s rule ("a field an old client still reads may not
+ *   quietly change") in its hardest form: the field is not there at all.
+ *
+ * A mismatch instead closes the socket with `version_mismatch` and costs a page
+ * reload in an Activity, where clients are served fresh on launch.
+ *
+ * ═══ WHAT HAPPENS TO A ZOOM ALREADY ON DISK ═══
+ * `CharacterFile.zoom` is no longer written and no longer read. `parseCharacterFile`
+ * ignores keys it does not know, so an existing file loads clean and the next
+ * save drops the key; nothing is migrated and nothing is rejected. The player
+ * gets the map the step's DEFAULT of 0 always drew, which is what they were
+ * looking at unless they had pressed `=` or `-`.
+ *
+ * CONSIDERED AND NOT BUMPED FOR, though they ride the same number: the UI SIZE
+ * row becoming two arrows and a percentage, and the Case Log becoming the LOG
+ * with EVENTS and PEOPLE tabs. Both are words and pixels on one client's own
+ * screen. `LogLane` is still `record` and `margin` on the wire and `set_ui_scale`
+ * is byte-for-byte what it was, so an older client and this server agree about
+ * every frame either sends -- which is exactly the test this file applies, and
+ * neither change passes it.
+ *
+ * `UI_SCALE_*` IS UNTOUCHED AND IS NOT THE SAME CONTROL. It biases the HUD's
+ * factor, not the map's, and the whole reason the two were split
+ * (test/client/hudscale.test.ts) is that one control for both resized the game
+ * rather than the world. Do not let the surviving lever grow a map term to
+ * replace the one that left.
+ *
+ * `SCHEMA_VERSION` STAYS 1. A dropped OPTIONAL key is not a shape change:
+ * docs/data-schemas.md:48-49 is the rule, and `zoom` has been optional since it
+ * shipped precisely because files written before it existed had to load.
+ *
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ *
  * 26 -> 27 (THE CONVERSATION). Talking to somebody stops being one line and
  * becomes a window: `ServerMsg` gains `DialogueMsg`, `ClientMsg` gains
  * `dialogue_choose` and `dialogue_close`, and a bare `talk` — one with no
@@ -1170,7 +1222,7 @@
  * path rather than read from disk. When that changes it will be an OPTIONAL
  * field and docs/data-schemas.md:48-49 applies unchanged.
  */
-export const PROTOCOL_VERSION = 27;
+export const PROTOCOL_VERSION = 28;
 
 /**
  * Bumped whenever a persisted save file's shape changes. Every bump needs a
@@ -1207,40 +1259,23 @@ export const SCHEMA_VERSION = 1 as const;
 export const TILE_PX = 64;
 
 /**
- * ═══════════════════════════════════════════════════════════════════════════
- * HOW FAR THE PLAYER MAY MOVE THE INTEGER SCALE. ONE STEP EACH WAY.
- * ═══════════════════════════════════════════════════════════════════════════
- *
- * `scale` is a whole number — that is what keeps every pixel of hand-drawn art
- * landing on a whole screen pixel — so zoom biases it by whole STEPS rather than
- * multiplying it. At the size this runs in a Discord iframe the natural scale is
- * 2 or 3, so one step each way is a real range and no setting is useless.
- *
- * ═══ IN `shared/` BECAUSE TWO PLACES NEED THE SAME NUMBER ═══
- * The renderer clamps to it and the wire schema validates against it, and a
- * bound written out twice is the shape this codebase keeps getting bitten by —
- * most recently `HAUNTS`, which learned two tile codes while a duplicate did
- * not. `src/shared/` is the only module both a client renderer and a zod schema
- * may import.
- */
-export const ZOOM_MIN = -1;
-export const ZOOM_MAX = 1;
-
-/**
  * ════════════════════════════════════════════════════════════════════════════
- * AND HOW FAR THEY MAY MOVE THE INTERFACE, WHICH IS NOT THE SAME CONTROL.
+ * HOW FAR THE PLAYER MAY MOVE THE INTERFACE.
  * ════════════════════════════════════════════════════════════════════════════
- * `ZOOM_*` biases the MAP's magnification. This biases the HUD's, which
+ * There was a `ZOOM_MIN`/`ZOOM_MAX` pair beside this one biasing the MAP's
+ * magnification, and it is gone with the control that moved it (*"remove the
+ * (zoom) option"* -- see `27 -> 28` above). This biases the HUD's factor, which
  * `viewLayout` has always computed on its own from the device pixel ratio and
  * `HUD_MAX_*` with no way for a player to say they wanted it otherwise.
  * Requested in those words: *"we also need to include an option in the settings
  * for UI scaling to lower or increase it."*
  *
- * KEEPING THEM APART IS THE WHOLE POINT OF `hudScale`. The HUD used to paint
+ * IT IS NOT THE MAP'S FACTOR AND MUST NEVER BECOME IT. The HUD used to paint
  * into the map's backbuffer, so `=` magnified the map AND the hotbar AND every
  * panel together; `test/client/hudscale.test.ts` is the record of splitting
- * them, citing `tome/class/Game.lua:571` where the UI set hands the map its rectangle. One
- * shared control would put them straight back together.
+ * them, citing `tome/class/Game.lua:571` where the UI set hands the map its rectangle.
+ * That the map's own control has since been removed is not a reason to let this
+ * one reach `scale` -- it is the surviving half of a split, not a replacement.
  *
  * ═══ THE RANGE IS ASYMMETRIC AND THAT IS THE HONEST SHAPE ═══
  * `hudScale` is a DIVISOR: `hudW = deviceW / hudScale`, so a bigger factor means

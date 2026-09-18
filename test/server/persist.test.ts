@@ -1410,10 +1410,12 @@ describe('character files: the bag and the paper doll', () => {
       carried: IN_THE_BAG,
       equipped: WORN_KIT,
       keybinds: REBOUND_KEYS,
-      // `zoom` rides this test for the reason the docblock gives: the hazard is
-      // per-LITERAL, not per-field, and one test naming every optional field
-      // pins both literals at once.
-      zoom: 1,
+      // `uiScale` rides this test for the reason the docblock gives: the hazard
+      // is per-LITERAL, not per-field, and one test naming every optional field
+      // pins both literals at once. It was `zoom` until that field left the
+      // character file (`27 -> 28` in shared/version.ts) and its surviving
+      // sibling took the seat.
+      uiScale: 2,
       /**
        * ═══════════════════════════════════════════════════════════════════════
        * AND THE THREE THIS TEST'S OWN DOCBLOCK PREDICTED IT WOULD MISS.
@@ -1446,14 +1448,14 @@ describe('character files: the bag and the paper doll', () => {
     expect(Object.keys(parsed.file)).toContain('carried');
     expect(Object.keys(parsed.file)).toContain('equipped');
     expect(Object.keys(parsed.file)).toContain('keybinds');
-    expect(Object.keys(parsed.file)).toContain('zoom');
+    expect(Object.keys(parsed.file)).toContain('uiScale');
     expect(Object.keys(parsed.file)).toContain('hotbar');
     expect(Object.keys(parsed.file)).toContain('unlockedTrees');
     expect(Object.keys(parsed.file)).toContain('deepenedTrees');
     expect(parsed.file.hotbar).toEqual(['talent:crude_blow', null, 'talent:ward_rush']);
     expect(parsed.file.unlockedTrees).toEqual(['generic/leverage']);
     expect(parsed.file.deepenedTrees).toEqual(['watch/discipline']);
-    expect(parsed.file.zoom).toBe(1);
+    expect(parsed.file.uiScale).toBe(2);
     expect(parsed.file.equipped).toEqual(WORN_KIT);
     expect(parsed.file.carried).toEqual(IN_THE_BAG);
     expect(parsed.file.keybinds).toEqual(REBOUND_KEYS);
@@ -1836,45 +1838,83 @@ describe('character files: the rebound keymap', () => {
 
   /**
    * ═══════════════════════════════════════════════════════════════════════════
-   * AND THE SAME THREE PROPERTIES FOR THE ZOOM, WHICH IS THE NEWEST OF THESE.
+   * AND THE SAME THREE PROPERTIES FOR THE INTERFACE STEP.
    * ═══════════════════════════════════════════════════════════════════════════
    *
-   * A player asked for tiles the size of Tales of Maj'Eyal's, and the zoom that
-   * answers it already existed and died with the tab. Every save on disk predates
-   * the field, so an absence must be silent; a hand-edited or rolled-back value
-   * must be REPAIRED rather than reject the character; and absent must stay
-   * absent rather than collapsing into 0, which is a real statement ("back to the
-   * default on purpose") and not the same fact at all.
+   * Asked for as *"an option in the settings for UI scaling to lower or increase
+   * it"*, and every save on disk predates the field — so an absence must be
+   * silent; a hand-edited or rolled-back value must be REPAIRED rather than
+   * reject the character; and absent must stay absent rather than collapsing
+   * into 0, which is a real statement ("back to the default on purpose") and not
+   * the same fact at all.
+   *
+   * THESE THREE WERE WRITTEN FOR `zoom` AND MOVED HERE WHEN IT LEFT. The parser
+   * they cover is the same one (`parseStep`); what changed is which of its two
+   * callers survives.
    */
-  it('loads a file with no zoom key clean, with the field undefined', () => {
+  it('loads a file with no uiScale key clean, with the field undefined', () => {
     const parsed = parseCharacterFile(V1_BEFORE_PROGRESSION);
     expect(parsed.ok).toBe(true);
     if (!parsed.ok) return;
 
-    expect(parsed.file.zoom).toBeUndefined();
+    expect(parsed.file.uiScale).toBeUndefined();
     expect(parsed.problems).toEqual([]);
   });
 
-  it('repairs a zoom outside the renderer bounds rather than refusing the character', () => {
+  it('repairs a uiScale outside the renderer bounds rather than refusing the character', () => {
     // A character file must never be the reason somebody cannot play tonight.
-    // 7 is not a step this renderer can reach, so it is dropped and the tiles
-    // come back at the default size — and the repair is REPORTED, because a
-    // silent one is indistinguishable from a field nobody wrote.
+    // 7 is not a step this renderer can reach, so it is dropped and the
+    // interface comes back at the default size — and the repair is REPORTED,
+    // because a silent one is indistinguishable from a field nobody wrote.
+    const parsed = parseCharacterFile({ ...V1_BEFORE_PROGRESSION, uiScale: 7 });
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+
+    expect(parsed.file.uiScale).toBeUndefined();
+    expect(parsed.problems.join(' ')).toContain('uiScale');
+  });
+
+  it('keeps a uiScale the renderer can actually reach', () => {
+    const parsed = parseCharacterFile({ ...V1_BEFORE_PROGRESSION, uiScale: -1 });
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+
+    expect(parsed.file.uiScale).toBe(-1);
+    expect(parsed.problems).toEqual([]);
+  });
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * AND THE MIGRATION OFF THE ZOOM, WHICH IS THE WHOLE OF IT.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * *"remove the (zoom) option"* took the field off `CharacterFile`. Real
+   * players have a `zoom` on disk right now. Nothing rewrites it: the parser
+   * does not read keys it does not know, so the file loads clean and with no
+   * problem reported, and the next save rebuilds the canonical object without
+   * it. This is what makes "no migration" a claim rather than an omission.
+   */
+  it('loads a file that still carries a zoom, silently, and drops it on the next save', () => {
+    const parsed = parseCharacterFile({ ...V1_BEFORE_PROGRESSION, zoom: 1 });
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+
+    // NOT A PROBLEM. A stale key is not a repair -- nobody's value was changed,
+    // the field simply stopped being read.
+    expect(parsed.problems).toEqual([]);
+    expect(Object.keys(parsed.file), 'zoom is still parsed into the file').not.toContain('zoom');
+    // ...AND IT DOES NOT COME BACK OUT. `serialiseCharacter` rebuilds from the
+    // parsed object, so one round trip is the migration.
+    expect(JSON.parse(serialiseCharacter(parsed.file))).not.toHaveProperty('zoom');
+  });
+
+  it('does not repair an out-of-range zoom either, because it does not look', () => {
+    // The bound went with the field. A 7 here is not clamped, not reported and
+    // not kept -- it is simply not a key this parser knows.
     const parsed = parseCharacterFile({ ...V1_BEFORE_PROGRESSION, zoom: 7 });
     expect(parsed.ok).toBe(true);
     if (!parsed.ok) return;
-
-    expect(parsed.file.zoom).toBeUndefined();
-    expect(parsed.problems.join(' ')).toContain('zoom');
-  });
-
-  it('keeps a zoom the renderer can actually reach', () => {
-    const parsed = parseCharacterFile({ ...V1_BEFORE_PROGRESSION, zoom: -1 });
-    expect(parsed.ok).toBe(true);
-    if (!parsed.ok) return;
-
-    expect(parsed.file.zoom).toBe(-1);
-    expect(parsed.problems).toEqual([]);
+    expect(parsed.problems.join(' ')).not.toContain('zoom');
   });
 
   /**

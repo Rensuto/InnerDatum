@@ -241,13 +241,29 @@ export function headerDragRect(rect: PanelRect, reservedRight: number): PanelRec
  * The caller must have set `ctx.font` — measurement is font-dependent and doing
  * it here would mean either taking the font as a parameter or silently measuring
  * against whatever the last drawer left behind.
+ *
+ * ═══════════════════════════════════════════════════════════════════════════
+ * A ONE-CHARACTER LABEL IS RETURNED WHOLE, BECAUSE THE MARK MADE IT *WIDER*.
+ * ═══════════════════════════════════════════════════════════════════════════
+ * The loop cannot shorten a string of length one, so this used to fall out of it
+ * and return that character PLUS an ellipsis — measured at 14.11px where the
+ * bare glyph was 8.61px and the box was 12. A function whose job is "make this
+ * fit" was the reason it did not, and the overflow read as the button being
+ * drawn wrong. Found on the interface-size arrows, and it is a trap for every
+ * one-glyph button in this client.
+ *
+ * AN ELLIPSIS IS A PROMISE THAT SOMETHING WAS CUT. Nothing was, so there is
+ * nothing to promise: the caller clips. `cut === text` is exactly the single
+ * character case — a longer string always loses at least one character here,
+ * because reaching the loop at all means `text` did not fit and `text…` is
+ * wider still.
  */
 export function fitText(ctx: CanvasRenderingContext2D, text: string, maxPx: number): string {
   if (maxPx <= 0) return '';
   if (ctx.measureText(text).width <= maxPx) return text;
   let cut = text;
   while (cut.length > 1 && ctx.measureText(`${cut}…`).width > maxPx) cut = cut.slice(0, -1);
-  return `${cut}…`;
+  return cut === text ? text : `${cut}…`;
 }
 
 /**

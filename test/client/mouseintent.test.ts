@@ -70,6 +70,28 @@ function husk(id: string, x: number, y: number, alive = true): ActorView {
   };
 }
 
+/**
+ * SOMEBODY WHO LIVES HERE. A `Monster` on the wire with `faction: 'townsfolk'`,
+ * which is exactly what the server sends — she is a body on a tile, drawn by the
+ * same painter and seen by the same FOV, and only who may hit her differs
+ * (`engine/actor.ts#Faction`).
+ */
+function townsfolk(id: string, x: number, y: number, alive = true): ActorView {
+  return {
+    id,
+    name: 'Merrow Stitch',
+    sprite: 'chr_npc_merrow_stitch_s',
+    x,
+    y,
+    kind: ActorKind.Monster,
+    faction: 'townsfolk',
+    rank: ActorRank.Normal,
+    hp: alive ? 20 : 0,
+    maxHp: 20,
+    alive,
+  };
+}
+
 function detective(id: string, x: number, y: number): ActorView {
   return {
     id,
@@ -119,6 +141,73 @@ describe('mouseIntentAt', () => {
       // Bump-attack: the intent IS a move, so nothing new goes on the wire.
       expect(intent).toEqual({ kind: MouseIntentKind.Bump, dir });
     }
+  });
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * CLICKING SOMEBODY YOU ARE STANDING NEXT TO OPENS A CONVERSATION.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Asked for as *"if you are adjacent to a friendly npc, you should be able to
+   * click them to open the dialogue box"*, and the whole risk in it is that a
+   * townsfolk is a `Monster` on the wire — so she falls into the BUMP branch
+   * unless this rule is asked first. All eight directions, because the bump case
+   * next to it is asserted in all eight and the two must not disagree about what
+   * adjacency is.
+   */
+  it('opens a conversation with an adjacent townsfolk, in all eight directions', () => {
+    for (const dir of DIR_ORDER) {
+      const tile = step(SELF, dir);
+      const intent = mouseIntentAt(snapshot(tile, [townsfolk('npc1', tile.x, tile.y)]));
+      // THE PERSON, NOT THE TILE: `TalkSchema` takes an actor id, so a body that
+      // steps aside between the click and the frame answers "there is nobody
+      // there" rather than starting a conversation with whoever moved in.
+      expect(intent, `dir ${dir}`).toEqual({ kind: MouseIntentKind.Talk, targetId: 'npc1' });
+    }
+  });
+
+  /**
+   * AND IT IS NOT A BUMP, which is the fact this replaces. The old answer was a
+   * `{t:'move'}` into her tile; `areEnemies` refuses a townsfolk, so the server
+   * handed it to `tryMove` and answered `Occupied`. A refusal with a sentence on
+   * the one body in the game a player most wants to click.
+   */
+  it('never offers a bump on a townsfolk, which is what the click used to be', () => {
+    for (const dir of DIR_ORDER) {
+      const tile = step(SELF, dir);
+      const intent = mouseIntentAt(snapshot(tile, [townsfolk('npc1', tile.x, tile.y)]));
+      expect(intent.kind).not.toBe(MouseIntentKind.Bump);
+    }
+  });
+
+  /**
+   * ═══ OUT OF REACH IS UNCHANGED, WHICH IS HALF THE REQUEST ═══
+   * Nothing new greys and nothing new refuses: two tiles away she is the same
+   * walk-up-to that clicking any occupied tile has always meant, and it stops
+   * short for the same reason (stepping onto an ally is `Occupied`).
+   */
+  it('walks up to a townsfolk out of reach rather than talking across the room', () => {
+    const tile = { x: 6, y: 3 };
+    const intent = mouseIntentAt(snapshot(tile, [townsfolk('npc1', tile.x, tile.y)]));
+    expect(intent).toEqual({ kind: MouseIntentKind.Travel, to: tile, stopShort: true });
+  });
+
+  /** A HOSTILE IS STILL A BUMP. The new branch must not have widened. */
+  it('still bumps an adjacent hostile that carries no faction', () => {
+    const tile = step(SELF, 'e');
+    const intent = mouseIntentAt(snapshot(tile, [husk('m1', tile.x, tile.y)]));
+    expect(intent).toEqual({ kind: MouseIntentKind.Bump, dir: 'e' });
+  });
+
+  /**
+   * AND A DEAD ONE IS NEITHER. `liveActorAt` is what both branches read, so a
+   * corpse — even a townsfolk's — is scenery and the tile is an ordinary
+   * destination. Talking to a body is the bug this pins shut.
+   */
+  it('does not talk to a dead townsfolk, and walks over her', () => {
+    const tile = step(SELF, 'n');
+    const intent = mouseIntentAt(snapshot(tile, [townsfolk('npc1', tile.x, tile.y, false)]));
+    expect(intent).toEqual({ kind: MouseIntentKind.Travel, to: tile, stopShort: false });
   });
 
   it('travels toward a hostile two tiles away rather than bumping it, stopping short', () => {

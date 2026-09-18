@@ -280,15 +280,28 @@ versions of those three would fix it. No source names such files yet, so nothing
 is missing.
 
 
-## `icon_ui_cog` — the case log's settings button, and it is a nicety
+## `icon_ui_cog` — the settings button on THREE panels now, and it is a nicety
 
 **Still open, but not outstanding in the sense a missing file is.** The button is DRAWN — a hub,
 a bore and six teeth, at thirteen pixels — so it is visible, pressable and
 correct on a bare clone with no art at all. `npm run art:needs` does not demand
 it, because no source line names it.
 
+**THREE CALLERS, NOT ONE.** This entry said "the case log's settings button"
+while `drawCog` was already shared with the ACTION BAR, and the CONVERSATION
+WINDOW became the third on 2026-09-18 (the author asked that window for a cog
+and a Reset position). One drawing, three headers — which raises what a real
+PNG would be worth and is why the count is written down rather than left to be
+rediscovered:
+
+- `src/client/ui/caselog.ts` — `drawLogCog`, 13px, in the log's header.
+- `src/client/main.ts` — `drawCog(ctx, hotbarCogRect(...), ...)`, 11px on the
+  action bar's head, so the art has to read at that size too.
+- `src/client/ui/dialogue.ts` — `drawCog(ctx, geometry.cog, ...)`, 13px, beside
+  the conversation window's close ×.
+
 **Why it is written down anyway:** the drawn version is a gear the way a wire
-frame is a chair. It sits in the case log's header beside a painted 9-slice
+frame is a chair. It sits in each of those headers beside a painted 9-slice
 panel and a painted header strip, and it is the only element in that strip that
 is obviously not of the same hand.
 

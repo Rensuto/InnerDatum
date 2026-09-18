@@ -29,13 +29,23 @@
  * threshold, and exactly one offset-composition rule, and they live somewhere
  * that can be unit-tested without a canvas.
  *
- * WHAT IS NOT HERE, DELIBERATELY: the offset STORE (module state in main.ts,
- * session-local, reset on reload exactly like `logVisible`/`partyVisible`), the
- * listeners (on `window`, not the canvas — a canvas-driven drag freezes the
+ * WHAT IS NOT HERE, DELIBERATELY: the offset STORE (module state in main.ts),
+ * the listeners (on `window`, not the canvas — a canvas-driven drag freezes the
  * moment the pointer crosses onto `#cmdrow`), and any notion of which panel is
  * currently being dragged. This file is arithmetic. It ships before anything
  * that uses it so that the arithmetic can be wrong in a test rather than in a
  * session.
+ *
+ * ═══ AND THE OFFSETS PERSIST, WHICH THIS NOTE USED TO SAY THEY DID NOT ═══
+ * It read *"session-local, reset on reload exactly like `logVisible`/
+ * `partyVisible`"*, and that was true when it was written and had already
+ * stopped being true: `set_panel_layout` carries the whole table to the server
+ * and `PanelLayoutSchema` (shared/protocol.ts) stores it on the character, which
+ * is upstream's own `saveSettings` arrangement (`Minimalist.lua:393`). Browser
+ * storage is not the mechanism and could not be — Discord partitions iframe
+ * storage. Left standing, a deferral note like that gets believed twice: once by
+ * somebody who adds a second persistence path because "there is none", and once
+ * by somebody who declines a feature it would have paid for.
  */
 
 import type { Slot } from '../../shared/protocol.ts';
@@ -146,6 +156,75 @@ export const DraggablePanel = {
    * from its corner grip. Its size is its WIDTH alone: see `hotbarPanelSize`.
    */
   Hotbar: 'hotbar',
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE CONVERSATION WINDOW, AND IT IS THE ONE THIS FILE'S HEADER ARGUED ABOUT.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Asked for as *"the dialogue box should have a (cog wheel settings button)
+   * and be dragable"*, alongside centring it — and the two are one decision.
+   * The window used to be DOCKED to the right-hand end of the band, and
+   * ui/dialogue.ts's `dialogueRect` spent a paragraph on why: centred, it sat
+   * straight on top of the Case Log, which is where the host ruling sends a
+   * story exchange for the rest of the party to read. That dock was a guess
+   * about which of two surfaces a given player is looking at. A handle plus a
+   * Reset lets them answer it themselves, once, and the answer is kept.
+   *
+   * IT MOVES AND IT DOES NOT RESIZE, which is the ordinary member of this union
+   * rather than an exception: its height is a function of how many answers the
+   * node carries (`dialogueRect` sums the rows, and a greyed row is taller by
+   * its reason line), so a stored height would fight the content on every node
+   * the conversation moved to. `movePanel` therefore takes `moveIntoBand` for
+   * it, like the four above, and only the Case Log branches.
+   *
+   * THE BAND IS THE CLAMP, exactly as for every other floating member, so a
+   * player cannot park a conversation over the hotbar and lose the four talent
+   * keys while the world goes on around them — which is the whole panel-not-
+   * modal promise this window was built on (ui/dialogue.ts's header).
+   */
+  Dialogue: 'dialogue',
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE MINIMAP, AND IT IS THE THIRD PANEL WITH A GRIP — AND UPSTREAM'S IS TOO.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Asked for as *"the minimap ui should also be draggable and resizable like
+   * the other UIs. the goal is to have the player customize their UI/HUD to
+   * their liking."*
+   *
+   * ═══ THIS FILE'S HEADER SAYS THERE IS NO UPSTREAM CITATION FOR A MOVABLE
+   *     WINDOW. THERE IS ONE FOR THIS BOX. ═══
+   * That paragraph is about `Dialog.lua`, and it is still true of dialogs.
+   * The minimap is not a dialog: `Minimalist.lua:307` gives it an entry in
+   * `mhandle_pos` (`minimap = {x=208, y=176, name="Minimap"}`), `:378` gives it
+   * a place with a scale (`{x=w-239, y=0, scale=1, a=1}`), and `:1634-1635`
+   * routes a press on that handle into `uiMoveResize("minimap", ...)` — left
+   * drag moves it, right drag rescales it, middle click puts the scale back.
+   * So this panel is ported rather than invented, which none of the five above
+   * it can say.
+   *
+   * ═══ IT RESIZES BY THE CELL, NOT BY THE WINDOW ═══
+   * `minimapCellFor` in ui/mapview.ts carries that argument in full, with
+   * upstream's fixed fifty-tile window (`Minimalist.lua:1611-1614`) and
+   * upstream's own `util.bound(..., 0.5, 2)` (`:590`) as the clamp.
+   *
+   * ═══ AND IT MOVES BY ITS BODY, WHICH IS A DIVERGENCE, STATED ═══
+   * Upstream puts both gestures on a small handle inside the box and leaves the
+   * rest of the map as the travel control (`:1642`, `mouseMove`). We cannot:
+   * caselog.ts's header records that the RIGHT button is already spoken for on
+   * every pixel of this canvas, so one handle cannot carry two gestures here.
+   * So the corner grip resizes and the body moves — the action bar's grammar
+   * exactly — and travel survives on the SAME body because a press that never
+   * passes `DRAG_THRESHOLD_PX` is still a click and still runs what it meant.
+   * That deferral is what `LiveDrag.click` exists for.
+   *
+   * ═══ ITS BAND IS ITS OWN, LIKE THE LOG'S ═══
+   * It lives ABOVE `panelBand.top` by default — the box starts at
+   * `MINIMAP_MARGIN`, which is inside the turn bar's strip — so the shared band
+   * would be a clamp the default position already breaks. `minimapBand` in
+   * main.ts is the one it gets: from that margin down to the action bar.
+   */
+  Minimap: 'minimap',
 } as const;
 export type DraggablePanel = (typeof DraggablePanel)[keyof typeof DraggablePanel];
 
@@ -164,6 +243,8 @@ export const DRAGGABLE_PANELS: readonly DraggablePanel[] = [
   DraggablePanel.Log,
   DraggablePanel.Party,
   DraggablePanel.Hotbar,
+  DraggablePanel.Dialogue,
+  DraggablePanel.Minimap,
 ] as const;
 
 /**
@@ -535,12 +616,50 @@ export function nextSize(
   x: number,
   y: number,
   floor: PanelSize = DEFAULT_PANEL_FLOOR,
+  corner: GripCorner = GripCorner.BottomRight,
 ): PanelSize {
+  const reach = x - gripOffset.dx;
   return {
-    w: Math.max(floor.w, x - gripOffset.dx - origin.x),
+    // `origin.x` IS THE EDGE THAT DOES NOT MOVE — see `GripCorner`. For the
+    // ordinary panel that is its left edge and the box grows rightwards; for a
+    // right-docked one it is its RIGHT edge and the box grows leftwards.
+    w: Math.max(floor.w, corner === GripCorner.BottomLeft ? origin.x - reach : reach - origin.x),
     h: Math.max(floor.h, y - gripOffset.dy - origin.y),
   };
 }
+
+/**
+ * ════════════════════════════════════════════════════════════════════════════
+ * WHICH CORNER THE GRIP IS IN — and a RIGHT-DOCKED PANEL CANNOT USE THE USUAL ONE
+ * ════════════════════════════════════════════════════════════════════════════
+ *
+ * Every panel with a grip until now grew rightwards and downwards from a
+ * top-left origin, so the grip went bottom-right and a gesture measured from
+ * there. The minimap is docked to the RIGHT margin: `minimapRect` places it at
+ * `viewW - box - MINIMAP_MARGIN`, so the corner that stays still as the box
+ * changes size is its TOP-RIGHT one, and the box grows LEFTWARDS.
+ *
+ * A bottom-right grip on it was a control with eight pixels of travel. Measured
+ * at 1262x428: the grip sat at x=1242 against a viewport edge at 1262, so the
+ * furthest the pointer could ask for was 107 wide — three cells, which is the
+ * size it already was. Dragging the grip 400px down and right stored
+ * `{w:107, h:345}` and drew 99x99, unchanged, at every viewport tried. Shrink
+ * it once to 66 and the room right of its own origin became 74, so the box was
+ * then pinned at its floor FOREVER — and `minimapSize` persists server-side, so
+ * one accidental shrink was a permanently half-size minimap in every session
+ * after it.
+ *
+ * So the grip goes in the corner the box grows towards. `nextSize` reads
+ * `origin.x` as the anchored edge and subtracts in the other order; the caller
+ * captures that edge and measures `gripOffset` from the same corner it drew the
+ * grip in. There is still exactly one size rule and one clamp — what changes is
+ * which two edges they are measured between.
+ */
+export const GripCorner = {
+  BottomRight: 'bottom-right',
+  BottomLeft: 'bottom-left',
+} as const;
+export type GripCorner = (typeof GripCorner)[keyof typeof GripCorner];
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════

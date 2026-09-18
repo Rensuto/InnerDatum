@@ -761,7 +761,7 @@ type ActorCommon = {
   shovedBy?: string;
 
   /**
-   * HOW BIG THIS PLAYER WANTS THEIR TILES — the integer zoom step, or absent.
+   * HOW BIG THIS PLAYER WANTS THE INTERFACE — the integer HUD step, or absent.
    *
    * ON THE BODY FOR `keybinds`' REASONS, both of them: `snapshotPlayers` runs in
    * a layer that can reach nothing but the actor table, so anything the save file
@@ -775,24 +775,20 @@ type ActorCommon = {
    *
    * ANYTHING IN engine/ THAT READS THIS IS A BUG. It is a display preference and
    * the simulation must stay byte-identical without it.
-   */
-  zoom?: number;
-
-  /**
-   * HOW BIG THIS PLAYER WANTS THE INTERFACE — the integer HUD step, or absent.
    *
-   * `zoom`'s twin in every respect above: on the body for the same two reasons,
-   * absent is not zero for the same reason, and anything in engine/ that reads
-   * it is the same bug. It is a SEPARATE step because `hudScale` is a separate
-   * factor from the map's — see `UI_SCALE_MIN`.
+   * IT HAD A TWIN, `zoom`, THE MAP'S STEP, AND THE FIELD IS GONE. The control
+   * that moved it was removed (*"remove the (zoom) option"*, `27 -> 28` in
+   * shared/version.ts), so nothing writes it and nothing reads it. A `zoom` key
+   * in an old character file is ignored by `parseCharacterFile` and dropped by
+   * the next save — no migration, no rejection.
    */
   uiScale?: number;
 
   /**
-   * WHERE THIS PLAYER LEFT THEIR PANELS, and how big they made the Case Log.
+   * WHERE THIS PLAYER LEFT THEIR PANELS, and how big they made the Log.
    *
-   * `zoom` and `uiScale`'s twin, and carried on the body for the same two
-   * reasons those are: it belongs to the PERSON rather than to the socket, so
+   * `uiScale`'s twin, and carried on the body for the same two
+   * reasons it is: it belongs to the PERSON rather than to the socket, so
    * it survives a reconnect, and the character file is what makes it survive a
    * session.
    *

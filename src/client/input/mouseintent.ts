@@ -38,18 +38,35 @@
 
 import { DIR_ORDER, chebyshev, inBounds, sameTile, step } from '../../shared/coords.ts';
 import { canRoute } from '../../shared/level.ts';
-import { isHostileBody, liveActorAt } from './travel.ts';
+import { isHostileBody, isTownsfolkBody, liveActorAt } from './travel.ts';
 import type { Dir, TileXY } from '../../shared/coords.ts';
 import type { ActorView, LevelView } from '../../shared/protocol.ts';
 
 /**
- * The three things a left-click can mean. An object plus a derived type rather
+ * The four things a left-click can mean. An object plus a derived type rather
  * than an `enum`: `erasableSyntaxOnly` is on because Node type-strips this
  * project directly, and an enum emits runtime code.
  */
 export const MouseIntentKind = {
   /** Attack by walking into them. One `move`, and nothing else. */
   Bump: 'bump',
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * OPEN A CONVERSATION. One `talk`, and it names a PERSON rather than a tile.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Asked for as *"if you are adjacent to a friendly npc, you should be able to
+   * click them to open the dialogue box. the right click option to talk should
+   * still exist."* Both halves are kept: this is the left-click door, and
+   * ui/verbs.ts's `Talk to` row is untouched.
+   *
+   * IT IS `Bump`'s TWIN AND IT DELIBERATELY SITS ABOVE IT. Adjacency plus a live
+   * body is the same test; which of the two it means is decided by who the body
+   * is, and it is decided HERE rather than in the event handler for this file's
+   * standing reason — "clicking an ally must not offer an attack" is a test, not
+   * a click-through.
+   */
+  Talk: 'talk',
   /** Start the travel state machine. */
   Travel: 'travel',
   /** Nothing to do, and a sentence saying why. */
@@ -59,6 +76,16 @@ export type MouseIntentKind = (typeof MouseIntentKind)[keyof typeof MouseIntentK
 
 export type MouseIntent =
   | { readonly kind: typeof MouseIntentKind.Bump; readonly dir: Dir }
+  | {
+      readonly kind: typeof MouseIntentKind.Talk;
+      /**
+       * THE PERSON, NEVER THE TILE — `TalkSchema` in shared/protocol.ts takes an
+       * actor id for the reason main.ts's `MapVerb.Talk` states: if she steps
+       * aside between the click and the frame, the honest answer is "there is
+       * nobody there" rather than a conversation with whoever moved in.
+       */
+      readonly targetId: string;
+    }
   | {
       readonly kind: typeof MouseIntentKind.Travel;
       readonly to: TileXY;
@@ -181,11 +208,38 @@ export function mouseIntentAt(snapshot: MouseSnapshot): MouseIntent {
   if (sameTile(self, tile)) return none('you are already standing there');
 
   const occupant = liveActorAt(actors, tile);
+  const adjacent = chebyshev(self, tile) === 1;
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * ADJACENT AND SOMEBODY WHO LIVES HERE: the conversation, and it is FIRST.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * ABOVE THE BUMP BECAUSE THE BUMP WOULD OTHERWISE TAKE IT. `isHostileBody` is
+   * `kind !== Player` and a townsfolk is a `Monster` on the server, so she has
+   * always fallen into the branch below — and what that produced was a
+   * `{t:'move'}` into her tile, which `resolveIntent` hands to `tryMove` because
+   * `areEnemies` refuses a townsfolk, which comes back `Occupied`. So the click
+   * this replaces was a REFUSAL with a sentence, on the one body in the game a
+   * player most wants to click. Nothing anybody relies on is taken: the ally
+   * case, the corpse case, the wall case and every travel case below are
+   * untouched, and this branch cannot be reached by any body without a faction
+   * on the wire.
+   *
+   * OUT OF REACH IS UNCHANGED. Two tiles away she is still a `Travel` that stops
+   * short — the same walk-up-to that clicking any occupied tile has always
+   * meant, and the same thing ui/verbs.ts's greyed `Talk to` row teaches: one
+   * more step really does make it work. Nothing new is greyed and nothing new
+   * refuses.
+   */
+  if (adjacent && occupant !== undefined && isTownsfolkBody(occupant)) {
+    return { kind: MouseIntentKind.Talk, targetId: occupant.id };
+  }
 
   // ADJACENT AND HOSTILE: the bump. Chebyshev because a diagonal step costs the
   // same as an orthogonal one everywhere in this game, and `step` reaches all
   // eight neighbours.
-  if (chebyshev(self, tile) === 1 && occupant !== undefined && isHostileBody(occupant)) {
+  if (adjacent && occupant !== undefined && isHostileBody(occupant)) {
     // The sanctioned idiom (main.ts:1758-1762), never a hand-rolled dx/dy table.
     const dir = DIR_ORDER.find((candidate) => sameTile(step(self, candidate), tile));
     if (dir !== undefined) return { kind: MouseIntentKind.Bump, dir };

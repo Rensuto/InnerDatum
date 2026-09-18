@@ -158,8 +158,10 @@ describe('the defaults compile to the seven tables keys.ts used to declare', () 
         ['c', UiCommand.ShowSheet],
         ['v', UiCommand.ToggleLog],
         ['m', UiCommand.ShowWorldMap],
-        ['-', UiCommand.ZoomOut],
-        ['=', UiCommand.ZoomIn],
+        // NO `-` OR `=` ROW. They were `zoom_out` and `zoom_in` and both went
+        // with the control (*"remove the (zoom) option"*). The two keys are
+        // unbound now, which is what lets `lets an unmapped key sail past
+        // untouched` be true of them.
         ['p', UiCommand.ToggleParty],
         ['g', UiCommand.ShowTalents],
         ['i', UiCommand.ShowInventory],
@@ -210,8 +212,11 @@ describe('the action registry', () => {
     // deliberate act with a diff. 29 -> 31 when the bar gained slots 5 and 6;
     // 31 -> 34 when it gained 7, 8 and 9 and became one row of nine keys;
     // 34 -> 35 when `rest` was ported (Player.lua:971); 35 -> 36 with
-    // auto-explore (Game.lua:2064).
-    expect(ACTIONS).toHaveLength(36);
+    // auto-explore (Game.lua:2064); 36 -> 34 when `zoom_out` and `zoom_in` went
+    // with the control (*"remove the (zoom) option"*) -- the only time this
+    // number has gone DOWN, and the rows below them were renumbered so `order`
+    // stays definition order.
+    expect(ACTIONS).toHaveLength(34);
     expect(ACTIONS.length).toBeLessThanOrEqual(KEYBIND_MAX_ACTIONS);
   });
 
@@ -518,7 +523,10 @@ describe('conflicts are resolved by dispatch and not by string equality', () => 
   it('reports a plain key-vs-key collision, with the holder named', () => {
     const found = conflictsFor({ action: 'show_inventory', binding: key('v') }, DEFAULT_KEYMAP);
     expect(found).toEqual([
-      { holder: 'toggle_log', holderName: 'Case Log', press: { key: 'v', code: '' } },
+      // `Log`, NOT `Case Log`: the panel was renamed and this row is a name a
+      // player reads on the Keys screen. The ACTION ID did not move, which is
+      // what keeps every stored bind for it working.
+      { holder: 'toggle_log', holderName: 'Log', press: { key: 'v', code: '' } },
     ]);
   });
 

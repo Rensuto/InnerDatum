@@ -472,8 +472,11 @@ describe('every row that already worked still works', () => {
     ['g', UiCommand.ShowTalents],
     ['v', UiCommand.ToggleLog],
     ['m', UiCommand.ShowWorldMap],
-    ['-', UiCommand.ZoomOut],
-    ['=', UiCommand.ZoomIn],
+    // `-` AND `=` ARE GONE FROM THIS TABLE, and they are the only rows ever
+    // removed from it: they were `zoom_out` and `zoom_in` (*"remove the (zoom)
+    // option"*). The pair below asserts they now reach nothing at all, which is
+    // the half a removal usually forgets -- a key still bound to a verb nothing
+    // answers is worse than an unbound one.
     ['p', UiCommand.ToggleParty],
     // v10. THE INVENTORY, ON ToME'S OWN LETTER — a dialog-local mnemonic
     // ("Manage [I]nventory", dialogs/CharacterSheet.lua:95-98, and the `c == 'i'`
@@ -486,6 +489,16 @@ describe('every row that already worked still works', () => {
   for (const [key, command] of UI_ROWS) {
     it(`${key} is ${command}`, () => {
       expect(press({ key }).calls).toEqual([{ kind: 'ui', command }]);
+    });
+  }
+
+  for (const key of ['-', '=']) {
+    it(`${key} reaches nothing now that the zoom is gone`, () => {
+      expect(press({ key }).calls).toEqual([]);
+      // ...AND IS NOT SWALLOWED EITHER. `lets an unmapped key sail past
+      // untouched` is what main.ts's travel-cancel listener depends on, and a
+      // key left half-bound would be one that cancels a walk and does nothing.
+      expect(press({ key }).prevented).toBe(false);
     });
   }
 
@@ -521,7 +534,7 @@ describe('every row that already worked still works', () => {
 // ---------------------------------------------------------------------------
 
 describe('what the keymap deliberately does NOT do', () => {
-  it('names exactly eleven UI verbs', () => {
+  it('names exactly nine UI verbs', () => {
     // A ninth member has to be added here on purpose, which is the point: the
     // exhaustive switch in main.ts breaks at lint time, and this breaks at test
     // time with the list of what the game claims to have. v9 added
@@ -529,6 +542,11 @@ describe('what the keymap deliberately does NOT do', () => {
     // `show_world_map` and the two zoom steps — `pickup` is deliberately NOT
     // here, because it spends a turn and therefore lives on `TurnCommand`
     // beside commit and hold.
+    //
+    // AND ELEVEN BECAME NINE. `zoom_in`/`zoom_out` left with the control
+    // (*"remove the (zoom) option"*), which is the first time this list has
+    // shrunk — a removal that left them here would be two verbs the Keys screen
+    // advertises and nothing answers.
     expect(Object.values(UiCommand).slice().sort()).toEqual([
       'respawn',
       'revive',
@@ -539,8 +557,6 @@ describe('what the keymap deliberately does NOT do', () => {
       'show_world_map',
       'toggle_log',
       'toggle_party',
-      'zoom_in',
-      'zoom_out',
     ]);
   });
 

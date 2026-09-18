@@ -7,6 +7,7 @@ import {
   DRAG_THRESHOLD_PX,
   DragKind,
   DraggablePanel,
+  GripCorner,
   createPanelOffsets,
   moveIntoBand,
   nextOffset,
@@ -557,25 +558,38 @@ describe('the offset store', () => {
      * settle, and the player asked for the pane to resize the way the log does.
      * A panel can be in this union for its size alone; the two capabilities were
      * one thing only while the log was the only member with either.
+     *
+     * ═══ AND THE CONVERSATION WINDOW IS THE EIGHTH, WHICH REVERSES A NOTE ═══
+     * `ui/dialogue.ts#dialogueRect` used to argue the window should be DOCKED to
+     * the right-hand end of the band precisely so that it cleared the Case Log —
+     * a placement chosen for the player because the window could not be moved.
+     * The author asked for the window centred, draggable and carrying a Reset
+     * position, so the dock is gone and the overlap is answered by the handle.
+     * It MOVES and never resizes: its height is a function of how many answers
+     * the node carries, so there is no size to store.
+     *
+     * ═══ AND THE MINIMAP IS THE NINTH, AND THE ONLY ONE UPSTREAM ALSO MOVES ═══
+     * The file header's *"there is NO upstream citation for a movable window"*
+     * is about `Dialog.lua` and stays true of dialogs. This box has one:
+     * `Minimalist.lua:307` gives it a move handle, `:378` a place with a scale,
+     * and `:1634-1635` routes a press on that handle into `uiMoveResize`. It
+     * both MOVES and RESIZES here, which no other member does except the log —
+     * and unlike the log its size is a CELL size, clamped to upstream's own
+     * `util.bound(..., 0.5, 2)` (`:590`).
      */
-    expect([...DRAGGABLE_PANELS].sort()).toEqual([
+    const EVERY_PANEL = [
+      'dialogue',
       'hotbar',
       'inventory',
       'log',
       'menu',
+      'minimap',
       'party',
       'sheet',
       'talents',
-    ]);
-    expect(Object.keys(createPanelOffsets()).sort()).toEqual([
-      'hotbar',
-      'inventory',
-      'log',
-      'menu',
-      'party',
-      'sheet',
-      'talents',
-    ]);
+    ];
+    expect([...DRAGGABLE_PANELS].sort()).toEqual(EVERY_PANEL);
+    expect(Object.keys(createPanelOffsets()).sort()).toEqual(EVERY_PANEL);
   });
 
   it('hands out an independent record each call', () => {
@@ -1179,5 +1193,63 @@ describe('the party pane resizes, and its floor is not the log’s', () => {
     expect(bodyOf('settleResize'), 'the settle drops the floor').toContain(
       'resizeIntoBand(rect, offset, band, width, floor)',
     );
+  });
+});
+
+/**
+ * ═════════════════════════════════════════════════════════════════════════════
+ * THE GRIP CORNER — the one thing a right-docked panel needs that no other has.
+ * ═════════════════════════════════════════════════════════════════════════════
+ */
+describe('nextSize measures from the edge that does not move', () => {
+  const FLOOR = { w: 10, h: 10 };
+
+  it('grows rightwards from a left origin, which is every panel but one', () => {
+    // The default, unchanged: `origin.x` is the left edge and the grip is in the
+    // bottom-right corner, so a pointer further right is a wider box.
+    const origin = { x: 100, y: 50 };
+    const grip = { dx: 0, dy: 0 };
+    expect(nextSize(origin, grip, 300, 200, FLOOR).w).toBe(200);
+    expect(nextSize(origin, grip, 400, 200, FLOOR).w).toBe(300);
+    expect(nextSize(origin, grip, 300, 200, FLOOR).h).toBe(150);
+  });
+
+  it('grows LEFTWARDS from a right origin, which is what a right dock needs', () => {
+    // `origin.x` is the RIGHT edge here and the grip is bottom-LEFT, so a
+    // pointer further left is a wider box. The minimap is docked at
+    // `viewW - box - MINIMAP_MARGIN`: measured from its left edge, the pointer
+    // had eight pixels of travel and the map could only ever get smaller.
+    const origin = { x: 300, y: 50 };
+    const grip = { dx: 0, dy: 0 };
+    expect(nextSize(origin, grip, 100, 200, FLOOR, GripCorner.BottomLeft).w).toBe(200);
+    expect(nextSize(origin, grip, 0, 200, FLOOR, GripCorner.BottomLeft).w).toBe(300);
+    expect(nextSize(origin, grip, 290, 200, FLOOR, GripCorner.BottomLeft).w).toBe(10);
+    // THE HEIGHT IS UNTOUCHED BY THE CORNER. Both grips are at the BOTTOM.
+    expect(nextSize(origin, grip, 100, 200, FLOOR, GripCorner.BottomLeft).h).toBe(150);
+  });
+
+  it('floors both corners at the same size', () => {
+    const floorOnly = { w: 44, h: 44 };
+    expect(nextSize({ x: 100, y: 50 }, { dx: 0, dy: 0 }, 101, 51, floorOnly)).toEqual(floorOnly);
+    expect(
+      nextSize({ x: 100, y: 50 }, { dx: 0, dy: 0 }, 99, 51, floorOnly, GripCorner.BottomLeft),
+    ).toEqual(floorOnly);
+  });
+
+  it('keeps the grabbed pixel under the pointer on both corners', () => {
+    // `gripOffset` is where in the grip the press landed, measured from the edge
+    // the grip sits on. Without it the corner snaps to the pointer on the first
+    // event of every gesture.
+    const right = nextSize({ x: 100, y: 50 }, { dx: -4, dy: -4 }, 300, 200, FLOOR);
+    expect(right.w).toBe(204);
+    const left = nextSize(
+      { x: 300, y: 50 },
+      { dx: 4, dy: -4 },
+      100,
+      200,
+      FLOOR,
+      GripCorner.BottomLeft,
+    );
+    expect(left.w).toBe(204);
   });
 });

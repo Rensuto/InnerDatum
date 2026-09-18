@@ -470,7 +470,11 @@ describe('changing character', () => {
     await sleep(80);
     const second = await createCharacter(harness.port, 1);
     // SOMETHING ONLY THE SECOND CHARACTER'S FILE HOLDS, for the end to look for.
-    second.client.send({ t: 'set_zoom', zoom: 1 });
+    // It was `set_zoom` until that verb left the protocol; the interface step is
+    // its surviving sibling and rides this test for the same reason — the
+    // hazard is a THROWAWAY written over a healthy file, and any per-character
+    // preference shows it.
+    second.client.send({ t: 'set_ui_scale', uiScale: 1 });
     await second.client.settle();
     second.client.close();
     const firstClass = first.classId;
@@ -488,14 +492,14 @@ describe('changing character', () => {
     if (unlucky === undefined || kept === undefined) {
       throw new Error('the two characters were not both saved');
     }
-    expect((await harness.store.loadCharacter(REN, kept.id)).file?.zoom).toBe(1);
+    expect((await harness.store.loadCharacter(REN, kept.id)).file?.uiScale).toBe(1);
 
     // ═══ THE FIRST CHARACTER IS PICKED, AND ITS OPEN FAILS ═══
     failNextOpen = true;
     const stray = await connect(harness.port);
     stray.send({ t: 'hello', sessionId: HANDLE, characterId: unlucky.id });
-    // THE THROWAWAY HAS NO ZOOM OF ITS OWN, which is what would show if it were
-    // written over the healthy character.
+    // THE THROWAWAY HAS NO INTERFACE STEP OF ITS OWN, which is what would show
+    // if it were written over the healthy character.
     expect(await joined(stray), 'the throwaway never joined').toBeDefined();
     expect(failNextOpen, 'the open was never attempted').toBe(false);
     await stray.settle();
@@ -526,7 +530,7 @@ describe('changing character', () => {
     expect(reopened?.classId, 'the throwaway was written over the character picked').toBe(
       secondClass,
     );
-    expect(reopened?.zoom, 'the throwaway was written over the character picked').toBe(1);
+    expect(reopened?.uiScale, 'the throwaway was written over the character picked').toBe(1);
     expect(harness.actorCount()).toBe(1);
   });
 

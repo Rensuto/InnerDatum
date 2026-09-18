@@ -85,7 +85,7 @@ import type { VisionView } from '../vision.ts';
 import { ActorRank, TileCode, isWalkable } from '../../shared/protocol.ts';
 import type { ZoneTileView } from '../../shared/protocol.ts';
 import type { TrapView } from '../../shared/protocol.ts';
-import { TILE_PX, UI_SCALE_MAX, UI_SCALE_MIN, ZOOM_MAX, ZOOM_MIN } from '../../shared/version.ts';
+import { TILE_PX, UI_SCALE_MAX, UI_SCALE_MIN } from '../../shared/version.ts';
 import { isLowLife, lifeFraction } from '../../shared/vitals.ts';
 import type { TileXY } from '../../shared/coords.ts';
 import type {
@@ -575,8 +575,8 @@ export type Viewport = {
  * to 30x16. That is not a regression to fix by tuning: 64 real pixels a cell IS
  * what Tales of Maj'Eyal looks like at 1080p with its own tileset, and what the
  * old number produced was this project's 32-pixel art blown up three times. A
- * player who wants the old framing has `zoom_in`, which is a real setting there
- * rather than a no-op.
+ * player who wanted the old framing once had `zoom_in`; that control is gone
+ * (see `viewLayout`'s `uiScaleStep`), so this number IS the framing now.
  */
 export const DEFAULT_VIEWPORT: Viewport = { tilesW: 16, tilesH: 8 };
 
@@ -705,8 +705,9 @@ export type ViewLayout = {
  * `round(dpr)` is the size a person sees; the `ceil` terms are the cap, and
  * they are `ceil` rather than `floor` because the constraint runs the other
  * way — the box must not EXCEED `HUD_MAX_*`, so the factor must be at least
- * `device / max`. No `zoomStep` term: zoom is a map control, which is the point
- * of the whole split.
+ * `device / max`. This factor has never had a MAP term in it, which is the whole
+ * point of the split -- and there is no map term left anywhere now, because the
+ * zoom control is gone; see `viewLayout`'s `uiScaleStep`.
  *
  * ── THE PLAYER'S STEP MAY NOT ASK FOR MORE THAN THE SCREEN CAN SHOW ──
  *
@@ -784,61 +785,65 @@ export function uiScaleFixed(deviceW: number, deviceH: number, dpr: number): boo
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════
- * IS THE ZOOM CONTROL INERT ON THIS WINDOW? `uiScaleFixed`'s twin, and it
- * answers TRUE far more often.
+ * HOW BIG THE INTERFACE IS DRAWN, AS A PERCENTAGE OF THE DEFAULT STEP.
  * ═══════════════════════════════════════════════════════════════════════════
  *
- * FOUND BY ASKING THE SAME QUESTION OF THE OTHER CONTROL. The interface step
- * was greyed on windows with no room for a second factor; nobody had asked
- * whether the MAP's step had the same problem. It does, and worse — measured
- * across six viewports, zoom produces ONE distinct map scale on everything
- * narrower than 1280, including the 1262x428 window this game is played in.
+ * Asked for in these words: *"the \"UI Size\" button should be arrows that change
+ * the scaling percentage, not just smaller, larger, etc."*
  *
- * `scale` is `max(1, floor(min(device / minLogical)) + zoomStep)`. On a window
- * where the fit is already 1, zooming out clamps back to 1 and zooming in needs
- * room for a whole second factor. So SMALLER does nothing on ANY window tested
- * — the floor eats it — and BIGGER does nothing below 1280 wide.
+ * ═══ A RATIO OF TWO FACTORS, NOT AN OPINION ABOUT THE STEP ═══
+ * The tempting version is a table — -1 is 75%, +1 is 125% — and it would be a
+ * lie. `hudScale` is a WHOLE number: on a window whose automatic factor is 2,
+ * one step down is 1 and one step up is 3, so the real sizes are 50%, 100% and
+ * 150% and nothing in between exists. Reading the two factors and dividing is
+ * the only answer that is true on every window, and it is the reason this
+ * function exists rather than a constant per step.
  *
- * THE VIEWPORT IS A PARAMETER because it is what `minLogical` is measured from,
- * and a realm that asks for more tiles has a lower fit and therefore less room
- * to zoom. Asking this question of the wrong viewport would answer it for a
- * different realm than the player is standing in.
+ * IT IS MEASURED AGAINST STEP 0 AND NOT AGAINST 1. The player's baseline is the
+ * interface they were given before they touched anything, which is the
+ * automatic factor — `round(dpr)` and the `HUD_MAX_*` ceilings — and that is
+ * what step 0 produces. A percentage of the raw factor would print 200% on a
+ * retina screen nobody had configured.
+ *
+ * CLAMPED STEPS ONLY. The caller passes what `setUiScale` RETURNED, so on a
+ * window with no room for a second factor every step reads 100% and the row is
+ * telling the truth rather than counting words nothing honours.
  */
-export function zoomFixed(deviceW: number, deviceH: number, viewport: Viewport): boolean {
-  const at = (step: number): number => viewLayout(deviceW, deviceH, viewport, step, 1).scale;
-  return at(ZOOM_MIN) === at(ZOOM_MAX);
+export function uiScalePercentFor(
+  deviceW: number,
+  deviceH: number,
+  dpr: number,
+  uiScaleStep: number,
+): number {
+  const base = hudScaleFor(deviceW, deviceH, dpr, 0);
+  const now = hudScaleFor(deviceW, deviceH, dpr, uiScaleStep);
+  // `hudScaleFor` floors at 1, so `base` can never be 0 and this can never be
+  // a division by zero -- stated rather than guarded, because a guard here
+  // would be dead code pretending the floor might move.
+  return Math.round((now / base) * 100);
 }
 
-/**
- * ═══════════════════════════════════════════════════════════════════════════
- * THE WHOLE OF THE SIZING ARITHMETIC, AS A FUNCTION OF THE DEVICE BOX.
- * ═══════════════════════════════════════════════════════════════════════════
- *
- * EXPORTED FOR THE REASON `pathCellOrigin` IS: it is the only way a test can
- * reach it. `resize()` writes its answers into closure variables that nothing
- * outside `draw` reads, so until this was pulled out, every number below — the
- * integer scale, the adaptive tile count, the letterbox, and now two scales
- * instead of one — was checked by looking at the game.
- *
- * PURE, and it has to stay pure: no canvas, no `window`. `deviceW`, `deviceH`
- * and `dpr` are already-measured — nothing here reads the DOM — which is what
- * makes the whole of it testable in the `node` environment the client tests run
- * in. `dpr` is an input rather than a lookup for exactly that reason, and the
- * interface's factor is the only thing that uses it: see `HUD_MAX_W`.
- */
 export function viewLayout(
   deviceW: number,
   deviceH: number,
   viewport: Viewport,
-  zoomStep: number,
   dpr: number,
   /**
-   * THE PLAYER'S OWN BIAS ON THE INTERFACE, and a SECOND step deliberately.
+   * THE PLAYER'S OWN BIAS ON THE INTERFACE, and the ONLY player term this
+   * function takes.
+   *
+   * THERE WAS A SECOND ONE, `zoomStep`, and it went with the control that fed
+   * it: *"remove the (zoom) option"*. It biased `scale`, the MAP's whole-number
+   * magnification, and it is gone from the arithmetic below rather than pinned
+   * to a constant -- a parameter every caller passes 0 to is a lever with no
+   * hand on it. What that means numerically: `scale` is now `max(1, fitScale)`,
+   * which is exactly what the step's default of 0 always produced, so nobody
+   * who never touched the control sees any change at all.
    *
    * Defaulted so every existing caller keeps the behaviour it had; the one that
-   * matters passes the stored preference. Folding this into `zoomStep` would put
-   * the map and the interface back on one factor, which is the exact thing
-   * `hudScale` was split out to stop -- see test/client/hudscale.test.ts.
+   * matters passes the stored preference. It must never be folded back into the
+   * map's factor, which is the exact thing `hudScale` was split out to stop --
+   * see test/client/hudscale.test.ts.
    */
   uiScaleStep = 0,
 ): ViewLayout {
@@ -850,7 +855,8 @@ export function viewLayout(
   // Scale first, from the MINIMUM viewport — this is what keeps the factor a
   // whole number and the pixels sharp.
   const fitScale = Math.floor(Math.min(deviceW / minLogicalW, deviceH / minLogicalH));
-  const scale = Math.max(1, fitScale + zoomStep);
+  // NO PLAYER TERM. A zoom step used to be added here -- see `uiScaleStep`.
+  const scale = Math.max(1, fitScale);
 
   /**
    * ═══════════════════════════════════════════════════════════════════════════
@@ -949,12 +955,12 @@ export type Renderer = {
   /** Re-measure the CSS box and dpr. Returns true if anything changed. */
   readonly resize: () => boolean;
   /**
-   * Move the zoom to a whole step and re-lay the board. Returns the step
-   * actually taken after clamping, so a caller can tell "already at the limit"
-   * from "moved" without keeping its own copy of the bounds.
+   * Move the INTERFACE step and re-lay the box. Returns the step actually taken
+   * AFTER CLAMPING, so a caller can tell "already at the limit" from "moved"
+   * without keeping its own copy of the bounds -- which is what the escape
+   * menu's two arrows and its percentage readout are drawn from. See
+   * `UI_SCALE_MIN`.
    */
-  readonly setZoom: (next: number) => number;
-  /** The INTERFACE step. `setZoom`'s twin; see `UI_SCALE_MIN`. */
   readonly setUiScale: (next: number) => number;
   readonly uiScale: () => number;
   /**
@@ -966,12 +972,15 @@ export type Renderer = {
    */
   readonly uiScaleFixed: () => boolean;
   /**
-   * Whether this window has room for a second MAP scale. `uiScaleFixed`'s
-   * twin; the escape menu greys the ZOOM row on true.
+   * How big the interface is drawn, as a percentage of the default step — the
+   * number the escape menu prints between its two arrows. See
+   * `uiScalePercentFor`.
+   *
+   * A METHOD AND NOT A FIELD for `uiScaleFixed`'s reason: the answer moves with
+   * the WINDOW as well as with the setting, and a value read once at startup
+   * would go stale the first time somebody resized.
    */
-  readonly zoomFixed: () => boolean;
-  /** The current zoom step. -1 out, 0 default, +1 in. */
-  readonly zoom: () => number;
+  readonly uiScalePercent: () => number;
   readonly draw: (scene: Scene) => void;
   readonly metrics: () => RendererMetrics;
   /**
@@ -3114,25 +3123,19 @@ export function createRenderer(options: RendererOptions): Renderer {
   let scale = 1;
   /**
    * ═════════════════════════════════════════════════════════════════════════
-   * ZOOM, AS A BIAS ON THE INTEGER SCALE RATHER THAN A MULTIPLIER ON IT
+   * THE INTERFACE'S STEP. THE MAP HAS NONE ANY MORE.
    * ═════════════════════════════════════════════════════════════════════════
    *
-   * `scale` is deliberately a whole number: it is what keeps every pixel of
-   * hand-drawn art landing on a whole screen pixel, and the header above spends
-   * a paragraph on why. A zoom that multiplied it by 1.25 would throw that away
-   * for every player who used it, which is the one thing this renderer will not
-   * do.
+   * There was a `zoomStep` beside this one, biasing the map integer `scale`,
+   * with two keys, a menu row, the mouse wheel and a stored preference behind
+   * it. All of it is gone: *"remove the (zoom) option"*.
    *
-   * So zoom moves the scale by whole STEPS. Out is a smaller scale — more
-   * tiles, each smaller; in is a larger one. Clamped so it can never reach 0,
-   * and clamped again by `MAX_TILES_*` on the way out, so zooming out on a big
-   * window stops at a readable size rather than at unreadable specks.
-   *
-   * "Slightly" is the requirement and one step each way is what that means: at
-   * the size this runs in a Discord iframe the natural scale is 2, so the range
-   * is 1x to 3x and no setting is useless.
+   * THIS ONE STAYS A WHOLE NUMBER for the reason that one was: `scale` and
+   * `hudScale` are what keep every pixel of hand-drawn art landing on a whole
+   * screen pixel, and a factor of 1.25 would throw that away for every player
+   * who used it. One step down and two up is a real range at the size this
+   * runs in a Discord iframe -- see `UI_SCALE_MIN`.
    */
-  let zoomStep = 0;
   let uiScaleStep = 0;
   let offsetX = 0;
   let offsetY = 0;
@@ -3145,40 +3148,20 @@ export function createRenderer(options: RendererOptions): Renderer {
   let lastLevel: LevelView | null = null;
 
   /**
-   * Change the zoom by one step and re-lay the board.
+   * Change the INTERFACE step and re-lay the box.
    *
-   * Returns the step actually taken, which may be the current one — the clamp
-   * is authoritative and the caller must be able to say "already as far out as
-   * it goes" rather than silently doing nothing.
-   */
-  function setZoom(next: number): number {
-    const clamped = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, Math.trunc(next)));
-    if (clamped === zoomStep) return zoomStep;
-    zoomStep = clamped;
-    // The device box has not changed, so `resize`'s early-out would skip the
-    // whole recompute. Forcing it is the point of this line.
-    deviceW = 0;
-    resize();
-    return zoomStep;
-  }
-
-  function zoom(): number {
-    return zoomStep;
-  }
-
-  /**
-   * Change the INTERFACE step and re-lay the box. `setZoom`'s twin.
-   *
-   * Returns the step actually taken, for `setZoom`'s reason: the clamp is
-   * authoritative and the caller has to be able to say "already as large as it
-   * goes" rather than appearing to do nothing.
+   * ═══ THE RETURN IS THE TRUTH, AND THE MENU IS DRAWN FROM IT ═══
+   * Returns the step actually taken, which may be the current one: the clamp is
+   * authoritative, and the caller has to be able to say "already as large as it
+   * goes" rather than appearing to do nothing. The escape menu prints the
+   * interface PERCENTAGE off this answer and never off what was asked for.
    */
   function setUiScale(next: number): number {
     const clamped = Math.max(UI_SCALE_MIN, Math.min(UI_SCALE_MAX, Math.trunc(next)));
     if (clamped === uiScaleStep) return uiScaleStep;
     uiScaleStep = clamped;
     // The device box has not changed, so `resize`'s early-out would skip the
-    // recompute -- `setZoom`'s line, for `setZoom`'s reason.
+    // whole recompute. Forcing it is the point of this line.
     deviceW = 0;
     resize();
     return uiScaleStep;
@@ -3199,12 +3182,12 @@ export function createRenderer(options: RendererOptions): Renderer {
   }
 
   /**
-   * `rendererUiScaleFixed`'s twin for the MAP's step, and it takes the LIVE
-   * viewport rather than a default: a realm asking for more tiles has less room
-   * to zoom, so the answer is a property of where the player is standing.
+   * `rendererUiScaleFixed`'s twin, off the same live box and for the same
+   * reason: the percentage is a fact about the WINDOW as much as about the
+   * step, so it has to be asked again after a resize.
    */
-  function rendererZoomFixed(): boolean {
-    return zoomFixed(deviceW, deviceH, viewport);
+  function rendererUiScalePercent(): number {
+    return uiScalePercentFor(deviceW, deviceH, dpr, uiScaleStep);
   }
 
   function resize(): boolean {
@@ -3230,7 +3213,7 @@ export function createRenderer(options: RendererOptions): Renderer {
     canvas.height = deviceH;
     viewCtx.imageSmoothingEnabled = false;
 
-    const next = viewLayout(deviceW, deviceH, viewport, zoomStep, dpr, uiScaleStep);
+    const next = viewLayout(deviceW, deviceH, viewport, dpr, uiScaleStep);
     scale = next.scale;
     hudScale = next.hudScale;
     offsetX = next.offsetX;
@@ -4772,11 +4755,9 @@ export function createRenderer(options: RendererOptions): Renderer {
     backbufferPoint,
     hudRectToClient,
     tileAtClient,
-    setZoom,
-    zoom,
     setUiScale,
     uiScale,
     uiScaleFixed: rendererUiScaleFixed,
-    zoomFixed: rendererZoomFixed,
+    uiScalePercent: rendererUiScalePercent,
   };
 }

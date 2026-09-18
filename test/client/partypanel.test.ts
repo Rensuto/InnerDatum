@@ -3,19 +3,34 @@
 import { describe, expect, it } from 'vitest';
 
 import { createContextMenu } from '../../src/client/ui/contextmenu.ts';
-import { resourceStripH } from '../../src/client/ui/resource.ts';
+import {
+  WIDEST_POOL_LINE_W,
+  poolLineW,
+  poolText,
+  resourceStripH,
+} from '../../src/client/ui/resource.ts';
 import {
   PARTY_PANE_COMPACT_W,
+  PARTY_PANE_MIN_H,
   PARTY_PANE_W,
   PartyPaneMode,
   drawPartyPane,
+  paneRowW,
   partyPaneHeight,
   partyPaneHitAt,
   partyPaneLayout,
   partyPaneTipAt,
   partyPaneView,
+  poolStripW,
   survivalWord,
 } from '../../src/client/ui/partypanel.ts';
+// ═══ THE REAL CLASS TABLE AND THE REAL POOL RULES, FROM THE SERVER ═══
+// Not a fixture. The whole point of the width test below is that it walks what
+// the game actually authors — `fixture-bands-are-not-panel-bands` is exactly
+// this class of bug, a layout that passed its own fixture and dropped content
+// live. A client module may not import these; a test may, and must.
+import { CLASSES } from '../../src/server/content/classes.ts';
+import { RESOURCE_RULES } from '../../src/server/engine/talents.ts';
 import {
   DeathStage,
   deathAction,
@@ -810,6 +825,79 @@ describe('the party card carries what the pane cannot', () => {
     throw new Error(`no row for ${id}`);
   }
 
+  it('says how many of the party it could fit, when it could not fit them all', () => {
+    /**
+     * ══════════════════════════════════════════════════════════════════════
+     * `paneGeometry` PLACES ROWS WHILE THEY FIT AND THEN STOPS — SILENTLY.
+     * ══════════════════════════════════════════════════════════════════════
+     * Which is right for the pixels and wrong for the FACT: a pane squeezed by
+     * the Case Log, by a short band or by the player's own grip showed two faces
+     * under a header reading "PARTY · 3", and the missing person was
+     * indistinguishable from somebody who had left the party.
+     */
+    // NOBODY DOWN in this fixture: the title's FIRST job is "N DOWN", which is
+    // more urgent than a count and rightly wins the strip. What is asserted here
+    // is the other branch.
+    const view = partyPaneView({
+      state: state([
+        member({ id: 'actor_a', name: 'Dalt', isSelf: true, isLeader: true }),
+        member({ id: 'actor_b', name: 'Sam' }),
+        member({ id: 'actor_c', name: 'Mo' }),
+      ]),
+      invites: [],
+      roster: [
+        rosterRow('actor_a', 'Dalt'),
+        rosterRow('actor_b', 'Sam'),
+        rosterRow('actor_c', 'Mo'),
+      ],
+      actors: new Map([
+        ['actor_a', actor('actor_a', 'Dalt')],
+        ['actor_b', actor('actor_b', 'Sam')],
+        ['actor_c', actor('actor_c', 'Mo')],
+      ]),
+      effects: new Map<string, readonly EffectView[]>(),
+      inCombat: false,
+      resource: null,
+      progress: null,
+      money: null,
+    });
+    const short = partyPaneLayout({
+      view,
+      width: 1262,
+      top: 20,
+      bottom: 20 + PARTY_PANE_MIN_H + 2,
+      rightReserved: 0,
+    });
+    expect(short, 'the fixture no longer squeezes the pane').not.toBeNull();
+    if (short === null) return;
+    expect(short.mode).toBe(PartyPaneMode.Rows);
+    const cut: string[] = [];
+    drawPartyPane({
+      ctx: measuring(cut),
+      sprites: { sprite: () => undefined },
+      view,
+      layout: short,
+    });
+    const title = cut.find((t) => t.startsWith('PARTY'));
+    expect(title, 'no title was drawn').toBeDefined();
+    expect(title, 'the title claimed a party it did not draw').toContain('/3');
+
+    // ...AND A PANE WITH ROOM FOR EVERYBODY SAYS THE PLAIN COUNT, unchanged:
+    // "PARTY · 1" is how somebody playing alone learns the pane is right rather
+    // than broken, and a fraction there would be noise.
+    const roomy = partyPaneLayout({ view, width: 1262, top: 20, bottom: 320, rightReserved: 0 });
+    expect(roomy).not.toBeNull();
+    if (roomy === null) return;
+    const whole: string[] = [];
+    drawPartyPane({
+      ctx: measuring(whole),
+      sprites: { sprite: () => undefined },
+      view,
+      layout: roomy,
+    });
+    expect(whole.find((t) => t.startsWith('PARTY'))).toBe('PARTY · 3');
+  });
+
   it('paints only initials in Portraits mode, which is why the card exists', () => {
     // THE MEASUREMENT THIS FEATURE IS FOR. If a later pass gives the compact row
     // real words, this fails and the card can be reconsidered — which is the
@@ -1295,5 +1383,196 @@ describe('the viewer’s own level and purse on the pane', () => {
     expect(() =>
       drawPartyPane({ ctx: stub, sprites: { sprite: () => undefined }, view, layout }),
     ).not.toThrow();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// THE PANE IS WIDE ENOUGH FOR THE POOL IT DRAWS
+// ---------------------------------------------------------------------------
+
+describe('the pane is wide enough for every class to read its own pool', () => {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * REPORTED AS THE REDACTOR'S INK BEING CUT OFF. THREE CLASSES OF FOUR WERE.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * *"the Party UI needs to be slightly widened as it can cut resourcces off.
+   * example: the redactor character has its Ink initially cut off on the party
+   * display until you manually drag to widenen it a bit to accomodate."*
+   *
+   * ═══ THE PANE CLIPS, WHICH IS WHY THIS SHIPPED ═══
+   * `drawPartyPane` clips to its own rect, so an over-long line is not drawn
+   * across the map where somebody would see it and call it a bug. It is cut at
+   * the frame and looks like a design.
+   *
+   * ═══ EVERY REAL CLASS, NOT A FIXTURE STRING ═══
+   * `CLASSES` is the server's own table and `RESOURCE_RULES` its own maxima, so
+   * this measures what a player actually sees. A fixture here would be the
+   * `fixture-bands-are-not-panel-bands` failure again: the pane passed every
+   * test it had while cutting the Watchman's line by 47 pixels.
+   */
+  const poolFor = (kind: (typeof CLASSES)[number]['resource']) => {
+    const rule = RESOURCE_RULES[kind];
+    // FULL, because that is where every class starts and it is the widest the
+    // figure ever prints — `Resolve 100/100` is longer than `Resolve 7/100`.
+    return { kind, current: rule.max, max: rule.max, discrete: rule.discrete };
+  };
+
+  /** What the painter actually hands `drawResource` for a default-width pane. */
+  const room = poolStripW(paneRowW(PARTY_PANE_W));
+
+  it('fits the line every authored class draws, at full pool', () => {
+    for (const def of CLASSES) {
+      const pool = poolFor(def.resource);
+      expect(
+        poolLineW(pool),
+        `${def.name}: "${poolText(pool)}" is cut off on the party pane`,
+      ).toBeLessThanOrEqual(room);
+    }
+  });
+
+  /**
+   * THE REPORT NAMED THE REDACTOR AND THE WATCHMAN WAS WORSE — which is the
+   * reason this walks the table instead of fixing the class that was reported.
+   * `hardcoded-word-for-a-value`'s rule, applied to a width: the moment you
+   * find one, grep the twins.
+   */
+  it('is sized by the widest class, which is not the one that was reported', () => {
+    const widest = [...CLASSES].sort(
+      (a, b) => poolLineW(poolFor(b.resource)) - poolLineW(poolFor(a.resource)),
+    )[0];
+    expect(widest).toBeDefined();
+    if (widest === undefined) return;
+    expect(poolText(poolFor(widest.resource))).toBe('Resolve 100/100');
+    const ink = CLASSES.find((def) => def.resource === ResourceKind.Ink);
+    expect(ink, 'the Redactor is still in the roster').toBeDefined();
+    if (ink === undefined) return;
+    expect(poolLineW(poolFor(ink.resource))).toBeLessThan(poolLineW(poolFor(widest.resource)));
+  });
+
+  /**
+   * THE WITNESS. At the width that shipped, the reported class and two others
+   * were cut — so this test would have caught it, which is the only evidence
+   * that it is testing the rule rather than the current numbers.
+   */
+  it('would have failed at the width that shipped', () => {
+    const was = poolStripW(paneRowW(208));
+    const cut = CLASSES.filter((def) => poolLineW(poolFor(def.resource)) > was);
+    expect(cut.map((def) => def.resource).sort()).toEqual(
+      [ResourceKind.Focus, ResourceKind.Ink, ResourceKind.Resolve].sort(),
+    );
+  });
+
+  /**
+   * THE WIDTH IS THE DERIVATION AND NOTHING ELSE — no slack, no magic number
+   * added on top. Exactly `WIDEST_POOL_LINE_W` of room, which is what makes the
+   * constant move by itself when a fifth resource is named.
+   */
+  it('is exactly the derivation, with nothing added by hand', () => {
+    expect(room).toBe(WIDEST_POOL_LINE_W);
+  });
+
+  /**
+   * AND THE CLEAR-MAP HEURISTIC IS UNMOVED AT THE FLOOR. The pane got 53 pixels
+   * wider, and the one thing that could have cost is the form it picks on a
+   * small window — `MAP_MIN_CLEAR_PX` is 320 against a 640-wide viewport.
+   */
+  it('still picks Rows at the narrowest viewport this client renders', () => {
+    const layout = partyPaneLayout({
+      view: trio(),
+      width: 640,
+      top: 0,
+      bottom: 320,
+      rightReserved: 0,
+    });
+    expect(layout?.mode).toBe(PartyPaneMode.Rows);
+    expect(layout?.rect.w).toBe(PARTY_PANE_W);
+  });
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * AND THE PAINTER ITSELF DRAWS NOTHING PAST THE ROW, FOR ANY CLASS.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * The test above is arithmetic about the rule. This drives `drawPartyPane` —
+   * the real painter, the real geometry, the real `drawResource` — and catches
+   * the string as it is written, so a change to WHERE the strip starts fails
+   * here even if `poolLineW` still agrees with itself.
+   *
+   * `measureText` IS THE SAME SIX-PIXEL ADVANCE the box sizes are derived from
+   * (ui/resource.ts's `CHAR_W`), which is a deliberate over-estimate of Consolas
+   * at 10px — so a line that fits here fits on a screen.
+   */
+  it('draws every class’s pool line inside the row, through the real painter', () => {
+    for (const def of CLASSES) {
+      const pool = poolFor(def.resource);
+      const wanted = poolText(pool);
+      const drawn: { text: string; x: number }[] = [];
+      const stub = new Proxy(
+        {},
+        {
+          get: (_target, prop: string) => {
+            if (prop === 'measureText') {
+              return (text: string) => ({ width: text.length * 6 });
+            }
+            if (prop === 'canvas') return undefined;
+            if (prop === 'fillText') {
+              return (text: string, x: number) => {
+                drawn.push({ text, x });
+              };
+            }
+            return () => undefined;
+          },
+          set: () => true,
+        },
+      ) as unknown as CanvasRenderingContext2D;
+
+      const view = { ...trio(), resource: { ...pool, ap: 6, maxAp: 6, mp: 3, maxMp: 3 } };
+      const layout = partyPaneLayout({
+        view,
+        width: 900,
+        top: 0,
+        bottom: 500,
+        rightReserved: 0,
+      });
+      expect(layout, `${def.name}: no pane`).not.toBeNull();
+      if (layout === null) continue;
+      drawPartyPane({ ctx: stub, sprites: { sprite: () => undefined }, view, layout });
+
+      const line = drawn.find((call) => call.text === wanted);
+      expect(line, `${def.name}: the pane never drew "${wanted}"`).toBeDefined();
+      if (line === undefined) continue;
+      /**
+       * ═══════════════════════════════════════════════════════════════════════
+       * AND `poolLineW` IS THE PAINTER'S OWN CURSOR, TERM FOR TERM.
+       * ═══════════════════════════════════════════════════════════════════════
+       *
+       * A MUTANT SURVIVED THE FIRST DRAFT AND THIS IS WHY IT DOES NOT NOW.
+       * Dropping the `PIP_GAP * 2` before the label made `poolLineW` four
+       * pixels short — and every other test here passed, because the pane
+       * width is DERIVED from `poolLineW`, so both sides of every comparison
+       * moved together. A derivation can only be checked against something it
+       * does not define, and the only such thing is the pixel the painter puts
+       * the string at.
+       *
+       * The slack left at the row's right edge must be exactly the slack the
+       * derivation predicts. Four pixels of drift shows up here as four.
+       */
+      const room = poolStripW(paneRowW(layout.rect.w));
+      const right = layout.rect.x + layout.rect.w - (layout.rect.w - paneRowW(layout.rect.w)) / 2;
+      expect(
+        right - (line.x + wanted.length * 6),
+        `${def.name}: poolLineW does not describe where the painter drew "${wanted}"`,
+      ).toBe(room - poolLineW(pool));
+      // THE ROW'S RIGHT EDGE, which is where the content has to stop — the clip
+      // is further out at the pane's own frame, and a line that reaches it is
+      // already touching the border.
+      const rowRight =
+        layout.rect.x + layout.rect.w - (layout.rect.w - paneRowW(layout.rect.w)) / 2;
+      expect(
+        line.x + wanted.length * 6,
+        `${def.name}: "${wanted}" runs past the row`,
+      ).toBeLessThanOrEqual(rowRight);
+    }
   });
 });

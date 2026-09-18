@@ -1,5 +1,10 @@
 /**
- * THE CASE LOG. One running stream, and tabs to ask a question of it.
+ * THE LOG. One running stream, and tabs to ask a question of it.
+ *
+ * IT WAS CALLED THE CASE LOG, AND THE PANEL IS NOW JUST `LOG`. The rename is
+ * skin-deep on purpose: the lanes on the wire are still `record` and `margin`
+ * (`LogLane`, src/shared/protocol.ts), and game-design.md § 11 still describes
+ * them under those names. Only the words a player reads moved — see `LogTab`.
  *
  * ===========================================================================
  * IT WAS TWO LANES, AND THE ARGUMENT FOR THAT IS WORTH KEEPING
@@ -62,6 +67,7 @@
  */
 
 import { LogLane } from '../../shared/protocol.ts';
+import { GripCorner } from './drag.ts';
 import { DAMAGE_INK, PALETTE } from '../render/canvas.ts';
 import {
   HEADER_H,
@@ -155,29 +161,46 @@ const INDENT_PX = 8;
  *
  * ═══ THREE, AND THE THIRD CANNOT BE NARROWED ═══
  * `LogLine.lane` is the only thing on the wire that separates one kind of line
- * from another, so the tabs are ALL, the RECORD lane, and the MARGIN lane.
+ * from another, so the tabs are ALL, the `record` lane, and the `margin` lane.
  *
- * "MARGIN" AND NOT "CHAT", because it is not only chat: a player's `say` and an
- * NPC's greeting are byte-identical on the wire — both arrive as
- * `{ lane: Margin, speaker: <name> }` — so a tab labelled CHAT would quietly
- * include everything the townsfolk say. Margin is this game's own word for the
- * lane (game-design.md § 11) and it is the honest one. Separating a person from
- * a character would need a new wire field, not a new filter.
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE KEY IS WHAT A PLAYER READS. THE VALUE IS THE WIRE. THEY DIVERGE HERE.
+ * ═══════════════════════════════════════════════════════════════════════════
+ * The panel is called `LOG` now and the tabs are ALL / EVENTS / PEOPLE, asked
+ * for in those words. The VALUES below are `'record'` and `'margin'` and must
+ * stay that way: `visible()` filters by `line.lane === tab`, so each value is
+ * the wire literal off `LogLane` (src/shared/protocol.ts) and renaming one is a
+ * protocol bump for a word nobody sees. Memory rules that ids stay stable while
+ * what players read changes, and this is that split, in one object.
+ *
+ * "PEOPLE" AND NOT "CHAT", WHICH IS THE OLD ARGUMENT RE-POINTED RATHER THAN
+ * DROPPED. A player's `say` and an NPC's greeting are byte-identical on the
+ * wire — both arrive as `{ lane: 'margin', speaker: <name> }` — so a tab
+ * labelled CHAT would quietly include everything the townsfolk say, and pings
+ * and emotes ride the same lane on top of that. PEOPLE is true of all of it:
+ * what a person said or otherwise communicated, player or not. Separating a
+ * player from a character would need a new wire field, not a new filter.
+ *
+ * EVENTS is the same promise on the other side — what the RULES did. It is the
+ * lane game-design.md § 11 calls the Record, and the doc is still right about
+ * the lane; it is the button that changed.
  */
 export const LogTab = {
   All: 'all',
-  Record: 'record',
-  Margin: 'margin',
+  /** What the rules did. `LogLane.Record` on the wire — do not rename the value. */
+  Events: 'record',
+  /** What a person communicated. `LogLane.Margin` on the wire — value is fixed. */
+  People: 'margin',
 } as const;
 export type LogTab = (typeof LogTab)[keyof typeof LogTab];
 
-export const LOG_TABS: readonly LogTab[] = [LogTab.All, LogTab.Record, LogTab.Margin];
+export const LOG_TABS: readonly LogTab[] = [LogTab.All, LogTab.Events, LogTab.People];
 
 /** What each tab is called on its button. Short: the strip is one row. */
 const TAB_LABEL: Readonly<Record<LogTab, string>> = {
   [LogTab.All]: 'ALL',
-  [LogTab.Record]: 'RECORD',
-  [LogTab.Margin]: 'MARGIN',
+  [LogTab.Events]: 'EVENTS',
+  [LogTab.People]: 'PEOPLE',
 };
 
 /**
@@ -982,7 +1005,10 @@ export function createCaseLog(options: CaseLogOptions): CaseLog {
     const headerBottom = drawHeader(
       ctx,
       sprites,
-      gameTurn >= 0 ? `CASE LOG · turn ${gameTurn}` : 'CASE LOG',
+      // `LOG`, NOT `CASE LOG` — asked for in those words. The turn stays: it is
+      // the one fact on this header that changes, and the scrollback is read
+      // against it.
+      gameTurn >= 0 ? `LOG · turn ${gameTurn}` : 'LOG',
       rect,
       FONT_META,
     );
@@ -1413,10 +1439,21 @@ export function logComposerRect(rect: PanelRect): PanelRect | null {
 
 export const LOG_GRIP_PX = 12;
 
-/** Where the grip is, for the painter and the hit test to share one answer. */
-export function logGripRect(rect: PanelRect): PanelRect {
+/**
+ * Where the grip is, for the painter and the hit test to share one answer.
+ *
+ * `corner` IS `BottomRight` FOR EVERY PANEL THAT GROWS RIGHTWARDS, which is all
+ * of them but the minimap — see `GripCorner` in ui/drag.ts for why a
+ * right-docked box has to put its grip in the corner it grows towards. The
+ * default keeps every existing caller and every existing test meaning exactly
+ * what it did.
+ */
+export function logGripRect(
+  rect: PanelRect,
+  corner: GripCorner = GripCorner.BottomRight,
+): PanelRect {
   return {
-    x: rect.x + rect.w - LOG_GRIP_PX,
+    x: corner === GripCorner.BottomLeft ? rect.x : rect.x + rect.w - LOG_GRIP_PX,
     y: rect.y + rect.h - LOG_GRIP_PX,
     w: LOG_GRIP_PX,
     h: LOG_GRIP_PX,
@@ -1424,8 +1461,13 @@ export function logGripRect(rect: PanelRect): PanelRect {
 }
 
 /** True when a LOGICAL backbuffer point is on the grip. */
-export function logGripAt(rect: PanelRect, px: number, py: number): boolean {
-  const grip = logGripRect(rect);
+export function logGripAt(
+  rect: PanelRect,
+  px: number,
+  py: number,
+  corner: GripCorner = GripCorner.BottomRight,
+): boolean {
+  const grip = logGripRect(rect, corner);
   return px >= grip.x && px < grip.x + grip.w && py >= grip.y && py < grip.y + grip.h;
 }
 
@@ -1435,8 +1477,16 @@ export function logGripAt(rect: PanelRect, px: number, py: number): boolean {
  * for `ASSETS-REQUIRED.md`'s reason — a widget that needs art to be USABLE
  * cannot ship behind a missing file.
  */
-export function drawLogGrip(ctx: CanvasRenderingContext2D, rect: PanelRect): void {
-  const grip = logGripRect(rect);
+export function drawLogGrip(
+  ctx: CanvasRenderingContext2D,
+  rect: PanelRect,
+  corner: GripCorner = GripCorner.BottomRight,
+): void {
+  const grip = logGripRect(rect, corner);
+  // MIRRORED WITH THE CORNER, so the ticks always run along the two edges the
+  // gesture drags. Three ticks pointing at the wrong corner is a control
+  // advertising a direction it does not move in.
+  const flip = corner === GripCorner.BottomLeft;
   ctx.save();
   ctx.strokeStyle = PALETTE.GREY_HI;
   ctx.lineWidth = 1;
@@ -1444,8 +1494,8 @@ export function drawLogGrip(ctx: CanvasRenderingContext2D, rect: PanelRect): voi
     const inset = i * 3;
     ctx.beginPath();
     // +0.5 so a one-pixel line lands ON a pixel rather than across two.
-    ctx.moveTo(grip.x + grip.w - inset + 0.5, grip.y + grip.h - 0.5);
-    ctx.lineTo(grip.x + grip.w - 0.5, grip.y + grip.h - inset + 0.5);
+    ctx.moveTo(flip ? grip.x + inset - 0.5 : grip.x + grip.w - inset + 0.5, grip.y + grip.h - 0.5);
+    ctx.lineTo(flip ? grip.x + 0.5 : grip.x + grip.w - 0.5, grip.y + grip.h - inset + 0.5);
     ctx.stroke();
   }
   ctx.restore();

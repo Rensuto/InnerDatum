@@ -32,6 +32,7 @@ import {
 import { UiCommand } from '../../src/client/input/keys.ts';
 import { HEADER_H } from '../../src/client/ui/panel.ts';
 import { PartyAction } from '../../src/shared/protocol.ts';
+import { UI_SCALE_MAX, UI_SCALE_MIN } from '../../src/shared/version.ts';
 import type { EscapeMenuView, MenuHit, MenuRow } from '../../src/client/ui/escapemenu.ts';
 import type { KeyRemap } from '../../src/client/input/keymap.ts';
 
@@ -204,27 +205,31 @@ describe('the root screen', () => {
     // about a row that already existed. The count is still FIXED: the row is
     // drawn greyed for a player with no account rather than dropped, exactly as
     // LEAVE PARTY is for a party of one, so no row ever moves under a pointer.
-    // EIGHT SINCE THE ZOOM ROW. It sits beside KEY BINDINGS because those two
-    // are the only rows that change how the game is SET UP — the five below them
-    // open a panel — and two rows is not a settings screen, so they group here
-    // rather than behind a sixth surface.
-    // ELEVEN SINCE UI SIZE, which joined the settings group beside ZOOM. It is a
-    // SEPARATE row from ZOOM on purpose: the two move different factors, and
-    // `hudScale` was split out of the map's magnification precisely so that `=`
-    // stopped resizing the hotbar and every panel along with the world (see
-    // test/client/hudscale.test.ts). One row driving both would undo that.
+    // EIGHT SINCE THE ZOOM ROW, ELEVEN SINCE UI SIZE JOINED IT, AND TEN AGAIN
+    // NOW THAT ZOOM HAS GONE (*"remove the (zoom) option"*). UI SIZE sits beside
+    // KEY BINDINGS because those two and RESET PANELS are the only rows that
+    // change how the game is SET UP — the six below them open or end something
+    // — and three rows is not a settings screen, so they group here rather than
+    // behind another surface.
+    //
+    // THE THREE `ROW_*` CONSTANTS MOVED WITH IT, which is the entire reason they
+    // are constants: the indices below are a list a human reads, and the ones
+    // main.ts guards with are not restated there.
     // TEN SINCE CASE NOTES, which is the port of `ShowLore` and lands here
     // because upstream's `learnLore` names this exact surface: *"You can read
     // all your collected lore in the game menu, by pressing Escape."* It is
     // greyed rather than dropped for a player who has found nothing, on the
     // rule LEAVE PARTY already sets — a row that vanished would teach nothing
     // about why, and no row may move under a pointer.
-    expect(rows).toHaveLength(11);
+    expect(rows).toHaveLength(10);
     expect(rows.map((row) => row.label)).toEqual([
       'RESUME',
       'KEY BINDINGS',
-      'ZOOM: NORMAL',
-      'UI SIZE: NORMAL',
+      // NO VALUE IN THE LABEL ANY MORE. The percentage and the two arrows are
+      // drawn on the right of the row from `steppers`, so the label is a NAME
+      // — which is what let the readout stop being a word. See the block
+      // `the ui-size row` below.
+      'UI SIZE',
       'RESET PANELS',
       'CHARACTER SHEET',
       'TALENTS',
@@ -238,12 +243,12 @@ describe('the root screen', () => {
       { kind: 'keys' },
       // ITS OWN EFFECT KIND, not a `ui` command. Every `UiCommand` opens or
       // closes a panel; this one changes a persisted preference and leaves the
-      // menu open so the player can look at the map and press again.
-      { kind: 'zoom' },
-      // ITS TWIN, and a SECOND kind rather than a parameter on the first: they
-      // move two different factors and must never share a control. See
-      // `UI_SCALE_MIN` and test/client/hudscale.test.ts.
-      { kind: 'ui-scale' },
+      // menu open so the player can look at the result and press again.
+      //
+      // `delta: 0` IS THE ROW'S OWN PRESS AND IT CYCLES. The two arrows carry
+      // -1 and +1 and are reached through the hit test, never through this
+      // field — which is what keeps Enter able to wrap when an arrow cannot.
+      { kind: 'ui-scale', delta: 0 },
       // A RECOVERY HATCH, and one press — see `MenuEffect`. It is greyed here
       // because the fixture has moved nothing, which is the common state.
       { kind: 'reset-panels' },
@@ -262,7 +267,7 @@ describe('the root screen', () => {
       // the first thing to go wrong would be a keybinding for it.
       { kind: 'leave-character' },
     ]);
-    expect(rows.map((row) => row.index)).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+    expect(rows.map((row) => row.index)).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
   });
 
   it('draws SWITCH CHARACTER greyed for a player with no account', () => {
@@ -292,19 +297,19 @@ describe('the root screen', () => {
     // row that already opens the spend screen — never a row of its own and never
     // a reorder — and this asserts the whole list on both sides of it.
     //
-    // (The list is EIGHT rows since ZOOM. A new VERB earns one — `SWITCH
-    // CHARACTER` did, and so does a preference with no other pointer route — a
-    // fact about an existing row still does not, which is the distinction.)
+    // (The list is TEN rows since the ZOOM row left it. A new VERB earns one —
+    // `SWITCH CHARACTER` did, and so does a preference with no other pointer
+    // route — a fact about an existing row still does not, which is the
+    // distinction.)
     const shape = (rows: readonly MenuRow[]) => entryRows(rows).map((row) => row.index);
     const labels = (rows: readonly MenuRow[]) => entryRows(rows).map((row) => row.label);
 
     const waiting = escapeMenuRows(view({ unspent: 2 }));
-    expect(shape(waiting)).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+    expect(shape(waiting)).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
     expect(labels(waiting)).toEqual([
       'RESUME',
       'KEY BINDINGS',
-      'ZOOM: NORMAL',
-      'UI SIZE: NORMAL',
+      'UI SIZE',
       'RESET PANELS',
       'CHARACTER SHEET',
       'TALENTS (2)',
@@ -313,17 +318,17 @@ describe('the root screen', () => {
       'LEAVE PARTY',
       'SWITCH CHARACTER',
     ]);
-    // The effect on row 3 is untouched — it is still the launcher, and a longer
-    // label must not turn it into a different act.
-    expect(entryRows(waiting)[6]?.effect).toEqual({ kind: 'ui', command: UiCommand.ShowTalents });
-    expect(entryRows(waiting)[6]?.keyLabel).toBe(labelFor('show_talents', DEFAULT_KEYMAP));
+    // The talents row's effect is untouched — it is still the launcher, and a
+    // longer label must not turn it into a different act.
+    expect(entryRows(waiting)[5]?.effect).toEqual({ kind: 'ui', command: UiCommand.ShowTalents });
+    expect(entryRows(waiting)[5]?.keyLabel).toBe(labelFor('show_talents', DEFAULT_KEYMAP));
 
     // WITHOUT POINTS THE LABEL IS UNCHANGED, at zero and with the field absent
     // entirely — which is what main.ts's existing `escapeMenuView()` passes. A
     // row reading "TALENTS (0)" on every open is furniture within one session.
-    expect(labels(escapeMenuRows(view({ unspent: 0 })))[6]).toBe('TALENTS');
-    expect(labels(escapeMenuRows(view()))[6]).toBe('TALENTS');
-    expect(labels(escapeMenuRows(view({ unspent: 1 })))[6]).toBe('TALENTS (1)');
+    expect(labels(escapeMenuRows(view({ unspent: 0 })))[5]).toBe('TALENTS');
+    expect(labels(escapeMenuRows(view()))[5]).toBe('TALENTS');
+    expect(labels(escapeMenuRows(view({ unspent: 1 })))[5]).toBe('TALENTS (1)');
   });
 
   it('draws LEAVE PARTY greyed for a party of one rather than dropping it', () => {
@@ -331,7 +336,7 @@ describe('the root screen', () => {
     // row you were reaching for, and a player who cannot see the row at all
     // learns nothing about why they cannot use it.
     const alone = entryRows(escapeMenuRows(view({ inParty: false })));
-    expect(alone).toHaveLength(11);
+    expect(alone).toHaveLength(10);
     const leave = alone[ROW_LEAVE_PARTY];
     expect(leave?.label).toBe('LEAVE PARTY');
     expect(leave?.enabled).toBe(false);
@@ -342,11 +347,11 @@ describe('the root screen', () => {
   it('names the LIVE key beside each screen row and never a hard-coded letter', () => {
     // A printed "press C" is a lie the moment somebody rebinds. The row reads
     // the same keymap the dispatcher reads.
-    const before = entryRows(escapeMenuRows(view()))[5];
+    const before = entryRows(escapeMenuRows(view()))[4];
     expect(before?.keyLabel).toBe(labelFor('show_sheet', DEFAULT_KEYMAP));
 
     const rebound = compileKeymap(ACTIONS, { show_sheet: ['key:q'] });
-    const after = entryRows(escapeMenuRows(view({ keymap: rebound })))[5];
+    const after = entryRows(escapeMenuRows(view({ keymap: rebound })))[4];
     expect(after?.keyLabel).toBe('Q');
   });
 });
@@ -369,19 +374,19 @@ describe('escapeMenuHitAt on the root screen', () => {
       if (hit === null || hit.kind !== MenuHitKind.Entry) continue;
       if (seen[seen.length - 1] !== hit.index) seen.push(hit.index);
     }
-    // EIGHT OF THE ELEVEN, and the three GAPS are the point of the scan. Each
+    // SEVEN OF THE TEN, and the three GAPS are the point of the scan. Each
     // missing index is a row that is DRAWN and refuses the pointer, which is
     // what "greyed" means here structurally rather than merely visually:
     //
-    //    4  RESET PANELS   — the fixture has moved nothing
-    //    8  CASE NOTES     — the fixture has found nothing
-    //   10  SWITCH CHARACTER — `canSwitchCharacter` is absent (not signed in)
+    //    3  RESET PANELS   — the fixture has moved nothing
+    //    7  CASE NOTES     — the fixture has found nothing
+    //    9  SWITCH CHARACTER — `canSwitchCharacter` is absent (not signed in)
     //
-    // The fixture IS in a party, so LEAVE PARTY at 9 answers. UI SIZE at 3 CAN
+    // The fixture IS in a party, so LEAVE PARTY at 8 answers. UI SIZE at 2 CAN
     // be a fourth gap — it greys on a window with no room for a second interface
     // factor — but the fixture leaves `uiScaleFixed` absent, which reads as a
     // window that has room. `the ui-size row` below scans the greyed case.
-    expect(seen).toEqual([0, 1, 2, 3, 5, 6, 7, 9]);
+    expect(seen).toEqual([0, 1, 2, 4, 5, 6, 8]);
   });
 
   it('answers the × in the header and nothing else up there', () => {
@@ -985,6 +990,47 @@ describe('drawing', () => {
     return { clips, calls, texts, rect };
   }
 
+  it('prints the interface size on a window that fits only one of them', () => {
+    /**
+     * ══════════════════════════════════════════════════════════════════════
+     * THE ROW'S OWN NOTE CLAIMED THIS AND THE PAINTER DID NOT DO IT.
+     * ══════════════════════════════════════════════════════════════════════
+     * *"STILL SHOWN, and still showing the setting … a small window must say what
+     * is set"* — and the whole stepper block was gated on `row.enabled`, so on
+     * 640x320, 1262x428 and 772x367 at dpr 1, which are the three windows this
+     * game is actually played in, the row printed no percentage at all.
+     *
+     * BOTH, NOW: the number greyed beside two greyed arrows, and the reason
+     * right-aligned to the LEFT of them. One fact and the sentence explaining
+     * why it cannot be changed here.
+     */
+    const fixed = paint(view({ uiScaleFixed: true, uiScale: 0, uiScalePercent: 100 }));
+    expect(fixed.texts, 'the greyed row printed no percentage').toContain('100%');
+    expect(fixed.texts.some((t) => t.includes('this window fits one size'))).toBe(true);
+    // ...AND A WINDOW THAT DOES FIT SEVERAL STILL PRINTS ITS OWN NUMBER.
+    const live = paint(view({ uiScaleFixed: false, uiScale: 1, uiScalePercent: 200 }));
+    expect(live.texts).toContain('200%');
+  });
+
+  it('draws the two arrows as shapes, never as a glyph that will not fit', () => {
+    /**
+     * `drawButton` fits its label to `rect.w - 6`, which is six pixels on a
+     * 12-wide plate. `◀` is 8.61 in the fallback face that has it, `fitText`
+     * cannot shorten one character, and what shipped was `◀…` at 14.11 centred
+     * in a 12px box. The triangles are traced now, so no font on any machine can
+     * put them outside their border.
+     */
+    for (const menu of [view(), view({ uiScaleFixed: true })]) {
+      const drawn = paint(menu);
+      for (const glyph of ['◀', '▶']) {
+        expect(
+          drawn.texts.some((t) => t.includes(glyph)),
+          `${glyph} went back to being text`,
+        ).toBe(false);
+      }
+    }
+  });
+
   it('clips to its own rect and pairs every save with a restore', () => {
     const { clips, calls, rect } = paint(view());
     expect(calls.length).toBeGreaterThan(0);
@@ -1315,76 +1361,56 @@ describe('the two rows that end something ask first', () => {
   });
 });
 
-describe('the zoom row', () => {
-  /**
-   * ═══════════════════════════════════════════════════════════════════════════
-   * A PERSISTED PREFERENCE WITH NO POINTER ROUTE TO CHANGE IT.
-   * ═══════════════════════════════════════════════════════════════════════════
-   *
-   * Zoom has a wire verb (`set_zoom`), a server echo (`SettingsMsg`) and storage
-   * that follows the account — and it IS discoverable, because `zoom_in` and
-   * `zoom_out` are rows on the Keys screen. What it had no route to was being
-   * CHANGED without a keyboard, which for a Discord Activity on a touch device
-   * means not at all. Upstream exposes it on a settings screen twice
-   * (GraphicMode.lua:139, VideoOptions.lua:77).
-   */
-  const labelAt = (zoom: number | undefined) =>
-    entryRows(escapeMenuRows(view(zoom === undefined ? {} : { zoom })))[2]?.label;
-
-  it('reads the setting as a word, not as a number', () => {
-    // "ZOOM: 0" tells a player nothing about what they are looking at. The row
-    // is a readout as much as a control.
-    expect(labelAt(-1)).toBe('ZOOM: SMALLER');
-    expect(labelAt(0)).toBe('ZOOM: NORMAL');
-    expect(labelAt(1)).toBe('ZOOM: BIGGER');
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE ZOOM ROW IS GONE, AND NOTHING MAY QUIETLY PUT IT BACK.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Eight tests stood here. *"remove the (zoom) option"* took the row, both key
+ * bindings, the mouse wheel, the wire verb and the stored preference with it —
+ * see `27 -> 28` in shared/version.ts.
+ *
+ * WHAT IS LEFT IS A GUARD RATHER THAN A DELETION. A removal that leaves half of
+ * itself behind is the failure the whole exercise was about, and the half most
+ * likely to come back here is a SECOND settings row: the surviving one is right
+ * beside where the old one sat, and "restore zoom" is a four-line change to this
+ * file. So this asserts on the whole root screen rather than on one index.
+ */
+describe('no zoom survives on the root screen', () => {
+  it('prints no zoom row, at any setting the view can carry', () => {
+    for (const over of [
+      {},
+      { uiScale: -1 },
+      { uiScale: 2 },
+      { uiScaleFixed: true },
+      { panelsMoved: true },
+    ]) {
+      const rows = entryRows(escapeMenuRows(view(over)));
+      for (const row of rows) {
+        expect(row.label, `a row still says ZOOM: ${row.label}`).not.toContain('ZOOM');
+      }
+    }
   });
 
-  it('reads the shipped default when no settings frame has landed', () => {
-    // Absent is 0, which is what a client with no `settings` yet is actually
-    // looking at — not an unknown to be drawn as a blank.
-    expect(labelAt(undefined)).toBe('ZOOM: NORMAL');
+  it('offers no effect that could reach the map scale', () => {
+    // THE EFFECT UNION IS THE VOCABULARY OF THIS SURFACE. A row cannot do
+    // anything the union cannot name, so scanning every kind on the screen is
+    // the whole question -- and `ui-scale` is checked BY NAME below to move the
+    // interface and nothing else.
+    const kinds = new Set(entryRows(escapeMenuRows(view())).map((row) => row.effect.kind));
+    expect(kinds.has('zoom' as never), 'a zoom effect is back on the menu').toBe(false);
   });
 
-  it('clamps a value from outside the range rather than inventing a word', () => {
-    // `ZOOM_MIN`..`ZOOM_MAX` is the whole vocabulary. A server or a save that
-    // somehow held something else still gets one of the three.
-    expect(labelAt(-9)).toBe('ZOOM: SMALLER');
-    expect(labelAt(9)).toBe('ZOOM: BIGGER');
-  });
-
-  it('is greyed with a reason on a window that cannot zoom', () => {
-    /**
-     * The same treatment UI SIZE gets, found by asking the same question of
-     * this control -- and it answers yes more often. Measured across six
-     * viewports, zoom yields ONE map scale on everything narrower than 1280,
-     * so on the window this game is played in the row cycled three words and
-     * the map never moved.
-     */
-    const row = entryRows(escapeMenuRows(view({ zoomFixed: true })))[2];
-    expect(row?.enabled).toBe(false);
-    expect(row?.reason).toBe('this window fits one size');
-  });
-
-  it('keeps its key printed even while greyed', () => {
-    /**
-     * `zoom_in` exists whatever this window can do and the Keys screen lists
-     * it, so blanking it here would make two screens disagree about the
-     * keyboard. The PRESS is what says why -- `applyZoom` shows a notice --
-     * which is the half UI SIZE never needed because it has no binding.
-     */
-    const row = entryRows(escapeMenuRows(view({ zoomFixed: true })))[2];
-    expect(row?.keyLabel).toBe(labelFor('zoom_in', DEFAULT_KEYMAP));
-  });
-
-  it('carries its own effect kind and shows the live key beside it', () => {
-    const row = entryRows(escapeMenuRows(view()))[2];
-    // NOT A `ui` COMMAND: every one of those opens or closes a panel, and this
-    // changes a preference and leaves the menu open on purpose.
-    expect(row?.effect).toEqual({ kind: 'zoom' });
-    // The key is read off the live keymap like every other row — this is a
-    // second ROUTE to one preference, not a second owner of it.
-    expect(row?.keyLabel).toBe(labelFor('zoom_in', DEFAULT_KEYMAP));
-    expect(row?.enabled).toBe(true);
+  it('names no zoom action on the keys screen either', () => {
+    // The row was a second ROUTE to `zoom_in`/`zoom_out`, and those ids went
+    // with it -- keymap.ts no longer declares them, so this screen cannot list
+    // them. A stored bind for either is dropped on load like any unknown id.
+    const rows = escapeMenuRows(view({ screen: MenuScreen.Keys }));
+    for (const row of rows) {
+      if (row.kind !== MenuRowKind.Action) continue;
+      expect(row.actionId, 'a zoom action is back on the Keys screen').not.toContain('zoom');
+      expect(row.name.toLowerCase()).not.toContain('zoom');
+    }
   });
 });
 
@@ -1399,7 +1425,7 @@ describe('the reset-panels row', () => {
    * is truly lost, but "drag it back by hand, four times" is not a recovery
    * story.
    */
-  const rowAt = (over: Partial<EscapeMenuView> = {}) => entryRows(escapeMenuRows(view(over)))[4];
+  const rowAt = (over: Partial<EscapeMenuView> = {}) => entryRows(escapeMenuRows(view(over)))[3];
 
   it('is greyed with a reason when nothing has been moved', () => {
     // GREYED, NOT DROPPED — a row that vanished when it had nothing to do would
@@ -1426,7 +1452,7 @@ describe('the reset-panels row', () => {
     expect(rowAt({ panelsMoved: true })?.effect).toEqual({ kind: 'reset-panels' });
     expect(rowAt({ panelsMoved: true })?.label).toBe('RESET PANELS');
     // ...and it is NOT one of the two rows that arm.
-    expect(rowAt({ panelsMoved: true, confirming: 4 })?.label).toBe('RESET PANELS');
+    expect(rowAt({ panelsMoved: true, confirming: 3 })?.label).toBe('RESET PANELS');
   });
 
   it('has no key, because it is a pointer hatch', () => {
@@ -1439,7 +1465,7 @@ describe('the reset-panels row', () => {
 describe('the ui-size row', () => {
   /**
    * ═══════════════════════════════════════════════════════════════════════════
-   * FOUR STEPS THAT CHANGED THE WORD AND NOTHING ELSE.
+   * FOUR WORDS THAT CHANGED AND A SCREEN THAT DID NOT.
    * ═══════════════════════════════════════════════════════════════════════════
    *
    * `hudScale` is a WHOLE number bounded hard at 1 below (a fraction of a device
@@ -1448,13 +1474,87 @@ describe('the ui-size row', () => {
    * the suite in test/client/hudscale.test.ts. On a window under 1280x640 those
    * two meet, so every one of the four steps lands on scale 1.
    *
-   * The row still CYCLED. Press it and the label walked
-   * NORMAL -> LARGER -> LARGEST -> SMALLER while the screen never moved, which
-   * reads as a broken control rather than as a window with no room. The window
-   * this game is actually played in is 1262x428, so that was the default
-   * experience of the setting rather than an edge of it.
+   * The row CYCLED and the label walked NORMAL -> LARGER -> LARGEST -> SMALLER
+   * while the screen never moved, which reads as a broken control rather than as
+   * a window with no room. The window this game is played in is 1262x428, so
+   * that was the default experience of the setting rather than an edge of it.
+   *
+   * ═══ WHAT IT IS NOW ═══
+   * *"the \"UI Size\" button should be arrows that change the scaling
+   * percentage, not just smaller, larger, etc."* A left arrow, the value AS A
+   * PERCENTAGE, a right arrow. The percentage is measured off what the renderer
+   * settled on, so a step the window cannot honour prints the number it already
+   * printed — the truth, where the fifth word would have been another lie.
    */
-  const rowAt = (over: Partial<EscapeMenuView> = {}) => entryRows(escapeMenuRows(view(over)))[3];
+  const rowAt = (over: Partial<EscapeMenuView> = {}) => entryRows(escapeMenuRows(view(over)))[2];
+  const steppersAt = (over: Partial<EscapeMenuView> = {}) => {
+    const row = rowAt(over);
+    expect(row, 'no UI SIZE row').toBeDefined();
+    return row?.steppers;
+  };
+
+  it('is a name and a readout, not a word for the step', () => {
+    expect(rowAt()?.label).toBe('UI SIZE');
+    expect(rowAt()?.steppers?.value).toBe('100%');
+  });
+
+  it('prints the percentage it is given and never derives one from the step', () => {
+    /**
+     * THE WHOLE POINT OF THE SECOND FIELD. `uiScale` is the STEP and decides the
+     * arrows; `uiScalePercent` is what the renderer DREW. A row that computed
+     * the percentage from the step would be a second opinion about a clamp that
+     * belongs to `setUiScale`, and it would print 150% on a window drawing 100%.
+     */
+    expect(rowAt({ uiScale: 1, uiScalePercent: 150 })?.steppers?.value).toBe('150%');
+    // The same step, on a window with no room for it: the renderer settled on
+    // the default factor and the row says so.
+    expect(rowAt({ uiScale: 1, uiScalePercent: 100 })?.steppers?.value).toBe('100%');
+    // And the converse: the same percentage under two different steps.
+    expect(rowAt({ uiScale: 2, uiScalePercent: 150 })?.steppers?.value).toBe('150%');
+  });
+
+  it('reads 100% when no settings frame has landed', () => {
+    // Absent is the shipped default drawing the default size — not an unknown
+    // to be drawn as a blank.
+    expect(rowAt()?.steppers?.value).toBe('100%');
+  });
+
+  it('rounds to a whole percent and never prints a nonsense one', () => {
+    expect(rowAt({ uiScalePercent: 66.6 })?.steppers?.value).toBe('67%');
+    expect(rowAt({ uiScalePercent: 0 })?.steppers?.value).toBe('1%');
+  });
+
+  it('greys the left arrow at the bottom of the range and nowhere else', () => {
+    expect(steppersAt({ uiScale: UI_SCALE_MIN })?.less).toBe(false);
+    for (let step = UI_SCALE_MIN + 1; step <= UI_SCALE_MAX; step += 1) {
+      expect(steppersAt({ uiScale: step })?.less, `step ${String(step)}`).toBe(true);
+    }
+  });
+
+  it('greys the right arrow at the top of the range and nowhere else', () => {
+    expect(steppersAt({ uiScale: UI_SCALE_MAX })?.more).toBe(false);
+    for (let step = UI_SCALE_MIN; step < UI_SCALE_MAX; step += 1) {
+      expect(steppersAt({ uiScale: step })?.more, `step ${String(step)}`).toBe(true);
+    }
+  });
+
+  it('greys neither at the shipped default, which is inside the range', () => {
+    // THE TEST ABOVE WOULD PASS IF BOTH WERE ALWAYS FALSE. This is the half
+    // that stops it: the default step is not an end, so both arrows are live.
+    expect(steppersAt()?.less).toBe(true);
+    expect(steppersAt()?.more).toBe(true);
+  });
+
+  it('is the only row on the screen that carries steppers', () => {
+    /**
+     * `place`, the painter and the hit test all branch on this field, so a
+     * second row acquiring it silently would put two arrows inside something
+     * like INVENTORY. Asserted as a WHOLE-SCREEN scan rather than at one index.
+     */
+    const rows = entryRows(escapeMenuRows(view()));
+    const withSteppers = rows.filter((row) => row.steppers !== undefined);
+    expect(withSteppers.map((row) => row.label)).toEqual(['UI SIZE']);
+  });
 
   it('is greyed with a reason on a window that fits one size', () => {
     const row = rowAt({ uiScaleFixed: true });
@@ -1469,8 +1569,9 @@ describe('the ui-size row', () => {
      * follows the player to whatever they open the game on next, so a small
      * window must say what is set even though it cannot change it.
      */
-    expect(rowAt({ uiScaleFixed: true, uiScale: 2 })?.label).toBe('UI SIZE: LARGEST');
-    expect(rowAt({ uiScaleFixed: true, uiScale: -1 })?.label).toBe('UI SIZE: SMALLER');
+    expect(rowAt({ uiScaleFixed: true, uiScale: 2, uiScalePercent: 200 })?.steppers?.value).toBe(
+      '200%',
+    );
   });
 
   it('is live on a window with room, and on a client that has not measured', () => {
@@ -1484,30 +1585,210 @@ describe('the ui-size row', () => {
   it('refuses the pointer while it is greyed', () => {
     /**
      * STRUCTURALLY, NOT MERELY VISUALLY — the same thing the hit-scan above
-     * asserts for the other three greyed rows. Greying a row that still
-     * answered the pointer would be worse than leaving it live, because the
-     * player would be told it does nothing and then watch it do something.
+     * asserts for the other greyed rows. Greying a row that still answered the
+     * pointer would be worse than leaving it live, because the player would be
+     * told it does nothing and then watch it do something.
      */
     const rect = roomyRect();
     const rows = escapeMenuRows(view({ uiScaleFixed: true }));
     const reached = new Set<number>();
     for (let y = rect.y; y < rect.y + rect.h; y += 1) {
-      const hit = escapeMenuHitAt(rect, rows, rect.x + 12, y);
-      if (hit !== null && hit.kind === MenuHitKind.Entry) reached.add(hit.index);
+      for (const x of [rect.x + 12, rect.x + rect.w - 8, rect.x + rect.w - 40]) {
+        const hit = escapeMenuHitAt(rect, rows, x, y);
+        if (hit !== null && hit.kind === MenuHitKind.Entry) reached.add(hit.index);
+      }
     }
-    expect(reached.has(3), 'a greyed UI SIZE row answered the pointer').toBe(false);
+    expect(reached.has(2), 'a greyed UI SIZE row answered the pointer').toBe(false);
     // ...and its neighbours in the settings group still do, so this is the row
     // refusing and not the scan missing a band.
-    expect(reached.has(2), 'ZOOM stopped answering').toBe(true);
+    expect(reached.has(1), 'KEY BINDINGS stopped answering').toBe(true);
   });
 
-  it('reads all four steps as words', () => {
-    // `zoomWord`'s twin, and four values rather than three because `UI_SCALE_*`
-    // is -1..2: the range is asymmetric on purpose.
-    expect(rowAt({ uiScale: -1 })?.label).toBe('UI SIZE: SMALLER');
-    expect(rowAt({ uiScale: 0 })?.label).toBe('UI SIZE: NORMAL');
-    expect(rowAt({ uiScale: 1 })?.label).toBe('UI SIZE: LARGER');
-    expect(rowAt({ uiScale: 2 })?.label).toBe('UI SIZE: LARGEST');
+  /**
+   * ═════════════════════════════════════════════════════════════════════════
+   * THE TWO ARROWS, AS PIXELS. This is the join `place` / the painter / the hit
+   * test have to agree about.
+   * ═════════════════════════════════════════════════════════════════════════
+   */
+  describe('the arrows under the pointer', () => {
+    /**
+     * ═══ THROUGH THE HIT TEST, PIXEL BY PIXEL, AND NOT THROUGH THE GEOMETRY ═══
+     * `escapeMenuGeometry` is deliberately not exported: everything about it
+     * reaches the outside world as a placed row or as a hit. Scanning the hit
+     * test is also the stronger question -- it is what a player's pointer
+     * actually asks, so it catches an arrow that is placed correctly and then
+     * covered by the row's own rect, which is the failure the ordering inside
+     * `escapeMenuHitAt` exists to prevent.
+     */
+    const rect = roomyRect();
+    const rowsFor = (over: Partial<EscapeMenuView> = {}) => escapeMenuRows(view(over));
+
+    /** The deltas along one scanline of the UI SIZE row, left to right. */
+    function scanRow(over: Partial<EscapeMenuView> = {}): readonly (number | null)[] {
+      const rows = rowsFor(over);
+      let band: number | null = null;
+      for (let y = rect.y; y < rect.y + rect.h; y += 1) {
+        const hit = escapeMenuHitAt(rect, rows, rect.x + 12, y);
+        if (hit !== null && hit.kind === MenuHitKind.Entry && hit.index === 2) {
+          band = band === null ? y : band;
+        } else if (band !== null) {
+          break;
+        }
+      }
+      expect(band, 'the UI SIZE row answered nowhere').not.toBeNull();
+      const y = (band ?? 0) + 5;
+      const out: (number | null)[] = [];
+      for (let x = rect.x; x < rect.x + rect.w; x += 1) {
+        const hit = escapeMenuHitAt(rect, rows, x, y);
+        if (hit === null || hit.kind !== MenuHitKind.Entry || hit.index !== 2) {
+          out.push(null);
+          continue;
+        }
+        expect(hit.effect.kind).toBe('ui-scale');
+        out.push(hit.effect.kind === 'ui-scale' ? hit.effect.delta : null);
+      }
+      return out;
+    }
+
+    /** Where a run of one value starts and ends, or null when there is none. */
+    function run(line: readonly (number | null)[], value: number) {
+      const from = line.indexOf(value);
+      if (from < 0) return null;
+      let to = from;
+      while (line[to + 1] === value) to += 1;
+      return { from, to, width: to - from + 1 };
+    }
+
+    it('answers -1 on the left arrow and +1 on the right one, in that order', () => {
+      const line = scanRow();
+      const less = run(line, -1);
+      const more = run(line, 1);
+      expect(less, 'no left arrow answered').not.toBeNull();
+      expect(more, 'no right arrow answered').not.toBeNull();
+      if (less === null || more === null) return;
+      // READING ORDER AND DISJOINT. Two controls that overlap are one control
+      // nobody can press, and an arrow drawn on the left of a value it makes
+      // bigger is the mutation that got past the first draft of this file.
+      expect(less.to, 'the arrows overlap or are reversed').toBeLessThan(more.from);
+      // BOTH ARE BUTTON-SIZED, not a stripe of the row. A single-pixel arrow
+      // passes "there is a -1 somewhere" and is unpressable in practice.
+      expect(less.width).toBeGreaterThanOrEqual(8);
+      expect(more.width).toBeGreaterThanOrEqual(8);
+      /**
+       * AND THE RIGHT ONE IS AGAINST THE RIGHT EDGE, which is where the row's
+       * second fact has always been drawn.
+       *
+       * ═══ EXACT, BECAUSE A ONE-SIDED BOUND IS NOT "FLUSH" ═══
+       * This read `toBeLessThanOrEqual(14)`, and two mutations survived it:
+       * `right = rowRect.x + rowRect.w - 3` changed to `- 0` (the arrow hard
+       * against the panel border) and to `+ 6` (the arrow six pixels PAST the
+       * row's right edge) both passed. `more.to` is an OFFSET from `rect.x`, so
+       * the number is `INSET` 8 + the 3px right inset the entry painter already
+       * uses for its right-hand text + 1 for the inclusive index.
+       */
+      expect(rect.w - more.to, 'the right arrow is not flush with the row').toBe(12);
+    });
+
+    it('leaves the label end of the row cycling, so the body is not dead', () => {
+      // A press on the LABEL end is the row's own effect, which wraps. This is
+      // the keyboard's act reached with a pointer, and it is why the row is
+      // still an Entry rather than a strip of two buttons.
+      const line = scanRow();
+      expect(line[12], 'the row body answered something other than the cycle').toBe(0);
+      const cycle = run(line, 0);
+      expect(cycle, 'nothing cycles').not.toBeNull();
+      expect((cycle?.width ?? 0) > 40, 'the label end is not a usable target').toBe(true);
+    });
+
+    it('keeps a gap between the arrows that reads rather than steps', () => {
+      // The value sits between them and is NOT a button: pressing a readout
+      // must not look like it does what the arrows do.
+      const line = scanRow();
+      const less = run(line, -1);
+      const more = run(line, 1);
+      if (less === null || more === null) return;
+      for (let x = less.to + 1; x < more.from; x += 1) {
+        expect(line[x], `x ${String(x)} between the arrows is not a readout`).toBe(0);
+      }
+      /**
+       * ═══ EXACT, BECAUSE `> 10` LEFT TWENTY PIXELS OF SLACK INVISIBLE ═══
+       * The readout is `CHAR_W * 5` = 30 wide with a 3px gap either side, so the
+       * space between the arrows is 36 and `> 10` could not see `STEP_GAP` going
+       * to zero — the arrows touching the number, which is the one thing this
+       * test is for. Both of those mutations survived it.
+       */
+      expect(more.from - less.to - 1, 'the readout gap is not STEP_VALUE_W + 2 gaps').toBe(36);
+    });
+
+    it('answers NOTHING on an arrow at the end of its range', () => {
+      /**
+       * ══════════════════════════════════════════════════════════════════
+       * THIS TEST USED TO PIN THE CYCLE HERE, AND THE CYCLE WAS THE BUG.
+       * ══════════════════════════════════════════════════════════════════
+       * It asserted `floored[less.from]` was 0 — the row's own wrapping effect —
+       * on the reasoning that a greyed arrow should mean what the rest of the row
+       * means. Driven at 1920x1080 that is a control doing the opposite of what
+       * it draws: two presses on ▶ took the interface 100 -> 200 -> 300%, and a
+       * third press on the GREYED ▶ took it straight back to 100.
+       *
+       * A greyed control is unpressable everywhere else in this client. The
+       * arrow's box is still CLAIMED (null here, swallowed by the menu block in
+       * main.ts), so it is not a hole through to the map — it is a button that
+       * has said "no further this way" and does nothing when pressed.
+       */
+      const at = scanRow();
+      const less = run(at, -1);
+      const more = run(at, 1);
+      expect(less).not.toBeNull();
+      expect(more).not.toBeNull();
+
+      const floored = scanRow({ uiScale: UI_SCALE_MIN });
+      expect(run(floored, -1), 'the greyed left arrow still stepped').toBeNull();
+      // EVERY PIXEL OF IT, not merely its first: an arrow that went quiet at one
+      // end and cycled at the other would pass a single-pixel probe.
+      if (less !== null) {
+        for (let x = less.from; x <= less.to; x += 1) {
+          expect(floored[x], `x ${String(x)} on the greyed left arrow answered`).toBeNull();
+        }
+      }
+      // ...and the other arrow is untouched, so this is the bound and not the
+      // whole row going quiet.
+      expect(run(floored, 1), 'the right arrow went with it').not.toBeNull();
+      // ...and the LABEL end of the row still cycles, which is where that act
+      // lives: `pressMenuSelection` gives a row exactly one, and a keyboard-only
+      // player must not be stranded at the top of the range.
+      expect(floored[12], 'the row body stopped cycling').toBe(0);
+
+      const capped = scanRow({ uiScale: UI_SCALE_MAX });
+      expect(run(capped, 1), 'the greyed right arrow still stepped').toBeNull();
+      if (more !== null) {
+        for (let x = more.from; x <= more.to; x += 1) {
+          expect(capped[x], `x ${String(x)} on the greyed right arrow answered`).toBeNull();
+        }
+      }
+      expect(run(capped, -1), 'the left arrow went with it').not.toBeNull();
+      expect(capped[12], 'the row body stopped cycling').toBe(0);
+    });
+
+    it('gives no other row a stepper of its own', () => {
+      /**
+       * `place`, the painter and the hit test all branch on the field, so a
+       * second row acquiring it silently would put two arrows inside something
+       * like INVENTORY. Scanned over the WHOLE panel rather than at one index.
+       */
+      const rows = rowsFor();
+      for (let y = rect.y; y < rect.y + rect.h; y += 1) {
+        for (let x = rect.x; x < rect.x + rect.w; x += 1) {
+          const hit = escapeMenuHitAt(rect, rows, x, y);
+          if (hit === null || hit.kind !== MenuHitKind.Entry) continue;
+          if (hit.effect.kind !== 'ui-scale') continue;
+          expect(hit.index, 'a row other than UI SIZE answered a ui-scale effect').toBe(2);
+          if (hit.effect.delta !== 0) {
+            expect(hit.index, 'a stepper appeared on another row').toBe(2);
+          }
+        }
+      }
+    });
   });
 });
 

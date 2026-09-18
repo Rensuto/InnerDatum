@@ -347,7 +347,6 @@ import type {
   ClientSetKeybinds,
   ClientSetPanelLayout,
   ClientSetUiScale,
-  ClientSetZoom,
   ClientSpendPoint,
   ClientUnlearn,
   ClientSpendStat,
@@ -1928,15 +1927,17 @@ export type CharacterSnapshot = {
    */
   readonly hotbar?: readonly (string | null)[];
   /**
-   * ═══ THE `settings` FRAME'S THREE — zoom, interface scale, panel layout ═══
+   * ═══ THE `settings` FRAME'S TWO — interface scale and panel layout ═══
    * DECLARED HERE BECAUSE THEY WERE NOT, and that was the whole bug: the save
-   * layer has carried all three since they shipped (`CharacterFile.zoom`,
+   * layer has carried them since they shipped (`CharacterFile.uiScale`,
    * `fileFor`, `openCharacter`), but this type never named them, so the gateway
    * never put them in a snapshot and never took them out of a restore. They
    * lived on the body alone — a reconnect inside the grace kept them, and every
    * restart and every deploy reset them while `settings` said `persisted: true`.
+   *
+   * THEY WERE THREE. `zoom` left with the control that moved it — see
+   * `27 -> 28` in shared/version.ts.
    */
-  readonly zoom?: number;
   readonly uiScale?: number;
   readonly panels?: PanelLayoutView;
   /**
@@ -2214,15 +2215,17 @@ export type CharacterRestore = {
    */
   readonly hotbar?: readonly (string | null)[];
   /**
-   * ═══ THE `settings` FRAME'S THREE — zoom, interface scale, panel layout ═══
+   * ═══ THE `settings` FRAME'S TWO — interface scale and panel layout ═══
    * DECLARED HERE BECAUSE THEY WERE NOT, and that was the whole bug: the save
-   * layer has carried all three since they shipped (`CharacterFile.zoom`,
+   * layer has carried them since they shipped (`CharacterFile.uiScale`,
    * `fileFor`, `openCharacter`), but this type never named them, so the gateway
    * never put them in a snapshot and never took them out of a restore. They
    * lived on the body alone — a reconnect inside the grace kept them, and every
    * restart and every deploy reset them while `settings` said `persisted: true`.
+   *
+   * THEY WERE THREE. `zoom` left with the control that moved it — see
+   * `27 -> 28` in shared/version.ts.
    */
-  readonly zoom?: number;
   readonly uiScale?: number;
   readonly panels?: PanelLayoutView;
   /**
@@ -4081,7 +4084,6 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     actor: Actor,
   ): {
     keybinds?: Readonly<Record<string, readonly string[]>>;
-    zoom?: number;
     uiScale?: number;
     panels?: PanelLayoutView;
     explored?: string;
@@ -4089,10 +4091,9 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     filed?: readonly string[];
   } => ({
     ...(actor.keybinds === undefined ? {} : { keybinds: keybindsRecord(actor.keybinds) }),
-    // THE THREE `settings` FIELDS, which no snapshot carried — see
-    // `CharacterSnapshot.zoom`. Absent means never set, and `fileFor` then
+    // THE `settings` FIELDS, which no snapshot carried — see
+    // `CharacterSnapshot.uiScale`. Absent means never set, and `fileFor` then
     // carries forward whatever the file already held rather than erasing it.
-    ...(actor.zoom === undefined ? {} : { zoom: actor.zoom }),
     ...(actor.uiScale === undefined ? {} : { uiScale: actor.uiScale }),
     // CLONED, DEFENSIVELY. The save layer holds this across a debounce, and
     // today every handler REPLACES the layout object rather than editing it — a
@@ -7601,12 +7602,11 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       );
     }
     /**
-     * ═══ AND THE THREE `settings` FIELDS, ABOVE THE LINE THAT RETURNS EARLY ═══
+     * ═══ AND THE `settings` FIELDS, ABOVE THE LINE THAT RETURNS EARLY ═══
      * The keymap return below skips everything after it for the common player,
      * who never rebound a key — a restore placed under it would never run for
-     * exactly the people who have only ever moved a panel or zoomed.
+     * exactly the people who have only ever moved a panel or resized the HUD.
      */
-    if (restore.zoom !== undefined) actor.zoom = restore.zoom;
     if (restore.uiScale !== undefined) actor.uiScale = restore.uiScale;
     if (restore.panels !== undefined) actor.panels = structuredClone(restore.panels);
     if (restore.keybinds === undefined) return;
@@ -9162,10 +9162,9 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       // 0 FOR A BODY WITH NO OPINION, and that is the honest wire value for the
       // same reason `binds: {}` is: the frame is absolute, so the default step
       // means "the default size" rather than "the server declined to say".
-      zoom: body?.zoom ?? 0,
-      // 0 FOR A BODY WITH NO OPINION, exactly as above. The two steps are
-      // independent -- `hudScale` is not the map's magnification -- so a player
-      // who has moved one and not the other gets their value and the default.
+      //
+      // THIS FIELD HAD A SIBLING, `zoom`, AND TAKING IT OFF COST A PROTOCOL BUMP
+      // where adding it cost none -- see `SettingsMsg` and `27 -> 28`.
       uiScale: body?.uiScale ?? 0,
       /**
        * THE EMPTY LAYOUT FOR A BODY WITH NO OPINION, which is the same shape as
@@ -9178,6 +9177,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
         logSize: null,
         partySize: null,
         hotbarSize: null,
+        minimapSize: null,
         hotbarStyle: null,
         logStyle: null,
       },
@@ -10691,10 +10691,9 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       stat: [...from.lastLearnt.stat],
     };
     if (from.keybinds !== undefined) to.keybinds = from.keybinds;
-    // THE `settings` THREE. Without them the next `set_zoom` echo on the far
-    // side sends `uiScale: 0` and an empty layout, and the client applies both —
-    // the interface shrinking and every panel snapping home mid-session.
-    if (from.zoom !== undefined) to.zoom = from.zoom;
+    // THE `settings` FIELDS. Without them the next `set_ui_scale` echo on the
+    // far side sends `uiScale: 0` and an empty layout, and the client applies
+    // both — the interface shrinking and every panel snapping home mid-session.
     if (from.uiScale !== undefined) to.uiScale = from.uiScale;
     if (from.panels !== undefined) to.panels = structuredClone(from.panels);
     // THE BAG AND THE DOLL, THEN THE SHEET. `equipped` is owned by the equipment
@@ -14088,7 +14087,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    *
    * ═══ WHAT THE OTHERS SEE — AND IT IS NOT A SECOND WINDOW ═══
    * See `recordDialogue`. A STORY exchange is the party's business and goes to
-   * every member's Case Log; a PERSONAL one goes to the asker's log alone.
+   * every member's Log; a PERSONAL one goes to the asker's log alone.
    */
   type OpenDialogue = {
     readonly speakerId: string;
@@ -17554,23 +17553,10 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
   };
 
   /**
-   * `set_zoom` — "THIS IS HOW BIG I WANT THE TILES." STORE IT, ECHO IT.
-   *
-   * `handleSetKeybinds`' shape, with one difference that matters: this uses
-   * `queueSave` where that uses `saveNow`. The reason is the failure that
-   * handler records — `saveNow` writes EVERY bound player's character file, each
-   * one a full atomic write with an fsync — and zoom arrives from a MOUSE WHEEL,
-   * which a player can spin faster than they can rebind a key. The idempotence
-   * check below absorbs the repeats (the step is clamped to three values, so a
-   * spin past the end changes nothing), and for the one or two real changes a
-   * session sees, the seconds between the wheel and a closed tab are not worth
-   * an fsync storm.
-   */
-  /**
    * `set_hotbar` — "THIS IS HOW I HAVE ARRANGED MY BAR." STORE IT, ECHO IT.
    *
-   * `handleSetZoom`'s shape below rather than `handleSetKeybinds`', and the
-   * choice is the same one that handler documents: `queueSave` where keybinds
+   * `handleSetUiScale`'s shape below rather than `handleSetKeybinds`', and the
+   * choice is the one `handleSetUiScale` documents: `queueSave` where keybinds
    * use `saveNow`. A bar is arranged by DRAGGING, which a player does several
    * times in a few seconds — and `saveNow` writes every bound player's
    * character file, each a full atomic write with an fsync. The idempotence
@@ -17712,26 +17698,17 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
   };
 
   /**
-   * `set_ui_scale` -- "THIS IS HOW BIG I WANT THE INTERFACE." STORE IT, ECHO IT.
-   *
-   * `handleSetZoom`'s shape exactly, including `queueSave` over `saveNow`: this
-   * one arrives from a settings control rather than a wheel, so the fsync-storm
-   * argument is weaker -- but the two preferences share a frame and an echo, and
-   * a handler that differed only in its durability would be a difference nobody
-   * could explain later.
-   */
-  /**
    * ═══════════════════════════════════════════════════════════════════════════
    * `set_panel_layout` -- "THIS IS WHERE I PUT MY PANELS." STORE IT, ECHO IT.
    * ═══════════════════════════════════════════════════════════════════════════
    *
-   * `handleSetZoom` and `handleSetUiScale`'s third sibling, and it repeats their
-   * structure rather than sharing it, for the reason `applyZoom` gives on the
-   * client side: the three differ in their field, their bound and their
-   * sentence, so a shared helper would be three parameters and a worse read.
+   * `handleSetUiScale`'s sibling, and it repeats that structure rather than
+   * sharing it, for the reason `applyUiScale` gives on the client side: the two
+   * differ in their field, their bound and their sentence, so a shared helper
+   * would be three parameters and a worse read.
    *
-   * NO NO-OP CHECK, WHICH IS WHERE IT DIVERGES FROM THE TWO ABOVE. Those compare
-   * an integer and skip the write when it has not moved. This carries a record
+   * NO NO-OP CHECK, WHICH IS WHERE IT DIVERGES FROM THE ONE ABOVE. That compares
+   * an integer and skips the write when it has not moved. This carries a record
    * and comparing two of those means a deep walk on every settle of every drag
    * -- to save one assignment and one echo of a frame the client already asked
    * for. The echo is not free but it is not a broadcast either: `sendSettings`
@@ -17759,6 +17736,19 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     sendSettings(session);
   };
 
+  /**
+   * `set_ui_scale` — "THIS IS HOW BIG I WANT THE INTERFACE." STORE IT, ECHO IT.
+   *
+   * `handleSetKeybinds`' shape, with one difference that matters: this uses
+   * `queueSave` where that uses `saveNow`. The reason is the failure that
+   * handler records — `saveNow` writes EVERY bound player's character file, each
+   * one a full atomic write with an fsync — and a size step arrives from an
+   * ARROW a player can hold down. The idempotence check below absorbs the
+   * repeats (the step is clamped to four values, so pressing past the end
+   * changes nothing), and for the one or two real changes a session sees, the
+   * seconds between the last press and a closed tab are not worth an fsync
+   * storm on four people who did nothing.
+   */
   const handleSetUiScale = (session: Session, msg: ClientSetUiScale): void => {
     const { world } = realmFor(session);
     const actorId = session.actorId;
@@ -17776,7 +17766,9 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       return;
     }
 
-    // THE ECHO STILL GOES OUT ON A NO-OP, for `handleSetZoom`'s reason.
+    // THE ECHO STILL GOES OUT ON A NO-OP: the frame's contract is that the
+    // screen renders what the SERVER holds, and a client that resent an
+    // unchanged value is still owed that answer. `handleSetKeybinds`' rule.
     if ((body.uiScale ?? 0) === msg.uiScale) {
       sendSettings(session);
       return;
@@ -17784,32 +17776,6 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
 
     body.uiScale = msg.uiScale;
     queueSave('uiScale');
-    sendSettings(session);
-  };
-
-  const handleSetZoom = (session: Session, msg: ClientSetZoom): void => {
-    const { world } = realmFor(session);
-    const actorId = session.actorId;
-    if (actorId === null) {
-      sendError(session.socket, ErrorCode.NotAuthenticated, 'send hello before setting the zoom');
-      return;
-    }
-    const body = world.getActor(actorId);
-    if (body === undefined) {
-      sendError(session.socket, ErrorCode.Internal, 'your body is not in the world');
-      return;
-    }
-
-    // THE ECHO STILL GOES OUT ON A NO-OP: the frame's contract is that the
-    // screen renders what the SERVER holds, and a client that resent an
-    // unchanged value is still owed that answer. `handleSetKeybinds`' rule.
-    if ((body.zoom ?? 0) === msg.zoom) {
-      sendSettings(session);
-      return;
-    }
-
-    body.zoom = msg.zoom;
-    queueSave('zoom');
     sendSettings(session);
   };
 
@@ -18009,9 +17975,6 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       // echo goes back with `send` and never `broadcast` — `KeybindsMsg` is a
       // `ViewerMsg`, so the compiler enforces it. See `handleSetKeybinds`, where
       // the absence of a park is written out for the next person who looks.
-      case 'set_zoom':
-        handleSetZoom(session, msg);
-        return;
       case 'set_ui_scale':
         handleSetUiScale(session, msg);
         return;

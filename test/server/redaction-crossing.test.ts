@@ -285,14 +285,17 @@ describe('what follows a character through a door', () => {
     expect(after?.equipped?.['lite'], 'the lantern did not follow').toBe('item_brass_lantern');
   });
 
-  it('carries zoom, interface scale and the panel layout, as copies', async () => {
+  it('carries the interface scale and the panel layout, as copies', async () => {
     /**
-     * THE `settings` FRAME'S THREE, which this list dropped: without them the
-     * far side's next `set_zoom` echo sends `uiScale: 0` and an empty layout,
-     * and the client applies both — the interface shrinking and every panel
-     * snapping home in the middle of a walk. The layout must arrive as a COPY:
-     * one object shared by two bodies would let the far side's drag rewrite what
-     * the near side's pending save writes.
+     * THE `settings` FRAME'S FIELDS, which this list dropped: without them the
+     * far side's next `set_ui_scale` echo sends `uiScale: 0` and an empty
+     * layout, and the client applies both — the interface shrinking and every
+     * panel snapping home in the middle of a walk. The layout must arrive as a
+     * COPY: one object shared by two bodies would let the far side's drag
+     * rewrite what the near side's pending save writes.
+     *
+     * IT WAS THREE. `zoom` left the frame and the body with the control that
+     * moved it (`27 -> 28` in shared/version.ts).
      */
     const { actorId, frames, socket } = await hello(server.port);
     const body = server.realms.realmOf(actorId)?.world.getActor(actorId);
@@ -304,10 +307,10 @@ describe('what follows a character through a door', () => {
       logSize: { w: 420, h: 180 },
       partySize: null,
       hotbarSize: null,
+      minimapSize: null,
       hotbarStyle: null,
       logStyle: null,
     };
-    body.zoom = 1;
     body.uiScale = 2;
     body.panels = layout;
 
@@ -316,7 +319,6 @@ describe('what follows a character through a door', () => {
     const after = server.realms.realmOf(actorId)?.world.getActor(actorId);
     expect(after, 'no body on the far side').toBeDefined();
     expect(after, 'the crossing kept the same body').not.toBe(body);
-    expect(after?.zoom, 'the zoom did not follow').toBe(1);
     expect(after?.uiScale, 'the interface scale did not follow').toBe(2);
     expect(after?.panels, 'the panel layout did not follow').toEqual(layout);
     expect(after?.panels, 'the layout is shared, not copied').not.toBe(layout);
@@ -325,7 +327,12 @@ describe('what follows a character through a door', () => {
     // Without the carry this frame sent `uiScale: 0` and an empty layout, and the
     // client applies both as absolute values.
     frames.length = 0;
-    socket.send(JSON.stringify({ v: PROTOCOL_VERSION, t: 'set_zoom', zoom: 1 }));
+    // A DIFFERENT VERB THAN THE ONE UNDER TEST WOULD BE BETTER and there is no
+    // longer one to hand: `set_zoom` was the other preference verb and it is
+    // gone. Re-sending the value the body already holds still produces the echo
+    // -- `handleSetUiScale` answers a no-op deliberately, because the frame's
+    // contract is that the screen renders what the SERVER holds.
+    socket.send(JSON.stringify({ v: PROTOCOL_VERSION, t: 'set_ui_scale', uiScale: 2 }));
     const deadline = Date.now() + FRAME_TIMEOUT_MS;
     // A POLL, NOT PACING: the loop header sits between the send and the sleep.
     while (latest(frames, 'settings') === undefined && Date.now() < deadline) {

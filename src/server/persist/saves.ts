@@ -145,7 +145,7 @@ import {
   spentFromSpread,
 } from '../../shared/progression.ts';
 import { LAYOUT_REVISION } from '../../shared/level.ts';
-import { UI_SCALE_MAX, UI_SCALE_MIN, ZOOM_MAX, ZOOM_MIN } from '../../shared/version.ts';
+import { UI_SCALE_MAX, UI_SCALE_MIN } from '../../shared/version.ts';
 import { noteSpend } from '../../shared/respec.ts';
 import type { Ledger } from '../../shared/respec.ts';
 import { readFile, readdir, rename } from 'node:fs/promises';
@@ -709,18 +709,23 @@ export type CharacterFile = {
    */
   readonly knownLore?: readonly string[];
   /**
-   * HOW BIG THIS PLAYER WANTS THEIR TILES — the integer zoom step.
+   * HOW BIG THIS PLAYER WANTS THE INTERFACE — the integer HUD step.
    *
    * NO SCHEMA BUMP, on exactly the ground `keybinds`, `explored`, `filed` and
    * `money` all set out: docs/data-schemas.md:48-49, an OPTIONAL field needs
    * none. A v1 file without it loads as a character who has never touched the
-   * zoom, which is the honest reading of every file written before it existed,
-   * and a rollback costs one keypress.
+   * interface size, which is the honest reading of every file written before it
+   * existed, and a rollback costs one keypress.
+   *
+   * IT HAD A TWIN, `zoom`, THE MAP'S STEP, AND THAT KEY IS NO LONGER READ OR
+   * WRITTEN. The control that moved it was removed (`27 -> 28` in
+   * shared/version.ts). A file that still carries `zoom` loads clean — nothing
+   * here rejects a key it does not know — and the next save drops it. That is
+   * the whole migration: no rewrite pass, no fixture bump, and a schema that
+   * never claimed the key was required.
    */
-  readonly zoom?: number;
-  /** HOW BIG THIS PLAYER WANTS THE INTERFACE. `zoom`'s twin; see `parseUiScale`. */
   readonly uiScale?: number;
-  /** WHERE THEY LEFT THEIR PANELS. `zoom`'s twin; see `parsePanels`. */
+  /** WHERE THEY LEFT THEIR PANELS. `uiScale`'s twin; see `parsePanels`. */
   readonly panels?: PanelLayoutView;
   /**
    * ═══════════════════════════════════════════════════════════════════════════
@@ -1137,18 +1142,23 @@ export type CharacterInit = {
   readonly deepenedTrees?: readonly string[];
   readonly knownLore?: readonly string[];
   /**
-   * HOW BIG THIS PLAYER WANTS THEIR TILES — the integer zoom step.
+   * HOW BIG THIS PLAYER WANTS THE INTERFACE — the integer HUD step.
    *
    * NO SCHEMA BUMP, on exactly the ground `keybinds`, `explored`, `filed` and
    * `money` all set out: docs/data-schemas.md:48-49, an OPTIONAL field needs
    * none. A v1 file without it loads as a character who has never touched the
-   * zoom, which is the honest reading of every file written before it existed,
-   * and a rollback costs one keypress.
+   * interface size, which is the honest reading of every file written before it
+   * existed, and a rollback costs one keypress.
+   *
+   * IT HAD A TWIN, `zoom`, THE MAP'S STEP, AND THAT KEY IS NO LONGER READ OR
+   * WRITTEN. The control that moved it was removed (`27 -> 28` in
+   * shared/version.ts). A file that still carries `zoom` loads clean — nothing
+   * here rejects a key it does not know — and the next save drops it. That is
+   * the whole migration: no rewrite pass, no fixture bump, and a schema that
+   * never claimed the key was required.
    */
-  readonly zoom?: number;
-  /** HOW BIG THIS PLAYER WANTS THE INTERFACE. `zoom`'s twin; see `parseUiScale`. */
   readonly uiScale?: number;
-  /** WHERE THEY LEFT THEIR PANELS. `zoom`'s twin; see `parsePanels`. */
+  /** WHERE THEY LEFT THEIR PANELS. `uiScale`'s twin; see `parsePanels`. */
   readonly panels?: PanelLayoutView;
   /** base64 bitset of the overworld this character has explored. See CharacterFile. */
   readonly explored?: string;
@@ -1222,7 +1232,6 @@ export function createCharacterFile(init: CharacterInit): CharacterFile {
     unlockedTrees: init.unlockedTrees,
     deepenedTrees: init.deepenedTrees,
     knownLore: init.knownLore,
-    zoom: init.zoom,
     uiScale: init.uiScale,
     panels: init.panels,
     explored: init.explored,
@@ -1804,21 +1813,6 @@ const KEYBIND_PROBLEMS_PER_ACTION = 2;
  * applied to one more field.
  */
 /**
- * The stored zoom step, REPAIRED RATHER THAN REJECTED like everything else here.
- *
- * Anything that is not an integer inside the renderer's own bounds is dropped,
- * and the character loads at the default magnification rather than failing to
- * load at all. The bounds come from `shared/version.ts` — the same constants the
- * renderer clamps to and the wire schema validates against — because a bound
- * written down twice is the shape this codebase keeps being bitten by.
- *
- * ABSENT STAYS ABSENT. `undefined` is "never touched it" and must not collapse
- * into `0`, which is "deliberately back to the default": they persist the same
- * way today, and the distinction is what stops a producer that cannot say from
- * asserting something on a player's behalf. That collapse is the exact failure
- * `keybinds` spends three paragraphs forbidding.
- */
-/**
  * THE BIRTH KIT ALREADY GIVEN: item ids, kept whether or not this build still
  * knows the item, because the record is of a GIFT and not of a holding, and
  * dropping an id would hand the piece over again. Absent stays absent.
@@ -1841,16 +1835,26 @@ function parseKitGranted(value: unknown, problems: string[]): string[] | undefin
   return out;
 }
 
-function parseZoom(value: unknown, problems: string[]): number | undefined {
-  return parseStep(value, ZOOM_MIN, ZOOM_MAX, 'zoom', 'tiles back to the default size', problems);
-}
-
 /**
- * The stored INTERFACE step, repaired the same way and for the same reasons.
+ * The stored INTERFACE step, REPAIRED RATHER THAN REJECTED like everything else
+ * here.
  *
- * SHARES `parseStep` WITH `parseZoom` RATHER THAN COPYING IT, because these two
- * differ only in their bounds and their sentence — and a second hand-written
- * copy of "integer, in range, absent stays absent" is where the third one drifts.
+ * Anything that is not an integer inside the renderer's own bounds is dropped,
+ * and the character loads at the default interface size rather than failing to
+ * load at all. The bounds come from `shared/version.ts` — the same constants the
+ * renderer clamps to and the wire schema validates against — because a bound
+ * written down twice is the shape this codebase keeps being bitten by.
+ *
+ * ABSENT STAYS ABSENT. `undefined` is "never touched it" and must not collapse
+ * into `0`, which is "deliberately back to the default": they persist the same
+ * way today, and the distinction is what stops a producer that cannot say from
+ * asserting something on a player's behalf. That collapse is the exact failure
+ * `keybinds` spends three paragraphs forbidding.
+ *
+ * `parseStep` IS STILL SHARED rather than inlined here. It had a second caller,
+ * `parseZoom`, which went with the zoom control; keeping the helper is what
+ * stops the next bounded preference hand-writing "integer, in range, absent
+ * stays absent" a third time.
  */
 function parseUiScale(value: unknown, problems: string[]): number | undefined {
   return parseStep(
@@ -2231,7 +2235,9 @@ export function parseCharacterFile(doc: unknown): ParseResult {
       // survives cannot buy a second +0.2.
       deepenedTrees: parseUnlockedTrees(doc.deepenedTrees, problems),
       knownLore: parseUnlockedTrees(doc.knownLore, problems),
-      zoom: parseZoom(doc.zoom, problems),
+      // A `zoom` KEY IN AN OLDER FILE IS SIMPLY NOT READ. Nothing here rejects
+      // an unknown key, so it loads clean and the next save drops it -- the
+      // whole of the migration off the removed zoom control.
       uiScale: parseUiScale(doc.uiScale, problems),
       panels: parsePanels(doc.panels, problems),
       // REPAIR, NEVER REJECT, like every other field here: anything that is not
@@ -2430,7 +2436,6 @@ export function serialiseCharacter(file: CharacterFile): string {
     unlockedTrees,
     deepenedTrees,
     knownLore,
-    zoom: file.zoom,
     uiScale: file.uiScale,
     panels: file.panels,
     /**
@@ -3481,18 +3486,23 @@ export type SavedPrefs = {
   readonly deepenedTrees?: readonly string[];
   readonly knownLore?: readonly string[];
   /**
-   * HOW BIG THIS PLAYER WANTS THEIR TILES — the integer zoom step.
+   * HOW BIG THIS PLAYER WANTS THE INTERFACE — the integer HUD step.
    *
    * NO SCHEMA BUMP, on exactly the ground `keybinds`, `explored`, `filed` and
    * `money` all set out: docs/data-schemas.md:48-49, an OPTIONAL field needs
    * none. A v1 file without it loads as a character who has never touched the
-   * zoom, which is the honest reading of every file written before it existed,
-   * and a rollback costs one keypress.
+   * interface size, which is the honest reading of every file written before it
+   * existed, and a rollback costs one keypress.
+   *
+   * IT HAD A TWIN, `zoom`, THE MAP'S STEP, AND THAT KEY IS NO LONGER READ OR
+   * WRITTEN. The control that moved it was removed (`27 -> 28` in
+   * shared/version.ts). A file that still carries `zoom` loads clean — nothing
+   * here rejects a key it does not know — and the next save drops it. That is
+   * the whole migration: no rewrite pass, no fixture bump, and a schema that
+   * never claimed the key was required.
    */
-  readonly zoom?: number;
-  /** HOW BIG THIS PLAYER WANTS THE INTERFACE. `zoom`'s twin; see `parseUiScale`. */
   readonly uiScale?: number;
-  /** WHERE THEY LEFT THEIR PANELS. `zoom`'s twin; see `parsePanels`. */
+  /** WHERE THEY LEFT THEIR PANELS. `uiScale`'s twin; see `parsePanels`. */
   readonly panels?: PanelLayoutView;
   /** base64 bitset of the overworld this character has explored. See CharacterFile. */
   readonly explored?: string;
@@ -3607,18 +3617,23 @@ type Binding = {
    */
   readonly keybinds?: Readonly<Record<string, readonly string[]>>;
   /**
-   * HOW BIG THIS PLAYER WANTS THEIR TILES — the integer zoom step.
+   * HOW BIG THIS PLAYER WANTS THE INTERFACE — the integer HUD step.
    *
    * NO SCHEMA BUMP, on exactly the ground `keybinds`, `explored`, `filed` and
    * `money` all set out: docs/data-schemas.md:48-49, an OPTIONAL field needs
    * none. A v1 file without it loads as a character who has never touched the
-   * zoom, which is the honest reading of every file written before it existed,
-   * and a rollback costs one keypress.
+   * interface size, which is the honest reading of every file written before it
+   * existed, and a rollback costs one keypress.
+   *
+   * IT HAD A TWIN, `zoom`, THE MAP'S STEP, AND THAT KEY IS NO LONGER READ OR
+   * WRITTEN. The control that moved it was removed (`27 -> 28` in
+   * shared/version.ts). A file that still carries `zoom` loads clean — nothing
+   * here rejects a key it does not know — and the next save drops it. That is
+   * the whole migration: no rewrite pass, no fixture bump, and a schema that
+   * never claimed the key was required.
    */
-  readonly zoom?: number;
-  /** HOW BIG THIS PLAYER WANTS THE INTERFACE. `zoom`'s twin; see `parseUiScale`. */
   readonly uiScale?: number;
-  /** WHERE THEY LEFT THEIR PANELS. `zoom`'s twin; see `parsePanels`. */
+  /** WHERE THEY LEFT THEIR PANELS. `uiScale`'s twin; see `parsePanels`. */
   readonly panels?: PanelLayoutView;
   /** base64 bitset of the overworld this character has explored. See CharacterFile. */
   readonly explored?: string;
@@ -3773,11 +3788,9 @@ export function createCharacterBridge(options: CharacterBridgeOptions): PersistP
       unlockedTrees: snapshot.unlockedTrees ?? binding.unlockedTrees,
       deepenedTrees: snapshot.deepenedTrees ?? binding.deepenedTrees,
       knownLore: snapshot.knownLore ?? binding.knownLore,
-      // THE SAME CARRY-FORWARD RULE. A producer with no opinion about the zoom
-      // leaves the disk exactly as it found it.
-      zoom: snapshot.zoom ?? binding.zoom,
-      // THE SAME CARRY-FORWARD, for the same reason: a producer with no opinion
-      // about the interface size must not erase one the player set.
+      // THE SAME CARRY-FORWARD RULE: a producer with no opinion about the
+      // interface size must not erase one the player set, and leaves the disk
+      // exactly as it found it.
       uiScale: snapshot.uiScale ?? binding.uiScale,
       // THE SAME CARRY-FORWARD ONCE MORE: a producer with no opinion about
       // the panel layout must not erase one the player arranged.
@@ -3907,7 +3920,6 @@ export function createCharacterBridge(options: CharacterBridgeOptions): PersistP
       // file rather than asserting "this player reset every binding" on behalf
       // of a file that never mentioned keys.
       keybinds: file?.keybinds,
-      zoom: file?.zoom,
       uiScale: file?.uiScale,
       panels: file?.panels,
       // NO `??` ON ANY OF THESE THREE EITHER, and the keymap's sentence covers
@@ -4001,8 +4013,7 @@ export function createCharacterBridge(options: CharacterBridgeOptions): PersistP
       // shape and the size have already been checked on the way in, and the
       // MEMBERSHIP question is one only the client can answer.
       keybinds: file.keybinds,
-      // AND HOW BIG THEY LIKE THEIR TILES, on the same argument.
-      zoom: file.zoom,
+      // AND HOW BIG THEY LIKE THE INTERFACE, on the same argument.
       uiScale: file.uiScale,
       // AND WHERE THEY PUT THEIR PANELS, on the same argument again.
       panels: file.panels,

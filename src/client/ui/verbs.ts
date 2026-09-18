@@ -53,6 +53,7 @@
  */
 
 import { MapVerb } from './contextmenu.ts';
+import { isTownsfolkBody } from '../input/travel.ts';
 import { PartyAction } from '../../shared/protocol.ts';
 import type { MenuItem } from './contextmenu.ts';
 import type { TileXY } from '../../shared/coords.ts';
@@ -585,7 +586,13 @@ export function verbsFor(ctx: VerbContext): VerbMenu {
        *
        * `Talk to` GREYS OUT OF REACH, because that one really is a step away.
        */
-      if (target.actor.faction === 'townsfolk') {
+      // THROUGH `isTownsfolkBody`, which is the client's ONE copy of that
+      // comparison — see its note in input/travel.ts. The plain left-click now
+      // opens a conversation on an adjacent person (`mouseIntentAt`), and the
+      // two doors into the same act must not be able to disagree about who is a
+      // person: this row greying out of reach while a click talked to somebody
+      // the menu offered `Attack` on would be the worst of both.
+      if (isTownsfolkBody(target.actor)) {
         /**
          * ═══════════════════════════════════════════════════════════════════
          * ONE ROW FOR A PERSON. THE MENU IS NOT THE DIALOGUE ANY MORE.
