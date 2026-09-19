@@ -29,6 +29,10 @@
  * It lives here, exported and pure, so the next person to touch it can see all
  * four cases fail in a test rather than in a log at midnight.
  */
+import { areEnemies } from '../engine/actor.ts';
+import { ActorKind } from '../../shared/protocol.ts';
+import type { Sided } from '../engine/actor.ts';
+
 export type ClearedFacts = {
   /** Living residents at the previous pump of this realm. */
   readonly previous: number;
@@ -44,6 +48,50 @@ export type ClearedFacts = {
   /** Already announced for this realm. The moment happens once. */
   readonly already: boolean;
 };
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ *   HOW MANY BODIES ARE STILL A PROBLEM — `standing`, and it counted friends.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * The gateway wrote this inline as
+ * `a.kind === Monster && a.alive`, which was every monster there was until
+ * `Faction.Bound` existed. A Redactor holding her own birth stance is standing
+ * next to a Monster that is alive and on her side, so a floor she has emptied
+ * reports `standing = 1`, `shouldAnnounceCleared` returns false at its first
+ * line, and `filedFor` — whose only write in the whole process sits behind
+ * that call — never records the site. The case never closes, silently and
+ * permanently. Driven: zero hostiles, one shadow, `standing` 1 and the answer
+ * false; the identical facts with `standing: 0` answer true.
+ *
+ * ═══ THE WITNESS IS THE SECOND ARGUMENT, AND IT IS NOT DECORATION ═══
+ * "Hostile" is not a property of a body, it is a relation — `areEnemies`
+ * (engine/actor.ts) is the engine's one answer and it takes two sides. Passing
+ * a living player makes this the same question every other surface asks, and it
+ * covers `Townsfolk` for free: a shopkeeper has never reached the gateway's
+ * count only because Inner realms hold none, which is a fact about content and
+ * not a rule anybody wrote down.
+ *
+ * NO WITNESS MEANS COUNT EVERYTHING, which is the reading this had before and
+ * cannot announce anything anyway — `standingPlayers` is zero in that case and
+ * the last line of `shouldAnnounceCleared` refuses.
+ *
+ * HERE RATHER THAN IN THE GATEWAY because it is the same rule as the function
+ * below and for the same reason: three wrong versions of `standing` would be
+ * three wrong versions nobody could put under a test. `Sided` is structural, so
+ * this file imports a predicate and not a module graph.
+ */
+export function standingThreats(
+  bodies: readonly (Sided & { readonly alive: boolean })[],
+  witness: Sided | undefined,
+): number {
+  return bodies.filter(
+    (body) =>
+      body.kind === ActorKind.Monster &&
+      body.alive &&
+      (witness === undefined || areEnemies(witness, body)),
+  ).length;
+}
 
 export function shouldAnnounceCleared(facts: ClearedFacts): boolean {
   if (facts.already) return false;

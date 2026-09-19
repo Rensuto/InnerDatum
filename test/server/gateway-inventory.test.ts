@@ -12,7 +12,8 @@ import {
   createContentTalentEngine,
   createTalentBook,
 } from '../../src/server/content/classes.ts';
-import { ITEMS } from '../../src/server/content/items.ts';
+import { BIRTH_KIT, ITEMS, ITEM_CATALOGUE, birthKitFor } from '../../src/server/content/items.ts';
+import { ClassId } from '../../src/server/engine/talents.ts';
 import { LORE_IDS, noteIdFor } from '../../src/server/content/lore.ts';
 import { moneyIdFor } from '../../src/server/content/money.ts';
 import { talentRuntimeFor } from '../../src/server/main.ts';
@@ -40,11 +41,32 @@ import type {
 import type { World } from '../../src/server/world/world.ts';
 
 /**
- * The doll every character is born with: upstream's brass lantern
- * (data/birth/descriptors.lua:75-77), put on by `grantBirthKit` at the first
- * join. "Nothing on the doll changed" means this, not `{}`.
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE DOLL A WATCHMAN IS BORN WITH — AND IT IS FOUR PIECES NOW, NOT ONE.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * It was `{ lite: 'item_brass_lantern' }`, which was upstream's UNIVERSAL half
+ * (`data/birth/descriptors.lua:75-77`) and the only half this game had. The
+ * other half is `resolvers.equipbirth`, authored per SUBCLASS: the Bulwark's is
+ * a sword, a shield and a body piece (warrior.lua:175-179). `birthKitFor`
+ * (content/items.ts) holds both halves and the four citations.
+ *
+ * DERIVED FROM THE CATALOGUE, so it follows the kit rather than being a second
+ * copy of it. Every case in this file that means "nothing on the doll changed"
+ * means this, not `{}` — and every one of those cases is about a LOOT VERB, so
+ * what the doll holds at birth is incidental to what they assert.
  */
-const BORN_WEARING = { lite: 'item_brass_lantern' };
+const BORN_WEARING: Readonly<Record<string, string>> = (() => {
+  const worn: Record<string, string> = {};
+  for (const id of birthKitFor(ClassId.Watchman)) {
+    const slot = ITEM_CATALOGUE.get(id)?.slot;
+    if (slot !== undefined) worn[slot] = id;
+  }
+  return worn;
+})();
+
+/** The whole list, in order, for a fixture that has to say "already given". */
+const WATCHMAN_KIT_IDS: readonly string[] = birthKitFor(ClassId.Watchman);
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════
@@ -974,7 +996,12 @@ describe('no loot frame can name anybody but its sender', () => {
     body.carried = ['item_watchmans_cap'];
     ren.clear();
 
-    ren.send({ t: 'unequip', slot: 'body' });
+    // `head`, NOT `body`. This read `body` and that slot is no longer empty on
+    // a Watchman: `resolvers.equipbirth` puts a chestpiece there at birth
+    // (warrior.lua:175-179, `birthKitFor`), so the frame stopped being the
+    // EMPTY-slot case it was written to be and became an ordinary unequip.
+    // A slot no birth kit fills is the fixture this case needs.
+    ren.send({ t: 'unequip', slot: 'head' });
     await ren.settle();
 
     expect(ren.last('error')?.['code']).toBe('bad_message');
@@ -1408,7 +1435,22 @@ describe('gear moves a number the player can read', () => {
     // cap's +3 is still folded on top of whatever the new class brings.
     await readSheet(ren, body.id);
     const afterChoice = Number(sheetRow(ren, 'Armour'));
-    expect(afterChoice).toBe(Number(ALCHEMIST.combat?.mods?.armour ?? 0) + 3);
+    /**
+     * THE CAP'S +3 PLUS THE KIT OF THE CLASS ACTUALLY CHOSEN.
+     *
+     * This body owed a class choice, so `grantBirthKit` gave it the universal
+     * half only and the ALCHEMIST's `resolvers.equipbirth` after the choice —
+     * which is a staff (her class weapon table) and a linen robe with no
+     * `wielder` at all (mage.lua:104-107). Zero armour, so the figure is
+     * unchanged from before the kit was per class, and that is the point:
+     * nobody is handed the Bulwark's chestpiece for having been rotated into a
+     * Watchman while they read the four descriptions.
+     */
+    const wornArmour = birthKitFor(ALCHEMIST.id).reduce(
+      (sum, id) => sum + Number(ITEM_CATALOGUE.get(id)?.wielder?.mods?.armour ?? 0),
+      0,
+    );
+    expect(afterChoice).toBe(Number(ALCHEMIST.combat?.mods?.armour ?? 0) + 3 + wornArmour);
     // The bug's signature was `afterChoice === base with no gear`, so this is
     // the assertion that would have failed before the fix.
     expect(beforeChoice).toBeGreaterThan(0);
@@ -1469,8 +1511,17 @@ describe('a loadout survives a snapshot and a restore', () => {
     // `snapshotPlayers`, so this is the same object either way — reading the
     // flush list here would silently assert against the state before the equip.
     const filed = server.saves.queued.at(-1)?.find((s) => s.actorId === body.id);
-    expect(filed?.carried).toEqual(['item_watchmans_cap']);
-    expect(filed?.equipped).toEqual({ body: 'item_watchmans_coat', ...BORN_WEARING });
+    // THE COAT DISPLACED THE BIRTH KIT'S CHESTPIECE INTO THE BAG, which is what
+    // `equip` does to whatever held the slot and is the reason the bag has two
+    // entries rather than one. Derived from the kit so it follows it.
+    const displaced = birthKitFor(WATCHMAN.id).filter(
+      (id) => ITEM_CATALOGUE.get(id)?.slot === 'body',
+    );
+    expect(filed?.carried).toEqual(['item_watchmans_cap', ...displaced]);
+    // SPREAD FIRST, THEN THE COAT. The other way round the kit's own chestpiece
+    // would overwrite the coat in the literal and the assertion would be that
+    // the equip did nothing.
+    expect(filed?.equipped).toEqual({ ...BORN_WEARING, body: 'item_watchmans_coat' });
     await server.close();
 
     // ═══ A FRESH WORLD, A FRESH PROCESS'S WORTH OF STATE ═══
@@ -1486,8 +1537,9 @@ describe('a loadout survives a snapshot and a restore', () => {
 
     const second = await connect(server.port);
     const restored = bodyOf(await second.hello('ren-handle'));
-    // One cap and no second lantern: the record came back with the doll.
-    expect(restored.carried).toEqual(['item_watchmans_cap']);
+    // THE BAG CAME BACK AS IT WAS FILED — cap plus the chestpiece the coat
+    // displaced — and no second lantern, because `kitGranted` came back too.
+    expect(restored.carried).toEqual(['item_watchmans_cap', ...displaced]);
     expect(restored.equipped?.['body']).toBe('item_watchmans_coat');
 
     // ═══ THE ONE THAT MATTERS ═══
@@ -1497,7 +1549,11 @@ describe('a loadout survives a snapshot and a restore', () => {
     // AND THE PANEL AGREES, off the frames the restored socket actually got —
     // sent on the welcome path, after the gear landed and the sheet recomposed.
     const panel = second.last('inventory');
-    expect(Object.keys((panel?.['equipped'] ?? {}) as Frame)).toEqual(['body', 'lite']);
+    // EVERY SLOT THE FILED DOLL HELD, in `SLOT_ORDER`. This was `['body','lite']`
+    // while the kit was one lantern; the Bulwark's kit fills two more.
+    expect(Object.keys((panel?.['equipped'] ?? {}) as Frame).sort()).toEqual(
+      Object.keys(filed?.equipped ?? {}).sort(),
+    );
   });
 
   it('carries an ABSENCE forward rather than emptying a bag it cannot speak for', async () => {
@@ -1516,7 +1572,7 @@ describe('a loadout survives a snapshot and a restore', () => {
     // or a doll.
     server = await boot('loot-absent');
     const ren = await connect(server.port);
-    playsThe(WATCHMAN, { kitGranted: ['item_brass_lantern'] });
+    playsThe(WATCHMAN, { kitGranted: [...WATCHMAN_KIT_IDS] });
     const body = bodyOf(await ren.hello('ren-handle'));
 
     const filed = server.saves.flushes.at(-1)?.snapshots.find((s) => s.actorId === body.id);
@@ -1561,8 +1617,11 @@ describe('a loadout survives a snapshot and a restore', () => {
         legs: 'item_watchmans_coat',
         head: 'item_watchmans_cap',
       },
-      // Given its lantern long ago, so the doll below is only what the file says.
-      kitGranted: ['item_brass_lantern'],
+      // Given its whole kit long ago, so the doll below is only what the file
+      // says. `WATCHMAN_KIT_IDS` and not the lantern alone: `grantBirthKit` tops
+      // up whatever is missing, so naming one piece would hand this body the
+      // other three and the repair below would be reading them instead.
+      kitGranted: [...WATCHMAN_KIT_IDS],
     };
 
     const body = bodyOf(await ren.hello('ren-handle'));
@@ -2154,18 +2213,60 @@ describe('what you put on changes how much of you there is', () => {
   });
 });
 
-describe('the birth kit: a brass lantern, once per character', () => {
+describe('the birth kit: the lantern everybody gets and the kit the class brings', () => {
   /**
-   * `data/birth/descriptors.lua:75-77` equips every character with a brass
-   * lantern at birth. The gateway gives it on a fresh join and records that it
-   * did, in `kitGranted`, so it is given exactly once.
+   * TWO HALVES, AND THIS FILE USED TO KNOW ABOUT ONE.
+   * `data/birth/descriptors.lua:75-77` equips EVERY character with a brass
+   * lantern; `resolvers.equipbirth` is authored per SUBCLASS and no two agree
+   * (warrior.lua:175-179 and :241-245, mage.lua:104-107, afflicted.lua:155-159).
+   * `birthKitFor` holds both. The gateway gives what is missing on a fresh join
+   * and records what it handed over, in `kitGranted`, so nothing is given twice.
    */
-  it('equips a brand-new character with a brass lantern', async () => {
+  it('gives a body that still owes a class choice the lantern and nothing else', async () => {
+    /**
+     * A FIRST-EVER JOIN IS A PROVISIONAL CLASS. There is no file, so the chooser
+     * is owed and the rotation has clothed the body in the meantime.
+     * `resolvers.equipbirth` is the SUBCLASS descriptor's and must wait: nothing
+     * takes gear back off, so a Watchman's shield handed out here would still be
+     * on the doll of somebody who chose the Alchemist.
+     */
     server = await boot('kit-new');
     const ren = await connect(server.port);
     const body = bodyOf(await ren.hello('ren-handle'));
     expect(body.equipped?.['lite']).toBe('item_brass_lantern');
     expect(body.kitGranted).toEqual(['item_brass_lantern']);
+    expect(body.equipped).toEqual({ lite: 'item_brass_lantern' });
+  });
+
+  it('gives a settled class the whole of its own kit', async () => {
+    // A file that names a real class owes no chooser, so `birthKitFor` can be
+    // asked and the Bulwark's sword, shield and chestpiece land with the
+    // lantern (warrior.lua:175-179).
+    server = await boot('kit-settled');
+    const ren = await connect(server.port);
+    playsThe(WATCHMAN, { carried: [], equipped: {} });
+    const body = bodyOf(await ren.hello('ren-handle'));
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * "THE WHOLE OF ITS OWN KIT" HAS TO MEAN MORE THAN THE PROVISIONAL HALF.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * Both assertions below are derived from `birthKitFor`, which is right for
+     * what they check — the gateway hands over what that function names — and
+     * leaves this case with NO DISCRIMINATOR against its own sibling. Measured:
+     * emptying the class half entirely (`return [...BIRTH_KIT]`) fails exactly
+     * one assertion in the repo, in `unwritten.test.ts`, while this case, its
+     * sibling, `class-wiring`, `class-choice` and `redaction-crossing` all stay
+     * green — because both cases would then be asserting lantern-alone.
+     *
+     * These two lines are the discriminator, and they are the CLAIM: a settled
+     * class gets strictly more than a body that still owes the chooser, and one
+     * of the things it gets fills a slot.
+     */
+    expect(WATCHMAN_KIT_IDS.length, 'the class half is empty').toBeGreaterThan(BIRTH_KIT.length);
+    expect(body.equipped?.['body'], 'the Bulwark reached the floor unarmoured').toBeDefined();
+    expect(body.kitGranted).toEqual([...WATCHMAN_KIT_IDS]);
+    expect(body.equipped).toEqual(BORN_WEARING);
   });
 
   it('gives one, once, to a character made before the lantern existed', async () => {
@@ -2173,14 +2274,15 @@ describe('the birth kit: a brass lantern, once per character', () => {
     const ren = await connect(server.port);
     playsThe(WATCHMAN, { carried: [], equipped: { head: 'item_watchmans_cap' } });
     const body = bodyOf(await ren.hello('ren-handle'));
-    expect(body.equipped).toEqual({ head: 'item_watchmans_cap', lite: 'item_brass_lantern' });
-    expect(body.kitGranted).toEqual(['item_brass_lantern']);
+    // THE FILE'S OWN HAT IS UNTOUCHED and the kit fills the slots around it.
+    expect(body.equipped).toEqual({ head: 'item_watchmans_cap', ...BORN_WEARING });
+    expect(body.kitGranted).toEqual([...WATCHMAN_KIT_IDS]);
   });
 
   it('gives no second one to a character who has had theirs and took it off', async () => {
     server = await boot('kit-already-given');
     const ren = await connect(server.port);
-    playsThe(WATCHMAN, { carried: [], equipped: {}, kitGranted: ['item_brass_lantern'] });
+    playsThe(WATCHMAN, { carried: [], equipped: {}, kitGranted: [...WATCHMAN_KIT_IDS] });
     const body = bodyOf(await ren.hello('ren-handle'));
     expect(body.equipped?.['lite']).toBeUndefined();
     expect(body.carried ?? []).not.toContain('item_brass_lantern');
@@ -2192,8 +2294,10 @@ describe('the birth kit: a brass lantern, once per character', () => {
     playsThe(WATCHMAN, { carried: [], equipped: { lite: 'item_dwarven_lantern' } });
     const body = bodyOf(await ren.hello('ren-handle'));
     expect(body.equipped?.['lite']).toBe('item_dwarven_lantern');
+    // ONLY THE LANTERN GOES TO THE BAG: its slot is taken and the class half's
+    // three are not.
     expect(body.carried).toEqual(['item_brass_lantern']);
-    expect(body.kitGranted).toEqual(['item_brass_lantern']);
+    expect(body.kitGranted).toEqual([...WATCHMAN_KIT_IDS]);
   });
 
   it('writes the record down with the bag, so taking the lantern off is kept', async () => {
@@ -2205,7 +2309,7 @@ describe('the birth kit: a brass lantern, once per character', () => {
     await ren.settle();
 
     const filed = server.saves.queued.at(-1)?.find((s) => s.actorId === body.id);
-    expect(filed?.kitGranted).toEqual(['item_brass_lantern']);
+    expect(filed?.kitGranted).toEqual([...WATCHMAN_KIT_IDS]);
     expect(filed?.carried).toEqual(['item_brass_lantern']);
     expect(filed?.equipped ?? {}).not.toHaveProperty('lite');
   });

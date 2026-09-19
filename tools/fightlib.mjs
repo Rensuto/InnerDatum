@@ -511,6 +511,22 @@ export function selfHelp(cls, known, inscribed) {
   return (
     [...(cls.loadout ?? []), ...inscribed]
       .filter((t) => known === undefined || known.has(t.id))
+      /**
+       * ═══ NEVER A SUSTAIN, AND IT USED TO TAKE THEM ═══
+       * A stance matches the two clauses below exactly — `ally` and `self` —
+       * and `turn-engine.ts#submitTalent` ACCEPTS one without ever routing it
+       * through `toggleSustain` (the gateway is that function's only caller).
+       * `takeHelp` returns at the first accepted submit, so a class whose first
+       * self/ally talent is a stance pressed a button that did nothing and
+       * never reached the heal behind it. Measured over the twelve moor delves:
+       * `healing_infusion:ok` = 467 / 2270 / 2468 for the other three classes,
+       * and **0** for the Redactor.
+       *
+       * A STANCE IS NOT FIRST AID. It goes up once, at the start, and stays up:
+       * `grown.mjs#raiseBirthSustains` is where that happens, through the real
+       * toggle. This list is "what do I press when I am hurt".
+       */
+      .filter((t) => t.kind !== 'sustained')
       .filter((t) => t.targeting?.affinity === 'ally' && t.targeting?.shape === 'self')
       // THE PRICE COMES WITH IT, because `no_energy` is the difference between a
       // button you press WHILE fighting and one you spend your turn on. See

@@ -5196,12 +5196,25 @@ function targetingWorld(): TargetingWorld {
     origin: me === undefined ? null : { x: me.x, y: me.y },
     // What the caster sees and remembers, so the aim draws upstream's player line.
     vision: visionViewOf(vision, currentRealmId, explored.get(currentRealmId ?? '')),
-    // Living hostiles, so the cursor opens on something worth aiming at.
-    // M4 SEAM: Mend Wounds wants ALLIES here, and `LoadoutTalent` does not yet
-    // say which a talent prefers. Until it does, the opening pick is a
-    // convenience and the player moves the cursor for a heal.
+    /**
+     * Living hostiles, so the cursor opens on something worth aiming at.
+     * M4 SEAM: Mend Wounds wants ALLIES here, and `LoadoutTalent` does not yet
+     * say which a talent prefers. Until it does, the opening pick is a
+     * convenience and the player moves the cursor for a heal.
+     *
+     * ═══ `isHostileBody`, NOT `kind === Monster` — AND THAT IS THE BUG FIXED ═══
+     * `pickOpeningCursor` takes the NEAREST candidate and `adviseTile` checks
+     * geometry and occupancy only, never affinity — so a townsfolk or a
+     * Redactor's own Bound shadow opened the cursor on itself and the server
+     * refused the cast at `engine/talents.ts` with `NotHostile`. Refunded, so
+     * no turn was lost, but it is a wasted keypress on most casts: a Bound
+     * shadow was measured adjacent to its summoner on 56% of its turns, which
+     * is where `pickOpeningCursor` would find it.
+     *
+     * One predicate, the one every other click-meaning surface already reads.
+     */
     candidates: [...actors.values()]
-      .filter((actor) => actor.alive && actor.kind === ActorKind.Monster)
+      .filter((actor) => actor.alive && isHostileBody(actor))
       .map((actor) => ({ x: actor.x, y: actor.y })),
     // EVERY living body, allies and the caster included. `single` needs one
     // present, `tile` (Fog Step) needs one absent — see `TargetingWorld`.
@@ -5952,13 +5965,21 @@ const paintHud: HudPainter = (ctx, width, height) => {
        * NOT FOV-FILTERED HERE: `projectActors` means this client never holds a
        * body it cannot see.
        */
+      /**
+       * ═══ AND `neutral` IS EVERY BODY THAT IS NOT AN ENEMY, NOT JUST A SHOP ═══
+       * This read `faction === 'townsfolk'` and so painted a Redactor's own
+       * shadow in the hostile colour, while the beacon layer over it drew the
+       * same body cyan — two layers of one map disagreeing about whose side a
+       * token is on. `isHostileBody` is the client's one answer to that, and
+       * `render/canvas.ts#ringIdFor` already takes it for the token ring.
+       */
       actors: [...actors.values()]
         .filter((actor) => actor.kind === 'monster' && actor.alive)
         .map((actor) => ({
           x: actor.x,
           y: actor.y,
           boss: actor.rank === ActorRank.Boss,
-          neutral: actor.faction === 'townsfolk',
+          neutral: !isHostileBody(actor),
         })),
       loot: ground.map((item) => ({ x: item.cell[0], y: item.cell[1] })),
       /**

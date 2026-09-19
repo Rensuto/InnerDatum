@@ -58,24 +58,43 @@ function treeLookup(definition: ClassDef): (id: string) => string | undefined {
 }
 
 describe('the birth grant does not split four-and-nothing', () => {
-  it('every class has a birth talent in a generic tree', () => {
+  it('splits the birth grant across both purses, and no class is all of one', () => {
     /**
      * THE FACT THE WHOLE PARTITION TURNS ON, asserted rather than assumed.
      *
-     * `talent:issued_kit` is generic and is one of the four. So a version that
-     * handed the class partition all `BIRTH_TALENT_GRANTS` would charge a fresh
-     * character for a rank it was given, and one that handed the generic
-     * partition none would do the same on the other side. If content ever moves
-     * it, this test says so before the ledger silently drifts.
+     * ═══ IT DEMANDED A GENERIC BIRTH TALENT FROM EVERY CLASS, AND THAT WAS
+     * ═══ TRUE OF THE FIXTURE RATHER THAN OF THE RULE.
+     *
+     * `talent:issued_kit` is generic and was on all four birth lists, so
+     * "every class has one" read as a rule. It is not one: `spendByPurse`
+     * COUNTS the generic births off the sheet — its own note says *"Counted from
+     * the class definition rather than assumed, so moving a birth talent between
+     * trees stays correct without anybody remembering this function"* — so a
+     * class with none is arithmetically fine and the next case proves it, per
+     * class, end to end.
+     *
+     * The Redactor is that class now. Upstream grants `T_ARMOUR_TRAINING` to the
+     * BULWARK alone (warrior.lua:153); the Archer, the Alchemist and the Doomed
+     * get none, and the Doomed's five birth talents are all its own
+     * (afflicted.lua:143-147). See `REDACTOR.birthTalents`.
+     *
+     * ═══ WHAT IS STILL WORTH GUARDING ═══
+     * That the PARTITION is exercised at all — some class must put a birth
+     * talent in each purse, or a whole arm of `spendByPurse` is untested by the
+     * roster — and that no class is ALL generic, which would mean a class born
+     * knowing nothing of its own.
      */
     for (const definition of CLASSES) {
       const generic = definition.birthTalents.filter((t) => isGenericTree(t.tree));
       expect(definition.birthTalents.length, definition.id).toBe(BIRTH_TALENT_GRANTS);
-      expect(generic.length, `${definition.id}: no generic birth talent`).toBeGreaterThan(0);
       expect(generic.length, `${definition.id}: every birth talent is generic`).toBeLessThan(
         BIRTH_TALENT_GRANTS,
       );
     }
+    const anyGeneric = CLASSES.some((definition) =>
+      definition.birthTalents.some((t) => isGenericTree(t.tree)),
+    );
+    expect(anyGeneric, 'no class exercises the generic half of the birth grant').toBe(true);
   });
 
   it('a fresh character has spent NOTHING from either purse', () => {

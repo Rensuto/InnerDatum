@@ -15,7 +15,7 @@ import {
   toResourceView,
   PLAYER_RESIST_CAP,
 } from '../../src/server/content/classes.ts';
-import { ITEM_CATALOGUE } from '../../src/server/content/items.ts';
+import { BIRTH_KIT, ITEM_CATALOGUE } from '../../src/server/content/items.ts';
 import { downedSpriteFor } from '../../src/server/engine/downed.ts';
 import { AiProfile } from '../../src/server/engine/actor.ts';
 import {
@@ -40,6 +40,7 @@ import { PROTOCOL_VERSION } from '../../src/shared/version.ts';
 import type { CharacterRestore, IdentityPort, PersistPort } from '../../src/server/net/gateway.ts';
 import type { TurnState } from '../../src/server/view/projector.ts';
 import type { PlayerActor } from '../../src/server/engine/actor.ts';
+import type { ClassDef } from '../../src/server/content/classes.ts';
 import type { World } from '../../src/server/world/world.ts';
 
 /**
@@ -299,6 +300,42 @@ function bodyOf(welcome: Frame | undefined): PlayerActor {
 // 1. WHICH CLASS, AND WHAT IT PUTS ON THE BODY
 // ===========================================================================
 
+/**
+ * THE CLASS'S OWN MODS PLUS EVERY PIECE OF ITS BIRTH KIT, SUMMED.
+ *
+ * Folded by ADDITION rather than spread, because two pieces of one kit can name
+ * the same mod: the Bulwark's leather and buckler both carry armour. That is
+ * `onWear`'s rule (ActorInventory.lua:563-572, one `addTemporaryValue` per key)
+ * and `composeWielders`'.
+ *
+ * Restated here rather than borrowed from the composer, so this asserts what the
+ * body SHOULD hold rather than that the composer agrees with itself.
+ */
+function birthMods(definition: ClassDef): Record<string, number> {
+  const out: Record<string, number> = { ...definition.combat.mods };
+  /**
+   * `BIRTH_KIT`, NOT `birthKitFor` — A FIRST-EVER JOIN IS A PROVISIONAL CLASS.
+   *
+   * These bodies have no character file, so the gateway owes them the class
+   * chooser and the rotation has clothed them in the meantime. `grantBirthKit`
+   * hands a provisional body the UNIVERSAL half only (`descriptors.lua:75-77`,
+   * the brass lantern) and waits for `choose_class` to give the rest — because
+   * nothing takes gear back off, and a player who was provisionally a Watchman
+   * and chose the Alchemist would otherwise keep the Bulwark's shield.
+   *
+   * So what is asserted here is the class's own sheet plus a lantern, which is
+   * exactly what it was before `resolvers.equipbirth` was ported.
+   */
+  for (const id of BIRTH_KIT) {
+    const mods = ITEM_CATALOGUE.get(id)?.wielder?.mods ?? {};
+    for (const [key, value] of Object.entries(mods)) {
+      if (typeof value !== 'number') continue;
+      out[key] = (out[key] ?? 0) + value;
+    }
+  }
+  return out;
+}
+
 describe('a first-ever join', () => {
   it('is assigned a class by rotation, and the whole body comes from that ClassDef', async () => {
     server = await boot('class-rotation');
@@ -336,18 +373,26 @@ describe('a first-ever join', () => {
      * The claim this test is making — the body is clothed from that ClassDef
      * and not from a rotation counter or a stale file — is unchanged.
      *
-     * AND PLUS THE BRASS LANTERN every character is born wearing
-     * (`grantBirthKit`). Light radius is the one mod it moves.
+     * AND PLUS THE BIRTH KIT this class is born wearing (`grantBirthKit`).
+     *
+     * ═══ IT WAS THE LANTERN AND A SPREAD, AND BOTH HALVES WERE TOO NARROW ═══
+     * `{ ...mods, ...lantern }` was right for exactly as long as the kit was one
+     * item whose only mod nothing else declared. `birthKitFor` is per class now
+     * (`resolvers.equipbirth` — content/items.ts) and the Bulwark's three pieces
+     * BOTH add armour, so a spread would take the last one instead of summing
+     * them. `birthMods` below folds by ADDITION, which is what `composeWielders`
+     * does and what `onWear` does upstream (ActorInventory.lua:563-572).
      */
-    const lantern = ITEM_CATALOGUE.get('item_brass_lantern')?.wielder?.mods;
     expect(first.combat?.stats).toEqual(WATCHMAN.combat.stats);
-    expect(first.combat?.mods).toEqual({ ...WATCHMAN.combat.mods, ...lantern });
+    expect(first.combat?.mods).toEqual(birthMods(WATCHMAN));
     expect(first.combat?.profile?.resistsCap?.all).toBe(PLAYER_RESIST_CAP);
     // …and the Alchemist really is the squishiest body rather than a third
-    // Watchman with different art.
+    // Watchman with different art. SHE IS ALSO THE ONE WITH NO KIT MODS AT ALL:
+    // upstream dresses her in a linen robe with no `wielder` table
+    // (cloth-armors.lua:34-39), so her sheet is the class's plus the lantern.
     expect(third.maxHp).toBe(ALCHEMIST.maxHp);
     expect(third.combat?.stats).toEqual(ALCHEMIST.combat.stats);
-    expect(third.combat?.mods).toEqual({ ...ALCHEMIST.combat.mods, ...lantern });
+    expect(third.combat?.mods).toEqual(birthMods(ALCHEMIST));
   });
 
   it('rotates past six players without ever reaching a class that does not exist', async () => {

@@ -964,3 +964,102 @@ describe('the talent screen shows what the server says after a rejoin', () => {
     ).toEqual([...STAT_WINDOW]);
   });
 });
+
+// ---------------------------------------------------------------------------
+// A BIRTH GRANT THAT STOPS BEING ONE — the join, not the function
+// ---------------------------------------------------------------------------
+
+describe('a file written before a class changed its four', () => {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE PURSES ARE DERIVED, SO A STALE FREE RANK IS A PERMANENT CHARGE.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `REDACTOR.birthTalents` displaced `open_ledger` and `issued_kit` when
+   * `ledger/unwritten` landed. `sheet.birth` is rebuilt from the CURRENT
+   * definition on every load and `createTalentSheet` seeds a new birth id at
+   * rank 1, so an old file comes back with NINE rank-1 entries against SEVEN
+   * free grants — and `spendByPurse` charges the difference to purses this file
+   * has already established are `earned - spent`, floored at zero. One class
+   * point and one generic point, gone silently and for ever.
+   *
+   * `migrateLegacyBirthGrants` (content/classes.ts) takes the free rank back
+   * instead, and is unit-tested in `unwritten.test.ts`. THIS IS THE JOIN:
+   * removing the call from `restoreProgression` left every one of those unit
+   * cases green, which is `test-the-join-not-the-halves` exactly.
+   */
+  const LEGACY = 'chr_legacy_redactor';
+
+  /** The file HEAD would have written for a Redactor who had spent nothing. */
+  function legacyRedactor(): Parameters<typeof createCharacterFile>[0] {
+    return {
+      id: LEGACY,
+      ownerId: OWNER,
+      name: 'Ren',
+      classId: 'redactor',
+      origin: ORIGIN_ID,
+      level: 1,
+      // The four she WAS born with, at the rank a birth grant seeds. Two of
+      // them are no longer granted; nothing on disk records that they were.
+      talentPoints: {
+        'talent:strike_out': 1,
+        'talent:indelible': 1,
+        'talent:open_ledger': 1,
+        'talent:issued_kit': 1,
+      },
+      resources: { hp: 100, ap: 1, mp: 0, special: { kind: 'ink', value: 10 } },
+    };
+  }
+
+  it('costs her nothing, and a fresh character of the same level agrees', async () => {
+    const harness = await start();
+    await harness.store.saveCharacter(createCharacterFile(legacyRedactor()), SaveReason.Manual);
+    await harness.store.flush();
+
+    const client = await arrive(harness.port, LEGACY);
+    const selfId = String(client.last('welcome')?.['selfId']);
+    const purses = pursesOnTheBody(harness.bodyOf(selfId));
+    client.close();
+
+    /**
+     * WHAT A LEVEL-1 REDACTOR OF THIS ORIGIN IS OWED, from the same functions
+     * the rest of this file derives its expectations with. She has spent
+     * nothing, so every purse is the whole grant.
+     */
+    expect(purses.class, 'the swap charged her a class point').toBe(
+      totalPointsAtLevel(1, classPointBonus(ORIGIN)),
+    );
+    expect(purses.generic, 'the swap charged her a generic point').toBe(
+      totalGenericPointsAtLevel(1, genericPointBonus(ORIGIN)),
+    );
+    // NOT VACUOUS: the origin really grants something at level 1, or both lines
+    // above would be asserting 0 === 0.
+    expect(purses.class + purses.generic, 'this origin grants nothing at birth').toBeGreaterThan(0);
+  });
+
+  it('still lets her press the two stances she has just been given', async () => {
+    /**
+     * THE OTHER HALF OF "costs her nothing": the migration takes a rank OFF, so
+     * the case above would also pass if it had emptied her sheet. She must come
+     * back owning the class's current four at rank 1 — that is what the two
+     * points are being spared FOR.
+     */
+    const harness = await start();
+    await harness.store.saveCharacter(createCharacterFile(legacyRedactor()), SaveReason.Manual);
+    await harness.store.flush();
+    const client = await arrive(harness.port, LEGACY);
+    const definition = classById('redactor');
+    if (definition === undefined) throw new Error('no redactor');
+
+    const selfId = String(client.last('welcome')?.['selfId']);
+    const sheet = harness.talents.sheetOf(selfId);
+    expect(sheet, 'the restored body has no sheet').toBeDefined();
+    for (const talent of definition.birthTalents) {
+      expect(sheet?.points.get(talent.id), `${talent.id} came back unlearned`).toBe(1);
+    }
+    // AND THE TWO THAT WERE DISPLACED ARE BACK TO UNLEARNED, which is what "no
+    // longer granted" means and is the rank that was taken off.
+    expect(sheet?.points.get('talent:open_ledger'), 'the displaced stance is still free').toBe(0);
+    client.close();
+  });
+});

@@ -241,6 +241,8 @@ import {
   statPointsGainedTo,
 } from '../../shared/leveling.ts';
 import { STAT_BASE } from '../engine/derived.ts';
+import { combatScale } from '../../shared/scale.ts';
+import type { PrimaryStats } from '../engine/derived.ts';
 import { ActorRank } from '../../shared/protocol.ts';
 import { DEFAULT_SIGHT_RADIUS } from '../../shared/sight.ts';
 import { ITEMS, itemById } from './items.ts';
@@ -3759,6 +3761,237 @@ export const UNDERMOST_PICKET: MonsterTemplate = Object.freeze({
   },
 });
 
+// ---------------------------------------------------------------------------
+// The Bound Shadow — Call Shadows' body. shadows.lua:183-300 (`createShadow`).
+// ---------------------------------------------------------------------------
+
+/**
+ * The frozen half of upstream's shadow table: the numbers that do NOT move with
+ * the summoner's level. Exported because `talents/call_shadows.ts` builds the
+ * per-level half and the two must not disagree about the fixed half.
+ */
+/** `combat_def = 3` — shadows.lua:227. */
+export const SHADOW_DEF = 3;
+/** `atk = 10 + level` — shadows.lua:230. This is the 10. */
+export const SHADOW_ATK_BASE = 10;
+/** `apr = 8` — shadows.lua:231. */
+export const SHADOW_APR = 8;
+/** `resists_pen = { all=25 }` — shadows.lua:253. */
+export const SHADOW_RESIST_PEN = 25;
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE MOVING HALF — `createShadow`'s stat block, shadows.lua:217-232.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * ```lua
+ * stats = { -- affected by stat limits
+ *   str=math.floor(self:combatScale(level, 5, 0, 55, 50, 0.75)),
+ *   dex=math.floor(self:combatScale(level, 10, 0, 85, 50, 0.75)),
+ *   mag=math.floor(self:combatScale(level, 10, 0, 85, 50, 0.75)),
+ *   wil=math.floor(self:combatScale(level, 5, 0, 55, 50, 0.75)),
+ *   cun=math.floor(self:combatScale(level, 5, 0, 40, 50, 0.75)),
+ *   con=math.floor(self:combatScale(level, 5, 0, 40, 50, 0.75)),
+ * },
+ * ```
+ *
+ * `combatScale(x, yLow, xLow, yHigh, xHigh, power)` takes its arguments in
+ * exactly upstream's order (`shared/scale.ts`), so these are transcriptions and
+ * not translations. THREE DISTINCT CURVES, and which stat gets which is the
+ * shadow's whole character: Dexterity and Magic run to 85 at level 50 while
+ * Cunning and Constitution stop at 40 — it is quick and it is insubstantial.
+ *
+ * `math.floor` ON EACH, not on the total: an integer stat is what
+ * `spreadStatPoints` and every derived getter expect, and rounding the six
+ * together would move the swing.
+ */
+export function shadowStatsAt(level: number): PrimaryStats {
+  return {
+    str: Math.floor(combatScale(level, 5, 0, 55, 50, SHADOW_STAT_POWER)),
+    dex: Math.floor(combatScale(level, 10, 0, 85, 50, SHADOW_STAT_POWER)),
+    mag: Math.floor(combatScale(level, 10, 0, 85, 50, SHADOW_STAT_POWER)),
+    wil: Math.floor(combatScale(level, 5, 0, 55, 50, SHADOW_STAT_POWER)),
+    cun: Math.floor(combatScale(level, 5, 0, 40, 50, SHADOW_STAT_POWER)),
+    con: Math.floor(combatScale(level, 5, 0, 40, 50, SHADOW_STAT_POWER)),
+  };
+}
+
+/** `dam = math.floor(self:combatScale(level, 1.5, 1, 75, 50, 0.75))` — shadows.lua:229. */
+export function shadowWeaponDamageAt(level: number): number {
+  return Math.floor(combatScale(level, SHADOW_DAM_LOW, 1, SHADOW_DAM_HIGH, 50, SHADOW_STAT_POWER));
+}
+
+/** The `power` every one of `createShadow`'s curves uses. shadows.lua:219-229. */
+const SHADOW_STAT_POWER = 0.75;
+/** `dam` at level 1 and at level 50 — shadows.lua:229. */
+const SHADOW_DAM_LOW = 1.5;
+const SHADOW_DAM_HIGH = 75;
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ *   THE BOUND SHADOW — the first body in this game that is on your side.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Ported from t-engine4 game/modules/tome/data/talents/cursed/shadows.lua:183-300
+ * (`createShadow`), the NPC table Call Shadows builds. Every number below is
+ * that table's; `talents/call_shadows.ts` holds the summoning half and the
+ * citations for it.
+ *
+ * ═══ IT IS DELIBERATELY A TERRIBLE FIGHTER, AND THAT IS THE PORT ═══
+ * `combat.dam` is `combatScale(level, 1.5, 1, 75, 50, 0.75)` — ONE AND A HALF
+ * at level 1 — against eight hit points and no armour. Upstream says so in its
+ * own tooltip: *"Shadows are weak combatants"* (:405). What a shadow is FOR is
+ * the tile it is standing on and the swing it is absorbing, which is the whole
+ * reason `T_CALL_SHADOWS` is on the Doomed's birth list: the frailest class in
+ * the game is born able to put something between itself and the thing swinging.
+ *
+ * Anything that makes it hit harder is a LATER TALENT — Shadow Warriors
+ * (:451-492) and Shadow Mages (:494-...) — and `shadow_warriors.ts` is the one
+ * of those that crossed.
+ *
+ * ═══ NO `rarity`, NO `levelRange`, AND THAT IS UPSTREAM'S OWN SIGNAL ═══
+ * See `MonsterTemplate.rarity`: `Zone.lua:214` skips an entity missing either,
+ * and `crystal.lua:73` writes `rarity = false` on the wisp — *"a creature that
+ * exists only to be summoned"*. This is exactly that creature, and
+ * `populateDelve` must never roll one onto a floor.
+ *
+ * ═══ NO `drops`, FOR A REASON THAT IS NOT TIDINESS ═══
+ * A summon that dropped loot would be a coat printer: hold the sustain, let
+ * them die, hold it again. Upstream reaches the same place through
+ * `exp_worth = 0` (:199) and by never giving the table a drop resolver.
+ *
+ * ═══ THE STATS HERE ARE THE LEVEL-1 ROW ONLY ═══
+ * Upstream is `autolevel = "none"` and computes every stat straight from the
+ * summoner's level, so a shadow does not GROW — it is BORN at a level. This
+ * table is that computation evaluated at 1, and `shadowInitAt`
+ * (talents/call_shadows.ts) is the computation itself. `autoStats` is therefore
+ * deliberately absent: a body that levelled twice would be two rules.
+ */
+export const BOUND_SHADOW: MonsterTemplate = Object.freeze({
+  id: 'bound_shadow',
+  displayName: 'Bound Shadow',
+  description:
+    'A piece of the dark that has agreed, for now, to stand where it is put. It has no edges you ' +
+    'could point to and it is between you and the thing that was coming.',
+  sprite: 'enemy_bound_shadow_s',
+  // `rank = 2` (:192) is ToME's ordinary creature. See `ActorRank`.
+  rank: ActorRank.Normal,
+
+  // `max_life = resolvers.rngavg(3,12)` (:200) — a mean of 7.5, frozen at 8 for
+  // the reason INDEX_HUSK's 25 is frozen: this file is RNG-free by contract and
+  // a body whose pool depended on a draw would move the seeded stream every
+  // time a sustain ticked. 8 is inside upstream's own band.
+  maxHp: 8,
+  // `life_rating = 5` (:200), verbatim. Half the engine default, which is what
+  // makes a deep shadow still frail. SPENT BY `shadowMaxHpAt`
+  // (`talents/call_shadows.ts`), which is `forceLevelup(level)` (:420) — for
+  // one commit it was transcribed here and read by nothing at all.
+  lifeRating: 5,
+  // `hate_regen = 1` (:196) is a field on the shadow's OWN table and it does
+  // not cross, because a shadow spends no Ink. The clause that pays the
+  // SUMMONER is `summoner_hate_per_kill = self.hate_per_kill` (:218), and it
+  // did not cross either — `talents/call_shadows.ts` prices that. Nothing here
+  // regenerates hit points and upstream's table sets no `life_regen`.
+  hpRegen: 0,
+
+  globalSpeed: 1,
+  speedFactor: 1,
+
+  /**
+   * `ai = "shadow"` (:246) DID NOT CROSS, AND THIS IS THE NEAREST PROFILE.
+   *
+   * Upstream's shadow AI is its own file: it hovers within `summoner_range` 10
+   * of its master, takes an enemy within `actor_range` 8, and spends
+   * `blindside_chance`/`phasedoor_chance` on the two talents this port did not
+   * bring (see `talents/call_shadows.ts` for both). With neither talent there is
+   * nothing for that state machine to choose BETWEEN — what is left of it is
+   * "walk at the nearest enemy you can see and hit it", which is exactly
+   * `MeleeChaser`.
+   *
+   * THE LEASH IS NOT IN THE AI. `summoner_range` is what stops a shadow
+   * wandering off; ours is enforced by `shadowPass` on the base clock instead,
+   * where the summoner is actually resolvable. Stated because a reader looking
+   * for the 10 will not find it here.
+   */
+  profile: AiProfile.MeleeChaser,
+  /**
+   * ═════════════════════════════════════════════════════════════════════════
+   * TEN, AND UPSTREAM'S IS EIGHT — THE VALIDATOR CAUGHT IT AND IS RIGHT.
+   * ═════════════════════════════════════════════════════════════════════════
+   *
+   * `ai_state.actor_range = 8` (shadows.lua:249) is one of SIX numbers in a
+   * `"shadow"` AI this port did not bring (see `profile` above), and it is
+   * paired there with `summoner_range = 10`: a shadow that sees less far than
+   * its tether can never be pulled off the master by something it noticed.
+   *
+   * Ours declares `MeleeChaser`, and `validateTemplate` refuses a chaser below
+   * `DEFAULT_SIGHT_RADIUS` in as many words — *"A chaser below that is one that
+   * stands still while you walk towards it in plain view"*. That is the right
+   * rule for the AI this body actually runs: a chaser has no hovering state to
+   * fall back into, so eight would make it stand still while a husk closed on
+   * the eight-to-ten band it can see and the shadow cannot.
+   *
+   * TEN KEEPS THE PAIRING INTACT because the leash is ten as well
+   * (`SHADOW_SUMMONER_RANGE`): the furthest thing it can notice is exactly as
+   * far as it is allowed to go. Upstream's eight is written down here rather
+   * than exported as a constant nothing reads.
+   */
+  aggroRange: DEFAULT_SIGHT_RADIUS,
+  preferredRange: 1,
+  minRange: 0,
+  attackRange: 1,
+  huntsIsolated: false,
+  shoulderAfter: 0,
+  // `no_breath = 1` (:231). It is not breathing anything.
+  noBreath: true,
+
+  combat: {
+    // :201-208 evaluated at level 1. See the header: the real values are
+    // `shadowInitAt`'s, and these exist so the template reads as a body.
+    stats: { str: 7, dex: 13, mag: 13, wil: 7, cun: 6, con: 6 },
+    // `combat_armor = 0, combat_def = 3` (:209).
+    mods: { armour: 0, def: SHADOW_DEF },
+    weapon: {
+      // `dam = combatScale(level, 1.5, 1, 75, 50, 0.75)` (:211) at level 1.
+      dam: 1,
+      // `atk = 10 + level` (:212).
+      atk: SHADOW_ATK_BASE + 1,
+      // `apr = 8` (:213).
+      apr: SHADOW_APR,
+      // `dammod = { str=0.5, dex=0.5 }` (:214).
+      damMod: { str: 0.5, dex: 0.5 },
+    },
+    profile: {
+      // `resists = { [DamageType.LIGHT] = -100, [DamageType.DARKNESS] = 100 }`
+      // (:241). LIGHT is not a damage type in this game, so only the darkness
+      // half crosses — a shadow cannot be hurt by the dark. The missing half is
+      // a missing DAMAGE TYPE, not a decision, and the day Light is authored
+      // this line is where its -100 goes.
+      resists: { [DamageType.Darkness]: 100 },
+    },
+    // `resists_pen = { all=25 }` (:242).
+    penetration: { all: SHADOW_RESIST_PEN },
+    /**
+     * :232-239 — `stone_immune`, `confusion_immune`, `fear_immune`,
+     * `teleport_immune`, `disease_immune`, `poison_immune`, `stun_immune`,
+     * `blind_immune`, every one of them `1`, which is 100%.
+     *
+     * FOUR OF THE EIGHT CROSS, and the other four name effects this game does
+     * not have — there is no stone, no fear, no disease and no poison to be
+     * immune TO. `IMMUNITY_KEYS` is keyed on `EffectDef.subtypes`, so an
+     * immunity to a subtype nothing declares would be a row that never matches.
+     *
+     * IT IS WHAT MAKES THE BODY WORTH SUMMONING. A meat shield that could be
+     * stunned off the tile it is holding would not be holding anything.
+     */
+    immunities: { stun: 100, confusion: 100, blind: 100, teleport: 100 },
+    range: 1.5,
+    minRange: 0,
+    // It is made of the dark and it hits with the dark.
+    damageType: DamageType.Darkness,
+  },
+});
+
 export const MONSTER_TEMPLATES: readonly MonsterTemplate[] = Object.freeze([
   INDEX_HUSK,
   INDEX_WRAITH,
@@ -3776,13 +4009,56 @@ export const MONSTER_TEMPLATES: readonly MonsterTemplate[] = Object.freeze([
   UNDERMOST_PICKET,
 ]);
 
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * BODIES A TALENT MAKES — AND THEY ARE NOT THE BESTIARY.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `MONSTER_TEMPLATES` IS "WHAT THE WORLD PUTS IN FRONT OF YOU", and a dozen
+ * assertions read it that way: the frailest body in the roster, which families
+ * carry `no_breath`, the hp-per-player-turn table, the identity fields held
+ * byte-identical across the re-base. Every one of those is a statement about
+ * the things you FIGHT, and none of them is true of a body on your own side
+ * that no floor can ever roll.
+ *
+ * Folding `BOUND_SHADOW` into that list broke four of them at once and each
+ * would have been "fixed" by adding an id to a literal — which is exactly the
+ * failure `bestiary.test.ts` records about its own size assertion: *"Every
+ * addition failed it, every fix was a digit, and not one of those failures said
+ * anything about whether the roster works."*
+ *
+ * ═══ AND IT IS UPSTREAM'S OWN SEPARATION ═══
+ * ToME's shadow is not in `data/general/npcs/` at all. `createShadow`
+ * (shadows.lua:179-333) builds the NPC inline inside the talent, so it is never
+ * a candidate for `Zone:computeRarities` and never appears in a zone's roster.
+ * This is that fact, in this codebase's vocabulary.
+ *
+ * EVERYTHING ELSE STILL COVERS IT. `ALL_TEMPLATES` below is what `monsterById`,
+ * `validateTemplate`'s sweep and the orphan guard read, so a summon is still
+ * validated, still greppable and still cannot be written and forgotten.
+ */
+export const SUMMON_TEMPLATES: readonly MonsterTemplate[] = Object.freeze([BOUND_SHADOW]);
+
+/**
+ * Every template this build knows, whoever puts it on the map.
+ *
+ * THIS IS WHAT AN "ORPHAN" IS MEASURED AGAINST. A template that is written,
+ * exported and in NEITHER list is one nothing can ever place — the failure
+ * `bestiary.test.ts` calls *"precisely the failure this repo has shipped more
+ * often than any other"*.
+ */
+export const ALL_TEMPLATES: readonly MonsterTemplate[] = Object.freeze([
+  ...MONSTER_TEMPLATES,
+  ...SUMMON_TEMPLATES,
+]);
+
 /** Their ids, same order. */
 export const MONSTER_IDS: readonly string[] = Object.freeze(
-  MONSTER_TEMPLATES.map((template) => template.id),
+  ALL_TEMPLATES.map((template) => template.id),
 );
 
 const BY_ID: ReadonlyMap<string, MonsterTemplate> = new Map(
-  MONSTER_TEMPLATES.map((template) => [template.id, template]),
+  ALL_TEMPLATES.map((template) => [template.id, template]),
 );
 
 /** Look one up. `undefined` for an id no build of the content knows about. */

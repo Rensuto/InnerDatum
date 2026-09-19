@@ -202,12 +202,47 @@ export const BIRTH_INSCRIPTION_GRANTS = 3;
  * in it — the same argument talent-trees.test.ts makes for why a tree is
  * exactly six and not at most six.
  *
- * THE CEILING IS WHAT THE BAR CAN ADDRESS: two pages of six. A thirteenth
- * active would be one a player could own, could see in the panel, and could
- * never put on a key.
+ * THE CEILING IS WHAT THE BAR CAN ADDRESS, AND IT WAS TWELVE AGAINST A BAR
+ * THAT NO LONGER EXISTS.
+ *
+ * The old sentence here read *"two pages of six. A thirteenth active would be
+ * one a player could own, could see in the panel, and could never put on a
+ * key."* Both halves stopped being true when the hotbar's partition was
+ * deleted. `ui/hotbar.ts` is explicit about it: `HOTBAR_TALENT_SLOTS`,
+ * `HOTBAR_TALENT_PAGES` and `HOTBAR_ITEM_SLOTS` are GONE, Shift is the second
+ * ROW rather than a second page, and every one of the resulting positions takes
+ * either kind — *"there are EIGHTEEN keyed positions, not nine"*.
+ *
+ * ═══ AND THE CEILING IS NOT THE BAR ANY MORE — IT IS THE CHARACTER SHEET ═══
+ * The bar can address `HOTBAR_KEY_ROW * HOTBAR_KEY_ROWS`, which is upstream's
+ * twelve across two rows: TWENTY-FOUR. What binds first is the other surface
+ * that has to draw every active at once. `charsheet.test.ts` measured it and
+ * writes the figure down: *"14 fit and 18 do not"* at the floor viewport
+ * (`HUD_MIN_W`x`HUD_MIN_H`, 640x320), and the failure there is TOTAL — the
+ * Talents tab sheds the whole section and prints one line of grey text.
+ *
+ * So the ceiling is 13: the most a class owns today, one under what the sheet
+ * has been measured to draw, and well inside what the keyboard can reach.
+ *
+ * ═══ RESTATED HERE RATHER THAN IMPORTED, WITH BOTH SURFACES AS TRIPWIRES ═══
+ * `shared/` may not read `client/` — the one-way arrow CLAUDE.md states — so
+ * these cannot be one expression. The arrangement is the one this file's header
+ * already describes: the rule lives here and each surface CHECKS ITSELF against
+ * it. `ui/hotbar.ts` throws at import time if
+ * `HOTBAR_SLOT_POOL < TALENTS_PER_CLASS_MAX`, and `charsheet.test.ts` paints a
+ * full-cap loadout at the floor — so both a shrunken key row and a sheet that
+ * stopped fitting are named failures rather than a talent that quietly cannot
+ * be pressed or seen.
+ *
+ * ═══ AND IT IS NOT THE WHOLE BUDGET EITHER ═══
+ * `category-points.test.ts` holds the tighter rule: a class's actives PLUS the
+ * most button-heavy disciplines a career can buy must all have a key. That sum
+ * is what actually forced the key row to twelve — at nine the Redactor's eleven
+ * plus seven buyable came to exactly the pool, so the class could not gain one
+ * pressable talent.
  */
 export const TALENTS_PER_CLASS_MIN = 6;
-export const TALENTS_PER_CLASS_MAX = 12;
+export const TALENTS_PER_CLASS_MAX = 13;
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════

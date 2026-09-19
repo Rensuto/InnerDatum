@@ -3,8 +3,9 @@
 import { describe, expect, it } from 'vitest';
 
 import { ringIdFor } from '../../src/client/render/canvas.ts';
-import { ActorRank } from '../../src/shared/protocol.ts';
-import type { ActorView } from '../../src/shared/protocol.ts';
+import { isHostileBody, isTownsfolkBody, seenHostiles } from '../../src/client/input/travel.ts';
+import { ActorRank, TileCode } from '../../src/shared/protocol.ts';
+import type { ActorView, LevelView } from '../../src/shared/protocol.ts';
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════
@@ -76,5 +77,53 @@ describe('the ring says whose side', () => {
     const ally: ActorView = { ...BODY, id: 'p2', kind: 'player' };
     expect(ringIdFor({ ...ally, id: 'p1' }, 'p1')).toBe('ui_token_ring_self');
     expect(ringIdFor(ally, 'p1')).toBe('ui_token_ring_ally');
+  });
+});
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * AND THE SECOND FRIENDLY FACTION, WHICH ARRIVED WITH NO CLIENT TEST AT ALL.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `Faction.Bound` is a body a PLAYER called up (`talents/call_shadows.ts`), and
+ * it reaches the wire exactly as a townsfolk does: `kind: 'monster'`, same
+ * painter, same FOV, only who may hit it differs. Three client surfaces branch
+ * on that and every one of them was written by hand.
+ *
+ * MEASURED: dropping `|| actor.faction === 'bound'` from `ringIdFor`, and
+ * dropping `&& actor.faction !== BOUND_FACTION` from `isHostileBody`, each left
+ * ALL 2013 client tests green — `grep -rn "'bound'" test/` returned two lines,
+ * both server-side. The consequence is the same three the townsfolk docblock
+ * names, arriving again: a hostile ring under your own shadow, a left-click
+ * that becomes a swing the server refuses, and travel treating it as a target.
+ */
+describe('a body you called up is on your side, on every surface', () => {
+  const SHADOW: ActorView = { ...BODY, id: 'shadow:p1:0', name: 'Bound Shadow', faction: 'bound' };
+  // A board, because `seenHostiles` answers an empty list without one — *"before
+  // the first board there is nothing to trace through"*.
+  const LEVEL: LevelView = { w: 8, h: 8, tiles: new Array<number>(64).fill(TileCode.FLOOR) };
+
+  it('gets the neutral ring, not the hostile one', () => {
+    expect(ringIdFor(SHADOW, 'p1')).toBe('ui_token_ring_neutral');
+    // AND THE DISCRIMINATOR, which is the shape this file already uses: a fix
+    // that neutralised every monster would pass the line above and delete the
+    // game.
+    expect(ringIdFor(BODY, 'p1')).toBe('ui_token_ring_hostile');
+  });
+
+  it('is not a hostile body, so a click on it is not a swing', () => {
+    expect(isHostileBody(SHADOW)).toBe(false);
+    expect(isHostileBody(BODY), 'every monster stopped being hostile').toBe(true);
+    // AND IT IS NOT A PERSON EITHER. A townsfolk has a DOOR (`Talk to`); a
+    // shadow has nothing to say, so the two questions stay separate.
+    expect(isTownsfolkBody(SHADOW)).toBe(false);
+    expect(isTownsfolkBody({ ...BODY, faction: 'townsfolk' })).toBe(true);
+  });
+
+  it('is left out of the list travel hunts through', () => {
+    // `seenHostiles` is what the travel planner and the rest sentence walk; a
+    // shadow standing in a doorway must not read as something to walk at.
+    const bodies: ActorView[] = [SHADOW, BODY, { ...BODY, id: 'm2', faction: 'townsfolk' }];
+    expect(seenHostiles(LEVEL, bodies).map((a) => a.id)).toEqual(['m1']);
   });
 });

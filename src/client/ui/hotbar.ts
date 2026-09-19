@@ -237,13 +237,69 @@ const ICON_INSET = Math.floor((SLOT_PX - ICON_DRAW_PX) / 2);
  */
 
 /**
- * How many slots one press of the digit row addresses. NINE, and it is the
- * DIGITS that choose it: `Digit1`..`Digit9` are bound by CODE in
- * input/keymap.ts, so none of them can be reached from the numpad and
- * `move_north`'s Numpad8 is untouched. `Digit0` is not a tenth in any sane
- * reading of a row that starts at 1.
+ * ═══════════════════════════════════════════════════════════════════════════
+ * HOW MANY SLOTS ONE PRESS OF THE NUMBER ROW ADDRESSES. TWELVE — UPSTREAM'S.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `engine/interface/PlayerHotkeys.lua` walks `for x = 1, 12` at :314 and sizes
+ * every hotkey loop `12 * self.nb_hotkey_pages` (:92, :124, :148, :216). A
+ * ToME page is TWELVE, not nine, and the twelve are the number row entire:
+ * `1`..`9`, `0`, `-`, `=`.
+ *
+ * ═══ IT WAS NINE, AND THE ARGUMENT AGAINST THE TENTH WAS EDITORIAL ═══
+ * *"`Digit0` is not a tenth in any sane reading of a row that starts at 1."*
+ * That is a good sentence about a row that stops at 9 and it was never a fact
+ * about the keyboard — every roguelike and every MMO in the world reads
+ * `1234567890` as ten and the two keys past it as eleven and twelve, and so
+ * does the game this is a port of.
+ *
+ * ═══ WHY IT MOVED NOW, MEASURED ═══
+ * `HOTBAR_SLOT_POOL` was 18 and `category-points.test.ts` pins the rule that
+ * makes it matter: a class's actives PLUS the most button-heavy disciplines a
+ * career can buy must all have a key. The Redactor sat at 11 + 7 = 18, exactly
+ * on it — so the class could not gain ONE pressable talent, and her fourth
+ * discipline (`ledger/unwritten`, two sustains) had nowhere to go. Nine was the
+ * binding constraint on class content, not a preference.
+ *
+ * THE FIRST NINE ARE UNTOUCHED. Slots 1-4 keep their `key` bindings and 5-9
+ * their `code` ones; the three added are `Digit0`, `Minus` and `Equal`, all by
+ * CODE, so none can be reached from the numpad and `move_north`'s Numpad8 is
+ * still its own.
  */
-export const HOTBAR_KEY_ROW = 9;
+export const HOTBAR_KEY_ROW = 12;
+
+/**
+ * WHAT IS PRINTED ON EACH OF THE TWELVE, in slot order.
+ *
+ * A TABLE RATHER THAN ARITHMETIC, because the row stopped being arithmetic at
+ * the tenth: `(index % 12) + 1` would print "10", "11" and "12" on keys that
+ * say `0`, `-` and `=`. `hotbarKeyLabel`'s own note is the reason this must be
+ * right — a bar that PRINTS one key while SENDING another is the single worst
+ * failure a hotbar has.
+ *
+ * THE ORDER IS `ActionDef.slot`'s ORDER, so entry `n` is the key bound to slot
+ * `n` in input/keymap.ts. `keybindwiring.test.ts` drives the real map.
+ *
+ * EXPORTED so a test can walk the label/press round trip without restating the
+ * row — three of them used to compute `String(digit + 1)`, which was the same
+ * arithmetic the paint used and therefore proved only that the two agreed.
+ * `hotbar.test.ts` spells the twelve out as the SPEC; everything else reads
+ * this.
+ */
+export const HOTBAR_ROW_KEYS: readonly string[] = [
+  '1',
+  '2',
+  '3',
+  '4',
+  '5',
+  '6',
+  '7',
+  '8',
+  '9',
+  '0',
+  '-',
+  '=',
+];
 
 /**
  * How many rows of digits there are: the plain one and the Shifted one.
@@ -300,6 +356,13 @@ export const HOTBAR_SLOTS_DEFAULT = 13;
  * runtime and fails at the only moment it matters — the commit that changes
  * either number.
  */
+if (HOTBAR_ROW_KEYS.length !== HOTBAR_KEY_ROW) {
+  throw new Error(
+    `hotbar: ${String(HOTBAR_ROW_KEYS.length)} printed keys for ${String(HOTBAR_KEY_ROW)} slots — ` +
+      'every slot in the row must say what presses it',
+  );
+}
+
 type _BarAddressesEveryTalent = typeof HOTBAR_SLOT_POOL extends number
   ? typeof TALENTS_PER_CLASS_MAX extends number
     ? true
@@ -328,8 +391,13 @@ if (HOTBAR_SLOT_POOL < TALENTS_PER_CLASS_MAX || !_barCoversTheClass) {
  */
 export function hotbarKeyLabel(index: number): string | null {
   if (index < 0 || index >= HOTBAR_SLOT_POOL) return null;
-  const digit = (index % HOTBAR_KEY_ROW) + 1;
-  return index < HOTBAR_KEY_ROW ? `${String(digit)}` : `⇧${String(digit)}`;
+  const key = HOTBAR_ROW_KEYS[index % HOTBAR_KEY_ROW];
+  // UNREACHABLE while `HOTBAR_ROW_KEYS` is `HOTBAR_KEY_ROW` long, and the guard below
+  // this line keeps it so: a table shorter than the row would print nothing on
+  // a slot that still answers to a key, which is the printed-one-sent-another
+  // failure this function exists to prevent.
+  if (key === undefined) return null;
+  return index < HOTBAR_KEY_ROW ? key : `⇧${key}`;
 }
 
 /**

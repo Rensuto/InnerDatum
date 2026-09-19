@@ -14,6 +14,7 @@ import {
   INDEX_HUSK,
   INDEX_HUSK_ELITE,
   INDEX_WRAITH,
+  ALL_TEMPLATES,
   MONSTER_TEMPLATES,
   monsterInit,
   validateTemplate,
@@ -515,7 +516,10 @@ describe('the three authored drop tables', () => {
   });
 
   it('passes validateTemplate on every shipped template', () => {
-    for (const template of MONSTER_TEMPLATES) expect(validateTemplate(template)).toEqual([]);
+    // EVERY template, bestiary and summon alike — see the same sweep in
+    // bestiary.test.ts for why the two lists are separate and why this one
+    // reads both.
+    for (const template of ALL_TEMPLATES) expect(validateTemplate(template)).toEqual([]);
   });
 
   it('refuses an empty pick, a bad percentage, an unknown id and a duplicate', () => {

@@ -381,15 +381,33 @@ export type HostileSense = {
 };
 
 /**
- * Hostile FROM A PLAYER'S SEAT.
+ * ═══════════════════════════════════════════════════════════════════════════
+ * HOSTILE FROM A PLAYER'S SEAT — AND THE FACTION SEAM IS OPEN NOW.
+ * ═══════════════════════════════════════════════════════════════════════════
  *
- * The client's mirror of `isHostile` in src/server/engine/actor.ts:724, which is
- * `a.kind !== b.kind` — with the viewer's kind pinned to Player, since the only
- * thing holding a mouse is a detective. FACTION SEAM: when charm or summons make
- * that untrue on the server, this is the line that follows it.
+ * The client's mirror of `isHostile` in src/server/engine/actor.ts, and the note
+ * that used to sit here said what would happen next: *"FACTION SEAM: when charm
+ * or summons make that untrue on the server, this is the line that follows
+ * it."* Summons landed (`talents/call_shadows.ts`), so it does.
+ *
+ * ═══ TWO FACTIONS ARE NOT ENEMIES OF THE PERSON HOLDING THE MOUSE ═══
+ * The server's rule is one predicate: `areEnemies` refuses a `Townsfolk` on
+ * either side, and `reactsAs` replaces a `Bound` body with its summoner before
+ * any reaction is computed (`Actor.lua:1666-1667`). Both arrive as a `Monster`
+ * on the wire — same painter, same FOV, only who may hit them differs — so
+ * `kind` cannot tell you and the faction string is what does.
+ *
+ * WHAT IT CHANGES, AND IT IS THE POINT: a left-click on your own shadow is no
+ * longer a swing the server refuses, and travel no longer treats one as a
+ * target. `isTownsfolkBody` below stays its own question, because a townsfolk
+ * has a DOOR (`Talk to`) and a shadow has nothing to say.
+ *
+ * ABSENT MEANS HOSTILE-AS-BEFORE, never "unknown": the field is omitted for
+ * every Redacted body on the wire.
  */
 export function isHostileBody(actor: ActorView): boolean {
-  return actor.kind !== ActorKind.Player;
+  if (actor.kind === ActorKind.Player) return false;
+  return actor.faction !== TOWNSFOLK_FACTION && actor.faction !== BOUND_FACTION;
 }
 
 /**
@@ -425,7 +443,14 @@ export function isTownsfolkBody(actor: ActorView): boolean {
  * direction), so the string is written out ONCE, here, rather than at each site
  * that needs it.
  */
-const TOWNSFOLK_FACTION = 'townsfolk';
+export const TOWNSFOLK_FACTION = 'townsfolk';
+
+/**
+ * `Faction.Bound` as it arrives — something a player called up
+ * (`talents/call_shadows.ts`). Written out for `TOWNSFOLK_FACTION`'s reason and
+ * kept beside it, so the two strings a client must know are in one place.
+ */
+export const BOUND_FACTION = 'bound';
 
 /**
  * The LIVING body on a tile, if any.

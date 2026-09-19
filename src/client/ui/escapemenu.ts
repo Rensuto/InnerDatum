@@ -1008,7 +1008,23 @@ function lockReason(action: ActionDef): string | null {
  * glyphs to redraw one with.
  */
 function sharedLockReason(group: KeyGroup): string | null {
-  return group === 'Hotbar' ? 'these digits are painted on the slots' : null;
+  return group === 'Hotbar' ? 'these keys are painted on the slots' : null;
+}
+
+/**
+ * THE WHOLE ROW OF FIXED KEYS, IN SLOT ORDER, AS ONE LINE.
+ *
+ * Read off each action's `fixed` binding rather than written out, so it cannot
+ * disagree with what the dispatcher will actually accept — the same reason
+ * `hotbarKeyLabel` is a function rather than a template string at the paint.
+ * `labelForBinding` is the one renderer both a row's columns and this line use.
+ *
+ * `--` FOR AN ACTION WITH NO FIXED BINDING, which is unreachable for the one
+ * group this serves and is what the columns already print. A gap in the middle
+ * of the row is the honest picture of a slot nothing presses.
+ */
+function fixedKeyLine(members: readonly ActionDef[]): string {
+  return members.map((action) => labelForBinding(action.fixed[0]) || '--').join('  ');
 }
 
 /** One root entry, with its live key. */
@@ -1385,7 +1401,41 @@ function keysRows(view: EscapeMenuView): readonly MenuRow[] {
      */
     const shared = sharedLockReason(group);
     if (shared !== null) rows.push({ kind: MenuRowKind.Note, text: shared });
-    for (const action of [...members].sort((a, b) => a.order - b.order)) {
+    const ordered = [...members].sort((a, b) => a.order - b.order);
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * A GROUP NOTHING CAN BE REBOUND IN IS ONE LINE, NOT TWELVE ROWS.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * THE SAME CHANGE `sharedLockReason` ABOVE ALREADY MADE, FOR THE SAME
+     * CAUSE, ONE STEP FURTHER. That one collapsed the REASON off nine rows
+     * because the table had outgrown the band at 1280x720 and the keys screen
+     * had started paging. `KEYS_FILL_H`'s note records where that left things:
+     * *"the next action that joins the table costs a row and nothing is being
+     * held in reserve for it. If 1280x720 ever starts paging, the fix is fewer
+     * rows or a second screen, not a bigger number here."*
+     *
+     * The number row grew to upstream's twelve (`PlayerHotkeys.lua:314`,
+     * `for x = 1, 12`) because the hotbar had become the binding constraint on
+     * class content, and that is three more actions. This is the fewer rows.
+     *
+     * ═══ AND IT IS BETTER, NOT MERELY SMALLER ═══
+     * This is the REBINDING screen. Twelve rows that cannot be rebound, each
+     * printing one fixed key that is ALSO painted on the slot it fires, is
+     * twelve rows of noise between a player and the rows they came for. One
+     * line naming the whole row says strictly more — it shows the keys IN ORDER
+     * and in one glance — and costs eleven fewer rows.
+     *
+     * ═══ KEYED ON `rebindable`, NEVER ON THE GROUP'S NAME ═══
+     * `Turn` holds `cancel`, which is locked, beside seven actions that are
+     * not — so it keeps every row it had. The day a hotbar slot becomes
+     * rebindable this group starts drawing rows again in the same edit.
+     */
+    if (ordered.every((action) => !action.rebindable)) {
+      rows.push({ kind: MenuRowKind.Note, text: fixedKeyLine(ordered) });
+      continue;
+    }
+    for (const action of ordered) {
       rows.push(actionRow(action, view));
     }
   }

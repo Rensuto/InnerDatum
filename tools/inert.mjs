@@ -236,6 +236,17 @@ const ALLOWED_DEAD = new Map([
       'spelling kept so the next log line or asset lookup does not invent one.',
   ],
   [
+    'src/server/talents/call_shadows.ts avoidMasterDamageAt',
+    'ported and STRUCTURALLY UNREACHABLE, which is a stronger claim than unused. ' +
+      'shadows.lua:244 reduces damage a shadow takes FROM ITS OWN SUMMONER, and ' +
+      'a ToME `project` lands on everything in its radius whatever its faction. ' +
+      'Ours cannot: every area talent selects through actorsInShape(..., ' +
+      'Affinity.Hostile) and isEnemy now answers false between a Redactor and ' +
+      'her shadow, so there is no such blow to reduce. Kept, with its curve ' +
+      '(combatTalentScale(t, 5, 85)), for the day friendly fire exists -- the ' +
+      'same shape as REVIVE_AP above.',
+  ],
+  [
     'src/shared/progression.ts STAT_MIN',
     'the outer bound from load.lua:182-189. statCeilingForLevel is the one that ' +
       'binds a player, and nothing lowers a stat below its base of 10.',

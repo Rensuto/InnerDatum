@@ -18,7 +18,7 @@ import {
 import { PORTRAIT_UNKNOWN } from '../../src/client/ui/dialogue.ts';
 import { registerAllTalents } from '../../src/server/content/classes.ts';
 import { MVP_EFFECTS } from '../../src/server/content/effects.ts';
-import { MONSTER_TEMPLATES } from '../../src/server/content/monsters.ts';
+import { ALL_TEMPLATES } from '../../src/server/content/monsters.ts';
 import { TOWNSFOLK, portraitKeyFor } from '../../src/server/content/townsfolk.ts';
 import { TileCode } from '../../src/shared/protocol.ts';
 
@@ -136,7 +136,9 @@ function wiredIds(): ReadonlyMap<string, string> {
       add(loneTreeSpriteId(field, tx, ty), `lone tree (${String(tx)},${String(ty)})`);
     }
   }
-  for (const template of MONSTER_TEMPLATES) add(template.sprite, `monster ${template.id}`);
+  // BOTH LISTS: a summoned body is drawn by the same painter and needs art
+  // just as much as a husk does.
+  for (const template of ALL_TEMPLATES) add(template.sprite, `monster ${template.id}`);
   for (const talent of registerAllTalents().all()) add(talent.iconId, `talent ${talent.id}`);
   for (const effect of MVP_EFFECTS) add(effect.icon, `effect ${effect.id}`);
   // THE CONVERSATION WINDOW'S SEVENTEEN FACES, AND THE SIXTEEN BODIES BEHIND

@@ -22,7 +22,7 @@ import {
   classPointBonus,
   genericPointBonus,
 } from '../../src/server/content/origins.ts';
-import { ITEM_CATALOGUE } from '../../src/server/content/items.ts';
+import { BIRTH_KIT, ITEM_CATALOGUE, Slot, birthKitFor } from '../../src/server/content/items.ts';
 import { higherHeal } from '../../src/server/talents/higher_heal.ts';
 import { talentRuntimeFor } from '../../src/server/main.ts';
 import { wsGateway } from '../../src/server/net/gateway.ts';
@@ -846,12 +846,25 @@ describe('choose_class, accepted', () => {
      * The claim this test is making — the body is clothed from that ClassDef
      * and not from a rotation counter or a stale file — is unchanged.
      *
-     * AND PLUS THE BRASS LANTERN every character is born wearing
-     * (`grantBirthKit`). Light radius is the one mod it moves.
+     * AND PLUS THE BIRTH KIT. It was the brass lantern alone — the universal
+     * half, `descriptors.lua:75-77` — and `birthKitFor` is per class now.
+     *
+     * THE CHOOSER IS WHY THIS BODY HAS THE ALCHEMIST'S AND NOT A WATCHMAN'S:
+     * the socket joined with no class, so `hello`'s `grantBirthKit` could only
+     * hand over the universal half, and the second call after `choose_class`
+     * gives what the SUBCLASS descriptor names. The Alchemist's is a staff (her
+     * class weapon table) and a linen robe with no `wielder` at all
+     * (mage.lua:104-107, cloth-armors.lua:34-39) — so her kit moves exactly the
+     * lantern's one mod, which is what this assertion is now saying.
      */
-    const lantern = ITEM_CATALOGUE.get('item_brass_lantern')?.wielder?.mods;
+    const kit = birthKitFor(ALCHEMIST.id).reduce<Record<string, number>>((mods, id) => {
+      for (const [key, value] of Object.entries(ITEM_CATALOGUE.get(id)?.wielder?.mods ?? {})) {
+        if (typeof value === 'number') mods[key] = (mods[key] ?? 0) + value;
+      }
+      return mods;
+    }, {});
     expect(body.combat?.stats).toEqual(ALCHEMIST.combat.stats);
-    expect(body.combat?.mods).toEqual({ ...ALCHEMIST.combat.mods, ...lantern });
+    expect(body.combat?.mods).toEqual({ ...ALCHEMIST.combat.mods, ...kit });
     expect(body.combat?.profile?.resistsCap?.all).toBe(PLAYER_RESIST_CAP);
     expect(body.hpRegen).toBe(ALCHEMIST.hpRegen);
     // FULL, at the NEW ceiling: the choice happens at character creation, so the
@@ -862,6 +875,90 @@ describe('choose_class, accepted', () => {
     // already looking at.
     expect({ x: body.x, y: body.y }).toEqual(where);
     expect(body.name).toBe('Ren');
+  });
+
+  it('hands the WATCHMAN his whole kit, which the Alchemist case cannot see', async () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * DELETING THE DELIVERY LINE LEFT 6970 TESTS GREEN.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * `gateway.ts`'s `if (body !== undefined) grantBirthKit(body, true);` — the
+     * single line that hands a settled class its own gear — could be removed
+     * with the whole suite still passing. The reason is the case above: the
+     * ONLY class this suite ever drives through `choose_class` is the
+     * ALCHEMIST, whose class half is `[]`. Her expectation is computed from
+     * `birthKitFor(ALCHEMIST.id)`, which is the lantern alone, so it equals
+     * what the universal half alone would produce and the two branches cannot
+     * be told apart.
+     *
+     * THE WATCHMAN IS THE DISCRIMINATOR: a baton, a buckler and a chestpiece
+     * (`warrior.lua:175-179`), none of which the provisional half carries. A
+     * body that reaches the end of `choose_class` with an empty `body` slot has
+     * not been dressed by anything.
+     */
+    server = await boot('choice-kit-watchman');
+    const client = await connect(server.port);
+    const welcome = await client.hello('ren-handle');
+    const body = bodyOf(welcome);
+    await client.waitFor('class_options');
+
+    // BEFORE: the provisional half only — see `grantBirthKit`'s own note about
+    // a body that still owes a class choice.
+    expect(body.equipped?.[Slot.Body], 'a provisional body was already dressed').toBeUndefined();
+    expect(body.equipped?.[Slot.Offhand]).toBeUndefined();
+
+    client.send({ t: 'choose_class', classId: WATCHMAN.id });
+    await client.settle();
+
+    expect(body.classId).toBe(WATCHMAN.id);
+    // THE ITEMS THEMSELVES, by id, because "some armour appeared" is true of a
+    // body that was handed the wrong kit.
+    expect(body.equipped?.[Slot.Body], 'the Bulwark lost his chestpiece').toBe(
+      'item_leather_chest',
+    );
+    expect(body.equipped?.[Slot.Offhand], 'the Bulwark lost his shield').toBe(
+      'item_watchmans_buckler',
+    );
+    expect(body.equipped?.[Slot.Mainhand]).toBe('item_service_baton');
+    // AND THE KIT IS STRICTLY MORE THAN THE UNIVERSAL HALF, which is the claim
+    // "his whole kit" actually makes.
+    expect(birthKitFor(WATCHMAN.id).length).toBeGreaterThan(BIRTH_KIT.length);
+    // AND IT REACHED THE SHEET. `armour` is the one column upstream's four
+    // resolvers disagree on, so it is the one worth reading off the body.
+    const kitArmour = birthKitFor(WATCHMAN.id).reduce(
+      (sum, id) => sum + Number(ITEM_CATALOGUE.get(id)?.wielder?.mods?.armour ?? 0),
+      0,
+    );
+    expect(kitArmour, 'the Bulwark’s kit carries no armour at all').toBeGreaterThan(0);
+    expect(body.combat?.mods?.armour).toBe((WATCHMAN.combat.mods?.armour ?? 0) + kitArmour);
+  });
+
+  it('takes the provisional class’s gear back off when another is chosen', async () => {
+    /**
+     * THE OTHER HALF OF THE SAME FIX, and the production bug it was written
+     * for: a body that still owes the chooser is wearing a PROVISIONAL class,
+     * and nothing takes gear back off. A player rotated into a Watchman while
+     * reading the four descriptions would have kept the Bulwark's shield for
+     * ever on an Alchemist.
+     *
+     * `hello` gives a provisional Watchman the UNIVERSAL half only, so choosing
+     * the Alchemist must leave both class slots empty rather than full of
+     * somebody else's kit.
+     */
+    server = await boot('choice-kit-rotated');
+    const client = await connect(server.port);
+    const body = bodyOf(await client.hello('ren-handle'));
+    expect(body.classId, 'the provisional class stopped being the Watchman').toBe(WATCHMAN.id);
+    await client.waitFor('class_options');
+
+    client.send({ t: 'choose_class', classId: ALCHEMIST.id });
+    await client.settle();
+
+    expect(body.classId).toBe(ALCHEMIST.id);
+    expect(body.equipped?.[Slot.Offhand], 'an Alchemist is carrying a buckler').toBeUndefined();
+    expect(body.equipped?.[Slot.Body], 'an Alchemist is wearing a chestpiece').toBeUndefined();
+    expect(body.equipped?.[Slot.Mainhand], 'an Alchemist is holding a baton').toBeUndefined();
   });
 
   it('hands a brand-new character the points its origin grants at birth', async () => {

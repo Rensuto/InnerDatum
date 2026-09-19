@@ -382,6 +382,64 @@ export const TALENT_TREES: readonly TalentTree[] = Object.freeze([
   {
     /**
      * ═════════════════════════════════════════════════════════════════════════
+     * THE REDACTOR'S FOURTH — what is NOT in the record, and what it will do.
+     * ═════════════════════════════════════════════════════════════════════════
+     *
+     * THE FIRST CLASS TREE THAT IS SHORTER THAN SIX, AND IT SAYS SO. Three
+     * talents, declared through `TalentTree.size`, which exists precisely for a
+     * tree that is short on purpose — see that field. `ui/talents.ts` centres a
+     * short strip below the full width, so it reads as deliberate.
+     *
+     * ═══ WHY A FOURTH TREE AND NOT THREE MORE TALENTS IN AN EXISTING ONE ═══
+     * All three of the Redactor's trees hold exactly six and the panel slices
+     * at six; a seventh would be dropped without a word. So the choice was a
+     * new heading or displacing three shipped talents, and displacing three to
+     * make room for three is not a port, it is a swap.
+     *
+     * UPSTREAM HAS SIX FOR THIS ARCHETYPE (afflicted.lua:130-141:
+     * `cursed/gestures`, `cursed/shadows`, `cursed/dark-sustenance`,
+     * `cursed/cursed-form`, `cursed/one-with-shadows`,
+     * `cursed/advanced-shadowmancy`) and we had three. A fourth is strictly
+     * closer, and it is where the Doomed's three missing BIRTH talents live.
+     *
+     * ═══ WHAT IS IN IT, AND WHY THESE THREE TOGETHER ═══
+     * `ledger/redaction` earns, `ledger/testimony` endures, `ledger/errata`
+     * moves you. This one is the class's answer to CONTACT, which none of the
+     * other three has: something else standing in the doorway (Call Shadows),
+     * something to do with the turn once it is standing (Gesture of Pain), and
+     * the passive that makes the first worth more (Shadow Warriors).
+     *
+     * CUNNING, like `ledger/redaction` and `ledger/errata`. Upstream gates all
+     * three of its sources on `cursed_cun_req*` (shadows.lua:340, :469;
+     * gestures.lua:71), which is the same reading of the class our own trees
+     * already take.
+     *
+     * ═══ MASTERY 1.0, AND UPSTREAM GRADES BOTH OF ITS SOURCES 1.3 ═══
+     * `afflicted.lua:132` is `["cursed/gestures"]={true, 0.3}` and `:134` is
+     * `["cursed/shadows"]={true, 0.3}` — a +0.3 add on the 1.0 base, so 1.3 on
+     * each. Ours is 1.0 and that is DELIBERATE rather than an omission: this
+     * project grades one SIGNATURE tree and one SUPPORTING tree per class and
+     * no more (`ClassDef.masteries`, the paragraph headed "EACH CLASS GETS ONE
+     * SIGNATURE AND ONE SUPPORTING"), and the Redactor's two are already spent
+     * on `ledger/redaction` and `ledger/testimony`. Taking upstream's number
+     * here would give her three graded trees and quietly make her the only
+     * class with a third, which is a four-class balance change wearing a
+     * port's clothes. `ledger/errata` carries 1.0 for the same reason.
+     *
+     * IT IS WRITTEN DOWN because it is the one number in this tree that HAS an
+     * upstream value we did not take, and an unstated omission is
+     * indistinguishable from an oversight.
+     */
+    id: 'ledger/unwritten',
+    mastery: 1,
+    name: 'Unwritten',
+    classId: ClassId.Redactor,
+    size: 3,
+    blurb: 'What is not in the record, and what it will stand in front of.',
+  },
+  {
+    /**
+     * ═════════════════════════════════════════════════════════════════════════
      * THE ORIGIN'S OWN — `newTalentType{ type="race/higher" }`, misc/races.lua:37.
      * ═════════════════════════════════════════════════════════════════════════
      *

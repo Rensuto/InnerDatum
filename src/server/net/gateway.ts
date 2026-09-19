@@ -107,7 +107,12 @@ import { COMMAND_BURST, COMMAND_RATE_PER_SEC, PROTOCOL_VERSION } from '../../sha
  * every other engine capability, because `engine/talents.ts` is on the far side
  * of a boundary this file may not reach across.
  */
-import { classById, classForJoin, playerCombat } from '../content/classes.ts';
+import {
+  classById,
+  classForJoin,
+  migrateLegacyBirthGrants,
+  playerCombat,
+} from '../content/classes.ts';
 import {
   DEFAULT_ORIGIN,
   birthCategoryPoints,
@@ -136,14 +141,24 @@ import type { OriginDef } from '../content/origins.ts';
  * an item id carries NOTHING on its own (slot, icon and wielder all live in the
  * catalogue), so a layer that has to validate one has to be able to ask.
  */
-import { BIRTH_KIT, ItemUseKind, KNOT_OF_ELSEWHERE_ID, SLOT_ORDER } from '../content/items.ts';
+import {
+  BIRTH_KIT,
+  ItemUseKind,
+  KNOT_OF_ELSEWHERE_ID,
+  SLOT_ORDER,
+  birthKitFor,
+} from '../content/items.ts';
 // THE ONE STATUS THIS FILE NAMES, and it names it because it is the one status
 // whose EXPIRY this file has to act on. See `yankOut`.
 import { EffectId } from '../content/effects.ts';
 import { moneyAmountOf, moneyName } from '../content/money.ts';
 import { partyMaxLevel } from '../content/loot.ts';
 import { blurbFor } from '../content/places.ts';
-import { shouldAnnounceCleared, shouldAnnounceDeparture } from '../world/cleared.ts';
+import {
+  standingThreats,
+  shouldAnnounceCleared,
+  shouldAnnounceDeparture,
+} from '../world/cleared.ts';
 import { fileableCount, isFileable, knownFiled } from '../world/casefile.ts';
 // `DELVES` IS DELIBERATELY NOT IMPORTED HERE ANY MORE. Both of this file's
 // lookups — the danger grade on the world map and the one in the bearing list —
@@ -5855,11 +5870,39 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     const full = opts.realms?.get(realm.id);
     if (full === undefined || full.kind !== RealmKind.Inner) return;
 
-    // NOBODY LEFT STANDING. `alive` rather than presence: a corpse is still an
-    // actor for the rest of the pump it died in.
-    const standing = realm.world
-      .allActors()
-      .filter((a) => a.kind === ActorKind.Monster && a.alive).length;
+    /**
+     * NOBODY LEFT STANDING. `alive` rather than presence: a corpse is still an
+     * actor for the rest of the pump it died in.
+     *
+     * ═══════════════════════════════════════════════════════════════════════
+     * AND A MONSTER ON YOUR OWN SIDE IS NOT SOMETHING LEFT TO FIGHT.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * This counted every `Monster`, which was every monster there was until
+     * `Faction.Bound` existed. A Bound shadow is a Monster and is alive, so a
+     * Redactor holding her own birth stance could kill the last body on the
+     * last floor of a fileable delve and `world/cleared.ts:50`
+     * (`if (facts.standing > 0) return false`) would refuse the announcement —
+     * and `mine.add(siteId)` below is the ONLY write to `filedFor` in the
+     * process, so the case would never close. Silently, permanently, with no
+     * line to say why. Driven: zero hostiles on the floor, one shadow up,
+     * `standing = 1` and `shouldAnnounceCleared` false; the identical call with
+     * `standing: 0` is true.
+     *
+     * `isHostile` AGAINST A STANDING PLAYER rather than a faction literal,
+     * because that is the predicate the whole engine already answers this
+     * question with (`engine/actor.ts#areEnemies`) and it covers `Townsfolk`
+     * for free — a shopkeeper has never reached this line only because Inner
+     * realms hold none, which is a fact about content and not a rule.
+     * `witness` is any live player in the realm; when there is none, the count
+     * falls back to every monster, which is the reading this line has always
+     * had and cannot then announce anything anyway (`standingPlayers` is 0).
+     */
+    const residents = realm.world.allActors();
+    const standing = standingThreats(
+      residents,
+      residents.find((a) => a.kind === ActorKind.Player && a.alive),
+    );
 
     // ═══ AN EDGE, NOT A LEVEL, AND IT MUST HAVE BEEN A KILL ═══
     // Many, then none — and the pump that emptied the room contained a DEATH.
@@ -7765,19 +7808,49 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    * ═══════════════════════════════════════════════════════════════════════════
    *
    * `data/birth/descriptors.lua:75-77` equips every character with a brass
-   * lantern at birth. This hands over each piece of `BIRTH_KIT` a body has not
-   * been given: worn when its slot is free, into the bag when it is not, and not
-   * at all when the bag is full, in which case it waits for the next join.
+   * lantern at birth. This hands over each piece a body has not been given:
+   * worn when its slot is free, into the bag when it is not, and not at all
+   * when the bag is full, in which case it waits for the next join.
    *
    * ONCE, AND RECORDED. `kitGranted` is what makes it once. "The slot is empty"
    * would be the wrong test: it would hand a new lantern to everybody who ever
    * took theirs off.
+   *
+   * ═══ AND IT IS `birthKitFor`, NOT `BIRTH_KIT` — THE LIST IS PER CLASS NOW ═══
+   * Upstream never had one list: `descriptors.lua:75-77` is the universal half
+   * and `resolvers.equipbirth` is authored separately on every subclass
+   * descriptor. `content/items.ts#birthKitFor` holds both halves and the four
+   * citations; this line is what makes an Archer's leather reach an Inspector
+   * and keeps a chestpiece off the two classes upstream dresses in a robe with
+   * no `wielder` table at all.
+   *
+   * ═══ THE CLASS IS READ OFF THE BODY, AND THE ORDER OF THE CALLERS MATTERS ═══
+   * A body whose `classId` is not settled yet gets the universal half only, and
+   * the next call tops it up — `kitGranted` records what was actually handed
+   * over rather than that the routine ran, so a Redactor who joined before the
+   * picker answered still collects her leather the moment she is reclothed.
    */
-  const grantBirthKit = (actor: Actor): void => {
+  const grantBirthKit = (actor: Actor, classSettled: boolean): void => {
     if (actor.kind !== 'player') return;
     const given = new Set(actor.kitGranted ?? []);
     let changed = false;
-    for (const id of BIRTH_KIT) {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * THE UNIVERSAL HALF UNTIL THE CLASS IS SETTLED, AND THE FULL KIT AFTER.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * A body that owes a class choice is wearing a PROVISIONAL class: the
+     * rotation clothed it so it has a sheet and a sprite while the player reads
+     * the four descriptions. Handing it that class's `resolvers.equipbirth`
+     * would be permanent — nothing takes gear back off — so a player who was
+     * provisionally a Watchman and chose the Alchemist would keep the Bulwark's
+     * shield and chestpiece for ever, on a class upstream dresses in a robe
+     * with no `wielder` table at all.
+     *
+     * The lantern is not provisional: `descriptors.lua:75-77` is on the BASE
+     * descriptor and every character in the game gets it whatever they pick.
+     */
+    for (const id of classSettled ? birthKitFor(actor.classId) : BIRTH_KIT) {
       if (given.has(id)) continue;
       const item = resolveItem(id);
       if (item === undefined) continue;
@@ -7906,10 +7979,28 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     // both. Nothing about a keymap depends on a class, a sheet or a level.
     restoreKeybinds(actor, restore);
 
-    // THE SHEET, through the injected seam and never by importing the talent
-    // engine. An absent method and an absent sheet both answer undefined, which
-    // is what tells the ledger below that it cannot be run.
-    const dropped = engine.applyTalentPoints?.(actor.id, restore.talentPoints ?? {});
+    /**
+     * THE SHEET, through the injected seam and never by importing the talent
+     * engine. An absent method and an absent sheet both answer undefined, which
+     * is what tells the ledger below that it cannot be run.
+     *
+     * ═══ THROUGH THE BIRTH-GRANT MIGRATION FIRST — see `migrateLegacyBirthGrants` ═══
+     * A file written before a class's four changed carries a FREE rank in a
+     * talent the class no longer grants, and every purse below is derived, so
+     * that rank would be charged to the player on this load and on every load
+     * after it. The correction belongs here, on the spread, and not inside the
+     * seam: `applyTalentPoints` is handed a map and has no idea which class
+     * wrote it, and the corrected map is what the next autosave persists.
+     * A body with no class yet (`classById` undefined) is left alone.
+     */
+    const restoredSpread = restore.talentPoints ?? {};
+    const restoredClass = classById(actor.classId);
+    const dropped = engine.applyTalentPoints?.(
+      actor.id,
+      restoredClass === undefined
+        ? restoredSpread
+        : migrateLegacyBirthGrants(restoredClass, restoredSpread),
+    );
     if (dropped !== undefined && dropped.length > 0) {
       app.log.warn(
         { actorId: actor.id, talentIds: dropped },
@@ -8895,7 +8986,8 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
      * ═══ AND A FRIENDLY FACE IN PLAIN SIGHT IS MARKED TOO, DELIBERATELY ═══
      * Measured on the rendered minimap: a townsperson you can see gets TWO
      * marks on one cell — the `actors` layer draws them in `NEUTRAL_INK` blue
-     * (`main.ts` sends `neutral: faction === 'townsfolk'`) and the beacon pass
+     * (`main.ts` sends `neutral: !isHostileBody(actor)`, which is this same
+     * question asked with the client's own copy of it) and the beacon pass
      * paints cyan over the top. Nothing is lost, because the beacon paints
      * last, and the result is the one a player can actually use: a friendly
      * face is ONE colour whether or not you happen to be looking at them.
@@ -10235,7 +10327,16 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       // ═══ AND THE BIRTH KIT, ONCE THE FILE HAS SAID WHAT IS ALREADY WORN ═══
       // Fresh bodies only, like everything in this block: a resumed body was
       // handed its kit on the join that made it. See `grantBirthKit`.
-      grantBirthKit(actor);
+      //
+      // ═══ AND THE CLASS IS SETTLED ONLY WHEN NOTHING IS OWED ═══
+      // `owes` is computed a dozen lines below and the answer is the same one:
+      // a restore that names a real class is a settled body, and anything else
+      // is provisional until `choose_class` lands. A provisional body gets the
+      // lantern and waits for the rest — see `grantBirthKit`.
+      grantBirthKit(
+        actor,
+        restore !== null && restore.classId !== null && restore.classId !== UNASSIGNED_CLASS,
+      );
 
       // ═══ AND DOES THIS BODY OWE US A CHOICE? A THREE-VALUED READ ═══
       // Three states of the character file mean "nobody has ever picked": there
@@ -15791,6 +15892,24 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     // block, the party would never wait for them, and every key they pressed
     // would land on a body that had already braced.
     if (body !== undefined) releaseFromClassChoice(body);
+
+    /**
+     * ═════════════════════════════════════════════════════════════════════════
+     * AND THE KIT THE CLASS ITSELF BRINGS — `resolvers.equipbirth`.
+     * ═════════════════════════════════════════════════════════════════════════
+     *
+     * `hello` already ran `grantBirthKit` on this body, and at that moment the
+     * body had no class: the picker had not been answered yet, so `birthKitFor`
+     * could only hand over the universal half (`descriptors.lua:75-77`, the
+     * brass lantern). The Bulwark's shield and the Archer's leather live on the
+     * SUBCLASS descriptor and are not knowable until this line.
+     *
+     * RUN AGAIN RATHER THAN MOVED, and that is what `kitGranted` is for: it
+     * records the ids actually handed over, not that the routine has run, so
+     * this second pass gives exactly the pieces the first could not name and
+     * never a second lantern.
+     */
+    if (body !== undefined) grantBirthKit(body, true);
 
     /**
      * ═════════════════════════════════════════════════════════════════════════

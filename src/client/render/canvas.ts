@@ -3184,7 +3184,20 @@ export function ringIdFor(actor: ActorView, selfId: string | null): string {
        * is shared with a corpse and that is honest: both mean "not a threat",
        * which is the entire question a ring answers.
        */
-      if (actor.faction === 'townsfolk') return 'ui_token_ring_neutral';
+      /**
+       * ═══ AND A SHADOW IS NOT SOMETHING TO KILL EITHER — `Faction.Bound` ═══
+       * `talents/call_shadows.ts` puts a body on the map that answers as its
+       * summoner does (`Actor.lua:1666-1667`), and it arrives here as a
+       * `Monster` for the same reason a townsfolk does. A hostile ring under
+       * your own shadow is the same lie this branch was written to stop.
+       *
+       * NEUTRAL, NOT A THIRD RING. Upstream paints a summon friendly on its
+       * minimap and we have two rings; neutral means "not a threat", which is
+       * the entire question a ring answers and is true of it.
+       */
+      if (actor.faction === 'townsfolk' || actor.faction === 'bound') {
+        return 'ui_token_ring_neutral';
+      }
       // THE ELITE RING. `rank` is on the wire for exactly this and nothing else
       // (protocol.ts, `ActorView.rank`): the client cannot infer "elite" from hp
       // — a wounded elite has less life than a fresh husk — and it cannot infer

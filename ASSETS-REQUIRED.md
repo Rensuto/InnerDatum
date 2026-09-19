@@ -1030,3 +1030,27 @@ ring), `icon_status_confused` (a ring with marks inside it) and
 `icon_status_out_of_phase`, which are the three nearest silhouettes in the badge
 set. It is a BENEFICIAL status — the party panel draws it without the harm tint,
 so the shape has to carry "something is about to happen to you" on its own.
+
+## The Unwritten — the Redactor's fourth tree
+
+**Wired, loading, and drawn by a script.** All four ids below ship as
+PROCEDURAL STAND-INS generated into the gitignored asset tree, so nothing
+renders as a violet box and `art:needs` folds them into "active stand-ins"
+with no individual handle. That aggregate is exactly why they are written out
+here: a stand-in is invisible to `PENDING_ICON_IDS` (which only covers ids with
+no file at all) and therefore invisible to the art lane.
+
+Register: `ledger/unwritten` is void-eldritch, not clerical. No pages, no
+stamps, no ink bottles, no clerks — the resource happens to be called Ink and
+that is the only clerical word allowed anywhere near these four.
+
+| Id | Size | What it is |
+|---|---|---|
+| `enemy_bound_shadow_s` | 64x64 | A piece of the dark that has agreed, for now, to stand where it is put. Roughly upright and roughly person-sized, with NO edges you could point to: the silhouette should dissolve at its boundary rather than end. No face, no limbs you could count, no cloth. It must read as a body occupying a tile at 64x64 and must not be mistakable for `enemy_index_wraith`, which is the nearest silhouette in the bestiary and is a THING THAT WANTS SOMETHING; this one wants nothing and is simply in the way. |
+| `icon_sustain_call_shadows` | 24x24 | The stance that puts a body between you and what is coming. Two shapes, one in front of the other, the front one darker and less resolved than the back. Not a summoning circle, not hands, not a sigil. |
+| `icon_sustain_gesture_of_pain` | 24x24 | The stance where the attack stops being physical. A hand held open — the only anatomical shape in this set, and deliberately so, because the whole talent is "both hands empty" — with the strike leaving it as a distortion rather than a line. It must be told apart at a glance from `icon_sustain_call_shadows`, which sits next to it on the same tree and the same bar. |
+| `icon_passive_shadow_warriors` | 24x24 | Hate lent to something that has none. The same two-shape motif as Call Shadows with the FRONT shape sharpened rather than softened — the passive's whole effect is that the thing you put in front hits harder. It must read as a passive: the passive icons in this set carry no frame, where the two sustains above do. |
+
+All three 24x24 icons must survive the bar's own contrast at `HOTBAR` scale and
+must not be mistakable for the three `ledger/testimony` stance icons, which are
+the nearest neighbours a Redactor actually looks at.

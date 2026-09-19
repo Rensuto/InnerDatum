@@ -86,6 +86,16 @@ import { createWorld } from './world/world.ts';
 import { isPlayer } from './engine/actor.ts';
 import type { EngineActor } from './engine/actor.ts';
 import { breakDamageSensitive } from './engine/effects.ts';
+import {
+  GESTURE_OF_PAIN_ID,
+  gestureOfPain,
+  gestureOfPainBlow,
+  handsFreeForGestures,
+  withinGestureReach,
+} from './talents/gesture_of_pain.ts';
+import { shadowsBasePass } from './talents/call_shadows.ts';
+import type { AttackResult } from './engine/combat.ts';
+import type { SummonPassResult } from './engine/scheduler.ts';
 import type { TalentResolutionResult } from './engine/scheduler.ts';
 import type {
   GuardCounter,
@@ -572,6 +582,53 @@ export function talentRuntimeFor(
      * would be a second answer to "which world is this" — see `useTalent`.
      */
     markMultiplier: (targetId: string): number => markMultiplier(talents, targetId),
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * IS THIS BODY GESTURING INSTEAD OF SWINGING? — `Combat.lua:164-173`.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * FOUR QUESTIONS AND THREE OF THEM ARE UPSTREAM'S THREE, in upstream's
+     * order: is the sustain up (`isTalentActive`), does `preAttack` allow it
+     * (`canUseGestures` — two free hands), and only then the blow. A `null`
+     * from any of them is the ordinary swing, which is exactly what
+     * `if not speed` falls through to.
+     *
+     * THE FOURTH IS `withinGestureReach`, and it exists because `strike` is
+     * not only a melee seam here while `Combat:attackTarget` is only a melee
+     * seam upstream. The whole argument is at that function.
+     *
+     * THE RULES LIVE IN `talents/gesture_of_pain.ts`, not here. This adapter
+     * decides nothing; it holds the sheet, the world's generator and the
+     * status door, and hands all three over.
+     */
+    meleeReplacement: (
+      attacker: EngineActor,
+      target: EngineActor,
+      mark: number,
+    ): AttackResult | null => {
+      const sheet = talents.sheetOf(attacker.id);
+      if (sheet === undefined || !sheet.sustained.has(GESTURE_OF_PAIN_ID)) return null;
+      if (!handsFreeForGestures(attacker)) return null;
+      if (!withinGestureReach(attacker, target)) return null;
+      return gestureOfPainBlow(
+        attacker,
+        target,
+        talentLevelOf(sheet, gestureOfPain),
+        world.rng,
+        mark,
+        status,
+      );
+    },
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * THE SUMMON CLOCK AND THE LEASH — `callbackOnActBase`, shadows.lua:438-453.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * `shadowsBasePass` is both arms of it and needs four world methods, which
+     * is why `SummonWorld` is structural: `World` satisfies it and a fixture
+     * can satisfy it with an object literal.
+     */
+    summonPass: (actor: EngineActor): SummonPassResult => shadowsBasePass(world, talents, actor),
     guardCounter: (attackerId: string, victimId: string): GuardCounter | null =>
       resolveGuardCounter({ engine: talents, world, rng: world.rng }, attackerId, victimId),
     forget: (actorId: string): void => {

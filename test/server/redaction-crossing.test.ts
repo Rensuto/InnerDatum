@@ -1,5 +1,6 @@
 import { recomposeCombat } from '../../src/server/engine/effects.ts';
 import { resolveItem } from '../../src/server/content/resolve.ts';
+import { BIRTH_KIT } from '../../src/server/content/items.ts';
 import { setTimeout as sleep } from 'node:timers/promises';
 
 import Fastify from 'fastify';
@@ -273,14 +274,20 @@ describe('what follows a character through a door', () => {
     const body = server.realms.realmOf(actorId)?.world.getActor(actorId);
     expect(body).toBeDefined();
     if (body === undefined || body.kind !== 'player') return;
-    expect(body.kitGranted, 'precondition: the join gave the kit').toEqual(['item_brass_lantern']);
+    // THE UNIVERSAL HALF. This socket has no character file, so it owes a class
+    // choice and its class is PROVISIONAL — `grantBirthKit` hands a provisional
+    // body `BIRTH_KIT` (the brass lantern, `descriptors.lua:75-77`) and waits
+    // for `choose_class` before asking `birthKitFor`. What this case is about is
+    // the RECORD surviving a crossing, and one id proves that as well as four.
+    const kit = BIRTH_KIT;
+    expect(body.kitGranted, 'precondition: the join gave the kit').toEqual([...kit]);
 
     await stepOnto(server.realms, actorId, socket, doorCell(server.realms));
 
     const after = server.realms.realmOf(actorId)?.world.getActor(actorId);
     expect(after, 'the crossing kept the same body').not.toBe(body);
     expect(after?.kind === 'player' ? after.kitGranted : null, 'the record did not follow').toEqual(
-      ['item_brass_lantern'],
+      [...kit],
     );
     expect(after?.equipped?.['lite'], 'the lantern did not follow').toBe('item_brass_lantern');
   });

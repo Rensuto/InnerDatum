@@ -128,6 +128,9 @@ import { coldReading } from '../talents/cold_reading.ts';
 import { concussionFlask } from '../talents/concussion_flask.ts';
 import { fieldDressing } from '../talents/field_dressing.ts';
 import { stableCompound } from '../talents/stable_compound.ts';
+import { callShadows } from '../talents/call_shadows.ts';
+import { gestureOfPain } from '../talents/gesture_of_pain.ts';
+import { shadowWarriors } from '../talents/shadow_warriors.ts';
 import { cutWithChalk } from '../talents/cut_with_chalk.ts';
 import { longHours } from '../talents/long_hours.ts';
 import { bedsideManner } from '../talents/bedside_manner.ts';
@@ -887,16 +890,83 @@ export const REDACTOR: ClassDef = {
     errata,
     excise,
     recension,
+    // ─── UNWRITTEN, the fourth tree, and the class's only answer to CONTACT.
+    //     Two stances and neither reserves anything: Call Shadows pays per
+    //     shadow, Gesture of Pain pays by leaving both hands empty. See
+    //     `ledger/unwritten`. ───
+    callShadows,
+    gestureOfPain,
   ],
   /**
-   * The mark, the passive that makes marks land, one stance, and the kit.
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE DOOMED'S OWN FIVE, LESS ONE — afflicted.lua:143-147.
+   * ═══════════════════════════════════════════════════════════════════════════
    *
-   * OPENS BOTH TREES, which `birth-talents.test.ts` requires and which matters
-   * here more than usual: a Redactor who could not reach `ledger/testimony` on
-   * day one would have no stance, and the stance reserve is the decision the
-   * class is built around. See `ClassDef.birthTalents`.
+   * ```lua
+   * talents = {
+   *   [ActorTalents.T_UNNATURAL_BODY] = 1,      -- indelible
+   *   [ActorTalents.T_FEED] = 1,                -- NOT GRANTED. See below.
+   *   [ActorTalents.T_GESTURE_OF_PAIN] = 1,     -- gestureOfPain
+   *   [ActorTalents.T_WILLFUL_STRIKE] = 1,      -- strikeOut
+   *   [ActorTalents.T_CALL_SHADOWS] = 1,        -- callShadows
+   * },
+   * ```
+   *
+   * FOUR OF THE FIVE, because `BIRTH_TALENT_GRANTS` is four and every class in
+   * this game grants the same number (`birth-talents.test.ts` pins it against
+   * the persistence ledger, which subtracts a flat count it cannot look up).
+   * Upstream grants five to all four of the classes we port, so the constant is
+   * the deviation and not this list — raising it is a four-class content change
+   * and it is not this run's.
+   *
+   * ═══ WHAT CAME OFF, AND WHAT IT COST — BOTH MEASURED ═══
+   *   `issuedKit`   ARMOUR TRAINING, and the Doomed does not get it. Upstream
+   *     grants `T_ARMOUR_TRAINING` to the BULWARK alone (warrior.lua:153, at
+   *     rank 2); the Archer, the Alchemist and the Doomed get none. At rank 1 it
+   *     is +1 armour and +2 hardiness, and armour below the attacker's armour
+   *     penetration is worth EXACTLY ZERO (`damage.ts`, and content/items.ts
+   *     says it out loud).
+   *
+   *     THE LOWEST APR ON THE ROSTER IS 3, AND THIS SENTENCE SAID 6. Measured
+   *     over `ALL_TEMPLATES`: `index_eidolon` and `undermost_warden` are 3, the
+   *     next lowest is 6, and `index_husk` is 7. This file family carried three
+   *     figures for one fact — items.ts still says "7", which was true of
+   *     `MONSTER_TEMPLATES` before the Undermost landed and is written as a
+   *     "was" there now. `check:constants` cannot catch any of them: it flags a
+   *     sentence restating a number the SAME file declares.
+   *
+   *     THE CONCLUSION SURVIVES THE CORRECTION and is stronger for it.
+   *     `max(0, 1 - 3)` is 0 against the softest body in the game, and
+   *     hardiness cannot bite when effective armour is already zero — so the
+   *     measured cost of taking this off the Redactor is nothing at all against
+   *     any apr on the roster, which is why it is the one that goes.
+   *   `openLedger`  OURS, NOT UPSTREAM'S. The Doomed is born in no stance. It
+   *     becomes the FIRST POINT a Redactor spends rather than something she is
+   *     given. The class is still built around the stance; it is now a decision
+   *     on the character sheet instead of a default.
+   *
+   *     ═══ AND THAT POINT IS IN HAND FOR ONE ORIGIN IN FIVE, NOT FOR ALL ═══
+   *     This claimed *"`CITYBORN` — the default origin — carries
+   *     `birthPoints.points: 1`, so a level-1 Redactor has a point in hand"* —
+   *     true of CITYBORN and written as though it were general. `origins.ts:181`
+   *     is the only `birthPoints` in the file, so class points at level 1 are
+   *     cityborn 1, indexed 0, archived 0, unfiled 0, footnoted 0. FOUR
+   *     REDACTORS IN FIVE ARE BORN IN NO STANCE AT ALL and buy one at level 2.
+   *     Their trees are not locked — `treesForClass` reads `loadout`,
+   *     `passives` and `birthTalents`, so `ledger/testimony` stays known — so it
+   *     is one level of waiting rather than ten, and it is said here because the
+   *     argument for this displacement read stronger than it is.
+   *
+   * ═══ AND `T_FEED` IS THE FIFTH, WHICH IS WHY IT IS LEARNABLE AND NOT GRANTED ═══
+   * It is on `ledger/unwritten` at tier 1 the day it is ported, reachable with
+   * the same point every other tier-1 talent is. Nothing had to be displaced to
+   * make room for it — the grant BUDGET is what it cannot fit inside.
+   *
+   * OPENS EXACTLY TWO TREES, which `birth-talents.test.ts` requires:
+   * `ledger/redaction` (strikeOut, indelible) and `ledger/unwritten`
+   * (gestureOfPain, callShadows). See `ClassDef.birthTalents`.
    */
-  birthTalents: [strikeOut, indelible, openLedger, issuedKit],
+  birthTalents: [strikeOut, indelible, gestureOfPain, callShadows],
   passives: [
     indelible,
     marginalia,
@@ -905,6 +975,10 @@ export const REDACTOR: ClassDef = {
     looseLeaf,
     setInStone,
     betweenTheLines,
+    // UNWRITTEN's one passive. It contributes NOTHING to this sheet — its whole
+    // effect lands on a shadow — which is why it has no `passive` function. See
+    // `shadow_warriors.ts`.
+    shadowWarriors,
   ],
   // A marker first, and hard to unwrite second.
   masteries: { 'ledger/redaction': SIGNATURE, 'ledger/testimony': SUPPORTING },
@@ -1273,6 +1347,85 @@ function deepenedMastery(definition: ClassDef, deepened: readonly string[]): Map
  * never called it at all. `treeOf` is a parameter because the talent registry
  * lives in the engine and this file may not reach into it.
  */
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ *    A TALENT THIS CLASS USED TO BE BORN WITH AND IS NOT ANY MORE.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `BIRTH_TALENT_GRANTS` is four for every class, so adding one to a shipped
+ * class always takes one away — and the first rank of the one taken away was
+ * FREE. Nothing on disk records that: `CharacterFile` stores a flat
+ * `talentPoints` map and `sheet.birth` is rebuilt from the CURRENT definition
+ * on every load, so the moment the list changes an existing character's
+ * already-granted rank starts reading as a rank they bought.
+ *
+ * ═══ DRIVEN THROUGH THE PRODUCTION SEAMS, ON THE FILE HEAD WOULD HAVE WRITTEN ═══
+ * `sheetForBody` -> `talentLedgerSeams.applyTalentPoints` -> `spendByPurse`,
+ * for a Redactor who had spent nothing at all:
+ *
+ *     OLD FILE rank-1: healing_infusion indelible issued_kit open_ledger
+ *                      regeneration_infusion strike_out wild_infusion
+ *     AFTER    rank-1: + call_shadows gesture_of_pain   (seeded by the new list)
+ *     spendByPurse: { class: 1, generic: 1 }      fresh: { class: 0, generic: 0 }
+ *
+ * Nine rank-1 entries against seven free grants. `gateway.ts`'s three purses
+ * are DERIVED (`earned - spent`, floored at zero), so that character owes one
+ * class point and one generic point for ever — silently, and irrecoverably if
+ * their purse was already empty.
+ *
+ * ═══ WHAT THIS DOES: IT TAKES BACK THE FREE RANK, AND NOTHING ELSE ═══
+ * A talent that is no longer granted is no longer granted. One rank comes off
+ * the restored spread, floored at zero — so a body that never touched
+ * `open_ledger` loses the rank it was given and may buy it back with the point
+ * it now has, and a body that had raised it to 3 keeps 2, which is exactly
+ * what it paid for. The arithmetic then comes out right on this load and on
+ * every load after it, because the corrected spread is what the next autosave
+ * writes.
+ *
+ * ═══ AND IT FIRES ONCE, ON A FILE THAT CAN BE IDENTIFIED ═══
+ * `Restored` here means a file whose spread does not mention a talent the
+ * class is currently born with. `createTalentSheet` seeds every birth id into
+ * `points`, and `talentPointsOf` writes the whole map, so a file saved by THIS
+ * build always names all four. A file that does not name one was written by a
+ * build with a different list — which is the only situation in which the free
+ * rank can be stale.
+ *
+ * PURE, AND IT TAKES THE LISTS RATHER THAN READING THEM, so the day a second
+ * class changes its four this function needs no edit and its test needs no
+ * fixture.
+ */
+export function migrateLegacyBirthGrants(
+  definition: ClassDef,
+  spread: Readonly<Record<string, number>>,
+): Readonly<Record<string, number>> {
+  const now = definition.birthTalents.map((talent) => talent.id);
+  // EVERY current grant present means the file agrees with this build.
+  if (now.every((id) => id in spread)) return spread;
+  const legacy = LEGACY_BIRTH_GRANTS[definition.id] ?? [];
+  const stale = legacy.filter((id) => !now.includes(id) && id in spread);
+  if (stale.length === 0) return spread;
+  const out: Record<string, number> = { ...spread };
+  for (const id of stale) out[id] = Math.max(0, Math.floor(out[id] ?? 0) - 1);
+  return out;
+}
+
+/**
+ * WHAT EACH CLASS USED TO BE BORN WITH. ONE ROW PER CHANGE, NEVER DELETED.
+ *
+ * `ledger/unwritten` displaced `openLedger` and `issuedKit` from the Redactor's
+ * four when Gesture of Pain and Call Shadows crossed (`REDACTOR.birthTalents`
+ * says why). Both are still REACHABLE — `openLedger` is on her loadout and
+ * `issuedKit` is a `GENERIC_PASSIVE` everybody may buy — so this is a price
+ * change and not a deletion, which is precisely why the rank has to be taken
+ * back rather than left standing and charged for.
+ *
+ * A row here costs nothing once every live file has been rewritten, and
+ * removing one would silently re-break every file that had not been.
+ */
+const LEGACY_BIRTH_GRANTS: Readonly<Record<string, readonly string[]>> = Object.freeze({
+  [ClassId.Redactor]: Object.freeze([openLedger.id, issuedKit.id]),
+});
+
 export function spendByPurse(
   sheet: TalentSheet,
   definition: ClassDef | undefined,

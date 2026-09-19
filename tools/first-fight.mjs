@@ -54,6 +54,27 @@
  * file first: the dead zone makes The Inspector the canary for every geometry
  * bug the driver has.
  *
+ * ═══════════════════════════════════════════════════════════════════════════
+ * AND THE FOURTH WAS THE REDACTOR, FOR THE SAME REASON IN A NEW PLACE.
+ * ═══════════════════════════════════════════════════════════════════════════
+ * The moment this file started raising the stances a class is born in, she read
+ * 0 of 4 with four stalls — because her own Bound shadow is a `Monster`, is
+ * alive, and the fight loop broke on `foes.length === 0`. She was standing in
+ * an empty room next to a body she had called up herself, counted as
+ * unfinished. `delve-run.mjs` had already written the correction down about
+ * TOWNSFOLK — *"`kind === Monster` is the wrong question"* — and this file
+ * kept the wrong question because an encounter room holds no townsfolk. It
+ * asks `areEnemies` now.
+ *
+ * ═══ WHAT THIS TOOL MEASURES, AND WHAT IT STILL CANNOT SEE ═══
+ * The body is dressed (`bearBirthKit`), its passives are folded and its birth
+ * stances are up (`grown.mjs#foldPassives`, `#raiseBirthSustains`) — all three
+ * were missing, so every number this file printed before today was a character
+ * whose talent sheet contributed exactly zero. `grown.mjs#foldPassives` names
+ * the one thing still absent: `absorb`, which reaches a closure inside
+ * `buildServer` rather than the sheet. No class here puts a shield up, so it is
+ * a bias in the HARD direction and it is stated rather than assumed away.
+ *
  * Usage:  node tools/first-fight.mjs [runs] [ground] [room-level]
  */
 
@@ -71,7 +92,11 @@ import { talentRuntimeFor } from '../src/server/main.ts';
 import { canRoute, canWalk, Ground } from '../src/shared/level.ts';
 import { ErasedReason } from '../src/shared/protocol.ts';
 import { firstStep } from './walk.mjs';
+import { areEnemies } from '../src/server/engine/actor.ts';
 import { classStrikes, firingSpot, takeShot } from './fightlib.mjs';
+import { bearBirthKit, foldPassives, raiseBirthSustains } from './grown.mjs';
+import { recomposeCombat } from '../src/server/engine/effects.ts';
+import { resolveItem } from '../src/server/content/resolve.ts';
 
 /** Enough that one lucky seed cannot carry a column. */
 const RUNS = Number(process.argv[2] ?? 24);
@@ -163,11 +188,59 @@ function fight(cls, seed) {
   talentEngine.attach('p1', sheet);
   // THE COMBAT SHEET. See the header — this one line is the whole reason the
   // tool exists.
+  p.classId = cls.id;
   p.combat = cls.combat;
   p.baseCombat = cls.combat;
   p.maxHp = cls.maxHp;
   p.hp = cls.maxHp;
   p.hpRegen = cls.hpRegen;
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * AND WHAT IT IS WEARING, WHICH WAS NOTHING AT ALL.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * This tool built a body from the class table and put NOT ONE ITEM on it —
+   * not even the brass lantern `descriptors.lua:75-77` gives every character at
+   * birth, which `delve-run.mjs` fixed on its own bodies and called "NOT a
+   * cosmetic detail". A level-1 character in this game is dressed: the
+   * universal half plus its own `resolvers.equipbirth` (`birthKitFor`), which
+   * for a Bulwark is a sword, a shield and a chestpiece and for either caster is
+   * a robe with no `wielder` table at all.
+   *
+   * SO THE ROW MOVED, AND ONLY FOR THE TWO CLASSES UPSTREAM DRESSES. That is the
+   * measurement, not a regression: the Watchman and the Inspector get the armour
+   * their archetypes are authored with, and the Alchemist and the Redactor get
+   * exactly what they got before, because upstream gives them nothing either.
+   */
+  bearBirthKit(p, effects);
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * AND WHAT IT KNOWS — WHICH WAS ALSO NOTHING, AND FOR LONGER.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * This tool folded no passives and raised no stance, so every number it ever
+   * printed was a body whose talent sheet contributed to `combat` exactly zero.
+   * `delve-run.mjs` closed the passive half of that gap when `foldPassives`
+   * was extracted, and this file was left behind — a real divergence between
+   * two probes that are supposed to be measuring one game.
+   *
+   * BOTH HALVES, IN THE ORDER `main.ts#refreshPassives` USES THEM: the stances
+   * a class is born in go up first, because the fold walks
+   * `[...sheet.passives, ...sheet.sustained]` and a stance that is not live
+   * contributes nothing.
+   *
+   * THE BIAS THIS REMOVES RAN IN THE HARD DIRECTION for every class and it was
+   * not uniform: the Watchman's `standingOrders` is ARMOUR, the Inspector's
+   * `coldReading` is SIGHT, and the Redactor's two are the whole of what this
+   * run ported. See `grown.mjs#foldPassives` for the one thing still missing.
+   */
+  raiseBirthSustains(cls, sheet, talentEngine);
+  foldPassives(p, sheet, effects, {
+    world: arena.world,
+    registry: talentEngine.registry,
+    engine: talentEngine,
+  });
+  recomposeCombat(p, effects, resolveItem);
   arena.engine.join('p1');
   arena.engine.setConnected('p1', true);
 
@@ -185,16 +258,34 @@ function fight(cls, seed) {
     new Set([...sheet.points].filter(([, rank]) => rank >= 1).map(([id]) => id)),
   );
 
-  // HOW MANY WERE ACTUALLY IN THERE. `seedAmbush`'s own note says "exactly one
-  // monster in the room" at level 1, which is a claim worth printing rather than
-  // trusting — `first-session.mjs` has met two.
-  const roster = arena.world.allActors().filter((a) => a.kind === 'monster').length;
+  /**
+   * HOW MANY WERE ACTUALLY IN THERE. `seedAmbush`'s own note says "exactly one
+   * monster in the room" at level 1, which is a claim worth printing rather than
+   * trusting — `first-session.mjs` has met two.
+   *
+   * ═══ `areEnemies`, NOT `kind === 'monster'` — delve-run.mjs's OWN CORRECTION ═══
+   * That file learned this against TOWNSFOLK and wrote it down: *"`kind ===
+   * Monster` is the wrong question"*, and it counted six foes in Alderbrook and
+   * spent 900 turns failing to murder the shopkeepers. This file kept the wrong
+   * question because an encounter room holds no townsfolk — and then a Redactor
+   * was born holding Call Shadows.
+   *
+   * MEASURED, the moment the birth stances were raised here: 0 of 4 wins and 4
+   * stalls for the Redactor, because her own Bound shadow is a `Monster`, is
+   * alive, and the loop below breaks on `foes.length === 0`. She was standing in
+   * an empty room next to a body she had called up, being counted as unfinished.
+   *
+   * ONE definition, the engine's, used by the roster count, the fight loop and
+   * the survivor count — which is exactly the three-copies shape that note names.
+   */
+  const hostiles = () => arena.world.allActors().filter((a) => areEnemies(p, a));
+  const roster = hostiles().length;
 
   let turns = 0;
   let worst = 1;
   let wiped = false;
   for (; turns < TURN_CAP; turns += 1) {
-    const foes = arena.world.allActors().filter((a) => a.kind === 'monster' && a.alive);
+    const foes = hostiles().filter((a) => a.alive);
     if (foes.length === 0 || !p.alive || isDowned(downed, 'p1')) break;
     const near = foes
       .map((f) => ({ f, d: Math.max(Math.abs(f.x - p.x), Math.abs(f.y - p.y)) }))
@@ -291,7 +382,7 @@ function fight(cls, seed) {
     worst = Math.min(worst, p.hp / p.maxHp);
   }
 
-  const left = arena.world.allActors().filter((a) => a.kind === 'monster' && a.alive).length;
+  const left = hostiles().filter((a) => a.alive).length;
   const down = wiped || !p.alive || isDowned(downed, 'p1');
   return {
     outcome: down ? 'down' : left === 0 ? 'win' : 'stall',

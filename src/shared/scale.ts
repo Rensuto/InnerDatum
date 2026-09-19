@@ -424,6 +424,38 @@ export function combatTalentSpellDamage(
 }
 
 /**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * `combatTalentMindDamage` — Combat.lua:2087-2092. THE SAME CURVE, MIND POWER.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ *     function _M:combatTalentMindDamage(t, base, max)
+ *       local mod = max / ((base + 100) * ((math.sqrt(5) - 1) * 0.8 + 1))
+ *       return self:rescaleDamage((base + (self:combatMindpower())) *
+ *         ((math.sqrt(self:getTalentLevel(t)) - 1) * 0.8 + 1) * mod)
+ *
+ * Line for line `combatTalentSpellDamage` above with `combatMindpower()` where
+ * that one reads `combatSpellpower()`, and upstream keeps the two as separate
+ * functions for it. Ours already takes the power as an ARGUMENT — because
+ * nineteen upstream talents pass an override — so this is a delegation and not
+ * a second copy of the arithmetic.
+ *
+ * ═══ IT EXISTS FOR THE GREP, WHICH IS A STATED PROJECT RULE ═══
+ * CLAUDE.md: *"Keep ported function names verbatim so
+ * `grep -r checkHit reference/t-engine4` still works in six months."* Gesture of
+ * Pain's `getBaseDamage` is `self:combatTalentMindDamage(t, 0, 130)`
+ * (gestures.lua:72-74), and a reader who greps that name must land on the thing
+ * it was ported into rather than on nothing at all.
+ */
+export function combatTalentMindDamage(
+  talentLevel: number,
+  base: number,
+  max: number,
+  mindPower: number,
+): number {
+  return combatTalentSpellDamage(talentLevel, base, max, mindPower);
+}
+
+/**
  * `getTierDiff` — Combat.lua:325-329.
  *
  * Tiers are twenty rescaled points wide. When an attacker's power outranks a

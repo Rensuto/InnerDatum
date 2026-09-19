@@ -31,10 +31,12 @@ import {
   DEFAULT_KEYMAP,
   KEYMAP_GEN_ID,
   labelFor,
+  labelForBinding,
   resetAll,
   resetOne,
 } from '../../src/client/input/keymap.ts';
 import { UiCommand } from '../../src/client/input/keys.ts';
+import { HOTBAR_KEY_ROW } from '../../src/client/ui/hotbar.ts';
 import { HEADER_H } from '../../src/client/ui/panel.ts';
 import { PartyAction } from '../../src/shared/protocol.ts';
 import { UI_SCALE_MAX, UI_SCALE_MIN } from '../../src/shared/version.ts';
@@ -506,6 +508,28 @@ describe('escapeMenuDragAt', () => {
 // THE KEYS SCREEN — every action, grouped, with its two columns
 // ---------------------------------------------------------------------------
 
+/**
+ * HOW MANY ACTION ROWS THE KEYS SCREEN DRAWS.
+ *
+ * DERIVED, NEVER PINNED. `keysRows` draws one row per action EXCEPT in a group
+ * where nothing is rebindable, which draws a single note naming the whole row of
+ * fixed keys instead. That is one group today (Hotbar, twelve slots) and the
+ * arithmetic follows the table rather than a number anybody has to remember.
+ */
+const REBINDABLE_ROWS = (() => {
+  const locked = new Set(
+    ACTIONS.filter((action) => !action.rebindable).map((action) => action.group),
+  );
+  const collapsed = [...locked].filter((group) =>
+    ACTIONS.filter((action) => action.group === group).every((action) => !action.rebindable),
+  );
+  const hidden = collapsed.reduce(
+    (sum, group) => sum + ACTIONS.filter((action) => action.group === group).length,
+    0,
+  );
+  return ACTIONS.length - hidden;
+})();
+
 describe('the keys screen', () => {
   it('lists every action this build binds, grouped and stably sorted', () => {
     // KeyBinder.lua:196-202 sorts by group then by `order`; ours takes the group
@@ -513,7 +537,23 @@ describe('the keys screen', () => {
     // sections read in the order a player learns them.
     const rows = keysRows();
     const actions = actionRows(rows);
-    expect(actions).toHaveLength(ACTIONS.length);
+    /**
+     * ═══ EVERY ACTION A PLAYER CAN REBIND HAS A ROW, WHICH IS NOT THE SAME AS
+     * ═══ EVERY ACTION.
+     *
+     * This read `ACTIONS.length` and was true while every action drew a row.
+     * A group in which NOTHING is rebindable now draws ONE note naming its whole
+     * row of fixed keys instead of one row each — `keysRows`'s own note has the
+     * argument and the measurement. So the property is: a rebindable action has
+     * a row, and the locked ones are accounted for either by a row (`cancel`,
+     * which sits among rebindable siblings) or by their group's note.
+     */
+    expect(actions.map((row) => row.actionId)).toEqual(
+      expect.arrayContaining(
+        ACTIONS.filter((action) => action.rebindable).map((action) => action.id),
+      ),
+    );
+    expect(actions.length).toBe(REBINDABLE_ROWS);
 
     const sections = rows.flatMap((row) => (row.kind === MenuRowKind.Section ? [row.label] : []));
     expect(sections).toEqual(['Movement', 'Turn', 'Screens', 'Hotbar', 'Log']);
@@ -548,45 +588,56 @@ describe('the keys screen', () => {
   it('marks every locked action, and a reason is reachable for each', () => {
     const rows = keysRows();
     const locked = actionRows(rows).filter((row) => row.locked);
-    expect(locked.map((row) => row.actionId)).toEqual([
-      'cancel',
-      'hotbar_1',
-      'hotbar_2',
-      'hotbar_3',
-      'hotbar_4',
-      'hotbar_5',
-      'hotbar_6',
-      'hotbar_7',
-      'hotbar_8',
-      'hotbar_9',
-    ]);
     /**
-     * ═══ THE REASON MOVED, IT DID NOT GO ═══
+     * ═══ ONE LOCKED ROW LEFT, AND THE TWELVE THAT WENT ARE ON A NOTE ═══
+     * `cancel` is locked and sits among seven rebindable siblings, so it keeps
+     * its row. The Hotbar group is locked ENTIRELY, so it draws one note naming
+     * its whole row of keys instead of twelve rows — see `keysRows`. The two
+     * assertions below are the same property from both ends: nothing locked is
+     * silently missing.
+     */
+    expect(locked.map((row) => row.actionId)).toEqual(['cancel']);
+    /**
+     * ═══ THE REASON MOVED, IT DID NOT GO — AND NOW THE ROWS HAVE TOO ═══
      * This asserted a per-row `reason` on all seven locked rows. Nine of the ten
-     * are hotbar digits locked for the IDENTICAL reason, and repeating it cost
+     * were hotbar digits locked for the IDENTICAL reason, and repeating it cost
      * each row the extra ten pixels of `LOCKED_ROW_H` — ninety pixels to say one
      * thing nine times, which is what pushed the table off one page at 1280x720.
+     * Then the number row grew to upstream's twelve and the ROWS themselves went
+     * the same way, for the same cause: `keysRows` draws one note for a group
+     * nothing can be rebound in.
      *
-     * The property that matters is that a reader can find out WHY, not that the
-     * sentence is stamped on every line. So: `cancel` keeps its own, and the
-     * Hotbar group states its own once as a Note.
+     * The property that matters is that a reader can find out WHY and WHICH KEY,
+     * not that either is stamped on every line.
      */
     const cancel = locked.find((row) => row.actionId === 'cancel');
     expect(cancel?.reason ?? '').toContain('Escape');
 
-    const notes = rows.filter((row) => row.kind === MenuRowKind.Note);
-    expect(notes.length).toBe(1);
-    expect((notes[0]?.kind === MenuRowKind.Note ? notes[0].text : '').length).toBeGreaterThan(10);
-
-    // AND NO HOTBAR ROW REPEATS IT, which is the whole saving.
-    for (const row of locked.filter((r) => r.actionId.startsWith('hotbar_'))) {
-      expect(row.reason, row.actionId).toBeNull();
+    const notes = rows.flatMap((row) => (row.kind === MenuRowKind.Note ? [row.text] : []));
+    // TWO: the group's lock reason, and its whole row of keys.
+    expect(notes).toHaveLength(2);
+    expect(notes[0] ?? '').toContain('painted on the slots');
+    /**
+     * EVERY FIXED KEY THE HOTBAR ANSWERS TO IS ON THAT LINE, in slot order.
+     * Read off `ACTIONS` rather than written out, so a slot that gained a key
+     * without gaining a place on the line fails here — which is the whole
+     * property the twelve rows used to carry one at a time.
+     */
+    const hotbar = ACTIONS.filter((action) => action.group === 'Hotbar').sort(
+      (a, b) => a.order - b.order,
+    );
+    expect(hotbar).toHaveLength(HOTBAR_KEY_ROW);
+    const line = notes[1] ?? '';
+    for (const action of hotbar) {
+      const fixed = action.fixed[0];
+      const key = fixed === undefined ? '--' : labelForBinding(fixed);
+      expect(line, `${action.id} (${key}) is not on the key line`).toContain(key);
     }
-    // A LOCKED ROW SHOWS ITS FIXED KEYS, NOT '--'. Both have empty `defaults` —
-    // that is what makes them unreachable by a remap — so reading the overlay
-    // would tell the player Escape and the digits are unbound.
+
+    // A LOCKED ROW SHOWS ITS FIXED KEYS, NOT '--'. `cancel` has empty `defaults`
+    // — that is what makes it unreachable by a remap — so reading the overlay
+    // would tell the player Escape is unbound.
     expect(locked[0]?.slots[0]).toBe('Esc');
-    expect(locked[1]?.slots[0]).toBe('1');
   });
 
   it('says so on the status line when nothing here will be saved', () => {
@@ -707,13 +758,15 @@ describe('paging', () => {
     // more than any band in this client can hold — which is why there is a pager
     // at all rather than a silent truncation.
     const paging = escapeMenuPaging(rect, keysRows());
-    expect(paging.total).toBe(ACTIONS.length);
+    // THE ROWS THE SCREEN DRAWS, not `ACTIONS.length`: a locked group is one
+    // note rather than a row each. See the keys-screen case above.
+    expect(paging.total).toBe(REBINDABLE_ROWS);
     expect(paging.pageCount).toBeGreaterThan(1);
     expect(paging.page).toBe(0);
     expect(paging.first).toBe(1);
     expect(paging.last).toBeGreaterThan(0);
     expect(paging.last).toBeLessThan(paging.total);
-    expect(paging.label).toBe(`1–${String(paging.last)} of ${String(ACTIONS.length)}`);
+    expect(paging.label).toBe(`1–${String(paging.last)} of ${String(REBINDABLE_ROWS)}`);
   });
 
   it('walks the pages contiguously and ends on the last action', () => {
@@ -728,13 +781,13 @@ describe('paging', () => {
       expect(paging.last).toBeGreaterThanOrEqual(paging.first);
       expected = paging.last + 1;
     }
-    expect(expected - 1).toBe(ACTIONS.length);
+    expect(expected - 1).toBe(REBINDABLE_ROWS);
   });
 
   it('clamps a page nobody can be on rather than drawing an empty screen', () => {
     const paging = escapeMenuPaging(rect, keysRows({ page: 99 }));
     expect(paging.page).toBe(paging.pageCount - 1);
-    expect(paging.last).toBe(ACTIONS.length);
+    expect(paging.last).toBe(REBINDABLE_ROWS);
     // A negative page is the same kind of mistake and gets the same answer.
     expect(escapeMenuPaging(rect, keysRows({ page: -3 })).page).toBe(0);
   });
@@ -747,7 +800,7 @@ describe('paging', () => {
     const roomier = { ...tall, h: 2000 };
     const paging = escapeMenuPaging(roomier, keysRows());
     expect(paging.pageCount).toBe(1);
-    expect(paging.label).toBe(`${String(ACTIONS.length)} keys`);
+    expect(paging.label).toBe(`${String(REBINDABLE_ROWS)} keys`);
   });
 });
 
@@ -1124,7 +1177,9 @@ describe('drawing', () => {
     // silently turns `\\d` into a literal `d`.
     const pager = texts.find((t) => t.includes(' of '));
     expect(pager).toMatch(/^\d+–\d+ of \d+$/);
-    expect(pager).toContain(` of ${String(ACTIONS.length)}`);
+    // `REBINDABLE_ROWS`, not `ACTIONS.length`: a group nothing can be rebound
+    // in draws one note instead of a row each. See the keys-screen case.
+    expect(pager).toContain(` of ${String(REBINDABLE_ROWS)}`);
     // The permanent floor is on the row, so a rebind cannot look like a break.
     // 'Up / Num8' until the arrows left movement; 'Num8' is the whole floor now.
     expect(texts.some((t) => t.includes('Num8'))).toBe(true);
@@ -1167,9 +1222,21 @@ describe('drawing', () => {
       (row) => row.kind === MenuRowKind.Action && row.locked && row.reason !== null,
     ).length;
     const lockedRows = rows.filter((row) => row.kind === MenuRowKind.Action && row.locked).length;
-    // THE FIXTURE IS THE HAZARD ITSELF: if every locked row carried a reason the
-    // two questions would agree and this test could not fail.
-    expect(lockedRows).toBeGreaterThan(withReason);
+    /**
+     * ═══ THE HAZARD WENT WITH THE ROWS, AND THIS LINE SAID SO BY FAILING ═══
+     * It read `expect(lockedRows).toBeGreaterThan(withReason)` under a note
+     * calling the fixture the hazard: nine locked rows with `reason: null`
+     * allotted `ROW_H` and painting into the row below. `keysRows` now draws NO
+     * rows at all for a group nothing can be rebound in, so the only locked row
+     * left is `cancel` and it carries its own reason — the two questions agree
+     * because there is nothing left to disagree about.
+     *
+     * So the equality is the assertion now, and it is the stronger one: every
+     * locked row that is drawn declares a reason, and the paint below shows
+     * exactly that many `LOCKED ·` lines. A future locked row with no reason
+     * breaks this immediately rather than painting over its neighbour.
+     */
+    expect(lockedRows).toBe(withReason);
 
     const pages = escapeMenuPaging(roomyRect(), rows).pageCount;
     const texts: string[] = [];

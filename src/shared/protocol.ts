@@ -1016,8 +1016,15 @@ export type ActorView = {
    * this behaves exactly as it always has — which is why adding it forces no
    * version bump.
    *
-   * `'townsfolk'` is the only value a client ever needs to branch on. The string
-   * is the server's `Faction` value verbatim so there is nothing to translate.
+   * TWO VALUES A CLIENT BRANCHES ON, and this said one. `'townsfolk'` was the
+   * only one there was; `'bound'` is what `talents/call_shadows.ts` puts on a
+   * body a player called up, and it answers as its summoner does
+   * (`Actor.lua:1666-1667`). Both arrive as a `Monster` for the same deliberate
+   * reason — same painter, same FOV, only who may hit them differs — so `kind`
+   * cannot tell a client either of them apart from a husk.
+   *
+   * The string is the server's `Faction` value verbatim so there is nothing to
+   * translate; `input/travel.ts` writes both out once, beside each other.
    */
   faction?: string;
   /**

@@ -46,7 +46,7 @@ import {
 } from '../src/shared/leveling.ts';
 import { canRaiseStat, pointsForLevel, TALENT_MAX_LEVEL } from '../src/shared/progression.ts';
 import { rollLoot, bandFor } from '../src/server/content/loot.ts';
-import { BIRTH_KIT, ITEMS } from '../src/server/content/items.ts';
+import { ITEMS, birthKitFor } from '../src/server/content/items.ts';
 import { resolveItem } from '../src/server/content/resolve.ts';
 import {
   EffectStatus,
@@ -54,7 +54,12 @@ import {
   effectsOn,
   recomposeCombat,
 } from '../src/server/engine/effects.ts';
-import { effectiveResourceMax, talentLevelOf } from '../src/server/engine/talents.ts';
+import {
+  TalentKind,
+  effectiveResourceMax,
+  talentLevelOf,
+  toggleSustain,
+} from '../src/server/engine/talents.ts';
 import { maxLifeOf } from '../src/server/engine/pools.ts';
 import { STAT_BASE } from '../src/server/engine/derived.ts';
 import { ActorKind, Slot, SLOT_ORDER } from '../src/shared/protocol.ts';
@@ -265,11 +270,27 @@ export function bandAt(level) {
  * repository keeps shipping. The bag path is the gateway's problem; a probe body
  * has an empty doll.
  *
+ * ═══════════════════════════════════════════════════════════════════════════
+ * AND IT IS `birthKitFor`, NOT `BIRTH_KIT` — THE KIT IS PER CLASS NOW.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `BIRTH_KIT` is upstream's UNIVERSAL half (`descriptors.lua:75-77`, the brass
+ * lantern). The other half is `resolvers.equipbirth`, authored on every SUBCLASS
+ * descriptor and different for all four — a sword, a shield and mail for the
+ * Bulwark (warrior.lua:175-179), leather for the Archer (:241-245), a robe with
+ * no `wielder` table at all for both casters (mage.lua:104-107,
+ * afflicted.lua:155-159).
+ *
+ * A probe that dressed every body in a lantern alone was measuring a character
+ * nobody has ever played — which is `delve-run.mjs`'s own charge against the
+ * bodies it used to build, one layer up. `classId` is read off the body, so a
+ * probe that never set one keeps exactly the kit it had.
+ *
  * `effects` is the status table (`createMvpEffectState`) so `recomposeCombat`
  * folds the doll the same way the server does. Pass `null` where a probe has none.
  */
 export function bearBirthKit(body, effects = null) {
-  for (const id of BIRTH_KIT) {
+  for (const id of birthKitFor(body.classId)) {
     const item = resolveItem(id);
     if (item?.slot === undefined) continue;
     if (body.equipped?.[item.slot] !== undefined) continue;
@@ -358,6 +379,21 @@ export function rememberWhatProbesSee(world) {
  * 47% in the light. A probe that cannot see the change cannot be asked whether
  * the change worked.
  *
+ * ═══ AND A SUSTAIN THAT WAS NEVER LIVE IS THE SAME GAP ONE STEP OVER ═══
+ * `foldPassives` walks `[...sheet.passives, ...sheet.sustained]`, and
+ * `sheet.sustained` was EMPTY for every probe body at every level — so a class
+ * born in a stance contributed nothing from it, and the fold reported "no
+ * bias" while carrying one. `raiseBirthSustains` is the other half; the two
+ * are called in that order, always, and the order is the rule.
+ *
+ * IT WAS TWO BUGS WEARING ONE COAT. `fightlib.mjs#selfHelp` selected exactly
+ * the shape a sustain has and `takeHelp` returned at the first ACCEPTED
+ * submit — and `turn-engine.ts#submitTalent` accepts a sustain without ever
+ * routing it through `toggleSustain`. So the stance did not go up AND the heal
+ * behind it was never reached: `healing_infusion:ok` over the twelve moor
+ * delves was 467 / 2270 / 2468 for the other three classes and **0** for the
+ * Redactor. That column was not a fact about the class.
+ *
  * WHAT IS STILL NOT HERE: `absorb`. It is the one line of the production fold
  * that reaches a closure rather than the sheet (`absorbShield` keys on an id
  * inside `buildServer`), and no talent any of the four classes owns puts a
@@ -408,6 +444,57 @@ export function levelOnTheFloor(body, cls, sheet, effects, ctx = undefined) {
  * board, which is what a body standing alone honestly sees. It is not a second
  * opinion about the rule; it is the same rule asked from a quieter room.
  */
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ *   THE STANCES A CLASS IS BORN IN, PUT UP — AND IT IS NOT A CONVENIENCE.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * A probe body used to reach the first tile of a delve with `sheet.sustained`
+ * EMPTY, for ever, at every level. That was harmless while a stance was only a
+ * modifier; it stopped being harmless the day a class was BORN in one.
+ *
+ * ═══ WHAT WAS ACTUALLY WRONG, WHICH IS WORSE THAN "THE DRIVER CANNOT PRESS ONE" ═══
+ * `fightlib.mjs#selfHelp` selects `affinity === 'ally' && shape === 'self'`,
+ * which is exactly what a sustain is, and `takeHelp` returns at the first
+ * submit the engine ACCEPTS. But `turn-engine.ts#submitTalent` never routes a
+ * sustain through `toggleSustain` — the only caller of that is the gateway —
+ * so the submit was accepted, the stance did not go up, and the chain
+ * short-circuited there. Measured over the twelve moor delves:
+ * `talent:call_shadows:ok = 2019`, turns with a shadow alive = 0, and
+ * `healing_infusion:ok` = 467 / 2270 / 2468 for the other three classes
+ * against **0** for the Redactor. The one class in the game that never drank.
+ *
+ * So there were two bugs wearing one coat: a stance that never rose, and every
+ * heal behind it that was never reached. `selfHelp` now refuses a sustain and
+ * says why; this is the other half.
+ *
+ * ═══ BIRTH STANCES ONLY, AND THROUGH THE PRODUCTION TOGGLE ═══
+ * What a player does on turn one is put up the stance their class came with.
+ * They do not buy one first, so this reads `birthTalents` and not `loadout` —
+ * `openLedger` is a Redactor's first PURCHASE now, not her birthright, and a
+ * probe that pressed it would be measuring a character nobody starts as.
+ *
+ * `toggleSustain` is the real seam, with the real refusals: the rank test
+ * (`getTalentLevelRaw >= 1`), the slot displacement, and the reservation
+ * arithmetic that can answer `NoRoom`. A refusal is left refused and the body
+ * fights without it, which is the honest reading of a stance it cannot afford.
+ *
+ * THE CALLER RE-FOLDS. `foldPassives` walks `[...sheet.passives,
+ * ...sheet.sustained]`, so this must run BEFORE it or the stance contributes
+ * nothing — which is the same ordering `main.ts#toggleSustain` keeps when it
+ * calls `refreshPassives` after the toggle.
+ */
+export function raiseBirthSustains(cls, sheet, engine) {
+  if (sheet === undefined || engine === undefined) return [];
+  const up = [];
+  for (const talent of cls?.birthTalents ?? []) {
+    if (talent.kind !== TalentKind.Sustained) continue;
+    const out = toggleSustain(engine, sheet, talent.id);
+    if (out?.ok === true && out.on === true) up.push(talent.id);
+  }
+  return up;
+}
+
 export function foldPassives(body, sheet, effects, ctx = undefined) {
   const registry = ctx?.registry;
   const engine = ctx?.engine;

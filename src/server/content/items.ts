@@ -1158,8 +1158,11 @@ const INSPECTOR_KIT: readonly Item[] = [
     tier: 'rare',
     // NO ARMOUR ON THIS ITEM, ON PURPOSE. See the file header: any armour total
     // below the attacker's apr is worth exactly zero, and the Inspector starts
-    // at 0 against a roster whose lowest apr is 7. A "+2 armour" longcoat would
-    // read as an upgrade on the sheet and be inert in the fight.
+    // at 0 against a roster whose lowest apr WAS 7 when this was written and is
+    // 3 today (`index_eidolon`, `undermost_warden`, measured over
+    // `ALL_TEMPLATES`). The argument survives the correction — a "+2 armour"
+    // longcoat still reads as an upgrade on the sheet and is still inert
+    // against every body above apr 2 — but the number is not 7 any more.
     wielder: { mods: { def: 4 } },
   },
   {
@@ -1851,8 +1854,105 @@ const QUEST_ARTEFACTS: readonly Item[] = [
  * the base birth descriptor hands each one a brass lantern
  * (data/birth/descriptors.lua:75-77). The gateway gives it once per character;
  * see `PlayerActor.kitGranted`.
+ *
+ * THE UNIVERSAL HALF ONLY. Upstream splits birth gear in two and so does this
+ * file now: `descriptors.lua:75-77` is on the BASE descriptor and every
+ * character in the game gets it; `resolvers.equipbirth` is on each SUBCLASS
+ * descriptor and no two agree. See `birthKitFor`.
  */
 export const BIRTH_KIT: readonly string[] = Object.freeze(['item_brass_lantern']);
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * AND THE HALF THAT IS DIFFERENT FOR EVERY CLASS — `resolvers.equipbirth`.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `BIRTH_KIT` WAS THE WHOLE ANSWER AND UPSTREAM HAS NEVER HAD ONE LIST. Every
+ * subclass descriptor carries its own `resolvers.equipbirth{...}`, and the four
+ * this game ports disagree on the only column that matters:
+ *
+ *   BULWARK   warrior.lua:175-179    iron longsword + iron shield + iron mail
+ *                                    armour (heavy-armors.lua:38-49 —
+ *                                    `combat_armor = 4, combat_def = 2`;
+ *                                    shields.lua:42-59 — `combat_armor = 2,
+ *                                    combat_def = 4`)
+ *   ARCHER    warrior.lua:241-245    elm longbow + quiver + ROUGH LEATHER
+ *                                    ARMOUR (light-armors.lua:34-44 —
+ *                                    `combat_armor = 2, combat_def = 1`)
+ *   ALCHEMIST mage.lua:104-107       elm staff + LINEN ROBE
+ *   DOOMED    afflicted.lua:155-159  two mossy mindstars + LINEN ROBE
+ *
+ * ═══ THE LINEN ROBE IS WORTH NOTHING, AND THAT IS THE WHOLE POINT ═══
+ * `cloth-armors.lua:34-39` authors the linen robe with NO `wielder` TABLE AT
+ * ALL — no armour, no defence, no anything. So upstream's two casters are not
+ * "given less armour"; they are given a garment that is mechanically zero. A
+ * kit that handed all four classes the same chestpiece would therefore not be
+ * "everybody gets their birth gear", it would be three classes handed armour
+ * their archetype is deliberately denied.
+ *
+ * That is why this is a FUNCTION and not a longer array.
+ *
+ * ═══ WHAT DID NOT CROSS, STATED RATHER THAN SUBSTITUTED ═══
+ *   NO HEAVY BODY ARMOUR EXISTS HERE, AND THE WATCHMAN IS TWO SHORT ON BOTH.
+ *     He takes `item_leather_chest` (armour 3, def 1) plus
+ *     `item_watchmans_buckler` (armour 1, def 3) and lands on ARMOUR 4 /
+ *     DEFENCE 4. The Bulwark wears iron mail (4/2, heavy-armors.lua:38-49) AND
+ *     carries an iron shield (2/4, shields.lua:42-59) and lands on 6/6.
+ *
+ *     THIS PARAGRAPH SAID "armour 4 — upstream's mail figure exactly", WHICH
+ *     COMPARED OUR WHOLE KIT AGAINST HALF OF HIS. Two items against two items
+ *     is the comparison, and it is two armour and two defence short. The gap is
+ *     a missing ITEM — there is no heavy body piece and no true shield — not a
+ *     decision, and it closes the day either is authored.
+ *   AND THE INSPECTOR IS ONE OVER, WHICH IS THE SAME CATALOGUE FACT INVERTED.
+ *     `item_leather_chest` is armour 3 where upstream's rough leather is 2
+ *     (light-armors.lua:34-44). There is no armour-2 body piece in this game,
+ *     so the nearest one is high rather than low. Both deviations are forced by
+ *     the catalogue and neither is a balance choice; they are stated together
+ *     because only one of them used to be stated at all.
+ *   NO BOW, NO STAFF, NO MINDSTAR. The Archer's longbow, the Alchemist's staff
+ *     and the Doomed's two mindstars are all ported already — as the CLASS
+ *     weapon table (`ClassDef.combat.weapon`, content/classes.ts), which is
+ *     what `attackTarget` swings when the hand is empty. Handing out a second
+ *     copy as an item would overwrite the class's own `damMod` and make every
+ *     class the same class. The Inspector's revolver carries `archery: true`
+ *     for exactly this reason.
+ *   THE MINDSTARS COST THE REDACTOR SOMETHING REAL. Gesture of Pain adds
+ *     `(weapon.combat.dam or 1) * 2` per equipped mindstar and their crit on
+ *     top (gestures.lua:78-100). With no mindstar in the game both terms are
+ *     zero, so ours is the bare `getBaseDamage` band. Stated in
+ *     `gesture_of_pain.ts`.
+ *
+ * ═══ IDS AS LITERALS, FOR THE CYCLE REASON THIS FILE ALREADY DOCUMENTS ═══
+ * `ClassId` lives in `engine/talents.ts`, which reaches this file through
+ * `engine/equipment.ts` -> `SLOT_ORDER`. Importing the VALUE closes the loop and
+ * the server does not boot — see the brass ring's note on `EffectId`. So the
+ * keys are written out and `items.test.ts` pins them against the real `ClassId`.
+ */
+const CLASS_BIRTH_EQUIPMENT: Readonly<Record<string, readonly string[]>> = Object.freeze({
+  // BULWARK — warrior.lua:175-179. A sword, a shield and a body piece.
+  watchman: Object.freeze(['item_service_baton', 'item_watchmans_buckler', 'item_leather_chest']),
+  // ARCHER — warrior.lua:241-245. The bow IS her class table; the leather is this.
+  inspector: Object.freeze(['item_leather_chest']),
+  // ALCHEMIST — mage.lua:104-107. A staff (her class table) and a robe worth zero.
+  alchemist: Object.freeze([]),
+  // DOOMED — afflicted.lua:155-159. Two mindstars (her class table) and a robe worth zero.
+  redactor: Object.freeze([]),
+});
+
+/**
+ * Everything this class is born wearing, in the order it is handed over: the
+ * universal `BIRTH_KIT` first, then its archetype's `resolvers.equipbirth`.
+ *
+ * A CLASS THIS BUILD NO LONGER HAS GETS THE UNIVERSAL HALF AND NOTHING ELSE,
+ * which is the same substitute-and-carry-on rule `classById` follows for a save
+ * naming a deleted class.
+ */
+export function birthKitFor(classId: string | null | undefined): readonly string[] {
+  const own =
+    classId === null || classId === undefined ? undefined : CLASS_BIRTH_EQUIPMENT[classId];
+  return own === undefined ? BIRTH_KIT : [...BIRTH_KIT, ...own];
+}
 
 export const ITEMS: readonly Item[] = Object.freeze([
   ...WATCHMAN_KIT,

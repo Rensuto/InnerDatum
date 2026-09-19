@@ -52,6 +52,7 @@ import {
   dressFor,
   foldPassives,
   levelOnTheFloor,
+  raiseBirthSustains,
   rememberWhatProbesSee,
   spendPointsTo,
 } from './grown.mjs';
@@ -270,6 +271,13 @@ export function run(site, size, seed, opts = {}) {
   for (let i = 0; i < size; i += 1) {
     const cls = party[i % party.length];
     const p = realm.world.addPlayer(`p${i}`, `P${i}`);
+    /**
+     * WHICH CLASS THIS BODY IS, ON THE BODY. Production writes it in
+     * `reclothePlayer` and `bearBirthKit` reads it — `resolvers.equipbirth` is
+     * authored per SUBCLASS, so a probe body with no `classId` is dressed in the
+     * universal half alone and measures a character nobody has ever played.
+     */
+    p.classId = cls.id;
     // THE COMBAT SHEET. See the header.
     p.combat = cls.combat;
     p.baseCombat = cls.combat;
@@ -332,6 +340,12 @@ export function run(site, size, seed, opts = {}) {
      * the turns a level-1 body is most likely to die in, were fought by a
      * character with no passive talents. Production folds at `join`.
      */
+    /**
+     * AND THE STANCES SHE IS BORN IN, BEFORE THE FOLD — see `raiseBirthSustains`.
+     * `foldPassives` walks `sheet.sustained`, so the order is the rule and not
+     * a preference.
+     */
+    raiseBirthSustains(cls, sheet, talentEngine);
     foldPassives(p, sheet, effects, {
       world: realm.world,
       registry: talentEngine.registry,

@@ -28,6 +28,7 @@ import {
   setBinding,
 } from '../../../src/client/input/keymap.ts';
 import { KEYBIND_ACTION_MAX_CHARS, KEYBIND_MAX_ACTIONS } from '../../../src/shared/protocol.ts';
+import { HOTBAR_KEY_ROW, HOTBAR_ROW_KEYS } from '../../../src/client/ui/hotbar.ts';
 import { Dir } from '../../../src/shared/coords.ts';
 import { TurnCommand, UiCommand } from '../../../src/client/input/keys.ts';
 import type { ActionDef, Binding, KeyRemap } from '../../../src/client/input/keymap.ts';
@@ -232,7 +233,7 @@ describe('the action registry', () => {
     expect([...known].sort()).toEqual(['Hotbar', 'Log', 'Movement', 'Screens', 'Turn']);
   });
 
-  it('names 35 actions, and stays under the cap the wire was sized for', () => {
+  it('names 38 actions, and stays under the cap the wire was sized for', () => {
     // src/shared/protocol.ts justifies the wire cap with an enumeration, and if
     // the table outgrows it a complete keymap starts getting refused as
     // `bad_message` with nobody able to guess why. THE SECOND ASSERTION IS THE
@@ -245,8 +246,11 @@ describe('the action registry', () => {
     // number has gone DOWN, and the rows below them were renumbered so `order`
     // stays definition order; 34 -> 35 when the Journal joined the Screens
     // group (*"case notes should actually be 'Journal'"*), which renumbered the
-    // twelve Hotbar and Log rows below it for that same reason.
-    expect(ACTIONS).toHaveLength(35);
+    // twelve Hotbar and Log rows below it for that same reason; 35 -> 38 when
+    // the number row grew to upstream's TWELVE (`PlayerHotkeys.lua:314`,
+    // `for x = 1, 12`) and slots 10, 11 and 12 arrived on `Digit0`, `Minus` and
+    // `Equal` -- which renumbered the three rows below them for that same reason.
+    expect(ACTIONS).toHaveLength(38);
     expect(ACTIONS.length).toBeLessThanOrEqual(KEYBIND_MAX_ACTIONS);
   });
 
@@ -455,7 +459,7 @@ describe('reset', () => {
 describe('a locked action refuses every write', () => {
   const LOCKED = ACTIONS.filter((action) => !action.rebindable).map((action) => action.id);
 
-  it('is exactly cancel and the nine hotbar digits', () => {
+  it('is exactly cancel and the twelve hotbar keys', () => {
     // Escape because it is the command line's only exit and the escape menu's
     // opener, so freezing it keeps RESET ALL one press away whatever else the
     // player has done. The digits because src/client/ui/hotbar.ts:391 PAINTS
@@ -475,6 +479,13 @@ describe('a locked action refuses every write', () => {
       'hotbar_7',
       'hotbar_8',
       'hotbar_9',
+      // AND THE THREE THAT MADE THE ROW TWELVE. Locked for the identical
+      // reason and one more: `ROW_KEYS` (ui/hotbar.ts) paints `0`, `-` and `=`
+      // on these squares, so a rebind would make an on-screen button lie in a
+      // row where the other nine cannot.
+      'hotbar_10',
+      'hotbar_11',
+      'hotbar_12',
     ]);
   });
 
@@ -1374,5 +1385,89 @@ describe('a stored keymap written before the WASD ruling', () => {
         expect(stored.includes('arrow')).toBe(false);
       }
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// THE WHOLE NUMBER ROW, KEY BY KEY — the join nobody was making
+// ---------------------------------------------------------------------------
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE TWELVE PHYSICAL KEYS, AND THE EVENT EACH ONE PRODUCES. THE SPEC.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Written out here and derived from NOTHING in `src/`, which is the only shape
+ * that can fail. The coverage this replaces was a three-line spot check —
+ * `slotByKey.get('1') === 0`, `slotByCode.get('Digit5') === 4`, `Digit6 === 5`
+ * — so mutating `hotbar_5` was caught and mutating `hotbar_8` was not, and the
+ * three slots added for `ledger/unwritten` arrived asserted only as MEMBERS of
+ * two lists. Measured: moving `hotbar_11`'s effect from slot 10 to slot 11 —
+ * which makes `-` and `=` both fire slot 12 and leaves slot 11 UNPRESSABLE —
+ * left all 6970 tests green, and re-binding `hotbar_10` from `Digit0` to
+ * `BracketLeft` while the bar kept painting `0` on it left all 2013 client
+ * tests green. That second one is the failure `hotbarKeyLabel`'s own note
+ * calls *"the single worst failure a hotbar has"*.
+ *
+ * `key` and `code` are what a browser reports on a US layout: the digits are
+ * `Digit0`-`Digit9`, and the two beside them are `Minus` and `Equal`.
+ * `keys.ts` reads `slotByCode` first and `slotByKey` second (:666, :673), so a
+ * row bound either way is reachable by the press this table describes.
+ */
+const NUMBER_ROW: readonly { readonly printed: string; readonly code: string }[] = [
+  { printed: '1', code: 'Digit1' },
+  { printed: '2', code: 'Digit2' },
+  { printed: '3', code: 'Digit3' },
+  { printed: '4', code: 'Digit4' },
+  { printed: '5', code: 'Digit5' },
+  { printed: '6', code: 'Digit6' },
+  { printed: '7', code: 'Digit7' },
+  { printed: '8', code: 'Digit8' },
+  { printed: '9', code: 'Digit9' },
+  { printed: '0', code: 'Digit0' },
+  { printed: '-', code: 'Minus' },
+  { printed: '=', code: 'Equal' },
+];
+
+describe('every hotbar slot has a key, and it is the key the bar prints', () => {
+  it('has one row entry per slot', () => {
+    expect(NUMBER_ROW).toHaveLength(HOTBAR_KEY_ROW);
+    // AND THE BAR PRINTS EXACTLY THESE, IN THIS ORDER. `HOTBAR_ROW_KEYS` is
+    // what `hotbarKeyLabel` paints; this table is what a keyboard sends. The
+    // two have never been compared to each other anywhere in the suite.
+    expect(NUMBER_ROW.map((row) => row.printed)).toEqual([...HOTBAR_ROW_KEYS]);
+  });
+
+  it('walks every slot from the press to the number', () => {
+    const keymap = compileKeymap(ACTIONS, {});
+    NUMBER_ROW.forEach((row, slot) => {
+      const fromCode = keymap.slotByCode.get(row.code);
+      const fromKey = keymap.slotByKey.get(row.printed);
+      const reached = fromCode ?? fromKey;
+      expect(reached, `pressing ${row.printed} reaches no slot at all`).toBeDefined();
+      expect(reached, `pressing ${row.printed} reaches the wrong slot`).toBe(slot);
+    });
+  });
+
+  it('gives each slot exactly one key, so no two keys share one', () => {
+    // The `hotbar_11 -> slot 11` mutant makes `-` and `=` both fire slot 12 and
+    // leaves slot 11 with nothing at all. A per-slot walk catches the second
+    // half; this catches the first, and says which failure it is.
+    const keymap = compileKeymap(ACTIONS, {});
+    const reached = NUMBER_ROW.map(
+      (row) => keymap.slotByCode.get(row.code) ?? keymap.slotByKey.get(row.printed),
+    );
+    expect(new Set(reached).size, 'two keys fire the same slot').toBe(HOTBAR_KEY_ROW);
+  });
+
+  it('names every one of them, so the Keys screen agrees with the game', () => {
+    // `resolveAction` is the Keys screen's reader of the same tables. A press
+    // the game answers and that function cannot name puts "unbound" beside a
+    // key that works.
+    const keymap = compileKeymap(ACTIONS, {});
+    NUMBER_ROW.forEach((row, slot) => {
+      const named = resolveAction({ code: row.code, key: row.printed }, keymap);
+      expect(named, `pressing ${row.printed} is nameless`).toBe(`hotbar_${String(slot + 1)}`);
+    });
   });
 });

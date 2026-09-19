@@ -579,6 +579,25 @@ type ActorCommon = {
    */
   kitGranted?: readonly string[];
 
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * TURNS UNTIL THE NEXT SHADOW — `self.shadows.remainingCooldown`,
+   * shadows.lua:439-449.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * ON THE BODY BECAUSE UPSTREAM PUTS IT ON THE BODY. `callbackOnActBase`
+   * lazily creates `self.shadows` on the ACTOR rather than on the sustain's
+   * parameter table, and the difference is observable: the counter survives the
+   * sustain being dropped and raised again, so a Redactor cannot re-press the
+   * button to get a shadow early.
+   *
+   * ABSENT IS ZERO, which is upstream's fresh `{ remainingCooldown = 0 }` — the
+   * first base turn after the stance goes up decrements it below zero and
+   * therefore summons immediately. `talents/call_shadows.ts` is the only reader
+   * and the only writer.
+   */
+  shadowCooldown?: number;
+
   // --- preferences ----------------------------------------------------------
   /**
    * WHICH KEYS THIS PLAYER HAS REBOUND: action id -> key strings, in slot order.
@@ -1257,6 +1276,26 @@ export type MonsterActor = ActorCommon & {
   readonly opensDoors?: boolean;
   /** Which side. `Redacted` for the whole bestiary; see `Faction`. */
   readonly faction: Faction;
+  /**
+   * ═════════════════════════════════════════════════════════════════════════
+   * WHO CALLED THIS BODY UP — `summoner`, Actor.lua:1666. ABSENT FOR EVERY
+   * CREATURE THAT WAS SIMPLY THERE.
+   * ═════════════════════════════════════════════════════════════════════════
+   *
+   * THE LINK, not the reaction. `Faction.Bound` is what `areEnemies` reads and
+   * is enough for a question asked with no world in hand; this is the actor id
+   * a question asked WITH a world needs — the leash (`shadowPass`,
+   * `talents/call_shadows.ts`) walks it every base turn to ask whether the
+   * summoner is still alive, still on this floor and still sustaining.
+   *
+   * ═══ AN ID AND NOT A REFERENCE, WHICH IS THIS CODEBASE'S RULE ═══
+   * Upstream stores the actor itself and pays for it with `if self.summoner.dead`
+   * scattered through the shadow's own methods (shadows.lua:286-289). A
+   * realm-crossing body, a save file and a reaped corpse all make a held
+   * reference a way to keep a dead object alive; every other cross-body link
+   * here (`ai.targetId`, `srcId`, `killerId`) is an id for the same reason.
+   */
+  readonly summonerId?: string;
   readonly ai: MonsterAi;
 };
 
@@ -1416,6 +1455,40 @@ export const Faction = {
   Redacted: 'redacted',
   /** Alderbrook's living. Cannot be attacked and never attacks. */
   Townsfolk: 'townsfolk',
+  /**
+   * ═════════════════════════════════════════════════════════════════════════
+   * SOMETHING A PLAYER CALLED UP. It answers as its summoner does.
+   * ═════════════════════════════════════════════════════════════════════════
+   *
+   * `Actor.lua:1664-1667` is the whole rule and it is four lines:
+   *
+   * ```lua
+   * function _M:reactionToward(target, no_reflection)
+   *   local rsrc, rtarget = self, target
+   *   while rsrc.summoner do rsrc = rsrc.summoner end
+   *   while rtarget.summoner do rtarget = rtarget.summoner end
+   * ```
+   *
+   * A summon has no opinion of its own: the chain is walked to a ROOT and the
+   * root's reaction is the answer. Upstream's own comment on the next line
+   * spells out both consequences — *"summons shouldn't hate each other and
+   * shouldn't hate summoner more than enemies"*.
+   *
+   * ═══ WHY THIS IS A FACTION AND NOT A THIRD `ActorKind` ═══
+   * The argument `Townsfolk` makes above holds unchanged: a shadow is a body on
+   * a tile with hit points and a sprite, drawn by the same painter, seen by the
+   * same FOV, ticked by the same scheduler. The one thing that differs is who
+   * may hit it. So it is a field on the body.
+   *
+   * ═══ AND WHY THE ROOT IS ASSUMED TO BE A PLAYER ═══
+   * `areEnemies` is handed two `Sided`s and no world, so it cannot WALK the
+   * link — and every summoner in this game is a player, because Call Shadows
+   * (`talents/call_shadows.ts`) is the only thing that summons and only a
+   * Redactor has it. `MonsterActor.summonerId` carries the link for everything
+   * that does have a world, and `ally.test.ts` fails the day a monster is given
+   * this faction, which is the day this shortcut has to become the real walk.
+   */
+  Bound: 'bound',
 } as const;
 export type Faction = (typeof Faction)[keyof typeof Faction];
 
@@ -1458,7 +1531,25 @@ export type Sided = {
  */
 export function areEnemies(a: Sided, b: Sided): boolean {
   if (a.faction === Faction.Townsfolk || b.faction === Faction.Townsfolk) return false;
-  return a.kind !== b.kind;
+  return reactsAs(a) !== reactsAs(b);
+}
+
+/**
+ * WHICH SIDE THIS BODY ANSWERS FOR — `Actor.lua:1666-1667`, the summoner walk.
+ *
+ * `while rsrc.summoner do rsrc = rsrc.summoner end`: a summon is replaced by
+ * whoever called it up before any reaction is computed. Ours has exactly one
+ * summoner and it is a player (see `Faction.Bound`), so the walk collapses to
+ * a substitution — and it is written as a function rather than inlined so the
+ * day a monster summons something, there is one line to change.
+ *
+ * THIS IS WHAT MAKES ALL THREE ANSWERS COME OUT AT ONCE: a shadow is not an
+ * enemy of its summoner, is not an enemy of another shadow, and IS an enemy of
+ * everything Redacted — which is the first monster-on-monster hostility this
+ * engine has ever had, and it needed no second predicate.
+ */
+function reactsAs(s: Sided): ActorKind {
+  return s.faction === Faction.Bound ? ActorKind.Player : s.kind;
 }
 
 export type EngineActor = PlayerActor | MonsterActor;
@@ -1696,6 +1787,8 @@ export type MonsterInit = {
    * byte-identical and no seeded stream moves.
    */
   readonly faction?: Faction;
+  /** Who called it up. See `MonsterActor.summonerId`; absent for the roster. */
+  readonly summonerId?: string;
   /** The real combat sheet. content/monsters.ts always supplies one. */
   readonly combat?: CombatSheet;
 };
@@ -1933,6 +2026,9 @@ export function createMonsterActor(id: string, init: MonsterInit): MonsterActor 
     // DEFAULTED, not required: the three roster templates author nothing, so
     // they stay exactly the bodies they were.
     faction: init.faction ?? Faction.Redacted,
+    // NAMED, never spread — the `onDie` rule at the head of this constructor.
+    // Absent stays absent, which is every creature that was simply there.
+    ...(init.summonerId === undefined ? {} : { summonerId: init.summonerId }),
     ai: {
       profile: init.profile,
       targetId: null,

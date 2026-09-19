@@ -10,6 +10,7 @@ import {
   HOTBAR_KEY_ROWS,
   HOTBAR_SLOTS_DEFAULT,
   HOTBAR_SLOT_POOL,
+  HOTBAR_ROW_KEYS,
   hotbarKeyLabel,
   hotbarSlotForKey,
 } from '../../src/client/ui/hotbar.ts';
@@ -392,8 +393,10 @@ describe('one bar: every slot takes either kind, and every slot has a key', () =
     for (let digit = 0; digit < HOTBAR_KEY_ROW; digit += 1) {
       const plain = hotbarSlotForKey(digit, false);
       const shifted = hotbarSlotForKey(digit, true);
-      expect(hotbarKeyLabel(plain)).toBe(`${String(digit + 1)}`);
-      expect(hotbarKeyLabel(shifted)).toBe(`⇧${String(digit + 1)}`);
+      // `HOTBAR_ROW_KEYS`, NOT `digit + 1`: the row is upstream's twelve and
+      // its tenth key says `0`. `hotbar.test.ts` spells the row out as the spec.
+      expect(hotbarKeyLabel(plain)).toBe(HOTBAR_ROW_KEYS[digit]);
+      expect(hotbarKeyLabel(shifted)).toBe(`⇧${String(HOTBAR_ROW_KEYS[digit])}`);
       expect(plain).not.toBe(shifted);
     }
     // EVERY SLOT IN THE POOL IS REACHABLE, and no two share a key.

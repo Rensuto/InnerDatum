@@ -16,6 +16,7 @@ import {
   INDEX_EIDOLON,
   INDEX_HUSK,
   INDEX_WRAITH,
+  ALL_TEMPLATES,
   MONSTER_TEMPLATES,
   validateTemplate,
   INDEX_GLUT,
@@ -80,7 +81,12 @@ describe('the two new creatures are ported, not invented', () => {
   });
 
   it('passes the same validator as everything that shipped before them', () => {
-    for (const template of MONSTER_TEMPLATES) {
+    // `ALL_TEMPLATES`, NOT `MONSTER_TEMPLATES`. A summoned body is still a body
+    // — same reach rules, same dead zone, same diagonal — and the validator has
+    // already earned its place here once by refusing `bound_shadow` for a
+    // `MeleeChaser` aggro below sight. The bestiary list is what the WORLD
+    // rolls; this sweep is about whether a template is well formed at all.
+    for (const template of ALL_TEMPLATES) {
       expect(validateTemplate(template), `${template.id} is malformed`).toEqual([]);
     }
     /**
@@ -110,10 +116,14 @@ describe('the two new creatures are ported, not invented', () => {
         'sprite' in value &&
         'maxHp' in value,
     );
-    const registered = new Set(MONSTER_TEMPLATES.map((t) => t.id));
+    // BOTH LISTS. The orphan this guards against is a template nothing can
+    // place, and there are two ways to be placed now: the bestiary a floor
+    // rolls, and `SUMMON_TEMPLATES`, which a talent builds. A template in
+    // neither is the bug; a template in either is reachable.
+    const registered = new Set(ALL_TEMPLATES.map((t) => t.id));
     const orphans = exported.filter((t) => !registered.has(t.id)).map((t) => t.id);
     expect(orphans, 'templates that exist and can never spawn').toEqual([]);
-    expect(MONSTER_TEMPLATES.length).toBe(exported.length);
+    expect(ALL_TEMPLATES.length).toBe(exported.length);
   });
 
   it('spends art that was already cut and drawing nothing', () => {

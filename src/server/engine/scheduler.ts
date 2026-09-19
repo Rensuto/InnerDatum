@@ -89,6 +89,7 @@ import {
   spendTurn,
 } from './actor.ts';
 import { AttackRefusal, attackTarget, canAttack } from './combat.ts';
+import type { AttackResult } from './combat.ts';
 import { TalentRefusal, ballTiles } from './talents.ts';
 import type { KillNote } from './talents.ts';
 import { inQuorum, isBlocking } from './barrier.ts';
@@ -844,6 +845,25 @@ export type TalentResolutionResult =
  * re-prompt — no AP is refilled, no resource regenerates, and not one draw moves
  * in the stream. `pump(world, { nowMs, barrier })` is unchanged to the byte.
  */
+/**
+ * What one body's `callbackOnActBase` wants the scheduler to do about it.
+ *
+ * DECLARED HERE, NEXT TO THE SEAM THAT RETURNS IT, and imported BY
+ * `talents/call_shadows.ts` rather than from it. `engine -> talents` is the
+ * wrong direction: the engine offers a shape and content fills it, which is the
+ * same arrangement `TalentResolution` itself has.
+ */
+export type SummonPassResult = {
+  /**
+   * Bodies whose leash broke. Enrolled in `PumpResult.reaped`, exactly as a
+   * monster killed by a blow is — see `noteMonsterDeath` for why a body is
+   * enrolled rather than deleted here.
+   */
+  readonly reap?: readonly string[];
+  /** Case Log lines, in the order they happened. */
+  readonly records?: readonly string[];
+};
+
 export type TalentResolution = {
   /**
    * Resolve one activation. `target` is a TILE and is absent for a `self` shape.
@@ -1009,6 +1029,52 @@ export type TalentResolution = {
    * learn what a talent effect is.
    */
   markMultiplier(targetId: string): number;
+  /**
+   * ═════════════════════════════════════════════════════════════════════════
+   * A TALENT THAT REPLACES THE SWING — `Combat.lua:164-173`.
+   * ═════════════════════════════════════════════════════════════════════════
+   *
+   * Upstream's `attackTarget` asks ONE question before the mainhand loop, the
+   * offhand loop and the barehand fall-through: is Gesture of Pain up? If it
+   * is, the gesture happens INSTEAD and `speed` is set, which is the flag all
+   * three of those loops test with `if not speed`.
+   *
+   * `strike` is this engine's `attackTarget`, so this is that question, asked
+   * in the same place. `mark` is handed over because `strike` has already
+   * resolved it and a replaced blow is still a blow against a marked body.
+   *
+   * ═══ WHY IT RETURNS AN `AttackResult` AND NOT AN `Effect` ═══
+   * So the substitution is TOTAL and invisible to everything downstream: the
+   * event, the Case Log line, the alarm, the kill note and the refund rule all
+   * read the same shape whether a stylus or a gesture produced it. A second
+   * `Effect` kind would have meant a new case in every consumer for a blow that
+   * differs only in how its number was arrived at.
+   *
+   * ABSENT, OR `null`, IS THE ORDINARY SWING — which is every body in the game
+   * except a Redactor standing in the stance with both hands empty, and every
+   * fixture that builds a `TalentResolution` by hand.
+   */
+  meleeReplacement?(attacker: EngineActor, target: EngineActor, mark: number): AttackResult | null;
+  /**
+   * ═════════════════════════════════════════════════════════════════════════
+   * ONCE PER BODY PER BASE TURN, AFTER `actBase` — `callbackOnActBase`.
+   * ═════════════════════════════════════════════════════════════════════════
+   *
+   * The summon clock. `tome/data/talents/cursed/shadows.lua:438-453` hangs Call
+   * Shadows' whole cadence off exactly this callback: count down, summon, reset.
+   * The leash that removes a shadow whose master is gone rides the same pass,
+   * from the SHADOW's own base turn — upstream's `on_act` (:324-329).
+   *
+   * ═══ IT ANSWERS RATHER THAN ACTS, FOR THE ONE THING IT CANNOT DO ITSELF ═══
+   * Adding a body is a world call and the seam has a world. BURYING one is not:
+   * `PumpResult.reaped` is the channel, the caller drains it after the pump and
+   * a body deleted mid-pump narrates as "someone". So a broken leash comes back
+   * as an id and this file enrols it exactly as `noteMonsterDeath` does.
+   *
+   * ABSENT IS A BUILD WITH NO SUMMONS, which is every fixture and was every
+   * build before this one.
+   */
+  summonPass?(actor: EngineActor): SummonPassResult;
   /**
    * ═══════════════════════════════════════════════════════════════════════════
    * SOMETHING JUST HIT A BODY. IS ANYBODY GUARDING IT, AND DOES THE ATTACKER
@@ -1910,6 +1976,43 @@ export function pump(world: World, ctx: PumpCtx): PumpResult {
       // more often, which is a haste that shortens cooldowns by another name.
       // Absent seam → not called, and nothing about this pass changes.
       ctx.talents?.actBase(actor.id);
+      /**
+       * ═══════════════════════════════════════════════════════════════════════
+       * AND WHAT THIS BODY HAS CALLED UP — `callbackOnActBase`.
+       * ═══════════════════════════════════════════════════════════════════════
+       *
+       * `tome/data/talents/cursed/shadows.lua:438-453` hangs Call Shadows'
+       * whole cadence off this exact callback, and `shadows.lua:324-329` hangs
+       * the leash off the SHADOW's own turn. One seam serves both arms — see
+       * `TalentResolution.summonPass`.
+       *
+       * HERE, IMMEDIATELY AFTER THE TALENT HALF, because it reads the sheet
+       * that line just refilled: a summon costs five Ink and the Ink it costs
+       * is this turn's. Above it and the stance would spend a pool that is
+       * about to be regenerated into.
+       *
+       * ═══ A NEW BODY STARTS ACTING ON THE NEXT PUMP, AND THAT IS DELIBERATE ═══
+       * `actors` is a snapshot taken at the head of this call and `ticking` is
+       * built from it, so a shadow added now is not in either. That is the
+       * ORB's rule, stated at `ticking`: *"nothing joins or leaves the sweep
+       * halfway through it"*, and it keeps us clear of the mid-sweep array
+       * mutation upstream survives only with explicit index fixups.
+       */
+      const summons = ctx.talents?.summonPass?.(actor);
+      if (summons !== undefined) {
+        for (const line of summons.records ?? []) run.records.push(line);
+        for (const id of summons.reap ?? []) {
+          const body = world.getActor(id);
+          // POSITIVE `kind === Monster`, for `noteMonsterDeath`'s stated reason:
+          // `removePlayer` is literally the same closure as `removeActor`, so a
+          // mistake here would delete somebody's character.
+          if (body === undefined || body.kind !== ActorKind.Monster) continue;
+          // `summon_time = 0` (shadows.lua:374) then `self:die(self)` (:327).
+          // `alive` first, so nothing can target it between here and the burial.
+          body.alive = false;
+          run.reaped.push(id);
+        }
+      }
       // AND THE LEVELS BANKED DURING THE PUMP ARE PAID OUT HERE, on the same
       // once-per-game-turn-per-actor clock and for a related reason: a talent
       // point that appeared mid-pump could be spent mid-pump, and a talent whose
@@ -2815,7 +2918,7 @@ function resolveIntent(actor: EngineActor, intent: Intent, run: Run): Resolution
        * doorway"*. In a co-op roguelike played down corridors this is the most
        * repeatable friction there is.
        *
-       * ═══ PLAYER TO PLAYER ONLY, AND THE KIND TEST EARNS ITS PLACE ═══
+       * ═══ A PLAYER OR HER PARTY'S SUMMON, AND THE KIND TEST EARNS ITS PLACE ═══
        * The hostile branch above has already returned for anything that would
        * fight, so an occupant reaching this line is never an enemy — which means
        * this test is not about hostiles at all. It is what stops the two cases
@@ -2826,14 +2929,47 @@ function resolveIntent(actor: EngineActor, intent: Intent, run: Run): Resolution
        *     kind test a player would shove the person they came to trade with
        *     off her own doorstep. (The gateway's `greetOnBump` intercepts a
        *     townsfolk bump before it is ever submitted, so this is belt and
-       *     braces today — and it is the only case a test can reach, which is
-       *     what test/server/ally-swap.test.ts uses to pin the gate.)
+       *     braces today — and `test/server/ally-swap.test.ts` is what pins it.)
        *
        *   TWO MONSTERS. A pack is not hostile to itself. Letting them trade
        *     places would let the back rank flow through the front rank, which
        *     turns a corridor from something a party can hold into a queue that
        *     shuffles — and holding a line is most of the tactical geometry this
        *     game has.
+       *
+       * ═══ …AND YOUR OWN SUMMON IS THE ONE NON-HOSTILE MONSTER THAT MUST ═══
+       * `Faction.Bound` broke the "two monsters" reading the day it landed: a
+       * Bound shadow is a Monster, `areEnemies` answers false against every
+       * player (engine/actor.ts#reactsAs), so the hostile branch above returns
+       * nothing and a shadow standing in a doorway was an absolute wall — to
+       * its own summoner and, because the second half of the test asked the
+       * OCCUPANT's kind, to every teammate as well.
+       *
+       * MEASURED on an instrumented copy of the driver, Redactor, twelve moor
+       * delves, four runs each, with Call Shadows genuinely raised: 4159 of
+       * 13765 ordered steps — 30.2% — were refused by a body she had called up
+       * herself, wins fell by half, six new stalls appeared and turns-per-win
+       * rose by 17%. With the swap emulated, blocked steps went to 44 and every
+       * one of those numbers returned. Barrow End went 4/4 to 0/4 and back.
+       *
+       * AFTERWARDS, on the shipped driver: the stance costs her no wins at all
+       * (7/48 raised and 7/48 down, over the same forty-eight runs) and takes
+       * 13.7% less damage off her. A wall she could not pass was the whole of
+       * the difference.
+       *
+       * UPSTREAM HAS NO SUCH CASE because `shadows.lua:431-434` puts the shadow
+       * in `game.party`, and party membership is exactly what makes the
+       * friendly half of `Combat.lua:32-74` legal — `Party.lua:271-272`'s
+       * `move_others = true`, already cited at the head of this block. Ours is
+       * not a party member (see `talents/call_shadows.ts` for why), so the
+       * permission is granted here instead, on the narrowest possible fact:
+       * THIS OCCUPANT IS SOMETHING A PLAYER CALLED UP. `summonerId` is the
+       * link `reactsAs` cannot walk (it is handed no world), so asking it here
+       * is asking the one question a faction cannot answer.
+       *
+       * THE "TWO MONSTERS" ARGUMENT IS UNTOUCHED: a monster is still never the
+       * mover on this branch, and a shadow still cannot trade places with
+       * another shadow or with a teammate who did not call it.
        *
        * ═══ AND NEVER A BODY ON THE FLOOR — WHICH IS UNREACHABLE, AND STAYS ═══
        * A Downed body cannot reach this line at all: `goDown` clears `alive`,
@@ -2913,11 +3049,29 @@ function resolveIntent(actor: EngineActor, intent: Intent, run: Run): Resolution
       }
 
       const wouldUndo = occupant !== undefined && actor.shovedBy === occupant.id;
+      /**
+       * A FRIENDLY SUMMON — see the block above.
+       *
+       * `summonerId` is set by `shadowInitAt` and by nothing else in the game,
+       * and reaching this line at all means the occupant is NOT hostile (the
+       * bump-attack branch has already returned). Those two together are
+       * upstream's party test: a summon whose root is a player is a party
+       * member (`shadows.lua:431-434`) and every party member may be moved
+       * through (`Party.lua:271-272`).
+       *
+       * NOT `summonerId === actor.id`, WHICH WAS THE FIRST VERSION. That let a
+       * Redactor past her own shadow and left it an absolute wall to her
+       * TEAMMATES, which upstream has no equivalent of — a party member is a
+       * party member whoever called it up. A summon whose root were a monster
+       * would be hostile and would never reach this line.
+       */
+      const friendlySummon =
+        occupant !== undefined && isMonster(occupant) && occupant.summonerId !== undefined;
       if (
         occupant !== undefined &&
         !wouldUndo &&
         actor.kind === ActorKind.Player &&
-        occupant.kind === ActorKind.Player &&
+        (occupant.kind === ActorKind.Player || friendlySummon) &&
         !(run.ctx.downed !== undefined && isDowned(run.ctx.downed, occupant.id))
       ) {
         const theirs: TileXY = { x: occupant.x, y: occupant.y };
@@ -3121,10 +3275,28 @@ function strike(attacker: EngineActor, target: EngineActor, run: Run): Effect {
    * answers 1 through the `??` and lands in the same branch.
    */
   const mark = run.ctx.talents?.markMultiplier(target.id) ?? 1;
-  const outcome = attackTarget(attacker, target, world, world.rng, {
-    skipLegality: true,
-    ...(mark === 1 ? {} : { mult: mark }),
-  });
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * IS THE SWING REPLACED? — `Combat.lua:164-173`, AND IT IS ASKED FIRST.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Upstream asks this ABOVE the mainhand loop, the offhand loop and the
+   * barehand fall-through, and sets `speed` — the flag all three test with
+   * `if not speed`. So a replaced blow does not ALSO swing a weapon, and this
+   * line is the only place that can be true.
+   *
+   * ABSENT SEAM, ABSENT METHOD OR `null` IS BYTE-FOR-BYTE THE OLD PATH: the
+   * `??` falls through to `attackTarget` with the same arguments at the same
+   * position in the draw stream. `TalentResolution.meleeReplacement` carries
+   * the whole argument.
+   */
+  const replaced = run.ctx.talents?.meleeReplacement?.(attacker, target, mark) ?? null;
+  const outcome =
+    replaced ??
+    attackTarget(attacker, target, world, world.rng, {
+      skipLegality: true,
+      ...(mark === 1 ? {} : { mult: mark }),
+    });
 
   /**
    * ═══════════════════════════════════════════════════════════════════════════
@@ -3161,10 +3333,22 @@ function strike(attacker: EngineActor, target: EngineActor, run: Run): Effect {
    * something would otherwise silently lose one of them, and the bestiary is
    * exactly where that will happen first.
    */
-  const riders = [
-    ...(isMonster(attacker) && attacker.onHit !== undefined ? [attacker.onHit] : []),
-    ...(attacker.combat?.onHit ?? []),
-  ];
+  /**
+   * ═══ AND A REPLACED BLOW CARRIES NO WEAPON RIDER — see `gesture_of_pain.ts` ═══
+   * `wielder.melee_project` and `MonsterActor.onHit` are properties of a WEAPON
+   * that was swung and of a BODY that swung it. A gesture swings neither:
+   * upstream's replacement path never reaches `attackTargetWith`, which is the
+   * only thing in ToME that runs a melee rider, and its own proc pass
+   * (gestures.lua:158-179) fires the MINDSTARS' procs and nothing else. An
+   * empty list here is that, said in this engine's vocabulary.
+   */
+  const riders =
+    replaced !== null
+      ? []
+      : [
+          ...(isMonster(attacker) && attacker.onHit !== undefined ? [attacker.onHit] : []),
+          ...(attacker.combat?.onHit ?? []),
+        ];
   for (const rider of riders) {
     if (!(outcome.ok && outcome.hit && !outcome.killed)) break;
     /**

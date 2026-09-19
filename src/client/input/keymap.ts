@@ -951,6 +951,62 @@ export const ACTIONS = [
     rebindable: false,
   },
 
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * SLOTS 10, 11 AND 12 — THE REST OF THE NUMBER ROW, WHICH IS UPSTREAM'S PAGE.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `engine/interface/PlayerHotkeys.lua:314` is `for x = 1, 12` and every one of
+   * its hotkey loops is sized `12 * self.nb_hotkey_pages` (:92, :124, :148,
+   * :216). A ToME hotkey page is TWELVE and always has been; ours stopped at
+   * nine on an editorial reading of the digit row — *"`Digit0` is not a tenth in
+   * any sane reading of a row that starts at 1"* — which `ui/hotbar.ts` now
+   * records as the sentence it was rather than a fact about keyboards.
+   *
+   * ═══ THEY EXIST BECAUSE THE BAR WAS THE BINDING CONSTRAINT ON CONTENT ═══
+   * `category-points.test.ts` asserts that a class's actives plus the most
+   * button-heavy disciplines a career can buy all have a key. At nine slots
+   * across two rows the pool was 18, the Redactor's eleven actives plus seven
+   * buyable came to exactly 18, and the class could not gain a single pressable
+   * talent. Her fourth discipline is two sustains; these are where they go.
+   *
+   * ═══ ALL THREE BY `code`, LIKE 5-9 AND FOR THE SAME REASON ═══
+   * The numpad reports its own codes (`Numpad0`, `NumpadSubtract`,
+   * `NumpadAdd`), so a code-bound `Digit0`/`Minus`/`Equal` cannot be reached
+   * from it and no direction key collides. `canDeliver` already admits `slot`
+   * to the code-keyed tables; `Keymap.slotByCode` picks these up with no change.
+   */
+  {
+    id: 'hotbar_10',
+    name: 'Talent slot 10',
+    group: 'Hotbar',
+    order: 33,
+    effect: { kind: 'slot', slot: 9 },
+    defaults: [],
+    fixed: [{ kind: 'code', value: 'Digit0' }],
+    rebindable: false,
+  },
+  {
+    id: 'hotbar_11',
+    name: 'Talent slot 11',
+    group: 'Hotbar',
+    order: 34,
+    effect: { kind: 'slot', slot: 10 },
+    defaults: [],
+    fixed: [{ kind: 'code', value: 'Minus' }],
+    rebindable: false,
+  },
+  {
+    id: 'hotbar_12',
+    name: 'Talent slot 12',
+    group: 'Hotbar',
+    order: 35,
+    effect: { kind: 'slot', slot: 11 },
+    defaults: [],
+    fixed: [{ kind: 'code', value: 'Equal' }],
+    rebindable: false,
+  },
+
   // ═══════════════════════════════════════════════════════════════════════════
   // LOG
   // ═══════════════════════════════════════════════════════════════════════════
@@ -962,7 +1018,7 @@ export const ACTIONS = [
     // keybind for `toggle_log` survives the rename untouched.
     name: 'Log',
     group: 'Log',
-    order: 33,
+    order: 36,
     effect: { kind: 'ui', command: 'toggle_log' },
     // THE KEY IS CHOSEN, NOT PORTED, AND THIS SAYS SO RATHER THAN DRESSING A
     // GUESS AS A CITATION. ToME has a SHOW_MESSAGE_LOG action and its Classic HUD
@@ -992,7 +1048,7 @@ export const ACTIONS = [
     id: 'scroll_back',
     name: 'Scroll the log back',
     group: 'Log',
-    order: 34,
+    order: 37,
     // +1 is BACK IN TIME, matching what Page Up does in every document ever
     // written. Shift picks the other lane, and that is a fact about a panel
     // rather than about a key, so it is not an action here.
@@ -1005,7 +1061,7 @@ export const ACTIONS = [
     id: 'scroll_forward',
     name: 'Scroll the log forward',
     group: 'Log',
-    order: 35,
+    order: 38,
     effect: { kind: 'scroll', steps: -1 },
     defaults: [{ kind: 'key', value: 'pagedown' }],
     fixed: [],

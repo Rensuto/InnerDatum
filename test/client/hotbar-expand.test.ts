@@ -19,6 +19,7 @@ import {
   ItemSlotAction,
   drawHotbar,
   hotbarDropTargetAt,
+  HOTBAR_ROW_KEYS,
   hotbarKeyLabel,
   hotbarPanelSize,
   hotbarSlotAt,
@@ -215,7 +216,10 @@ describe('a key fires the slot it is printed on, at every bar size', () => {
       for (let i = 0; i < count; i += 1) {
         const label = hotbarKeyLabel(i) ?? '';
         const shifted = label.startsWith('⇧');
-        const digit = Number(shifted ? label.slice(1) : label) - 1;
+        // THE POSITION IN THE ROW, LOOKED UP RATHER THAN PARSED. `Number(label)`
+        // worked while every key was its own index plus one; the row is
+        // upstream's twelve now and its last three say `0`, `-` and `=`.
+        const digit = HOTBAR_ROW_KEYS.indexOf(shifted ? label.slice(1) : label);
         // THE CLOSED LOOP: the string on the box → the key a player presses →
         // the index that press resolves to → the box it was drawn on.
         expect(hotbarSlotForKey(digit, shifted)).toBe(i);

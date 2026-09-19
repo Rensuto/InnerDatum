@@ -396,10 +396,24 @@ describe('geometry', () => {
     expect(labels.size).toBe(HOTBAR_SLOT_POOL);
     expect(hotbarKeyLabel(HOTBAR_SLOT_POOL)).toBeNull();
     expect(hotbarKeyLabel(-1)).toBeNull();
-    // ...AND THE INVERSE AGREES AT EVERY POSITION.
+    /**
+     * ...AND THE INVERSE AGREES AT EVERY POSITION, AGAINST THE ROW SPELLED OUT.
+     *
+     * THIS READ `String(digit + 1)`, WHICH WAS THE PAINT'S OWN ARITHMETIC. It
+     * proved the label and the press agreed and said nothing about WHICH keys
+     * the row is — so when the row grew to upstream's twelve
+     * (`PlayerHotkeys.lua:314`) and the tenth became `0` rather than "10", this
+     * fixture was the thing asserting the wrong answer.
+     *
+     * The literal below is the SPEC: the number row, left to right. Everything
+     * else in the suite reads `HOTBAR_ROW_KEYS`; this one restates it on
+     * purpose, because a spec asserted against itself is not a spec.
+     */
+    const ROW = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '0', '-', '='];
+    expect(ROW).toHaveLength(HOTBAR_KEY_ROW);
     for (let digit = 0; digit < HOTBAR_KEY_ROW; digit += 1) {
-      expect(hotbarKeyLabel(hotbarSlotForKey(digit, false))).toBe(`${String(digit + 1)}`);
-      expect(hotbarKeyLabel(hotbarSlotForKey(digit, true))).toBe(`\u21e7${String(digit + 1)}`);
+      expect(hotbarKeyLabel(hotbarSlotForKey(digit, false))).toBe(ROW[digit]);
+      expect(hotbarKeyLabel(hotbarSlotForKey(digit, true))).toBe(`\u21e7${String(ROW[digit])}`);
     }
   });
 });
@@ -787,7 +801,7 @@ describe('drawing', () => {
      * read one mapping; a test that re-derived the list here would be a third
      * copy, and the one that could disagree silently.
      */
-    const keys = texts.filter((t) => /^\u21e7?[0-9]$/.test(t));
+    const keys = texts.filter((t) => /^\u21e7?[0-9=-]$/.test(t));
     expect(keys).toEqual(
       Array.from({ length: HOTBAR_SLOTS_DEFAULT }, (_unused, i) => hotbarKeyLabel(i)),
     );
@@ -923,7 +937,7 @@ describe('a bar narrower than its row', () => {
 
   it('draws every slot, wrapped, and has nothing to apologise for', () => {
     const texts = paintAt({ w: hotbarFloor().w, h: 1 });
-    expect(texts.filter((t) => /^\u21e7?[0-9]$/.test(t))).toEqual(
+    expect(texts.filter((t) => /^\u21e7?[0-9=-]$/.test(t))).toEqual(
       Array.from({ length: HOTBAR_SLOTS_DEFAULT }, (_unused, i) => hotbarKeyLabel(i)),
     );
     expect(texts.filter((t) => t === 'EMPTY').length).toBe(ITEM_TAIL);
