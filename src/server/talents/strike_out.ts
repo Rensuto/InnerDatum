@@ -70,8 +70,28 @@ import type { Talent } from '../engine/talents.ts';
 /** Tiles. Short for a ranged class — a clerk works at desk distance. */
 const RANGE = 6;
 const AP_COST = 4;
-/** Under `INK_PER_MARK`. See the header: the entry mark must be net-positive. */
-const INK_COST = 8;
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * 5, AND IT WAS 8 — force-of-will.lua:27, the archetype's own opening attack.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * The Doomed's level-1 attack is Willful Strike, `hate = 5`
+ * (cursed/force-of-will.lua:27), out of a `max_hate` of 100 — and our Ink pool's
+ * max is 100 (`RESOURCE_RULES`), so the fraction crosses unconverted and the
+ * figure is upstream's without arithmetic.
+ *
+ * WHAT 8 WAS DOING, MEASURED. `INK_PER_TURN` is 0.6, so an 8-Ink attack has a
+ * sustained ceiling of one press every 13.3 turns when no mark lands. On the
+ * intro floor at level 1 a lone Redactor reported `no_resource x380` in one run
+ * and `x191` in the next, with 141-351 turns of 900 spent holding. The other
+ * three classes pay NOTHING for their opening attack (Crude Blow, Revolver
+ * Shot) or one countable unit that a kill refills (Ashwick Flare).
+ *
+ * STILL UNDER `INK_PER_MARK` (12), which is the property the header is about:
+ * the entry mark stays net-positive when it lands, and still costs the full
+ * price when the save beats it.
+ */
+const INK_COST = 5;
 
 /** Weapon-damage multiplier. Low: this is a mark that also stings, not a bolt. */
 const DAMAGE_LOW = 0.55;

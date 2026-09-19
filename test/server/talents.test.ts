@@ -65,7 +65,7 @@ import {
 import { MELEE_REACH } from '../../src/server/engine/combat.ts';
 import { markPower, sigil } from '../../src/server/talents/sigil.ts';
 import { healFraction, mendWounds } from '../../src/server/talents/mend_wounds.ts';
-import { ActorKind, TileCode } from '../../src/shared/protocol.ts';
+import { ActorKind, ActorRank, TileCode } from '../../src/shared/protocol.ts';
 import { DamageType } from '../../src/server/engine/damage.ts';
 import { drawCount, scriptedRng } from '../helpers/scripted-rng.ts';
 import { createRng } from '../../src/shared/rng.ts';
@@ -1386,14 +1386,17 @@ describe('REAGENTS ARE A COUNTED STOCK THAT REFILLS IN WHOLE UNITS — game-desi
     if (sheet === undefined) return;
 
     sheet.resource.value = 2;
-    f.engine.noteKill('rey');
+    // ONE REAGENT WHATEVER DIED — `KillNote` is Ink's rule (misc.lua:209-234)
+    // and the ammo cadence has no rank clause. A BOSS note is passed here on
+    // purpose: if a rank multiplier ever leaks onto Reagents, this is 4 not 3.
+    f.engine.noteKill('rey', { rank: ActorRank.Boss, level: 9, killerLevel: 1 });
     expect(sheet.resource.value).toBe(3);
 
     f.engine.noteStairs();
     expect(sheet.resource.value).toBe(8);
 
     // …and a kill never overflows the stock.
-    f.engine.noteKill('rey');
+    f.engine.noteKill('rey', { rank: ActorRank.Normal, level: 1, killerLevel: 1 });
     expect(sheet.resource.value).toBe(8);
   });
 

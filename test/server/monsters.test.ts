@@ -5,7 +5,7 @@ import { combatMindpower, combatPhysicalpower } from '../../src/server/engine/de
 import { canBe, setEffect } from '../../src/server/engine/effects.ts';
 
 import { decideNpcAction } from '../../src/server/ai/npc.ts';
-import { ALCHEMIST, INSPECTOR, WATCHMAN } from '../../src/server/content/classes.ts';
+import { ALCHEMIST, CLASSES, INSPECTOR, WATCHMAN } from '../../src/server/content/classes.ts';
 import {
   INDEX_CAIRN,
   INDEX_HUSK,
@@ -727,10 +727,29 @@ describe('index_wraith, derived', () => {
     // class-granted mean of 0.714 points = +2.86. Anchor 103.31, which EXCLUDES
     // race Con and the free birth points and is therefore the low end.
     const UPSTREAM_LEVEL_1_BAR = 103.31;
-    // Ours: Watchman 72, Inspector 60, Alchemist 54 — median 60.
-    const ourBars = [WATCHMAN.maxHp, INSPECTOR.maxHp, ALCHEMIST.maxHp].sort((a, b) => a - b);
-    expect(ourBars).toEqual([54, 60, 72]);
-    const OUR_MEDIAN_BAR = ourBars[1] ?? 0;
+    /**
+     * Ours: Watchman 72, Inspector 66, Alchemist 54, Redactor 54 — median 60.
+     *
+     * ═══ THE REDACTOR WAS MISSING FROM THIS LIST AND IT MATTERED ═══
+     * Three classes were named here because there were three when it was
+     * written, and the anchor upstream is a MEAN OVER ALL TWENTY-TWO — so a
+     * roster this list does not know about is a roster the correction is not
+     * taken over. It went unnoticed while the Inspector sat at 60 and happened
+     * to be the median of three; correcting her to the Archer's 110/120 of the
+     * toughest body (see `classes.ts`) moved the median of THREE to 66 and this
+     * assertion is what caught it.
+     *
+     * `CLASSES` rather than three names, so the next class cannot repeat it.
+     */
+    const ourBars = CLASSES.map((c) => c.maxHp).sort((a, b) => a - b);
+    expect(ourBars).toEqual([54, 54, 66, 72]);
+    // MEDIAN OF AN EVEN COUNT is the mean of the two middle values.
+    const mid = ourBars.length / 2;
+    const OUR_MEDIAN_BAR =
+      ourBars.length % 2 === 1
+        ? (ourBars[(ourBars.length - 1) / 2] ?? 0)
+        : ((ourBars[mid - 1] ?? 0) + (ourBars[mid] ?? 0)) / 2;
+    expect(OUR_MEDIAN_BAR).toBe(60);
     const scaled = (upstream / UPSTREAM_LEVEL_1_BAR) * OUR_MEDIAN_BAR;
     expect(scaled).toBeCloseTo(14.48, 2);
 

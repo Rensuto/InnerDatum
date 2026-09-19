@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  REDACTOR,
   WATCHMAN,
   createContentTalentEngine,
   sheetForClass,
 } from '../../src/server/content/classes.ts';
+import { healPerKillAt, indelible } from '../../src/server/talents/indelible.ts';
 import { regenAt, walkItOff } from '../../src/server/talents/walk_it_off.ts';
 import { talentLevelOf } from '../../src/server/engine/talents.ts';
 import { createWorld } from '../../src/server/world/world.ts';
@@ -217,5 +219,163 @@ describe('the attacker’s own hooks are fired by the damage pipeline', () => {
     const out = applyDamage(victim, 5, DamageType.Physical, { id: 'trap' }, createRng('trap'));
     expect(out.dealt).toBeGreaterThan(0);
     expect(victim.hp).toBeLessThan(before);
+  });
+});
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * UNNATURAL BODY — cursed/cursed-form.lua:24-76, on the Redactor's birth passive.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * THE MEASUREMENT IS THE REASON AND IT IS IN `indelible.ts`'s header: eight runs
+ * each on the Drowned Chapel's first floor, a level-1 Redactor alone, one field
+ * changed at a time. Armour, accuracy, weapon damage and DOUBLE HIT POINTS each
+ * gave 0/8 — hit points made the damage figure worse — and regeneration was the
+ * only input that moved anything. The Doomed, the archetype she ports, is born
+ * with exactly this (data/birth/classes/afflicted.lua:143).
+ *
+ * AND BE PRECISE ABOUT WHAT THAT SWEEP LICENSES, which `indelible.ts` now says
+ * at length: the row that moved was a per-turn REGENERATION, and this talent
+ * pays only on a kill. Toggled on its own it changes no outcome on either
+ * level-1 floor. The sweep is evidence that SUSTAIN is the axis; it is not
+ * evidence that this sustain is enough, and these cases are about the rule being
+ * upstream's and reaching the body, not about it being sufficient.
+ *
+ * THROUGH `applyDamage`, like every other case in this file, for this file's own
+ * reason: calling `indelible.hooks.onKill(ctx)` by hand is what the tests that
+ * missed two dead dispatchers did.
+ */
+describe('the Redactor is paid in life for a kill — cursed-form.lua:59-67', () => {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE RANK COMES OFF THE SHIPPED CLASS, AND THAT IS THE HALF NOBODY DROVE.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * This fixture hard-wrote `level: 1`. Measured with a mutant: swap `indelible`
+   * off `REDACTOR.birthTalents` for `marginalia` and the whole suite stays green
+   * — 337 files, 6931 tests — because the talent stays in `passives` at rank 0,
+   * `main.ts:1521` binds no hook, and no kill ever heals her. `pointsForLevel(1)`
+   * is 0, so `birthTalents` IS the level-1 character, and the one line that
+   * decides whether this whole talent reaches a Redactor at all was uncovered.
+   *
+   * So the level is READ from `sheetForClass(REDACTOR)` and asserted positive,
+   * which is what `woundedWatchman` twelve lines up already does. Not `trained`:
+   * that helper hands every talent a rank and would delete the question.
+   */
+  function redactorAnd(victimHp: number) {
+    const world = createWorld('unnatural-body');
+    const her = world.addPlayer('p1', 'Ren', { maxHp: REDACTOR.maxHp });
+    const victim = world.addPlayer('p2', 'Mal', { maxHp: 40 });
+    const sheet = sheetForClass(REDACTOR);
+    const level = talentLevelOf(sheet, indelible);
+    her.talentHooks = [{ talentId: indelible.id, level, hooks: indelible.hooks ?? {} }];
+    her.turnProcs = createTurnProcs();
+    victim.hp = victimHp;
+    return { her, victim, level };
+  }
+
+  it('is a talent the Redactor is actually born with', () => {
+    const { level } = redactorAnd(1);
+    expect(level, 'the Redactor is not born with Unnatural Body').toBeGreaterThan(0);
+  });
+
+  it('returns hit points when the blow finishes the body', () => {
+    const { her, victim, level } = redactorAnd(1);
+    her.hp = her.maxHp - 30;
+    const before = her.hp;
+
+    const out = applyDamage(victim, 50, DamageType.Physical, her, createRng('unnatural'));
+
+    expect(out.killed, 'the fixture did not actually kill anything').toBe(true);
+    expect(her.hp, 'the kill paid nothing').toBe(before + healPerKillAt(level));
+    expect(healPerKillAt(1), 'upstream’s figure for a level-1 Redactor').toBe(10);
+  });
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * AND A BODY ON THREE HIT POINTS BANKS THREE — cursed-form.lua:63.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `self.unnatural_body_heal = math.min(self.life, pool + heal)`. With the pool
+   * collapsed into the kill that is `min(hp, healPerKill)`, and it was dropped
+   * here as "a cap on the POOL, and there is none" — it is not: it is keyed on
+   * CURRENT LIFE, and the hook has current life two lines above in its own
+   * `alive` guard. The old case set `hp = maxHp - 30` (24 against a heal of 10)
+   * and could not see it.
+   */
+  it('banks no more than the body has left to give', () => {
+    const { her, victim, level } = redactorAnd(1);
+    her.hp = 3;
+    expect(healPerKillAt(level), 'the fixture must heal more than she has').toBeGreaterThan(3);
+
+    applyDamage(victim, 50, DamageType.Physical, her, createRng('clamped'));
+
+    expect(her.hp, 'a body on 3 hit points banked the full figure').toBe(6);
+  });
+
+  it('pays nothing for a blow that leaves the body up — you live by WINNING', () => {
+    const { her, victim } = redactorAnd(40);
+    her.hp = her.maxHp - 30;
+    const before = her.hp;
+
+    applyDamage(victim, 1, DamageType.Physical, her, createRng('graze'));
+
+    expect(her.hp).toBe(before);
+  });
+
+  it('does not heal a body that is already down', () => {
+    // `walk_it_off.ts`'s guard, for its reason: the Downed system keeps a body
+    // on the board at 0 hp and a kill landing on the turn she goes down must
+    // not heal her off the floor behind the rescue rules.
+    const { her, victim } = redactorAnd(1);
+    her.hp = 0;
+
+    applyDamage(victim, 50, DamageType.Physical, her, createRng('downed'));
+
+    expect(her.hp).toBe(0);
+  });
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * AND THE HEALING FACTOR DOES NOT TOUCH IT — cursed-form.lua:51-54.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Upstream applies `healing_factor` to every heal in the game through `onHeal`
+   * (tome/class/Actor.lua:2089) and then steps around its own rule for this one:
+   *
+   * ```lua
+   * local temp = self.healing_factor
+   * self.healing_factor = 1
+   * self:heal(heal, t)
+   * self.healing_factor = temp
+   * ```
+   *
+   * and says so to the player at cursed-form.lua:73 — *"it is not affected by
+   * your hatred level or other effects."* `HealOpts.ignoreHealingFactor` is that
+   * swap, and this is the case that makes it a rule rather than a comment.
+   *
+   * `healMod` IS THE REAL KEY an ego or a debuff writes (`healingFactor`,
+   * engine/derived.ts) — not a fixture invention. It is inert on the shipped
+   * Redactor today, which is exactly why this would otherwise ship unnoticed and
+   * be discovered by a player the day a healing ego lands.
+   */
+  it('is not moved by a healing modifier, the way upstream’s is not', () => {
+    const { her, victim, level } = redactorAnd(1);
+    her.combat = { mods: { healMod: 0.5 } };
+    her.hp = her.maxHp - 30;
+    const before = her.hp;
+
+    applyDamage(victim, 50, DamageType.Physical, her, createRng('factored'));
+
+    expect(her.hp, 'a healing modifier reached a heal upstream exempts').toBe(
+      before + healPerKillAt(level),
+    );
+  });
+
+  it('grows with the rank, on upstream’s own curve', () => {
+    // `combatTalentSpellDamage(t, 15, 50, (level + wil) * 1.2)` — strictly
+    // increasing, and pinned at both ends so a rewrite of the curve is visible.
+    const band = [1, 2, 3, 4, 5].map((r) => healPerKillAt(r));
+    expect(band).toEqual([10, 14, 16, 19, 21]);
   });
 });

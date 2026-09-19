@@ -7,6 +7,7 @@ import {
   ALCHEMIST,
   CLASSES,
   INSPECTOR,
+  REDACTOR,
   WATCHMAN,
   createContentTalentEngine,
   loadoutViewFor,
@@ -1057,5 +1058,71 @@ describe('a class resource that can only be earned in play', () => {
     // above the floor. A heal reported as a blow with `damage: 0` would land in
     // the same place.
     expect(table.sheet.resource.value).toBeLessThan(RESOLVE_ON_STRUCK * TURNS + trickle);
+  });
+});
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE LEVEL-1 HIT-POINT LADDER — upstream's four values, and nothing else.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * ToME's level-1 `max_life` takes exactly FOUR values across all twenty-two
+ * classes: 120 (warrior.lua:41, the Warrior metaclass the Bulwark inherits),
+ * 110 (warrior.lua:225, the Archer), 100 (warrior.lua:315, Arcane Blade) and 90
+ * (mage.lua:101 Alchemist, mage.lua:229 Archmage, afflicted.lua:150 Doomed).
+ * As a fraction of the toughest body: 1.0 / 0.917 / 0.833 / 0.75, and 0.75 is a
+ * FLOOR — nothing in the game is frailer.
+ *
+ * OURS WAS 72 / 60 / 54 / 48, which is 1.0 / 0.833 / 0.75 / 0.667. The Alchemist
+ * was right and the other two were each a whole step low: the Inspector was
+ * wearing the Arcane Blade's fraction while citing the Archer for her
+ * `lifeRating`, and the Redactor was on a fraction upstream never uses for
+ * anything.
+ *
+ * THE TEST IS THE RATIO, NOT THE FIGURE, deliberately. A retune of the Watchman
+ * should move all four together; a class quietly dropped below upstream's floor
+ * should fail here. The figures are pinned once, below, so a change to the top
+ * of the scale is still visible in a diff.
+ */
+describe('the level-1 hit-point ladder is upstream’s', () => {
+  /** The toughest body in the game — the Bulwark's 120. */
+  const top = Math.max(...CLASSES.map((c) => c.maxHp));
+
+  it('puts nobody under 0.75 of the toughest class, which is ToME’s floor', () => {
+    for (const cls of CLASSES) {
+      expect(cls.maxHp / top, cls.name).toBeGreaterThanOrEqual(0.75);
+    }
+  });
+
+  it('gives each class the fraction its upstream counterpart has', () => {
+    // Watchman = Bulwark (120/120), Inspector = Archer (110/120),
+    // Alchemist = Alchemist (90/120), Redactor = Doomed (90/120).
+    const want: ReadonlyArray<readonly [string, number]> = [
+      [WATCHMAN.name, 120 / 120],
+      [INSPECTOR.name, 110 / 120],
+      [ALCHEMIST.name, 90 / 120],
+      [REDACTOR.name, 90 / 120],
+    ];
+    for (const [name, fraction] of want) {
+      const cls = CLASSES.find((c) => c.name === name);
+      expect(cls, name).toBeDefined();
+      expect(cls === undefined ? 0 : cls.maxHp / top, name).toBeCloseTo(fraction, 3);
+    }
+  });
+
+  it('pins the figures themselves, so the top of the scale cannot drift unseen', () => {
+    expect([WATCHMAN.maxHp, INSPECTOR.maxHp, ALCHEMIST.maxHp, REDACTOR.maxHp]).toEqual([
+      72, 66, 54, 54,
+    ]);
+  });
+
+  it('gives the two classes with no upstream override tome/class/Actor.lua:187’s default', () => {
+    // `t.life_rating = t.life_rating or 10`. Neither the Archer
+    // (warrior.lua:188-258) nor the Doomed (afflicted.lua:105-161) overrides it.
+    expect(INSPECTOR.lifeRating, 'the Archer').toBe(10);
+    expect(REDACTOR.lifeRating, 'the Doomed').toBe(10);
+    // …and the two that DO keep theirs: Bulwark +6, Alchemist -1.
+    expect(WATCHMAN.lifeRating).toBe(16);
+    expect(ALCHEMIST.lifeRating).toBe(9);
   });
 });

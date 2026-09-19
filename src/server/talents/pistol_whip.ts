@@ -193,7 +193,21 @@ export const pistolWhip: Talent = {
     const victim = targetActor(ctx.world, target);
     if (victim === undefined) return talentRefused(TalentRefusal.NoTarget);
 
-    const hit = talentAttack(ctx, self, victim, { mult: damageMult(ctx.talentLevel) });
+    /**
+     * `withWeapon` — THE REVOLVER IS THE CLUB, AND THE ENGINE HAS TO BE TOLD.
+     *
+     * `Weapon.archery` now marks the Inspector's revolver as a thing that is
+     * fired rather than swung, and `attackTarget` answers a swing inside
+     * `MELEE_REACH` with `BAREHAND` — upstream's `-- Barehanded ?` fall-through
+     * at tome/class/interface/Combat.lua:221-231. This talent is the exception
+     * upstream also has: a talent that NAMES the combat table it swings
+     * (`attackTargetWith`, Combat.lua:380) never entered the loop that falls
+     * through. Without this flag the whole talent becomes a one-damage punch.
+     */
+    const hit = talentAttack(ctx, self, victim, {
+      mult: damageMult(ctx.talentLevel),
+      withWeapon: true,
+    });
     if (!victim.alive) return talentDone([hit]);
 
     const landed = ctx.status?.(victim, EffectId.Stunned, STUN_TURNS, {

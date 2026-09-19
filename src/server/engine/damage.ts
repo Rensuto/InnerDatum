@@ -976,8 +976,37 @@ export type HealTarget = {
   readonly combat?: Combatant;
 };
 
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * ONE HEAL THAT THE FACTOR DOES NOT TOUCH — tome/data/talents/cursed/cursed-form.lua:51-54.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Upstream applies `healing_factor` on `onHeal` for everything — and then, for
+ * exactly one heal in the game, steps around its own rule:
+ *
+ * ```lua
+ * local temp = self.healing_factor
+ * self.healing_factor = 1
+ * self:heal(heal, t)
+ * self.healing_factor = temp
+ * ```
+ *
+ * Unnatural Body's own info text says so to the player at cursed-form.lua:73 —
+ * *"it is not affected by your hatred level or other effects."* It is not an
+ * oversight there and it is not one here.
+ *
+ * IT IS A FLAG ON THIS FUNCTION RATHER THAN A SECOND HEAL PATH, for the reason
+ * `HealTarget` already gives: four talents once wrote `hp = min(maxHp, hp + n)`
+ * by hand and every one of them skipped the factor. Upstream's own shape is a
+ * temporary swap around a call to `heal`, which is this, spelled as an argument.
+ */
+export type HealOpts = {
+  /** cursed-form.lua:51-54 — apply the amount raw. Exactly one talent needs it. */
+  readonly ignoreHealingFactor?: boolean;
+};
+
 /** Restore HP, clamped at max. Returns what was actually restored. */
-export function healActor(target: HealTarget, amount: number): number {
+export function healActor(target: HealTarget, amount: number, opts: HealOpts = {}): number {
   if (!target.alive || amount <= 0) return 0;
   // See `HealTarget.maxHp`. No ceiling, no heal — never `NaN` hit points.
   const maxHp = target.maxHp;
@@ -1006,7 +1035,10 @@ export function healActor(target: HealTarget, amount: number): number {
    * game can draw. Rounded rather than floored so the factor cannot make a heal
    * of 1 into a heal of 0, which would read as a talent that did nothing.
    */
-  const factor = bound(healingFactor(target.combat ?? {}), HEAL_FACTOR_MIN, HEAL_FACTOR_MAX);
+  const factor =
+    opts.ignoreHealingFactor === true
+      ? 1
+      : bound(healingFactor(target.combat ?? {}), HEAL_FACTOR_MIN, HEAL_FACTOR_MAX);
   const scaled = Math.round(amount * factor);
   if (scaled <= 0) return 0;
   const before = target.hp;

@@ -7,9 +7,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
-  ALCHEMIST,
-  INSPECTOR,
-  WATCHMAN,
+  CLASSES,
   createContentTalentEngine,
   sheetForClass,
 } from '../../src/server/content/classes.ts';
@@ -17,7 +15,21 @@ import { BIRTH_INSCRIPTION_GRANTS, BIRTH_TALENT_GRANTS } from '../../src/shared/
 import { BIRTH_INSCRIPTIONS, talentsFor } from '../../src/server/content/inscriptions.ts';
 import { MIN_TIER } from '../../src/shared/tiers.ts';
 
-const CLASSES = [WATCHMAN, INSPECTOR, ALCHEMIST];
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE SHIPPED ROSTER, NOT THREE NAMES SOMEBODY TYPED WHEN THERE WERE THREE.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * This was `[WATCHMAN, INSPECTOR, ALCHEMIST]` and it drives all ten cases in
+ * this file, so the REDACTOR — a whole class, born with four talents, two trees
+ * and a stance — was checked by none of them. `monsters.test.ts` carried the
+ * identical fault and it was fixed this run with the same sentence: *"three
+ * classes were named here because there were three when it was written."*
+ *
+ * `CLASSES` is `content/classes.ts`'s own export and the picker's own order, so
+ * a fifth class is covered by this file on the day it is authored rather than
+ * on the day somebody remembers this line.
+ */
 const REGISTRY = createContentTalentEngine().registry;
 
 /**

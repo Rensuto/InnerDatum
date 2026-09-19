@@ -53,9 +53,32 @@ import type { AuthoredMap } from '../../src/shared/level.ts';
  * `createRealms` with the real generator, the real placer and the real seeds.
  */
 
-/** A bare open floor, so nothing about a generated map is in the way. */
-function openFloor(seed: string): { world: ReturnType<typeof createWorld>; map: AuthoredMap } {
-  const world = createWorld(seed);
+/**
+ * A bare open floor, so nothing about a generated map is in the way.
+ *
+ * ═══ `size` IS NOT COSMETIC AND LEAVING IT DEFAULT COST A CASE ═══
+ * The default is `makeTestMap`'s 30-wide fixture, about 750 cells. Every DELVE
+ * is built at its upstream zone's own size — Blackwood Outskirts is 65 x 40,
+ * 2600 cells — so a count spread over the fixture sits at three and a half
+ * times the density it has in the game. That is harmless for a case that counts
+ * bodies and fatal for one that measures how CLOSE they stand: see the OnSpots
+ * case, whose statistic saturated at 85% against 83% the moment the counts came
+ * off `NB_NPC_SCALE = 0.4`, because on a floor that small nearly every body is
+ * within five tiles of two others however it was placed. The rule had not
+ * changed; the fixture had never been the floor.
+ */
+function openFloor(
+  seed: string,
+  size?: { readonly w: number; readonly h: number },
+): { world: ReturnType<typeof createWorld>; map: AuthoredMap } {
+  const world =
+    size === undefined
+      ? createWorld(seed)
+      : createWorld(seed, {
+          view: { w: size.w, h: size.h, tiles: Array.from({ length: size.w * size.h }, () => 0) },
+          spawns: [{ x: 4, y: 4 }],
+          sites: new Map<string, string>(),
+        });
   world.level.tiles.fill(TileCode.FLOOR);
   const map: AuthoredMap = {
     view: world.level,
@@ -63,6 +86,39 @@ function openFloor(seed: string): { world: ReturnType<typeof createWorld>; map: 
     sites: new Map<string, string>(),
   };
   return { world, map };
+}
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE FLOOR BLACKWOOD IS REALLY GENERATED AT — 65 x 40, AND IT WAS 51 x 51.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `shared/sitemap.ts` builds every site at its zone's own `width`/`height`, and
+ * `trollmire/zone.lua` is 65 by 40. The square got the CELL COUNT right (2601
+ * against 2600) and the SHAPE wrong, which does not matter for a case that
+ * counts bodies and does matter for the OnSpots case below — that is a statistic
+ * about DISTANCE, and a square is not the rectangle the placer runs on.
+ *
+ * The comment here used to say 51 was "its zone's own width/height, measured
+ * through `createRealms`". It was not measured; it was the square root of a
+ * measured area. Driven through `realms.open` the answer is 65 x 40, 1730
+ * walkable — which is the whole lesson this fixture already carries in its own
+ * words two paragraphs up: *"the fixture had never been the floor."*
+ */
+const BLACKWOOD_FLOOR = { w: 65, h: 40 } as const;
+
+/**
+ * THE FLOOR'S CELL COUNT, FOR THE ONE ZONE THAT READS IT — `nbNpcPerArea`,
+ * `infinite-dungeon/zone.lua:255-256`. Every other spec ignores whatever is
+ * passed, which is why the caller only pays for this where the field exists.
+ */
+function areaOf(siteId: string, floor: number): number {
+  const site = SITES.get(siteId);
+  if (site === undefined) throw new Error(`no site ${siteId}`);
+  const seed = `area:${siteId}:${String(floor)}`;
+  const realms = createRealms({ seed, engineFor: (world) => createTurnEngine({ world }) });
+  const realm = realms.open(site, seed, { level: 1, size: 1 }, undefined, undefined, floor);
+  return realm.world.level.w * realm.world.level.h;
 }
 
 const bodiesOf = (world: ReturnType<typeof createWorld>) =>
@@ -88,7 +144,7 @@ describe('how many — `nb_npc`, per zone and per level', () => {
     }
   });
 
-  it('reads the zone`s per-level override where the zone carries one', () => {
+  it('reads the zone’s per-level override where the zone carries one', () => {
     /**
      * `engine/Zone.lua:833-843` deep-merges `levels[n]` over the zone's table.
      * The Undermost is the escape from Reknor and its last level is
@@ -796,16 +852,26 @@ describe('the gaps the mutation audit found', () => {
      * WEAK: 4.04 against 4.31, and forcing the per-body branch false left it
      * passing by luck. `on_spot_chance` is 35, so two thirds of the floor is
      * drawn uniformly either way and the signal is all in the other third.
-     * Asking how many bodies are standing WITH somebody separates them — 49%
-     * against 32%, stable from ten floors to forty — because that is the thing
-     * `OnSpots` actually does.
+     * Asking how many bodies are standing WITH somebody separates them, because
+     * that is the thing `OnSpots` actually does.
+     *
+     * ═══ AND IT IS MEASURED ON BLACKWOOD'S OWN FLOOR NOW ═══
+     * It read 49% against 32% on the 30-wide fixture at the counts of the day.
+     * Both halves of that were fixture: on 750 cells a band of twenty is dense
+     * enough that a uniform draw packs nearly everything, and when the counts
+     * rose to the zone's own the two numbers met at 85% and 83% and the case
+     * failed with the rule untouched. `BLACKWOOD_SIDE` is the floor the placer
+     * really runs on, and on it the separation is about the rule again.
      */
     const inAPack = (withSpots: boolean): number => {
       const radius = spec.spots?.spotRadius ?? 0;
       let packed = 0;
       let counted = 0;
       for (let n = 0; n < 20; n += 1) {
-        const { world, map } = openFloor(`spots:${String(withSpots)}:${String(n)}`);
+        const { world, map } = openFloor(
+          `spots:${String(withSpots)}:${String(n)}`,
+          BLACKWOOD_FLOOR,
+        );
         populateDelve(world, map, withSpots ? spec : { ...spec, spots: undefined }, {
           level: 1,
           size: 1,
@@ -832,5 +898,142 @@ describe('the gaps the mutation audit found', () => {
       clustered,
       `OnSpots did not tighten the floor: ${(100 * clustered).toFixed(0)}% vs ${(100 * loose).toFixed(0)}%`,
     ).toBeGreaterThan(loose * 1.2);
+  });
+});
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ *   THE FACTOR ITSELF — `NB_NPC_SCALE`, AND WHAT IT IS ALLOWED TO BE.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * The cases above check that every band is the zone's own `nb_npc` and that
+ * nothing is denser than the densest zone upstream states. Both of them take
+ * `NB_NPC_SCALE` as given and scale their own bound by it, which is right — they
+ * are about the BANDS — and it means nothing in the tree says anything about the
+ * factor. A factor of 0.05 passes every one of them, and so does 12.
+ *
+ * The receipt for its value lives on the constant in `content/delve.ts`. These
+ * are the two bounds that receipt cannot be written outside of.
+ */
+describe('the one factor that is not upstream’s', () => {
+  it('never places MORE than the zone states, because then it is not a port', () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * ONE IS THE CEILING AND IT IS A DEFINITION, NOT A TOLERANCE.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * Every `nbNpc` in `DELVES` cites a zone file and a line. At 1.00 the band
+     * this game rolls IS the band that line states, and the whole claim of the
+     * port — *"reuse fifteen years of tuning"* — rests on that. Above 1.00 the
+     * counts stop being upstream's and start being ours, and nothing in the
+     * bestiary, the rarity weighting or `actor_adjust_level` was tuned for them.
+     *
+     * A floor is deliberately NOT asserted here. A factor can be argued down
+     * with a measurement — that is what the constant's docblock is — and the
+     * bar that decides how far down is the levelling curve, which has its own
+     * file (`test/server/levelling-curve.test.ts`) and fails from below.
+     */
+    expect(
+      NB_NPC_SCALE,
+      'the delves hold more bodies than the zones they port',
+    ).toBeLessThanOrEqual(1);
+    expect(NB_NPC_SCALE, 'a factor of zero or less empties every delve').toBeGreaterThan(0);
+  });
+
+  it('leaves every delve a band that can still put a body on the floor', () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * THE FLOOR UNDER THE FACTOR THAT IS A RULE RATHER THAN A MEASUREMENT.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * How far DOWN the factor may be argued is the levelling curve's question
+     * and it has its own file — `test/server/levelling-curve.test.ts` fails
+     * from below, because a thinner floor pays less experience and the ruling
+     * is about experience. This is the other floor, the structural one: a
+     * factor low enough to round a band to nothing turns a delve into an empty
+     * room, and no amount of levelling arithmetic would notice, because an
+     * empty room fails that case for the same reason a poor one does.
+     *
+     * `nbNpcFor` rounds, so the smallest band in the game is what decides this:
+     * the Glass Archive's `{12, 16}` off `scintillating-caves/zone.lua:53`.
+     *
+     * THE ONE EXEMPTION IS UPSTREAM'S OWN ZERO. `reknor-escape/zone.lua:79`
+     * states `nb_npc = {0, 0}` for its last level, and `nbNpcFor`'s docblock is
+     * explicit that `{0, 0}` must stay `{0, 0}` under any factor — that static
+     * floor has its bodies drawn on the map. So the rule is about bands the
+     * spec states as non-empty, and a band that was never meant to hold anybody
+     * is not evidence of a factor that is too low.
+     */
+    let checked = 0;
+    for (const site of SITES.values()) {
+      if (site.kind !== RealmKind.Inner) continue;
+      const spec = specFor(site.id);
+      if (spec === undefined) continue;
+      for (let floor = 1; floor <= floorsOf(spec); floor += 1) {
+        const stated = spec.nbNpcByFloor?.get(floor) ?? spec.nbNpc;
+        if (stated[1] === 0) continue;
+        checked += 1;
+        /**
+         * THE SITE'S OWN AREA, READ OFF THE BUILT FLOOR — and read only for the
+         * spec that has a field which looks at it. This passed a literal 2500
+         * for every spec, which happened to be right (the one zone that reads
+         * the area, Gearford's `nbNpcPerArea`, is 50x50) and was right by
+         * COINCIDENCE, on a case whose whole subject is a band rounding to zero.
+         * The Glass Archive is 900 cells, the Hollow Mine 3600 and Blackwood
+         * 2600, and the day a second zone takes `nbNpcPerArea` the coincidence
+         * stops holding. A realm is opened only where it is needed, because
+         * opening one per floor of twenty-eight sites is a generator run apiece.
+         */
+        const area = spec.nbNpcPerArea === undefined ? undefined : areaOf(site.id, floor);
+        expect(
+          nbNpcFor(spec, floor, area)[1],
+          `${site.id} floor ${String(floor)} rounds to an empty room at this factor`,
+        ).toBeGreaterThan(0);
+      }
+    }
+    expect(checked, 'no delve states a non-empty band any more').toBeGreaterThan(0);
+  });
+
+  it('is the number the probes measured, and moving it means re-running them', () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * THE ONE CHANGE-DETECTOR IN THIS FILE, AND IT IS DELIBERATE.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * Every other case here scales its own bound by `NB_NPC_SCALE`, which is
+     * right — they are about the BANDS — and it means all of them would go on
+     * passing at 0.05 or at 12. The two bounds above are real and neither of
+     * them picks a value inside the range they leave.
+     *
+     * The value is picked by things a unit test cannot run, and there are THREE
+     * of them, not two — which is the lesson this message now carries:
+     *
+     *   `tools/delve-climb.mjs`, every delve descended by every class, carrying
+     *     level and experience. This is the LEVELLING bound and it wants the
+     *     factor HIGH.
+     *   `tools/delve-density.mjs` / `tools/delve-run.mjs`, the two level-1 delves
+     *     solo for ALL FOUR CLASSES and as a party of four, counting wipes AND
+     *     TURNS. This is the BEGINNER-ROOM bound and it wants the factor LOW.
+     *   and only then the arithmetic in `levelling-curve.test.ts`, which is a
+     *     bound on the delve rather than on the player.
+     *
+     * THE SECOND ONE WAS ONCE TAKEN ON THE WATCHMAN ALONE, and the constant's own
+     * note said in the same breath that *"the Watchman is flat across the whole
+     * range"* — a value chosen with the one instrument that cannot see it. Driven
+     * across the four classes the same sweep moves a great deal: see the table in
+     * `first-room.test.ts`.
+     *
+     * THE HONEST THING IS TO SAY SO RATHER THAN TO INVENT A FAST PROXY that would
+     * be a worse bound wearing a test's clothes. So this line exists to make
+     * moving the number a deliberate act: change it and this case names every
+     * measurement that has to move with it.
+     */
+    expect(
+      NB_NPC_SCALE,
+      'the factor moved — re-run tools/delve-climb.mjs (every delve, EVERY' +
+        ' CLASS) and the first-room sweep in tools/delve-density.mjs for all' +
+        ' four classes AND a party of four, counting wipes and TURNS, and' +
+        ' rewrite every table on the constant and in first-room.test.ts',
+    ).toBe(0.85);
   });
 });

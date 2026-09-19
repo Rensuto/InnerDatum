@@ -56,7 +56,7 @@ import {
   statusExtender,
 } from './engine/effects.ts';
 import type { StatusApply, StatusCure, StatusExtend, StatusHas } from './engine/effects.ts';
-import type { BudgetPenalty } from './engine/talents.ts';
+import type { BudgetPenalty, KillNote } from './engine/talents.ts';
 import { EffectId, MVP_EFFECTS, effectById } from './content/effects.ts';
 import {
   MOVE_MP_COST,
@@ -509,8 +509,8 @@ export function talentRuntimeFor(
     // See `TalentResolution.noteKill` / `.noteStruck` for the two dead ends
     // — the Alchemist's permanently empty hotbar and the Watchman's Resolve
     // that never moved off 0 — that the absent wiring produced.
-    noteKill: (actorId: string): void => {
-      talents.noteKill(actorId);
+    noteKill: (actorId: string, note: KillNote): void => {
+      talents.noteKill(actorId, note);
     },
     noteStruck: (actorId: string): void => {
       talents.noteStruck(actorId);

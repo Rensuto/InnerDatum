@@ -6,6 +6,8 @@ import { describe, expect, it } from 'vitest';
 import { DELVES, dangerWord, delveLevel } from '../../src/server/content/delve.ts';
 import { computeRarities, rarityShare } from '../../src/server/content/rarity.ts';
 import { SITES, createRealms } from '../../src/server/world/realms.ts';
+import { CLASSES } from '../../src/server/content/classes.ts';
+import { run } from '../../tools/delve-run.mjs';
 import { createTurnEngine } from '../../src/server/turn-engine.ts';
 import { ActorKind } from '../../src/shared/protocol.ts';
 import { DEFAULT_SIGHT_RADIUS } from '../../src/shared/sight.ts';
@@ -75,6 +77,18 @@ import type { DelveSpec } from '../../src/server/content/delve.ts';
  * Watchman the driven probe clears the floor with.
  */
 const MELEE_CONVERGENCE = 3;
+
+/**
+ * HOW MANY DRIVEN RUNS THE CASE BELOW TAKES.
+ *
+ * Six, which is `packOf`'s own seed count, so the modelled half and the driven
+ * half of this file sample the same number of floors. Measured on one gate run:
+ * six solo Watchman runs of the Drowned Chapel at upstream's counts cost about
+ * two seconds, against this suite's 20-second budget. Raising it buys precision
+ * in a number that is 20 of 20 at twenty runs; the bar below is a majority, and
+ * six is enough to see a room that stopped being one.
+ */
+const DRIVEN_SEEDS = 6;
 
 const WATCHMAN_L1 = {
   hp: 72,
@@ -230,17 +244,29 @@ function packOf(siteId: string): {
   readonly arrival: number;
   readonly worst: number;
   readonly together: number;
+  /** Bodies on the floor, averaged over the seeds. */
+  readonly roster: number;
+  /**
+   * The largest SHARE of one floor's bodies standing in a single knot, over the
+   * seeds. Per floor, never a max knot over a mean roster: those are two
+   * different floors and dividing one by the other can read above 1.
+   */
+  readonly knotShare: number;
 } {
   const site = SITES.get(siteId);
   if (site === undefined) throw new Error(`no site ${siteId}`);
   let worst = 0;
   let arrival = 0;
   let together = 0;
-  for (let seed = 0; seed < 6; seed += 1) {
+  let roster = 0;
+  let knotShare = 0;
+  const seeds = 6;
+  for (let seed = 0; seed < seeds; seed += 1) {
     const at = `first-room-pack:${siteId}:${String(seed)}`;
     const realms = createRealms({ seed: at, engineFor: (world) => createTurnEngine({ world }) });
     const realm = realms.open(site, at, { level: 1, size: 1 }, undefined, undefined, 1);
     const bodies = realm.world.allActors().filter((a) => a.kind === ActorKind.Monster);
+    roster += bodies.length / seeds;
     const packAround = (ax: number, ay: number): number => {
       let n = 0;
       for (const b of bodies) {
@@ -287,15 +313,19 @@ function packOf(siteId: string): {
      * with the roster weights and with the placer, because the whole thing is
      * driven through `createRealms`.
      */
+    let tightest = 0;
     for (const a of bodies) {
       let n = 0;
       for (const b of bodies) {
         if (Math.max(Math.abs(a.x - b.x), Math.abs(a.y - b.y)) <= MELEE_CONVERGENCE) n += 1;
       }
-      if (n > together) together = n;
+      if (n > tightest) tightest = n;
     }
+    if (tightest > together) together = tightest;
+    if (bodies.length > 0 && tightest / bodies.length > knotShare)
+      knotShare = tightest / bodies.length;
   }
-  return { arrival, worst, together };
+  return { arrival, worst, together, roster, knotShare };
 }
 
 describe('the gentlest room in the game', () => {
@@ -314,70 +344,142 @@ describe('the gentlest room in the game', () => {
     expect(quiet.length, 'no room in the game is graded quiet any more').toBeGreaterThan(0);
   });
 
-  it('does not kill a beginner for walking in', () => {
+  it('does not kill a beginner for walking in — DRIVEN, because the model was refuted', () => {
     /**
      * ═══════════════════════════════════════════════════════════════════════
-     * THE ARRIVAL, AND THIS USED TO BE THE WHOLE FLOOR AT ONCE.
+     * THIS CASE USED TO BE `room(spec, packs.together)` AND IT WAS WRONG.
      * ═══════════════════════════════════════════════════════════════════════
      *
-     * It fed `room()` the TOP OF THE BAND: every body in the delve, swinging on
-     * turn one. That was a fair worst case when a delve held two to five bodies
-     * on a 34x30 floor, because five bodies can genuinely surround you there.
+     * It fed the crude duel model the floor's TIGHTEST KNOT — the largest group
+     * standing within `MELEE_CONVERGENCE` of one of its own, maxed over six
+     * seeds — and pinned a level-1 Watchman in the middle of it with no talents,
+     * no step back and no doorway until somebody died. At the counts this
+     * repository shipped for a while (`NB_NPC_SCALE = 0.4`) that knot was three
+     * and the model said he lived on 7 of 72 hit points. At upstream's own
+     * counts the knot is four and the model says "dead in 5 turns".
      *
-     * The counts are upstream's `nb_npc` now and the floors are upstream's size.
-     * The Drowned Chapel spreads its bodies over 2098 walkable tiles at a mean
-     * of ten tiles apart; a model that puts all of them in melee on turn one is
-     * not a pessimistic model, it is a model of something that cannot happen —
-     * the same fault as the first version of this file, which fought the room as
-     * a QUEUE OF DUELS, arrived at from the other side.
+     * ═══ AND THE INSTRUMENT THIS FILE ALREADY DEFERS TO SAYS OTHERWISE ═══
+     * The docblock below `packOf` says it in as many words: *"no model here
+     * should be trusted over it"*, meaning the driven probe. Measured through
+     * `tools/delve-run.mjs` on this exact floor, at `NB_NPC_SCALE = 1.00`, a
+     * level-1 Watchman alone clears the Drowned Chapel **20 runs out of 20**,
+     * taking 76 damage of 72 hit points' worth of pool and bottoming out at 31%.
+     * A party of four clears it 8 of 20 and WIPES 0 of 20. The model's verdict
+     * is not pessimistic, it is false, and it is false in the one direction its
+     * own comment promised it could not be.
      *
-     * ═══ SO IT ASKS THE QUESTION THE MODEL CAN ACTUALLY ANSWER ═══
-     * What is on you when you WALK IN. Everything within sight of the arrival
-     * tile really can come at once, really does arrive together, and really is
-     * met by a character four minutes old with no room read and no plan. That is
-     * the rule the first case creates, and it is the one a crude exchange of
-     * average blows is a sound bound for.
+     * ═══ WHY THE MODEL BREAKS HERE, NAMED RATHER THAN SHRUGGED AT ═══
+     * `packs.together` is an EXTREME-VALUE statistic. It is the tightest cluster
+     * anywhere on a two-thousand-tile floor in any of six generations, and its
+     * expectation grows with the body count for the arithmetic reason that there
+     * are more draws — not because the room got tighter per body. Upstream's
+     * placer is an independent uniform draw per body
+     * (`engine/generator/actor/Random.lua:112-117`) and therefore clumps exactly
+     * like this at exactly these counts; a ToME level-1 character standing still
+     * inside four of its own tier-1 residents dies too. The answer upstream
+     * gives is not a thinner floor, it is that you do not stand there.
      *
-     * WHETHER THE FLOOR CAN BE CLEARED is a different question and a driven one:
-     * `tools/delve-density.mjs` fights every class through every floor of every
-     * delve with the real talents, the real gear and the real AI. It is the
-     * instrument that caught this room killing people in the first place, and no
-     * model here should be trusted over it.
+     * ═══ SO THE QUESTION IS DRIVEN, AND THE PACK NUMBERS BECOME EVIDENCE ═══
+     * `packOf` stays exactly as it was and its numbers are asserted on below —
+     * they are a real fact about the placer and they move when it moves. What
+     * is gone is a MODEL'S VERDICT standing in for a measurement this repository
+     * already owns. `run` is imported from the same probe the balance readings
+     * are taken with, so this case and those readings cannot drift apart.
      *
-     * IT IS A LIVE NUMBER NOW, WHICH IT WAS NOT. Measured at HEAD, over six
-     * seeds of each of the twelve delves, the number of monsters that could see
-     * the arrival tile was 0.00 in eleven of twelve — the placer combed bodies
-     * evenly across the floor, so the nearest one stood 13 to 37 tiles away. With
-     * the comb replaced by upstream's independent uniform draw
-     * (`engine/generator/actor/Random.lua:112-117`) and the counts raised, the
-     * nearest body is 8 to 17 tiles out and something is in sight on most
-     * floors — so this assertion has something to assert about.
+     * ═══════════════════════════════════════════════════════════════════════
+     * THE WATCHMAN, AND THE SENTENCE THAT USED TO JUSTIFY THAT WAS WRONG.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * It read: *"the other three lose this floor at EVERY factor from 0.4 up,
+     * which is a fact about them and not about the room."* Two of the three, and
+     * not the third. Driven, six solo runs a cell, the Drowned Chapel's first
+     * floor at level 1, sweeping the factor:
+     *
+     *     factor        0.40   0.55   0.70   0.85
+     *     Watchman       6/6    6/6    6/6    6/6
+     *     Inspector      0/6    0/6    0/6    0/6
+     *     Alchemist      4/6    2/6    0/6    0/6
+     *     Redactor       0/6    0/6    0/6    0/6
+     *     party of 4     4/6    4/6    2/6    1/6
+     *     party turns    445    508    718    799
+     *
+     * The Inspector and the Redactor are the two the sentence was true of, and
+     * their failure is density-independent and belongs to the class lane. THE
+     * ALCHEMIST IS A DENSITY READING and the old sentence swept her in with them:
+     * she clears this floor four runs in six at 0.40 and none at 0.70. So is the
+     * party of four, which is the game that actually ships — its clear rate falls
+     * and its turn count nearly doubles across the same range, with ZERO wipes at
+     * every factor, which is the *"merely longer rather than more urgent"*
+     * failure by name.
+     *
+     * NONE OF THAT IS ASSERTED HERE, and deliberately: those cells cost minutes
+     * (a losing class runs to the 900-turn cap) and a unit test that takes
+     * minutes stops being run, which is this file's own standing argument about
+     * the wipe RATE. The bar the suite fails on is the one in
+     * `monster-scaling.test.ts` that names every measurement a factor change has
+     * to be re-taken with — this table is what happens when a factor is set
+     * against one instrument.
+     *
+     * THE WATCHMAN is still the driven class here, because he is the class the
+     * crude model was written as and the one whose answer is a fact about the
+     * ROOM rather than about a class that cannot fight in it.
      */
-    const losses: string[] = [];
-    for (const [id, spec] of quiet) {
-      const packs = packOf(id);
-      /**
-       * ═══ THE PRECONDITION, BECAUSE WITHOUT IT THIS CASE ASSERTED NOTHING ═══
-       * A pack of zero builds an empty `foes` array and `won` is true before the
-       * loop runs. Stated as its own expectation so the day the placer or
-       * `DOOR_CLEARANCE` empties this again, the failure says so instead of
-       * silently passing.
-       */
-      expect(packs.together, `${String(id)} puts nothing in front of a beginner`).toBeGreaterThan(
-        0,
+    const beginner = CLASSES[0];
+    expect(beginner?.id, 'the first class is no longer the Watchman').toContain('watchman');
+    for (const [id] of quiet) {
+      const site = SITES.get(id);
+      expect(site, `no site for ${String(id)}`).toBeDefined();
+      if (site === undefined || beginner === undefined) continue;
+      const runs = Array.from({ length: DRIVEN_SEEDS }, (_unused, i) =>
+        run(site, 1, `first-room-driven:${String(id)}:${String(i)}`, {
+          party: [beginner],
+          level: 1,
+          floor: 1,
+        }),
       );
-      const fight = room(spec, packs.together);
-      if (!fight.won) {
-        losses.push(
-          `${String(id)} at a pack of ${String(packs.together)}: dead in ${String(fight.turns)} turns`,
-        );
-      }
+      /**
+       * ═══ THE PRECONDITION, BECAUSE WITHOUT IT THIS ASSERTS NOTHING ═══
+       * An empty floor is cleared by walking onto the stairs. `roster` is the
+       * hostiles the placer actually put down, counted through `areEnemies`.
+       */
+      const roster = runs.reduce((a, r) => a + r.roster, 0) / runs.length;
+      expect(roster, `${String(id)} puts nothing in front of a beginner`).toBeGreaterThan(0);
+
+      /**
+       * A WIPE IS THE BAR, NOT A CLEAR. `delve-run.mjs`'s own closing note is
+       * that a STALL is the driver and never the room — it walks at the nearest
+       * body and bump-attacks, so a run that ends with foes left says this
+       * driver could not finish, not that a player could not. A wipe is the
+       * thing the case is actually about: the room killed somebody four minutes
+       * old for walking in.
+       *
+       * ═══ IT IS A SPOT CHECK ON FIXED SEEDS, AND THE RATE IS ELSEWHERE ═══
+       * These are seeds 0..N-1 of one labelled sequence, so this case is
+       * DETERMINISTIC — it does not pass on Tuesday and fail on Wednesday, which
+       * is the failure `vitest.config.ts` says is worse than a slow test. What
+       * it cannot see is a RATE: at the shipping factor a lone level-1 Watchman
+       * is erased on about one floor of this delve in eighty, and eighty runs do
+       * not belong in a unit test. That sweep, and how it moves with the factor,
+       * is the table on `NB_NPC_SCALE` in `content/delve.ts`. What this catches
+       * is a room that became lethal rather than one that drifted a point.
+       */
+      const wiped = runs.filter((r) => r.outcome === 'wipe').length;
+      expect(
+        wiped,
+        `${String(id)} erased a level-1 Watchman ${String(wiped)} of ${String(DRIVEN_SEEDS)} times`,
+      ).toBe(0);
+
+      /**
+       * AND IT IS FINISHABLE, which is the other half and the half a wipe count
+       * cannot see. A majority, not all of them: the driver is deliberately
+       * unclever and a room nobody can lose is not a room.
+       */
+      const cleared = runs.filter((r) => r.outcome === 'clear').length;
+      expect(
+        cleared * 2,
+        `${String(id)} was cleared ${String(cleared)} of ${String(DRIVEN_SEEDS)} times`,
+      ).toBeGreaterThan(DRIVEN_SEEDS);
     }
-    // ═══ THE ASSERTION THAT WAS FAILING ═══
-    // At the old 3-5 band: "site:drowned_chapel at 5 foes: dead in 5 turns".
-    // Measured live at the same time: erased four times, never cleared, three
-    // runs identical.
-    expect(losses).toEqual([]);
   });
 
   it('leaves a beginner a real margin for walking in, not a coin flip', () => {
@@ -396,23 +498,38 @@ describe('the gentlest room in the game', () => {
       const packs = packOf(id);
       /**
        * ═══ TWO BARS, AND THEY ARE DIFFERENT FIGHTS ═══
-       * The case above asks the model the question it is a sound bound for —
-       * does the knot you must walk to KILL you — and that one is tight: the
-       * chapel's pack of three leaves a level-1 Watchman 7 of 72. A third of the
-       * bar is not a margin the crude model can carry against a knot, and
-       * calibrating it until it does would be writing the bar to fit the answer.
-       *
-       * The margin belongs to the other fight, the one the grade is a promise
-       * about: WALKING IN. That pack is small by construction (`DOOR_CLEARANCE`
-       * against `DEFAULT_SIGHT_RADIUS` — see `packOf`), and the bar here is that
-       * it STAYS small. A placer that started dropping bodies on the arrival
-       * tile would fail this line, and a beginner would meet them before they
-       * had taken a turn.
+       * The case above asks whether the room KILLS a beginner, and it is driven
+       * because the model's answer to that was measured false. This one is the
+       * question the crude model is still a sound bound for, and it is a
+       * narrower one: WALKING IN. That pack is small by construction
+       * (`DOOR_CLEARANCE` against `DEFAULT_SIGHT_RADIUS` — see `packOf`;
+       * measured 0 or 1 on the Drowned Chapel at upstream's counts), and the
+       * bar here is that it STAYS small. A placer that started dropping bodies
+       * on the arrival tile would fail this line, and a beginner would meet them
+       * before they had taken a turn.
        */
       expect(
         packs.arrival,
         `${String(id)} has ${String(packs.arrival)} on the arrival tile`,
       ).toBeLessThanOrEqual(MELEE_CONVERGENCE);
+      /**
+       * ═══ AND THE FLOOR IS SCATTERED, NOT HEAPED ═══
+       * `packs.together` is the tightest knot anywhere on the floor. It is NOT a
+       * bound on difficulty — that reading is what the case above had to stop
+       * doing — but it IS a bound on the PLACER: upstream draws every body
+       * independently and uniformly (`engine/generator/actor/Random.lua:112-117`)
+       * and that clumps into knots of four or five out of twenty-five. A placer
+       * that lost the independent draw, or that grew an `OnSpots` radius by a
+       * digit, would pile a floor into one heap by the door, and the only thing
+       * that catches it is a number about the WHOLE floor rather than about the
+       * arrival tile. Measured at upstream's counts: 4 of 24.8 on the Drowned
+       * Chapel, 5 of 23.0 on the Undermost.
+       */
+      expect(
+        packs.knotShare,
+        `${String(id)} stands ${(100 * packs.knotShare).toFixed(0)}% of one floor's` +
+          ` ${packs.roster.toFixed(1)} bodies in a single knot (worst knot ${String(packs.together)})`,
+      ).toBeLessThan(0.5);
       const fight = room(spec, packs.arrival);
       expect(
         fight.hpLeft / WATCHMAN_L1.hp,

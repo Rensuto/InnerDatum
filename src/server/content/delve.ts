@@ -173,85 +173,244 @@ export function actorAdjustLevel(
  *
  * Every `nbNpc` in `DELVES` is its zone's own `nb_npc`, read off the zone file
  * with the line cited beside it. This is the single factor they are all taken
- * at, and it exists because `nb_npc` is the one piece of the pipeline that
- * genuinely cannot cross at face value.
+ * at. `engine/generator/actor/Random.lua:126` has no such factor, so this field
+ * is a divergence by definition, and its whole job is to be the ONE place that
+ * divergence can be argued — never twelve.
  *
- * ═══ WHY IT CANNOT CROSS, MEASURED ═══
- * A count is only meaningful against what one body costs to kill and what it
- * costs you to be near. Ported at 1.00 and measured with `tools/delve-density.mjs`
- * — every class, alone, at the floor's own level, on every floor of every delve:
+ * ═══════════════════════════════════════════════════════════════════════════
+ * ITS VALUE IS A MEASUREMENT OF THE AUTHOR'S OWN SENTENCE.
+ * ═══════════════════════════════════════════════════════════════════════════
  *
- *     The Drowned Chapel, level 1, 21 bodies   Watchman 0/2   538 damage taken
- *     The Undermost,      level 1, 55 bodies   every class 0/2
- *     The Underworks,     level 3, 46 bodies   Watchman 1/2, everyone else 0/2
+ * *"the goal is to level up before encountering the boss at the end. you are
+ * not meant to get to the end of the dungeon without leveling at least twice.
+ * this is exactly like ToME does."*
  *
- * The beginner room the first case NAMES BY GRADE to a four-minute-old
- * character became unsurvivable, and so did the room every character wakes up
- * in. That is not difficulty, it is deletion — the exact failure the previous
- * area-scaling attempt produced and the reason this pass was told to measure.
+ * That is not a feel, it is a curve, and it has an instrument:
+ * `tools/delve-climb.mjs` walks ONE character from a delve's first floor to the
+ * floor its boss is standing on, carrying level, experience and the paper doll
+ * down the stairs. Six descents a delve, the twelve delves on the moor, the
+ * Watchman — because he is the only class that completes a descent at all, so
+ * he is the only one this question can be asked of today:
  *
- * ═══ AND THE CAUSE IS NOT THE COUNT ═══
- * ToME puts 20-30 bodies in front of a LEVEL-1 character in four of its tier-1
- * zones (`trollmire/zone.lua:197`, `heart-gloom/zone.lua:76`,
- * `rhaloren-camp/zone.lua:53`, `ruins-kor-pul/zone.lua:55` — all `level_range =
- * {1, 5}`), and its level-1 characters live. Ours do not, because a body here
- * costs far more turns to kill and deals far more per turn relative to what a
- * level-1 character has. The count is upstream's; the per-body arithmetic is
- * not, and this factor is the receipt for that gap rather than a decision about
- * how crowded a room should be.
+ *     factor   full descents   delves where EVERY completed run
+ *                              gained two levels by the boss
+ *      0.40      53 of 72              4 of 12
+ *      0.70      48 of 72              8 of 12
+ *      0.80      47 of 72              8 of 12
+ *      0.85      50 of 72             10 of 12      <- here
+ *      0.90      46 of 72              9 of 12
+ *      0.95      43 of 72              9 of 12
+ *      1.00      45 of 72              8 of 12
+ *
+ * ═══ THE RULING HAS A PEAK AND IT IS NOT AT EITHER END ═══
+ * That right-hand column is the acceptance test, and it is not monotonic. It
+ * climbs because a fuller floor pays more experience, and then it FALLS —
+ * because the experience on a floor you cannot finish is not experience. At
+ * 1.00 the Hollow Mine and the Weir stop being completable at all (they are 3
+ * of 6 and 2 of 6 at 0.40), and a delve nobody reaches the bottom of cannot pay
+ * anything. 0.85 is where those two curves cross.
+ *
+ * SO IT IS NOT A CEILING SET BY DIFFICULTY AND THEN ARGUED DOWN. Both bounds
+ * are the same measurement read from its two sides, which is why the number is
+ * this rather than a round one.
+ *
+ * ═══ THE ARITHMETIC HALF AGREES, AND IT IS A TEST RATHER THAN A PROBE ═══
+ * `test/server/levelling-curve.test.ts` asks the same question without a
+ * driver — what the floors before the boss PAY, at each band's midpoint and at
+ * the roster's own rank mix, against `expChart` — over all twenty-eight delves
+ * including the twins through the Redaction:
+ *
+ *     factor   delves that pay two levels
+ *      0.40     8 of 28
+ *      0.55    11 of 28
+ *      0.70    17 of 28
+ *      0.85    21 of 28
+ *      1.00    21 of 28
+ *
+ * IT COSTS NOTHING TO STOP AT 0.85. The arithmetic bar is already flat there:
+ * every delve that 1.00 would pay for, 0.85 pays for. The whole of the
+ * difference between them is on the driven side, and on that side 1.00 is
+ * strictly worse.
+ *
+ * ═══════════════════════════════════════════════════════════════════════════
+ * IT WAS 0.40, AND THE RECEIPT FOR THAT IS VOID ON ITS OWN TERMS.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * 0.40 was set by fighting every class through every floor with
+ * `tools/delve-density.mjs` and reading where the game stopped being playable.
+ * Three rows stood here as the receipt. THE PROBE THAT TOOK THEM HAS SINCE BEEN
+ * FIXED IN FIVE WAYS — it wore no birth lantern, ran no remember pass, built
+ * floors for the wrong party size, banked the points a level pays without ever
+ * spending them, and folded NO PASSIVE TALENTS onto the body at all — and
+ * `AuthoredMap.forceLevel` landed after it. Re-run: same sites, same levels,
+ * the same factor of 1.00 those rows were taken at, twelve runs a row not two.
+ *
+ *     the row the old receipt quoted        it said          it says now
+ *     The Drowned Chapel, lvl 1, 25 bodies  Watchman 0/2     Watchman 11/12, 70 dmg
+ *     The Underworks,     lvl 3, 46 bodies  Watchman 1/2     Watchman  8/12
+ *     The Undermost,      lvl 1             every class 0/2  Watchman 9/12,
+ *                                                            Inspector 9/12
+ *
+ * The Underworks row is the one that settles it: the SAME forty-six bodies, the
+ * same level, the same generated floor. Nothing about the room changed. The
+ * measurement did. (The Undermost's old row read 55 bodies because it predates
+ * `nbNpcByFloor`; the spec states 20-30 for its first two floors now, for its
+ * own separate and still-live reason — see that field.)
+ *
+ * ═══════════════════════════════════════════════════════════════════════════
+ * WHAT 0.85 COSTS, MEASURED ACROSS THE WHOLE SWEEP AND ACROSS ALL FOUR CLASSES.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * THE FIRST RECEIPT FOR THIS VALUE WAS TAKEN ON THE WATCHMAN, and this note said
+ * in its own next breath that *"the Watchman is flat across the whole range"* —
+ * a number chosen with the one instrument that cannot see it. Re-measured, six
+ * solo runs a cell, floor 1 of the two level-1 delves at level 1, sweeping:
+ *
+ *     The Drowned Chapel    0.40   0.55   0.70   0.85
+ *       Watchman             6/6    6/6    6/6    6/6
+ *       Inspector            0/6    0/6    0/6    0/6
+ *       Alchemist            4/6    2/6    0/6    0/6
+ *       Redactor             0/6    0/6    0/6    0/6
+ *       party of four        4/6    4/6    2/6    1/6
+ *       party turns          445    508    718    799
+ *
+ *     The Undermost         0.40   0.55   0.70   0.85
+ *       Watchman             6/6    5/6    4/6    4/6
+ *       Inspector            6/6    6/6    6/6    5/6
+ *       Alchemist            6/6    6/6    2/6    0/6
+ *       Redactor             2/6    0/6    0/6    0/6
+ *       party of four        5/6    5/6    5/6    4/6
+ *       party turns          368    404    415    549
+ *
+ * THREE THINGS IN THAT TABLE AND ALL THREE ARE THE PRICE OF THIS NUMBER:
+ *
+ *   THE ALCHEMIST IS THE DENSITY CANARY. She clears the Drowned Chapel four runs
+ *     in six at 0.40 and none at 0.70. The Inspector and the Redactor lose it at
+ *     every factor, which is the class lane's residual and not this field's.
+ *   THE PARTY GETS LONGER, NOT DEADLIER. Zero wipes in every party cell at every
+ *     factor; the clear rate falls because the runs hit the 900-turn cap. That is
+ *     the *"merely longer rather than more urgent"* failure, named.
+ *   AND IT IS THE CO-OP CASE, which is the game that ships.
+ *
+ * ═══ AND THE OLD DIAGNOSIS OF WHY IS STILL STANDING, SO IT IS KEPT ═══
+ * An earlier draft of this note said: *"a body here costs far more turns to kill
+ * and deals far more per turn relative to what a level-1 character has. The count
+ * is upstream's; the per-body arithmetic is not."* The WIPE rows beside it were
+ * taken with a broken probe and were voided; that sentence was not, and the turn
+ * counts above are it, measured from the other side. ToME puts 20-30 bodies in
+ * front of a level-1 character in four of its tier-1 zones
+ * (`trollmire/zone.lua:197`, `heart-gloom/zone.lua:76`,
+ * `rhaloren-camp/zone.lua:53`, `ruins-kor-pul/zone.lua:55`, all
+ * `level_range = {1, 5}`) and its level-1 characters live. The count is not what
+ * differs. Until the per-body arithmetic does cross, this factor is the receipt
+ * for that gap rather than a decision about how crowded a room should be.
+ *
+ * ═══ IT IS HELD ANYWAY, AND HERE IS THE ARGUMENT ═══
+ * Every one of those costs is an argument for a SMALLER divergence from upstream
+ * — and this field IS the divergence. 1.00 is upstream; 0.40 was further from it
+ * than 0.85 and paid for that with a levelling curve that could not close. The
+ * ruling this whole system answers to is the author's: *"you are not meant to get
+ * to the end of the dungeon without leveling at least twice. this is exactly like
+ * ToME does"*, and the way to that is upstream's counts, not ours. Lowering the
+ * number buys a beginner room by moving away from the thing being ported.
+ *
+ * SO THE COST IS WRITTEN DOWN RATHER THAN AVERAGED AWAY, and the residual it
+ * leaves is named and owned somewhere else: the Inspector and the Redactor lose
+ * the Drowned Chapel at EVERY factor, and that is a class problem with a class
+ * answer (`classes.ts`, `indelible.ts`). The three lines above are what has to be
+ * re-measured before this number moves again —
+ * `test/server/monster-scaling.test.ts`'s change-detector names all of them, and
+ * the table in `test/server/first-room.test.ts` is the per-class half.
+ *
+ * ═══ AND THE ROOM THE GAME NAMES STILL DOES NOT ERASE THE CLASS IT IS FOR ═══
+ * A lone level-1 Watchman on floor 1, counting WIPES rather than clears, because
+ * a stall is the driver and a wipe is the room (`delve-run.mjs` closes by saying
+ * exactly that).
+ *
+ *     factor   The Drowned Chapel   The Undermost
+ *      0.40       0 of 40             0 of 40
+ *      0.70       0 of 40             0 of 40
+ *      0.85       1 of 80             0 of 80
+ *      0.90       1 of 80             1 of 80
+ *      0.95       0 of 40             3 of 40
+ *      1.00       3 of 40             2 of 40
+ *
+ * About one run in a hundred here, and about one in fifteen from 0.95 up. The
+ * driven case in `test/server/first-room.test.ts` is that bound, and it replaced
+ * a crude duel model whose verdict this measurement refuted — see it for why.
+ *
+ * ═══════════════════════════════════════════════════════════════════════════
+ * WHAT IS STILL SHORT, AND WHAT WOULD HAVE TO CHANGE TO REACH 1.00.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Seven of the twenty-eight still cannot pay two levels at 0.85 — the Glass
+ * Archive, its twin, and the five `REDACTED_TOWN` sites that share one spec at
+ * level 14 — and one, the Outer Index, cannot be completed at any factor at
+ * all.
+ *
+ * ═══ AND IT IS SEVEN FOR TWO DIFFERENT REASONS, WHICH THIS NOTE GOT WRONG ═══
+ * It used to say *"every one of those seven is still short at 1.00, which is the
+ * test's own way of saying NONE OF IT IS THE COUNT."* That was true of the two
+ * Glass Archives and false of the other five, and the only thing holding it up
+ * was a bug in the acceptance test: it priced every body at `delveLevel + floor
+ * - 1` when the placer births them at `actorAdjustLevel`'s four terms, an
+ * under-count of about 6%. On the placer's own levels the five `REDACTED_TOWN`
+ * sites pay 1.004 of two levels at upstream's own count and 0.854 of it at ours.
+ * THEIR SHORTFALL IS THE COUNT, and the count is held where it is by the
+ * beginner-room bound above.
+ * `test/server/levelling-curve.test.ts` now carries two lists and pins each entry
+ * from both sides, so an entry cannot sit in the wrong one again.
+ *
+ * WHAT IS LEFT OF THE ORIGINAL CLAIM IS THE GLASS ARCHIVE AND ITS TWIN, and for
+ * those it is exactly right.
+ * Upstream tunes a `nb_npc` and a `level_range` TOGETHER. We ported the count
+ * and kept our own authored level, and this is the drift that leaves:
+ *
+ *     delve                  ours  the zone its nbNpc came from     level_range
+ *     The Undermost            1   reknor-escape/zone.lua:22        {1, 5}    ok
+ *     The Drowned Chapel       1   halfling-ruins/zone.lua:22       {10, 25}  -9
+ *     The Underworks           3   orc-breeding-pit/zone.lua:22     {30, 60}  -27
+ *     Barrow End               5   old-forest/zone.lua:25           {7, 16}   -2
+ *     Cairnfoot                6   heart-gloom/zone.lua:25          {1, 5}    +5
+ *     The Weir                 6   lake-nur/zone.lua:25             {15, 25}  -9
+ *     The Watcher's Altar      7   rhaloren-camp/zone.lua:26        {1, 5}    +6
+ *     The Hollow Mine          9   ardhungol/zone.lua:22            {25, 32}  -16
+ *     The Outer Index         10   maze/zone.lua:25                 {7, 16}   +3
+ *     The Glass Archive       11   scintillating-caves/zone.lua:25  {1, 5}    +10
+ *     Gearford Ward           13   infinite-dungeon/zone.lua:25     scales
+ *     Blackwood Outskirts     15   trollmire/zone.lua:26            {1, 5}    +14
+ *
+ * A body pays LINEARLY in its level (`worthExp`) while `expChart` climbs
+ * quadratically, so a delve standing far ABOVE its zone's band is starved: the
+ * Glass Archive carries the sparsest count in the twelve, `{12, 16}`, at level
+ * eleven, and pays two thirds of two levels here — it would still be short at
+ * 1.00, and it clears the bar at level 7 and fails from 8 up. A delve standing
+ * far BELOW its band is the opposite: the Hollow Mine puts ardhungol's seventy
+ * to eighty bodies, which upstream hands to a character in the twenty-fives, in
+ * front of a level-9 one, and that is why it is the first delve to fall off the
+ * top of the sweep.
+ *
+ * ═══ SO: ALIGN THE LEVELS WITH THE ZONES, AND THIS FIELD DELETES ITSELF ═══
+ * Give each delve the `level_range` of the zone its `nbNpc` was read from, or
+ * read its count from a zone whose band matches the level the map wants it at.
+ * ONE GLOBAL FACTOR CANNOT BE RIGHT FOR BOTH DIRECTIONS of that drift —
+ * lowering it starves the delves above their band and raising it kills you in
+ * the ones below — which is the exact shape of the peaked sweep at the top of
+ * this note, and the reason no value of this number was ever going to be the
+ * answer. It moves the whole overworld progression, nothing measured here can
+ * price that, and it is recorded in `DECISIONS.md` rather than taken.
  *
  * ═══ WHY ONE GLOBAL FACTOR RATHER THAN A BAND PER SITE ═══
  * Because the RATIOS are the tuning. Ardhungol is 3.5x the Glass Archive's
  * original, the escape from Reknor is the densest thing in the first tier, the
  * Maze is denser than the forest it sits under — fifteen years of somebody
  * deciding that, and per-site bands would throw all of it away and put us back
- * where this file started, with twelve numbers somebody picked. One factor keeps
- * every relative decision upstream made and admits the one thing we know is
- * different, in one place, with the measurement that set it written above it.
- *
- * ═══ ITS VALUE IS A MEASUREMENT, NOT A TASTE ═══
- * THE LARGEST FACTOR AT WHICH THE ROOM THE FIRST CASE NAMES IS STILL BEATABLE BY
- * WALKING INTO IT. Swept against `test/server/first-room.test.ts`, which opens
- * the quiet rooms with the real generator and the real placer and fights the
- * pack that can see the arrival tile:
- *
- *     0.60  the Undermost leaves a beginner  7 of 72 hp
- *     0.50  the Undermost leaves a beginner  7 of 72 hp
- *     0.45  the Undermost leaves a beginner  7 of 72 hp
- *     0.40  passes                                        <- here
- *     0.35  passes
- *
- * At 0.40 no delve in the game is less crowded than it was, which is the other
- * bound worth stating: a factor low enough to keep the beginner room also has to
- * be high enough that the author's complaint — *"too little enemies"* — is
- * actually answered. Against HEAD's authored bands, by midpoint:
- *
- *     Blackwood Outskirts  8-10 ->  8-12   1.1x      the Underworks   4-6 -> 16-20  3.6x
- *     The Glass Archive     3-5 ->   5-6   1.4x      The Hollow Mine  6-8 -> 28-32  4.3x
- *     Barrow End            5-7 ->  8-12   1.7x      The Drowned Chapel 2-2 -> 8-12 5.0x
- *     The Watcher's Altar   5-7 ->  8-12   1.7x      The Undermost    2-2 ->  8-12  5.0x
- *     Gearford Ward         6-8 -> 10-14   1.7x      The Outer Index  3-4 -> 20-24  6.3x
- *     The Weir              4-6 ->  8-10   1.8x
- *     Cairnfoot             4-6 ->  8-12   2.0x
- *
- * Median 1.9x, and `test/server/monster-scaling.test.ts` holds the floor of it:
- * no site may be less crowded than the row above.
- *
- * ═══ AND THE DRIVEN PROBE IS WHAT SAYS WHETHER IT IS PLAYABLE ═══
- * `tools/delve-density.mjs` fights every class through every floor of every
- * delve. Read its per-class column before moving this: at HEAD it was Watchman
- * 98%, Alchemist 54%, Inspector 46%, Redactor 17% — three of the four classes
- * were already losing most floors BEFORE any density change, and this factor
- * cannot fix that.
- *
- * ═══ IT IS MEANT TO REACH 1.00 ═══
- * Not by raising it. By fixing what it is paying for: one rolled item per slot
- * erases 50-69% of incoming damage from level 3 on, a body takes ~35 player
- * turns to kill, and monster hit points reach 180-516 while the damage that
- * answers them does not keep up. Every point of that closed is a point this can
- * rise by, and the day it is 1.00 this constant deletes itself.
+ * where this file started, with twelve numbers somebody picked. At 0.85 every
+ * one of those ratios is intact and no delve in the game is less crowded than
+ * it was; `test/server/monster-scaling.test.ts` holds both of those and the
+ * hard ceiling of 1.00, above which the counts stop being upstream's at all.
  */
-export const NB_NPC_SCALE = 0.4;
+export const NB_NPC_SCALE = 0.85;
 
 /** How a floor's bodies are scattered over it — upstream's `OnSpots` fields. */
 export type SpotSpec = {
@@ -827,15 +986,30 @@ export const DELVES: ReadonlyMap<string, DelveSpec> = new Map<string, DelveSpec>
        * ```
        *
        * The player is force-levelled on each descent, and NORGAN WALKS WITH THEM
-       * and is levelled too. We have neither: `forceLevelup` is unported and
-       * there is no escort. Measured with the count its own zone states, a
-       * level-1 character is killed by the pack that can see the arrival tile
-       * before it has read the room (`test/server/first-room.test.ts`).
+       * and is levelled too.
+       *
+       * ═══ HALF OF THAT HAS LANDED SINCE, AND THIS NOTE SAID IT NEVER WOULD ═══
+       * It read *"we have neither: `forceLevelup` is unported and there is no
+       * escort"*. `forceLevelup` IS ported — `shared/progression.ts` has the
+       * rule, `AuthoredMap.forceLevel` carries it, `realms.ts` sets it on every
+       * floor of this site from the second down, and `turn-engine.ts` pays it on
+       * arrival with upstream's full heal. The note was written before that and
+       * went on arguing from its absence, which is the failure mode a deferral
+       * note has: *"we cannot because we lack Y"* outlives Y shipping.
+       *
+       * ═══ AND THE HALF THAT IS STILL TRUE IS THE HALF THAT MATTERS HERE ═══
+       * THERE IS NO ESCORT, and `forceLevel` is only set from floor 2 — because
+       * upstream's `on_enter` only fires from `lev == 2`. So FLOOR ONE, which is
+       * the room every character in this game wakes up in, gets neither of the
+       * two things that pay for fifty to sixty bodies. That is what this
+       * override is still for, and it is now a claim about floor 1 alone.
        *
        * ═══ THIS IS THE ROW THAT REVERTS ═══
-       * The day `forceLevelup` and the escort land — which is the tutorial lane's
-       * work, and the same pair `docs/wip/d3b` is waiting on — this override
-       * comes out and the Undermost carries `nbNpc` like everything else.
+       * The day the escort lands — the tutorial lane's work — this override
+       * comes out and the Undermost carries `nbNpc` like everything else. It is
+       * a SEPARATE divergence from `NB_NPC_SCALE` and reverts separately: that
+       * factor is one number about every delve, and this is one row about this
+       * one, for a reason the factor knows nothing about.
        */
       // And `levels[3].generator.actor.nb_npc = {0, 0}` — reknor-escape/zone.lua:79.
       // The last level is a STATIC map with its bodies drawn on it

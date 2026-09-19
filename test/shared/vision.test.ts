@@ -214,6 +214,112 @@ describe('computeVision', () => {
   });
 });
 
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * HEIGHTENED SENSES — tome/class/Player.lua:636-644.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Four rules, and each case below breaks exactly one of them:
+ *
+ *   it shows a tile that HOLDS AN ACTOR, and no other tile;
+ *   it is blocked by walls (`block_sight`, the same blocker sight uses);
+ *   it is capped at sight (`math.min(radius, self.sight)`, applied by
+ *     `sensesRadiusOf` before the call, so what is exercised here is that the
+ *     clause obeys the number it is handed);
+ *   it lights `max(1, floor(senses / 4))` around the eye and no further.
+ *
+ * DARK EVERYWHERE and `lite: 0`, so nothing else in `computeVision` can produce
+ * a seen tile and every `true` below belongs to this clause alone.
+ */
+describe('computeVision — heightened senses', () => {
+  /** An occupancy predicate holding exactly these tiles. */
+  const holding = (...at: readonly (readonly [number, number])[]) => {
+    const set = new Set(at.map(([x, y]) => `${String(x)},${String(y)}`));
+    return (x: number, y: number): boolean => set.has(`${String(x)},${String(y)}`);
+  };
+
+  it('shows a body outside the lantern, and not the floor it is standing on the way to', () => {
+    const level = fixture();
+    const body = { x: EYE.x, y: EYE.y - 4 };
+    const vision = computeVision(
+      level,
+      EYE,
+      { sight: RADIUS, lite: 0, senses: 5 },
+      dark(level),
+      [],
+      holding([body.x, body.y]),
+    );
+    expect(fogHas(vision.seen, level.w, body.x, body.y), 'the body').toBe(true);
+    // ONE TILE NEARER, EMPTY. Upstream's callback fires only where an actor is.
+    expect(fogHas(vision.seen, level.w, EYE.x, EYE.y - 3), 'empty floor between').toBe(false);
+    // …and it is not written into memory: dark ground is never kept.
+    expect(fogHas(vision.remember, level.w, body.x, body.y), 'not remembered').toBe(false);
+  });
+
+  it('does not sense through a wall', () => {
+    const level = fixture();
+    // The wall runs x = 13, y = 8..12. Stand west of it and put a body east.
+    const eye = { x: 11, y: 10 };
+    const behind = { x: 15, y: 10 };
+    const vision = computeVision(
+      level,
+      eye,
+      { sight: RADIUS, lite: 0, senses: 5 },
+      dark(level),
+      [],
+      holding([behind.x, behind.y]),
+    );
+    expect(fogHas(vision.seen, level.w, behind.x, behind.y)).toBe(false);
+  });
+
+  it('senses nothing past the radius it is given', () => {
+    const level = fixture();
+    const far = { x: EYE.x, y: EYE.y - 5 };
+    const near = { x: EYE.x, y: EYE.y - 3 };
+    const vision = computeVision(
+      level,
+      EYE,
+      { sight: RADIUS, lite: 0, senses: 4 },
+      dark(level),
+      [],
+      holding([far.x, far.y], [near.x, near.y]),
+    );
+    expect(fogHas(vision.seen, level.w, near.x, near.y), 'inside 4').toBe(true);
+    expect(fogHas(vision.seen, level.w, far.x, far.y), 'outside 4').toBe(false);
+  });
+
+  it('lights floor(senses / 4) around the eye, and no more', () => {
+    const level = fixture();
+    // senses 8 -> rad2 2. Nothing is standing anywhere, so every seen tile here
+    // is the second pass and nothing else.
+    const vision = computeVision(
+      level,
+      EYE,
+      { sight: RADIUS, lite: 0, senses: 8 },
+      dark(level),
+      [],
+      holding(),
+    );
+    expect([...vision.seen], 'exactly a radius-2 circle').toEqual([...computeSeen(level, EYE, 2)]);
+  });
+
+  it('does nothing at all without a radius, so every existing caller is unchanged', () => {
+    const level = fixture();
+    const body = { x: EYE.x, y: EYE.y - 4 };
+    const without = computeVision(level, EYE, { sight: RADIUS, lite: 0 }, dark(level), []);
+    const withPredicate = computeVision(
+      level,
+      EYE,
+      { sight: RADIUS, lite: 0, senses: 0 },
+      dark(level),
+      [],
+      holding([body.x, body.y]),
+    );
+    expect([...withPredicate.seen]).toEqual([...without.seen]);
+    expect(fogCount(without.seen), 'its own tile and nothing else').toBe(1);
+  });
+});
+
 describe('alwaysRemembered', () => {
   it('keeps every tile that blocks sight, and an open door', () => {
     for (const code of Object.values(TileCode)) {

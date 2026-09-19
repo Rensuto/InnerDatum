@@ -7,9 +7,14 @@ import Fastify from 'fastify';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { AiProfile } from '../../src/server/engine/actor.ts';
+import { INSPECTOR, sheetForClass } from '../../src/server/content/classes.ts';
+import { talentLevelOf } from '../../src/server/engine/talents.ts';
 import { DamageType } from '../../src/server/engine/damage.ts';
 import { createDownedState } from '../../src/server/engine/downed.ts';
-import { sightRadiusOf } from '../../src/server/engine/derived.ts';
+import { sensesRadiusOf, sightRadiusOf } from '../../src/server/engine/derived.ts';
+import { EMPTY_PASSIVE_VIEW } from '../../src/server/engine/hooks.ts';
+import { coldReading, senseAt } from '../../src/server/talents/cold_reading.ts';
+import { visionOf } from '../../src/server/view/eyesight.ts';
 import { composeWielders } from '../../src/server/engine/equipment.ts';
 import { createPartyState } from '../../src/server/engine/party.ts';
 import { wsGateway } from '../../src/server/net/gateway.ts';
@@ -93,6 +98,132 @@ describe('the board, in the dark', () => {
     mate.combat = composeWielders(mate.combat ?? {}, [{ mods: { lite: 2 } }]);
     husk(world, 'lit-by-mate', EYE.x + FAR, EYE.y);
     expect(visibleActorIds(world, [eyeWith(0)]).has('lit-by-mate')).toBe(true);
+  });
+});
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * HEIGHTENED SENSES, END TO END — cunning/survival.lua:21-48 through
+ * tome/class/Player.lua:636-644.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * DRIVEN FROM `coldReading.passive` AND `composeWielders`, which is the whole
+ * point of putting it here rather than beside the `computeVision` unit cases.
+ * The number has to cross four boundaries to matter — the talent's block, the
+ * additive fold's key list, `sensesRadiusOf`'s cap, and `visionOf`'s occupancy
+ * predicate — and `WIELDER_MOD_KEYS` is the one that has silently swallowed a
+ * new mod before. A body whose sheet says `senses: 5` while the fold never
+ * carried it looks identical to a body that has no talent.
+ *
+ * `FAR` is 4: past a brass lantern's 2, inside the senses radius of 5, and
+ * inside sight — so on an unlit floor NOTHING ELSE in `computeVision` can
+ * produce this husk.
+ */
+describe('sensing in the dark', () => {
+  /** A viewer at `EYE` with a lantern and whatever Cold Reading grants at `rank`. */
+  function sensingEye(rank: number, lite = 2) {
+    const block = coldReading.passive?.(rank, EMPTY_PASSIVE_VIEW) ?? {};
+    return { ...EYE, combat: composeWielders({ mods: { lite } }, [block]) };
+  }
+
+  it('shows a husk past the lantern that a lantern alone cannot', () => {
+    const world = floor(false);
+    husk(world, 'far', EYE.x + FAR, EYE.y);
+    expect(visibleActorIds(world, [eyeWith(2)]).has('far'), 'lantern alone').toBe(false);
+    expect(visibleActorIds(world, [sensingEye(1)]).has('far'), 'and with senses').toBe(true);
+  });
+
+  it('carries the talent’s own number through the fold', () => {
+    // If `senses` is dropped by `WIELDER_MOD_KEYS` this is 0 and every case
+    // above still has a lantern to hide behind. `senseAt(1)` is upstream's
+    // `floor(combatTalentScale(t, 5, 9))` at rank 1, which is 5.
+    expect(sensesRadiusOf(sensingEye(1))).toBe(senseAt(1));
+    expect(senseAt(1)).toBe(5);
+    /**
+     * `Math.floor`, NOT `Math.round` — upstream's own survival.lua:27, and it
+     * takes a FRACTIONAL talent level to tell the two apart. Measured across the
+     * curve they agree at every whole rank (5 / 6.34 / 7.37 / 8.24 / 9), so
+     * `senseAt(2) === 6` is true of both rules and pins neither; a first attempt
+     * at this line asserted exactly that and the mutant walked through it.
+     *
+     * 2.6 is a MASTERED rank 2 (`ActorTalents.lua:826` multiplies raw points by
+     * category mastery, and `shared/scale.ts` refuses to clamp past 5 for that
+     * reason). The value there is 6.98: floor 6, round 7.
+     */
+    expect(senseAt(2), 'both rules agree here — see below').toBe(6);
+    expect(senseAt(2.6), 'floor, not round').toBe(6);
+  });
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * AND THE INSPECTOR IS BORN WITH IT. THE JOIN NOTHING DROVE.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Every case in this describe built its eye from `coldReading.passive(rank)`
+   * BY HAND — which drives the talent, the fold, `WIELDER_MOD_KEYS`,
+   * `sensesRadiusOf` and the `computeVision` clause, and never once asks whether
+   * an Inspector HAS the talent. Measured with a mutant: put `steadyHands` back
+   * on `INSPECTOR.birthTalents` in place of `coldReading` — the pre-fix loadout,
+   * the darkness port granted to nobody — and the whole suite stays green.
+   *
+   * `pointsForLevel(1)` is 0 (shared/progression.ts), so `birthTalents` IS the
+   * level-1 character and this one line is the difference between the measured
+   * 0/6 -> 6/6 on the intro floor and nothing at all.
+   *
+   * THE RANK IS READ FROM THE SHIPPED SHEET AND THEN SPENT, so the case fails
+   * both ways: a class that stops granting it, and a fold that stops carrying
+   * it. Not `trained` — that helper ranks up everything a class owns and would
+   * delete the question this case exists to ask.
+   */
+  it('is granted by the class the measurement was taken on', () => {
+    const rank = talentLevelOf(sheetForClass(INSPECTOR), coldReading);
+    expect(rank, 'the Inspector is not born knowing Cold Reading').toBeGreaterThanOrEqual(1);
+
+    const world = floor(false);
+    husk(world, 'far', EYE.x + FAR, EYE.y);
+    const born = sensingEye(rank);
+    expect(sensesRadiusOf(born), 'her own rank senses nothing').toBeGreaterThanOrEqual(FAR);
+    expect(visibleActorIds(world, [born]).has('far'), 'a born Inspector is blind').toBe(true);
+  });
+
+  it('is capped at sight, as `math.min(radius, self.sight)` is', () => {
+    // Rank 5 senses 9; a blinded body's `sightRadiusOf` is 1, and upstream's
+    // whole senses block sits inside `if not self:attr("blind")`.
+    const blind = {
+      ...EYE,
+      combat: composeWielders({ mods: { lite: 2 }, flags: { blind: true } }, [
+        coldReading.passive?.(5, EMPTY_PASSIVE_VIEW) ?? {},
+      ]),
+    };
+    expect(senseAt(5)).toBe(9);
+    expect(sensesRadiusOf(blind), 'clamped to what it can see at all').toBe(1);
+  });
+
+  it('shows the BODY and not the ground it is standing on', () => {
+    // Upstream's callback fires only where `game.level.map(x, y, ACTOR)` is
+    // true; the floor between stays black. `knownTile` asks the same seen set.
+    const world = floor(false);
+    husk(world, 'far', EYE.x + FAR, EYE.y);
+    const eye = sensingEye(1);
+    const seen = visionOf(world, eye).seen;
+    expect(fogHas(seen, world.level.w, EYE.x + FAR, EYE.y), 'the tile it stands on').toBe(true);
+    expect(fogHas(seen, world.level.w, EYE.x + 3, EYE.y), 'the empty tile before it').toBe(false);
+  });
+
+  it('does not sense a corpse, which upstream’s map no longer holds', () => {
+    const world = floor(false);
+    const dead = husk(world, 'far', EYE.x + FAR, EYE.y);
+    dead.alive = false;
+    expect(visibleActorIds(world, [sensingEye(1)]).has('far')).toBe(false);
+  });
+
+  it('leaves a body with no talent exactly where it was', () => {
+    const world = floor(false);
+    husk(world, 'far', EYE.x + FAR, EYE.y);
+    husk(world, 'near', EYE.x + 1, EYE.y);
+    const plain = visibleActorIds(world, [eyeWith(2)]);
+    expect(plain.has('near')).toBe(true);
+    expect(plain.has('far')).toBe(false);
   });
 });
 

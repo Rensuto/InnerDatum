@@ -29,7 +29,12 @@ import { createWorld } from '../../src/server/world/world.ts';
 import { TalentShape, TileCode } from '../../src/shared/protocol.ts';
 import type { EngineActor } from '../../src/server/engine/actor.ts';
 import type { TalentResolutionResult } from '../../src/server/engine/scheduler.ts';
-import type { GuardCounter, TalentEngine, TalentSheet } from '../../src/server/engine/talents.ts';
+import type {
+  GuardCounter,
+  KillNote,
+  TalentEngine,
+  TalentSheet,
+} from '../../src/server/engine/talents.ts';
 import type { TalentRuntime } from '../../src/server/turn-engine.ts';
 import type { TileXY } from '../../src/shared/coords.ts';
 import type { World } from '../../src/server/world/world.ts';
@@ -102,7 +107,7 @@ function runtimeFor(talents: TalentEngine, world: World): TalentRuntime {
       const sheet = talents.sheetOf(actorId);
       if (sheet !== undefined) sheet.movedThisTurn = true;
     },
-    noteKill: (actorId: string): void => talents.noteKill(actorId),
+    noteKill: (actorId: string, note: KillNote): void => talents.noteKill(actorId, note),
     noteStruck: (actorId: string): void => talents.noteStruck(actorId),
     // THE REAL PREDICATE, because this fixture drives real talents — a stub
     // would test the closed-round path while the file is about the open one.

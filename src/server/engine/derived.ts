@@ -187,6 +187,35 @@ export type CombatMods = {
    */
   readonly lite?: number;
   /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * `heightened_senses` — SEEING A BODY OUTSIDE YOUR LIGHT. Not seeing the room.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * tome/class/Player.lua:636-644 is the whole of upstream's implementation and
+   * it is nine lines. Two FOV passes, both `block_sight`, so both stop at a
+   * wall:
+   *
+   *   `radius = min(max(heightened_senses, infravision), self.sight)` — this
+   *   number, capped by how far the body can see at all, and the callback marks
+   *   a grid seen ONLY when `game.level.map(x, y, ACTOR)` — only when something
+   *   is standing on it. The floor between you and it stays black.
+   *
+   *   `rad2 = max(1, floor(radius / 4))` — and a second, much smaller pass that
+   *   applies LITE, so the tiles right around you are properly lit.
+   *
+   * THE TALENT'S OWN TEXT IS THE SPECIFICATION: *"allowing you to 'see'
+   * creatures in a %d radius even outside of light radius. This is not
+   * telepathy, however, and it is still limited to line of sight."*
+   * (tome/data/talents/cunning/survival.lua:43-44.)
+   *
+   * A BONUS ON ZERO, like `lite` and unlike `sight`: nothing has it by default,
+   * so the fold stays additive and a body with no sheet is unchanged.
+   *
+   * `sensesRadiusOf` applies the cap; `shared/vision.ts#computeVision` is where
+   * the two passes live.
+   */
+  readonly senses?: number;
+  /**
    * `healing_factor` — a FRACTION added to the heal multiplier, not a percent.
    * `0.1` is a tenth more healing received. See `healingFactor`, which reads it.
    */
@@ -317,6 +346,27 @@ export type Weapon = {
    * `{ str = 0.6 }` (Combat.lua:1625); a bow is `{ dex = 0.7, str = 0.5 }`.
    */
   readonly damMod?: PrimaryStats;
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * `archery` — THIS IS FIRED, NOT SWUNG, SO IT CANNOT BE SWUNG.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Upstream's flag is on the OBJECT and `attackTarget` reads it twice, once per
+   * hand: `if combat and not o.archery then` at
+   * tome/class/interface/Combat.lua:181 and again at :204. A bow in the mainhand
+   * is SKIPPED by the melee loop, `speed` stays nil, and control falls through
+   * to :221-231 — `-- Barehanded ?` — which swings
+   * `self:getObjectCombat(nil, "barehand")` instead. That is why a ToME archer
+   * standing in a doorway is never refused: she punches.
+   *
+   * It is a fact about the WEAPON rather than about the class, which is what
+   * makes it the right home. The day a second gun exists, or a Watchman picks
+   * one up, the rule follows the object.
+   *
+   * See `BAREHAND` and `rangeRefusal` in engine/combat.ts for the two halves
+   * that read it.
+   */
+  readonly archery?: boolean;
 };
 
 /**
@@ -1121,4 +1171,31 @@ export function sightRadiusOf(body: {
  */
 export function liteRadiusOf(body: { readonly combat?: { readonly mods?: CombatMods } }): number {
   return body.combat?.mods?.lite ?? 0;
+}
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * HOW FAR THIS BODY SENSES A CREATURE IT CANNOT SEE — and the cap is upstream's.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * tome/class/Player.lua:639-640, both lines:
+ *
+ *     local radius = math.max((self.heightened_senses or 0), (self.infravision or 0))
+ *     radius = math.min(radius, self.sight)
+ *
+ * The MAX of the two sources, then clamped to sight. We have one source today
+ * (`CombatMods.senses`), so the max is that one term — the day infravision
+ * exists it is a second `Math.max` argument here and nothing else moves.
+ *
+ * CLAMPED TO SIGHT, NOT TO THE DEFAULT. `sightRadiusOf` already short-circuits a
+ * blind body to 1, so a blind body senses one tile: upstream's `self.sight` is
+ * likewise the body's own current value, and the whole senses block sits inside
+ * `if not self:attr("blind") then` at tome/class/Player.lua:622.
+ */
+export function sensesRadiusOf(body: {
+  readonly combat?: { readonly mods?: CombatMods; readonly flags?: StatusFlags };
+}): number {
+  const senses = body.combat?.mods?.senses ?? 0;
+  if (senses <= 0) return 0;
+  return Math.min(senses, sightRadiusOf(body));
 }

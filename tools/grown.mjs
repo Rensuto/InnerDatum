@@ -48,7 +48,13 @@ import { canRaiseStat, pointsForLevel, TALENT_MAX_LEVEL } from '../src/shared/pr
 import { rollLoot, bandFor } from '../src/server/content/loot.ts';
 import { BIRTH_KIT, ITEMS } from '../src/server/content/items.ts';
 import { resolveItem } from '../src/server/content/resolve.ts';
-import { boughtSheet, recomposeCombat } from '../src/server/engine/effects.ts';
+import {
+  EffectStatus,
+  boughtSheet,
+  effectsOn,
+  recomposeCombat,
+} from '../src/server/engine/effects.ts';
+import { effectiveResourceMax, talentLevelOf } from '../src/server/engine/talents.ts';
 import { maxLifeOf } from '../src/server/engine/pools.ts';
 import { STAT_BASE } from '../src/server/engine/derived.ts';
 import { ActorKind, Slot, SLOT_ORDER } from '../src/shared/protocol.ts';
@@ -335,19 +341,32 @@ export function rememberWhatProbesSee(world) {
  * you, an effect that grants stats, and once per base turn, which is what
  * catches a level gained in the middle of a pump.
  *
- * ═══ WHAT IT DELIBERATELY DOES NOT DO: THE PASSIVE FOLD ═══
- * `refreshPassives` also rebuilds `actor.passiveCombat` from the sheet's
- * passives and sustains, and that fold is a hundred and fifty lines inside
- * `buildServer` reaching the talent registry, the board and the status table.
- * Copying it here would be a second copy of the rule this file's own header
- * warns about. So a probe body's PASSIVE talents contribute nothing, at every
- * level — which is a pre-existing gap, it is unchanged by this function, and it
- * biases every number here in the HARD direction. Said out loud rather than
- * left to be discovered.
+ * ═══ AND IT DOES THE PASSIVE FOLD NOW. IT USED NOT TO, AND THAT WAS THE GAP ═══
+ * This note read: *"a probe body's PASSIVE talents contribute nothing, at every
+ * level ... it biases every number here in the HARD direction"*, on the grounds
+ * that the fold is *"a hundred and fifty lines inside `buildServer`"*. It is
+ * thirty-five, and `foldPassives` below is those thirty-five — the same walk
+ * over `[...sheet.passives, ...sheet.sustained]`, the same `points < 1` skip,
+ * the same `talentLevelOf`, the same additive collect into `passiveCombat`,
+ * asking the same production functions.
+ *
+ * THE GAP WAS NOT UNIFORM, WHICH IS WHY IT HAD TO CLOSE. It hid one thing per
+ * class and they are not the same size: the Watchman's `standingOrders` is ARMOUR
+ * and the other three get offence, so the bias ran against him. And it hid
+ * `coldReading`'s `heightened_senses` entirely — a talent whose whole effect is
+ * on what a body can SEE, on a class measured at 4% win rate in the dark against
+ * 47% in the light. A probe that cannot see the change cannot be asked whether
+ * the change worked.
+ *
+ * WHAT IS STILL NOT HERE: `absorb`. It is the one line of the production fold
+ * that reaches a closure rather than the sheet (`absorbShield` keys on an id
+ * inside `buildServer`), and no talent any of the four classes owns puts a
+ * shield up. Still a bias, still in the hard direction, still said out loud.
  */
-export function levelOnTheFloor(body, cls, sheet, effects) {
+export function levelOnTheFloor(body, cls, sheet, effects, ctx = undefined) {
   spendBankedStats(body, cls);
   spendBankedTalents(body, sheet, cls);
+  foldPassives(body, sheet, effects, ctx);
   // `recomposeCombat` IS THE ONLY WRITER OF `combat` — this writes its inputs
   // and asks it to run, exactly as main.ts#refreshPassives does.
   recomposeCombat(body, effects, resolveItem);
@@ -361,6 +380,115 @@ export function levelOnTheFloor(body, cls, sheet, effects) {
    */
   body.maxHp = maxLifeOf(body, cls, PLAYER_RANK);
   body.hp = Math.min(body.hp, body.maxHp);
+}
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * `actor.passiveCombat`, REBUILT — main.ts#refreshPassives:1435-1515, condensed.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Production builds a `PassiveView` over the board, walks the sheet's passives
+ * and live sustains, skips anything at rank 0, calls `talent.passive(rank, view)`
+ * and adds the `stats`/`mods` blocks up. That is exactly this, and every rule in
+ * it is asked of a production function rather than restated:
+ *
+ *   WHICH RANK      `talentLevelOf` — not the raw point map, which is the one
+ *                   place a talent can behave at a rank the panel does not show.
+ *   RANK 0 IS NOT   `points.get(id) < 1` skips. A class OWNS more passives than
+ *   A TENTH OF ONE  it KNOWS since birth talents landed, and
+ *                   `combatTalentScale(0)` would hand the fold a tenth of a
+ *                   talent nobody has.
+ *   ABSENT, NOT {}  a body with no passives composes byte-identically to one
+ *                   from before passives existed.
+ *
+ * ═══ THE VIEW IS THE HONEST HALF AND `ctx` IS WHY IT IS OPTIONAL ═══
+ * Four of the eight questions need the BOARD (who is next to me, how far is the
+ * nearest enemy) and the probe's callers have one. A caller that does not —
+ * anything building a body outside a world — gets the same fold with an empty
+ * board, which is what a body standing alone honestly sees. It is not a second
+ * opinion about the rule; it is the same rule asked from a quieter room.
+ */
+export function foldPassives(body, sheet, effects, ctx = undefined) {
+  const registry = ctx?.registry;
+  const engine = ctx?.engine;
+  if (registry === undefined || sheet === undefined) return;
+  const world = ctx?.world;
+  const neighbours = () =>
+    (world?.allActors() ?? []).filter(
+      (o) =>
+        o.id !== body.id &&
+        o.alive &&
+        Math.max(Math.abs(o.x - body.x), Math.abs(o.y - body.y)) <= 1,
+    );
+  const view = {
+    adjacentEnemies: () => neighbours().filter((o) => o.kind !== body.kind).length,
+    adjacentAllies: () => neighbours().filter((o) => o.kind === body.kind).length,
+    hpFraction: () => (body.maxHp > 0 ? Math.max(0, Math.min(1, body.hp / body.maxHp)) : 1),
+    resourceFraction: () => {
+      if (engine === undefined) return 1;
+      const ceiling = effectiveResourceMax(engine, sheet);
+      return ceiling > 0 ? Math.max(0, Math.min(1, sheet.resource.value / ceiling)) : 1;
+    },
+    movedThisTurn: () => sheet.movedThisTurn,
+    isSustained: (id) => sheet.sustained.has(id),
+    nearestEnemyDistance: () => {
+      let best = Number.POSITIVE_INFINITY;
+      for (const o of world?.allActors() ?? []) {
+        if (o.id === body.id || !o.alive || o.kind === body.kind) continue;
+        const d = Math.max(Math.abs(o.x - body.x), Math.abs(o.y - body.y));
+        if (d < best) best = d;
+      }
+      return best;
+    },
+    afflicted: () =>
+      effects === null || effects === undefined
+        ? 0
+        : effectsOn(effects, body.id).filter(
+            (i) => effects.defs.get(i.effectId)?.status === EffectStatus.Detrimental,
+          ).length,
+  };
+
+  const stats = {};
+  const mods = {};
+  /**
+   * AND THE HOOKS, BOUND WITH THEIR RANK — main.ts:1486-1488.
+   *
+   * COLLECTED OUTSIDE THE `passive` GUARD, as production collects them: a
+   * talent may carry a hook and no `passive` block at all, and `indelible`'s
+   * `onKill` heal is exactly that shape. A probe that folded only the numbers
+   * would report a class as unsurvivable while the talent meant to save it sat
+   * in the registry doing nothing.
+   */
+  const bound = [];
+  for (const id of [...sheet.passives, ...sheet.sustained]) {
+    if ((sheet.points.get(id) ?? 0) < 1) continue;
+    const talent = registry.get(id);
+    if (talent === undefined) continue;
+    if (talent.hooks !== undefined) {
+      bound.push({ talentId: id, level: talentLevelOf(sheet, talent), hooks: talent.hooks });
+    }
+    if (talent.passive === undefined) continue;
+    const block = talent.passive(talentLevelOf(sheet, talent), view);
+    for (const [key, value] of Object.entries(block.stats ?? {})) {
+      if (typeof value === 'number') stats[key] = (stats[key] ?? 0) + value;
+    }
+    for (const [key, value] of Object.entries(block.mods ?? {})) {
+      if (typeof value === 'number') mods[key] = (mods[key] ?? 0) + value;
+    }
+  }
+  const any = Object.keys(stats).length > 0 || Object.keys(mods).length > 0;
+  body.passiveCombat = any
+    ? {
+        ...(Object.keys(stats).length > 0 ? { stats } : {}),
+        ...(Object.keys(mods).length > 0 ? { mods } : {}),
+      }
+    : undefined;
+  // ABSENT RATHER THAN EMPTY, for production's reason: `applyDamage`
+  // short-circuits on an absent array.
+  body.talentHooks = bound.length > 0 ? bound : undefined;
+  // THE LATCH THE HOOKS READ, borrowed from the sheet rather than copied —
+  // two latches would be two answers to "has this fired this turn".
+  body.turnProcs = sheet.turnProcs;
 }
 
 /**

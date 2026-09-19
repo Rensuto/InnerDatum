@@ -1,13 +1,23 @@
+import { readFileSync, readdirSync } from 'node:fs';
+
 import { describe, expect, it } from 'vitest';
 
 import {
   AttackRefusal,
+  BAREHAND,
   MELEE_REACH,
   attackTarget,
   canAttack,
   combatDistance,
 } from '../../src/server/engine/combat.ts';
 import { DamageType } from '../../src/server/engine/damage.ts';
+// THE SHIPPED SHEETS, not fixtures — see `a gun at contact is a fist` below for
+// why the join between `Weapon.archery` and `barehandAt` has to be driven from
+// the content the game actually loads.
+import {
+  INSPECTOR as SHIPPED_INSPECTOR,
+  WATCHMAN as SHIPPED_WATCHMAN,
+} from '../../src/server/content/classes.ts';
 import { TileCode } from '../../src/shared/protocol.ts';
 import { createRng } from '../../src/shared/rng.ts';
 import { drawCount, scriptedRng } from '../helpers/scripted-rng.ts';
@@ -197,6 +207,192 @@ describe('the dead zone — min_range, game-design.md § 2', () => {
 
   it('does not apply to a melee actor, which has no hole at all', () => {
     expect(canAttack(actor('w', 1, 1), actor('t', 2, 1), world())).toBeNull();
+  });
+});
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE BAREHAND FALL-THROUGH — tome/class/interface/Combat.lua:181, :204, :221-231
+ * and tome/class/Actor.lua:277-285.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Upstream's melee loop skips a weapon flagged `archery` in both hands, which
+ * leaves `speed` nil, which falls into `-- Barehanded ?` and swings the actor's
+ * innate `{dam=1, atk=1, apr=0, physcrit=0, dammod={str=1}, damrange=1.1}`. A
+ * ToME archer at contact is NEVER refused; she punches, feebly.
+ *
+ * IT IS DRIVEN FROM `INSPECTOR.combat`, THE SHIPPED SHEET, not from a fixture.
+ * `Weapon.archery` is a content field and `barehandAt` is an engine rule, and
+ * the bug this exists for lived in the one line between them: the class carried
+ * `minRange: 3` and the engine refused her bump, `bumped: 0` in every run the
+ * probes ever took. A fixture sheet that set `archery: true` by hand would pass
+ * while the shipped revolver did not carry it.
+ */
+describe('a gun at contact is a fist — Combat.lua:221-231', () => {
+  const gun = SHIPPED_INSPECTOR.combat;
+
+  it('is not refused at contact, where the bare dead zone refuses', () => {
+    const w = world();
+    const her = actor('insp', 1, 1, { combat: gun });
+    // Orthogonal and diagonal neighbours: both inside MELEE_REACH.
+    expect(canAttack(her, actor('t', 2, 1), w), 'orthogonal').toBeNull();
+    expect(canAttack(her, actor('t', 2, 2), w), 'diagonal').toBeNull();
+    // AND THE SAME SHEET WITHOUT THE FLAG IS STILL REFUSED. This is the line
+    // that fails if `barehandAt` stops reading the weapon.
+    const { archery: _archery, ...swingable } = gun.weapon ?? {};
+    const noGun = actor('x', 1, 1, { combat: { ...gun, weapon: swingable } });
+    expect(canAttack(noGun, actor('t', 2, 1), w)).toBe(AttackRefusal.MinRange);
+  });
+
+  it('still refuses between melee reach and the dead zone — the hole is intact', () => {
+    const w = world();
+    const her = actor('insp', 1, 1, { combat: gun });
+    // 2.0 and 2.83 are past MELEE_REACH (1.5) and inside minRange (3).
+    expect(canAttack(her, actor('t', 3, 1), w), 'two tiles away').toBe(AttackRefusal.MinRange);
+    expect(canAttack(her, actor('t', 3, 3), w), 'the diagonal at 2.83').toBe(
+      AttackRefusal.MinRange,
+    );
+    // …and 3.0 is legal, as it always was.
+    expect(canAttack(her, actor('t', 4, 1), w), 'three tiles away').toBeNull();
+  });
+
+  it('swings the FIST at contact and the REVOLVER at range', () => {
+    /**
+     * AVERAGED OVER A HUNDRED SWINGS from one seed, because the only thing that
+     * may differ between the two figures is the WEAPON and everything else in
+     * the pipeline is a roll.
+     *
+     * THE MARGIN IS 1.6x, NOT 18x, AND THAT IS UPSTREAM'S ARITHMETIC RATHER
+     * THAN A WEAK TEST. `combatDamagePower` (Combat.lua:1682-1687) is
+     * `(sqrt((dam + totstat) / 10) - 1) * 0.5 + 1`, so the weapon's own `dam`
+     * sits under a square root beside the whole stat term and a 1 against an 18
+     * compresses to `combatDamage` 7.06 against 11.54 on this body. A ToME
+     * archer's punch is weaker than her bow and it is not nothing. If the
+     * substitution stops happening these converge exactly, which is what the
+     * factor below catches.
+     */
+    const mean = (at: readonly [number, number]): number => {
+      const rng = createRng('barehand');
+      let total = 0;
+      for (let i = 0; i < 100; i += 1) {
+        const r = attackTarget(
+          actor('insp', 1, 1, { combat: gun }),
+          actor('t', at[0], at[1], { hp: 100000 }),
+          world(),
+          rng,
+        );
+        total += r.ok ? r.damage : 0;
+      }
+      return total / 100;
+    };
+    const punch = mean([2, 1]);
+    const shot = mean([5, 1]);
+    expect(punch, 'a fist is worth something').toBeGreaterThan(0);
+    expect(punch * 1.5, 'and well under the revolver').toBeLessThan(shot);
+  });
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE FIST, FIELD FOR FIELD — tome/class/Actor.lua:277-285.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `combat.ts` says of this table *"EVERY FIELD IS UPSTREAM'S AND THE NUMBERS
+   * ARE NOT NEGOTIABLE"*, and three of the seven were defended by nothing.
+   * Measured with mutants: `atk: 1 -> 30`, `apr: 0 -> 3` and `physCrit: 0 -> 3`
+   * applied together — the revolver's own values, i.e. a fist that is secretly a
+   * gun — leave the whole suite green, because the behavioural case above has a
+   * 1.5x tolerance band and only the three terms feeding `combatDamage` can
+   * cross it. `atk` is live (`combatAttack`, derived.ts) and so is `apr`, and
+   * `combat.ts` argues in prose that `physCrit: 0` is written out precisely
+   * because Combat.lua:1424's `physcrit or 1` would otherwise default it to 1.
+   *
+   * SO THE WHOLE TABLE IS PINNED. The mean-damage case above stays as the
+   * behavioural half; this is the transcription half, and a transcription is
+   * checked by reading it against the source, not by sampling it.
+   */
+  it('is upstream’s table field for field — Actor.lua:277-285', () => {
+    expect(BAREHAND).toEqual({
+      dam: 1,
+      atk: 1,
+      apr: 0,
+      physCrit: 0,
+      physSpeed: 1,
+      damMod: { str: 1 },
+      damRange: 1.1,
+    });
+  });
+
+  it('gives the revolver back when a talent names it — attackTargetWith, Combat.lua:380', () => {
+    // `withWeapon` is what Pistol Whip passes. Without it the talent would
+    // become a one-damage punch the moment `archery` landed on the gun.
+    const mean = (withWeapon: boolean): number => {
+      const rng = createRng('named-weapon');
+      let total = 0;
+      for (let i = 0; i < 100; i += 1) {
+        const r = attackTarget(
+          actor('insp', 1, 1, { combat: gun }),
+          actor('t', 2, 1, { hp: 100000 }),
+          world(),
+          rng,
+          { withWeapon, skipLegality: true },
+        );
+        total += r.ok ? r.damage : 0;
+      }
+      return total / 100;
+    };
+    expect(mean(true), 'the club is the gun').toBeGreaterThan(mean(false) * 1.5);
+  });
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE INVARIANT `withWeapon` RESTS ON, WHICH NOTHING WAS STATING.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `barehandAt` substitutes the fist for ANY swing inside `MELEE_REACH` by an
+   * archery wielder that does not pass the flag. That is safe today for a reason
+   * that lives in six other files: every Inspector talent reaching `talentAttack`
+   * carries `minRange: 3` and so can never be aimed at contact, and the one with
+   * `minRange: 0` — Pistol Whip, the revolver used as a club — passes
+   * `withWeapon`. Scattershot has `minRange: 0` and goes through `talentProject`,
+   * never `talentAttack`, so it never asks this question.
+   *
+   * NOTHING ASSERTED ANY OF THAT. A point-blank gun talent, or moving Scattershot
+   * onto `talentAttack`, becomes a punch silently and the only symptom is a
+   * number being smaller than it should be.
+   *
+   * SO IT IS A SCRAPE, and deliberately so: the rule is about which FILES do two
+   * things at once, and driving every talent at contact would test the fixture's
+   * imagination rather than the set. `fov.test.ts` keeps `eyesIn` deleted the
+   * same way and for the same reason.
+   */
+  it('lets no gun talent become a punch by accident — the `withWeapon` invariant', () => {
+    const dir = new URL('../../src/server/talents/', import.meta.url);
+    const offenders: string[] = [];
+    for (const file of readdirSync(dir).filter((f) => f.endsWith('.ts'))) {
+      const src = readFileSync(new URL(file, dir), 'utf8');
+      if (!src.includes('ClassId.Inspector')) continue;
+      if (!src.includes('talentAttack')) continue;
+      // The dead zone keeps it out of contact entirely, which is the other way
+      // to be safe and the way five of the six are safe.
+      if (src.includes('minRange: INSPECTOR_MIN_RANGE')) continue;
+      if (src.includes('withWeapon')) continue;
+      offenders.push(file);
+    }
+    expect(
+      offenders,
+      'an Inspector talent swings at contact without naming its weapon, so it is a punch',
+    ).toEqual([]);
+  });
+
+  it('leaves every melee body alone — a truncheon is not archery', () => {
+    const w = world();
+    const watchman = actor('w', 1, 1, { combat: SHIPPED_WATCHMAN.combat });
+    expect(canAttack(watchman, actor('t', 2, 1), w)).toBeNull();
+    // And a monster with a dead zone still has one: `barehandAt` reads the
+    // WEAPON, and upstream's monsters carry `self.combat`, never an archery
+    // object. A wraith standing on you is still refused.
+    const wraith = actor('k', 1, 1, { combat: { range: 6, minRange: 2 } });
+    expect(canAttack(wraith, actor('t', 2, 1), w)).toBe(AttackRefusal.MinRange);
   });
 });
 

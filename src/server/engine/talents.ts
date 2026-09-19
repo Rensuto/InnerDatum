@@ -123,7 +123,7 @@ import { createTurnProcs, fireTurnStart } from './hooks.ts';
 import type { BoundHooks, PassiveView, TalentHooks, TurnProcs } from './hooks.ts';
 import { DIR_ORDER, DIR_VECTORS, chebyshev } from '../../shared/coords.ts';
 import { ENERGY_TO_ACT } from '../../shared/version.ts';
-import { bound, rescaleDamage } from '../../shared/scale.ts';
+import { bound, combatTalentScale, rescaleDamage } from '../../shared/scale.ts';
 import { hasLineOfSight } from '../../shared/sight.ts';
 import { Faction, areEnemies, cooldownOf, setCooldown } from './actor.ts';
 import type { Sided } from './actor.ts';
@@ -131,7 +131,8 @@ import { attackTarget, combatDistance } from './combat.ts';
 import { DamageType, applyDamage } from './damage.ts';
 import { combatCrit, combatCritPower, combatDamage } from './derived.ts';
 import type { Dir, TileXY } from '../../shared/coords.ts';
-import type { ActorKind, LevelView } from '../../shared/protocol.ts';
+import type { ActorKind, ActorRank, LevelView } from '../../shared/protocol.ts';
+import { RANK_VALUE } from '../../shared/leveling.ts';
 import { canWalk } from '../../shared/level.ts';
 import type { Rng } from '../../shared/rng.ts';
 import type { StatusApply, StatusCure, StatusExtend, StatusHas } from './effects.ts';
@@ -718,6 +719,154 @@ export const FOCUS_ON_HELD_GROUND = 12;
 export const FOCUS_ON_MARKED_IN_SIGHT = 8;
 /** Reagents refill on kills — one per kill, never past the cap. */
 export const REAGENTS_PER_KILL = 1;
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * INK ON A KILL — `hate_per_kill`, tome/class/Actor.lua:253, ported verbatim.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ *     t.hate_per_kill = t.hate_per_kill or 8
+ *
+ * EIGHT, AND IT IS THE ONLY REASON THE DOOMED CAN AFFORD TO PLAY. Two lines
+ * above it, tome/class/Actor.lua:240 is `t.hate_regen = t.hate_regen or 0 --
+ * Hate does not regen`: the archetype the Redactor ports has NO passive
+ * income at all, and pays for Willful Strike (5 hate, force-of-will.lua:27) out
+ * of kills and out of `T_FEED` — a free, no-turn, range-7 ability that TAKES
+ * hate from a target rather than paying to touch one
+ * (cursed/dark-sustenance.lua:21-41).
+ *
+ * WE HAD THE TRICKLE AND NEITHER OF THE OTHER TWO. `INK_PER_TURN` is 0.6
+ * against Strike Out's 8, a ceiling of one attack every thirteen turns unless a
+ * mark beats a mental save. Measured on the intro floor at level 1, a lone
+ * Redactor: `no_resource x380` in one run, `x191` in the next, 141-351 turns
+ * held out of 900 doing nothing at all. The other three pay nothing for their
+ * opening attack (Crude Blow, Revolver Shot) or one countable unit that refills
+ * on a kill (Ashwick Flare).
+ *
+ * SO THE MISSING THIRD IS PORTED AND THE OTHER TWO ARE NOT. `T_FEED` is a
+ * talent and would cost her a birth slot she has not got; `hate_regen = 0` is
+ * not portable without Feed, and taking the trickle away while leaving the cost
+ * would be porting upstream's penalty and none of its relief. What lands is the
+ * one number that is a fact about the RESOURCE rather than about a talent.
+ *
+ * ═══ 8 OF 100 IS 8 OF 100 — the fraction crosses, so the figure does ═══
+ * `max_hate` is 100 (tome/class/Actor.lua:250) and `RESOURCE_RULES[Ink].max` is
+ * 100. No conversion, and deliberately no `TOME_ACTIONS_PER_TURN` factor either:
+ * this is an EVENT grant, not a per-turn accrual, and a kill is a kill on either
+ * clock. `REAGENTS_PER_KILL` above is unscaled for the same reason.
+ *
+ * ═══════════════════════════════════════════════════════════════════════════
+ * AND `tome/class/Actor.lua:253` IS A DEFAULT, NOT THE RULE. THE RULE IS `inkForKill`.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * This note used to say "ported verbatim" over that one line, and eight was ALL
+ * of what we paid. It is not all of what upstream pays: `hate_per_kill` is the
+ * BASE, and the Hate Pool talent multiplies it by what died
+ * (data/talents/misc/misc.lua:209-234), which `tome/class/Actor.lua:3103-3108`
+ * routes every kill through. A flat 8 is upstream's number for a rat and one
+ * QUARTER of upstream's number for a boss — which is precisely the fight a
+ * controller is for, and precisely where our measurement found her held at
+ * `no_resource`. See `inkForKill` for the four clauses and the one not taken.
+ */
+export const INK_PER_KILL = 8;
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * WHAT A KILL WAS. The three facts `on_kill` asks — misc.lua:209-234.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * REQUIRED, NOT OPTIONAL, and that is the whole point of the type existing: an
+ * optional note would let a caller drop the rank and silently pay a boss like a
+ * rat, which is the shape of the bug it is fixing. Every `noteKill` site names
+ * all three or the typechecker says which one did not.
+ */
+export type KillNote = {
+  /** `target.rank` — misc.lua:219, :223. */
+  readonly rank: ActorRank;
+  /** `target.level` — misc.lua:213. */
+  readonly level: number;
+  /** `self.level`, the KILLER's — the other side of misc.lua:213's comparison. */
+  readonly killerLevel: number;
+};
+
+/** misc.lua:213 — a foe more than this many levels above you is "experienced". */
+const OOD_MARGIN = 2;
+/** misc.lua:215 — `combatTalentScale(depth, 2, 10, "log", 0, 1)`. */
+const OOD_LOW = 2;
+const OOD_HIGH = 10;
+const OOD_SHIFT = 1;
+/** misc.lua:219-227 — upstream's numeric ranks, against `RANK_VALUE`'s. */
+const BOSS_RANK = 4;
+const BOSS_MULT = 4;
+const ELITE_RANK = 3;
+const ELITE_MULT = 2;
+/** misc.lua:228 — `hateGain = math.min(hateGain, 100)`. */
+const INK_PER_KILL_CAP = 100;
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * `on_kill` — data/talents/misc/misc.lua:209-234, THREE CLAUSES OF FOUR.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * ```lua
+ * local hateGain = self.hate_per_kill
+ * if target.level - 2 > self.level then
+ *   hateGain = hateGain + math.ceil(self:combatTalentScale(target.level - 2 - self.level, 2, 10, "log", 0, 1))
+ * end
+ * if target.rank >= 4 then hateGain = hateGain * 4
+ * elseif target.rank >= 3 then hateGain = hateGain * 2 end
+ * hateGain = math.min(hateGain, 100)
+ * ```
+ *
+ * ═══ THE RANKS MAP WITHOUT A CONVERSION, WHICH IS WHY THIS IS A PORT ═══
+ * `RANK_VALUE` (shared/leveling.ts) already places our three words on upstream's
+ * numeric ladder for the life-adjust curve: Normal 2, Elite 3.5, Boss 4. Read
+ * against upstream's own thresholds that is 8 for a body, 16 for an elite and 32
+ * for a boss — no new table, no new number, and the same mapping the hit-point
+ * curve has used since M-002.
+ *
+ * ═══ THE FOURTH CLAUSE — THE BLEED — IS NOT PORTED, AND HERE IS WHY ═══
+ * `misc.lua:190-205` runs an active DECAY: `-0.7 * (hate/100)^1.5` per turn
+ * above `baseline_hate`, which `:206-208` resets to `max(10, hate * 0.5)` on
+ * every kill. Upstream's Hate therefore starts full and BLEEDS toward a floor
+ * that the last kill set; ours starts full and TRICKLES UP at `INK_PER_TURN`.
+ * The two are opposite signs of the same mechanism, and this repo took the
+ * trickle years before it took the payout — `INK_PER_TURN`'s own note calls it
+ * "a floor and not an income" for the reason a Watchman once sat at 0 Resolve
+ * all session. Porting the bleed ON TOP of a trickle would be two opposed rules
+ * cancelling in the middle. So the divergence is named rather than hidden: WE
+ * HAVE A TRICKLE WHERE UPSTREAM HAS A BLEED, and this function is the payout
+ * half only.
+ *
+ * ═══ AND MEASURED AFTERWARDS, IT IS A CORRECTNESS FIX AND NOT A BALANCE ONE ═══
+ * Driven, six solo Redactor runs a floor, the flat 8 against this function:
+ *
+ *     floor                          flat 8            ported
+ *     The Undermost, level 1         0/6, 771 dmg      0/6, 771 dmg
+ *     The Drowned Chapel, level 1    0/6, 1733         0/6, 1733
+ *     Barrow End, level 5            6/6, 145          6/6, 145
+ *     Blackwood Outskirts, level 15  4/6, 890          4/6, 984
+ *
+ * Byte-identical on three of the four, because a tier-1 delve's roster is nearly
+ * all `Normal` and the multiplier never fires. THAT IS THE HONEST READING: the
+ * old note was wrong about what upstream pays and this is what upstream pays,
+ * and neither statement is a claim that the Redactor's level-1 problem was her
+ * income. Where it is felt is an elite or a boss — which is the fight a
+ * controller is FOR, and the one place a unit table cannot stand in for play.
+ */
+export function inkForKill(note: KillNote): number {
+  let gain = INK_PER_KILL;
+  // misc.lua:213-217 — a foe three or more levels over you pays a bonus.
+  const depth = note.level - OOD_MARGIN - note.killerLevel;
+  if (depth > 0) {
+    gain += Math.ceil(combatTalentScale(depth, OOD_LOW, OOD_HIGH, 'log', 0, OOD_SHIFT));
+  }
+  // misc.lua:219-227 — and what died multiplies all of it.
+  const rank = RANK_VALUE[note.rank];
+  if (rank >= BOSS_RANK) gain *= BOSS_MULT;
+  else if (rank >= ELITE_RANK) gain *= ELITE_MULT;
+  // misc.lua:228.
+  return Math.min(gain, INK_PER_KILL_CAP);
+}
 
 export type ResourcePool = {
   readonly kind: ResourceKind;
@@ -2366,9 +2515,11 @@ export type TalentEngine = {
    * A kill happened. Reagents are a stock and this is half of how it refills.
    *
    * ═══ EXACTLY ONE CALLER, AND IT IS THE SCHEDULER ═══
-   * `noteCasualty` (engine/scheduler.ts) is the one place a death is recognised
-   * — for the weapon swing, for a talent, and for an orb landing three turns
-   * after it was fired — so it is the one place that pays. `talentAttack` and
+   * `noteMonsterDeath` (engine/scheduler.ts) is the one place a death is
+   * recognised — reached from `noteCasualty` for the weapon swing, for a talent
+   * and for an orb landing three turns after it was fired, and from
+   * `resolveStatusHits` for a bleed that finishes somebody — so it is the one
+   * place that pays. `talentAttack` and
    * `talentProject` used to call this themselves, which paid the talent path
    * and left the basic swing paying nothing: an Alchemist who killed with her
    * bump swing (the majority of kills) got no reagent, spent her eight, and
@@ -2376,8 +2527,11 @@ export type TalentEngine = {
    * session with no way back. Two payment sites would ALSO double-pay a talent
    * kill once the scheduler seam existed, so the two calls were removed rather
    * than a third added.
+   *
+   * `note` IS REQUIRED. Upstream pays by what died (`inkForKill`), and an
+   * optional note is how a boss quietly becomes worth a rat.
    */
-  noteKill(killerId: string): void;
+  noteKill(killerId: string, note: KillNote): void;
   /**
    * A blow LANDED on this actor. Resolve's other half (`RESOLVE_ON_STRUCK`).
    *
@@ -2541,14 +2695,26 @@ export function createTalentEngine(registry: TalentRegistry): TalentEngine {
       }
     },
 
-    noteKill: (killerId: string): void => {
+    noteKill: (killerId: string, note: KillNote): void => {
       const sheet = sheets.get(killerId);
       if (sheet === undefined) return;
-      // Reagents ONLY. Resolve and Focus are earned by standing in the right
+      // Reagents AND INK. Resolve and Focus are earned by standing in the right
       // place, not by landing the last hit — a kill-fed Resolve bar would pay
       // the Watchman for stealing the Inspector's shot.
+      //
+      // INK IS HERE BECAUSE UPSTREAM PUTS IT HERE: `hate_per_kill = 8`
+      // (tome/class/Actor.lua:253) on the archetype the Redactor ports, whose
+      // resource otherwise does not regenerate at all. See `INK_PER_KILL`.
+      //
+      // A REAGENT IS ONE REAGENT WHATEVER DIED. `note` is upstream's `on_kill`
+      // and upstream hangs it on the Hate Pool talent alone (misc.lua:209); the
+      // Alchemist's ammo cadence knows nothing about ranks and is not given a
+      // rank clause here just because one is now in scope.
       if (sheet.resource.kind === ResourceKind.Reagents) {
         gainResource(sheet.resource, REAGENTS_PER_KILL);
+      }
+      if (sheet.resource.kind === ResourceKind.Ink) {
+        gainResource(sheet.resource, inkForKill(note));
       }
     },
 
@@ -2649,9 +2815,10 @@ function regenResource(
       // NOTHING HERE, AND THE EMPTY CASE IS THE DESIGN.
       // ═══════════════════════════════════════════════════════════════════════
       // The other three all read the BOARD once a turn: where you are standing,
-      // whether you moved, who is beside you. Ink reads an EVENT instead — a
-      // mark landing — and it is paid by `noteAfflicted` at the moment that
-      // happens.
+      // whether you moved, who is beside you. Ink reads EVENTS instead — a mark
+      // landing, paid by `noteAfflicted`, and a KILL, paid by `noteKill` at
+      // `INK_PER_KILL` (tome/class/Actor.lua:253). Both are still events and
+      // this case is still empty.
       //
       // A positional clause here would be a second income on the same bar and
       // would blur the one sentence this class makes. The flat trickle above
@@ -3505,12 +3672,24 @@ export function talentAttack(
   ctx: TalentCallCtx,
   self: TalentActor,
   victim: TalentActor,
-  opts: { readonly mult: number; readonly damtype?: DamageType; readonly critBonus?: number },
+  opts: {
+    readonly mult: number;
+    readonly damtype?: DamageType;
+    readonly critBonus?: number;
+    /**
+     * THIS TALENT SWINGS THE WEAPON, WHATEVER IT IS — `AttackOpts.withWeapon`,
+     * upstream's `attackTargetWith` (Combat.lua:380). Only a talent that would
+     * otherwise fall through to the fist needs to say so, which today is Pistol
+     * Whip and nothing else. See the flag's own note in engine/combat.ts.
+     */
+    readonly withWeapon?: boolean;
+  },
 ): TalentHit {
   const result = attackTarget(self, victim, ctx.world, ctx.rng, {
     mult: opts.mult * markMultiplier(ctx.engine, victim.id),
     damtype: opts.damtype,
     critBonus: opts.critBonus,
+    withWeapon: opts.withWeapon,
     skipLegality: true,
   });
 

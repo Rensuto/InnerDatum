@@ -454,12 +454,58 @@ export const WATCHMAN: ClassDef = {
  * ═══ `minRange: 3` IS ON THE SHEET, NOT ONLY ON THE TALENTS ═══
  *
  * game-design.md § 2: *"`min_range 3` is the single most important number here:
- * the Inspector **cannot shoot adjacent**."* Putting it on the combat sheet
- * means `canAttack` (combat.ts) refuses a basic bump-attack from inside the
- * hole with `AttackRefusal.MinRange` — a distinct refusal, never a miss — and
- * the three gun talents carry the same 3 independently. Both layers, because
- * the dead zone being invisible is the failure mode game-design.md warns about
- * by name: *"if the dead zone is invisible the class reads as broken."*
+ * the Inspector **cannot shoot adjacent**."* On the combat sheet it means
+ * `rangeRefusal` (combat.ts) answers `AttackRefusal.MinRange` inside the hole —
+ * a distinct refusal, never a miss — and the three gun talents carry the same 3
+ * independently, because the dead zone being invisible is the failure mode
+ * game-design.md warns about by name: *"if the dead zone is invisible the class
+ * reads as broken."*
+ *
+ * ═══ AND BE EXACT ABOUT WHICH LAYER A PLAYER MEETS, BECAUSE IT IS ONE ═══
+ * This used to claim "both layers" of the player, and that is now false. There
+ * is NO basic-attack intent on the wire — `{t:'attack'}` does not exist,
+ * `MapVerb.Attack` comes out as `{t:'move',dir}` (client/ui/contextmenu.ts) and
+ * walking into a hostile IS the attack — so the only player path into
+ * `canAttack` is the bump, and the bump at contact is exempted by
+ * `Weapon.archery` below. What a PLAYER meets is therefore the TALENT layer:
+ * `checkTargeting` (engine/talents.ts) refusing a gun talent aimed inside the
+ * ring, which is where the dead zone has to be legible anyway.
+ *
+ * THE FIELD STAYS, AND NOT AS DECORATION. `rangeRefusal` is also the AI's own
+ * band question (`ai/npc.ts` calls it directly so a monster cannot submit an
+ * intent `canAttack` would refuse every turn), and it is the engine-level
+ * statement of the rule that `test/server/combat.test.ts` drives off this very
+ * sheet — 2.0 and 2.83 refused, 3.0 legal. Deleting it would move the rule into
+ * three talent files and leave the engine with no opinion at all.
+ *
+ * ═══ AND `archery: true` IS WHAT STOPS IT REFUSING HER FIST AS WELL ═══
+ *
+ * IT DID, FOR EVERY RUN THIS GAME HAS EVER MEASURED. `bumped: 0` — not low,
+ * ZERO — at every site and every level, because the sheet's dead zone refused
+ * the basic attack at contact and the only contact talent she owns is Pistol
+ * Whip on a five-turn cooldown. Measured on the intro floor at level 1 she lost
+ * 12 of 12 and spent 170 of ~250 turns holding, while the ALCHEMIST — 54hp to
+ * her 60, 0 defence to her 4, the same zero armour, the same reach — cleared it
+ * 12 of 12 taking 8 damage. The only structural difference between those two
+ * bodies was this field.
+ *
+ * Upstream does not have the rule at all. `min_range` appears on exactly ONE
+ * talent in the whole of ToME (spells/golem.lua:34); not one archery talent has
+ * one; `Archery.lua:42-53` returns a maximum only; and clicking an adjacent
+ * enemy fires the bow (tome/class/Game.lua:2518-2526). Point blank costs
+ * DAMAGE — Kill Shot is −50% weapon damage at range 1
+ * (cunning/called-shots.lua:140-141) — never the shot. And at contact a ToME
+ * archer always has a punch: the melee loop skips an archery weapon
+ * (tome/class/interface/Combat.lua:181, :204) and falls through to
+ * `-- Barehanded ?` at :221-231, swinging `tome/class/Actor.lua:277-285`'s
+ * innate `{dam=1, dammod={str=1}}` — which through `combatDamagePower`'s square
+ * root is 7.06 on this body against the revolver's 11.54, not the eighteenth of
+ * a swing the raw numbers suggest. See `BAREHAND`.
+ *
+ * So the divergence kept here is the DEAD ZONE, which game-design.md wants, and
+ * the thing that came with it by accident — a body with nothing to do in a
+ * doorway — is gone. `Weapon.archery` and `BAREHAND` (engine/combat.ts) are the
+ * port; the hole in the ring is unchanged and she still cannot shoot adjacent.
  *
  * `apr: 3` is what a bullet is: armour matters less against it than against a
  * truncheon, and armour penetration is SUBTRACTIVE against armour (damage.ts
@@ -470,11 +516,37 @@ export const INSPECTOR: ClassDef = {
   name: 'The Inspector',
   description:
     'A disgraced detective who treats Alderbrook itself as the case eating his mind. ' +
-    'Lethal at range and helpless in a doorway.',
+    'Lethal at range, and in a doorway she has only her fists.',
   sprite: 'chr_player_inspector_s',
   downedSprite: 'chr_player_inspector_downed_s',
-  maxHp: 60,
-  // Archer 10 — upstream's ranged baseline.
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * 66, AND IT WAS 60 — THE ARCHER IS 110 OF THE BULWARK'S 120, NOT 100 OF IT.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * ToME's level-1 `max_life` takes exactly four values and every class in the
+   * game sits on one of them: 120 (warrior.lua:41, the Warrior metaclass the
+   * Bulwark inherits), 110 (warrior.lua:225, the ARCHER), 100
+   * (warrior.lua:315, Arcane Blade), 90 (mage.lua:101 Alchemist,
+   * mage.lua:229 Archmage, afflicted.lua:150 Doomed — the floor across all
+   * twenty-two).
+   *
+   * As a fraction of the toughest body that is 1.0 / 0.917 / 0.833 / 0.75, and
+   * OURS DID NOT MATCH ITS OWN LADDER: 72 / 60 / 54 / 48 is 1.0 / 0.833 / 0.75
+   * / 0.667. The Alchemist's 54 is exactly upstream's 0.75 and is right. The
+   * Inspector was a whole step low — she was wearing the Arcane Blade's fraction
+   * while citing the Archer everywhere else, including `lifeRating` below.
+   *
+   * 72 × 110/120 = 66. A PORT CORRECTION, NOT A BUFF: the number comes from
+   * upstream's own spread applied to our own top of scale, the same arithmetic
+   * that produced 54 for the Alchemist and produces 54 for the Redactor. It is
+   * six hit points and it is not what makes her playable — see `Weapon.archery`
+   * above for that — but a class cited as the Archer should have the Archer's
+   * fraction.
+   */
+  maxHp: 66,
+  // Archer 10 — upstream's ranged baseline. No `life_rating` override in
+  // warrior.lua:188-258, so she takes tome/class/Actor.lua:187's default of 10.
   lifeRating: 10,
   hpRegen: 0.5,
   resource: ResourceKind.Focus,
@@ -492,6 +564,12 @@ export const INSPECTOR: ClassDef = {
       physCrit: 3,
       damRange: 1.2,
       damMod: { dex: 0.7, str: 0.3 },
+      /**
+       * FIRED, NOT SWUNG — `o.archery`, tome/class/interface/Combat.lua:181.
+       * The only weapon in the game that carries it. See the header: this is
+       * what gives her a fist at contact instead of a refusal.
+       */
+      archery: true,
     },
     range: 5,
     minRange: INSPECTOR_MIN_RANGE,
@@ -518,8 +596,49 @@ export const INSPECTOR: ClassDef = {
     lineOfEnquiry,
     closedFile,
   ],
-  /** The round, the close answer to something on top of you, a steady hand — and the kit. See `ClassDef.birthTalents`. */
-  birthTalents: [revolverShot, pistolWhip, steadyHands, issuedKit],
+  /**
+   * The round, the close answer to something on top of you, the habit of
+   * knowing what is in the room — and the kit. See `ClassDef.birthTalents`.
+   *
+   * ═══════════════════════════════════════════════════════════════════════════
+   * `coldReading` IS HERE AND `steadyHands` IS NOT, AND THAT WAS MEASURED.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `pointsForLevel(1)` is 0 (shared/progression.ts), so these four ARE the
+   * level-1 character; nothing else is reachable until level 2. Cold Reading now
+   * carries `heightened_senses` (cunning/survival.lua:21-48), and upstream gives
+   * the Archer that tree OPEN AT BIRTH (warrior.lua:213) with two unspent points
+   * to put in it (tome/class/Actor.lua:170-172) — so a born Inspector who can
+   * see in the dark is upstream's Archer, not a favour.
+   *
+   * WHAT IT COST: a level-1 Inspector's firing band in an unlit cave held ZERO
+   * legal tiles — seen radius 2.00 from the brass lantern, nearest legal tile
+   * 3.00 — and she won 4% of unlit floors against 47% of lit ones. Steady Hands
+   * is crit chance and crit power on a shot she was not able to take.
+   *
+   * IT IS STILL IN `passives` and still the first thing worth a point at level
+   * 2. Losing it at BIRTH is the trade, and the trade is a class that can act.
+   *
+   * ═══════════════════════════════════════════════════════════════════════════
+   * AND IT REACHES NEW CHARACTERS ONLY. AN EXISTING INSPECTOR KEEPS STEADY HANDS.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Driven rather than assumed: a save written by the old build carries EVERY
+   * talent id with its rank (`talentPointsOf`, server/main.ts) and
+   * `applyTalentPoints` replays it verbatim, so an existing level-1 Inspector
+   * loads with `steady_hands: 1` and `cold_reading: 0` and never receives this
+   * grant for free. She has the zero-tile dark firing band until she buys the
+   * talent at level 2.
+   *
+   * THE LEDGER IS UNDAMAGED, WHICH IS THE PART THAT MATTERED. `spendByPurse`
+   * counts birth grants by COUNT and not by id (`spentFromSpread`,
+   * shared/progression.ts), so the swap can neither cost nor refund a point, and
+   * `maxHp` is derived at load and only rises. No migration is written because
+   * there is nothing broken to migrate: the character is the character she was
+   * bought as. This paragraph exists so that "the fix is live" is not read as
+   * "every Inspector has it".
+   */
+  birthTalents: [revolverShot, pistolWhip, coldReading, issuedKit],
   passives: [
     // ─── METHOD. See `index/method`. ───
     corroboration,
@@ -661,11 +780,33 @@ export const ALCHEMIST: ClassDef = {
  * makes the class's stat spread the shape the engine already rewards rather
  * than flavour laid on top of it. `indelible.ts` makes the full argument.
  *
- * ═══ THE FRAILEST BODY THAT SHIPS, AND NO ARMOUR ANSWER ═══
- * Life rating 8 against the Watchman's, and nothing in either tree raises
- * armour. `closed_ledger` and `weight_of_precedent` raise the MENTAL and SPELL
- * saves and say in writing that they do nothing about a stick. A controller who
- * could also hold a line would have no reason to stand anywhere else.
+ * ═══ NO ARMOUR ANSWER, WHICH IS THE ONE COLUMN SHE IS ACTUALLY FRAIL IN ═══
+ * Nothing in either tree raises armour. `closed_ledger` and
+ * `weight_of_precedent` raise the MENTAL and SPELL saves and say in writing that
+ * they do nothing about a stick. A controller who could also hold a line would
+ * have no reason to stand anywhere else.
+ *
+ * THIS HEADING SAID "THE FRAILEST BODY THAT SHIPS" AND THAT IS NO LONGER TRUE.
+ * She is 54 hit points, tied with the Alchemist, and carries the HIGHER
+ * `lifeRating` of the two (10 against 9), so from level 2 up she is strictly the
+ * tougher. Both figures are upstream's — the Doomed and the Alchemist share
+ * `max_life = 90`, and the Doomed takes tome/class/Actor.lua:187's default life
+ * rating where the Alchemist's block subtracts one (mage.lua:130). Frail means
+ * ARMOUR here, and nothing else.
+ *
+ * ═══ FRAILEST, BUT NOT FRAILER THAN ToME ALLOWS — SEE `maxHp` ═══
+ * "Frailest" used to be read as "keep going down", and it produced a body at
+ * 0.667 of the Watchman with `lifeRating: 8` when the archetype it ports — the
+ * Doomed, afflicted.lua:105-161 — is 0.75 with a life rating of 10, tied with
+ * the Alchemist rather than under her. Upstream's frail classes are frail in
+ * exactly ONE column, armour, and are paid back in every other: the Doomed is
+ * born with `T_UNNATURAL_BODY` (regeneration and heal-per-kill,
+ * cursed/cursed-form.lua:25-43), `T_CALL_SHADOWS` (a body between you and them,
+ * cursed/shadows.lua:336-348) and `T_FEED` (cursed/dark-sustenance.lua:21-41,
+ * which TAKES a resource from a target rather than paying to touch one). We
+ * copied the armour column and none of the rest. `maxHp` and `strike_out.ts`
+ * are the two lines that answer that; the missing shadow and the missing
+ * regeneration are stated here rather than quietly shipped.
  */
 export const REDACTOR: ClassDef = {
   id: ClassId.Redactor,
@@ -675,9 +816,36 @@ export const REDACTOR: ClassDef = {
     'and is paid in ink every time a mark takes.',
   sprite: 'chr_player_redactor_s',
   downedSprite: 'chr_player_redactor_downed_s',
-  maxHp: 48,
-  /** 8 -- under the Alchemist's 9 and the Inspector's 10. See the header. */
-  lifeRating: 8,
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * 54, AND IT WAS 48 — NOTHING IN ToME SITS UNDER 0.75 OF THE TOUGHEST BODY.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * The Doomed is `max_life = 90` (afflicted.lua:150) against the Warrior
+   * metaclass's 120 (warrior.lua:41) — 0.75, which is the FLOOR that every one
+   * of ToME's twenty-two classes shares. The Archmage (mage.lua:229) and the
+   * Alchemist (mage.lua:101) are on that same 90. There is no frailer class.
+   *
+   * 72 × 90/120 = 54. Ours was 48, which is 0.667 — a fraction upstream never
+   * uses for anything, arrived at by counting down from the Alchemist rather
+   * than by reading the ladder. See INSPECTOR.maxHp for the whole spread.
+   *
+   * ═══ AND IT IS RANKED LAST FOR A REASON: IT DOES NOT FIX HER ═══
+   * Measured, 12 runs on the intro floor at level 1, a Redactor at `maxHp 54,
+   * lifeRating 10` — the Doomed's ratios exactly — goes 0/12 to 0/12. The whole
+   * Watchman armour block on top of it goes 0/6 to 0/6. This is a correctness
+   * fix and it is not the answer; the answer is what she can DO with a turn,
+   * which is `strikeOut`'s own note.
+   */
+  maxHp: 54,
+  /**
+   * 10, AND IT WAS 8. The Doomed block (afflicted.lua:105-161) sets no
+   * `life_rating` at all, so it takes tome/class/Actor.lua:187's
+   * `t.life_rating = t.life_rating or 10`. An 8 was below the archetype's own
+   * number and below the Alchemist's 9 on a class upstream makes NO frailer
+   * than the Alchemist — the two share a `max_life` of 90.
+   */
+  lifeRating: 10,
   hpRegen: 0.5,
   resource: ResourceKind.Ink,
   maxAp: BASE_MAX_AP,

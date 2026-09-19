@@ -77,6 +77,7 @@ import {
   healingFactor,
   ignoreDirectCrits,
   liteRadiusOf,
+  sensesRadiusOf,
   sightRadiusOf,
   stat,
 } from '../engine/derived.ts';
@@ -657,8 +658,7 @@ function pushSelfSheet(
    * concept across `src/client/` returned nothing at all.
    *
    * `lite` is the next row, upstream's `Light radius` under the same heading
-   * (CharacterSheet.lua:725-727). `infravision`, the third vision row, is not
-   * ported: there is no pass that reads it yet.
+   * (CharacterSheet.lua:725-727).
    */
   rows.push({
     label: 'Vision range',
@@ -670,6 +670,36 @@ function pushSelfSheet(
     value: whole(liteRadiusOf({ combat: c })),
     group: InspectGroup.General,
   });
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * AND THE THIRD VISION ROW, WHICH THE NOTE ABOVE USED TO SAY DID NOT EXIST.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * It read: *"`infravision`, the third vision row, is not ported: there is no
+   * pass that reads it yet."* There is one now — `CombatMods.senses`,
+   * `sensesRadiusOf`, and clause 0 of `shared/vision.ts#computeVision`, ported
+   * from tome/class/Player.lua:636-644 for `cold_reading.ts`.
+   *
+   * CONDITIONAL, WHICH IS UPSTREAM'S OWN PRESENTATION. CharacterSheet.lua:733
+   * computes the row as `(attr("infravision") or attr("heightened_senses")) and
+   * math.max(...)` and :734 draws it only `if text` — so a body with neither
+   * attribute has no row at all, rather than a row reading 0. Ours is the same
+   * shape, which also means every existing inspect fixture is byte-identical.
+   *
+   * THE LABEL IS UPSTREAM'S, TYPO AND ALL? NO — ours reads "Heightened senses"
+   * where CharacterSheet.lua:735 has `"Heighten Senses"`. The rule here is
+   * `docs/tome-port.md`'s: layout and wording are 1:1 where upstream's wording
+   * is a CHOICE, and a slip of the pen is not one. The talent's own name in
+   * cunning/survival.lua:21 is "Heightened Senses".
+   */
+  const senses = sensesRadiusOf({ combat: c });
+  if (senses > 0) {
+    rows.push({
+      label: 'Heightened senses',
+      value: whole(senses),
+      group: InspectGroup.General,
+    });
+  }
 
   // ═══ 2. ATTACK — CharacterSheet.lua:935-1120 ═══
   // "Accuracy" (:935), "Damage" (:941), "APR" (:1111), "Crit. chance" (:1113),

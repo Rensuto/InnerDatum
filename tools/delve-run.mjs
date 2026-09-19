@@ -50,6 +50,7 @@ import {
   bearBirthKit,
   growTo,
   dressFor,
+  foldPassives,
   levelOnTheFloor,
   rememberWhatProbesSee,
   spendPointsTo,
@@ -192,7 +193,18 @@ export function run(site, size, seed, opts = {}) {
   const refreshBody = (actorId) => {
     const m = born.get(actorId);
     if (m === undefined) return;
-    levelOnTheFloor(m.body, m.cls, m.sheet, effects);
+    /**
+     * THE THIRD ARGUMENT IS THE BOARD, AND IT IS WHAT MAKES THE PASSIVES REAL.
+     * `foldPassives` (grown.mjs) needs the world to answer "who is next to me"
+     * and the registry to find a talent's `passive` block — the same two things
+     * main.ts#refreshPassives resolves on its first two lines. Without it every
+     * passive in the game contributed nothing to every row this tool printed.
+     */
+    levelOnTheFloor(m.body, m.cls, m.sheet, effects, {
+      world: realm.world,
+      registry: talentEngine.registry,
+      engine: talentEngine,
+    });
   };
   /**
    * ═════════════════════════════════════════════════════════════════════════
@@ -313,6 +325,19 @@ export function run(site, size, seed, opts = {}) {
      */
     if (opts.lantern === false) recomposeCombat(p, effects, resolveItem);
     else bearBirthKit(p, effects);
+    /**
+     * AND THE PASSIVES, BEFORE THE FIRST TURN RATHER THAN AFTER IT.
+     * `refreshBody` above folds them on `onActBase`, which is once the clock has
+     * started — so without this line the opening turns of every run, which are
+     * the turns a level-1 body is most likely to die in, were fought by a
+     * character with no passive talents. Production folds at `join`.
+     */
+    foldPassives(p, sheet, effects, {
+      world: realm.world,
+      registry: talentEngine.registry,
+      engine: talentEngine,
+    });
+    recomposeCombat(p, effects, resolveItem);
     /**
      * ═══════════════════════════════════════════════════════════════════════
      * AND ONLY NOW DOES IT ARRIVE. `join` WAS THE FIRST THING AND HAD TO MOVE.

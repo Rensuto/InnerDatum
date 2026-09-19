@@ -3,6 +3,7 @@
 // Ported from t-engine4 game/engines/default/engine/Map.lua:649-687 (apply, applyLite: seen and remembered)
 //                       game/modules/tome/class/Actor.lua:178 (sight radius default)
 //                       game/modules/tome/class/Player.lua:646-663 (sight, own light, other lights)
+//                       game/modules/tome/class/Player.lua:636-644 (heightened senses / infravision)
 // T-Engine4 (C) 2009-2018 Nicolas Casalini "DarkGod" -- https://te4.org/license
 
 /**
@@ -136,15 +137,24 @@ export type Vision = {
  * the eye's carried light (`liteRadiusOf`). `lights` is every OTHER body carrying
  * one; the eye's own is `radii.lite`, not an entry here.
  *
- * Infravision, upstream's first pass, is not here: no character in this game
- * has a source of it yet.
+ * `radii.senses` is `heightened_senses` (tome/class/Player.lua:636-644) and is
+ * upstream's FIRST pass, before sight and before light. Infravision shares that
+ * pass upstream and has no source in this game; when one exists it is a second
+ * `Math.max` argument in `sensesRadiusOf` and nothing here moves.
+ *
+ * @param occupied does a tile hold an actor? Upstream's senses callback is
+ *   `if game.level.map(x, y, ACTOR)` and nothing else, so without this the pass
+ *   cannot be written at all. Absent — a fixture, a tile that is not a body —
+ *   the senses pass finds nobody, which is the right answer for an eye that is
+ *   not in a world.
  */
 export function computeVision(
   level: LevelView,
   eye: TileXY,
-  radii: { readonly sight: number; readonly lite: number },
+  radii: { readonly sight: number; readonly lite: number; readonly senses?: number },
   lit: Uint8Array,
   lights: readonly LightSource[],
+  occupied?: (x: number, y: number) => boolean,
 ): Vision {
   const inFov = createFog(level.w, level.h);
   const seen = createFog(level.w, level.h);
@@ -156,6 +166,59 @@ export function computeVision(
     fogSet(seen, level.w, x, y);
     if (keep) fogSet(remember, level.w, x, y);
   };
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * 0. HEIGHTENED SENSES — tome/class/Player.lua:636-644, both passes.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   *     if self:attr("infravision") or self:attr("heightened_senses") then
+   *       local radius = math.max((self.heightened_senses or 0), (self.infravision or 0))
+   *       radius = math.min(radius, self.sight)
+   *       local rad2 = math.max(1, math.floor(radius / 4))
+   *       self:computeFOV(radius, "block_sight", function(x, y, ...) if game.level.map(x, y, game.level.map.ACTOR) then game.level.map.seens(x, y, ...) end end, ...)
+   *       self:computeFOV(rad2, "block_sight", function(x, y, ...) game.level.map:applyLite(x, y, ...) end, ...)
+   *
+   * WHAT IT IS AND WHAT IT IS NOT. The talent's own text is the specification:
+   * *"allowing you to 'see' creatures in a %d radius even outside of light
+   * radius. This is not telepathy, however, and it is still limited to line of
+   * sight."* (cunning/survival.lua:43-44.) So:
+   *
+   *   IT IS BLOCKED BY WALLS. `block_sight` is the same blocker the ordinary
+   *   sight pass uses, which is `tilesInSight` here. A note in
+   *   `talents/overseer_of_nations.ts` used to call a second kind of sight "a
+   *   system rather than a number" and deferred it on that basis; it is neither,
+   *   it is this clause, and the note is corrected in that file.
+   *
+   *   IT SHOWS THE BODY, NOT THE ROOM. The callback fires only where an ACTOR
+   *   is standing. The floor between you and it stays black, which is what makes
+   *   this different from carrying a bigger lantern.
+   *
+   *   IT DOES NOT ENTER `inFov`. Upstream's callback is `map.seens`, not
+   *   `map:apply`, so a sensed tile does not become a grid another body's light
+   *   may then reveal. Clause 3 below is unaffected by it.
+   *
+   * REMEMBERED ON THE ORDINARY RULE (`kept`): lit or always-remembered. A body
+   * sensed on unlit floor is not written into terrain memory, which is exactly
+   * `darkness.test.ts`'s rule that nothing keeps dark ground.
+   *
+   * THE SECOND PASS IS LITE, and at `senses = 5` it is radius 1 — smaller than
+   * the brass lantern every character is born with, so today it adds nothing.
+   * Ported anyway because it is upstream's and it stops mattering the moment a
+   * body carries darkness (`CombatMods.lite` goes negative; stealth.lua:91
+   * takes a thousand off it).
+   */
+  const senses = radii.senses ?? 0;
+  if (senses > 0 && occupied !== undefined) {
+    for (const tile of tilesInSight(level, eye, senses)) {
+      if (!occupied(tile.x, tile.y)) continue;
+      see(tile.x, tile.y, kept(tile.x, tile.y));
+    }
+    const rad2 = Math.max(1, Math.floor(senses / 4));
+    for (const near of tilesInSight(level, eye, rad2)) {
+      see(near.x, near.y, kept(near.x, near.y));
+    }
+  }
 
   // 1. SIGHT. Every grid in view is in the field of view, but sight alone sees
   // and keeps only a lit one (engine/Map.lua:649).

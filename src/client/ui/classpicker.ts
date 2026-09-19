@@ -666,9 +666,12 @@ function drawLetterPlate(
  *
  * ═══ THE DEAD ZONE IS THE REASON THIS IS SHORTHAND AND NOT PROSE ═══
  * game-design.md § 2 calls the Inspector's `min_range 3` *"the single most
- * important thing"* about the class — they are helpless in a doorway. A player
- * who learns that after choosing has been told the most important fact too
- * late, and it fits in five characters: `3-5`.
+ * important thing"* about the class — in a doorway the gun is no use to her.
+ * (She is not helpless there any more: `Weapon.archery` gives her upstream's
+ * barehand fall-through, tome/class/interface/Combat.lua:221-231. The TALENT is
+ * still refused inside three tiles, which is what this shorthand is about.) A
+ * player who learns that after choosing has been told the most important fact
+ * too late, and it fits in five characters: `3-5`.
  *
  * A CARD IS ~175px WIDE, so this is the same label-left/value-right grammar the
  * Life and resource rows above already use, rather than a wrapped paragraph

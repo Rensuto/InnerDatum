@@ -673,24 +673,38 @@ describe('somebody else turns up', () => {
     expect(err?.code, 'a wall stopped reading as a wall').toBe('illegal_move');
   });
 
-  it('tells an Inspector she is too close rather than that she cannot go that way', async () => {
+  it('lets an Inspector punch an adjacent husk instead of refusing her turn', async () => {
     /**
      * ═══════════════════════════════════════════════════════════════════════
-     * THE FIX FOR A PLAYTESTED BUG WAS IN THE CODEBASE AND UNREACHABLE.
+     * THE RULE THIS CASE ASSERTS CHANGED, AND THE ROUTING IT GUARDS DID NOT.
      * ═══════════════════════════════════════════════════════════════════════
      *
-     * `minRange: 3` is on the Inspector's combat sheet, so walking into an
-     * adjacent husk is `AttackRefusal.MinRange` — the class's whole counterplay,
-     * and combat.ts:52 exists, in its own words, *"precisely so the log can say
-     * 'too close' instead of eating the turn silently"*.
+     * IT USED TO ASSERT THE BUMP WAS REFUSED with `too_close`, because
+     * `minRange: 3` on the combat sheet refused a bump-attack outright. That was
+     * a divergence from upstream taken WITHOUT upstream's compensating
+     * machinery, and measured it was the single worst number in the game: a
+     * level-1 Inspector alone on the intro floor lost 12 of 12 with `bumped: 0`
+     * — not low, ZERO, in every run any probe had ever taken — while the
+     * ALCHEMIST, a strictly weaker body (54hp to her 60, 0 defence to her 4, the
+     * same zero armour, the same reach), cleared the same floor 12 of 12 taking
+     * 8 damage.
      *
-     * The refund loop forwarded every resolution refusal as `illegal_move`, so
-     * the log said *"you cannot go that way"* — while the client held the
-     * sentence written for exactly this case, from exactly this case: *"a
-     * scripted Inspector bump-attacking the opening ambush stalled 3 runs in 12,
-     * doing nothing, forever — which is precisely what a new player does."*
+     * ToME has no such rule anywhere. `min_range` appears on ONE talent in the
+     * whole game (spells/golem.lua:34); the melee loop SKIPS an archery weapon
+     * (tome/class/interface/Combat.lua:181, :204) and falls through to
+     * `-- Barehanded ?` at :221-231, swinging tome/class/Actor.lua:277-285's
+     * innate fist. So an archer in a doorway punches, and is never refused.
      *
-     * Asserted on the CODE, because the code is what selects that sentence.
+     * ═══ AND THE DEAD ZONE ITSELF IS UNTOUCHED, WHICH THIS DOES NOT ASSERT ═══
+     * The BUMP now lands (`Weapon.archery` + `BAREHAND`, engine/combat.ts). The
+     * GUN is still refused at the same tile with the same `too_close`, which
+     * `game-design.md` § 2 calls the single most important number in the class —
+     * and that half is driven at its own entry point by
+     * `turn-engine.test.ts`'s "the Inspector's dead zone", which calls
+     * `submitTalent` at distance 1 and 2 and requires `ErrorCode.TooClose`. It
+     * is named here so a reader of this case does not conclude the hole is gone,
+     * and so a commit that deleted the dead zone outright still turns a suite
+     * red.
      */
     const a = await connect(server.port);
     const actorId = await a.hello();
@@ -734,13 +748,15 @@ describe('somebody else turns up', () => {
     // read `terrain` — the player had walked into a wall.
     expect(Math.max(Math.abs(husk.x - body.x), Math.abs(husk.y - body.y))).toBe(1);
 
+    const before = husk.hp;
     a.send({ t: 'move', dir: spot.dir });
     await sleep(350);
-    const err = a.latest('error') as { code?: string; message?: string } | undefined;
-    expect(err, 'the dead-zone bump was not refused').toBeDefined();
-    expect(err?.code, `the Inspector was told the wrong thing: ${JSON.stringify(err)}`).toBe(
-      'too_close',
-    );
+    const bumpErr = a.latest('error') as { code?: string; message?: string } | undefined;
+    expect(bumpErr, `the punch was refused: ${JSON.stringify(bumpErr)}`).toBeUndefined();
+    // THE HIT ITSELF, not merely the absence of a refusal: `bumped: 0` was a
+    // tally of intents accepted and thrown away once already, and an assertion
+    // on the error alone would have read as a pass for exactly that bug.
+    expect(husk.hp, 'the punch landed on nothing').toBeLessThan(before);
   });
 
   it('trades places with a party member instead of treating them as a wall', async () => {

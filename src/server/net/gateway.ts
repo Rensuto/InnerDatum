@@ -6649,6 +6649,15 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
      * forever"*. The fix for that bug was in the codebase and unreachable from
      * the path that caused it.
      *
+     * ═══ THAT EXAMPLE IS HISTORY NOW, AND THE ROUTING IS NOT ═══
+     * An Inspector who walks into an adjacent husk PUNCHES — `Weapon.archery`
+     * and `BAREHAND` (engine/combat.ts), upstream's
+     * tome/class/interface/Combat.lua:221-231 — so the bump no longer produces
+     * `min_range` at all. What still does is a GUN TALENT aimed inside the dead
+     * zone, which is `TalentRefusal.MinRange` and takes this same table. The
+     * measurement above is why the row exists; the row is still the only thing
+     * that makes the client's sentence reachable.
+     *
      * THIS IS A ROUTING TABLE, NOT A VOCABULARY. It adds no words anywhere; all
      * three codes already existed on the wire and already had client arms.
      *

@@ -167,6 +167,24 @@ const WIELDER_MOD_KEYS: readonly (keyof AdditiveMods)[] = Object.freeze([
   'sight',
   // TILES of carried light, additive for the same reason. See `liteRadiusOf`.
   'lite',
+  /**
+   * TILES at which a creature is made out in the dark — `heightened_senses`.
+   *
+   * ADDITIVE IS NOT UPSTREAM'S COMBINE AND IT IS THE RIGHT ONE HERE. Upstream
+   * takes `math.max(heightened_senses, infravision)` at
+   * tome/class/Player.lua:639, but that is a max over two DIFFERENT ATTRIBUTES,
+   * not over two sources of the same one: `talentTemporaryValue` adds, so two
+   * things granting `heightened_senses` stack there exactly as they do here.
+   * `sensesRadiusOf` is where the cross-attribute max will live when a second
+   * attribute exists.
+   *
+   * IT IS ON THIS LIST BECAUSE THE LIST IS THE FOLD. `CombatMods.senses` is
+   * read, `AdditiveMods` permits it and `cold_reading.ts` grants it — and
+   * without this line every one of those would be true while the number never
+   * reached a sheet. That is the `moveMp` shape below, and it has now been the
+   * shape of enough bugs in this file to be worth naming twice.
+   */
+  'senses',
   'genericCrit',
   'criticalPower',
   'damRange',

@@ -150,7 +150,7 @@ import type { OnHitStatus } from './actor.ts';
 import type { LevelView } from '../../shared/protocol.ts';
 import type { Rng } from '../../shared/rng.ts';
 import type { DamageProfile, TypeTable } from './damage.ts';
-import type { Combatant } from './derived.ts';
+import type { Combatant, Weapon } from './derived.ts';
 
 /**
  * A combat sheet plus the damage-side profile.
@@ -364,6 +364,87 @@ const DEFAULT_SHEET: CombatSheet = {};
 export const MELEE_REACH = 1.5;
 
 /**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE FIST EVERY BODY HAS — tome/class/Actor.lua:277-285, verbatim.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ *     -- Default melee barehanded damage
+ *     self.combat = self.combat or {
+ *       dam=1,
+ *       atk=1, apr=0,
+ *       physcrit=0,
+ *       physspeed =1,
+ *       dammod = { str=1 },
+ *       damrange=1.1,
+ *     }
+ *
+ * EVERY FIELD IS UPSTREAM'S AND THE NUMBERS ARE NOT NEGOTIABLE. A ToME archer
+ * cornered in a doorway is not refused; she punches.
+ *
+ * ═══ AND A `dam` OF 1 IS NOT A DAMAGE OF 1 — MEASURED, HAVING ASSUMED IT WAS ═══
+ * The first draft of this note called the punch "deliberately feeble" and
+ * "one point of base damage". It is neither, and the reason is upstream's own
+ * curve: `combatDamagePower` (Combat.lua:1682-1687) is
+ * `(sqrt((dam + totstat) / 10) - 1) * 0.5 + 1`, so the weapon's `dam` goes under
+ * a square root BESIDE the whole stat term rather than multiplying the result.
+ * Run through this game's own `combatDamage` on the shipped Inspector, a
+ * `dam` of 1 against the revolver's 18 comes out as 7.06 against 11.54 — a
+ * factor of 1.6, not 18.
+ *
+ * That is the port and it is left alone. What the fist loses is the rest of the
+ * weapon: half the crit (`physcrit = 0` against the revolver's 3, and `physCrit`
+ * DEFAULTS TO 1 when absent at Combat.lua:1424, which is why the zero is written
+ * out), half the armour penetration, and the narrower damage band.
+ *
+ * `dammod = { str = 1 }` is the one number LARGER than a real weapon's
+ * (`{ str = 0.6 }` is ToME's default, Combat.lua:1625) and it is upstream's:
+ * with a `dam` of 1 the stat term is nearly all of the swing, which is why a
+ * strong body's punch is worth more than a weak one's.
+ *
+ * See `Weapon.archery` (engine/derived.ts) for what reaches this, and
+ * `barehandAt` below for when.
+ */
+export const BAREHAND: Weapon = {
+  dam: 1,
+  atk: 1,
+  apr: 0,
+  physCrit: 0,
+  physSpeed: 1,
+  damMod: { str: 1 },
+  damRange: 1.1,
+};
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * IS THIS SWING A PUNCH? — tome/class/interface/Combat.lua:181, :204, :221-231.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Upstream's melee loop skips any weapon flagged `archery` in BOTH hands
+ * (`if combat and not o.archery then`, twice), which leaves `speed` nil, which
+ * falls into `-- Barehanded ?` at :221 and swings
+ * `self:getObjectCombat(nil, "barehand")` — the innate `self.combat` above.
+ *
+ * ═══ THE ONE ADAPTATION, STATED ═══
+ * Upstream splits by ATTACK KIND: `attackTarget` is melee and never uses a bow,
+ * while `Archery.lua`'s talents always do, at any distance. This engine has one
+ * `attackTarget` that serves both the bump and the basic shot, because a class's
+ * reach is `CombatSheet.range` rather than a second code path. So the split is
+ * by DISTANCE instead: inside `MELEE_REACH` you are swinging, and a gun cannot
+ * be swung. Past it you are firing, and the gun is the weapon.
+ *
+ * That lands on exactly upstream's outcome for the only case either rule can
+ * disagree about — a body in contact with a gun in its hands — which is the case
+ * this exists for.
+ *
+ * IT READS THE WEAPON, NOT THE CLASS. A monster's innate weapon is not archery
+ * (upstream's are `self.combat` tables, which is the barehand slot itself), so
+ * nothing about a wraith or a husk changes.
+ */
+function barehandAt(sheet: CombatSheet, distance: number): boolean {
+  return sheet.weapon?.archery === true && distance <= MELEE_REACH;
+}
+
+/**
  * `core.fov.distance` — EUCLIDEAN.
  *
  * REIMPLEMENTED, not translated: `core.fov.*` is native C and absent from the
@@ -451,6 +532,33 @@ export function rangeRefusal(
 
   if (distance > reach) return AttackRefusal.OutOfRange;
 
+  /**
+   * ═════════════════════════════════════════════════════════════════════════
+   * A GUN IN CONTACT IS A FIST, AND A FIST IS NEVER REFUSED.
+   * ═════════════════════════════════════════════════════════════════════════
+   *
+   * tome/class/interface/Combat.lua:221-231. `barehandAt`'s note has the whole
+   * argument; the short version is that upstream has NO minimum range on any
+   * archery talent and no way to be refused at contact — the melee loop skips
+   * the bow and the fall-through punches for `dam = 1`.
+   *
+   * THIS LINE IS WHY THE INSPECTOR WAS UNPLAYABLE. Measured at HEAD: `bumped: 0`
+   * in every run ever taken of her, at every site, at every level, because the
+   * dead zone refused the one action a body in a doorway has. 0/12 on the intro
+   * floor at level 1 against a strictly WEAKER body (the Alchemist: 54hp to her
+   * 60, 0 defence to her 4, the same reach, the same zero armour) going 12/12.
+   *
+   * ═══ AND THE DEAD ZONE ITSELF IS UNTOUCHED, WHICH IS THE POINT ═══
+   * `game-design.md` § 2 calls `min_range 3` "the single most important number
+   * here: the Inspector CANNOT SHOOT ADJACENT", and she still cannot. The three
+   * gun talents carry their own `minRange: 3` and are refused by
+   * `checkTargeting`, not by this function. What comes back at contact is a
+   * punch worth one point of base damage, and the tiles between `MELEE_REACH`
+   * and `minRange` — too far to hit, too close to shoot — are still the hole the
+   * class is built around.
+   */
+  if (barehandAt(sheet, distance)) return null;
+
   // THE DEAD ZONE. `<` not `<=`: min_range 3 means 3 is the closest LEGAL tile,
   // matching how the authored `min_range` reads in content/skills/*.json and how
   // the targeting ring's hole must be drawn.
@@ -477,6 +585,26 @@ export type AttackOpts = {
    * walls: it means "I already asked".
    */
   readonly skipLegality?: boolean;
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THIS TALENT NAMES THE THING IT SWINGS — upstream's `attackTargetWith`.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Combat.lua:380 takes a `combat` table as an ARGUMENT, and a talent that
+   * calls it has chosen its weapon rather than letting the mainhand/offhand loop
+   * choose: `Combat.lua:202` hands `o.special_combat` to it for a shield bash,
+   * which is a swing with a thing the ordinary melee loop would never pick up.
+   *
+   * SO THE BAREHAND FALL-THROUGH DOES NOT APPLY. That fall-through is what
+   * happens when the LOOP found nothing to swing (`if not speed`, :222); a
+   * talent that named its weapon skipped the loop entirely.
+   *
+   * Exactly one talent needs it: Pistol Whip is the revolver used as a club, and
+   * without this it would become a one-damage punch the moment `Weapon.archery`
+   * landed on the Inspector's gun — which would delete the class's contact
+   * answer in the same commit that gave it one.
+   */
+  readonly withWeapon?: boolean;
 };
 
 /**
@@ -530,7 +658,27 @@ export function attackTarget(
     if (refusal !== null) return { ok: false, reason: refusal };
   }
 
-  const self = sheetOf(attacker);
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE FALL-THROUGH — tome/class/interface/Combat.lua:221-231.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `barehandAt` (above) says when. This is what upstream does when it happens:
+   * `getObjectCombat(nil, "barehand")` returns the actor's own `self.combat`
+   * table in place of the object's, and `attackTargetWith` is called with THAT.
+   *
+   * ONLY THE WEAPON BLOCK IS SWAPPED. `mods` — accuracy, armour penetration,
+   * crit, every wielder fold — is the ACTOR's and upstream keeps all of it: a
+   * gauntlet's `combat_apr` applies to a punch, which is the whole point of
+   * `-- Ensures we have certain values for gloves to modify`
+   * (tome/class/Actor.lua:286). Spreading the sheet and replacing one field is
+   * exactly that split.
+   */
+  const worn = sheetOf(attacker);
+  const self: CombatSheet =
+    opts.withWeapon !== true && barehandAt(worn, combatDistance(attacker, target))
+      ? { ...worn, weapon: BAREHAND }
+      : worn;
   const foe = sheetOf(target);
   const type = opts.damtype ?? self.damageType ?? DamageType.Physical;
 

@@ -27,10 +27,30 @@
  *                   skipped clause but an unreachable one, the answer
  *                   `healing_infusion.ts` gives for upstream's poison: the day
  *                   a blind effect exists, this is where its immunity goes.
- *   `esight`        NOT PORTED. `infravision` is seeing living things through
- *                   walls, which needs a second FOV pass with different rules;
- *                   `canSee` is one circle and one line test, and a second kind
- *                   of sight is a system rather than a number.
+ *   `esight`        NOT PORTED, AND THE REASON IT USED TO GIVE WAS WRONG ON THE
+ *                   FACTS. It read: *"`infravision` is seeing living things
+ *                   through walls, which needs a second FOV pass with different
+ *                   rules; a second kind of sight is a system rather than a
+ *                   number."* It is not through walls and it is not a system.
+ *                   tome/class/Player.lua:636-644 is nine lines, both passes use
+ *                   `block_sight` — the same blocker the ordinary sight pass
+ *                   uses — and the talent that carries the other half says so in
+ *                   its own text: *"This is not telepathy, however, and it is
+ *                   still limited to line of sight."*
+ *                   (cunning/survival.lua:44.)
+ *
+ *                   THE PASS EXISTS NOW. `CombatMods.senses` and clause 0 of
+ *                   `shared/vision.ts#computeVision` are that port, written for
+ *                   Heightened Senses (`talents/cold_reading.ts`), and upstream
+ *                   shares ONE pass between `heightened_senses` and
+ *                   `infravision` — `math.max` of the two at Player.lua:639.
+ *                   So `esight` is now a one-line grant here plus a second
+ *                   `Math.max` argument in `sensesRadiusOf`, and it is left
+ *                   UNGRANTED as a balance decision rather than an engineering
+ *                   one: a racial passive that hands every Cold Country
+ *                   character the Inspector's signature answer to the dark is a
+ *                   bigger statement than this file should make on its own.
+ *                   (Memory rule, the hard way: deferral notes rot.)
  *
  * A PARTIAL PORT IS SAID OUT LOUD RATHER THAN QUIETLY SHIPPED, so the next
  * person reads a list of what is missing instead of measuring it.

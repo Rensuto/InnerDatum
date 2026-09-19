@@ -385,6 +385,45 @@ export function combatTalentWeaponDamage(
 }
 
 /**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * `combatTalentSpellDamage` — Combat.lua:1774-1779, ported verbatim.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ *     function _M:combatTalentSpellDamage(t, base, max, spellpower_override)
+ *       -- Compute at "max"
+ *       local mod = max / ((base + 100) * ((math.sqrt(5) - 1) * 0.8 + 1))
+ *       -- Compute real
+ *       return self:rescaleDamage((base + (spellpower_override or self:combatSpellpower())) *
+ *         ((math.sqrt(self:getTalentLevel(t)) - 1) * 0.8 + 1) * mod)
+ *
+ * THE THIRD CURVE, AND IT IS NOT `combatTalentScale`. That one interpolates
+ * between two authored endpoints; this one SOLVES for a multiplier that would
+ * produce `max` at rank 5 against a power of 100, then applies it to whatever
+ * power the caster actually has. So `base` and `max` are a promise about a
+ * hundred-power caster and everyone else is scaled off it — which is why two
+ * talents with identical `(base, max)` pay different amounts to different
+ * bodies, and why the pair cannot be read as "low" and "high".
+ *
+ * `spellpower` IS AN ARGUMENT AND NOT A LOOKUP, because upstream's is: nineteen
+ * talents pass an override, and the one this was ported for
+ * (cursed/cursed-form.lua:20-22) passes `(self.level + self:getWil()) * 1.2`,
+ * which is not a spell power at all. A function that reached for
+ * `combatSpellpower` itself could not express that.
+ *
+ * `rescaleDamage` IS INSIDE IT, as upstream has it — the ^1.04 is part of this
+ * curve, not something a caller adds afterwards.
+ */
+export function combatTalentSpellDamage(
+  talentLevel: number,
+  base: number,
+  max: number,
+  spellPower: number,
+): number {
+  const mod = max / ((base + 100) * ((Math.sqrt(5) - 1) * 0.8 + 1));
+  return rescaleDamage((base + spellPower) * ((Math.sqrt(talentLevel) - 1) * 0.8 + 1) * mod);
+}
+
+/**
  * `getTierDiff` — Combat.lua:325-329.
  *
  * Tiers are twenty rescaled points wide. When an attacker's power outranks a

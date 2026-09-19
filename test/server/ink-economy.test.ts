@@ -1,12 +1,19 @@
 import { describe, expect, it } from 'vitest';
 
-import { REDACTOR, WATCHMAN, sheetForClass } from '../../src/server/content/classes.ts';
+import {
+  REDACTOR,
+  WATCHMAN,
+  createContentTalentEngine,
+  sheetForClass,
+} from '../../src/server/content/classes.ts';
+import { strikeOut } from '../../src/server/talents/strike_out.ts';
 import {
   EffectStatus,
   SetEffectOutcome,
   creditForLanding,
 } from '../../src/server/engine/effects.ts';
-import { ResourceKind } from '../../src/server/engine/talents.ts';
+import { INK_PER_KILL, ResourceKind, inkForKill } from '../../src/server/engine/talents.ts';
+import { ActorRank } from '../../src/shared/protocol.ts';
 import type { SetEffectResult } from '../../src/server/engine/effects.ts';
 
 /**
@@ -165,5 +172,129 @@ describe('who gets paid when a mark lands', () => {
    */
   it('pays nothing for an effect the table does not know', () => {
     expect(creditForLanding('victim', landing(), 'redactor', undefined)).toBeNull();
+  });
+});
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * AND A KILL PAYS — `hate_per_kill`, tome/class/Actor.lua:253.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * The archetype the Redactor ports has NO passive income at all
+ * (tome/class/Actor.lua:240, `hate_regen = 0 -- Hate does not regen`); it is paid
+ * 8 per kill and by `T_FEED`. We had the trickle and neither of the other two,
+ * and the measurement said so: a lone level-1 Redactor on the intro floor
+ * reported `no_resource x380` in one run and spent 141-351 turns of 900 holding.
+ *
+ * DRIVEN THROUGH `noteKill`, WHICH IS THE ENGINE'S OWN ENTRY POINT and has
+ * exactly one caller — `noteMonsterDeath` in the scheduler, which is where every
+ * lane's kill arrives (`noteCasualty` for the swing, the talent and the orb;
+ * `resolveStatusHits` for a bleed that finishes somebody) — for exactly the
+ * reason its docblock gives.
+ */
+describe('a kill pays Ink — hate_per_kill, tome/class/Actor.lua:253', () => {
+  /** A live engine with one attached body of this class. */
+  function attached(cls: typeof REDACTOR) {
+    const engine = createContentTalentEngine();
+    const sheet = sheetForClass(cls);
+    engine.attach('body', sheet);
+    return { engine, sheet };
+  }
+
+  /** An ordinary body, at the killer's own level. Nothing multiplies it. */
+  const RAT = { rank: ActorRank.Normal, level: 1, killerLevel: 1 };
+
+  it('pays INK_PER_KILL, and pays it into the Redactor’s own pool', () => {
+    const { engine, sheet } = attached(REDACTOR);
+    // Spend first: a full pool would clamp the grant and hide it entirely.
+    sheet.resource.value = 0;
+    engine.noteKill('body', RAT);
+    expect(sheet.resource.value).toBe(INK_PER_KILL);
+    expect(INK_PER_KILL).toBe(8);
+  });
+
+  it('never pays past the ceiling', () => {
+    const { engine, sheet } = attached(REDACTOR);
+    sheet.resource.value = sheet.resource.max;
+    engine.noteKill('body', RAT);
+    expect(sheet.resource.value).toBe(sheet.resource.max);
+  });
+
+  it('pays nobody else — a kill-fed Resolve bar would reward stealing a kill', () => {
+    const { engine, sheet } = attached(WATCHMAN);
+    sheet.resource.value = 0;
+    engine.noteKill('body', RAT);
+    expect(sheet.resource.kind).toBe(ResourceKind.Resolve);
+    expect(sheet.resource.value, 'the Watchman earns by standing there').toBe(0);
+  });
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * AND WHAT DIED MULTIPLIES IT — misc.lua:209-234, the clause we did not have.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `hate_per_kill = 8` (tome/class/Actor.lua:253) is the BASE and this file
+   * used to assert it as though it were the payout. Upstream routes every kill
+   * through the Hate Pool talent (tome/class/Actor.lua:3103-3108), which pays
+   * `x2` for an elite and `x4` for a boss — so a flat 8 was upstream's figure
+   * for a rat and one QUARTER of its figure for the fight a controller is for.
+   *
+   * DRIVEN THROUGH THE ENGINE, not through `inkForKill` alone: the arithmetic
+   * being right while `noteKill` still paid the flat base is exactly the bug.
+   */
+  it('pays a boss four times over, and an elite twice — through the engine', () => {
+    const { engine, sheet } = attached(REDACTOR);
+    for (const [rank, expected] of [
+      [ActorRank.Normal, INK_PER_KILL],
+      [ActorRank.Elite, INK_PER_KILL * 2],
+      [ActorRank.Boss, INK_PER_KILL * 4],
+    ] as const) {
+      sheet.resource.value = 0;
+      engine.noteKill('body', { rank, level: 1, killerLevel: 1 });
+      expect(sheet.resource.value, `a ${rank} paid the wrong figure`).toBe(expected);
+    }
+  });
+
+  it('pays a bonus for a foe out of depth, and nothing for one that is not', () => {
+    // misc.lua:213 — `target.level - 2 > self.level`, so exactly two levels over
+    // is NOT out of depth and three is. The bonus itself is
+    // `ceil(combatTalentScale(depth, 2, 10, 'log', 0, 1))`, which at depth 1 is
+    // 2 — the fitted low — so the boundary is visible without pinning the curve.
+    expect(inkForKill({ rank: ActorRank.Normal, level: 3, killerLevel: 1 })).toBe(INK_PER_KILL);
+    expect(inkForKill({ rank: ActorRank.Normal, level: 4, killerLevel: 1 })).toBe(INK_PER_KILL + 2);
+    // …and it is inside the multiplier, as upstream's order has it: the bonus is
+    // added to `hateGain` BEFORE the rank clause multiplies it (misc.lua:215
+    // then :219).
+    expect(inkForKill({ rank: ActorRank.Elite, level: 4, killerLevel: 1 })).toBe(
+      (INK_PER_KILL + 2) * 2,
+    );
+  });
+
+  it('never pays more than the pool holds — misc.lua:228', () => {
+    // `math.min(hateGain, 100)`. A boss far out of depth would otherwise pay
+    // more than `max_hate`, which upstream refuses at the source rather than at
+    // the pool, and so do we.
+    expect(inkForKill({ rank: ActorRank.Boss, level: 60, killerLevel: 1 })).toBe(100);
+  });
+
+  /**
+   * THE COST IS PINNED AT ITS FIGURE, not at a relation with a `?? 0` in it.
+   * This case used to read `expect(INK_PER_KILL).toBeGreaterThan(strikeOut.cost.resource ?? 0)`
+   * — and deleting the `resource` field outright left the whole suite green,
+   * because an absent cost is `0` and 8 is greater than 0. The number this run
+   * deliberately moved (8 -> 5) was pinned by nothing at all.
+   */
+  it('costs what Willful Strike costs — cursed/force-of-will.lua:27', () => {
+    expect(strikeOut.cost.resource).toBe(5);
+  });
+
+  it('buys a Strike Out outright, which is the whole point of the number', () => {
+    // 8 Ink for a 5-Ink talent: one kill funds the next mark with change, which
+    // is what turns a run of kills into a class that can keep acting.
+    //
+    // `?? NaN` RATHER THAN `?? 0`: an absent cost must FAIL this, not sail
+    // through it. Every comparison against NaN is false, so deleting the field
+    // goes red here as well as in the case above.
+    expect(INK_PER_KILL).toBeGreaterThan(strikeOut.cost.resource ?? Number.NaN);
   });
 });

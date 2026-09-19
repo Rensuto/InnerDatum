@@ -6817,23 +6817,39 @@ function refusalText(code: ErrorCode, fallback: string): string {
        * A BARE "too close" IS THE FAILURE content/classes.ts WARNS ABOUT BY
        * NAME.
        * ═══════════════════════════════════════════════════════════════════
-       * With a talent pending this already says the whole lesson —
-       * "too close — Sniper's Mark needs 3 tiles". Without one it used to say
-       * two words, and the case where there is no talent pending is exactly
-       * the case that matters most: an Inspector who WALKED INTO a husk.
+       * With a talent pending this says the whole lesson — "too close —
+       * Sniper's Mark needs 3 tiles". game-design.md § 2 is quoted in
+       * classes.ts on the danger: *"if the dead zone is invisible the class
+       * reads as broken."* Two words, on a screen where a shot just did
+       * nothing, IS invisible. It reads as the game being bugged rather than
+       * as the one rule the class is built around.
        *
-       * `minRange: 3` is on the Inspector's combat SHEET as well as on its
-       * talents, so a basic bump-attack from inside the hole is refused —
-       * deliberately, because "the Inspector cannot shoot adjacent" is the
-       * class. game-design.md § 2 is quoted in classes.ts on the danger:
-       * *"if the dead zone is invisible the class reads as broken."* Two
-       * words, on a screen where the player just walked into a monster and
-       * watched nothing happen, IS invisible. It reads as the attack being
-       * bugged rather than as the one rule the class is built around.
+       * ═══════════════════════════════════════════════════════════════════
+       * WHAT REACHES THIS CHANGED, AND THE OLD PARAGRAPH IS KEPT BELOW AS
+       * HISTORY RATHER THAN DELETED.
+       * ═══════════════════════════════════════════════════════════════════
+       * It used to say: *"`minRange: 3` is on the Inspector's combat SHEET as
+       * well as on its talents, so a basic bump-attack from inside the hole is
+       * refused — deliberately"*, and the no-talent arm was written for an
+       * Inspector who WALKED INTO a husk. Driving a first session is what
+       * surfaced it: a scripted Inspector bump-attacking the opening ambush
+       * stalled 3 runs in 12, doing nothing, forever.
        *
-       * Driving a first session is what surfaced it: a scripted Inspector
-       * bump-attacking the opening ambush stalled 3 runs in 12, doing
-       * nothing, forever — which is precisely what a new player does.
+       * THAT IS NO LONGER WHAT HAPPENS. She punches — `Weapon.archery` and
+       * `BAREHAND` (server/engine/combat.ts), upstream's
+       * tome/class/interface/Combat.lua:221-231 — so a bump at contact is a
+       * swing, not a refusal. The gateway's own routing note says the same
+       * thing from the server side.
+       *
+       * SO WHAT REACHES `too_close` FROM A CLIENT IS A GUN TALENT AIMED INSIDE
+       * THE DEAD ZONE (`TalentRefusal.MinRange`), which always has a pending
+       * talent and therefore always takes the SECOND arm. The first arm is not
+       * dead code and is not deleted: `attackRefusalToRefusal` still maps
+       * `AttackRefusal.MinRange` to `TooClose` for the bump path, so the day a
+       * body has a dead zone its basic attack is refused inside — a class whose
+       * weapon is not `archery`, or an Inspector handed a non-archery weapon —
+       * this is the sentence that body gets, and a two-word refusal is the
+       * failure this whole block exists to prevent.
        */
       return talent === null
         ? 'too close to shoot — back off a step and fire, or use a talent'

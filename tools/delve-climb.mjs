@@ -132,7 +132,32 @@ function climb(site, cls, seed) {
     floors,
     perFloor,
     stoppedAt,
-    /** The level standing in front of the last floor — where the boss is. */
+    /**
+     * ═══════════════════════════════════════════════════════════════════════════
+     * THE LEVEL STANDING IN FRONT OF THE LAST FLOOR — REACHED, NOT SURVIVED.
+     * ═══════════════════════════════════════════════════════════════════════════
+     *
+     * `perFloor.length >= floors` means the boss floor was ENTERED. It does not
+     * mean it was cleared, and it must not: the ruling is *"you are not meant to
+     * get to the end of the dungeon without levelling at least twice"*, which is
+     * a question about the character who walks through that door, not about
+     * whether they walk back out.
+     *
+     * THE STATISTIC USED TO BE CONDITIONED ON SURVIVING and that is exactly
+     * backwards. The runs dropped were the ones that reached the boss and died
+     * on it — which are precisely the UNDER-LEVELLED runs, the ones the ruling
+     * exists to catch. It is also why `reached` is printed beside the ratio now:
+     * a delve carried by one completed descent and a delve walked by four are
+     * different claims and used to print the same way.
+     *
+     * ═══ AND IT CHANGES WHO IS COUNTED, NOT JUST HOW MANY ═══
+     * Re-walked with reached-the-boss kept, four descents a class over the
+     * twelve moor delves: the Inspector reaches the Undermost's boss floor 4
+     * times in 4, at +3.3 levels each time, and completes ZERO of those
+     * descents. Every one of those runs is a character who levelled exactly as
+     * the ruling asks and then lost to the boss — the whole population the old
+     * statistic threw away.
+     */
     atBoss: perFloor.length >= floors ? perFloor[floors - 1].into : null,
     end: level,
   };
@@ -144,7 +169,8 @@ console.log(
 console.log(
   `${'delve'.padEnd(24)} ${'fl'.padStart(2)} ${'class'.padEnd(12)} ${'in'.padStart(3)}` +
     ` ${'at boss'.padStart(7)} ${'out'.padStart(4)} ${'gained'.padStart(6)}` +
-    ` ${'>=2 by boss'.padStart(11)} ${'full runs'.padStart(9)} ${'stopped on'.padStart(10)}`,
+    ` ${'>=2 by boss'.padStart(11)} ${'reached'.padStart(7)} ${'full runs'.padStart(9)}` +
+    ` ${'stopped on'.padStart(10)}`,
 );
 
 for (const site of sites) {
@@ -153,8 +179,11 @@ for (const site of sites) {
       climb(site, cls, `climb:${site.id}:${cls.id}:${String(i)}`),
     );
     const full = rs.filter((r) => r.stoppedAt === 0);
-    const atBoss = full.map((r) => r.atBoss ?? r.start);
-    const twice = full.filter((r) => (r.atBoss ?? r.start) - r.start >= 2).length;
+    // REACHED THE BOSS FLOOR — see `atBoss`. A run that got there and died there
+    // is the under-levelled case and belongs in this statistic, not outside it.
+    const reached = rs.filter((r) => r.atBoss !== null);
+    const atBoss = reached.map((r) => r.atBoss ?? r.start);
+    const twice = reached.filter((r) => (r.atBoss ?? r.start) - r.start >= 2).length;
     const stops = rs.filter((r) => r.stoppedAt > 0).map((r) => r.stoppedAt);
     console.log(
       `${site.name.slice(0, 24).padEnd(24)} ${String(rs[0].floors).padStart(2)}` +
@@ -162,7 +191,8 @@ for (const site of sites) {
         ` ${(atBoss.length === 0 ? '-' : avg(atBoss).toFixed(1)).padStart(7)}` +
         ` ${(full.length === 0 ? '-' : avg(full.map((r) => r.end)).toFixed(1)).padStart(4)}` +
         ` ${(full.length === 0 ? '-' : avg(full.map((r) => r.end - r.start)).toFixed(1)).padStart(6)}` +
-        ` ${(full.length === 0 ? '-' : `${String(twice)}/${String(full.length)}`).padStart(11)}` +
+        ` ${(reached.length === 0 ? '-' : `${String(twice)}/${String(reached.length)}`).padStart(11)}` +
+        ` ${`${String(reached.length)}/${String(RUNS)}`.padStart(7)}` +
         ` ${`${String(full.length)}/${String(RUNS)}`.padStart(9)}` +
         ` ${(stops.length === 0 ? '-' : `fl ${avg(stops).toFixed(1)}`).padStart(10)}`,
     );

@@ -90,6 +90,7 @@ import {
 } from './actor.ts';
 import { AttackRefusal, attackTarget, canAttack } from './combat.ts';
 import { TalentRefusal, ballTiles } from './talents.ts';
+import type { KillNote } from './talents.ts';
 import { inQuorum, isBlocking } from './barrier.ts';
 import {
   DownedTick,
@@ -932,8 +933,11 @@ export type TalentResolution = {
    * `noteStairs` unreachable because M4 has no stairs. Wiring it here fixes the
    * swing, the orb and the talent in one place, and the two calls inside
    * talents.ts were REMOVED rather than left to double-pay.
+   *
+   * `note` carries WHAT DIED — upstream pays four times as much for a boss
+   * (`inkForKill`, engine/talents.ts). Required, for the reason given there.
    */
-  noteKill(actorId: string): void;
+  noteKill(actorId: string, note: KillNote): void;
   /**
    * A BLOW LANDED ON THIS ACTOR. The Watchman's Resolve, which had no writer.
    *
@@ -2764,6 +2768,22 @@ function resolveIntent(actor: EngineActor, intent: Intent, run: Run): Resolution
          *   accident. What she should do is back away, and `TooClose` is the
          *   only refusal that tells her so.
          *
+         * ═══ AND THE SECOND ONE IS WHAT UPSTREAM ACTUALLY DOES — SEE BELOW ═══
+         * THIS LINE IS STILL RIGHT AND THE PARAGRAPH ABOVE IT WAS HALF WRONG,
+         * which is worth leaving in place rather than deleting. `canAttack` is
+         * still the judge and the bump still obeys whatever it says. What
+         * changed is the answer: `rangeRefusal` no longer refuses an ARCHERY
+         * wielder inside `MELEE_REACH`, because upstream's melee loop skips a
+         * bow and punches instead (tome/class/interface/Combat.lua:181, :204,
+         * :221-231). So the Inspector's bump lands here as a `BAREHAND` swing
+         * (measured at 7.06 damage against the revolver's 11.54 — read that
+         * constant's note, `dam = 1` is not a damage of 1), and the dead zone
+         * is intact everywhere else — she
+         * still cannot SHOOT adjacent, and the band between 1.5 and 3 tiles is
+         * still empty for her. "A melee exemption" would have been the whole
+         * class deleted; a fist is what upstream gives her, and measured it is
+         * the difference between 0/12 and a real run.
+         *
          * A MONSTER inherits this too — a refused monster intent still costs the
          * turn (`actMonster`) and shows up as a `blocked` sweep step. That is
          * correct: it bumped into something it cannot swing at. The one profile
@@ -4528,7 +4548,21 @@ function noteMonsterDeath(
      * party of four racing the same husk — the same property that makes the
      * reap enrolment above idempotent.
      */
-    run.ctx.talents?.noteKill(killerId);
+    const killer = run.world.getActor(killerId);
+    run.ctx.talents?.noteKill(killerId, {
+      rank: victim.rank,
+      level: victim.level,
+      /**
+       * A KILLER WHOSE BODY IS ALREADY GONE is not hypothetical: the projectile
+       * lane freezes `sourceId` at the muzzle and the shooter can be several
+       * game turns dead when the orb lands (`awardExperience` opens on the same
+       * fact). `killerLevel` is read by the out-of-depth clause ALONE, and that
+       * clause compares it against the victim's own level — so handing it the
+       * victim's level makes the clause answer "not out of depth" rather than
+       * inventing a number for a body nobody can look at.
+       */
+      killerLevel: killer?.level ?? victim.level,
+    });
     // AND THE EXPERIENCE, ON THE SAME LINE OF REASONING AND FOR THE SAME REASON
     // IT IS HERE RATHER THAN IN A TALENT. See `awardExperience`.
     awardExperience(run, killerId, victim);
