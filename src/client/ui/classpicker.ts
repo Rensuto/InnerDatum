@@ -41,17 +41,18 @@
  * ===========================================================================
  * `ClassOptionsMsg.options` is authored order and protocol.ts asks for it to be
  * respected: "a card that moves between two frames is a card somebody misclicks,
- * and this one is irreversible". That is the same promise ui/partypanel.ts:69-77
- * makes about the kick row and ui/turncards.ts:24-38 makes about the strip, and
- * this is the one place where getting it wrong cannot be undone by clicking
+ * and this one is irreversible". That is the same promise ui/partypanel.ts makes
+ * about the kick row — and about the turn, which is why the pane is never sorted
+ * by state — and this is the one place where getting it wrong cannot be undone by
+ * clicking
  * again — the class is written to a file and the chooser never comes back.
  *
  * ===========================================================================
  * THE SELECTION IS MARKED BY SHAPE AND BY WORD, NEVER BY COLOUR ALONE
  * ===========================================================================
  * Roughly one man in twelve cannot separate the red from the green and the
- * Discord overlay is not colour-managed. ui/partypanel.ts:78-92 and
- * ui/turncards.ts:66-99 both state the rule; a chosen class is precisely the
+ * Discord overlay is not colour-managed. ui/partypanel.ts's own NEVER COLOUR
+ * ALONE block states the rule; a chosen class is precisely the
  * case it exists for. So a selected card carries THREE signals: a 2px drawn
  * border (a shape), the word SELECTED (a word), and gold (a colour). Any one of
  * the three can be lost and the card still reads as chosen.
@@ -1043,7 +1044,7 @@ function drawOriginChip(
  * as translucent sprites across the whole screen — see that helper's note.
  *
  * `save`/`restore` around everything and a clip to the panel rect, exactly as
- * the party pane and the card strip do: a long class description must never
+ * the party pane does: a long class description must never
  * bleed onto the map, even one that is behind a scrim.
  */
 export function drawClassPicker(options: ClassPickerDrawOptions): void {

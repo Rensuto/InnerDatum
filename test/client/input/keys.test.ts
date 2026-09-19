@@ -75,7 +75,7 @@ import type { KeyHandlers, LiveKeymap } from '../../../src/client/input/keys.ts'
  * keypress asks.
  *
  * THE `reference lib="dom"` ON LINE 1 IS REQUIRED and its cost is documented in
- * test/client/turncards.test.ts:52-63: tests compile under tsconfig.server.json,
+ * test/client/turnbar.test.ts: tests compile under tsconfig.server.json,
  * whose `lib` is ES2024 with no DOM, and keys.ts is typed against
  * `KeyboardEvent`, `HTMLElement` and `EventTarget`.
  */

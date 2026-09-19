@@ -13,11 +13,14 @@
  *
  * THAT FILE IS DELETED. It drew the player's own hp on a bottom strip that was
  * removed to give the Case Log the corner it has upstream, and nothing else
- * imported it. The rule outlived it — `ui/partypanel.ts` and `ui/turncards.ts`
- * still read `HP_LOW` from here, which is exactly why it is here.
+ * imported it. The rule outlived it — `ui/partypanel.ts` still reads `HP_LOW`
+ * from here, which is exactly why it is here. (The turn card strip read it too,
+ * and has since been deleted; the constant outliving a second reader is the
+ * point of the file.)
  *
  * That rule was written down three times. `HP_LOW = 1 / 3` appeared in
- * `ui/life.ts` (now gone), `ui/partypanel.ts` and `ui/turncards.ts`, each with its own
+ * `ui/life.ts` (now gone), `ui/partypanel.ts` and the turn card strip (also now
+ * gone), each with its own
  * copy of the same number — which is precisely the shape `shared/version.ts`
  * says keeps biting this codebase: *"a bound written out twice is the shape
  * this codebase keeps getting bitten by — most recently `HAUNTS`, which learned

@@ -361,11 +361,23 @@ It holds seven lists:
 - **Status icons**, **items** and **props**: ToME's effects, base items and
   traps that have no picture here yet, and furniture for every town and delve.
 
-**Effects are frame strips and are not wired yet.** One frame per actor is still
-the whole animation system, so a `ui_fx_*` strip is 64x64 frames laid left to
-right: 4 frames (256x64) for a loop, 6 frames (384x64) for something played
+**Effects are frame strips, and one family is wired now.** One frame per actor is
+still the whole animation system, so a `ui_fx_*` strip is 64x64 frames laid left
+to right: 4 frames (256x64) for a loop, 6 frames (384x64) for something played
 once. Projectiles are drawn pointing east. The file header gives the full
 convention and the colour family for each damage type.
+
+**The bolts are on screen as of the projectile-art pass.** `paintProjectiles` in
+src/client/render/canvas.ts draws `ui_fx_bolt_<damage type>` for every orb in
+flight, and `ProjectileView.damageType` is what tells it which. Six of the twelve
+are reachable today, because `shared/damagetype.ts` has six members:
+`ui_fx_bolt_physical`, `_fire`, `_cold`, `_lightning`, `_darkness` and `_mind`.
+The other six (`_acid`, `_nature`, `_blight`, `_light`, `_arcane`, `_temporal`)
+are drawn by nothing until an element of theirs exists to fire, and they stay in
+the commission. **Nothing is missing:** every element this game can fire already
+had its strip. What the wiring adds is two requirements the briefs did not state,
+and they are folded into R-FLIGHT below — the renderer shows FRAME 0 ONLY, and it
+ROTATES the frame.
 
 **Style.** Gaslit Alderbrook: soot, brass, fog and lamplight. The Redacted show
 pieces cut clean out of them, holes with depth behind them, wrong angles and a
@@ -401,6 +413,8 @@ The effect briefs below refer to these by name, so each entry only lists what is
 - **R-GRID6 (384x64 once-strips).** Six 64x64 frames; frame i spans x 64i to 64i+63. Draw one pose per frame, centred on the same frame-local anchor (normally x=32) on the same baseline. Leave at least 2 px of clear space on both sides, so columns 0 and 63 of every frame stay empty unless a pose deliberately fills the cell. A blank first or last frame is allowed only as a fade. Check it by slicing into six cells: no cell may contain part of another pose.
 - **R-GRID4 (256x64 loops).** Four 64x64 frames under the same rules. The effect's centre may move no more than 1-2 px across the loop, and frame 4 must lead cleanly back into frame 1.
 - **R-FLIGHT (projectile loops).** The projectile points east and is vertically centred. The whole projectile appears at the same size and position in all four frames, with its tip at a fixed x no further right than 58-60. Animate only the trail, streaks, flicker or spin. No shatter, burst or fade frame: impacts belong to ui_fx_hit_*. Nothing crosses a frame boundary.
+  - **R-FLIGHT-F0 (frame 0 is the only one anybody sees).** The renderer draws frame 0 and no other, because animation playback is a PLAN.md non-goal. So frame 0 must be the finished, complete projectile — never a build-up, a faint lead-in or a blank. The other three frames still have to obey R-FLIGHT (they are what makes a later animated renderer possible, and a strip whose frames disagree about the subject is a strip nobody can wire), but no fault confined to frames 1-3 is visible to a player today. This is also why the shipped shatter-on-the-last-frame fault, which nine of the twelve bolts have, does not show on screen: it is in frame 3.
+  - **R-FLIGHT-ROT (it gets turned).** The renderer rotates the 64x64 frame about the CELL'S CENTRE to one of eight compass headings, because an orb travels on a grid. So the bolt must read at 45 degrees as well as flat: keep it inside a circle of radius 32 centred on the cell, which in practice means the tip at x 58-60 is the outer limit and nothing may sit in the frame's corners. A long flat streak that reaches the left edge is clipped into a stub when the shot flies north-east. Nothing in the frame may depend on being horizontal — no ground shadow, no baseline, no text-like mark that would read upside down flying west.
 - **R-AREA (area loops).** Content covers the whole 64x64 cell. Anything touching the left edge continues on the right edge, and top matches bottom, so a 3x3 tiling shows no seams and no repeated centred motif. Coverage stays constant across the four frames: animate by drift and flicker, not by growing and shrinking.
 - **R-BEAM (beam segments).** Horizontal. The core band reaches columns 0 and 63 at the same rows in every frame, at even thickness, so copies placed end to end join with no gap or pinch. Decorative branches stay away from the edges.
 - **R-OVERLAY (status overlays on a body).** Small and in the upper part of the cell, above the head. Constant size in every frame (no frame-3 swell). A silhouette no other overlay uses, and a colour outside the twelve damage-type families.
@@ -505,7 +519,7 @@ In every entry here the poses were drawn 32-55 px apart instead of one per 64 px
 
 ##### 2c. Flight loops that break every cycle (15 majors)
 
-Every entry takes R-FLIGHT.
+Every entry takes R-FLIGHT, and the six that the renderer now draws additionally take R-FLIGHT-F0 and R-FLIGHT-ROT: `ui_fx_bolt_physical`, `_fire`, `_cold`, `_lightning`, `_darkness` and `_mind`. Those six are on a player's screen today, so they are the ones to regenerate first within this family — the other six are still a catalogue nobody sees.
 
 - **ui_fx_bolt_physical** (effect_256x64_01) [MAJOR]. Frame 4 is loose shards (3.1% visible, against 8.8-14.6% in the other frames), so the bolt blinks out every fourth frame. Frame 3's tip runs about 3 px past x=192, and the tip creeps 51, 56, 63 and snaps back. Keep the steel shaft, bone-white point and grey/bone palette.
 - **ui_fx_bolt_fire** (effect_256x64_01) [MAJOR]. Frame 4 is five orange fragments, frame 3's tip crosses into frame 4, and the tip creeps 50 to 63. Keep orange and yellow. Letting flame dominate over the metal casing is optional.

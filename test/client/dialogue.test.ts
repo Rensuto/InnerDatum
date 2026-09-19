@@ -33,7 +33,6 @@ import { HEADER_H, PANEL_CORNER, PANEL_PAD } from '../../src/client/ui/panel.ts'
 import { NO_OFFSET, moveIntoBand, nextOffset, settleOffset } from '../../src/client/ui/drag.ts';
 import { HOTBAR_TOTAL_H } from '../../src/client/ui/hotbar.ts';
 import { TURN_BAR_H } from '../../src/client/ui/turnbar.ts';
-import { TURN_CARDS_H } from '../../src/client/ui/turncards.ts';
 import { PALETTE } from '../../src/client/render/canvas.ts';
 import { DialogueScope } from '../../src/shared/protocol.ts';
 import type { DialogueGeometry, DialogueRow } from '../../src/client/ui/dialogue.ts';
@@ -93,7 +92,7 @@ function codeOf(path: string): string {
  * a band no panel is ever given — which is precisely the failure the memory note
  * above records, twice in one session.
  */
-function realBand(height: number, inCombat: boolean): { top: number; bottom: number } {
+function realBand(height: number, _inCombat: boolean): { top: number; bottom: number } {
   const code = codeOf('src/client/main.ts');
   expect(code, 'panelBand was reshaped; this rebuild is measuring a band nothing uses').toContain(
     '    top: hudTop + DOCK_MARGIN,\n',
@@ -108,9 +107,21 @@ function realBand(height: number, inCombat: boolean): { top: number; bottom: num
   };
   const dock = read('DOCK_MARGIN');
   const lineH = read('LINE_H');
-  // `turnHudHeight` is `TURN_BAR_H + turnCardsHeight(turn)`, and
-  // `turnCardsHeight` is zero out of combat and `TURN_CARDS_H` in it.
-  const hudTop = TURN_BAR_H + (inCombat ? TURN_CARDS_H : 0);
+  /**
+   * ═══ THE TOP HUD IS `TURN_BAR_H`, IN COMBAT AND OUT OF IT ═══
+   * It was `TURN_BAR_H + turnCardsHeight(turn)` — 14 walking around and 60 in a
+   * fight, because a strip of turn cards sat under the banner whenever there was
+   * one. That strip is deleted and the party pane carries what it carried, so
+   * this band no longer moves when a monster joins the initiative.
+   *
+   * THE PARAMETER IS KEPT AND IGNORED, deliberately. Forty-one call sites below
+   * drive both states, and several of them loop over `[false, true]` to prove a
+   * rule holds in a fight as well as out of one. Dropping it would delete that
+   * sweep along with the argument; keeping it means every one of those cases
+   * still runs, against a band that is now asserted to be the same either way
+   * (test/client/turnband.test.ts measures the difference that used to exist).
+   */
+  const hudTop = TURN_BAR_H;
   return { top: hudTop + dock, bottom: height - HOTBAR_TOTAL_H - lineH * 2 - dock };
 }
 
@@ -408,19 +419,28 @@ describe('dialogueRect', () => {
     }
   });
 
-  it('is docked to the foot of the band, so it rises when the turn cards appear', () => {
+  it('is docked to the FLOOR of the band, so a shorter band shortens it', () => {
+    /**
+     * ═══ THIS USED TO SAY "so it rises when the turn cards appear" ═══
+     * It compared the band in combat with the band out of it, and the turn card
+     * strip was what made those two differ. The cards are deleted, the band no
+     * longer moves, and asserting against two identical bands would be asserting
+     * nothing — so the RULE is driven directly instead: the window stands on the
+     * floor of whatever band it is given, and a band with a lower ceiling makes
+     * it shorter rather than lower. That is the property the old fixture was
+     * reaching for, stated without needing a fight to produce it.
+     */
     const [w, h] = [1262, 428];
-    const quiet = realBand(h, false);
-    const fight = realBand(h, true);
-    // THE FLOOR IS THE SAME in and out of combat — only the ceiling moves — so a
-    // window that fits in both is at the same y in both, and one that does not
-    // fit is SHORTER rather than lower.
+    const roomy = realBand(h, false);
+    const squeezed = { top: roomy.top + 46, bottom: roomy.bottom };
     const big = view({
       options: Array.from({ length: 20 }, (_, i) => option(`o${String(i)}`, 'x')),
     });
-    expect(dialogueRect(big, w, quiet).y + dialogueRect(big, w, quiet).h).toBe(quiet.bottom);
-    expect(dialogueRect(big, w, fight).y + dialogueRect(big, w, fight).h).toBe(fight.bottom);
-    expect(dialogueRect(big, w, fight).h).toBeLessThan(dialogueRect(big, w, quiet).h);
+    expect(dialogueRect(big, w, roomy).y + dialogueRect(big, w, roomy).h).toBe(roomy.bottom);
+    expect(dialogueRect(big, w, squeezed).y + dialogueRect(big, w, squeezed).h).toBe(
+      squeezed.bottom,
+    );
+    expect(dialogueRect(big, w, squeezed).h).toBeLessThan(dialogueRect(big, w, roomy).h);
   });
 
   it('grows with the answer list rather than being one fixed height', () => {

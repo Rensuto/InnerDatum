@@ -3,6 +3,18 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import Fastify from 'fastify';
 
+/**
+ * THE CLIENT'S SHIPPED BAR WIDTH, IMPORTED RATHER THAN RETYPED.
+ *
+ * `hotbarStyleSchema.slots` carries a `.default(...)` so that a save written
+ * before the bar could be resized still parses, and the whole argument for that
+ * default is that it is *the count that shipped* — an old file then reads as
+ * "never changed this", which is exactly what it is. That makes the schema's
+ * literal and this constant ONE DECISION WRITTEN IN TWO FILES, and the pair
+ * below is what fails when somebody moves one of them. `category-points.test.ts`
+ * imports across the same seam for the same reason.
+ */
+import { HOTBAR_SLOTS_DEFAULT } from '../../src/client/ui/hotbar.ts';
 import { createContentTalentEngine, createTalentBook } from '../../src/server/content/classes.ts';
 import { talentRuntimeFor } from '../../src/server/main.ts';
 import { wsGateway } from '../../src/server/net/gateway.ts';
@@ -891,6 +903,114 @@ describe('set_keybinds, over a real socket', () => {
     expect(settings, 'zoom came back on the settings frame').not.toHaveProperty('zoom');
     expect(settings?.['panels']).toEqual(layout);
     expect(settings?.['persisted']).toBe(true);
+  });
+
+  it('carries the width the player dragged the action bar to, across a restart', async () => {
+    /**
+     * ═════════════════════════════════════════════════════════════════════════
+     * THE ACTION BAR'S SLOT COUNT IS A LAYOUT, AND IT GOES DOWN THE SAME PIPE.
+     * ═════════════════════════════════════════════════════════════════════════
+     *
+     * A bar can be widened two ways — the cogwheel's `SLOTS` row and the resize
+     * grip — and both write one number, `hotbarStyle.slots`. The case above
+     * proves the PIPE works with `hotbarStyle: null`, which is every bar nobody
+     * has touched; it cannot see whether the new field survives it, and that is
+     * the whole of what a player would notice. A bar dragged from thirteen slots
+     * to eighteen that came back at thirteen next session is the gesture visibly
+     * working and silently not being kept.
+     *
+     * DRIVEN OVER A SOCKET AND THROUGH A SECOND GATEWAY, not asserted against
+     * the schema: the schema is one of five places this value has to survive
+     * (wire in, file, restore, welcome, wire out) and a `safeParse` test would
+     * pass while any of the other four dropped it.
+     */
+    const layout = {
+      offsets: {},
+      logSize: null,
+      partySize: null,
+      hotbarSize: { w: 880, h: 64 },
+      minimapSize: null,
+      // EVERY FIELD DIFFERENT FROM ITS DEFAULT, so a round trip that returned a
+      // freshly-defaulted style rather than the stored one fails on all four
+      // rather than on whichever one happened to be checked.
+      hotbarStyle: { vertical: true, icon: 48, opacity: 60, slots: 18 },
+      logStyle: null,
+    };
+    const first = await boot('hotbar-slots-restart');
+    const before = await connect(first.port);
+    await before.hello('ren-handle');
+    before.send({ t: 'set_panel_layout', layout });
+    await before.settle();
+
+    expect(first.disk.files.get(`${REN_ID}/chr_main`)?.panels).toEqual(layout);
+    before.close();
+    await first.close();
+
+    server = await boot('hotbar-slots-restart-again', first.disk);
+    const after = await connect(server.port);
+    const welcome = await after.hello('ren-handle');
+    // ON A FRESH BODY, off the file — `resolveActor` cannot resume anything here.
+    expect(bodyOf(welcome).panels).toEqual(layout);
+    // ...AND ON THE WIRE, in the frame the client applies through
+    // `snapHotbarStyle`. The count is what the player dragged to, not the
+    // thirteen the bar ships with.
+    const settings = await after.waitFor('settings');
+    expect(settings?.['panels']).toEqual(layout);
+    const style = (settings?.['panels'] as { hotbarStyle: { slots: number } }).hotbarStyle;
+    expect(style.slots).toBe(18);
+  });
+
+  it('reads a save written before the bar could be resized as an untouched bar', () => {
+    /**
+     * ═════════════════════════════════════════════════════════════════════════
+     * THE CLAIM `hotbarStyleSchema.slots` IS ARGUED ON, DRIVEN.
+     * ═════════════════════════════════════════════════════════════════════════
+     *
+     * protocol.ts states it in as many words: a required `slots` would fail
+     * every save written before the bar could be resized, and `parsePanels`
+     * DROPS A LAYOUT IT CANNOT PARSE WHOLE — so the visible bug would not be "my
+     * bar is the wrong width", it would be EVERY PANEL ON THE SCREEN jumping
+     * back to its computed position for everyone who had ever touched a
+     * cogwheel. That is a large blast radius for a defaulted integer, and
+     * nothing drove it: the argument lived in a comment and the `.default(13)`
+     * beside it was the only thing keeping it true.
+     *
+     * THE FILE IS BUILT WITH THE THREE OLD KEYS AND NO FOURTH — the shape a
+     * previous build actually wrote — and goes through the real
+     * `parseCharacterFile`, which is the same function a reconnect runs.
+     */
+    const old = createCharacterFile({
+      id: 'chr_main',
+      ownerId: REN_ID,
+      name: 'Ren',
+      classId: 'watchman',
+      resources: { hp: 30, ap: 0, mp: 0, special: { kind: '', value: 0 } },
+      createdAt: '2026-01-01T00:00:00.000Z',
+    });
+    const doc = JSON.parse(JSON.stringify(old)) as Record<string, unknown>;
+    doc.panels = {
+      offsets: { log: { dx: 12, dy: -8 } },
+      logSize: { w: 420, h: 180 },
+      partySize: null,
+      hotbarSize: null,
+      minimapSize: null,
+      // THREE KEYS. What every file written before this pass carries.
+      hotbarStyle: { vertical: false, icon: 32, opacity: 100 },
+      logStyle: null,
+    };
+
+    const parsed = parseCharacterFile(doc);
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    // NOT ONE COMPLAINT, and — far more important — the layout is still THERE.
+    expect(parsed.problems.filter((p) => p.includes('panels'))).toEqual([]);
+    expect(parsed.file.panels).toBeDefined();
+    // THE REST OF THE LAYOUT IS UNTOUCHED, which is the half the blast radius
+    // is about: the bar's width is one panel, and dropping it takes all five.
+    expect(parsed.file.panels?.offsets).toEqual({ log: { dx: 12, dy: -8 } });
+    expect(parsed.file.panels?.logSize).toEqual({ w: 420, h: 180 });
+    // AND THE MISSING FIELD READS AS "NEVER CHANGED THIS", which is what it is.
+    expect(parsed.file.panels?.hotbarStyle?.slots).toBe(HOTBAR_SLOTS_DEFAULT);
   });
 
   it('says persisted:false for a VERIFIED player the bridge refused to bind', async () => {

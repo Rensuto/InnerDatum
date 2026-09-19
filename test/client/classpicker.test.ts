@@ -46,7 +46,7 @@ import type {
  * because it would be testing the test's own copy of the arithmetic.
  *
  * THE `reference lib="dom"` ON LINE 1 IS REQUIRED and its cost is documented at
- * test/client/turncards.test.ts:51-60.
+ * test/client/turnbar.test.ts.
  */
 
 // ---------------------------------------------------------------------------
@@ -299,7 +299,7 @@ describe('drawing', () => {
     // Every save is paired. The scrim sets `globalAlpha`, and an unbalanced
     // restore leaks it to every painter later in the frame — it presents as
     // translucent sprites across the whole screen and gets diagnosed as a
-    // broken PNG (ui/turncards.ts:786-790 records the same trap for `filter`).
+    // broken PNG (ui/panel.ts's `drawScrim` records the same trap for `globalAlpha`).
     expect(calls.filter((c) => c.startsWith('save(')).length).toBe(
       calls.filter((c) => c.startsWith('restore(')).length,
     );

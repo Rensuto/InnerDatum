@@ -990,10 +990,9 @@ function drawLetterPlate(ctx: CanvasRenderingContext2D, box: PanelRect, letters:
  * plate under every row; this surface has no plate and one ink to raise.
  *
  * ═══ THE CONTEXT IS LEFT AS IT WAS FOUND ═══
- * `save`/`restore` around the whole body. ui/turncards.ts:786-790 records what a
- * leaked `ctx.filter` does and panel.ts's `drawScrim` the same for
- * `globalAlpha`: it presents as the whole screen being wrong and gets diagnosed
- * as a broken PNG.
+ * `save`/`restore` around the whole body. ui/tooltip.ts records what a leaked
+ * `ctx.filter` does and panel.ts's `drawScrim` the same for `globalAlpha`: it
+ * presents as the whole screen being wrong and gets diagnosed as a broken PNG.
  */
 export function drawDialogue(options: DialogueDrawOptions): void {
   const { ctx, sprites, rect, view, selected } = options;

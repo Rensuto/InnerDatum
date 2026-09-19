@@ -6,9 +6,12 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 import {
-  HOTBAR_TALENT_BINDINGS,
-  HOTBAR_TALENT_PAGES,
-  HOTBAR_TALENT_SLOTS,
+  HOTBAR_KEY_ROW,
+  HOTBAR_KEY_ROWS,
+  HOTBAR_SLOTS_DEFAULT,
+  HOTBAR_SLOT_POOL,
+  hotbarKeyLabel,
+  hotbarSlotForKey,
 } from '../../src/client/ui/hotbar.ts';
 
 /**
@@ -31,6 +34,28 @@ import {
  */
 
 const MAIN = readFileSync(new URL('../../src/client/main.ts', import.meta.url), 'utf8');
+
+/**
+ * `MAIN` WITH EVERY COMMENT REMOVED.
+ *
+ * ═══ WHY AN ABSENCE MUST NEVER BE ASSERTED AGAINST THE RAW TEXT ═══
+ * This codebase explains a change by QUOTING what it replaced — the house rule
+ * that a comment which lies is worse than no comment. So the paragraph
+ * explaining that `talentPage` is gone contains the string `talentPage`, and a
+ * `not.toContain` against the raw file fails on the explanation rather than on
+ * the code. Three of the cases below did exactly that on their first run.
+ *
+ * `toContain` assertions stay on the raw text where they are matching a line
+ * this file quotes verbatim; only the ABSENCE checks need the stripped copy.
+ */
+const CODE = MAIN.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+
+/** The body of a function with its comments removed. `body` + `CODE`'s rule. */
+function code(open: string): string {
+  return body(open)
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/\/\/[^\n]*/g, '');
+}
 
 /**
  * The body of a function, by its opening line — BRACE-MATCHED, not guessed.
@@ -64,10 +89,9 @@ function body(open: string): string {
 describe('the bar is built from bindings, not from the loadout', () => {
   it('resolves each slot through the binding store', () => {
     const view = body('function hotbarView(): HotbarView {');
-    // ONE PAGE OF THE STORE, not the whole of it: the bar draws six and the
-    // store holds twelve. `talentInSlot` applies that offset, and it is what
-    // `armed` is resolved against too — see the assertion two blocks down,
-    // which is the one that catches the ring being drawn on the wrong box.
+    // ONE RESOLVER, and `armed` is resolved against the same list — see the
+    // assertion at the bottom of this file, which is the one that catches the
+    // ring being drawn on the wrong box.
     expect(view).toContain('talentInSlot(');
     /**
      * `loadout.map(...)` INSIDE THIS FUNCTION is the old contract — slot n IS
@@ -134,7 +158,7 @@ describe('a loadout frame puts the bar in order without disturbing it', () => {
   });
 
   it('clears a dead binding before filling, so the slot is genuinely free', () => {
-    const fn = body('function reseatTalentBindings(): void {');
+    const fn = body('function reseatTalentBindings(): readonly SeatedTalent[] {');
     expect(fn).toContain('known.has(');
     expect(fn).toContain('= null');
   });
@@ -160,7 +184,7 @@ describe('a loadout frame puts the bar in order without disturbing it', () => {
    * bug, so its presence is the thing worth pinning.
    */
   it('never seats a talent the character has not learned', () => {
-    const fn = body('function reseatTalentBindings(): void {');
+    const fn = body('function reseatTalentBindings(): readonly SeatedTalent[] {');
     expect(fn).toContain('level');
     expect(fn).toMatch(/<\s*1|>=\s*1|level\s*\?\?\s*0/);
   });
@@ -171,7 +195,7 @@ describe('a loadout frame puts the bar in order without disturbing it', () => {
      * business. The FILL must not do it on its own: a duplicate that appeared
      * without being asked for reads as the bar being broken.
      */
-    const fn = body('function reseatTalentBindings(): void {');
+    const fn = body('function reseatTalentBindings(): readonly SeatedTalent[] {');
     expect(fn).toContain('seated');
     expect(fn).toContain('continue');
   });
@@ -187,12 +211,51 @@ describe('binding a talent', () => {
     const fn = body('function bindTalentSlot(index: number, talentId: string): void {');
     expect(fn).toContain('displaced');
     /**
-     * AGAINST THE CELL, NOT THE VISIBLE INDEX. With two pages the box under the
-     * pointer is slot n of the page being drawn, and the store is both pages end
-     * to end — comparing a visible index to a store position would make page 2's
-     * slot 0 look like page 1's, and the swap would fire against the wrong cell.
+     * AGAINST THE INDEX ITSELF, WHICH IS NOW THE CELL. This read
+     * `from !== cell`, because with two pages the box under the pointer was
+     * slot n of the page being drawn and the store was both pages end to end.
+     * There is one coordinate space now (`cellOfSlot` is gone), so the swap
+     * compares the store position to the store position.
      */
-    expect(fn).toContain('from !== cell');
+    expect(fn).toContain('from !== index');
+    /**
+     * ═══ AND IT IS WRITTEN BACK, WHICH IS WHAT `toContain('displaced')` MISSED ═══
+     * Those two assertions are satisfied by a function that COMPUTES both
+     * displaced occupants and writes neither — the local would still be named
+     * `displacedTalent` and the comparison would still be `from !== index`,
+     * and the button the player dragged off would simply be gone. That is
+     * `membership-is-not-a-rank` in a test: it read the shape of the code and
+     * not the act. The two writes are the act, and they are different for the
+     * two kinds on purpose — a talent TRADES with where it came from, an item
+     * is REHOMED to the first free slot, because a drop may not have come from
+     * a slot at all (the bag and the talent panel are both sources).
+     */
+    expect(fn).toContain(
+      'if (from >= 0 && from !== index) talentBindings[from] = displacedTalent;',
+    );
+    expect(fn).toContain(
+      'const moved = displacedItem === null ? null : rehomeItem(displacedItem);',
+    );
+    // THE OTHER KIND KEEPS THE SAME PROMISE, or a player learns that dropping
+    // an item on an occupied slot is safe and dropping a talent on one is not.
+    const item = body('function bindItemSlot(index: number, subject: DragSubject): void {');
+    expect(item).toContain(
+      'if (from >= 0 && from !== index) hotbarBindings[from] = displacedItem;',
+    );
+    expect(item).toContain(
+      'const moved = displacedTalent === null ? null : rehomeTalent(displacedTalent);',
+    );
+    // AND A REHOME ACTUALLY SEATS THE THING, in the slot the ported scan found
+    // — not merely names one. `firstFreeSlot` is `PlayerHotkeys.lua:123-128`.
+    expect(body('function rehomeTalent(talentId: string): string {')).toContain(
+      'talentBindings[free] = talentId;',
+    );
+    expect(body('function rehomeItem(binding: ItemBinding): string {')).toContain(
+      'hotbarBindings[free] = binding;',
+    );
+    // ...AND SAYS SO. A button that moved on its own without a sentence is the
+    // report this file's notices exist to prevent.
+    expect(fn).toContain('showNotice(');
   });
 
   it('refuses a talent that is not in the loadout, in words', () => {
@@ -215,78 +278,268 @@ describe('binding a talent', () => {
 });
 
 describe('clearing', () => {
-  it('right-click clears a talent slot, the same gesture as an item slot', () => {
+  it('right-click clears whatever is on a slot, through ONE function', () => {
     // A bar where the same press means "clear" on four buttons and nothing on
-    // six is a bar with two rules in it.
-    expect(MAIN).toContain('unbindTalentSlot(rightSlot);');
+    // nine is a bar with two rules in it. It was two functions keeping one
+    // promise, split by `isItemSlotIndex`; one function cannot break it.
+    expect(MAIN).toContain('clearSlot(rightSlot);');
+    expect(CODE).not.toContain('unbindTalentSlot(');
+    expect(CODE).not.toContain('unbindItemSlot(');
+    const fn = body('function clearSlot(index: number): void {');
+    expect(fn).toContain('vacateSlot(index);');
+    // BOTH KINDS ARE TESTED before anything is said, so clearing an item slot
+    // is silent on the wire and clearing a talent slot is not.
+    expect(fn).toContain('hadTalent');
+    expect(fn).toContain('hadItem');
+    expect(fn).toContain('if (hadTalent) sendHotbar();');
   });
 });
 
 describe('the store', () => {
-  it('is exactly as long as the keyed half of the bar', () => {
+  it('is exactly as long as the bar can address, and so is the item store', () => {
     /**
-     * ═══ "THE DAY THE BAR GROWS A PAGE" WAS THE NEXT COMMIT ═══
-     * This asserted `{ length: HOTBAR_TALENT_SLOTS }` under a comment predicting
-     * exactly the change that broke it, which is a good sign about the comment
-     * and a bad one about the assertion: a guard that names the CURRENT size
-     * fails on a resize and says nothing about correctness.
+     * ═══ "THE DAY THE BAR GROWS A PAGE" WAS THE NEXT COMMIT, TWICE ═══
+     * This asserted `{ length: HOTBAR_TALENT_SLOTS }`, then
+     * `{ length: HOTBAR_TALENT_BINDINGS }`. The property has not moved: the
+     * store is as long as the bar can ADDRESS, and the number comes from the
+     * module that owns it rather than being written down twice.
      *
-     * The property is that the store is as long as the bar can address —
-     * pages times slots — and that both numbers come from the module that owns
-     * them rather than being written down twice.
+     * BOTH STORES, AND THAT IS THE NEW HALF. `hotbarBindings` was four cells
+     * read at `index - HOTBAR_TALENT_SLOTS`; the two are parallel now, and a
+     * pair of arrays of different lengths indexed by one number is an
+     * out-of-bounds read waiting for somebody to widen the bar.
      */
-    expect(MAIN).toContain('{ length: HOTBAR_TALENT_BINDINGS }');
-    expect(HOTBAR_TALENT_BINDINGS).toBe(HOTBAR_TALENT_SLOTS * HOTBAR_TALENT_PAGES);
-    expect(HOTBAR_TALENT_PAGES).toBeGreaterThan(1);
+    expect(MAIN).toContain('Array.from({ length: HOTBAR_SLOT_POOL }, () => null)');
+    expect(MAIN).toContain('{ length: HOTBAR_SLOT_POOL },');
+    expect(HOTBAR_SLOT_POOL).toBe(HOTBAR_KEY_ROW * HOTBAR_KEY_ROWS);
+    // THE DEFAULT IS INSIDE THE POOL. A bar that shipped wider than it can
+    // address would put a box on screen with no key and no way to get one.
+    expect(HOTBAR_SLOTS_DEFAULT).toBeLessThanOrEqual(HOTBAR_SLOT_POOL);
+    expect(HOTBAR_SLOTS_DEFAULT).toBeGreaterThan(0);
   });
 });
 
-describe('the second page', () => {
-  it('is a held mode, never a toggle', () => {
-    /**
-     * ═══════════════════════════════════════════════════════════════════════
-     * THE ONE FAILURE A PAGED BAR RELIABLY HAS.
-     * ═══════════════════════════════════════════════════════════════════════
-     *
-     * A toggled page is a state a player can be in without noticing: you press
-     * 1 for your reliable attack four minutes later and get something else,
-     * and nothing on screen ever told you. Held-Shift cannot do that — the
-     * moment you stop asking for page 2 you are back on page 1, so the bar you
-     * are looking at is always the bar your keys will press.
-     *
-     * The keyup and the blur are the two halves of "cannot get stuck":
-     * alt-tabbing with Shift held is the ordinary way a modifier is never
-     * released, and a bar frozen on page 2 is one where the player's reliable
-     * attack has vanished with no way back.
-     */
-    expect(MAIN).toContain("window.addEventListener('keyup'");
-    expect(MAIN).toContain("window.addEventListener('blur'");
-    expect(MAIN).toContain('setTalentPage(0);');
+describe('one bar: every slot takes either kind, and every slot has a key', () => {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THIS DESCRIBE WAS `the second page` AND EVERY CASE IN IT IS GONE.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * It pinned three properties of a PAGED bar: that the page was a held mode
+   * and never a toggle (`keyup` + `blur`), that `setTalentPage` redrew only on
+   * a change, and that every index was resolved through `cellOfSlot`. All three
+   * were correct and all three were defences of a bar that swapped its own
+   * buttons under the player's hand.
+   *
+   * The author asked for the opposite bar: *"the hotbar/actionbar should not
+   * segregate items from abilities. we need it it be 1 bar to rearange as
+   * people like."* So Shift reaches the second nine SLOTS rather than the
+   * second page of nine talents, and what has to be pinned is the mapping
+   * between a key and a box — which is the same failure the page cases were
+   * about, one layer down.
+   */
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * A SENTENCE ABOUT A SLOT NAMES THE KEY PRINTED ON IT, NOT ITS INDEX.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `slotWord` exists for this — `slot 3`, `slot ⇧4` — and every notice written
+   * for the one-bar pass already used it. Three did not, and they were the
+   * three that matter most: `activateSlot`'s own docblock says the refusal it
+   * prints *"is the only thing that explains `⇧7` on a bar somebody has shrunk
+   * to five slots"*, and the sentence it actually printed was **slot 16** — a
+   * number belonging to an array the player has never seen, about a key that is
+   * right there under their finger. The bar has eighteen boxes and nine digits,
+   * so the index and the label agree for exactly half the bar and disagree,
+   * silently, for the other half.
+   *
+   * ONE FUNCTION, WHICH IS WHY THIS IS AN ABSENCE. `slotWord` reads
+   * `hotbarKeyLabel`, the same function the painter draws with, so a notice and
+   * a box cannot disagree about what to call one square. A second `index + 1`
+   * anywhere in either handler is that disagreement growing back.
+   */
+  it('names a slot by the key drawn on it, in every sentence about one', () => {
+    for (const fn of [
+      'function activateSlot(index: number): void {',
+      'function pressItemSlot(index: number): void {',
+    ]) {
+      const arm = code(fn);
+      expect(arm, `${fn} stopped naming slots by their key`).toContain('slotWord(index)');
+      expect(arm, `${fn} named a slot by its index`).not.toContain('String(index + 1)');
+    }
+    // AND `slotWord` IS STILL THE LABEL AND NOT A SECOND COPY OF IT.
+    expect(code('function slotWord(index: number): string {')).toContain('hotbarKeyLabel(index)');
   });
 
-  it('redraws only on a change, so holding Shift is not a 60fps loop', () => {
-    // `keydown` repeats while a modifier is held. This client is a dirty-flag
-    // renderer and an unconditional requestDraw here would turn holding Shift
-    // into a render loop — the same rule every hover in main.ts follows.
-    const fn = body('function setTalentPage(page: number): void {');
-    expect(fn).toContain('if (talentPage === page) return;');
+  it('has no page left anywhere in main.ts', () => {
+    // A HALF-REMOVED MODE IS THE WORST OF BOTH. `talentPage` was read by the
+    // draw, the hit test, the bind and the unbind; one surviving reader would
+    // resolve through a variable nothing writes.
+    expect(CODE).not.toContain('talentPage');
+    expect(CODE).not.toContain('setTalentPage');
+    expect(CODE).not.toContain('cellOfSlot');
   });
 
-  it('resolves every slot index through one function', () => {
+  it('maps a digit and a modifier to exactly one slot, both ways', () => {
     /**
-     * The pointer and the keyboard both name a box on the VISIBLE bar, and the
-     * store is both pages end to end. Offsetting at each call site instead of
-     * once is how a paged bar ends up with the mouse editing page 1 while the
-     * keyboard presses page 2.
+     * THE PRINTED KEY AND THE SENT KEY ARE ONE FUNCTION READ TWICE.
+     * `hotbarKeyLabel` is what the box wears; `hotbarSlotForKey` is what the
+     * press resolves. A bar that printed `4` on the box that `⇧4` fires does
+     * not look broken — it just casts the wrong thing, which is the single
+     * worst failure a hotbar has.
      */
-    expect(MAIN).toContain('function cellOfSlot(index: number): number {');
-    expect(body('function bindTalentSlot(index: number, talentId: string): void {')).toContain(
-      'cellOfSlot(index)',
+    for (let digit = 0; digit < HOTBAR_KEY_ROW; digit += 1) {
+      const plain = hotbarSlotForKey(digit, false);
+      const shifted = hotbarSlotForKey(digit, true);
+      expect(hotbarKeyLabel(plain)).toBe(`${String(digit + 1)}`);
+      expect(hotbarKeyLabel(shifted)).toBe(`⇧${String(digit + 1)}`);
+      expect(plain).not.toBe(shifted);
+    }
+    // EVERY SLOT IN THE POOL IS REACHABLE, and no two share a key.
+    const reached = new Set<number>();
+    for (let row = 0; row < HOTBAR_KEY_ROWS; row += 1) {
+      for (let digit = 0; digit < HOTBAR_KEY_ROW; digit += 1) {
+        reached.add(hotbarSlotForKey(digit, row === 1));
+      }
+    }
+    expect(reached.size).toBe(HOTBAR_SLOT_POOL);
+    // ...AND NOTHING PAST IT WEARS A LABEL, so a box can never advertise a key
+    // that sends nothing.
+    expect(hotbarKeyLabel(HOTBAR_SLOT_POOL)).toBeNull();
+    expect(hotbarKeyLabel(-1)).toBeNull();
+  });
+
+  it('never leaves one index holding a talent AND an item', () => {
+    /**
+     * ═══ THE INVARIANT THE TWO PARALLEL STORES COST ═══
+     * `hotbarView` reads the talent store first, so an index holding both draws
+     * the talent and keeps the item invisible underneath. The player then
+     * right-clicks, the talent goes, the item appears, and the bar looks like
+     * it ignored a press. Every write goes through `vacateSlot`.
+     */
+    expect(body('function vacateSlot(index: number): void {')).toContain(
+      'hotbarBindings[index] = null',
     );
-    expect(body('function unbindTalentSlot(index: number): void {')).toContain('cellOfSlot(index)');
+    for (const fn of [
+      'function bindTalentSlot(index: number, talentId: string): void {',
+      'function bindItemSlot(index: number, subject: DragSubject): void {',
+      'function clearSlot(index: number): void {',
+    ]) {
+      expect(body(fn), fn).toContain('vacateSlot(index);');
+    }
   });
 
-  it('lights the armed ring against the page being drawn', () => {
+  it('auto-seats a newly learnt talent in the first free slot, testing BOTH stores', () => {
+    /**
+     * ═══ PORTED: `PlayerHotkeys.lua:123-128` / `:147-152` / `:207-215` ═══
+     * Upstream scans `1 .. 12 * nb_hotkey_pages` for the first index where
+     * `not self.hotkey[i]` — ONE table holding both kinds. Ours has two stores
+     * for the one reason stated at `ItemBinding` (only one of them is on the
+     * wire), so the port is that both are tested.
+     *
+     * `talentBindings.indexOf(null)` was the whole fill and it could not see an
+     * item: a draught on slot 3 and a talent learned the next level would both
+     * claim slot 3, the talent would win the draw, and the draught would be a
+     * binding nobody could see or press.
+     */
+    const fill = body('function firstFreeSlot(): number {');
+    expect(fill).toContain('talentBindings[i] == null && hotbarBindings[i] == null');
+    /**
+     * ═══ THE VISIBLE SLOTS FIRST, THEN THE REST OF THE POOL ═══
+     * TWO loops, and the bounds are what makes them two. A single pass over the
+     * pool survived a pin that only asked for `hotbarSlotCount()` to be
+     * MENTIONED — the mutant kept the `const visible = …` line and walked the
+     * whole pool anyway — so the bounds are named. `i < visible` then
+     * `i = visible`: both, in that order.
+     */
+    expect(fill).toMatch(/i < visible;[\s\S]+let i = visible;[\s\S]+HOTBAR_SLOT_POOL/);
+    expect(fill).toContain('const visible = hotbarSlotCount();');
+    expect(body('function reseatTalentBindings(): readonly SeatedTalent[] {')).toContain(
+      'firstFreeSlot()',
+    );
+    expect(code('function reseatTalentBindings(): readonly SeatedTalent[] {')).not.toContain(
+      'talentBindings.indexOf(null)',
+    );
+  });
+
+  it('says so when the fill seats a talent past the end of the bar', () => {
+    /**
+     * Upstream has this state and says nothing about it — its layout loop
+     * simply stops (`HotkeysIconsDisplay.lua:270`). A silent button is the
+     * "control that does nothing" this client refuses everywhere else, so the
+     * fill reports what it seated off the bar and the `loadout` arm announces
+     * it. The JOIN path deliberately does not: see its own comment.
+     */
+    const reseat = body('function reseatTalentBindings(): readonly SeatedTalent[] {');
+    expect(reseat).toContain('if (free >= hotbarSlotCount()) offBar.push(');
+    expect(MAIN).toContain('announceOffBar(reseatTalentBindings());');
+    expect(body('function announceOffBar(seated: readonly SeatedTalent[]): void {')).toContain(
+      'onRefusal(',
+    );
+  });
+
+  it('picks a slot up as well as pressing it, which is what "rearrange" means', () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * THE BAR IS A DRAG SOURCE NOW, AND IT WAS ONLY EVER A DROP TARGET.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * *"1 bar to rearange as people like"*. A bar that can only be filled from
+     * the talent panel and the bag is not one: moving key 1 to key 5 meant
+     * finding the talent in the panel again. Upstream registers a drag zone for
+     * EVERY slot, occupied or not (`HotkeysIconsDisplay.lua:167`, outside the
+     * `if ts then` at :169) and takes a drop of either kind onto any slot at
+     * :349; this is the pick-up half of the same thing.
+     *
+     * ═══ AND THE PRESS SURVIVES, WHICH IS THE HALF THAT COULD SILENTLY GO ═══
+     * `beginDrag`'s fourth argument is what a SUB-THRESHOLD release means. A
+     * `beginDrag` without it would turn every click on the bar into a gesture
+     * that does nothing — the whole bar dead, with no error and no refusal, in
+     * the one panel this client's header says a refusal must never be silent
+     * in. So the ORDER and the CALLBACK are both pinned.
+     */
+    expect(CODE).toContain('beginDrag(carrying, point.x, point.y, () => activateSlot(slot));');
+    // AN EMPTY SLOT STARTS NOTHING, and still presses.
+    expect(CODE).toContain('if (carrying === null) activateSlot(slot);');
+    const pick = body('function dragSubjectForSlot(index: number): DragSubject | null {');
+    // A TALENT FIRST, because a slot holding one holds nothing else
+    // (`vacateSlot`), and the talent store is what `hotbarView` reads first.
+    expect(pick.indexOf('DragKind.Talent')).toBeLessThan(pick.indexOf('DragKind.Worn'));
+    // WORN BEFORE CARRIED. `bindItemSlot` resolves a `Carried` subject against
+    // the bag alone, so a coat on the doll picked up as `Carried` would be
+    // refused with "that is not in your hands any more" about something plainly
+    // being worn.
+    expect(pick.indexOf('DragKind.Worn')).toBeLessThan(pick.indexOf('DragKind.Carried'));
+    expect(pick).toContain('wornSlotOf(binding.itemId');
+    // A GONE BINDING CARRIES NOTHING — there is nothing for the drop to resolve.
+    expect(pick).toContain('held ? { kind: DragKind.Carried, itemId: binding.itemId } : null');
+  });
+
+  it('presses an ITEM off the same key a talent would use', () => {
+    /**
+     * THE WHOLE OF ITEM 8 IN ONE ASSERTION. `activateSlot` branched on
+     * `isItemSlotIndex(index)` — the INDEX decided which half of the bar it
+     * was in. It dispatches on the CONTENTS now, which is upstream's own shape:
+     * `PlayerHotkeys.lua:161-162` calls `self["hotkey"..kind:capitalize()]`
+     * off the kind stored IN the slot.
+     */
+    const press = body('function activateSlot(index: number): void {');
+    expect(code('function activateSlot(index: number): void {')).not.toContain('isItemSlotIndex');
+    expect(press).toContain('if (hotbarBindings[index] != null) {');
+    expect(press).toContain('pressItemSlot(index);');
+    // AND THE ITEM PRESS NO LONGER SUBTRACTS AN OFFSET from its index.
+    expect(body('function pressItemSlot(index: number): void {')).toContain(
+      'hotbarBindings[index]',
+    );
+    expect(code('function pressItemSlot(index: number): void {')).not.toContain(
+      'HOTBAR_TALENT_SLOTS',
+    );
+  });
+});
+
+describe('the armed ring', () => {
+  it('is resolved against the slots being drawn, never the loadout', () => {
     /**
      * ═══ THIS WAS WRONG FOR ONE COMMIT, AND IT DID NOT FAIL ANYTHING ═══
      * `armed` read `loadout.findIndex`, which was right for exactly as long as
@@ -305,11 +558,13 @@ describe('the second page', () => {
      * the guarded property STRONGER, which is the tell that a test was holding
      * a copy of the implementation rather than its rule.
      *
-     * The rule is: the ring is resolved against the six being DRAWN. `talents`
-     * is that list, built one line above out of the same resolver the press
-     * uses, so the ring and the button under it cannot disagree.
+     * The rule is: the ring is resolved against the slots being DRAWN.
+     * `slots` is that list, built out of the same resolver the press uses, so
+     * the ring and the button under it cannot disagree — and it is bounded by
+     * the VISIBLE count, so a talent armed from a slot the player has since
+     * shrunk off the bar rings nothing rather than ringing the wrong box.
      */
-    expect(code).toMatch(/armed:[\s\S]{0,200}talents\.findIndex\(/);
+    expect(code).toMatch(/armed:[\s\S]{0,200}slots\.findIndex\(/);
     expect(code).not.toContain('loadout.findIndex(');
     expect(code).not.toContain('loadout.indexOf(');
   });

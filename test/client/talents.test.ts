@@ -1340,9 +1340,20 @@ describe('the attribute column', () => {
    * `REAL` — whose 40..280 and 40..320 bands are rounder than anything the game
    * produces — and placed all six there while placing four at the real floor.
    *
-   * These are `panelBand` in main.ts: the top is the turn bar (14) plus the dock
-   * margin (3), plus the turn cards (46) in combat; the bottom is the height less
-   * the hotbar (60), two prose lines (14 each) and the margin (3).
+   * These are MODELLED ON `panelBand` in main.ts: the top is the turn bar (14)
+   * plus the dock margin (3); the bottom is the height less the hotbar, two
+   * prose lines (14 each) and the margin (3).
+   *
+   * ═══ TWO OF THESE NUMBERS ARE NOT THE PRODUCTION ONES, AND BOTH ARE SAFE ═══
+   * `combat: true` adds 46 for a strip of turn cards that used to sit under the
+   * banner in a fight. That strip is deleted and the band no longer moves, so
+   * those rows are now simply a SHORTER band than the game produces — extra
+   * coverage rather than a claim about combat. And the hotbar term here is 60
+   * while `HOTBAR_TOTAL_H` is larger, so the band modelled is TALLER than the
+   * real one by that difference. Both err on the side of a band this panel must
+   * still fit in; neither is the direction that hides a dropped stat. Deriving
+   * them from the real constants is the right fix and belongs with whoever owns
+   * the hotbar's geometry.
    */
   const band = (width: number, height: number, combat: boolean) => ({
     width,

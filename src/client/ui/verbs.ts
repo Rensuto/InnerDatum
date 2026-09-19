@@ -13,7 +13,7 @@
  *
  * So the whole thing is one total function over a plain struct. No canvas, no
  * DOM, no socket, no clock. vitest.config.ts is explicit that the environment is
- * `node` with deliberately no jsdom, and test/client/turncards.test.ts and
+ * `node` with deliberately no jsdom, and test/client/turnbar.test.ts and
  * partypanel.test.ts are the house precedent: test the client's DECISIONS with
  * nothing drawn. Every row below is asserted in test/client/verbs.test.ts by
  * action AND by enabled flag, which is the pair that actually breaks.

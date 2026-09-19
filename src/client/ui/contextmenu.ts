@@ -14,7 +14,7 @@
  * ===========================================================================
  * IT IS DRAWN ON THE CANVAS, NOT IN THE DOM
  * ===========================================================================
- * Everything else on this screen is: the hotbar, the dock, the turn cards. A DOM
+ * Everything else on this screen is: the hotbar, the dock, the party pane. A DOM
  * overlay would sit at CSS pixel scale over a backbuffer that is magnified by an
  * integer factor, so it would be the one surface in the game whose pixels do not
  * line up with the art underneath it — and it would need its own z-index, its

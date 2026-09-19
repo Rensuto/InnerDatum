@@ -572,6 +572,63 @@ export const PANEL_MIN_H = 72;
 export const DEFAULT_PANEL_FLOOR: PanelSize = { w: PANEL_MIN_W, h: PANEL_MIN_H };
 
 /**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * EVERYTHING `RESET PANELS` PUTS BACK, IN ONE PLACE, SO THE ROW CANNOT LIE.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * The escape menu greys `RESET PANELS` and captions it *"nothing has been
+ * moved"* when this is false (ui/escapemenu.ts's `panelsMoved`), and the row is
+ * the ONLY route back for a player who has dragged something somewhere they
+ * cannot reach. So the predicate and the effect have to be the same list, and
+ * they were not: the predicate asked `DRAGGABLE_PANELS.some(offset !== 0,0)`
+ * while the effect had grown to clear every `panelSizes` entry as well.
+ *
+ * ═══ THE BUG THAT WAS ACTUALLY ON SCREEN ═══
+ * Resize the Case Log by its grip and never drag it, and the row is GREY with
+ * "nothing has been moved" under it — over a panel the player has visibly
+ * changed and that the row, if it could be pressed, would put back. The same
+ * for the party pane, the minimap, and now for the action bar, whose grip
+ * writes a SLOT COUNT: a bar dragged from thirteen slots to eighteen is a
+ * change nobody can undo from the menu that exists to undo it. `RESET PANELS`
+ * is not a rank, it is a MEMBERSHIP, and a `.some` over one of the three stores
+ * is a membership test that has forgotten two of them.
+ *
+ * ═══ WHY THE BAR'S COUNT IS IN HERE AND THE REST OF ITS STYLE IS NOT ═══
+ * `HotbarStyle` has four fields and exactly one of them is written by a GRIP.
+ * `vertical`, `icon` and `opacity` are things the bar LOOKS like and are only
+ * reachable from the cogwheel — the same kind of preference as the Case Log's
+ * font, which this row has never claimed to reset. `slots` is what the bar IS:
+ * `hotbarPanelSize` derives the panel's rect from it, so clearing
+ * `sizes[Hotbar]` while leaving the count alone puts back the one panel the
+ * player resized by not putting it back at all. It is a size wearing a count's
+ * clothes, and it belongs with the sizes.
+ *
+ * ═══ PURE, AND HERE RATHER THAN IN `main.ts` ═══
+ * It is this module's stores it walks, `DRAGGABLE_PANELS` is here, and a
+ * predicate inlined at the view-building site is one nothing can drive: the two
+ * that shipped wrong were both inline. It takes the bar's two numbers rather
+ * than importing them because `ui/hotbar.ts` imports THIS file, and a cycle to
+ * read one constant would be a poor trade.
+ */
+export type PanelLayoutState = {
+  /** How far each panel has been dragged. `createPanelOffsets`' store. */
+  readonly offsets: Readonly<Record<DraggablePanel, PanelOffset>>;
+  /** What each resizable panel was dragged to, or null for "never resized". */
+  readonly sizes: Readonly<Record<DraggablePanel, PanelSize | null>>;
+  /** The action bar's slot count now, and the count it ships with. */
+  readonly hotbarSlots: { readonly at: number; readonly shipped: number };
+};
+
+export function panelsTouched(state: PanelLayoutState): boolean {
+  for (const panel of DRAGGABLE_PANELS) {
+    const offset = state.offsets[panel];
+    if (offset.dx !== 0 || offset.dy !== 0) return true;
+    if (state.sizes[panel] !== null) return true;
+  }
+  return state.hotbarSlots.at !== state.hotbarSlots.shipped;
+}
+
+/**
  * The size a resize gesture has reached: the size at the grab plus how far the
  * pointer has travelled, floored.
  *

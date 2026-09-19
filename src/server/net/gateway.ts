@@ -5096,19 +5096,21 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    */
   /**
    * ═══════════════════════════════════════════════════════════════════════════
-   * WHAT THE TURN CARDS PRINT, AS A KEY TERM. Without it they go stale mid-turn.
+   * WHAT A `turn` FRAME CARRIES BESIDES THE BARRIER. Without this term it goes
+   * stale mid-turn.
    * ═══════════════════════════════════════════════════════════════════════════
    *
    * `turnKey` is six terms about the BARRIER — whose turn, who has committed,
-   * who is standing by — and the turn strip also paints a health bar and
-   * `12/60` digits for every player from the same frame (ui/turncards.ts:605,
-   * :838, off `turn.actors`). The client never patches that frame; `turn = msg`
-   * is its only write, and every hp correction goes to a different map.
+   * who is standing by — and `TurnActor` also carries a per-player `hp`/`maxHp`
+   * off the same frame. The client never patches that frame; `turn = msg` is its
+   * only write, and every hp correction goes to a different map.
    *
    * So hit points moved and the frame was suppressed as unchanged. A player took
-   * a hit in the middle of their own round and their card kept the old bar until
-   * something else moved the barrier — which is to say, until they passed.
-   * Reported in exactly those words.
+   * a hit in the middle of their own round and the strip of cards that then drew
+   * those numbers kept the old bar until something else moved the barrier —
+   * which is to say, until they passed. Reported in exactly those words. The
+   * cards are deleted and `TurnActor.hp` is still on the wire, so the term
+   * stays: a suppressed frame is a stale frame whoever is reading it.
    *
    * ═══ A DIGEST OF THE WORLD, NOT AN EVENT HOOK ═══
    * Invalidating on `damage` would miss the hit points that move with no wire
@@ -5116,7 +5118,8 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    * `applyDamage` directly. Reading the bodies is the only thing that catches
    * every mover, and it is read at the same instant the rest of the key is.
    *
-   * `Math.ceil` because that is what turncards.ts prints — a fractional regen
+   * `Math.ceil` because that is what every surface printing hit points rounds
+   * with (ui/partypanel.ts, ui/tooltip.ts, ui/charsheet.ts) — a fractional regen
    * intermediate nobody can see must not cost a frame.
    *
    * ═══ ONE EXTRA FRAME PER PUMP, AT WORST ═══
@@ -6267,6 +6270,26 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    * EXACTLY THE SESSIONS THE BROADCAST REACHES, by the same test `broadcast`
    * applies: past hello, not the excepted connection, and in that realm.
    */
+  /**
+   * Where each body in a world is standing, by id, for `fogEvent`.
+   *
+   * A CLOSURE OVER `getActor` RATHER THAN A SNAPSHOT MAP. The world is already
+   * indexed by id (`World.getActor`) and a copy would be a second answer to
+   * "where is this body" that could go stale inside a pump; the whole reason
+   * this is threaded down instead of being computed at the call site is that
+   * there must be exactly one.
+   *
+   * `null` FOR A BODY THAT IS NOT THERE. A killer can be erased inside the same
+   * pump that its blow is being narrated in, and `fogEvent` answers that by
+   * saying nothing rather than by guessing a direction.
+   */
+  const tileLookupIn =
+    (world: World) =>
+    (actorId: string): TileXY | null => {
+      const body = world.getActor(actorId);
+      return body === undefined ? null : { x: body.x, y: body.y };
+    };
+
   const reachedBy = (
     session: Session,
     exceptConnId: string | undefined,
@@ -6481,10 +6504,11 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
      * step, blow and talent still reach everyone in the realm.
      */
     if (result.playerEvents.length > 0) {
+      const whereIs = tileLookupIn(world);
       for (const session of sessions.values()) {
         if (!session.helloDone || realmFor(session).id !== realm.id) continue;
         for (const event of result.playerEvents) {
-          const heard = fogEvent(event, session.visible);
+          const heard = fogEvent(event, session.visible, whereIs);
           if (heard === null) continue;
           // Null means "this kind has no immediate-lane wrapper" — see
           // `messageForEvent`. It is delivered by the `effects`/`party`
@@ -6678,11 +6702,28 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
      * one thing that edits the ledger. This is a filter, not a second authority.
      */
     if (result.sweep.length > 0) {
+      /**
+       * ═══════════════════════════════════════════════════════════════════════
+       * WHERE EVERY BODY IS, FOR THE ONE FACT THAT SURVIVES A REDACTION.
+       * ═══════════════════════════════════════════════════════════════════════
+       *
+       * `fogEvent` decides that a dealer is unseen and drops its id; only it
+       * knows that happened, and only the world knows where the two bodies are
+       * standing. So the lookup is handed down rather than the direction being
+       * computed up here — see `DamageEvent.from`, which is a QUADRANT and is
+       * sent ONLY where the name was taken away.
+       *
+       * BUILT ONCE PER PUMP, OUTSIDE THE SESSION LOOP. Six viewers times twenty
+       * events is a hundred and twenty lookups of the same unchanging board,
+       * and the resolution is per EVENT rather than per viewer: which bodies
+       * you can see differs, where they are standing does not.
+       */
+      const whereIs = tileLookupIn(world);
       for (const session of sessions.values()) {
         if (!session.helloDone || realmFor(session).id !== realm.id) continue;
         const held = jumpedVisible(session, world) ?? session.visible;
         const events = result.sweep
-          .map((event) => fogEvent(event, held))
+          .map((event) => fogEvent(event, held, whereIs))
           .filter((event): event is TurnEvent => event !== null);
         // A viewer who saw nothing happen gets no frame at all, rather than an
         // empty one — an idle pump for a player alone in a room is silent, the
@@ -12546,7 +12587,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
              * this is a string, and a string is the right place to lie.
              *
              * `ceil` FOR HP, `round` FOR THE BLOW, matching partypanel.ts and
-             * turncards.ts — a body on 14.2 reads 15 everywhere or the party
+             * tooltip.ts — a body on 14.2 reads 15 everywhere or the party
              * panel and the Case Log disagree about the same creature. `maxHp`
              * is authored and integral, so it is left alone.
              *
@@ -15148,9 +15189,9 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     // portrait from `actor.sprite`, which the re-clothe just rewrote.
     //
     // WITHOUT THIS: a player who picks the Alchemist on a quiet floor sees an
-    // Alchemist hp bar and an Alchemist character sheet beside a turn card still
-    // reading the provisional Watchman's 34/34 and their portrait — until their
-    // first step, which out of combat can be minutes.
+    // Alchemist hp bar and an Alchemist character sheet beside a `turn` frame
+    // still reading the provisional Watchman's 34/34 and their portrait — until
+    // their first step, which out of combat can be minutes.
     //
     // EVERY MEMO IN THE REALM IS CLEARED RATHER THAN BYPASSED, so the frame goes
     // to EVERYBODY. Every other player's strip carries this card too, and a

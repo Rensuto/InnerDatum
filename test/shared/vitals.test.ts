@@ -44,22 +44,19 @@ describe('every life readout asks the same question', () => {
    *
    * `shared/vitals.ts` argues that two health readouts disagreeing about when a body
    * is in trouble would be worse than one — and `HP_LOW = 1 / 3` then appeared
-   * in `ui/life.ts`, `ui/partypanel.ts` and `ui/turncards.ts`, three copies of
-   * a number that must never differ. `ui/life.ts` has since been deleted with
-   * the bottom strip it drew on, so the list below is the two that remain plus
-   * the renderer — the guard is about surfaces that EXIST, and naming a file
-   * that does not would make it throw rather than assert.
+   * in `ui/life.ts`, `ui/partypanel.ts` and the turn card strip, three copies of
+   * a number that must never differ. Two of those three have since been deleted
+   * — `ui/life.ts` with the bottom strip it drew on, the cards with the whole
+   * top-of-screen tracker — so the list below is the one that remains plus the
+   * renderer. The guard is about surfaces that EXIST, and naming a file that
+   * does not would make it throw rather than assert.
    *
    * Nothing had drifted. That is the point: three copies of an agreed number is
    * a bug that has not happened yet, and this is what stops it happening after
    * somebody tunes one surface.
    */
   it('has exactly one definition of the threshold in the whole client', () => {
-    const files = [
-      'src/client/ui/partypanel.ts',
-      'src/client/ui/turncards.ts',
-      'src/client/render/canvas.ts',
-    ];
+    const files = ['src/client/ui/partypanel.ts', 'src/client/render/canvas.ts'];
     for (const file of files) {
       const source = readFileSync(file, 'utf8');
       expect(source, `${file} declares its own copy of the threshold`).not.toMatch(

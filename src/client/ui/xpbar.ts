@@ -285,8 +285,8 @@ export type XpBarOptions = {
  * `save`/`restore` around everything because it sets `font`, `textAlign`,
  * `textBaseline` and `fillStyle`, none of which the world painter re-sets before
  * every call — a leak surfaces three milestones later as a mysteriously
- * right-aligned label somewhere else entirely (ui/turncards.ts:786-790 records
- * the identical trap for `ctx.filter`).
+ * right-aligned label somewhere else entirely (ui/panel.ts's `drawScrim`
+ * records the identical trap for `globalAlpha`).
  *
  * NO SPRITE. There is no gauge, no frame and no keycap in the manifest, adding
  * an id is forbidden (test/client/assets.test.ts pins the loader's prefix list),

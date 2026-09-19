@@ -19,13 +19,16 @@ import {
   resizeIntoBand,
   settleResize,
   sizeIntoBand,
+  panelsTouched,
 } from '../../src/client/ui/drag.ts';
 import { SHEET_TABS, charSheetRect, charSheetRows } from '../../src/client/ui/charsheet.ts';
 import type { CharSheetView } from '../../src/client/ui/charsheet.ts';
 import { HEADER_H, PANEL_PAD, headerDragRect } from '../../src/client/ui/panel.ts';
-import type { PanelOffset } from '../../src/client/ui/drag.ts';
+import type { PanelLayoutState, PanelOffset, PanelSize } from '../../src/client/ui/drag.ts';
 import type { PanelRect } from '../../src/client/ui/panel.ts';
 import { PARTY_PANE_COMPACT_W, PARTY_PANE_MIN_H } from '../../src/client/ui/partypanel.ts';
+import { TURN_BAR_H } from '../../src/client/ui/turnbar.ts';
+import { HOTBAR_TOTAL_H } from '../../src/client/ui/hotbar.ts';
 
 /** An untouched panel. `main.ts` has its own; a test may not reach it. */
 const NO_OFFSET: PanelOffset = { dx: 0, dy: 0 };
@@ -1036,71 +1039,86 @@ describe('the case log keeps its size when a fight starts', () => {
    * REPORTED AS "each area we enter causes the log to reset its size".
    * ═══════════════════════════════════════════════════════════════════════════
    *
-   * Combat is what does it. `turnHudHeight` is `TURN_BAR_H +
-   * turnCardsHeight(turn)`, and `turnCardsHeight` is ZERO out of combat and
-   * `TURN_CARDS_H` in it — so the band's top jumps the instant something is in
-   * the initiative. Correct for the band; wrong for everything the log derives
-   * from it, because `defaultLogH` is a FRACTION of the band and the anchor and
-   * the height cap are both computed from that.
+   * Combat did it. The top HUD was `TURN_BAR_H + turnCardsHeight(turn)` — the
+   * banner plus a strip of turn cards that was ZERO out of combat and 46 in it —
+   * so the band's top jumped the instant something joined the initiative.
+   * Correct for the band; wrong for everything the log derives from it, because
+   * `defaultLogH` is a FRACTION of the band and the anchor and the height cap
+   * are both computed from that. `settlePanel` then wrote the shorter value into
+   * the STORE, which is what made it permanent: every walk into a fight ratcheted
+   * the box down and leaving the fight never gave it back.
    *
-   * And `settlePanel` wrote the shorter value into the STORE, which is what made
-   * it permanent: every walk into a fight ratcheted the box down and leaving the
-   * fight never gave it back.
+   * ═══ THE FIX WAS A SECOND BAND; THE FIX NOW IS THAT THERE IS ONE BAND ═══
+   * `quietLogBand(height)` was `logBand(height, TURN_BAR_H)` — the band as if
+   * nobody were fighting — and the log sized itself from that while the live
+   * band still clamped a box the player had dragged. The turn cards are deleted
+   * (ui/turnbar.ts records the ruling), so `TURN_BAR_H` is the whole top HUD in
+   * combat and out of it, the two bands are the same band, and the ratchet has
+   * no mechanism left. These assertions are therefore STRONGER than the ones
+   * they replace: they say the cause is gone rather than that it is compensated.
    */
-  const H = 428;
-  const QUIET = { top: 3 + 14, bottom: H - 60 - 3 };
-  const FIGHTING = { top: 3 + 14 + 52, bottom: H - 60 - 3 };
-
-  it('the two bands really do differ, or this file is testing nothing', () => {
-    // The fixture has to exercise the thing. A band that did not move would
-    // make every assertion below true of any implementation at all.
-    expect(FIGHTING.top, 'the card strip does not move the band').toBeGreaterThan(QUIET.top);
-  });
-
-  it('derives the log’s own geometry from a band the cards cannot move', () => {
+  it('the top HUD does not move when a fight starts, so the band cannot', () => {
+    // THE FIXTURE IS THE REAL CONSTANT, not a number copied out of main.ts.
+    // Memory: a band fixture that drifts from the band is how a height layout
+    // passes its test and drops content live.
     const source = readFileSync('src/client/main.ts', 'utf8');
-    expect(source, 'the quiet band is gone').toContain(
-      'function quietLogBand(height: number): { top: number; bottom: number } {',
+    // `hudLayout` stacks everything, and it reads the CONSTANT. Anything that
+    // reintroduced a per-frame height would have to change this line.
+    expect(source, 'the top HUD is a function of the frame again').toContain(
+      'const hudTop = TURN_BAR_H;',
     );
-    // The anchor and the default size.
-    expect(source, 'the log sizes itself from the live band again').toContain(
-      'const own = quietLogBand(height);',
+    // test/client/turnband.test.ts is where the whole tree is swept for the
+    // deleted measurement; this is the one line the log's geometry turns on.
+    expect(TURN_BAR_H).toBe(14);
+  });
+
+  it('has no quiet band, because there is no loud one to differ from', () => {
+    const source = readFileSync('src/client/main.ts', 'utf8');
+    // The second band is deleted, not left as a wrapper: a function whose whole
+    // justification has gone is the half-removed feature `check:inert` hunts.
+    expect(source, 'the quiet band outlived its cause').not.toContain('function quietLogBand(');
+    // The anchor, the default size and the settle all ask the same band.
+    expect(source, 'the log sizes itself from something else again').toContain(
+      'const own = logBand(height, TURN_BAR_H);',
     );
-    // And the settle, which is where the ratchet lived.
-    // THE STORE IS A RECORD NOW — the party pane grew a grip, which is the
-    // condition `logSize`'s own note said would turn it into one.
-    expect(source, 'the settle clamps the STORE against a band combat shrinks').toContain(
-      'panelSizes[subject.panel] = sizeIntoBand(held, quietLogBand(logicalH), logicalW);',
+    expect(source, 'the settle clamps the STORE against a different band').toContain(
+      'panelSizes[subject.panel] = sizeIntoBand(held, logBand(logicalH, TURN_BAR_H), logicalW);',
     );
   });
 
-  it('the cap that actually moved is the ANCHOR, not the band height', () => {
+  it('the cap the ratchet moved is reachable from one band only', () => {
     /**
      * ═══════════════════════════════════════════════════════════════════════
      * THE FIRST VERSION OF THIS TEST BLAMED THE WRONG CLAMP.
      * ═══════════════════════════════════════════════════════════════════════
      *
      * `sizeIntoBand` caps the height against the band's own HEIGHT — 296 while
-     * fighting at this window — so a 200-tall log sails through it and the
+     * fighting at this window — so a 200-tall log sailed through it and the
      * assertion passed for both bands. That is the shape this project keeps
      * getting caught by: an arithmetic model that agrees with the code and says
      * nothing about the bug.
      *
-     * The cap that moves is `resizeIntoBand`'s: `h <= band.bottom - y`, where
+     * The cap that moved is `resizeIntoBand`'s: `h <= band.bottom - y`, where
      * the log's anchor is `bottom - defaultLogH(band)` and `defaultLogH` is a
-     * FRACTION of the band. So the reachable height IS `defaultLogH`, and it
-     * falls from 157 to 133 the instant the cards appear.
+     * FRACTION of the band. So the reachable height IS `defaultLogH` — and with
+     * one band there is one cap. The old band is rebuilt here as it WAS, to show
+     * the drop this measures is real and that the live band no longer has it.
      */
+    const H = 428;
+    const LIVE = { top: TURN_BAR_H + 3, bottom: H - HOTBAR_TOTAL_H - 3 };
+    // The strip was 46 tall and sat directly under the banner.
+    const WAS_FIGHTING = { top: TURN_BAR_H + 46 + 3, bottom: LIVE.bottom };
+
     const DEFAULT_FRACTION = 0.45;
     const capFor = (band: { top: number; bottom: number }): number => {
       const anchor = band.bottom - Math.round((band.bottom - band.top) * DEFAULT_FRACTION);
       const landed = resizeIntoBand({ x: 3, y: anchor, w: 640, h: 9000 }, NO_OFFSET, band, 1280);
       return landed.h;
     };
-    expect(capFor(FIGHTING), 'the fixture no longer exercises the drop').toBeLessThan(
-      capFor(QUIET),
-    );
-    // ...and the fix is that the log never asks the fighting band at all.
+
+    // The drop was real, and this is how much of it the deletion gives back.
+    expect(capFor(WAS_FIGHTING)).toBeLessThan(capFor(LIVE));
+    // ...and there is no band left that the log can be asked for in a fight.
     const source = readFileSync('src/client/main.ts', 'utf8');
     expect(source).not.toContain('const own = logBand(height, band.top - DOCK_MARGIN);');
   });
@@ -1251,5 +1269,104 @@ describe('nextSize measures from the edge that does not move', () => {
       GripCorner.BottomLeft,
     );
     expect(left.w).toBe(204);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// WHAT `RESET PANELS` WOULD PUT BACK — the predicate that greys the only
+// route home
+// ---------------------------------------------------------------------------
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * `panelsTouched` IS A MEMBERSHIP TEST, AND IT USED TO BE ONE THIRD OF ONE.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * The escape menu greys `RESET PANELS` and writes *"nothing has been moved"*
+ * under it when this is false, and that row is the ONLY way back for somebody
+ * who has dragged a panel somewhere they cannot reach or shrunk the action bar
+ * to one slot. So the predicate has to name every store the effect clears, and
+ * it named one: `DRAGGABLE_PANELS.some(offset !== 0,0)`, while `reset-panels`
+ * had grown to clear every size and now the bar's slot count.
+ *
+ * ON SCREEN THAT IS: resize the Case Log and never drag it, and the row is grey
+ * with "nothing has been moved" under it, over a panel you can see you changed.
+ *
+ * EVERY CASE BELOW ASSERTS THE FALSE ANSWER FIRST. A case that only proves
+ * `true` after a change would pass for a predicate that returned `true` always,
+ * which is the mutant with the worst failure mode here — a row that is never
+ * greyed is merely untidy, and this suite would not notice.
+ */
+describe('panelsTouched — everything RESET PANELS puts back, and nothing else', () => {
+  const SHIPPED = 13;
+
+  function noSizes(): Record<DraggablePanel, PanelSize | null> {
+    const out = {} as Record<DraggablePanel, PanelSize | null>;
+    for (const panel of DRAGGABLE_PANELS) out[panel] = null;
+    return out;
+  }
+
+  function state(over: Partial<PanelLayoutState> = {}): PanelLayoutState {
+    return {
+      offsets: createPanelOffsets(),
+      sizes: noSizes(),
+      hotbarSlots: { at: SHIPPED, shipped: SHIPPED },
+      ...over,
+    };
+  }
+
+  it('is false on a screen nobody has touched', () => {
+    expect(panelsTouched(state())).toBe(false);
+  });
+
+  it('is true for a drag of ANY panel, in either axis', () => {
+    for (const panel of DRAGGABLE_PANELS) {
+      for (const moved of [
+        { dx: 1, dy: 0 },
+        { dx: 0, dy: -1 },
+        { dx: -40, dy: 12 },
+      ]) {
+        const offsets = createPanelOffsets();
+        offsets[panel] = moved;
+        expect(panelsTouched(state({ offsets })), `${panel} at ${JSON.stringify(moved)}`).toBe(
+          true,
+        );
+      }
+    }
+  });
+
+  it('is true for a RESIZE of any panel, which is the half that was missing', () => {
+    // `reset-panels` writes `null` into every entry of this store, so a stored
+    // size is by definition something the row would put back. A player who only
+    // ever used a grip is exactly the player the old predicate turned away.
+    for (const panel of DRAGGABLE_PANELS) {
+      const sizes = noSizes();
+      sizes[panel] = { w: 420, h: 180 };
+      expect(panelsTouched(state({ sizes })), `${panel} resized`).toBe(true);
+    }
+  });
+
+  it('is true for a bar the grip widened or narrowed, and false for the one it ships with', () => {
+    expect(panelsTouched(state({ hotbarSlots: { at: SHIPPED, shipped: SHIPPED } }))).toBe(false);
+    expect(panelsTouched(state({ hotbarSlots: { at: SHIPPED + 5, shipped: SHIPPED } }))).toBe(true);
+    expect(panelsTouched(state({ hotbarSlots: { at: 1, shipped: SHIPPED } }))).toBe(true);
+    // AND IT IS THE COMPARISON THAT DECIDES, not a hard-coded thirteen: the
+    // day the shipped bar changes width, an untouched bar must still read as
+    // untouched. A predicate holding its own copy of the default would grey
+    // the row for everybody on the commit that moved it.
+    expect(panelsTouched(state({ hotbarSlots: { at: 9, shipped: 9 } }))).toBe(false);
+  });
+
+  it('answers for the LAST change as well as the first, in any combination', () => {
+    // A `.some` that short-circuited on offsets alone would pass every case
+    // above and still miss a screen whose only change is the last store asked.
+    const offsets = createPanelOffsets();
+    offsets[DraggablePanel.Log] = { dx: 4, dy: 4 };
+    const sizes = noSizes();
+    sizes[DraggablePanel.Party] = { w: 52, h: 200 };
+    expect(panelsTouched({ offsets, sizes, hotbarSlots: { at: 18, shipped: SHIPPED } })).toBe(true);
+    // ...and undoing all three by hand puts it back to false, which is what the
+    // row's effect does and therefore what the row's greying must agree with.
+    expect(panelsTouched(state())).toBe(false);
   });
 });

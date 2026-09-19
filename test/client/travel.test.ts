@@ -31,7 +31,7 @@ import type { ActorView, LevelView, TurnMsg } from '../../src/shared/protocol.ts
  * vitest.config.ts has no jsdom on purpose, and src/client/input/travel.ts is
  * written to need none: it is fed observations and asked for a direction. So
  * what is asserted below is the DECISION layer — the step gate, the interrupts
- * and the direction derivation — in the same spirit as test/client/turncards.ts,
+ * and the direction derivation — in the same spirit as test/client/turnbar.test.ts,
  * which reads a HUD without painting one.
  *
  * THREE OF THESE TESTS ARE ABOUT A STALL RATHER THAN A WRONG ANSWER, and they
@@ -172,7 +172,7 @@ function detective(id: string, x: number, y: number): ActorView {
  *
  * Hand-built rather than projected: the claim under test is the gate reading a
  * card, and a test importing the real projector would need `reference lib="dom"`
- * dragged in for no gain (turncards.test.ts pays that cost for a different and
+ * dragged in for no gain (turnbar.test.ts pays that cost for a different and
  * larger claim). The OTHER card is always `committed` so nothing can pass by
  * accidentally finding the wrong one.
  */

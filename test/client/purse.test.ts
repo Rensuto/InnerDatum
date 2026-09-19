@@ -31,7 +31,7 @@ import type { ProgressMsg } from '../../src/shared/protocol.ts';
  *                    fact makes a player check whether they are the same number.
  *
  * The `reference lib="dom"` on line 1 is required; its cost is documented at
- * test/client/turncards.test.ts:51-60.
+ * test/client/turnbar.test.ts.
  */
 
 // ---------------------------------------------------------------------------

@@ -22,9 +22,10 @@ import { DragKind, DraggablePanel } from '../../src/client/ui/drag.ts';
 import {
   HOTBAR_HEADER_H,
   HOTBAR_INSET,
-  HOTBAR_ITEM_SLOTS,
-  HOTBAR_SLOTS,
-  HOTBAR_TALENT_SLOTS,
+  HOTBAR_KEY_ROW,
+  HOTBAR_KEY_ROWS,
+  HOTBAR_SLOTS_DEFAULT,
+  HOTBAR_SLOT_POOL,
   HOTBAR_TOTAL_H,
   HotbarDropKind,
   HotbarSlotKind,
@@ -45,7 +46,9 @@ import {
   hotbarSettingsRect,
   snapHotbarStyle,
   stepHotbarStyle,
-  isItemSlotIndex,
+  hotbarKeyLabel,
+  hotbarSlotForKey,
+  hotbarSlotsForSize,
   isSlotDisabled,
   itemActionWord,
   itemSlotAction,
@@ -97,7 +100,7 @@ import type { ItemView, LoadoutTalent, Slot } from '../../src/shared/protocol.ts
  *
  * vitest.config.ts is explicit that there is no jsdom and no canvas here. The
  * `reference lib="dom"` on line 1 is required and its cost is documented at
- * test/client/turncards.test.ts:51-60.
+ * test/client/turnbar.test.ts.
  */
 
 // ---------------------------------------------------------------------------
@@ -156,17 +159,29 @@ function itemSlot(action: ItemSlotAction, over: Partial<HotbarSlot> = {}): Hotba
 
 const EMPTY_SLOT: HotbarSlot = { kind: HotbarSlotKind.Empty };
 
-/** A bar in the shape the wiring pass will build: four talents, then four item slots. */
 /**
- * THE FIRST ITEM SLOT, DERIVED. It was the literal 4 until the bar grew to six
- * talents, at which point a hard-coded 4 silently became a TALENT slot and the
- * item-slot caption tests were asserting about the wrong square.
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE SPLIT BELOW IS THE FIXTURE'S ARRANGEMENT, NOT THE BAR'S RULE.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `FIRST_ITEM` was `FIRST_ITEM` — the boundary the BAR enforced, and
+ * the assertions that read it were true of that rule. There is no boundary any
+ * more: every slot takes either kind. So this fixture keeps the same PICTURE —
+ * nine talents then four item slots, which is exactly what a default bar looked
+ * like the day the partition was removed — purely so the drawing cases below
+ * have one of each kind at a known index.
+ *
+ * NOTHING HERE MAY BE READ AS A RULE ABOUT THE BAR. The cases that used to
+ * assert "index >= FIRST_ITEM is an item slot" are gone; what is left uses it
+ * only to say "the fixture put an item HERE". A case that would still pass if
+ * the bar refused an item on slot 0 is a case testing this fixture.
  */
-const FIRST_ITEM = HOTBAR_TALENT_SLOTS;
+const ITEM_TAIL = 4;
+const FIRST_ITEM = HOTBAR_SLOTS_DEFAULT - ITEM_TAIL;
 
 function barSlots(items: readonly HotbarSlot[] = []): HotbarSlot[] {
   const out: HotbarSlot[] = [];
-  for (let i = 0; i < HOTBAR_TALENT_SLOTS; i += 1) {
+  for (let i = 0; i < FIRST_ITEM; i += 1) {
     out.push(
       talentSlot({
         talent: talent({
@@ -181,7 +196,7 @@ function barSlots(items: readonly HotbarSlot[] = []): HotbarSlot[] {
       }),
     );
   }
-  for (let i = 0; i < HOTBAR_ITEM_SLOTS; i += 1) out.push(items[i] ?? EMPTY_SLOT);
+  for (let i = 0; i < ITEM_TAIL; i += 1) out.push(items[i] ?? EMPTY_SLOT);
   return out;
 }
 
@@ -228,8 +243,8 @@ const WIDTHS = [640, 800, 1280, 1920];
  * the whole row's left edge, centred, at the foot. `stored` is a grip's size.
  */
 function rectFor(width: number, stored: { w: number; h: number } | null = null): PanelRect {
-  const size = hotbarPanelSize(HOTBAR_SLOTS, stored, width);
-  const row = hotbarPanelSize(HOTBAR_SLOTS, null, width);
+  const size = hotbarPanelSize(HOTBAR_SLOTS_DEFAULT, stored, width);
+  const row = hotbarPanelSize(HOTBAR_SLOTS_DEFAULT, null, width);
   return { x: Math.max(0, Math.floor((width - row.w) / 2)), y: 480 - size.h, w: size.w, h: size.h };
 }
 
@@ -247,7 +262,7 @@ describe('geometry', () => {
     // The height main.ts's panel bands leave free at the foot of the screen.
     // Stated as a relation, so a change to any term moves the bands with it.
     expect(HOTBAR_TOTAL_H).toBe(HOTBAR_INSET * 2 + HOTBAR_HEADER_H + SLOT_PX);
-    expect(hotbarPanelSize(HOTBAR_SLOTS, null, 1920).h).toBe(HOTBAR_TOTAL_H);
+    expect(hotbarPanelSize(HOTBAR_SLOTS_DEFAULT, null, 1920).h).toBe(HOTBAR_TOTAL_H);
     expect(hotbarFloor()).toEqual({ w: HOTBAR_INSET * 2 + SLOT_PX, h: HOTBAR_TOTAL_H });
   });
 
@@ -284,26 +299,28 @@ describe('geometry', () => {
     // 13*44 + 12*4 = 620 against the 640 floor render/canvas.ts pins as
     // `HUD_MIN_W`, and the frame's two insets make it 636. That is why the talent
     // half stopped at NINE: one more slot and the default bar wraps on the floor.
-    expect(hotbarRowWidth(HOTBAR_SLOTS)).toBe(620);
-    const floor = hotbarPanelSize(HOTBAR_SLOTS, null, FLOOR_W);
+    expect(hotbarRowWidth(HOTBAR_SLOTS_DEFAULT)).toBe(620);
+    const floor = hotbarPanelSize(HOTBAR_SLOTS_DEFAULT, null, FLOOR_W);
     expect(floor.w).toBeLessThanOrEqual(FLOOR_W);
     expect(floor.h, 'the default bar wrapped on the floor').toBe(HOTBAR_TOTAL_H);
-    expect(hotbarPanelSize(HOTBAR_SLOTS + 1, null, FLOOR_W).h).toBeGreaterThan(HOTBAR_TOTAL_H);
+    expect(hotbarPanelSize(HOTBAR_SLOTS_DEFAULT + 1, null, FLOOR_W).h).toBeGreaterThan(
+      HOTBAR_TOTAL_H,
+    );
   });
 
   it('wraps a narrower bar onto more lines rather than hiding a slot', () => {
     // REPORTED: the bar was a strip the width of the screen with bare wings at
     // its sides. It is a panel whose width is the player's, and a narrow one
     // wraps as upstream's hotkey box does (engine/HotkeysIconsDisplay.lua:265-271).
-    for (let across = 1; across <= HOTBAR_SLOTS; across += 1) {
+    for (let across = 1; across <= HOTBAR_SLOTS_DEFAULT; across += 1) {
       const rect = rectAcross(across);
-      const lines = Math.ceil(HOTBAR_SLOTS / across);
+      const lines = Math.ceil(HOTBAR_SLOTS_DEFAULT / across);
       expect(rect.w, String(across)).toBe(HOTBAR_INSET * 2 + hotbarRowWidth(across));
       expect(rect.h, String(across)).toBe(
         HOTBAR_INSET * 2 + HOTBAR_HEADER_H + hotbarRowWidth(lines),
       );
-      for (let i = 0; i < HOTBAR_SLOTS; i += 1) {
-        const r = slotRect(rect, i, HOTBAR_SLOTS);
+      for (let i = 0; i < HOTBAR_SLOTS_DEFAULT; i += 1) {
+        const r = slotRect(rect, i, HOTBAR_SLOTS_DEFAULT);
         const at = `${String(across)}:${String(i)}`;
         expect(r.x, at).toBeGreaterThanOrEqual(rect.x + HOTBAR_INSET);
         expect(r.x + r.w, at).toBeLessThanOrEqual(rect.x + rect.w - HOTBAR_INSET);
@@ -314,47 +331,74 @@ describe('geometry', () => {
   });
 
   it('is never narrower than one slot, or wider than the screen', () => {
-    expect(hotbarPanelSize(HOTBAR_SLOTS, { w: 1, h: 1 }, 1280).w).toBe(hotbarFloor().w);
-    expect(hotbarPanelSize(HOTBAR_SLOTS, { w: 5000, h: 1 }, 700).w).toBeLessThanOrEqual(700);
+    expect(hotbarPanelSize(HOTBAR_SLOTS_DEFAULT, { w: 1, h: 1 }, 1280).w).toBe(hotbarFloor().w);
+    expect(hotbarPanelSize(HOTBAR_SLOTS_DEFAULT, { w: 5000, h: 1 }, 700).w).toBeLessThanOrEqual(
+      700,
+    );
   });
 
   it('round-trips every slot centre through the hit test at every shape', () => {
-    for (const across of [1, 2, 5, HOTBAR_SLOTS]) {
+    for (const across of [1, 2, 5, HOTBAR_SLOTS_DEFAULT]) {
       const rect = rectAcross(across);
-      for (let i = 0; i < HOTBAR_SLOTS; i += 1) {
-        const r = slotRect(rect, i, HOTBAR_SLOTS);
+      for (let i = 0; i < HOTBAR_SLOTS_DEFAULT; i += 1) {
+        const r = slotRect(rect, i, HOTBAR_SLOTS_DEFAULT);
         const cx = r.x + Math.floor(r.w / 2);
         const cy = r.y + Math.floor(r.h / 2);
         const at = `${String(across)}:${String(i)}`;
-        expect(hotbarSlotAt(rect, cx, cy, HOTBAR_SLOTS), at).toBe(i);
+        expect(hotbarSlotAt(rect, cx, cy, HOTBAR_SLOTS_DEFAULT), at).toBe(i);
         // The corners too: a half-open box is where an off-by-one hides.
-        expect(hotbarSlotAt(rect, r.x, r.y, HOTBAR_SLOTS), at).toBe(i);
-        expect(hotbarSlotAt(rect, r.x + r.w - 1, r.y + r.h - 1, HOTBAR_SLOTS), at).toBe(i);
+        expect(hotbarSlotAt(rect, r.x, r.y, HOTBAR_SLOTS_DEFAULT), at).toBe(i);
+        expect(hotbarSlotAt(rect, r.x + r.w - 1, r.y + r.h - 1, HOTBAR_SLOTS_DEFAULT), at).toBe(i);
       }
       // The header and the frame are the bar, not a slot.
       const head = { x: rect.x + HOTBAR_INSET + 1, y: rect.y + HOTBAR_INSET + 1 };
-      expect(hotbarSlotAt(rect, head.x, head.y, HOTBAR_SLOTS)).toBe(-1);
-      expect(hotbarSlotAt(rect, rect.x + 1, rect.y + rect.h - 2, HOTBAR_SLOTS)).toBe(-1);
+      expect(hotbarSlotAt(rect, head.x, head.y, HOTBAR_SLOTS_DEFAULT)).toBe(-1);
+      expect(hotbarSlotAt(rect, rect.x + 1, rect.y + rect.h - 2, HOTBAR_SLOTS_DEFAULT)).toBe(-1);
     }
-    expect(hotbarSlotAt(null, 10, 10, HOTBAR_SLOTS)).toBe(-1);
+    expect(hotbarSlotAt(null, 10, 10, HOTBAR_SLOTS_DEFAULT)).toBe(-1);
   });
 
   it('does not answer for a slot past the count it is given', () => {
     // Both numbers are the caller's. A stale, shorter count must not reach a slot
-    // it does not know about: that press would fire whatever sits there.
+    // it does not know about: that press would fire whatever sits there. It is
+    // the live case now rather than a hypothetical — the cogwheel and the grip
+    // both change the count while the bar is on screen.
     const rect = rectFor(1280);
-    const r = slotRect(rect, HOTBAR_TALENT_SLOTS + 1, HOTBAR_SLOTS);
-    expect(hotbarSlotAt(rect, r.x + 2, r.y + 2, HOTBAR_SLOTS)).toBe(HOTBAR_TALENT_SLOTS + 1);
-    expect(hotbarSlotAt(rect, r.x + 2, r.y + 2, HOTBAR_TALENT_SLOTS)).toBe(-1);
+    const r = slotRect(rect, FIRST_ITEM + 1, HOTBAR_SLOTS_DEFAULT);
+    expect(hotbarSlotAt(rect, r.x + 2, r.y + 2, HOTBAR_SLOTS_DEFAULT)).toBe(FIRST_ITEM + 1);
+    expect(hotbarSlotAt(rect, r.x + 2, r.y + 2, FIRST_ITEM)).toBe(-1);
   });
 
-  it('splits the row four and four, and says which half an index is in', () => {
-    expect(HOTBAR_SLOTS).toBe(HOTBAR_TALENT_SLOTS + HOTBAR_ITEM_SLOTS);
-    for (let i = 0; i < HOTBAR_TALENT_SLOTS; i += 1) expect(isItemSlotIndex(i)).toBe(false);
-    for (let i = HOTBAR_TALENT_SLOTS; i < HOTBAR_SLOTS; i += 1)
-      expect(isItemSlotIndex(i)).toBe(true);
-    expect(isItemSlotIndex(-1)).toBe(false);
-    expect(isItemSlotIndex(HOTBAR_SLOTS)).toBe(false);
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THIS CASE WAS `splits the row four and four, and says which half an index
+   * is in`, AND THE SPLIT IS WHAT THE AUTHOR REPORTED.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * It walked `isItemSlotIndex` over every index and asserted the boundary. The
+   * boundary is gone; what replaces it is the mapping that had to exist before
+   * it could go — every slot in the pool wears a key, and the key it wears is
+   * the key that fires it.
+   */
+  it('gives every slot in the pool a key, and nothing past it', () => {
+    expect(HOTBAR_SLOT_POOL).toBe(HOTBAR_KEY_ROW * HOTBAR_KEY_ROWS);
+    const labels = new Set<string>();
+    for (let i = 0; i < HOTBAR_SLOT_POOL; i += 1) {
+      const label = hotbarKeyLabel(i);
+      expect(label, `slot ${String(i)} wears no key`).not.toBeNull();
+      labels.add(label ?? '');
+    }
+    // NO TWO SLOTS SHARE ONE. A duplicate label is a box that lies about what
+    // pressing it does, which is the failure the partition's mouse-only item
+    // slots were introduced to avoid and this replaces.
+    expect(labels.size).toBe(HOTBAR_SLOT_POOL);
+    expect(hotbarKeyLabel(HOTBAR_SLOT_POOL)).toBeNull();
+    expect(hotbarKeyLabel(-1)).toBeNull();
+    // ...AND THE INVERSE AGREES AT EVERY POSITION.
+    for (let digit = 0; digit < HOTBAR_KEY_ROW; digit += 1) {
+      expect(hotbarKeyLabel(hotbarSlotForKey(digit, false))).toBe(`${String(digit + 1)}`);
+      expect(hotbarKeyLabel(hotbarSlotForKey(digit, true))).toBe(`\u21e7${String(digit + 1)}`);
+    }
   });
 });
 
@@ -465,38 +509,39 @@ describe('hotbarDropTargetAt', () => {
   const RECT = rectFor(1280);
 
   function centreOf(index: number): { x: number; y: number } {
-    const r = slotRect(RECT, index, HOTBAR_SLOTS);
+    const r = slotRect(RECT, index, HOTBAR_SLOTS_DEFAULT);
     return { x: r.x + Math.floor(r.w / 2), y: r.y + Math.floor(r.h / 2) };
   }
 
-  it('answers BIND with the index for the four item slots', () => {
-    for (let i = HOTBAR_TALENT_SLOTS; i < HOTBAR_SLOTS; i += 1) {
+  it('answers BIND with the index for EVERY slot, whatever is in it', () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * THIS WAS TWO CASES: BIND for the item half, TALENT for the talent half.
+     * ═══════════════════════════════════════════════════════════════════════
+     * The second one's note read *"the class talents cannot be rebound, so the
+     * caller has to be able to say 'the first four slots are your class
+     * talents' instead of letting the item snap back for no stated reason."*
+     * There is nothing to refuse and nothing to say: `HotbarDropKind.Talent`
+     * is gone from the union with the refusal it routed to.
+     *
+     * WALKED OVER A BAR HOLDING BOTH KINDS, so a drop test that had quietly
+     * reacquired an opinion about the contents of the slot under it would fail
+     * here rather than in somebody's hand.
+     */
+    for (let i = 0; i < HOTBAR_SLOTS_DEFAULT; i += 1) {
       const p = centreOf(i);
-      expect(hotbarDropTargetAt(RECT, p.x, p.y, HOTBAR_SLOTS)).toEqual({
-        kind: HotbarDropKind.Bind,
-        index: i,
-      });
-    }
-  });
-
-  it('answers TALENT — WITH THE INDEX — for a release over slots 0-3', () => {
-    // NOT a miss and NOT silence. The class talents cannot be rebound, so the
-    // caller has to be able to say "the first four slots are your class talents"
-    // instead of letting the item snap back for no stated reason. Carrying the
-    // index is what lets the sentence name the slot.
-    for (let i = 0; i < HOTBAR_TALENT_SLOTS; i += 1) {
-      const p = centreOf(i);
-      expect(hotbarDropTargetAt(RECT, p.x, p.y, HOTBAR_SLOTS)).toEqual({
-        kind: HotbarDropKind.Talent,
-        index: i,
-      });
+      expect(hotbarDropTargetAt(RECT, p.x, p.y, HOTBAR_SLOTS_DEFAULT), `slot ${String(i)}`).toEqual(
+        { kind: HotbarDropKind.Bind, index: i },
+      );
     }
   });
 
   it('answers MISS off the bar, so whatever is underneath still gets the release', () => {
-    const r = slotRect(RECT, 0, HOTBAR_SLOTS);
-    expect(hotbarDropTargetAt(RECT, 0, r.y, HOTBAR_SLOTS)).toEqual({ kind: HotbarDropKind.Miss });
-    expect(hotbarDropTargetAt(RECT, r.x, r.y - 1, HOTBAR_SLOTS)).toEqual({
+    const r = slotRect(RECT, 0, HOTBAR_SLOTS_DEFAULT);
+    expect(hotbarDropTargetAt(RECT, 0, r.y, HOTBAR_SLOTS_DEFAULT)).toEqual({
+      kind: HotbarDropKind.Miss,
+    });
+    expect(hotbarDropTargetAt(RECT, r.x, r.y - 1, HOTBAR_SLOTS_DEFAULT)).toEqual({
       kind: HotbarDropKind.Miss,
     });
   });
@@ -504,12 +549,12 @@ describe('hotbarDropTargetAt', () => {
   it('reads the SAME geometry as the hover test at every viewport', () => {
     for (const width of WIDTHS) {
       const rect = rectFor(width);
-      for (let i = 0; i < HOTBAR_SLOTS; i += 1) {
-        const r = slotRect(rect, i, HOTBAR_SLOTS);
+      for (let i = 0; i < HOTBAR_SLOTS_DEFAULT; i += 1) {
+        const r = slotRect(rect, i, HOTBAR_SLOTS_DEFAULT);
         const x = r.x + 1;
         const y = r.y + 1;
-        const drop = hotbarDropTargetAt(rect, x, y, HOTBAR_SLOTS);
-        const hover = hotbarSlotAt(rect, x, y, HOTBAR_SLOTS);
+        const drop = hotbarDropTargetAt(rect, x, y, HOTBAR_SLOTS_DEFAULT);
+        const hover = hotbarSlotAt(rect, x, y, HOTBAR_SLOTS_DEFAULT);
         expect(drop.kind === HotbarDropKind.Miss ? -1 : drop.index).toBe(hover);
       }
     }
@@ -624,7 +669,7 @@ describe('drawing', () => {
   it('pairs every save with a restore', () => {
     // An unbalanced restore leaks a font, an alignment or an alpha into every
     // painter later in the frame, and it presents as a bug in whichever surface
-    // happens to be drawn next (ui/turncards.ts:786-790 records the same trap).
+    // happens to be drawn next (ui/panel.ts's `drawScrim` records the same trap).
     const { calls } = paint(view({ slots: barSlots([itemSlot(ItemSlotAction.Equip)]) }));
     expect(calls.filter((c) => c.startsWith('save(')).length).toBe(
       calls.filter((c) => c.startsWith('restore(')).length,
@@ -641,8 +686,11 @@ describe('drawing', () => {
     // path — so the empty slot asks for no content sprite at all.
     expect(asked).not.toContain('ui_inventory_cell_empty');
     // The word is what makes it a SLOT and not a gap — the player's own
-    // complaint. Four of them, one per empty item slot.
-    expect(texts.filter((t) => t === 'ITEM').length).toBe(HOTBAR_ITEM_SLOTS);
+    // complaint. It reads EMPTY rather than ITEM: a slot takes either kind
+    // now, and naming one of them would send a player who wanted a talent on
+    // it to the wrong panel.
+    expect(texts.filter((t) => t === 'EMPTY').length).toBe(ITEM_TAIL);
+    expect(texts).not.toContain('ITEM');
   });
 
   it('lights the empty slots on a live ITEM drag and not on a panel drag', () => {
@@ -653,10 +701,10 @@ describe('drawing', () => {
     // rather than a second PNG, so what this pins is that the slot is PAINTED
     // during a live item drag at all. The edge itself is a fill, not a sprite.
     expect(carried.asked).toContain('ui_panel_9slice_inset');
-    // BIND, not ITEM: while something droppable is in hand the caption says what
-    // the release will DO.
+    // BIND, not EMPTY: while something droppable is in hand the caption says
+    // what the release will DO.
     expect(carried.texts).toContain('BIND');
-    expect(carried.texts).not.toContain('ITEM');
+    expect(carried.texts).not.toContain('EMPTY');
 
     // A worn item dragged off the doll is equally bindable.
     const worn = paint(view({ drag: { kind: DragKind.Worn, slot: 'body' } }));
@@ -665,7 +713,7 @@ describe('drawing', () => {
     // A panel header is clamped into panelBand and can never reach the hotbar.
     const panel = paint(view({ drag: { kind: DragKind.Panel, panel: DraggablePanel.Inventory } }));
     expect(panel.texts).not.toContain('BIND');
-    expect(panel.texts).toContain('ITEM');
+    expect(panel.texts).toContain('EMPTY');
   });
 
   it('draws EQUIP, REMOVE and GONE, and hatches only the GONE slot', () => {
@@ -701,16 +749,23 @@ describe('drawing', () => {
     const { asked, texts } = paint(view());
     expect(asked).toContain('icon_active_fog_step');
 
-    // One digit per TALENT slot, in order, and none on an item slot. The item
-    // half stays mouse-only: a digit there would have to be 0 or a punctuation
-    // cap, and `HOTBAR_ITEM_SLOTS`' own note argues that case.
-    //
-    // DERIVED FROM THE CONSTANT. This read `['1', '2', '3', '4']` under a
-    // comment saying "exactly four digits" while asserting six — the list and
-    // its explanation had already drifted apart once.
-    const digits = texts.filter((t) => /^[0-9]$/.test(t));
-    expect(digits).toEqual(
-      Array.from({ length: HOTBAR_TALENT_SLOTS }, (_unused, i) => String(i + 1)),
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * A KEY ON EVERY SLOT, AND THIS CASE USED TO ASSERT THE OPPOSITE.
+     * ═══════════════════════════════════════════════════════════════════════
+     * It read *"one digit per TALENT slot, in order, and none on an item slot.
+     * The item half stays mouse-only: a digit there would have to be 0 or a
+     * punctuation cap"* — the partition, stated as a drawing rule. The item
+     * half is not mouse-only and the key past nine is `\u21e7` plus a digit, so
+     * what is pinned is the label `hotbarKeyLabel` gives for that index.
+     *
+     * AGAINST THE FUNCTION, NOT A WRITTEN-OUT LIST. The painter and the press
+     * read one mapping; a test that re-derived the list here would be a third
+     * copy, and the one that could disagree silently.
+     */
+    const keys = texts.filter((t) => /^\u21e7?[0-9]$/.test(t));
+    expect(keys).toEqual(
+      Array.from({ length: HOTBAR_SLOTS_DEFAULT }, (_unused, i) => hotbarKeyLabel(i)),
     );
   });
 
@@ -745,7 +800,7 @@ describe('drawing', () => {
     // rendering were its sprite, that state would be an invisible box here — and
     // an invisible DROP TARGET is worse than none.
     const states: readonly (readonly [string, HotbarView, string])[] = [
-      ['empty', view(), 'ITEM'],
+      ['empty', view(), 'EMPTY'],
       ['empty+drag', view({ drag: { kind: DragKind.Carried, itemId: 'item_boots' } }), 'BIND'],
       ['equip', view({ slots: barSlots([itemSlot(ItemSlotAction.Equip)]) }), 'EQUIP'],
       ['remove', view({ slots: barSlots([itemSlot(ItemSlotAction.Unequip)]) }), 'REMOVE'],
@@ -757,7 +812,7 @@ describe('drawing', () => {
       // The traced frame: `drawFrame`'s fallback is four 1px fillRects per slot
       // on top of the fill, and nothing else in this painter reaches that count.
       expect(calls.filter((c) => c.startsWith('fillRect(')).length, label).toBeGreaterThan(
-        HOTBAR_SLOTS * 4,
+        HOTBAR_SLOTS_DEFAULT * 4,
       );
       // Nothing was blitted, because nothing resolved.
       expect(
@@ -777,8 +832,14 @@ describe('drawing', () => {
   it('says what the pointer is on, per kind, and says nothing when it is on nothing', () => {
     expect(paint(view()).texts.some((t) => t.includes('click to'))).toBe(false);
 
+    // ONE SENTENCE FOR AN EMPTY SLOT, whichever slot it is. It used to pick a
+    // noun off `isItemSlotIndex`, and naming one of the two kinds a slot now
+    // takes would send a player to the wrong panel — the same bug the old
+    // split-sentence was written to avoid, with the halves swapped.
     const onEmpty = paint(view({ hovered: FIRST_ITEM }));
-    expect(onEmpty.texts.some((t) => t.includes('drag an item here'))).toBe(true);
+    expect(onEmpty.texts.some((t) => t.includes('drag a talent or an item here'))).toBe(true);
+    const onEmptyKeyed = paint(view({ hovered: 0, slots: [EMPTY_SLOT] }));
+    expect(onEmptyKeyed.texts.some((t) => t.includes('drag a talent or an item here'))).toBe(true);
 
     const onEquip = paint(
       view({ hovered: FIRST_ITEM, slots: barSlots([itemSlot(ItemSlotAction.Equip)]) }),
@@ -795,8 +856,14 @@ describe('drawing', () => {
     );
     expect(onGone.texts.some((t) => t.includes('you no longer have it'))).toBe(true);
 
+    // THE STRIP LEADS WITH THE KEY THE BOX WEARS, not `index + 1`: slot 10
+    // reads `\u21e71.` and pressing `10` does nothing at all.
     const onTalent = paint(view({ hovered: 1 }));
     expect(onTalent.texts.some((t) => t.includes('2. Talent 1'))).toBe(true);
+    const onShifted = paint(view({ hovered: FIRST_ITEM }));
+    expect(onShifted.texts.some((t) => t.startsWith(`${hotbarKeyLabel(FIRST_ITEM) ?? ''}.`))).toBe(
+      true,
+    );
   });
 });
 
@@ -832,10 +899,10 @@ describe('a bar narrower than its row', () => {
 
   it('draws every slot, wrapped, and has nothing to apologise for', () => {
     const texts = paintAt({ w: hotbarFloor().w, h: 1 });
-    expect(texts.filter((t) => /^[0-9]$/.test(t))).toEqual(
-      Array.from({ length: HOTBAR_TALENT_SLOTS }, (_unused, i) => String(i + 1)),
+    expect(texts.filter((t) => /^\u21e7?[0-9]$/.test(t))).toEqual(
+      Array.from({ length: HOTBAR_SLOTS_DEFAULT }, (_unused, i) => hotbarKeyLabel(i)),
     );
-    expect(texts.filter((t) => t === 'ITEM').length).toBe(HOTBAR_ITEM_SLOTS);
+    expect(texts.filter((t) => t === 'EMPTY').length).toBe(ITEM_TAIL);
     // The strip used to say `9 of 13 slots` or `hotbar hidden` here. Nothing is hidden.
     expect(texts.some((t) => t.includes('slots —') || t.includes('hidden'))).toBe(false);
   });
@@ -1267,7 +1334,7 @@ describe('the bar’s cogwheel settings', () => {
     style: HotbarStyle,
     stored: { w: number; h: number } | null = null,
   ): PanelRect => {
-    const size = hotbarPanelSize(HOTBAR_SLOTS, stored, 1280, style, 480);
+    const size = hotbarPanelSize(HOTBAR_SLOTS_DEFAULT, stored, 1280, style, 480);
     return { x: 100, y: 20, w: size.w, h: size.h };
   };
 
@@ -1275,10 +1342,10 @@ describe('the bar’s cogwheel settings', () => {
     const tall = HOTBAR_INSET * 2 + HOTBAR_HEADER_H + hotbarRowWidth(5);
     const rect = rectIn(VERTICAL, { w: 1, h: tall });
     expect(rect.h).toBe(tall);
-    expect(rect.w).toBe(HOTBAR_INSET * 2 + hotbarRowWidth(Math.ceil(HOTBAR_SLOTS / 5)));
-    const first = slotRect(rect, 0, HOTBAR_SLOTS, VERTICAL);
-    const down = slotRect(rect, 1, HOTBAR_SLOTS, VERTICAL);
-    const across = slotRect(rect, 5, HOTBAR_SLOTS, VERTICAL);
+    expect(rect.w).toBe(HOTBAR_INSET * 2 + hotbarRowWidth(Math.ceil(HOTBAR_SLOTS_DEFAULT / 5)));
+    const first = slotRect(rect, 0, HOTBAR_SLOTS_DEFAULT, VERTICAL);
+    const down = slotRect(rect, 1, HOTBAR_SLOTS_DEFAULT, VERTICAL);
+    const across = slotRect(rect, 5, HOTBAR_SLOTS_DEFAULT, VERTICAL);
     expect(down.x).toBe(first.x);
     expect(down.y).toBeGreaterThan(first.y);
     expect(across.y).toBe(first.y);
@@ -1287,7 +1354,7 @@ describe('the bar’s cogwheel settings', () => {
 
   it('scales the slot with the icon, up to upstream’s 64', () => {
     const huge = rectIn(HUGE);
-    expect(slotRect(huge, 0, HOTBAR_SLOTS, HUGE).w).toBe(SLOT_PX * 2);
+    expect(slotRect(huge, 0, HOTBAR_SLOTS_DEFAULT, HUGE).w).toBe(SLOT_PX * 2);
     const one = HOTBAR_INSET * 2 + SLOT_PX * 2;
     expect(hotbarFloor(HUGE)).toEqual({ w: one, h: one + HOTBAR_HEADER_H });
     expect(hotbarFloor(DEFAULT_HOTBAR_STYLE)).toEqual({
@@ -1301,17 +1368,17 @@ describe('the bar’s cogwheel settings', () => {
       DEFAULT_HOTBAR_STYLE,
       VERTICAL,
       HUGE,
-      { vertical: true, icon: 48, opacity: 60 },
+      { vertical: true, icon: 48, opacity: 60, slots: HOTBAR_SLOTS_DEFAULT },
     ];
     for (const style of styles) {
       for (const stored of [null, hotbarFloor(style)]) {
         const rect = rectIn(style, stored);
-        for (let i = 0; i < HOTBAR_SLOTS; i += 1) {
-          const r = slotRect(rect, i, HOTBAR_SLOTS, style);
+        for (let i = 0; i < HOTBAR_SLOTS_DEFAULT; i += 1) {
+          const r = slotRect(rect, i, HOTBAR_SLOTS_DEFAULT, style);
           const at = `${JSON.stringify(style)} ${String(i)}`;
           const cx = r.x + Math.floor(r.w / 2);
           const cy = r.y + Math.floor(r.h / 2);
-          expect(hotbarSlotAt(rect, cx, cy, HOTBAR_SLOTS, style), at).toBe(i);
+          expect(hotbarSlotAt(rect, cx, cy, HOTBAR_SLOTS_DEFAULT, style), at).toBe(i);
           expect(r.x, at).toBeGreaterThanOrEqual(rect.x + HOTBAR_INSET);
           expect(r.x + r.w, at).toBeLessThanOrEqual(rect.x + rect.w - HOTBAR_INSET);
           expect(r.y, at).toBeGreaterThanOrEqual(rect.y + HOTBAR_INSET + HOTBAR_HEADER_H);
@@ -1333,11 +1400,82 @@ describe('the bar’s cogwheel settings', () => {
   });
 
   it('snaps a style from another build onto the nearest step', () => {
-    expect(snapHotbarStyle({ vertical: true, icon: 50, opacity: 55 })).toEqual({
+    expect(snapHotbarStyle({ vertical: true, icon: 50, opacity: 55, slots: 7 })).toEqual({
       vertical: true,
       icon: 48,
       opacity: 60,
+      // CLAMPED, NOT SNAPPED. The count has no steps — every whole number from
+      // one to the pool is a bar somebody might want — so seven survives
+      // unchanged where 50 becomes 48.
+      slots: 7,
     });
+    // ...AND THE CLAMP IS BOTH ENDS. A file written by a build with a bigger
+    // pool would otherwise hand this one a count it has no key for.
+    expect(snapHotbarStyle({ ...DEFAULT_HOTBAR_STYLE, slots: 999 }).slots).toBe(HOTBAR_SLOT_POOL);
+    expect(snapHotbarStyle({ ...DEFAULT_HOTBAR_STYLE, slots: 0 }).slots).toBe(1);
+    expect(snapHotbarStyle({ ...DEFAULT_HOTBAR_STYLE, slots: -4 }).slots).toBe(1);
+  });
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE COGWHEEL ADDS SLOTS, AND THE GRIP ADDS THE SAME ONES.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Two controls, one number — asked for as two requests: *"i want the cogwheel
+   * settings button for the action bar to allow you to add more slots to
+   * expand"* and *"resizing the actionbar should dynamically add slots."*
+   */
+  it('steps the slot count one at a time and stops at both ends', () => {
+    const at = (n: number): HotbarStyle => ({ ...DEFAULT_HOTBAR_STYLE, slots: n });
+    expect(stepHotbarStyle(at(9), 'slots', 1).slots).toBe(10);
+    expect(stepHotbarStyle(at(9), 'slots', -1).slots).toBe(8);
+    expect(stepHotbarStyle(at(1), 'slots', -1).slots).toBe(1);
+    expect(stepHotbarStyle(at(HOTBAR_SLOT_POOL), 'slots', 1).slots).toBe(HOTBAR_SLOT_POOL);
+    // THE ROW READS THE NUMBER ITSELF. There is no name for a bar of thirteen
+    // the way `Large` names an icon size, and inventing one would hide the only
+    // fact somebody pressing `+` is watching.
+    expect(hotbarSettingText(at(13), 'slots')).toBe('13');
+  });
+
+  it('derives the count from the dragged size, as upstream derives its columns', () => {
+    /**
+     * PORTED: `HotkeysIconsDisplay.lua:108-109` is
+     * `max_cols = floor(w / frames.w)` and `max_rows = floor(h / frames.h)`,
+     * and the layout loop stops when it runs out of either (`:270`, `:276`).
+     */
+    const oneRow = (n: number): { w: number; h: number } => ({
+      w: HOTBAR_INSET * 2 + hotbarRowWidth(n),
+      h: HOTBAR_TOTAL_H,
+    });
+    for (let n = 1; n <= HOTBAR_SLOTS_DEFAULT; n += 1) {
+      expect(hotbarSlotsForSize(oneRow(n)), `one row of ${String(n)}`).toBe(n);
+    }
+    // A SECOND ROW IS A SECOND ROW OF SLOTS, which is the whole gesture.
+    const twoRows = { w: oneRow(5).w, h: HOTBAR_TOTAL_H + SLOT_PX + 4 };
+    expect(hotbarSlotsForSize(twoRows)).toBe(10);
+    // AT LEAST ONE, AT MOST THE POOL.
+    expect(hotbarSlotsForSize({ w: 0, h: 0 })).toBe(1);
+    expect(hotbarSlotsForSize({ w: 100000, h: 100000 })).toBe(HOTBAR_SLOT_POOL);
+  });
+
+  it('is a fixed point: a size gives a count that gives the same size back', () => {
+    /**
+     * ═══ THE BUG THIS RULES OUT IS A PANEL THAT WALKS A PIXEL A FRAME ═══
+     * The grip writes the COUNT and `hudLayout` re-derives the RECT from the
+     * count on the next frame. If `size -> count -> size` were not a fixed
+     * point the bar would resize itself every frame for as long as it was on
+     * screen, which is not something a drag test would catch — the gesture ends
+     * and the panel keeps moving.
+     */
+    for (const style of [DEFAULT_HOTBAR_STYLE, HUGE, VERTICAL]) {
+      for (let n = 1; n <= HOTBAR_SLOT_POOL; n += 1) {
+        const size = hotbarPanelSize(n, null, 4000, style, 4000);
+        const count = hotbarSlotsForSize(size, style);
+        const again = hotbarPanelSize(count, size, 4000, style, 4000);
+        expect(count, `${JSON.stringify(style)} ${String(n)}`).toBe(n);
+        expect(again, `${JSON.stringify(style)} ${String(n)}`).toEqual(size);
+      }
+    }
   });
 
   it('names each setting as a player reads it', () => {
@@ -1351,7 +1489,12 @@ describe('the bar’s cogwheel settings', () => {
   it('presses the button it drew, swallows its own background, and nothing else', () => {
     const pop = hotbarSettingsRect(rectFor(1280), 1280, 480, 17);
     const buttons = hotbarSettingsButtons(pop);
+    // SLOTS IS FIRST: it is the one row that changes what the bar HOLDS, and a
+    // player who opened the cogwheel for it should not have to read past two
+    // appearance settings to find it.
     expect(buttons.map((b) => `${b.key}${String(b.by)}`)).toEqual([
+      'slots-1',
+      'slots1',
       'vertical-1',
       'vertical1',
       'icon-1',
@@ -1385,7 +1528,7 @@ describe('the bar’s cogwheel settings', () => {
     const cog = hotbarCogRect(rect);
     expect(cog.y + cog.h).toBeLessThanOrEqual(rect.y + HOTBAR_INSET + HOTBAR_HEADER_H);
     expect(cog.x + cog.w).toBeLessThanOrEqual(rect.x + rect.w - HOTBAR_INSET);
-    expect(hotbarSlotAt(rect, cog.x + 1, cog.y + 1, HOTBAR_SLOTS)).toBe(-1);
+    expect(hotbarSlotAt(rect, cog.x + 1, cog.y + 1, HOTBAR_SLOTS_DEFAULT)).toBe(-1);
   });
 
   function events(style: HotbarStyle): string[] {
@@ -1426,7 +1569,7 @@ describe('the bar’s cogwheel settings', () => {
 
   it('draws a bigger slot by scaling the drawing, inside a save and restore', () => {
     const out = events(HUGE);
-    expect(out.filter((e) => e === 'scale(2,2)').length).toBe(HOTBAR_SLOTS);
+    expect(out.filter((e) => e === 'scale(2,2)').length).toBe(HOTBAR_SLOTS_DEFAULT);
     expect(out.filter((e) => e.startsWith('save(')).length).toBe(
       out.filter((e) => e.startsWith('restore(')).length,
     );

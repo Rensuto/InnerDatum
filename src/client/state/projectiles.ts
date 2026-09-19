@@ -9,13 +9,22 @@
  * vitest.config.ts, which is blunt about that being deliberate). So the orb
  * feature is split so that the half with a RULE in it lives here, pure, and can
  * be tested, while the half that puts pixels on a backbuffer lives in
- * render/canvas.ts and is held correct by a rule instead
- * (`paintProjectiles` may only `fillRect`, so there is nothing to mock).
+ * render/canvas.ts.
  *
- * KEEP IT THAT WAY. This module must never import from render/, never touch
- * `document`, `window` or a 2D context, and never grow a draw call. The moment
- * it does, the one testable piece of the feature stops being testable and the
- * split has bought nothing.
+ * ═══ THE SECOND HALF OF THAT SENTENCE HAS BEEN OVERTAKEN, AND IT MATTERED ═══
+ * It read *"and is held correct by a rule instead (`paintProjectiles` may only
+ * `fillRect`, so there is nothing to mock)"*. That rule is gone: the painter
+ * blits `ui_fx_bolt_<element>` now, rotated to the flight heading, and the claim
+ * it makes — frame 0 of the strip, at cell size, on the orb's tile — is about
+ * pixels and cannot be held by a promise not to draw. It is driven instead, in
+ * test/client/projectile-art.test.ts, through the real renderer against a
+ * recording context, exactly as trap-paint.test.ts drives the trap pictures.
+ *
+ * KEEP THIS MODULE AS IT IS REGARDLESS. It must never import from render/, never
+ * touch `document`, `window` or a 2D context, and never grow a draw call — the
+ * frame's rules (complete and absolute, replaced never merged) are testable
+ * without any of that, and folding them into the painter would put the one part
+ * of this feature that has a RULE behind a canvas.
  *
  * ═══════════════════════════════════════════════════════════════════════════
  * THE FRAME IS COMPLETE AND ABSOLUTE. IT IS REPLACED, NEVER MERGED.

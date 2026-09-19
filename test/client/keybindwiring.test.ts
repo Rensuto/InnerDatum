@@ -721,20 +721,29 @@ describe('the six keyboard gates', () => {
 
   /**
    * ═══════════════════════════════════════════════════════════════════════
-   * v27 — THE CONVERSATION'S DIGIT GATE SITS ABOVE `setTalentPage`, NOT MERELY
-   * ABOVE `activateSlot`.
+   * THE CONVERSATION'S DIGIT GATE IS THE FIRST STATEMENT OF `onSlot`.
    * ═══════════════════════════════════════════════════════════════════════
    *
-   * `setTalentPage` is the FIRST statement of `onSlot` and it is a WRITE. A gate
-   * placed under it would let `2` in a conversation flip the action bar to page
-   * two on the way past — and the page is a mode every later read resolves
-   * through, so the bar would still be flipped after the conversation ended,
-   * pointing four keys at four different talents. The order is the whole fix and
-   * it is invisible at the call site, which is why it is pinned here.
+   * It used to be pinned ABOVE `setTalentPage`, because that call was the first
+   * statement of the handler and it was a WRITE: *"a gate placed under it would
+   * let `2` in a conversation flip the action bar to page two on the way past —
+   * and the page is a mode every later read resolves through, so the bar would
+   * still be flipped after the conversation ended."*
+   *
+   * There is no page and no write. The handler's first statements are now pure
+   * reads, so the thing to pin is the one that has not changed: the dialogue
+   * gate comes before ANYTHING that can act, and `slot` is turned into a bar
+   * index only after it has been offered to the conversation. Pinned against
+   * `hotbarSlotForKey` — the only remaining act on a digit — so a later pass
+   * that puts a second writer at the top of this handler fails here.
    */
-  it('gates the conversation ABOVE setTalentPage in onSlot', () => {
+  it('gates the conversation above every other reader of a digit', () => {
     const body = handlerBody('onSlot: (slot, shifted) => {');
-    expect(at('if (dialogueView !== null) {', body)).toBeLessThan(at('setTalentPage(', body));
+    expect(at('if (dialogueView !== null) {', body)).toBeLessThan(at('hotbarSlotForKey(', body));
+    // AND NOTHING WRITES BEFORE IT. The whole class of bug the old pin caught
+    // was a WRITE on the way past a gate, so the absence of one is what is
+    // asserted rather than the absence of one particular call.
+    expect(body.slice(0, at('if (dialogueView !== null) {', body))).not.toMatch(/=[^=>]/);
     // AND IT IS THE DIGIT AS DRAWN, one-based, bounded by ui/dialogue.ts rather
     // than by a length read here: `slot` is zero-based everywhere else in this
     // handler, so passing it straight through would be off by one on every row.
@@ -848,10 +857,15 @@ describe('the six keyboard gates', () => {
     // tome/class/Game.lua:2307-2308.
     const body = handlerBody('onSlot: (slot, shifted) => {');
     expect(body).toContain('if (menuOpen) closeMenu();');
-    expect(body).toContain('activateSlot(slot);');
+    // `activateSlot(hotbarSlotForKey(slot, shifted))` — the digit and the
+    // modifier resolve to ONE index, and Shift reaches the second nine rather
+    // than swapping the first nine underneath the player.
+    expect(body).toContain('activateSlot(hotbarSlotForKey(slot, shifted));');
     // NOT A REFUSAL: no early return anywhere between the picker gate and the
     // activation, so the digit always reaches a talent.
-    expect(at('if (menuOpen) closeMenu();', body)).toBeLessThan(at('activateSlot(slot);', body));
+    expect(at('if (menuOpen) closeMenu();', body)).toBeLessThan(
+      at('activateSlot(hotbarSlotForKey(slot, shifted));', body),
+    );
     expect(body).not.toMatch(/if \(menuOpen\) return;/);
     // The reason is written where the refusal would have gone, so the next pass
     // reads it before adding one.
@@ -1904,10 +1918,67 @@ describe('reset-panels puts all four back', () => {
     expect(arm).not.toContain('closeMenu()');
   });
 
-  it('reports whether anything has moved from the offsets themselves', () => {
-    // Not from a "has been dragged" flag kept beside them, which is a second
-    // copy of the same fact and the one that would go stale.
-    expect(CODE).toContain('panelsMoved: DRAGGABLE_PANELS.some(');
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE BAR'S SLOT COUNT IS PART OF THE ACT, BECAUSE IT IS A SIZE.
+   * ═══════════════════════════════════════════════════════════════════════════
+   * The sizes loop above puts `panelSizes[Hotbar]` back to null, and on its own
+   * that does NOTHING a player can see: `hotbarPanelSize` re-derives the bar's
+   * rect from `hotbarStyle.slots`, so an eighteen-slot bar with no stored size
+   * is still an eighteen-slot bar. The one panel somebody resized with a GRIP
+   * would be the one panel this row failed to put back, under a notice reading
+   * "panels put back".
+   */
+  it('puts the action bar back to the width it ships with', () => {
+    const start = at("case 'reset-panels':");
+    const arm = CODE.slice(start, CODE.indexOf("      case 'ui-scale': {", start));
+    expect(arm).toContain('hotbarStyle = { ...hotbarStyle, slots: DEFAULT_HOTBAR_STYLE.slots };');
+    // THE SHIPPED COUNT AND NOT A LITERAL. A hard-coded thirteen here would go
+    // stale the day the default moves and would reset the bar to a width
+    // nothing else in the client agrees is the default.
+    expect(arm).not.toMatch(/slots:\s*\d/);
+    // AND ONLY THAT FIELD. `vertical`, `icon` and `opacity` are cogwheel
+    // preferences of the same kind as the Case Log's font, which this row has
+    // never claimed to reset; a whole-style assignment would take away choices
+    // nobody made with a gesture.
+    expect(arm).not.toContain('hotbarStyle = DEFAULT_HOTBAR_STYLE');
+    // ...AND IT IS SAVED, or the reset is undone by the next reload.
+    expect(arm.indexOf('savePanelLayout()')).toBeGreaterThan(arm.indexOf('hotbarStyle ='));
+  });
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE PREDICATE AND THE EFFECT ARE ONE LIST, OR THE ROW LIES ABOUT ITSELF.
+   * ═══════════════════════════════════════════════════════════════════════════
+   * This asserted `toContain('panelsMoved: DRAGGABLE_PANELS.some(')` — and that
+   * WAS the bug it was pinning in place. `.some` over the offsets was the whole
+   * predicate while the arm above had grown to clear every size and now the
+   * bar's count, so a player who had only ever used a GRIP was shown a grey row
+   * captioned "nothing has been moved" over a screen they had plainly changed,
+   * with the one control that would put it back refusing to act. That is
+   * `membership-is-not-a-rank`: a `.some` over one of three stores is a
+   * membership test that has forgotten two of them.
+   *
+   * WHAT IS PINNED NOW IS THAT THERE IS NO SECOND COPY. `panelsTouched`
+   * (ui/drag.ts, driven for real in test/client/drag.test.ts) is the list, and
+   * the assertion below is that the view asks it rather than re-deriving
+   * anything — an inline predicate is exactly what shipped wrong twice.
+   */
+  it('greys the row from the same list the row would clear', () => {
+    expect(CODE).toContain('panelsMoved: panelsTouched(layoutState()),');
+    // NOT A FLAG KEPT BESIDE THE STORES, which is a second copy of the same
+    // fact and the one that goes stale; and not a second `.some` anywhere.
+    expect(CODE).not.toMatch(/panelsMoved:\s*DRAGGABLE_PANELS/);
+    expect(CODE).not.toMatch(/let panelsDirty|panelsHaveMoved/);
+    // AND `layoutState` READS THE LIVE STORES rather than a captured object: a
+    // value built once at boot would answer for the bar somebody had before
+    // they touched it, which is the failure this predicate exists to fix.
+    const fn = fnBody('function layoutState(): PanelLayoutState {');
+    expect(fn).toContain('offsets: panelOffsets,');
+    expect(fn).toContain('sizes: panelSizes,');
+    expect(fn).toContain(
+      'hotbarSlots: { at: hotbarStyle.slots, shipped: DEFAULT_HOTBAR_STYLE.slots }',
+    );
   });
 });
 

@@ -413,26 +413,32 @@ const STAT_CELL_GAP = 6;
  *
  * Upstream stacks all six down one column because its dialog is nine tenths of
  * a desktop screen tall. Ours is not. The HUD band (`panelBand` in main.ts)
- * leaves the column 135 pixels at the 640x320 floor, 182 in the Discord frame
- * this game is played in, and 89 and 136 once combat's turn cards take their
- * 46 off the top. Six cells of `STAT_PITCH` need 293.
+ * leaves the column 135 pixels at the 640x320 floor and 182 in the Discord frame
+ * this game is played in — in a fight as well as out of one. It WAS 89 and 136
+ * in combat, because a strip of turn cards sat under the banner and took 46 off
+ * the top of every band while there was a fight on; that strip is deleted and
+ * the party pane carries the turn. Six cells of `STAT_PITCH` need 293.
  *
  * The text column's answer was to drop the rows that did not fit, which was
  * safe only because nobody measured it at those sizes: a dropped stat is a stat
  * that cannot be bought, and there is no other route to buying it. So the cells
  * FOLD into a second column — row-major, which keeps upstream's reading order
  * (`STR DEX / CON MAG / WIL CUN`) — with two pixels of air under each caption
- * rather than the grid's seven. That is what keeps full-size icons in the
- * Discord frame IN COMBAT as well as out of it; with the grid's air they would
- * shrink the moment a fight started. Only where even that does not fit do the
+ * rather than the grid's seven. That is what kept full-size icons in the
+ * Discord frame IN COMBAT as well as out of it, back when a fight cost the band
+ * 46 pixels; with the grid's air they shrank the moment one started. The band no
+ * longer moves, so the fold is now about narrow WINDOWS rather than about
+ * combat — and it is kept at the tighter air because the smallest windows this
+ * game is played in still reach it. Only where even that does not fit do the
  * icons drop to SIXTEEN pixels, the other exact reduction of the 64-pixel art
  * and the one the hotbar's chips already use.
  *
  * ═══ THE FIXTURE BAND IS NOT THE REAL ONE ═══
  * The first version of this fold was sized against the tests' 640x320 fixture
  * (a 40..280 band, a 163-pixel column) and placed all six there. At the band the
- * game actually hands this panel it placed four, and two in combat.
- * `test/client/talents.test.ts` now asks the production bands.
+ * game actually hands this panel it placed four, and two in combat — back when
+ * combat had a band of its own. `test/client/talents.test.ts` asks the
+ * production bands.
  *
  * ASKED OF THE COLUMN'S OWN HEIGHT, which `talentPanelRect` can only know as a
  * panel height: it chooses a width tier before any geometry exists. So the one
@@ -4481,8 +4487,8 @@ export type TalentPanelDrawOptions = {
  * `textBaseline` and `fillStyle`, none of which the world painter re-sets before
  * every call — a leak surfaces three milestones later as a mysteriously
  * right-aligned label somewhere else entirely. CLIPPED to its own rect for the
- * reason the card strip, the party pane and the sheet are: a long description
- * must never bleed onto the map.
+ * reason the party pane and the sheet are: a long description must never bleed
+ * onto the map.
  *
  * IT DRAWS NO SCRIM. That is not an omission — it is the panel-not-modal
  * decision made visible. Everything behind it is still live and still pressable.

@@ -189,9 +189,15 @@ describe('the fillRect overlays stay art-free', () => {
   const mainSrc = codeOf('src/client/main.ts');
 
   it('loads exactly the asset prefixes it loaded before the orb landed', () => {
-    // The v7 projectile is drawn as an ORANGE fillRect dot. If this list ever
-    // grows a `fx_`, a `ui_orb_` or a second `ui_tile_marker_`-shaped entry for
-    // it, somebody has reached for a PNG that does not exist.
+    // ═══ THE ORB HAS LANDED, AND THIS SENTENCE WAS THE REASON IT COULD NOT ═══
+    // This read: *"The v7 projectile is drawn as an ORANGE fillRect dot. If this
+    // list ever grows a `fx_`, a `ui_orb_` or a second `ui_tile_marker_`-shaped
+    // entry for it, somebody has reached for a PNG that does not exist."* The
+    // premise expired: `ui_fx_bolt_*` is twelve manifest rows and twelve 256x64
+    // PNGs on disk, one per ToME damage type, each with a review entry in
+    // ASSETS-REQUIRED.md. So `ui_fx_bolt_` is in the list below, and it is the
+    // FIRST kind of prefix — art that exists — which is the only distinction
+    // this assertion has ever been about.
     const block = /const NEEDED_ASSET_PREFIXES = \[([\s\S]*?)\] as const;/.exec(mainSrc);
     expect(block).not.toBeNull();
     const prefixes = [...(block?.[1] ?? '').matchAll(/'([^']+)'/g)].map((m) => m[1]);
@@ -379,6 +385,14 @@ describe('the fillRect overlays stay art-free', () => {
       'prop_wagon',
       'prop_well',
       'prop_wetland_reeds',
+      // ═══ THE PROJECTILE STRIPS, AND THEY ARE THE FIRST KIND ═══
+      // Twelve `ui_fx_bolt_*` rows in the manifest and twelve PNGs under
+      // ui/effects/; `PROJECTILE_SPRITE` in render/canvas.ts names the six this
+      // game can fire as literals, in the same change that added this line —
+      // which is the rule `icon_ability_` broke by sitting here dead from M3 to
+      // M6. NOT `ui_fx_`: that would pull all 86 effect strips, and nothing
+      // draws the hits, the areas, the beams or the swings.
+      'ui_fx_bolt_',
     ]);
   });
 
@@ -416,25 +430,66 @@ describe('the fillRect overlays stay art-free', () => {
     expect(kinds).toEqual(['cursor', 'valid', 'invalid', 'aoe', 'minrange']);
   });
 
-  it('paints projectiles with fillRect and never with blitSprite', () => {
+  it('paints projectiles from the bolt strips, and falls back without blitSprite', () => {
+    // ═══ THIS PIN SAID `never with blitSprite` AND MEANT `never with art` ═══
+    // It asserted `not.toContain('drawImage')`, because at the time no
+    // projectile sprite existed and reaching for one would have shipped a violet
+    // missing-asset box to every clone. Twelve `ui_fx_bolt_*` strips exist now,
+    // so the half of the rule that survives is the FALLBACK half — and it is the
+    // half that actually protects a bare clone, which has no manifest at all.
     const from = canvasSrc.indexOf('function paintProjectiles(');
     const to = canvasSrc.indexOf('function cornerTicks(');
     expect(from).toBeGreaterThan(-1);
     expect(to).toBeGreaterThan(from);
     const body = canvasSrc.slice(from, to);
 
+    // THE FALLBACK IS DRAWN GEOMETRY. `blitSprite` resolves a miss to the loud
+    // violet box, which is right for an invisible player and wrong for a shot on
+    // a clone with zero PNGs — where EVERY orb takes this path.
     expect(body).not.toContain('blitSprite');
-    expect(body).not.toContain('drawImage');
+    // ORANGE only for an orb whose element the server did not send.
     expect(body).toContain('PALETTE.ORANGE');
     // The 1px INK surround, the legibility trick the status pips use: the orb
     // crosses floor, wall and the lit top edge of a wall in one flight.
     expect(body).toContain('PALETTE.INK');
-    // Never GOLD (the player's own route and cursor — an enemy orb in gold reads
-    // as your own aim), never CRIMSON (reserved for "hostiles are engaged"), and
-    // never VIOLET_HI, which IS the missing-asset box.
+    // AND THE ELEMENT'S OWN INK COMES FROM THE FLOOR-WASH TABLE, not the log's.
+    // `DAMAGE_INK[Mind]` is GOLD — the player's own route and cursor — and
+    // `DAMAGE_INK[Physical]` is PARCHMENT; `ZONE_WASH_INK` is those two
+    // overridden and the other four copied, which is the question it was built
+    // for. Asserting the table by name is what makes the two `not` lines below
+    // impossible to satisfy by accident.
+    expect(body).toContain('ZONE_WASH_INK[type]');
+    expect(body).not.toContain('DAMAGE_INK[');
+    // Never GOLD (an enemy orb in gold reads as your own aim), never CRIMSON
+    // (reserved for "hostiles are engaged"), and never VIOLET_HI, which IS the
+    // missing-asset box.
     expect(body).not.toContain('PALETTE.GOLD');
     expect(body).not.toContain('PALETTE.CRIMSON');
     expect(body).not.toContain('PALETTE.VIOLET_HI');
+    // THE TRANSFORM IS BALANCED ON EVERY PATH OUT. A leaked rotate moves every
+    // sprite drawn afterwards, which reads as the map tearing rather than as a
+    // missing restore.
+    //
+    // NOT A COUNT OF THE TWO WORDS. One `save` and two `restore`s is the CORRECT
+    // shape here: the loop takes one of two exits per orb — the sprite path
+    // `continue`s and the fallback path falls out of the bottom — so a balanced
+    // tally would be the bug. What has to be true is that neither exit skips its
+    // restore.
+    const pushed = body.indexOf('backCtx.save()');
+    expect(body.split('backCtx.save()').length - 1, 'more than one transform pushed').toBe(1);
+    // EVERY `continue` AFTER THE PUSH — the cull above it exits before there is
+    // anything to pop, and pinning that one would pin the cull's position.
+    const exits = [...body.matchAll(/continue;/g)].filter((m) => (m.index ?? 0) > pushed);
+    expect(exits.length, 'the sprite path no longer exits early').toBe(1);
+    for (const exit of exits) {
+      const before = body.slice(pushed, exit.index);
+      expect(before, 'an orb leaves the loop with the transform still pushed').toContain(
+        'backCtx.restore();',
+      );
+    }
+    // ...and the path that falls out of the bottom pops it too.
+    const tail = body.slice((exits[0]?.index ?? pushed) + 'continue;'.length);
+    expect(tail, 'the fallback path never restores').toContain('backCtx.restore();');
   });
 
   it('still paints the travel route with fillRect and never with blitSprite', () => {

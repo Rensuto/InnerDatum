@@ -99,8 +99,8 @@
  *
  * FOUR, from game-design.md § 4's own framing of the failure it is designed
  * around — *"player 1 deliberates 40 s, players 2–4 tab out"* — so four is the
- * size the Bell, the quorum arithmetic and the turn-card strip were all written
- * against. It is a cap on a SHARED CLOCK rather than on a friend group: a fifth
+ * size the Bell, the quorum arithmetic and the party pane's rows were all
+ * written against. It is a cap on a SHARED CLOCK rather than on a friend group: a fifth
  * person is not refused entry to the game, they are simply in their own party,
  * which after this file is a perfectly good way to play on the same floor.
  */

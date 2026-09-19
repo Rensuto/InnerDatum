@@ -67,7 +67,7 @@ import type {
  * end, and nothing else on the panel answers a click.
  *
  * THE `reference lib="dom"` ON LINE 1 IS REQUIRED AND HAS A COST, documented in
- * full at test/client/turncards.test.ts:51-60: tests compile under
+ * full at test/client/turnbar.test.ts: tests compile under
  * tsconfig.server.json, whose `lib` is ES2024 with no DOM, and ui/charsheet.ts
  * is typed against `CanvasRenderingContext2D`.
  */

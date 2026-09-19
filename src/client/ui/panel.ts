@@ -413,6 +413,62 @@ const CARD_LINE_H = 12;
 const CARD_GAP = 10;
 
 /**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE ONE RECT ON THIS SCREEN THAT A CANVAS CARD CANNOT WIN AGAINST.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Reported from play: *"tooltip when hovering on the bar gets covered by the log
+ * window box"*.
+ *
+ * ═══ AND IT IS NOT A PAINT-ORDER BUG, WHICH IS WHY IT SURVIVED ONE ═══
+ * Paint order was ALSO wrong and is fixed at `paintHud` — the cards are last
+ * now. It would not have been enough on its own. The Case Log's composer strip
+ * is a REAL `<input>`, `#cmdrow` in index.html, positioned over the box the
+ * canvas drew (`placeCommandLine`), with an opaque VOID background. It is DOM
+ * over a canvas, so it wins against every pixel this file can ever put down, at
+ * any paint order, for ever. ui/caselog.ts already records the same fact from
+ * the other side: *"the real `<input>` is opaque and floats over the canvas, so
+ * any row drawn under it is permanently invisible — not dim, not clipped,
+ * gone"*, and it stops the transcript above the strip for exactly that reason.
+ *
+ * The hotbar sits at the foot of the screen and its card opens UPWARD from the
+ * pointer, so a card's bottom edge lands in the band the composer occupies —
+ * the Case Log's own band reaches down to the hotbar (`logBand` in main.ts).
+ * Hovering a talent therefore cost the last two or three rows of its
+ * description, every time, with nothing on screen to say why.
+ *
+ * ═══ SO THE CARD MOVES, RATHER THAN THE ROW HIDING ═══
+ * Hiding `#cmdrow` for a frame would blur a focused field and drop whatever
+ * somebody was typing, which is a worse bug than the one being fixed. Lifting
+ * the card is arithmetic, it is pure, and it needs no DOM.
+ *
+ * ABOVE BY PREFERENCE, BELOW WHEN THERE IS NO ROOM ABOVE, and unmoved when
+ * neither fits — a card shoved off the top of the screen to dodge a chat row
+ * would be the cure being worse. The caller passes `undefined` when the row is
+ * not on screen at all, which is every frame of a class picker, a world map or
+ * a client whose index.html predates M4.
+ */
+export function clearOfObstacle(
+  rect: PanelRect,
+  obstacle: PanelRect | undefined,
+  viewportH: number,
+): PanelRect {
+  if (obstacle === undefined) return rect;
+  const overlaps =
+    rect.y < obstacle.y + obstacle.h &&
+    rect.y + rect.h > obstacle.y &&
+    rect.x < obstacle.x + obstacle.w &&
+    rect.x + rect.w > obstacle.x;
+  if (!overlaps) return rect;
+
+  const above = obstacle.y - CARD_GAP - rect.h;
+  if (above >= CARD_GAP) return { ...rect, y: above };
+  const below = obstacle.y + obstacle.h + CARD_GAP;
+  if (below + rect.h + CARD_GAP <= viewportH) return { ...rect, y: below };
+  return rect;
+}
+
+/**
  * ════════════════════════════════════════════════════════════════════════════
  * THE BODY A CARD WILL ACTUALLY DRAW, BOUNDED BY THE SCREEN.
  * ════════════════════════════════════════════════════════════════════════════
@@ -530,6 +586,12 @@ export function hoverCardRect(
   py: number,
   viewportW: number,
   viewportH: number,
+  /**
+   * The DOM command row, when it is on screen — see `clearOfObstacle`. Optional
+   * so every caller that has no such row (and every fixture) keeps compiling and
+   * keeps the placement it always had.
+   */
+  obstacle?: PanelRect,
 ): PanelRect {
   const { body } = hoverCardBody(card, viewportH);
   const rows = 1 + (card.meta === undefined ? 0 : 1) + body.length;
@@ -569,7 +631,9 @@ export function hoverCardRect(
   const preferred = anchor === undefined ? (above < CARD_GAP ? py + CARD_GAP : above) : anchor.y;
   const y = Math.min(Math.max(CARD_GAP, preferred), Math.max(CARD_GAP, viewportH - h - CARD_GAP));
 
-  return { x, y, w, h };
+  // LAST, AFTER THE CLAMP. Lifting first and clamping second would put the card
+  // straight back under the row it just stepped off.
+  return clearOfObstacle({ x, y, w, h }, obstacle, viewportH);
 }
 
 export function drawHoverCard(
@@ -580,6 +644,8 @@ export function drawHoverCard(
   py: number,
   viewportW: number,
   viewportH: number,
+  /** The DOM command row, when it is on screen. See `clearOfObstacle`. */
+  obstacle?: PanelRect,
 ): void {
   /**
    * ═══════════════════════════════════════════════════════════════════════════
@@ -589,7 +655,7 @@ export function drawHoverCard(
    *
    * IT LEAKED `font`, `textAlign` and `fillStyle` into whatever painted next —
    * the trap `inventory.test.ts` pins for the inventory panel by name, and
-   * `turncards.ts:786-790` records having been bitten by.
+   * `drawScrim` below records having been bitten by for `globalAlpha`.
    *
    * AND IT READ A BASELINE IT NEVER SET. `cursor = y + CARD_PAD + 9` is
    * measured from the TOP of the box, which is only true while the ambient
@@ -608,7 +674,7 @@ export function drawHoverCard(
    * measurer left rather than the caller's, and leak just as surely while
    * looking balanced. A test pins the ordering because nothing else can see it.
    */
-  const { x, y, w, h } = hoverCardRect(ctx, card, px, py, viewportW, viewportH);
+  const { x, y, w, h } = hoverCardRect(ctx, card, px, py, viewportW, viewportH, obstacle);
 
   // THE INSET SKIN — this card sits ON another surface rather than being one.
   drawPanel(ctx, sprites, PanelSkin.Inset, { x, y, w, h });
@@ -661,7 +727,7 @@ export function drawHoverCard(
 
 /**
  * The face every button in this client wears. `bold 10px`, matching the meta
- * text in ui/partypanel.ts, ui/turncards.ts and ui/caselog.ts.
+ * text in ui/partypanel.ts and ui/caselog.ts.
  *
  * Exported so a caller that needs to measure a label BEFORE handing it to
  * `drawButton` — a sizer deciding whether two buttons fit side by side — can
@@ -725,10 +791,10 @@ export function drawButton(
  * ═══ THE save/restore IS INSIDE THIS FUNCTION AND IS NOT OPTIONAL ═══
  * `globalAlpha` is context state, not a parameter, so an unwrapped assignment
  * leaks to EVERY painter that runs later in the same frame — the hotbar, the
- * turn cards, the map itself. It presents as translucent sprites across the
+ * party pane, the map itself. It presents as translucent sprites across the
  * whole screen, which is diagnosed as a broken PNG or a bad manifest long before
- * anybody looks for a missing `restore`. ui/turncards.ts:786-790 records the
- * identical trap for `ctx.filter`, where a leaked greyscale greys the world.
+ * anybody looks for a missing `restore`. `ctx.filter` is the identical trap one
+ * property over, where a leaked greyscale greys the world.
  *
  * Putting the pairing HERE rather than asking each caller to remember it means
  * the trap can be sprung at most once, in one file, under one test.

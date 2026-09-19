@@ -11,7 +11,7 @@ import type { InspectRow, InspectView } from '../../src/shared/protocol.ts';
  * ═══════════════════════════════════════════════════════════════════════════
  *
  * The `/// <reference lib="dom" />` above is the same line test/client/
- * turncards.test.ts carries and for the same reason: tests compile under
+ * turnbar.test.ts carries and for the same reason: tests compile under
  * tsconfig.server.json, whose `lib` is ES2024 with no DOM, and ui/tooltip.ts
  * names `CanvasRenderingContext2D` in its draw signature. Referencing the lib
  * lets the module's TYPES resolve. It does not conjure a canvas, and vitest.

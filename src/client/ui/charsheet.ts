@@ -1029,8 +1029,8 @@ export function charSheetRows(
       }
     }
 
-    // `ceil`, THE SAME ROUNDING ui/tooltip.ts:143-155, ui/partypanel.ts and
-    // ui/turncards.ts use. Since the scheduler moved onto the real damage
+    // `ceil`, THE SAME ROUNDING ui/tooltip.ts:143-155 and ui/partypanel.ts
+    // use. Since the scheduler moved onto the real damage
     // pipeline `hp` is routinely fractional; rounding differently from the party
     // pane would put 14 on one surface and 15 on another for one body, and a
     // player would reasonably conclude one of them is lying.
@@ -2174,7 +2174,7 @@ export type CharSheetDrawOptions = {
  * `textBaseline` and `fillStyle`, none of which the world painter re-sets before
  * every call — a leak surfaces three milestones later as a mysteriously
  * right-aligned label somewhere else entirely. CLIPPED to its own rect for the
- * reason the card strip and the party pane are: a long class name must never
+ * reason the party pane is: a long class name must never
  * bleed onto the map.
  */
 export function drawCharSheet(options: CharSheetDrawOptions): void {

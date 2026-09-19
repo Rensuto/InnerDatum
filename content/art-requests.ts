@@ -1531,14 +1531,23 @@ export const BOSS_ART_COMMISSION: readonly ArtRequest[] = [
  * See the file header for the strip conventions. One projectile, one hit and
  * one area per damage type, then weapons, class signatures, support effects and
  * hazards.
+ *
+ * ═══ SIX BOLTS ARE MISSING FROM THIS LIST AND THAT IS THE LIST WORKING ═══
+ * `ui_fx_bolt_physical`, `_fire`, `_cold`, `_lightning`, `_darkness` and
+ * `_mind` have left it, because `PROJECTILE_SPRITE` in
+ * src/client/render/canvas.ts now names all six and `paintProjectiles` blits
+ * them — and this file's rule, stated in its header and enforced by
+ * test/shared/art-requests.test.ts, is that an id leaves the commission in the
+ * same commit as the code that draws it. They are `shared/damagetype.ts`'s
+ * whole membership; the other six bolts stay here because no element of theirs
+ * exists to fire yet.
+ *
+ * Their REGENERATION briefs are a different document and are unaffected:
+ * ASSETS-REQUIRED.md reviews the delivered art, and every one of the twelve
+ * bolts has an entry there. Leaving this list is "nobody has to draw this from
+ * nothing", not "this art is finished".
  */
 export const EFFECT_ART_COMMISSION: readonly ArtRequest[] = [
-  loop(
-    { id: 'ui_fx_bolt_physical' },
-    'any',
-    'data/damage_types.lua',
-    'A physical bolt in flight, pointing east, in grey and bone white.',
-  ),
   once(
     { id: 'ui_fx_hit_physical' },
     'any',
@@ -1550,12 +1559,6 @@ export const EFFECT_ART_COMMISSION: readonly ArtRequest[] = [
     'any',
     'data/damage_types.lua',
     'One cell of a physical area effect, seamless with its neighbours, in grey and bone white.',
-  ),
-  loop(
-    { id: 'ui_fx_bolt_fire' },
-    'any',
-    'data/damage_types.lua',
-    'A fire bolt in flight, pointing east, in orange and yellow.',
   ),
   once(
     { id: 'ui_fx_hit_fire' },
@@ -1569,12 +1572,6 @@ export const EFFECT_ART_COMMISSION: readonly ArtRequest[] = [
     'data/damage_types.lua',
     'One cell of a fire area effect, seamless with its neighbours, in orange and yellow.',
   ),
-  loop(
-    { id: 'ui_fx_bolt_cold' },
-    'any',
-    'data/damage_types.lua',
-    'A cold bolt in flight, pointing east, in pale blue and white.',
-  ),
   once(
     { id: 'ui_fx_hit_cold' },
     'any',
@@ -1586,12 +1583,6 @@ export const EFFECT_ART_COMMISSION: readonly ArtRequest[] = [
     'any',
     'data/damage_types.lua',
     'One cell of a cold area effect, seamless with its neighbours, in pale blue and white.',
-  ),
-  loop(
-    { id: 'ui_fx_bolt_lightning' },
-    'any',
-    'data/damage_types.lua',
-    'A lightning bolt in flight, pointing east, in electric yellow and violet.',
   ),
   once(
     { id: 'ui_fx_hit_lightning' },
@@ -1677,12 +1668,6 @@ export const EFFECT_ART_COMMISSION: readonly ArtRequest[] = [
     'data/damage_types.lua',
     'One cell of a light area effect, seamless with its neighbours, in gold and white.',
   ),
-  loop(
-    { id: 'ui_fx_bolt_darkness' },
-    'any',
-    'data/damage_types.lua',
-    'A darkness bolt in flight, pointing east, in black and deep blue.',
-  ),
   once(
     { id: 'ui_fx_hit_darkness' },
     'any',
@@ -1712,12 +1697,6 @@ export const EFFECT_ART_COMMISSION: readonly ArtRequest[] = [
     'any',
     'data/damage_types.lua',
     'One cell of a arcane area effect, seamless with its neighbours, in magenta.',
-  ),
-  loop(
-    { id: 'ui_fx_bolt_mind' },
-    'any',
-    'data/damage_types.lua',
-    'A mind bolt in flight, pointing east, in pale violet.',
   ),
   once(
     { id: 'ui_fx_hit_mind' },

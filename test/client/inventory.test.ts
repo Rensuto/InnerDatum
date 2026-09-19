@@ -91,7 +91,7 @@ import type {
  * test's own copy of the arithmetic.
  *
  * THE `reference lib="dom"` ON LINE 1 IS REQUIRED and its cost is documented at
- * test/client/turncards.test.ts:51-60.
+ * test/client/turnbar.test.ts.
  */
 
 // ---------------------------------------------------------------------------
@@ -1860,7 +1860,7 @@ describe('drawing', () => {
     expect(clips[0]).toEqual({ x: rect.x, y: rect.y, w: rect.w, h: rect.h });
     // An unbalanced restore leaks a font, an alignment or an alpha into every
     // painter later in the frame, and it presents as a bug in whichever surface
-    // happens to be drawn next (ui/turncards.ts:786-790 records the same trap).
+    // happens to be drawn next (ui/panel.ts's `drawScrim` records the same trap).
     expect(calls.filter((c) => c.startsWith('save(')).length).toBe(
       calls.filter((c) => c.startsWith('restore(')).length,
     );

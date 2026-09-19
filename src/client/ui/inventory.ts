@@ -3352,7 +3352,7 @@ export type InventoryPanelDrawOptions = {
  * `textBaseline` and `fillStyle`, none of which the world painter re-sets before
  * every call — a leak surfaces three milestones later as a mysteriously
  * right-aligned label somewhere else entirely. CLIPPED to its own rect for the
- * reason the card strip, the party pane and the sheet are: a long item name must
+ * reason the party pane and the sheet are: a long item name must
  * never bleed onto the map.
  *
  * IT DRAWS NO SCRIM. That is not an omission — it is the panel-not-modal

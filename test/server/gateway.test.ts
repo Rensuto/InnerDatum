@@ -371,6 +371,12 @@ describe('the projectiles frame', () => {
         targetY: LANE_Y,
         // Six tiles at two tiles a game turn. TURNS, never milliseconds.
         turnsToImpact: 3,
+        // WHAT ELEMENT IT IS — the one field taken off the orb's frozen
+        // `damage`, and the only one. The renderer picks `ui_fx_bolt_physical`
+        // from it; before it was sent, every shot in the game was drawn as the
+        // same orange square. `fire` here builds a monster with no `combat`
+        // sheet, so it takes the default type rather than naming one.
+        damageType: 'physical',
       },
     ]);
   });
@@ -426,6 +432,8 @@ describe('the projectiles frame', () => {
         // Five tiles left at two a turn, rounded UP: a partial turn is still a
         // turn the player gets to act in.
         turnsToImpact: 3,
+        // AND THE ELEMENT TRAVELS WITH IT. See the first case above.
+        damageType: 'physical',
       },
     ]);
   });

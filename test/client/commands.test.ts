@@ -20,7 +20,7 @@ import type { CommandContext, RosterEntry } from '../../src/client/input/command
  * notice, and then ask the other one to decline. Every case below that returns a
  * `notice` instead of a `party` is that promise being kept.
  *
- * No DOM lib reference is needed here, unlike test/client/turncards.test.ts:
+ * No DOM lib reference is needed here, unlike test/client/turnbar.test.ts:
  * input/commands.ts is deliberately pure — text in, a typed outcome out, no
  * canvas, no socket and no clock — which is exactly what makes the whole surface
  * testable at all.

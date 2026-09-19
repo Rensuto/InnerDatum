@@ -388,12 +388,32 @@ describe('projectProjectiles', () => {
     // four energy fields; a spread would put the shot's exact number and its
     // exact tick of arrival on the wire, and a client that knew both would never
     // need to guess whether a dodge was worth a turn.
+    //
+    // THE ELEMENT IS SENT AND THE NUMBER IS NOT, which is the line this check
+    // now has to hold rather than "nothing off `damage` at all". A player sees
+    // the element on every surface the shot touches — the bolt sprite, the
+    // burning tile, the Case Log's coloured damage line — and never the roll.
     const world = room();
     fire(world, { x: 2, y: LANE_Y }, { x: 8, y: LANE_Y });
 
     const [view] = projectProjectiles(world).projectiles;
     expect(Object.keys(view ?? {}).sort()).toEqual(
-      ['id', 'sourceId', 'targetX', 'targetY', 'turnsToImpact', 'x', 'y'].sort(),
+      [
+        'id',
+        'sourceId',
+        'targetX',
+        'targetY',
+        'turnsToImpact',
+        'x',
+        'y',
+        // ONE FIELD OFF `damage`, AND THE ASSERTION IS STILL EXACT. The orb's
+        // frozen `dam`, its `apr` and its `penetration` are what the paragraph
+        // above refuses, and they are still absent — this is the ELEMENT, which
+        // the Case Log prints the instant the shot lands and which the renderer
+        // needs in order to draw anything but an orange square. A spread would
+        // have brought all four; naming one is what keeps this list a list.
+        'damageType',
+      ].sort(),
     );
   });
 });

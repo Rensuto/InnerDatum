@@ -6,35 +6,42 @@ import { AiProfile } from '../../src/server/engine/actor.ts';
 import { createDownedState, goDown } from '../../src/server/engine/downed.ts';
 import { projectTurn } from '../../src/server/view/projector.ts';
 import { createWorld } from '../../src/server/world/world.ts';
-import { TURN_BAR_H, bannerFor, isYourTurn, turnHudHeight } from '../../src/client/ui/turnbar.ts';
 import {
-  TURN_CARDS_H,
+  TURN_BAR_H,
+  bannerFor,
   bellSeconds,
-  drawTurnCards,
+  isYourTurn,
   owedCount,
   selfCard,
-  turnCardsHeight,
-} from '../../src/client/ui/turncards.ts';
+} from '../../src/client/ui/turnbar.ts';
 import { MONSTERS_TURN_ID, TurnActorKind, TurnActorState } from '../../src/shared/protocol.ts';
 import type { DownedState } from '../../src/server/engine/downed.ts';
 import type { TurnState } from '../../src/server/view/projector.ts';
 import type { Actor, World } from '../../src/server/world/world.ts';
 import type { TurnMsg } from '../../src/shared/protocol.ts';
-import type { TurnView } from '../../src/client/ui/turncards.ts';
+import type { TurnView } from '../../src/client/ui/turnbar.ts';
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════
- * THE TURN TRACKER, READ THE WAY THE HUD READS IT. NO PIXELS ARE ASSERTED.
+ * THE WARRANT CLOCK, READ THE WAY THE HUD READS IT. NO PIXELS ARE ASSERTED.
  * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * THIS FILE WAS THE CARD STRIP'S TEST AND HALF OF IT WENT WITH THE CARDS. The
+ * strip of portrait cards across the top of the screen is deleted — the author
+ * ruled on 2026-09-18 that there is to be no card and no turn order indicator at
+ * all, and that the party pane carries the turn instead. What survived is
+ * everything that was never about a card: the barrier's precedence arriving
+ * intact on the wire, and the one line of prose ui/turnbar.ts still draws. The
+ * per-member half now lives in test/client/partypanel.test.ts, and the band the
+ * cards used to spend is measured in test/client/turnband.test.ts.
  *
  * vitest.config.ts is explicit that there is deliberately no canvas test and no
  * jsdom here, and nothing below draws anything. What it tests is the layer
- * between the wire and the paint: the four pure readers every painter in
- * ui/turncards.ts and ui/turnbar.ts consults before it puts a pixel down —
- * `selfCard`, `owedCount`, `bellSeconds`, `turnCardsHeight` — plus the two
- * sentences `isYourTurn` and `bannerFor` produce, which are also the copy the
- * status line mirrors for a screen reader. A regression in any of them is a HUD
- * that is confidently wrong, which is worse than one that is missing.
+ * between the wire and the paint: the three pure readers every painter consults
+ * before it puts a pixel down — `selfCard`, `owedCount`, `bellSeconds` — plus
+ * the two sentences `isYourTurn` and `bannerFor` produce, which are also the
+ * copy the status line mirrors for a screen reader. A regression in any of them
+ * is a HUD that is confidently wrong, which is worse than one that is missing.
  *
  * THE FRAMES ARE BUILT BY THE REAL PROJECTOR, and that is the point of putting
  * this file here rather than hand-rolling `TurnMsg` literals. The claim under
@@ -57,8 +64,8 @@ import type { TurnView } from '../../src/client/ui/turncards.ts';
  * would no longer be a compile error. That trade is worth making for the one
  * UI whose absence was a bug reported from real play; the alternative is that
  * the most-looked-at surface in the game has no test at all. If it ever stops
- * being worth it, the fix is to move these six functions into a DOM-free module
- * and delete this line.
+ * being worth it, the fix is to move these five functions into a DOM-free
+ * module and delete this line.
  *
  * IT IS NOT AN INITIATIVE ORDER (DECISIONS.md D1). Inner Datum is phase-locked:
  * every player action costs one full turn, so the whole party decides in the
@@ -74,17 +81,12 @@ import type { TurnView } from '../../src/client/ui/turncards.ts';
 
 const HUSK = { name: 'Index Husk', sprite: 'enemy_index_husk_s' } as const;
 
-/**
- * Three detectives and a husk, so the strip has a hostile side to put last.
- *
- * `hostile` swaps the husk's body for another one, which is how the portrait
- * tests put a 48x64 body in the same seat as the 96x128 husk.
- */
+/** Three detectives and a husk, so the frame has a hostile side to put last. */
 function room(hostile: { readonly name: string; readonly sprite: string } = HUSK): {
   readonly world: World;
   readonly cast: readonly Actor[];
 } {
-  const world = createWorld('turncards');
+  const world = createWorld('turnbar');
   const cast = [
     world.addPlayer('actor_a', 'Dalt'),
     world.addPlayer('actor_b', 'Sam'),
@@ -140,7 +142,7 @@ function view(
   return { turn, bellMs, budget };
 }
 
-/** Card state by actor id, which is how every assertion below is phrased. */
+/** Actor state by actor id, which is how every assertion below is phrased. */
 function states(frame: TurnMsg): Record<string, string> {
   const out: Record<string, string> = {};
   for (const card of frame.actors) out[card.id] = card.state;
@@ -151,7 +153,7 @@ function states(frame: TurnMsg): Record<string, string> {
 // The mapping — the barrier's precedence, arriving intact
 // ---------------------------------------------------------------------------
 
-describe('a card wears the barrier state its owner is actually in', () => {
+describe('a turn record wears the barrier state its owner is actually in', () => {
   it('reads waiting for the ones who still owe a decision, and committed for the rest', () => {
     // Sam still owes; Dalt and Mo are in no array at all, which under this
     // barrier is what "already submitted" looks like — `whoseTurn` is the
@@ -341,14 +343,21 @@ describe('the Bell decorates the straggler and nobody else', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Out of combat — the strip is not drawn at all
+// Out of combat — one line of prose and nothing else
 // ---------------------------------------------------------------------------
 
-describe('out of combat the strip renders nothing', () => {
-  it('costs the map zero pixels when engagement is 0', () => {
-    // Free movement needs no turn tracker: nobody blocks and nothing is owed. A
-    // permanently visible strip of eight ticks trains people to stop looking at
-    // the one surface that has to be believed the moment it does mean something.
+describe('out of combat the top HUD still costs one line and no more', () => {
+  it('is the same height whether or not there is a fight on', () => {
+    /**
+     * ═══ THE CARD STRIP IS WHY THIS EXISTS AND WHY IT IS NOW ONE NUMBER ═══
+     * `turnHudHeight(view)` was `TURN_BAR_H + turnCardsHeight(turn)`, and the
+     * strip was ZERO out of combat and 46 in it, so this was the place that
+     * pinned the 46 to `inCombat`. With the cards deleted the top HUD is
+     * `TURN_BAR_H` in both states — a claim worth keeping, because every band in
+     * main.ts stacks against it and the ratchet that cost the Case Log its size
+     * on every fight came from it moving. test/client/turnband.test.ts measures
+     * what the map got back.
+     */
     const { world, cast } = room();
     const dalt = cast[0];
     expect(dalt).toBeDefined();
@@ -358,16 +367,11 @@ describe('out of combat the strip renders nothing', () => {
     const engaged = frameFor(world, dalt, barrier({ engagement: 3, whoseTurn: ['actor_a'] }));
 
     expect(free.inCombat).toBe(false);
-    expect(turnCardsHeight(free)).toBe(0);
-    expect(turnHudHeight(view(free))).toBe(TURN_BAR_H);
-
     expect(engaged.inCombat).toBe(true);
-    expect(turnCardsHeight(engaged)).toBe(TURN_CARDS_H);
-    expect(turnHudHeight(view(engaged))).toBe(TURN_BAR_H + TURN_CARDS_H);
+    expect(TURN_BAR_H).toBe(14);
   });
 
-  it('draws nothing before the first frame arrives, either', () => {
-    expect(turnCardsHeight(null)).toBe(0);
+  it('says nothing before the first frame arrives, either', () => {
     expect(selfCard(null)).toBeNull();
     expect(owedCount(null)).toBe(0);
     expect(isYourTurn(view(null))).toBe(false);
@@ -478,10 +482,10 @@ describe('a body on the floor is flagged whatever else is true of it', () => {
     );
   });
 
-  it('keeps the fallen ally on the strip, in place, wearing the same face', () => {
-    // A card that vanished when somebody went down would delete the person the
+  it('keeps the fallen ally in the frame, in place, wearing the same face', () => {
+    // A record that vanished when somebody went down would delete the person the
     // party most needs to be looking at; a portrait that changed would be the
-    // one card they are trying to recognise. `goDown` swaps the map sprite to
+    // one face they are trying to recognise. `goDown` swaps the map sprite to
     // the `_downed_s` variant and the projector strips the suffix for that
     // reason alone.
     const { world, cast } = room();
@@ -501,9 +505,6 @@ describe('a body on the floor is flagged whatever else is true of it', () => {
 
     expect(fallen.actors.map((c) => c.id)).toEqual(standing.actors.map((c) => c.id));
     expect(fallen.actors.map((c) => c.portrait)).toEqual(portraits);
-    // And the strip is still drawn, at the same height — the map must not resize
-    // because somebody fell over.
-    expect(turnCardsHeight(fallen)).toBe(turnCardsHeight(standing));
   });
 
   it('is never down without a survival table to say so', () => {
@@ -616,325 +617,5 @@ describe('the banner answers whether you are done', () => {
     const line = bannerFor(view(frame, 12_000, BUDGET));
     expect(line.startsWith('YOUR MOVE — BELL 12s')).toBe(true);
     expect(line).toContain('3/6 AP');
-  });
-});
-
-/**
- * ═══════════════════════════════════════════════════════════════════════════
- *      WHAT THE SELF CARD ACTUALLY PAINTS — AND ONLY A PAINT TEST SEES IT.
- * ═══════════════════════════════════════════════════════════════════════════
- *
- * This client has been bitten twice by trusting a non-paint instrument about a
- * painted thing: two conversation topics with no button, and a Case Log that
- * vanished in every fight. Both were invisible to every test in the tree because
- * no test laid anything out. So the budget on the self card is asserted by
- * recording the draw calls, which is the only instrument that can see it.
- */
-type PaintOp = { readonly kind: string; readonly args: readonly unknown[] };
-
-/** The Proxy recorder the other ui/ tests here use. Six pixels a character. */
-function recorder(ops: PaintOp[]): CanvasRenderingContext2D {
-  return new Proxy(
-    {},
-    {
-      get: (_target, prop: string) => {
-        if (prop === 'measureText') return (text: string) => ({ width: text.length * 6 });
-        if (prop === 'canvas') return { width: 960, height: 540 };
-        return (...args: unknown[]) => {
-          ops.push({ kind: prop, args });
-        };
-      },
-      set: () => true,
-    },
-  ) as unknown as CanvasRenderingContext2D;
-}
-
-const NO_SPRITES = { sprite: () => undefined } as unknown as Parameters<
-  typeof drawTurnCards
->[0]['sprites'];
-
-function paintedTexts(v: TurnView): readonly string[] {
-  const ops: PaintOp[] = [];
-  drawTurnCards({ ctx: recorder(ops), sprites: NO_SPRITES, view: v, width: 960, y: 0 });
-  return ops.flatMap((op) => (op.kind === 'fillText' ? [String(op.args[0])] : []));
-}
-
-describe('the card wearing your own face', () => {
-  const BUDGET = { ap: 3, maxAp: 6, mp: 2, maxMp: 3 };
-
-  it('spends its state line on the round while the round is open', () => {
-    /**
-     * ON YOUR OWN CARD, "WAITING" IS THE LEAST USEFUL WORD ON THE STRIP. The
-     * caret, the gold border, the '>' on the name and the corner chip all say
-     * it is you and that you owe a move; none of them says whether you can do
-     * anything else. That is the question, so that line answers it.
-     */
-    const { world, cast } = room();
-    const sam = cast[1];
-    if (sam === undefined) throw new Error('no cast');
-    const frame = frameFor(world, sam, barrier({ engagement: 3, whoseTurn: ['actor_b'] }));
-
-    /**
-     * DIFFERENTIAL, BECAUSE OTHER CARDS ARE ALLOWED TO SAY `WAITING`. A flat
-     * "no WAITING anywhere" assertion was tried and is wrong — it passes only
-     * on a strip where nobody else owes a move, which is not the case this is
-     * about. What must be true is that EXACTLY ONE card traded the word for the
-     * round: the one wearing your face.
-     */
-    const withBudget = paintedTexts(view(frame, null, BUDGET));
-    const without = paintedTexts(view(frame, null, null));
-
-    // ═══ THE ASSERTION THAT WAS FAILING ═══
-    expect(withBudget).toContain('3AP 2MP');
-    expect(without).not.toContain('3AP 2MP');
-    expect(withBudget.filter((t) => t === 'WAITING')).toHaveLength(
-      without.filter((t) => t === 'WAITING').length - 1,
-    );
-  });
-
-  it('says WAITING again when there is no budget to show', () => {
-    // THE HALF THAT MUST NOT MOVE. A client that has not had a `resource` frame
-    // yet, or one outliving a server that never sends MP, still gets the word —
-    // a blank line where the state used to be would be strictly worse than the
-    // word that was there before.
-    const { world, cast } = room();
-    const sam = cast[1];
-    if (sam === undefined) throw new Error('no cast');
-    const frame = frameFor(world, sam, barrier({ engagement: 3, whoseTurn: ['actor_b'] }));
-
-    expect(paintedTexts(view(frame, null, null))).toContain('WAITING');
-  });
-
-  it('never prints a budget on somebody else’s card', () => {
-    /**
-     * ═══ THE ONE THAT WOULD BE A LEAK ═══
-     * `ResourceView` is viewer-private and the party pane has never claimed
-     * otherwise. The budget is passed to `drawCard` only for the self card, so
-     * this asserts the count: exactly one budget line on a strip of three.
-     */
-    const { world, cast } = room();
-    const sam = cast[1];
-    if (sam === undefined) throw new Error('no cast');
-    const frame = frameFor(
-      world,
-      sam,
-      barrier({ engagement: 3, whoseTurn: ['actor_a', 'actor_b', 'actor_c'] }),
-    );
-
-    const budgetLines = paintedTexts(view(frame, null, BUDGET)).filter((t) =>
-      /\d+AP \d+MP/.test(t),
-    );
-    expect(budgetLines).toHaveLength(1);
-  });
-
-  it('gives the word back once the turn is over', () => {
-    // DONE and STANDBY are states you need told, and a budget printed under a
-    // finished card would read as an invitation to spend it.
-    const { world, cast } = room();
-    const sam = cast[1];
-    if (sam === undefined) throw new Error('no cast');
-    const frame = frameFor(
-      world,
-      sam,
-      barrier({ engagement: 3, whoseTurn: ['actor_c'], committed: ['actor_b'] }),
-    );
-
-    const texts = paintedTexts(view(frame, null, BUDGET));
-    expect(texts).toContain('DONE');
-    expect(texts.filter((t) => /\d+AP \d+MP/.test(t))).toHaveLength(0);
-  });
-});
-
-/**
- * ═══════════════════════════════════════════════════════════════════════════
- *        A LARGE HOSTILE KEEPS ITS FACE, AND A PLAYER'S FACE STAYS A FACE
- * ═══════════════════════════════════════════════════════════════════════════
- *
- * The hostile card wears a monster's MAP sprite, and four of the Index's bodies
- * — the husk, the husk elite, the eidolon and the glut — are 96x128. Halving
- * that gives 48x64, which is taller than any card, so the card refused the
- * sprite and printed "TT" for the very thing the party was fighting. The cap
- * that fixes it must not reach a player's 64x64 face, so both halves are here.
- *
- * THE SIZES ARE WRITTEN OUT, not read from disk. The PNGs are not in the
- * repository and a clone must still pass; these are the manifest's sizes for
- * the ids named, so a card is fed exactly what a deployment feeds it.
- */
-type SpriteSourceArg = Parameters<typeof drawTurnCards>[0]['sprites'];
-
-/** Each image is tagged with its id, so a recorded `drawImage` says what it drew. */
-function sized(sizes: Readonly<Record<string, readonly [number, number]>>): SpriteSourceArg {
-  return {
-    sprite: (id: string) => {
-      const size = sizes[id];
-      if (size === undefined) return undefined;
-      return { id, image: { id } as unknown as HTMLImageElement, w: size[0], h: size[1] };
-    },
-  };
-}
-
-/** The destination rectangle of every blit of `id`, as `[x, y, w, h]`. */
-function blitsOf(ops: readonly PaintOp[], id: string): readonly (readonly unknown[])[] {
-  return ops.flatMap((op) =>
-    op.kind === 'drawImage' && (op.args[0] as { readonly id?: unknown }).id === id
-      ? [op.args.slice(1)]
-      : [],
-  );
-}
-
-function paint(v: TurnView, sprites: SpriteSourceArg, width: number): readonly PaintOp[] {
-  const ops: PaintOp[] = [];
-  drawTurnCards({ ctx: recorder(ops), sprites, view: v, width, y: 0 });
-  return ops;
-}
-
-function textsOf(ops: readonly PaintOp[]): readonly string[] {
-  return ops.flatMap((op) => (op.kind === 'fillText' ? [String(op.args[0])] : []));
-}
-
-/**
- * THE HOSTILE CARD'S PORTRAIT BOX, in both forms the strip has, on a strip of
- * four cards (three detectives, then the side). Its top is band padding 3 +
- * caret 4 + border 2 = 9, and it is 32 tall in both forms: the card is the
- * 32px portrait plus its border.
- *
- *   WIDE at 960: every card is the 168 maximum, so the side's card starts at
- *   3 + 3 x 171 = 516 and its box at 518, 32 wide.
- *   COMPACT at 200: (194 - 9) / 4 = 46 is short of the 124 a name column
- *   needs, so every card is the 44 floor; the side's starts at 3 + 3 x 47 =
- *   144 and its box at 146, 40 wide (the whole interior).
- */
-const FORMS = [
-  { form: 'wide', width: 960, box: { x: 518, y: 9, w: 32, h: 32 } },
-  { form: 'compact', width: 200, box: { x: 146, y: 9, w: 40, h: 32 } },
-] as const;
-
-/** The manifest's sizes. A 48x64 body is the ordinary case; 96x128 is the large one. */
-const BODIES = [
-  { name: 'Index Husk', sprite: 'enemy_index_husk_s', w: 96, h: 128 },
-  { name: 'Index Wraith', sprite: 'enemy_index_wraith_s', w: 48, h: 64 },
-] as const;
-
-/** The three detectives' class icons, which `projectTurn` picks from their sprites. */
-const FACES = [
-  'icon_character_the_watchman',
-  'icon_character_the_inspector',
-  'icon_character_the_alchemist',
-] as const;
-
-describe('a portrait lands at a whole fraction of its art, on both forms of the card', () => {
-  const cases = FORMS.flatMap((form) => BODIES.map((body) => ({ ...form, body })));
-
-  it.each(cases)(
-    'draws a $body.w x $body.h hostile at 24x32 on the $form card, and no letters',
-    ({ width, box, body }) => {
-      const { world, cast } = room(body);
-      const sam = cast[1];
-      if (sam === undefined) throw new Error('no cast');
-      const frame = frameFor(world, sam, barrier({ engagement: 3, whoseTurn: ['actor_b'] }));
-      const side = frame.actors.at(-1);
-      expect(side?.kind).toBe(TurnActorKind.Monsters);
-      expect(side?.portrait).toBe(body.sprite);
-
-      const ops = paint(view(frame), sized({ [body.sprite]: [body.w, body.h] }), width);
-
-      // A QUARTER OF 96x128 IS THE SAME 24x32 A 48x64 BODY GETS AT A HALF, so both
-      // rows expect one rectangle: centred across the box, on its floor. (The
-      // floor and the middle are the same row here — a 32-tall body in a 32-tall
-      // box has no slack — so this pins where it lands, not which anchor put it
-      // there.)
-      expect(blitsOf(ops, body.sprite)).toEqual([
-        [box.x + (box.w - 24) / 2, box.y + box.h - 32, 24, 32],
-      ]);
-      // THE LETTERS ARE THE REFUSAL, and they are only absent because the body
-      // drew. The same frame with no art at all must still print them, or the
-      // assertion below it could never fail.
-      expect(textsOf(paint(view(frame), NO_SPRITES, width))).toContain('TT');
-      expect(textsOf(ops)).not.toContain('TT');
-    },
-  );
-
-  it.each(FORMS)(
-    'halves every 64x64 face on the $form card and never quarters one',
-    ({ width }) => {
-      /**
-       * ═══ WHY THE CAP OF 4 CANNOT SMUDGE A FACE ═══
-       * `blitReduced` takes the smallest factor that fits, and every portrait box
-       * this layout makes is at least 32 square, so a 64x64 icon always fits at a
-       * half and the 4 is never reached. That is a property of the LAYOUT, not of
-       * the cap. These two rows pin the faces on the strip this file already
-       * paints; the sweep below is what fails if a narrower card ever makes it
-       * untrue on any other, rather than a 16px face quietly shipping.
-       */
-      const { world, cast } = room();
-      const sam = cast[1];
-      if (sam === undefined) throw new Error('no cast');
-      const frame = frameFor(world, sam, barrier({ engagement: 3, whoseTurn: ['actor_b'] }));
-      expect(frame.actors.map((card) => card.portrait)).toEqual([...FACES, HUSK.sprite]);
-
-      const sizes = Object.fromEntries(FACES.map((id) => [id, [64, 64] as const]));
-      const ops = paint(view(frame), sized(sizes), width);
-
-      for (const id of FACES) {
-        expect(
-          blitsOf(ops, id).map((rect) => rect.slice(2)),
-          id,
-        ).toEqual([[32, 32]]);
-      }
-    },
-  );
-
-  it('halves every face on every strip the layout can make, one to six detectives', () => {
-    /**
-     * ═══ TWO STRIPS ARE NOT EVERY STRIP ═══
-     * The rows above paint four cards at 960 and at 200. A card floor that gave
-     * way only when the strip is crowded — six detectives in a narrow window —
-     * leaves both of those untouched and quarters every face on a full party,
-     * and it passed all of them. So this paints every party size up to the cap,
-     * plus the side, at every width up to 1200: seven cards at the 168 maximum
-     * with six gaps and the band's padding, past which nothing moves.
-     *
-     * TWO HALVES, BECAUSE A NARROWED BOX FAILS TWO WAYS. Under this cap a face
-     * lands at 16x16; under a cap of 2 it is refused and the card prints letters
-     * instead. So every strip must draw at least one face (the first card is
-     * always a player, and at least one card is always drawn), and every face it
-     * draws must be 32x32.
-     */
-    const wrong: string[] = [];
-    for (let players = 1; players <= 6; players += 1) {
-      const world = createWorld('turncards');
-      const cast = Array.from({ length: players }, (_, i) =>
-        world.addPlayer(`actor_${String(i)}`, `P${String(i)}`),
-      );
-      world.addMonster('mon_a', { ...HUSK, x: 8, y: 2, profile: AiProfile.MeleeChaser });
-      const viewer = cast[0];
-      if (viewer === undefined) throw new Error('no cast');
-      const frame = frameFor(
-        world,
-        viewer,
-        barrier({ engagement: 3, whoseTurn: cast.map((actor) => actor.id) }),
-      );
-      expect(frame.actors).toHaveLength(players + 1);
-
-      const faces = new Set(
-        frame.actors.flatMap((card) =>
-          card.kind === TurnActorKind.Player && card.portrait !== undefined ? [card.portrait] : [],
-        ),
-      );
-      const sprites = sized(Object.fromEntries([...faces].map((id) => [id, [64, 64] as const])));
-      const v = view(frame);
-
-      for (let width = 1; width <= 1200; width += 1) {
-        const drawn = paint(v, sprites, width).flatMap((op) =>
-          op.kind === 'drawImage' && faces.has(String((op.args[0] as { readonly id?: unknown }).id))
-            ? [op.args.slice(3)]
-            : [],
-        );
-        if (drawn.length === 0 || drawn.some(([w, h]) => w !== 32 || h !== 32)) {
-          wrong.push(`${String(players)} detectives at ${String(width)}: ${JSON.stringify(drawn)}`);
-        }
-      }
-    }
-    expect(wrong).toEqual([]);
   });
 });

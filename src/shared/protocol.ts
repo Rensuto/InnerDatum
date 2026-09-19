@@ -116,9 +116,11 @@
  *
  * So `TurnMsg` grew three fields — `engagement`, `inCombat` and `actors` — and
  * `turn` became per-recipient (`ViewerMsg`, because `isSelf` is true for one
- * person). `actors` is a card strip that says WHO STILL OWES A DECISION; it is
- * emphatically not an initiative order, and the long note above `TurnActorKind`
- * is the one to read before drawing it.
+ * person). `actors` says WHO STILL OWES A DECISION; it is emphatically not an
+ * initiative order, and the long note above `TurnActorKind` is the one to read
+ * before drawing it. The surface that draws it is the PARTY PANE — a strip of
+ * portrait cards across the top of the screen answered this until 2026-09-18,
+ * when the author ruled it out ("no cards at all, no turn order indicator").
  *
  * ONE INBOUND VERB WAS ADDED AFTER v5 AND THE VERSION DID NOT MOVE.
  *
@@ -2015,6 +2017,41 @@ export type ProjectileView = {
    * have two turns to move" and "it lands before you can press a key".
    */
   turnsToImpact: number;
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * WHAT ELEMENT IS COMING AT YOU. The only part of `damage` that is sent.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * The orb was drawn as an orange square because nothing on the wire said what
+   * it was, so the renderer had one picture for every shot in the game. There
+   * are twelve `ui_fx_bolt_*` strips in the manifest — one per ToME damage type,
+   * six of which this game can actually fire — and none of them could be chosen
+   * from a frame carrying only a position.
+   *
+   * ═══ THE TYPE, NOT THE NUMBER, AND NOT A SPRITE ID ═══
+   * `projectProjectiles`'s own note bans a spread over the orb precisely so that
+   * the frozen roll, the armour penetration and the flight plan stay off the
+   * wire — *"a client that knew it could decide whether to bother dodging"*.
+   * That argument is about the NUMBER. The ELEMENT is already visible to the
+   * player on every surface the shot touches: the Case Log prints "9 fire
+   * damage" in `DAMAGE_INK[Fire]` the instant it lands, a burning tile is washed
+   * in `ZONE_WASH_INK`, and upstream's own projectile IS its element — a bolt in
+   * ToME is drawn by the particle emitter its damage type names, so withholding
+   * it here would be a divergence rather than a protection.
+   *
+   * And it is the TYPE rather than an asset key, for the reason every other art
+   * decision in this client is made client-side (`TILE_SPRITES`,
+   * `MARKER_SPRITE`, `TRAP_SPRITE`): the server must not know how the art is
+   * cut, or re-cutting a strip becomes a protocol change.
+   *
+   * ═══ OPTIONAL, AND THEREFORE NO `PROTOCOL_VERSION` BUMP ═══
+   * `shared/version.ts` states the rule three times over — *"Adding an optional
+   * field needs no bump; the bump is for renames, semantic changes and
+   * removals"* — and `sourceId` two fields up is the precedent. A client that
+   * does not read it is unaffected; a client that does falls back to a drawn
+   * dart, which is what a bare clone with no art at all draws anyway.
+   */
+  damageType?: DamageType;
 };
 
 /**
@@ -2428,9 +2465,9 @@ export type PartyStateMember = {
   name: string;
   /**
    * AN ASSET KEY, NEVER A PATH — the same contract as `ActorView.sprite` and
-   * `TurnActor.portrait`, and it is the same class icon the turn card uses, so
-   * one face means one person across both surfaces. Absent when there is no
-   * honest picture to use.
+   * `TurnActor.portrait`, and it is the same class icon the inventory doll
+   * wears, so one face means one person wherever it is drawn. Absent when there
+   * is no honest picture to use.
    */
   portrait?: string;
   hp: number;
@@ -4052,7 +4089,7 @@ export type PartyAction = (typeof PartyAction)[keyof typeof PartyAction];
  *   sent one would be naming something the server has no table for.
  *
  *   IT NAMES SOMETHING THE SENDER CAN ALREADY SEE. Every actor id on this wire
- *   arrived in `ActorView` — on the map, in the party panel, on a turn card —
+ *   arrived in `ActorView` — on the map, in the party panel, in the Case Log —
  *   so a `targetId` discloses nothing the recipient was not already sent. That
  *   is what makes right-clicking somebody's avatar a legal way to invite them.
  *
@@ -4385,6 +4422,35 @@ const hotbarStyleSchema = z.strictObject({
   icon: z.number().int().min(16).max(128),
   /** Backing opacity as a percentage. The slots never fade. */
   opacity: z.number().int().min(10).max(100),
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * HOW MANY SLOTS THE BAR HAS — the cogwheel's `SLOTS` row and the grip's drag.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `.default(...)` AND THAT IS WHAT MAKES IT SAFE TO ADD. This schema also
+   * validates what comes back OUT of a character file, and every save written
+   * before the bar could be resized has a `hotbarStyle` with three keys. A
+   * required field would fail those saves — and `parsePanels` (persist/saves.ts)
+   * DROPS a layout it cannot parse — so the visible bug would not be "the bar is
+   * the wrong width", it would be every panel on the screen jumping back to its
+   * computed position for everyone who had ever touched a cogwheel. The default
+   * is the count that shipped, so an old file reads as "never changed this",
+   * which is exactly what it is.
+   *
+   * NO `PROTOCOL_VERSION` BUMP, and it is the same shape this file has called
+   * textbook three times: a defaulted, OPTIONAL-on-the-way-in field inside an
+   * already-nullable object. An older client never sends one and reads as the
+   * default; an older server round-trips a key it does not name back out of the
+   * file untouched, because `panels` is stored whole.
+   *
+   * BOUNDED WIDE RATHER THAN TO THE CLIENT'S POOL, for `logStyleSchema`'s
+   * stated reason: the pool is a CLIENT fact (`HOTBAR_SLOT_POOL`, eighteen
+   * today, and the number of digit rows is the client's business), and a server
+   * that hard-coded it would refuse a bar the day the client grew a third row —
+   * a refusal nobody could diagnose from either side. The client clamps what it
+   * reads (`snapHotbarStyle`); this stops a hostile file claiming a million.
+   */
+  slots: z.number().int().min(1).max(64).default(13),
 });
 
 /**
@@ -4923,6 +4989,56 @@ export type DamageEvent = {
   sourceId?: string;
   /**
    * ═══════════════════════════════════════════════════════════════════════════
+   * WHICH WAY A BLOW YOU CANNOT SEE CAME FROM. A QUADRANT, NEVER A TILE.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Asked for: *"Tales of Maj Eyal combat will tell you which direction the
+   * enemy is facing. we need to give a small indication to the direction that
+   * the attack or enemy targetting you is coming from."*
+   *
+   * ═══ WHAT UPSTREAM ACTUALLY DOES, AND WHAT IT DOES NOT ═══
+   * ToME's facing tell is ART, not a field. `tome/class/Actor.lua:1427` flips
+   * the sprite on a move (`if self.x < ox then MOflipX(isTileFlipped())`) and
+   * `tome/class/interface/Combat.lua:649` flips it toward the target at the
+   * moment of a blow; `isTileFlipped` (`Actor.lua:4014-4019`) says which way
+   * the art natively points and `engine/Entity.lua:591-603` does the flipping.
+   * That is horizontal only — there is a `MOflipY` and NOTHING calls it for
+   * facing — and it exists on the ATTACKER's sprite, so it tells you nothing at
+   * all about a body you cannot see. Upstream has no victim-side direction cue.
+   *
+   * The facing half ports with no wire at all: the client already holds
+   * `move.fromX/fromY` and `attack.x/y`, which is the same pair of tiles those
+   * two Lua lines compare, so a heading is derivable from the event stream and
+   * lives in the renderer where upstream's also lives. THIS FIELD IS THE OTHER
+   * HALF — the one upstream does not have — and it is a LABELLED DIVERGENCE.
+   *
+   * ═══ WHY IT IS A QUADRANT AND NOT AN OCTANT ═══
+   * When the dealer is VISIBLE the client holds both tiles and can work the
+   * bearing out to whatever precision it likes; nothing is added here and this
+   * field is absent. It is sent ONLY where `sourceId` was redacted — a blow out
+   * of the dark — and there it is new information the server chose to give.
+   *
+   * An OCTANT plus the adjacency a melee blow implies is ONE TILE, which is a
+   * different game: it would let a player swing exactly at an invisible body
+   * every time. Four quadrants never narrow further than three adjacent tiles,
+   * so the tell answers "which way do I face, which way do I run" and never
+   * "which square is it standing on". The honesty is IN THE PROTOCOL rather
+   * than in the renderer, so no drawing change can leak the finer fact.
+   *
+   * Ties (a perfect diagonal) go to the VERTICAL axis. Some rule has to break
+   * them and a deterministic one leaks nothing: the answer is still one of four.
+   *
+   * ═══ PRESENT EXACTLY WHEN `sourceId` IS ABSENT AND THERE WAS A DEALER ═══
+   * So the pair is readable: a named dealer means you can see it, a bare
+   * quadrant means you cannot, and neither means the damage had no dealer at
+   * all (a bleed tick, a fall). A client that ignores the field renders exactly
+   * what it rendered before — which is why this is OPTIONAL and additive and
+   * forces no `PROTOCOL_VERSION` bump, under the rule `type` and `crit` two
+   * fields down already state at length.
+   */
+  from?: 'n' | 'e' | 's' | 'w';
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
    * WHAT IT WAS, AND WHETHER IT LANDED HARD.
    * ═══════════════════════════════════════════════════════════════════════════
    *
@@ -5329,11 +5445,12 @@ export type LeftMsg = {
  * batch. There is no order among the players because there is no queue to be
  * in. Anyone in `actors` whose `state` is `waiting` can act RIGHT NOW.
  *
- * So a card strip built from this answers exactly one question — WHO HAS NOT
+ * So anything built from this answers exactly one question — WHO HAS NOT
  * DECIDED YET — and the failure mode of getting it wrong is specific and bad: a
- * strip that reads as a running order makes three players sit and wait for
+ * surface that reads as a running order makes three players sit and wait for
  * "their go" while the server is already waiting on all four. That is the
  * spinner D1 exists to prevent, arrived at through the UI instead of the engine.
+ * It is why the party pane's rows are never sorted by turn state.
  *
  * WHICH IS WHY THE ORDER IS JOIN ORDER AND IS STABLE ACROSS FRAMES. It carries
  * no information at all, on purpose: nothing in it can be mistaken for a queue,

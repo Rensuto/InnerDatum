@@ -119,8 +119,8 @@ export type PurseOptions = {
  *
  * `save`/`restore` around everything, because it sets `font`, `textAlign`,
  * `textBaseline` and `fillStyle` and the world painter re-sets none of them —
- * `ui/xpbar.ts` records the same trap and `ui/turncards.ts:786-790` records it
- * for `ctx.filter`.
+ * `ui/xpbar.ts` records the same trap and `ui/panel.ts`'s `drawScrim` records
+ * it for `globalAlpha`.
  *
  * NO SPRITE, for `ui/xpbar.ts`'s reason, and the accurate version of it: money
  * DOES have art — `item_iron_ingot`, which `content/money.ts` names as "the

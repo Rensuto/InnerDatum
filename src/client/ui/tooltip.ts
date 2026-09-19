@@ -30,9 +30,9 @@
  * SAVE/RESTORE IS NOT OPTIONAL
  * ===========================================================================
  * Canvas state leaks between painters, and this one runs from `paintHud` in the
- * middle of a frame. ui/turncards.ts sets `ctx.filter` and warns what a leaked
- * one looks like: not a missing restore, but a BROKEN PNG — every sprite drawn
- * afterwards comes out grey and the search starts in the asset pipeline. So the
+ * middle of a frame. A leaked `ctx.filter` does not look like a missing
+ * restore: it looks like a BROKEN PNG — every sprite drawn afterwards comes out
+ * grey and the search starts in the asset pipeline. So the
  * whole draw is wrapped, and `imageSmoothingEnabled`, `textAlign` and
  * `textBaseline` are re-asserted on entry like every sibling in this directory
  * rather than inherited from whoever drew last.
@@ -47,13 +47,35 @@
  * is contextmenu.ts's algorithm verbatim — a card that slid would drift away
  * from the thing it describes.
  *
- * main.ts draws it after the respawn plate and immediately BEFORE the combat
- * banner, so the banner and the token menu both still win: an incidental hover
- * is the weakest claim on that screen space of the three.
+ * ═══════════════════════════════════════════════════════════════════════════
+ * IT GETS THE LAST WORD OVER EVERY PANEL, AND IT USED NOT TO
+ * ═══════════════════════════════════════════════════════════════════════════
+ * This read *"main.ts draws it after the respawn plate and immediately BEFORE
+ * the combat banner, so the banner and the token menu both still win"*, and it
+ * was describing the middle of `paintHud` rather than the end: the world map and
+ * the dialogue window were both painted after it and both covered it.
+ *
+ * There is one card block at the end of `paintHud` now — `paintPointerCards` —
+ * and the two surfaces that still outrank a card are the two that suppress it
+ * outright rather than covering it: the token menu (which opens AT the pointer,
+ * so the two overlap by construction) and the class picker (a scrimmed modal).
+ *
+ * THE COMBAT BANNER USED TO OUTRANK IT AND NO LONGER DOES. That is a decision,
+ * argued at `paintPointerCards`: the three precedences this file, the dialogue
+ * window and the banner had each written down formed a cycle, and the banner's
+ * claim over a card was the cheapest of the three to cut.
+ *
+ * ═══ AND `obstacle`, WHICH PAINT ORDER CANNOT ANSWER ═══
+ * The Case Log's composer is a real `<input>` floating over the canvas, so it
+ * beats every pixel drawn here whatever the order. `clearOfObstacle` in
+ * ui/panel.ts carries the whole argument and the arithmetic; this file only
+ * passes the rect along, so the actor card, the floor card and the hover card
+ * dodge the row by the same rule rather than by three.
  */
 
 import { PALETTE } from '../render/canvas.ts';
 import {
+  clearOfObstacle,
   drawHeader,
   drawPanel,
   fitText,
@@ -111,6 +133,8 @@ export type TooltipDrawOptions = {
   readonly py: number;
   readonly viewportW: number;
   readonly viewportH: number;
+  /** The DOM command row, when it is on screen. See `clearOfObstacle`. */
+  readonly obstacle?: PanelRect;
 };
 
 /** One laid-out line: a label on the left, a value on the right. */
@@ -140,7 +164,7 @@ function clamp(value: number, min: number, max: number): number {
  */
 function tipLines(view: InspectView): readonly TipLine[] {
   return [
-    // ═══ `ceil`, THE SAME ROUNDING partypanel.ts AND turncards.ts USE ═══
+    // ═══ `ceil`, THE SAME ROUNDING partypanel.ts AND charsheet.ts USE ═══
     // `InspectView.hp` is the raw server-side number, and since the scheduler
     // moved onto the real damage pipeline that number is routinely fractional
     // (`dam * pres - armour + dam * (1 - pres)` does not land on integers).
@@ -177,6 +201,8 @@ export function tooltipRect(
   py: number,
   viewportW: number,
   viewportH: number,
+  /** See `clearOfObstacle`. Optional, so every fixture keeps its old placement. */
+  obstacle?: PanelRect,
 ): PanelRect {
   const lines = tipLines(view);
   const blocked = view.blockedReason;
@@ -197,12 +223,17 @@ export function tooltipRect(
   // tiles away from the one it is anchored to.
   const x = px + w <= viewportW ? px : Math.max(0, px - w);
   const y = py + h <= viewportH ? py : Math.max(0, py - h);
-  return {
-    x: clamp(x, 0, Math.max(0, viewportW - w)),
-    y: clamp(y, 0, Math.max(0, viewportH - h)),
-    w,
-    h,
-  };
+  // LAST, AFTER THE CLAMP — `hoverCardRect` states why in one line.
+  return clearOfObstacle(
+    {
+      x: clamp(x, 0, Math.max(0, viewportW - w)),
+      y: clamp(y, 0, Math.max(0, viewportH - h)),
+      w,
+      h,
+    },
+    obstacle,
+    viewportH,
+  );
 }
 
 /**
@@ -276,6 +307,8 @@ export type LootTipOptions = {
   readonly py: number;
   readonly viewportW: number;
   readonly viewportH: number;
+  /** The DOM command row, when it is on screen. See `clearOfObstacle`. */
+  readonly obstacle?: PanelRect;
 };
 
 /**
@@ -360,6 +393,8 @@ export function lootTipRect(
   py: number,
   viewportW: number,
   viewportH: number,
+  /** See `clearOfObstacle`. Optional, so every fixture keeps its old placement. */
+  obstacle?: PanelRect,
 ): PanelRect {
   const shown = Math.min(items.length, LOOT_MAX_ROWS);
   const overflow = items.length - shown;
@@ -390,16 +425,16 @@ export function lootTipRect(
   // themselves differently at a screen edge read as two different features.
   const x = px + w <= viewportW ? px : Math.max(0, px - w);
   const y = py + h <= viewportH ? py : Math.max(0, py - h);
-  return { x, y, w, h };
+  return clearOfObstacle({ x, y, w, h }, obstacle, viewportH);
 }
 
 /** The word the header uses. Kept short so the box does not open on it. */
 const HEADER_CHARS = 12;
 
 export function drawLootTip(opts: LootTipOptions): void {
-  const { ctx, sprites, items, underfoot, px, py, viewportW, viewportH } = opts;
+  const { ctx, sprites, items, underfoot, px, py, viewportW, viewportH, obstacle } = opts;
   if (items.length === 0) return;
-  const rect = lootTipRect(items, underfoot, px, py, viewportW, viewportH);
+  const rect = lootTipRect(items, underfoot, px, py, viewportW, viewportH, obstacle);
 
   ctx.save();
   ctx.imageSmoothingEnabled = false;
@@ -481,8 +516,8 @@ export function drawLootTip(opts: LootTipOptions): void {
 }
 
 export function drawTooltip(opts: TooltipDrawOptions): void {
-  const { ctx, sprites, view, px, py, viewportW, viewportH } = opts;
-  const rect = tooltipRect(view, px, py, viewportW, viewportH);
+  const { ctx, sprites, view, px, py, viewportW, viewportH, obstacle } = opts;
+  const rect = tooltipRect(view, px, py, viewportW, viewportH, obstacle);
 
   ctx.save();
   ctx.imageSmoothingEnabled = false;

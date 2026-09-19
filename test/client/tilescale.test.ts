@@ -5,7 +5,7 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { DEFAULT_VIEWPORT, viewLayout } from '../../src/client/render/canvas.ts';
+import { DEFAULT_VIEWPORT, cameraAxis, viewLayout } from '../../src/client/render/canvas.ts';
 import { TILE_PX, UI_SCALE_MAX, UI_SCALE_MIN } from '../../src/shared/version.ts';
 
 /**
@@ -176,12 +176,18 @@ describe('how big a cell is', () => {
  * bigger than the canvas, `offset*` goes negative, and the edges of the map are
  * simply gone.
  *
- * WHICH INCLUDES YOU. `cameraAxis` CLAMPS at the level edge rather than
- * centring — it has to, or the camera would show the void beyond the map — so a
- * player standing on the top row of a level is drawn at backbuffer y 0. At
- * 1262×428, where `offsetY` was -42, that put screen y at -42: two thirds of
- * your own character above the top of the screen, on the window this game is
- * actually played in.
+ * WHICH INCLUDED YOU. `cameraAxis` CLAMPED at the level edge rather than
+ * centring, so a player standing on the top row of a level was drawn at
+ * backbuffer y 0. At 1262×428, where `offsetY` was -42, that put screen y at
+ * -42: two thirds of your own character above the top of the screen, on the
+ * window this game is actually played in.
+ *
+ * THAT CLAMP IS GONE — the camera is dead centre and the void beyond the map is
+ * drawn as void — so the corner no longer exposes this on its own. The buffer
+ * arithmetic is what still has to hold, and it is what the two cases below
+ * assert; the body is checked at the corner AND in the middle, because with a
+ * centred camera those are the same claim and the fixture must not be able to
+ * pass by being the easy one.
  *
  * The two assertions are separate because they fail for different reasons. The
  * first is arithmetic about the buffer; the second is what a player sees, and
@@ -227,29 +233,32 @@ describe('the map never overflows the window', () => {
     }
   });
 
-  it('keeps a player standing on a level edge fully on screen', () => {
+  it('keeps a player fully on screen, on a level edge and in the middle', () => {
     /**
-     * The camera arithmetic `cameraAxis` performs, at the one position that
-     * exposes the clamp: the top-left corner of a level far bigger than the
-     * view. A centred camera would hide this — the bug only appears where the
-     * clamp stops the camera following.
+     * THE REAL `cameraAxis`, not a copy of it. This case used to restate the
+     * clamped form inline — `min(max(floor(tile - view/2), 0), world - view)` —
+     * and a restatement is a second answer to where the camera is: the day the
+     * real one changed, this would have gone on asserting the old transform and
+     * passing. It changed.
+     *
+     * TWO ROWS, because with a dead-centre camera the corner and the middle are
+     * the same claim and a fixture that only asked about one of them could pass
+     * by accident.
      */
-    const world = 100 * TILE_PX;
     for (const [w, h, dpr] of EDGES) {
       const got = viewLayout(w, h, DEFAULT_VIEWPORT, dpr);
-      const camY = Math.min(
-        Math.max(Math.floor(TILE_PX / 2 - got.logicalH / 2), 0),
-        world - got.logicalH,
-      );
-      const top = (0 * TILE_PX - camY) * got.scale + got.offsetY;
-      expect(
-        top,
-        `${String(w)}x${String(h)}: the player's own tile starts above the screen`,
-      ).toBeGreaterThanOrEqual(0);
-      expect(
-        top + TILE_PX * got.scale,
-        `${String(w)}x${String(h)}: the player's own tile ends below the screen`,
-      ).toBeLessThanOrEqual(h);
+      for (const row of [0, 50]) {
+        const camY = cameraAxis(got.logicalH, (row + 0.5) * TILE_PX);
+        const top = (row * TILE_PX - camY) * got.scale + got.offsetY;
+        expect(
+          top,
+          `${String(w)}x${String(h)} row ${String(row)}: the tile starts above the screen`,
+        ).toBeGreaterThanOrEqual(0);
+        expect(
+          top + TILE_PX * got.scale,
+          `${String(w)}x${String(h)} row ${String(row)}: the tile ends below the screen`,
+        ).toBeLessThanOrEqual(h);
+      }
     }
   });
 });

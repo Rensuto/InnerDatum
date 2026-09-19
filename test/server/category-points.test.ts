@@ -6,7 +6,7 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { HOTBAR_TALENT_BINDINGS } from '../../src/client/ui/hotbar.ts';
+import { HOTBAR_SLOT_POOL } from '../../src/client/ui/hotbar.ts';
 import {
   ALL_LOCKED_TALENTS,
   ALCHEMIST,
@@ -155,10 +155,16 @@ describe('what a point buys', () => {
      * locked tree ever gains an active, this fails and the arithmetic above is
      * why it should."
      *
-     * The bar does not address twelve any more. `HOTBAR_TALENT_SLOTS` went 6 ->
-     * 9 when the row was widened to the eighteen pixels the 640 floor had
-     * spare, so `HOTBAR_TALENT_BINDINGS` is EIGHTEEN. The premise moved, so the
-     * conclusion is re-derived rather than inherited.
+     * The bar does not address twelve any more. The keyed digit row went 6 -> 9
+     * when the row was widened to the pixels the 640 floor had spare, and Shift
+     * is a second row of nine, so `HOTBAR_SLOT_POOL` is EIGHTEEN. The premise
+     * moved, so the conclusion is re-derived rather than inherited.
+     *
+     * IT IS THE POOL AND NOT THE VISIBLE COUNT, deliberately. A player may
+     * shrink the bar to one slot from its cogwheel; that is a choice they made
+     * and can undo. What this guards is that every talent a career can buy has
+     * an ADDRESS — a key that reaches it once the bar is wide enough — which is
+     * a fact about the design rather than about somebody's window.
      *
      * AND THE PROXY IS REPLACED BY THE CONSTRAINT. "No locked tree may hold an
      * active" was never the rule — it was a cheap way to guarantee the rule,
@@ -183,7 +189,7 @@ describe('what a point buys', () => {
       expect(
         total,
         `${definition.id}: ${String(definition.loadout.length)} class actives + ${String(worst)} bought`,
-      ).toBeLessThanOrEqual(HOTBAR_TALENT_BINDINGS);
+      ).toBeLessThanOrEqual(HOTBAR_SLOT_POOL);
     }
   });
 

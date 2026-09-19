@@ -556,9 +556,10 @@ export function hostileAlert(prev: HostileSense, next: HostileSense): boolean {
  * comparing against a local id — protocol.ts is explicit that `turn` is unicast
  * precisely so the server can state which card is you, and a bodiless or
  * spectating socket genuinely has no card. (Deliberately not imported from
- * ui/turncards.ts: that module pulls in render/canvas.ts and with it the DOM
- * lib, and this file stays DOM-free so its test needs no `reference lib="dom"`.
- * What is copied is one `find`, not a rule that could drift.)
+ * ui/turnbar.ts, which declares `selfCard`: that module pulls in
+ * render/canvas.ts and with it the DOM lib, and this file stays DOM-free so its
+ * test needs no `reference lib="dom"`. What is copied is one `find`, not a rule
+ * that could drift.)
  *
  * OUT OF COMBAT THE ANSWER IS ALWAYS YES. See the step gate in the header:
  * `engagement === 0` means nobody blocks, every card reads `committed`, and the

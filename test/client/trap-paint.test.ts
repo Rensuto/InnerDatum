@@ -192,9 +192,14 @@ function everyPicture(): SpriteSource & { readonly asked: string[] } {
 const NO_ART: SpriteSource = { sprite: () => undefined };
 
 /**
- * One frame, on a level EXACTLY the size of the view. `cameraAxis` centres a
- * map no bigger than the buffer, and one exactly its size centres at zero, so a
- * cell's origin is `x * TILE_PX` and no case has to repeat the camera maths.
+ * One frame, on a level EXACTLY the size of the view, and with NO BODY on it.
+ *
+ * The camera is centred on the viewer, and with no viewer it falls back to the
+ * middle of the map (`draw`: *"before `welcome` names a self, look at the middle
+ * of the map"*). A map exactly the buffer's size therefore centres at camera
+ * zero, so a cell's origin is `x * TILE_PX` and no case here has to repeat the
+ * camera maths. `scene.actors` is `[]` below, which is what makes that true —
+ * add a body to this fixture and every coordinate in this file moves.
  */
 function frame(sprites: SpriteSource, traps: readonly TrapView[] | undefined): readonly Op[] {
   const visible = recordingCanvas(1248, 860);

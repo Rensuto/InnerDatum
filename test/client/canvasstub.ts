@@ -51,10 +51,40 @@ export type Rect = {
   readonly h: number;
 };
 
+/**
+ * One stroked arc, as it was called, plus the `lineWidth` live at that moment.
+ *
+ * ═══ WHY THE WIDTH IS PART OF THE ARC AND NOT A SEPARATE LOG ═══
+ * The threat tell (render/canvas.ts) distinguishes "I can see what hit you"
+ * from "it came out of the dark" by SPAN AND WEIGHT rather than by colour — the
+ * span is the precision the wire carried. A recorder that kept the geometry and
+ * dropped the weight could not tell the two grades apart, which is the one
+ * thing about that painter worth asserting.
+ */
+export type Arc = {
+  readonly x: number;
+  readonly y: number;
+  readonly r: number;
+  readonly start: number;
+  readonly end: number;
+  readonly width: number;
+};
+
 export type StubCtx = {
   readonly canvas: StubCanvas;
   readonly blits: Blit[];
   readonly rects: Rect[];
+  readonly arcs: Arc[];
+  /**
+   * The transform calls, in order, as `translate(x,y)` / `rotate(a)` /
+   * `save()` / `restore()`.
+   *
+   * THE STUB DOES NOT MAINTAIN A MATRIX and must not learn to: a stub that
+   * applied its own transform would be a second, untested implementation of the
+   * thing being measured. What a caller wants to know is that a painter asked
+   * for the right pivot and the right turn, which is exactly this list.
+   */
+  readonly ops: string[];
 };
 
 export type StubCanvas = {
@@ -74,12 +104,40 @@ function isSource(v: unknown): v is StubCanvas | StubImage {
 function stubContext(canvas: StubCanvas): StubCtx {
   const blits: Blit[] = [];
   const rects: Rect[] = [];
-  const real: Record<string, unknown> = { canvas, blits, rects };
+  const arcs: Arc[] = [];
+  const ops: string[] = [];
+  // The live `lineWidth`. Tracked rather than swallowed because it is half of
+  // what an arc means here — see `Arc`.
+  let lineWidth = 1;
+  const real: Record<string, unknown> = { canvas, blits, rects, arcs, ops };
   return new Proxy(real, {
     get(target, prop) {
       if (prop === 'canvas') return canvas;
       if (prop === 'blits') return blits;
       if (prop === 'rects') return rects;
+      if (prop === 'arcs') return arcs;
+      if (prop === 'ops') return ops;
+      if (prop === 'lineWidth') return lineWidth;
+      if (prop === 'arc') {
+        return (x: number, y: number, r: number, start: number, end: number) => {
+          arcs.push({ x, y, r, start, end, width: lineWidth });
+        };
+      }
+      if (prop === 'translate') {
+        return (x: number, y: number) => {
+          ops.push(`translate(${String(x)},${String(y)})`);
+        };
+      }
+      if (prop === 'rotate') {
+        return (a: number) => {
+          ops.push(`rotate(${a.toFixed(4)})`);
+        };
+      }
+      if (prop === 'save' || prop === 'restore') {
+        return () => {
+          ops.push(`${prop}()`);
+        };
+      }
       if (prop === 'fillRect') {
         return (x: number, y: number, w: number, h: number) => {
           rects.push({ x, y, w, h });
@@ -105,7 +163,8 @@ function stubContext(canvas: StubCanvas): StubCtx {
       if (typeof prop === 'string' && prop in target) return target[prop];
       return () => undefined;
     },
-    set() {
+    set(_target, prop, value) {
+      if (prop === 'lineWidth' && typeof value === 'number') lineWidth = value;
       return true;
     },
   }) as unknown as StubCtx;

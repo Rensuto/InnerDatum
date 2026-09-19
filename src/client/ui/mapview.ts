@@ -1397,8 +1397,10 @@ export function zoneLabelBaseline(box: MapRect): number {
  *
  * RIGHT-ALIGNED TO THE MINIMAP'S EDGE and allowed to run left across empty
  * screen, so the common case is untouched — but a long name is CUT rather than
- * allowed to run under the turn cards, because the top-left of this strip is
- * where they appear the moment a fight starts.
+ * allowed to run the width of the screen. The cut was for the turn card strip,
+ * which appeared across the top-left the moment a fight started; that is deleted,
+ * and the bound stays because a label with nothing to stop it ends up across the
+ * middle of the map.
  */
 export function fitZoneLabel(
   measure: (text: string) => number,

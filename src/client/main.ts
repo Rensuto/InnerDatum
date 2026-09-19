@@ -112,10 +112,10 @@
  *
  *   WHOSE TURN IT IS, ALWAYS ON SCREEN. game-design.md § 4 is blunt about this
  *   being the way co-op turn-based dies, so the answer is drawn several times
- *   over and never in one place only: the banner sentence, the card strip under
- *   it (ui/turncards.ts), and the frame around the playfield — plus the same
- *   phase in the status line below the canvas, which is the `aria-live` region
- *   and therefore the accessible copy.
+ *   over and never in one place only: the banner sentence, the party pane's own
+ *   per-member word (ui/partypanel.ts), and the frame around the playfield —
+ *   plus the same phase in the status line below the canvas, which is the
+ *   `aria-live` region and therefore the accessible copy.
  *
  *   M5: MANY TELLINGS, ONE TELLER. Those surfaces all read `TurnMsg.actors` —
  *   the server's own per-actor answer — and nothing in this client derives the
@@ -125,11 +125,14 @@
  *   told the party that the person on the floor had taken their turn. Several
  *   places SAYING one fact is the design; two places DECIDING it was the bug.
  *
- *   M5: THE TOP HUD IS MEASURED, NOT ASSUMED. `turnHudHeight` is the banner plus
- *   the card strip, and the strip is 78 logical pixels IN COMBAT and zero out of
- *   it. Everything that stacks under the HUD — the dock, the combat banner, the
- *   panel hit test — takes that number from the one function, so a fight
- *   starting cannot leave a panel overlapping the cards on one surface only.
+ *   THE TOP HUD IS ONE NUMBER AND IT DOES NOT MOVE. `TURN_BAR_H` is 14, in
+ *   combat and out of it. It was `turnHudHeight(view)` — a FUNCTION, because the
+ *   card strip added 46 pixels whenever there was a fight on — and everything
+ *   stacked under the HUD moved with it: `panelBand.top` was 17 walking around
+ *   and 63 fighting, and the Case Log needed a quiet band of its own to stop
+ *   ratcheting smaller every time somebody walked into a room. The cards are
+ *   deleted, so the dock, the combat banner and the panel hit test all stack
+ *   against the same constant and no band moves because of the world.
  */
 
 import type {
@@ -186,6 +189,17 @@ import {
   orbsAimedAt,
   soonestImpact,
 } from './state/projectiles.ts';
+// ITEM 5 — WHERE THE BLOW CAME FROM, and it is in a module beside the orb's for
+// the identical reason: the decay, the merge and the snap are RULES, and a rule
+// inside `boot()` is a rule no test can drive. See state/threat.ts's header.
+import {
+  headingToward,
+  nextThreatExpiry,
+  liveThreats,
+  rememberThreat,
+  threatTells,
+} from './state/threat.ts';
+import type { RememberedThreat, ThreatTell } from './state/threat.ts';
 import { orbsOnMyLine } from '../shared/flight.ts';
 import {
   createCaseLog,
@@ -229,6 +243,7 @@ import {
   createPanelOffsets,
   moveIntoBand,
   nextOffset,
+  panelsTouched,
   passesThreshold,
   settleOffset,
 } from './ui/drag.ts';
@@ -260,12 +275,17 @@ import { createCombatBanner, PLAYFIELD_FRAME_MAX_PX } from './ui/combatbanner.ts
 // here would be the first step towards refusing to send, which is exactly the
 // silent no-op this file's header forbids.
 //
-// v12 — SEVEN MORE NAMES, AND EVERY ONE OF THEM IS THE ITEM HALF OF THE BAR.
-// `itemSlotAction` and `wornSlotOf` are the state machine: a binding stores an
-// `itemId` and nothing else, so what pressing it MEANS is recomputed from the
-// last `inventory` frame on every frame. `hotbarDropTargetAt` is the release,
-// `isItemSlotIndex` is the right-click's guard, and the three constants are what
-// keeps slot 4 the first item slot in this file as well as in that one.
+// `itemSlotAction` and `wornSlotOf` are the item state machine: a binding stores
+// an `itemId` and nothing else, so what pressing it MEANS is recomputed from the
+// last `inventory` frame on every frame. `hotbarDropTargetAt` is the release.
+//
+// THE THREE CONSTANTS THAT KEPT SLOT 9 THE FIRST ITEM SLOT ARE GONE with the
+// partition they described (`HOTBAR_TALENT_SLOTS`, `HOTBAR_ITEM_SLOTS`,
+// `HOTBAR_SLOTS`), and so is `isItemSlotIndex`, which was the right-click's
+// guard. What replaces them is ONE pool and ONE key mapping:
+// `hotbarSlotForKey` turns a digit and a Shift into an index, `hotbarKeyLabel`
+// turns the index back into what is printed on the box, and every slot in
+// between takes either kind.
 import {
   drawHotbar,
   drawHotbarSettings,
@@ -273,22 +293,21 @@ import {
   hotbarCogAt,
   hotbarCogRect,
   hotbarFloor,
+  hotbarKeyLabel,
   hotbarPanelSize,
   hotbarSettingsHitAt,
   hotbarSettingsRect,
+  hotbarSlotForKey,
+  hotbarSlotsForSize,
   snapHotbarStyle,
   stepHotbarStyle,
-  HOTBAR_ITEM_SLOTS,
-  HOTBAR_SLOTS,
-  HOTBAR_TALENT_BINDINGS,
-  HOTBAR_TALENT_SLOTS,
+  HOTBAR_SLOT_POOL,
   HOTBAR_TOTAL_H,
   HotbarDropKind,
   HotbarSlotKind,
   ItemSlotAction,
   hotbarDropTargetAt,
   hotbarSlotAt,
-  isItemSlotIndex,
   itemSlotAction,
   wornSlotOf,
 } from './ui/hotbar.ts';
@@ -382,7 +401,7 @@ import { drawHoverCard } from './ui/panel.ts';
 import type { HoverCard } from './ui/panel.ts';
 import { hotbarTipAt } from './ui/hotbar.ts';
 import { inventoryTipAt } from './ui/inventory.ts';
-import { drawTurnBar, TURN_BAR_H, turnHudHeight } from './ui/turnbar.ts';
+import { drawTurnBar, owedCount, selfCard, TURN_BAR_H } from './ui/turnbar.ts';
 import { drawMenuButton, menuButtonHit } from './ui/menubutton.ts';
 import { exploreStopText, exploreTarget } from './input/explore.ts';
 import { bearingWord } from '../shared/coords.ts';
@@ -402,7 +421,6 @@ import {
   paintMap,
   partyMarks,
 } from './ui/mapview.ts';
-import { drawTurnCards, owedCount, selfCard } from './ui/turncards.ts';
 import { readVisionFrame, visionViewOf } from './vision.ts';
 import type { VisionWindow } from './vision.ts';
 import { TileLoot, verbsFor } from './ui/verbs.ts';
@@ -456,12 +474,13 @@ import type {
   BeaconView,
   SiteView,
   Slot,
+  DamageEvent,
   TurnEvent,
   TurnMsg,
 } from '../shared/protocol.ts';
 import type { CommandContext, RosterEntry } from './input/commands.ts';
 import type { KeyRemap } from './input/keymap.ts';
-import type { DragSubject, PanelOffset, PanelSize } from './ui/drag.ts';
+import type { DragSubject, PanelLayoutState, PanelOffset, PanelSize } from './ui/drag.ts';
 import type {
   ArmedCapture,
   EscapeMenuView,
@@ -473,7 +492,7 @@ import type { Targeting, TargetingWorld } from './input/targeting.ts';
 import type { Travel, TravelWorld } from './input/travel.ts';
 import type { DiscordParticipant } from './net/discord.ts';
 import type { AssetEntry } from './render/assets.ts';
-import type { HudPainter, LootMarker, PingMarker, Scene } from './render/canvas.ts';
+import type { HudPainter, LootMarker, PingMarker, Scene, ThreatMark } from './render/canvas.ts';
 import type { SweepPlayback } from './render/sweep.ts';
 import type { SpriteSource } from './render/assets.ts';
 import type { CaseLog } from './ui/caselog.ts';
@@ -489,7 +508,7 @@ import type {
 import { PanelSkin, drawPanel } from './ui/panel.ts';
 import type { PanelRect } from './ui/panel.ts';
 import type { PartyPaneLayout, PartyPaneView } from './ui/partypanel.ts';
-import type { TurnView } from './ui/turncards.ts';
+import type { TurnView } from './ui/turnbar.ts';
 import type { VerbTarget } from './ui/verbs.ts';
 
 /**
@@ -578,10 +597,11 @@ const NEEDED_ASSET_PREFIXES = [
   'icon_stat_',
   // M4. `chr_player_` above already covers the three `*_downed_s` bodies.
   'icon_status_',
-  // M5. The turn cards' portraits (`icon_character_the_*`). Half the family is
-  // uncut today — the manifest has the alchemist and the cipher-clerk and not
-  // the watchman, the inspector or the generic detective — so ui/turncards.ts
-  // treats a miss as the common case and draws initials rather than a blank.
+  // M5. The class portraits (`icon_character_the_*`) — the party pane's faces
+  // and the inventory doll's. Half the family is uncut today — the manifest has
+  // the alchemist and the cipher-clerk and not the watchman, the inspector or
+  // the generic detective — so ui/partypanel.ts treats a miss as the common case
+  // and draws initials rather than a blank.
   // Listing the prefix now means the day the rest are promoted is a pipeline run
   // and not a code change.
   'icon_character_',
@@ -758,6 +778,40 @@ const NEEDED_ASSET_PREFIXES = [
   'prop_wagon',
   'prop_well',
   'prop_wetland_reeds',
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE TWELVE PROJECTILE STRIPS — `ui_fx_bolt_<damage type>`.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Reported from play: *"it seems projectiles are using solid colored boxes
+   * instead of the sprites codex made for the projectiles"*. They were, and the
+   * sprites were already here — this list is where they were being filtered out
+   * of the load, for the fourth time (see `icon_ability_`, `icon_passive_` and
+   * `prop_` above, the same invisible-from-both-ends shape each time).
+   *
+   * ═══ THE CODE THAT CONSUMES IT LANDS IN THIS CHANGE, WHICH IS THE RULE ═══
+   * `PROJECTILE_SPRITE` in render/canvas.ts names all six ids this game can
+   * reach as literals, and `paintProjectiles` blits frame 0 of whichever the
+   * orb's `damageType` selects. A prefix admitted ahead of its reader is the
+   * `icon_ability_` case, which sat here dead from M3 to M6.
+   *
+   * ═══ VERIFIED PRESENT BEFORE ADDING, which is this array's one rule ═══
+   * All twelve `ui_fx_bolt_*` are rows in
+   * `client/public/assets/manifest.placeholders.json` AND 256x64 PNGs under
+   * `client/public/assets/ui/effects/`; ASSETS-REQUIRED.md carries a review
+   * entry and a regeneration brief for each. THE PREFIX, NOT SIX EXACT IDS,
+   * because the family is closed and authored as one: `shared/damagetype.ts`
+   * has six members today and `DAMAGE_TYPES` is the list ToME has twelve of, so
+   * the other six load the day an element is added rather than needing a second
+   * edit here. That is six PNGs of load nothing asks for yet, which is the same
+   * trade `prop_eldritch_` already makes and states.
+   *
+   * NOT `ui_fx_`. That prefix would pull all 86 effect strips — hits, areas,
+   * beams, swings, status loops — and nothing draws any of them. `TRAP_SPRITE`'s
+   * three exact ids above are the same decision at the other extreme, and for
+   * the same stated reason: load what is drawn.
+   */
+  'ui_fx_bolt_',
 ] as const;
 
 /**
@@ -872,10 +926,12 @@ const LOG_DEFAULT_BAND_FRACTION = 0.45;
 /**
  * The band both side panels live in: under the top HUD, above the bottom bands.
  *
- * `hudTop` is the whole top HUD — the banner plus the turn cards, which exist
- * only in combat — and it is PASSED IN rather than read from a constant. The
- * panels therefore give up 78 pixels when a fight starts and take them back when
- * it ends, which is the trade that lets the card strip be as tall as it is.
+ * `hudTop` is the whole top HUD, and it is PASSED IN rather than read from a
+ * constant so that every band is stacked by one arithmetic rather than by a
+ * second copy of how tall the bar is. It USED to vary — the turn cards under the
+ * banner added 46 pixels while a fight was on, so the panels gave that up when
+ * one started and took it back when it ended. The cards are deleted, so every
+ * caller passes `TURN_BAR_H` and the band no longer moves.
  */
 /**
  * ═══════════════════════════════════════════════════════════════════════════
@@ -908,36 +964,33 @@ function logBand(height: number, hudTop: number): { top: number; bottom: number 
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════
- * THE LOG'S BAND AS IF NOBODY WERE FIGHTING — the one its OWN SIZE is from.
+ * `quietLogBand` LIVED HERE AND IS DELETED WITH THE THING THAT CAUSED IT.
  * ═══════════════════════════════════════════════════════════════════════════
  *
  * Reported as *"each area we enter causes the log to reset its size to
- * original"*, and combat is what actually does it.
- *
- * `turnHudHeight` is `TURN_BAR_H + turnCardsHeight(turn)`, and
- * `turnCardsHeight` is ZERO out of combat and `TURN_CARDS_H` in it. So the
- * band's top JUMPS the moment a fight starts and drops back when it ends —
- * which is correct for the band (the cards need that room) and wrong for
- * everything the log derives from it:
+ * original"*, and combat was what did it: the top HUD was `TURN_BAR_H` plus the
+ * turn card strip, and the strip was ZERO out of combat and 46 in it. So the
+ * band's top jumped the moment a fight started and dropped back when it ended —
+ * correct for the band, and wrong for everything the log derived from it:
  *
  *   `defaultLogH` is a FRACTION of the band, so it shrank;
  *   the anchor is `bottom - defaultLogH`, so the top moved;
  *   the height cap is `bottom - anchor`, so the box was capped shorter;
  *   and `settlePanel` then wrote the shorter value into the STORE.
  *
- * That last step is what made it permanent. Every walk into a fight ratcheted
- * the log down and leaving the fight never gave it back — at 1262x428 the cap
- * falls from 157 to 133 the instant a monster is in the initiative, and stays.
+ * That last step made it permanent: every walk into a fight ratcheted the log
+ * down and leaving the fight never gave it back — at 1262x428 the cap fell from
+ * 157 to 133 the instant a monster joined the initiative, and stayed.
  *
- * ═══ THE CARDS ARE AT THE TOP AND THE LOG IS AT THE BOTTOM ═══
- * They do not overlap at any size a default log reaches, so pinning the log's
- * geometry to the quiet band costs nothing and buys a box that does not move
- * when something walks into view. The LIVE band still clamps where a MOVED log
- * may sit, so a log dragged up cannot be drawn under the cards.
+ * `logBand(height, TURN_BAR_H)` was `logBand(height, TURN_BAR_H)`: the band as if
+ * nobody were fighting, used for the log's SIZE and anchor while the live band
+ * still clamped a MOVED box. With the cards gone there is no live band to differ
+ * from — `TURN_BAR_H` is the whole top HUD in combat and out of it — so the two
+ * are the same call and the log's geometry is pinned by construction rather than
+ * by a second function that has to be remembered. THE FIX IS NOT REVERTED; its
+ * cause is. If anything ever makes the top HUD vary again, this note is the
+ * argument for bringing it back before doing so.
  */
-function quietLogBand(height: number): { top: number; bottom: number } {
-  return logBand(height, TURN_BAR_H);
-}
 
 /** The action bar may go anywhere under the turn HUD, down to the screen's foot. */
 function hotbarBand(height: number, hudTop: number): { top: number; bottom: number } {
@@ -949,13 +1002,13 @@ function hotbarBand(height: number, hudTop: number): { top: number; bottom: numb
  * THE MINIMAP'S BAND, AND ITS TOP IS ABOVE EVERY OTHER PANEL'S.
  * ═══════════════════════════════════════════════════════════════════════════
  *
- * `panelBand.top` is `hudTop + DOCK_MARGIN` — below the turn bar, and below the
- * card strip while a fight is on. The minimap's home is `MINIMAP_MARGIN`, which
- * is ABOVE that line and always has been: the box is painted after the bar and
- * the cards (main.ts's minimap paint block argues that order at length), so it
- * sits over the top of them by design. Clamping it into the shared band would
- * mean a panel whose own default position the clamp refuses — and it would jump
- * down the screen the instant a monster joined the initiative.
+ * `panelBand.top` is `hudTop + DOCK_MARGIN` — below the turn bar. The minimap's
+ * home is `MINIMAP_MARGIN`, which is ABOVE that line and always has been: the
+ * box is painted after the bar (main.ts's minimap paint block argues that order
+ * at length), so it sits over the top of it by design. Clamping it into the
+ * shared band would mean a panel whose own default position the clamp refuses —
+ * and, while the top HUD still grew a card strip in a fight, it would have
+ * jumped down the screen the instant a monster joined the initiative.
  *
  * ═══ THE BOTTOM IS THE LOG'S, NOT THE PANEL BAND'S ═══
  * `logBand`'s note argues it: the two prose strips are TRANSIENT — a targeting
@@ -963,10 +1016,13 @@ function hotbarBand(height: number, hudTop: number): { top: number; bottom: numb
  * live where they appear. The action bar is not transient, and that is the line
  * this stops at.
  *
- * NO `hudTop` PARAMETER, deliberately. Every other band takes one and moves
- * when a fight starts; this one is a constant of the viewport, which is what
- * keeps a box the player placed from walking up and down the screen as monsters
- * come and go — the same fault `quietLogBand` exists to prevent for the log.
+ * NO `hudTop` PARAMETER, deliberately. Every other band takes one, and while
+ * the top HUD grew a card strip in combat that meant every other band moved when
+ * a fight started; this one has always been a constant of the viewport, which is
+ * what keeps a box the player placed from walking up and down the screen as
+ * monsters come and go. `TURN_BAR_H` does not vary any more, so the others no
+ * longer move either — this box's home is simply ABOVE their top, and that has
+ * not changed.
  */
 function minimapBand(height: number): { top: number; bottom: number } {
   return { top: MINIMAP_MARGIN, bottom: height - HOTBAR_TOTAL_H - DOCK_MARGIN };
@@ -1023,7 +1079,8 @@ function panelBand(height: number, hudTop: number): { top: number; bottom: numbe
  */
 // DERIVED FROM THE BOX, NOT THE CAP — see `minimapReserveH`. The old form used
 // MINIMAP_MAX_H and over-reserved by 31 pixels, which is what made the Case Log
-// disappear on a 384-tall viewport the moment the turn cards appeared.
+// disappear on a 384-tall viewport the moment the top HUD grew for a fight. The
+// strip that made it grow is gone; the over-reservation was the bug either way.
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════
@@ -1278,6 +1335,41 @@ function placeCommandLine(box: PanelRect | null): void {
 
 function syncCommandLineReach(): void {
   setCommandLineReachable(classOptions === null && !menuOpen);
+}
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * WHERE THE ONE PIECE OF DOM OVER THE CANVAS IS, IN LOGICAL PIXELS — OR NULL.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Reported as *"tooltip when hovering on the bar gets covered by the log window
+ * box"*. `#cmdrow` is the Case Log's composer strip, and it is a real `<input>`
+ * with an opaque background positioned over the box the canvas drew. DOM beats
+ * canvas at every paint order there is, so no reordering inside `paintHud` can
+ * put a card in front of it; the card has to go somewhere else instead. See
+ * `clearOfObstacle` in ui/panel.ts, which is where the arithmetic and the whole
+ * argument live.
+ *
+ * ═══ THE SAME RECT `placeCommandLine` USED, NOT A SECOND COPY ═══
+ * `caseLog.composerBox()` is the strip's box from the LAST draw, and
+ * `placeCommandLine` — which runs earlier in this same frame — is what converts
+ * it into the element's CSS box. Two answers to where that row is would put the
+ * card next to where the input is not, which is the failure `slotRect` and
+ * `hudLayout` both exist to prevent.
+ *
+ * ═══ AND IT READS THE ATTRIBUTE RATHER THAN RE-DERIVING THE CONDITION ═══
+ * The row is hidden by TWO independent mechanisms — `placeCommandLine` when
+ * there is no box to put it in, and `setCommandLineReachable` while the class
+ * picker or the escape menu is up — and a copy of that disjunction here would be
+ * a third opinion that goes stale the first time either moves. `hidden` is the
+ * answer both of them write, and `placeCommandLine` has already run this frame.
+ *
+ * NULL FOR A CLIENT WITH NO SUCH ELEMENT, which is an index.html that predates
+ * M4: the cards then place themselves exactly as they always did.
+ */
+function domCommandRow(): PanelRect | null {
+  if (cmdRowEl === null || cmdRowEl.hasAttribute('hidden')) return null;
+  return caseLog?.composerBox() ?? null;
 }
 
 /**
@@ -1850,6 +1942,24 @@ const panelSizes: Record<DraggablePanel, PanelSize | null> = {
 };
 
 /**
+ * The three stores `RESET PANELS` puts back, gathered for the one predicate
+ * that decides whether it has anything to do — `panelsTouched` (ui/drag.ts),
+ * which carries the argument for what is in this list and what is not.
+ *
+ * A FUNCTION AND NOT A CAPTURED OBJECT, because all three are reassigned as
+ * gestures land: a value built once at boot would answer for the bar somebody
+ * had before they touched it, which is the failure mode this whole predicate
+ * exists to fix.
+ */
+function layoutState(): PanelLayoutState {
+  return {
+    offsets: panelOffsets,
+    sizes: panelSizes,
+    hotbarSlots: { at: hotbarStyle.slots, shipped: DEFAULT_HOTBAR_STYLE.slots },
+  };
+}
+
+/**
  * THE GESTURE IN PROGRESS, or null. There is never more than one — a pointer has
  * one button down at a time and a second press cancels the first (see the guard
  * at the head of `mousedown`).
@@ -1898,14 +2008,29 @@ type LiveDrag = {
 let drag: LiveDrag | null = null;
 
 /**
- * WHAT IS ON THE FOUR MOUSE-ONLY HOTBAR SLOTS (indices 4-7), or null for empty.
+ * WHAT ITEM IS ON EACH HOTBAR SLOT, or null. `HOTBAR_SLOT_POOL` long, indexed by
+ * the SAME index `talentBindings` is — one slot, two stores, at most one of
+ * which holds anything.
  *
- * INDEXED 0-3 AND OFFSET BY `HOTBAR_TALENT_SLOTS` AT EVERY READ, rather than an
- * eight-long array with four permanent holes: slots 0-3 are the class loadout and
- * are not bindable at all (`hotbarDropTargetAt` answers `Talent` for them and the
- * caller must refuse IN WORDS), so an array with room for them would be an array
- * with four cells that must never be written — which is an invariant somebody
- * eventually breaks.
+ * ═══ IT WAS FOUR CELLS OFFSET BY `HOTBAR_TALENT_SLOTS`, AND THE REASON WENT ═══
+ * *"an array with room for them would be an array with four cells that must
+ * never be written — which is an invariant somebody eventually breaks."* True
+ * while nine of the thirteen slots could not take an item. Every slot can now,
+ * so a pool-long array has no unwritable cells in it and the offset arithmetic
+ * that stood in for them — `index - HOTBAR_TALENT_SLOTS`, at five call sites —
+ * is gone with it.
+ *
+ * ═══ TWO PARALLEL STORES AND NOT ONE TAGGED ARRAY, DELIBERATELY ═══
+ * Upstream keeps one table of `{kind, name}` pairs
+ * (`HotkeysIconsDisplay.lua:159-162`) and ours would read better as one array
+ * of a tagged union. It is two because they have DIFFERENT LIFETIMES and the
+ * wire is what draws the line: `talentBindings` is `set_hotbar`, sent to the
+ * server, written to the character file and restored on join; this one is not
+ * on the wire at all. Merging them would mean either sending item bindings the
+ * save layer has no field for, or keeping a merged array whose two halves
+ * persist differently — a store that is half-durable with nothing in its type
+ * saying which half. `slotBinding` is the one reader that joins them, and it is
+ * where the "at most one" invariant is stated and enforced.
  *
  * ═══ THE NAME AND THE ICON ARE CACHED AT BIND TIME, AND THE ACTION IS NOT ═══
  * `itemSlotAction` recomputes EQUIP / REMOVE / GONE from the last `inventory`
@@ -1916,10 +2041,14 @@ let drag: LiveDrag | null = null;
  * for an item that is in neither collection to read one off.
  *
  * SESSION-LOCAL, like the offsets above and for the same reasons. Stated plainly
- * because it is a real limitation rather than an oversight: a bar the player
- * fills is EMPTY AGAIN AFTER A REFRESH. ToME persists per character
- * (`self.actor.hotkey[i] = {drag.kind, drag.id}`, HotkeysIconsDisplay.lua:355);
- * we do not, this pass (DECISIONS.md D16).
+ * because it is a real limitation rather than an oversight: the ITEMS on a bar
+ * are gone again after a refresh, while the TALENTS on the same bar survive.
+ * ToME persists both per character (`self.actor.hotkey[i] = {drag.kind,
+ * drag.id}`, HotkeysIconsDisplay.lua:355); we persist one, still (DECISIONS.md
+ * D16), and unifying the BAR did not unify that — `CharacterFile.hotbar` is a
+ * `(string | null)[]` of talent ids in `src/server/persist/saves.ts`, and
+ * growing it a second kind is a save-format change that belongs to whoever owns
+ * that file rather than a rider on a client layout pass.
  */
 type ItemBinding = {
   readonly itemId: string;
@@ -1950,28 +2079,29 @@ type ItemBinding = {
  * a class owns land on keys 1-6 in the order they were authored, which is
  * precisely where they were before this existed. See `reseatTalentBindings`.
  */
-const talentBindings: (string | null)[] = Array.from(
-  { length: HOTBAR_TALENT_BINDINGS },
-  () => null,
-);
+const talentBindings: (string | null)[] = Array.from({ length: HOTBAR_SLOT_POOL }, () => null);
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════
- *   WHICH PAGE THE BAR IS SHOWING. 0 ordinarily; 1 while Shift is down.
+ *   HOW MANY SLOTS THE BAR IS SHOWING. THE COGWHEEL'S AND THE GRIP'S NUMBER.
  * ═══════════════════════════════════════════════════════════════════════════
  *
- * A MODE, NOT A TOGGLE, and that is the whole of why it is safe. A toggled
- * second page is a state a player can be in without noticing — the classic
- * failure is pressing 1 for your reliable attack and getting something else
- * because you left the bar on page 2 four minutes ago. Held-Shift cannot do
- * that: the moment you stop asking for page 2 you are back on page 1, and the
- * bar you are looking at is always the bar your keys will press.
+ * THIS REPLACED `talentPage`, which was *"a MODE, not a toggle... the moment
+ * you stop asking for page 2 you are back on page 1, and the bar you are
+ * looking at is always the bar your keys will press."* Every word of that was a
+ * defence of a bar that swapped its own buttons, and the defence was sound; the
+ * bar does not swap them any more, so there is no mode to make safe. Shift now
+ * reaches slots 10-18 instead of redrawing slots 1-9 (`hotbarSlotForKey`).
  *
- * IT IS ALSO WHY THE BAR REDRAWS ON THE MODIFIER ALONE. Pressing Shift with no
- * digit shows you page 2 — that is how you find out what is on it, and a page
- * you can only see by committing to a press is a page nobody uses.
+ * READ FROM `hotbarStyle`, NOT HELD SEPARATELY, so the bar this draws, the bar
+ * the grip sizes and the bar the file remembers are one number. It is CLAMPED
+ * here rather than trusted: `snapHotbarStyle` bounds what arrives from the
+ * server, and this bounds everything else, because a count out of range is a
+ * `slotRect` past the end of the panel rather than an exception anybody sees.
  */
-let talentPage = 0;
+function hotbarSlotCount(): number {
+  return Math.max(1, Math.min(HOTBAR_SLOT_POOL, hotbarStyle.slots));
+}
 
 /**
  * Will this bar still be here tomorrow? False for an anonymous socket and for a
@@ -1983,6 +2113,133 @@ let talentPage = 0;
  * who was never going to touch the bar.
  */
 let hotbarPersists = true;
+
+/**
+ * What picking a slot up would be carrying, or null when it is carrying nothing.
+ *
+ * ═══ THE SUBJECT IS WHAT THE OTHER PANELS PRODUCE, NOT A NEW KIND ═══
+ * `resolveDrop` and `bindItemSlot` already resolve `Talent`, `Carried` and
+ * `Worn`; a fourth kind meaning "off the bar" would be a fourth arm in every
+ * one of them, for a drop that lands in exactly the same place.
+ *
+ * ═══ WORN OR CARRIED, AND THE BAG DECIDES ═══
+ * `bindItemSlot` resolves a `Carried` subject against `inventory.carried` and a
+ * `Worn` one against `inventory.equipped`, so a coat the player is WEARING has
+ * to be picked up as `Worn` or the drop would answer *"that is not in your
+ * hands any more"* about something plainly on the paper doll. `wornSlotOf` is
+ * ui/hotbar.ts's own walk of `SLOT_ORDER`, shared with the caption, so the
+ * pick-up and the word under the icon cannot disagree about where it is.
+ *
+ * ═══ A GONE BINDING CARRIES NOTHING ═══
+ * `ItemSlotAction.Gone` is an id in neither collection. There is nothing to
+ * resolve on the drop, so the press stays a press — which is the one that
+ * clears the slot and says so.
+ */
+function dragSubjectForSlot(index: number): DragSubject | null {
+  const talentId = talentBindings[index] ?? null;
+  if (talentId !== null) return { kind: DragKind.Talent, talentId };
+  const binding = hotbarBindings[index] ?? null;
+  if (binding === null) return null;
+  const worn = wornSlotOf(binding.itemId, inventory?.equipped ?? {});
+  if (worn !== null) return { kind: DragKind.Worn, slot: worn };
+  const held = inventory?.carried.some((entry) => entry.itemId === binding.itemId) ?? false;
+  return held ? { kind: DragKind.Carried, itemId: binding.itemId } : null;
+}
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * ONE SLOT HOLDS ONE THING. THE INVARIANT, ENFORCED WHERE IT IS WRITTEN.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `talentBindings` and `hotbarBindings` are parallel, pool-long, and read by
+ * `hotbarView` in that order — a talent at index n WINS. So an index holding
+ * both would draw the talent and silently keep the item, which is the state
+ * that makes a right-click look like it did nothing: the talent goes, the
+ * item underneath appears, and the player presses again.
+ *
+ * Every write goes through this, so the two stores cannot both be occupied at
+ * one index. It is the whole of what "one bar" costs in wiring.
+ */
+function vacateSlot(index: number): void {
+  talentBindings[index] = null;
+  hotbarBindings[index] = null;
+}
+
+/**
+ * The first slot with nothing on it, preferring one the player can SEE.
+ * -1 when the whole pool is full.
+ *
+ * ═══════════════════════════════════════════════════════════════════════════
+ * PORTED. `PlayerHotkeys.lua:123-128` and :147-152 (`addNewHotkey`) are:
+ *
+ *     for i = 1, 12 * (self.nb_hotkey_pages or 5) do
+ *       if not self.hotkey[i] then self.hotkey[i] = {kind, name} break end
+ *     end
+ *
+ * — the first free index in the whole pool, testing ONE table that holds both
+ * kinds, which is why this tests both stores. `hotkeyAutoTalents` (:207-215)
+ * is the same loop.
+ *
+ * ═══ THE TWO-PASS PREFERENCE IS OURS, AND IT IS NEARLY FREE ═══
+ * Upstream lays out as many of its sixty slots as the box fits and stops
+ * (`HotkeysIconsDisplay.lua:270`, :276), so a talent it auto-assigned can land
+ * off screen. Ours can too — the bar is `hotbarSlotCount()` wide and the pool
+ * is eighteen. Scanning the VISIBLE slots first and the rest afterwards
+ * differs from one straight scan only when a player has left a hole beyond
+ * the visible count, and in that one case it puts the new button where they
+ * can see it. The caller says so out loud when it lands off the bar.
+ */
+function firstFreeSlot(): number {
+  const visible = hotbarSlotCount();
+  for (let i = 0; i < visible; i += 1) {
+    if (talentBindings[i] == null && hotbarBindings[i] == null) return i;
+  }
+  for (let i = visible; i < HOTBAR_SLOT_POOL; i += 1) {
+    if (talentBindings[i] == null && hotbarBindings[i] == null) return i;
+  }
+  return -1;
+}
+
+/** `slot 3` or `slot ⇧3` — the box as the player sees it labelled. */
+function slotWord(index: number): string {
+  const key = hotbarKeyLabel(index);
+  return key === null ? `slot ${String(index + 1)}` : `slot ${key}`;
+}
+
+/**
+ * Say where a newly learnt talent went when it went somewhere off the bar.
+ *
+ * ONE SENTENCE FOR ANY NUMBER OF THEM. A level-up can learn one talent; a
+ * class restore can seat several, and four notices in a row is a queue the
+ * player reads none of.
+ *
+ * IT NAMES THE KEY, NOT THE INDEX. `⇧4` is what the player would press;
+ * "slot 13" is an implementation detail of an array they have never seen.
+ *
+ * `onRefusal` RATHER THAN `showNotice`, for the reason the travel interrupt
+ * gives two thousand lines down: this is module scope and the notice's timer
+ * lives inside `boot()`. Same line, same four and a half seconds.
+ */
+function announceOffBar(seated: readonly SeatedTalent[]): void {
+  if (seated.length === 0) return;
+  const names = seated
+    .map((seat) => {
+      const name = loadout.find((entry) => entry.id === seat.id)?.name ?? seat.id;
+      return `${name} on ${slotWord(seat.index)}`;
+    })
+    .join(', ');
+  onRefusal(`${names} — past the end of your bar, add slots from the bar's ⚙`);
+}
+
+/**
+ * A talent the fill just seated, and where it put it.
+ *
+ * Reported rather than announced, because the two callers want
+ * different urgency out of the same fact: a talent learned MID-GAME landing off
+ * the visible bar is news, and the same landing while a saved bar is being
+ * restored at join is not worth a line over the class picker.
+ */
+type SeatedTalent = { readonly id: string; readonly index: number };
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════
@@ -2011,7 +2268,8 @@ let hotbarPersists = true;
  *      order they were written. Nothing about day one changed, which is the
  *      property that lets this land without a word to anybody playing.
  */
-function reseatTalentBindings(): void {
+function reseatTalentBindings(): readonly SeatedTalent[] {
+  const offBar: SeatedTalent[] = [];
   const known = new Set(loadout.map((talent) => talent.id));
   for (let i = 0; i < talentBindings.length; i += 1) {
     const bound = talentBindings[i];
@@ -2050,17 +2308,35 @@ function reseatTalentBindings(): void {
      * invent a binding, not the player.
      */
     if ((talent.level ?? 0) < 1) continue;
-    const free = talentBindings.indexOf(null);
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * THE FIRST FREE SLOT, TESTING BOTH STORES. IT USED TO TEST ONE.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * `talentBindings.indexOf(null)` was the whole fill, and it was correct
+     * while the four item slots lived in a different array with a different
+     * index space: no index it could return had an item on it, because no
+     * index it could reach could hold one.
+     *
+     * With one bar that read is a bug with a picture: a player who drags a
+     * draught onto slot 3 and then learns a talent gets the talent seated on
+     * slot 3 as well, `hotbarView` draws the talent (a talent at index n wins)
+     * and the draught is a binding nobody can see or press. `firstFreeSlot`
+     * asks both stores, which is upstream's `if not self.hotkey[i]` over the
+     * one table that holds both kinds (`PlayerHotkeys.lua:212-214`).
+     */
+    const free = firstFreeSlot();
     if (free < 0) break;
     talentBindings[free] = talent.id;
     seated.add(talent.id);
+    // A SEAT THE PLAYER CANNOT SEE IS STILL A SEAT, AND IT IS SAID OUT LOUD.
+    // The caller has `showNotice`; this function is module-level and does not.
+    if (free >= hotbarSlotCount()) offBar.push({ id: talent.id, index: free });
   }
+  return offBar;
 }
 
-const hotbarBindings: (ItemBinding | null)[] = Array.from(
-  { length: HOTBAR_ITEM_SLOTS },
-  () => null,
-);
+const hotbarBindings: (ItemBinding | null)[] = Array.from({ length: HOTBAR_SLOT_POOL }, () => null);
 
 /**
  * THE CHARACTER SHEET, AND IT DEFAULTS OFF — the other two do not.
@@ -3180,14 +3456,18 @@ function bellRemainingMs(): number | null {
 }
 
 /**
- * ONE view, shared by the banner and the card strip, built once per frame.
+ * ONE view of the `turn` frame, built once per frame.
+ *
+ * It was shared by the banner and the turn card strip so that the two could not
+ * describe different instants. The strip is deleted; the banner and the status
+ * line are the readers now, and the type lives in ui/turnbar.ts with them.
  *
  * IT NO LONGER CARRIES THE ACTOR MAP OR `selfId`, and that is the M5 point. The
- * `turn` frame now names every card, its state, its hp, its portrait and which
- * one is you (`TurnActor.isSelf` — the reason the frame is unicast). Joining
- * against the local actor map to rebuild any of that would put a second answer
- * on screen beside the server's, and it would disagree first for the aggregate
- * hostile card, which has no body to join to.
+ * `turn` frame names every actor, its state, its hp, its portrait and which one
+ * is you (`TurnActor.isSelf` — the reason the frame is unicast). Joining against
+ * the local actor map to rebuild any of that would put a second answer on screen
+ * beside the server's, and it would disagree first for the aggregate hostile
+ * record, which has no body to join to.
  */
 function turnView(): TurnView {
   return {
@@ -3844,10 +4124,21 @@ function escapeMenuView(uiScale: number, uiScalePercent: number): EscapeMenuView
     // ONLY WHETHER THE ROW CAN DO ANYTHING HERE, never what it would do — the
     // same shape as `panelsMoved` below.
     uiScaleFixed: liveUiScaleFixed,
-    // ONLY WHETHER, never which: the row is greyed or it is not.
-    panelsMoved: DRAGGABLE_PANELS.some(
-      (panel) => panelOffsets[panel].dx !== 0 || panelOffsets[panel].dy !== 0,
-    ),
+    /**
+     * ONLY WHETHER, never which: the row is greyed or it is not.
+     *
+     * ═══ IT ASKED ONE OF THREE STORES AND `RESET PANELS` CLEARS ALL THREE ═══
+     * This was `DRAGGABLE_PANELS.some(offset !== 0,0)` inline, and the effect
+     * beside it had since grown to clear every `panelSizes` entry and now the
+     * action bar's slot count too. So a player who resized the Case Log, the
+     * party pane, the minimap or the bar — and never DRAGGED anything — was
+     * shown a grey row captioned "nothing has been moved" over a screen they
+     * had plainly changed, with the row that would put it back the one thing
+     * refusing to act. `panelsTouched` (ui/drag.ts) is the whole list in one
+     * place precisely so the predicate and the effect cannot drift again; both
+     * this and `runMenuEffect`'s `reset-panels` arm read it.
+     */
+    panelsMoved: panelsTouched(layoutState()),
     message: menuMessage,
     // v12 — THE COUNT GOES ON THE CONTROL THAT ALREADY ROUTES TO THE PANEL.
     // Root row 3 opens the talent screen and never said how many points were
@@ -4020,7 +4311,7 @@ type HudLayout = {
    *
    * FROM `minimapBand`, NOT `panelBand` LIKE THE FIVE FLOATING PANELS. Its home
    * is `MINIMAP_MARGIN`, which is above `panelBand.top`, and it is painted OVER
-   * the turn bar and the card strip on purpose. See `minimapBand`.
+   * the turn bar on purpose. See `minimapBand`.
    *
    * IT IS THE ONLY MEMBER OF THIS TYPE THAT IS NOT A PANEL. Everything else here
    * is something the player opened; this is standing furniture they are allowed
@@ -4168,9 +4459,11 @@ function unmovedPanelRect(
      */
     case DraggablePanel.Log: {
       if (!logVisible || width < DOCK_MIN_VIEWPORT_W) return null;
-      // THE QUIET BAND for the size and the anchor — see `quietLogBand`. A box
-      // that changed shape because a fight started is the reported bug.
-      const own = quietLogBand(height);
+      // `TURN_BAR_H` for the size and the anchor, which is the WHOLE top HUD
+      // in combat and out of it. A box that changed shape because a fight
+      // started is the reported bug; see the note above `logBand` for the strip
+      // that used to cause it.
+      const own = logBand(height, TURN_BAR_H);
       const size = logRectSize(own, width);
       if (size.h < PANEL_MIN_H) return null;
       /**
@@ -4197,8 +4490,12 @@ function unmovedPanelRect(
       return { x: DOCK_MARGIN, y, w: size.w, h: size.h };
     }
     case DraggablePanel.Hotbar: {
-      const count = hotbarView().slots.length;
-      if (count === 0) return null;
+      // THE COUNT, NOT THE BUILT VIEW. `hotbarView()` walks the loadout, the
+      // inventory and the drag on every call, and this runs once per panel per
+      // frame; the two numbers are the same by construction (`hotbarView` is
+      // `Array.from({ length: hotbarSlotCount() })`) and this is the one that
+      // does not need a frame to have arrived.
+      const count = hotbarSlotCount();
       const room = height - band.top;
       const stored = panelSizes[DraggablePanel.Hotbar];
       const size = hotbarPanelSize(count, stored, width, hotbarStyle, room);
@@ -4280,7 +4577,7 @@ function unmovedPanelRect(
 }
 
 function hudLayout(width: number, height: number): HudLayout {
-  const hudTop = turnHudHeight(turnView());
+  const hudTop = TURN_BAR_H;
   const band = panelBand(height, hudTop);
   /**
    * THROUGH `movePanel`, LIKE THE FOUR BELOW IT AND UNLIKE ITS OLD SELF. The
@@ -4498,8 +4795,8 @@ function hudLayout(width: number, height: number): HudLayout {
     // registration and one persisted layout field this feature does not need" —
     // and the author, having played it, asked for both. The arm in
     // `unmovedPanelRect` still decides the SHAPE and the null (it is centred and
-    // docked to the foot of the band, so it rises on its own when the turn cards
-    // appear); this slides the result by however far it has been dragged and
+    // docked to the FOOT of the band, so a shorter band shortens it rather than
+    // moving it); this slides the result by however far it has been dragged and
     // clamps it back into the same band every other floating panel is held in.
     dialogue: movePanel(
       DraggablePanel.Dialogue,
@@ -4616,22 +4913,21 @@ function talentById(id: string | null): LoadoutTalent | null {
 }
 
 /**
- * A SLOT ON THE BAR YOU CAN SEE -> ITS CELL IN THE TWELVE-LONG STORE.
+ * ═══════════════════════════════════════════════════════════════════════════
+ * `cellOfSlot` IS GONE, AND THAT IS THE POINT OF UNIFYING THE BAR.
+ * ═══════════════════════════════════════════════════════════════════════════
  *
- * Every caller takes an index from the POINTER or from a KEY, and both of those
- * name a box on the visible bar. The store is both pages end to end, so every
- * one of them has to be offset by the page — and doing it in one named function
- * rather than at five call sites is the difference between a page feature and a
- * bug where the mouse edits page 1 while the keyboard presses page 2.
+ * It was `talentPage * HOTBAR_TALENT_SLOTS + index`: a box on the visible bar
+ * turned into a cell in the eighteen-long store, so *"the mouse edits page 1
+ * while the keyboard presses page 2"* could not happen. With no page, a box IS
+ * its cell — the identity function, which is not a function — so every call
+ * site now indexes directly and there is no second coordinate space left for
+ * two readers to disagree in.
  *
- * THIS USED TO LIVE INSIDE THE INPUT CLOSURE, where only `bindTalentSlot` and
- * `clearTalentSlot` could reach it — so the bind and the unbind were paged and
- * the PAINT and the PRESS were not. It is module-level now because the reader
- * that matters most, `talentInSlot`, is.
+ * WHAT TOOK ITS PLACE IS `hotbarSlotForKey`, in ui/hotbar.ts beside the label
+ * the box wears, for the identical reason this one existed: ONE mapping,
+ * written once, read by the paint and by the press.
  */
-function cellOfSlot(index: number): number {
-  return talentPage * HOTBAR_TALENT_SLOTS + index;
-}
 
 /**
  * THE SLOT YOU CAN SEE -> THE TALENT THAT SLOT MEANS. One resolver, so the box
@@ -4663,7 +4959,7 @@ function cellOfSlot(index: number): number {
  * draw's own long-standing lookup, unchanged — the press is what moved.
  */
 function talentInSlot(index: number): LoadoutTalent | undefined {
-  const id = talentBindings[cellOfSlot(index)] ?? null;
+  const id = talentBindings[index] ?? null;
   if (id === null) return undefined;
   return loadout.find((entry) => entry.id === id);
 }
@@ -4718,77 +5014,34 @@ function affordable(talent: LoadoutTalent): boolean {
 }
 
 /**
- * THE BAR: THE TALENT SLOTS ON THEIR DIGITS, THEN THE MOUSE-ONLY ITEM SLOTS.
+ * THE BAR: `hotbarSlotCount()` IDENTICAL SLOTS, EACH HOLDING WHATEVER IS IN IT.
  *
- * ═══ THE ARRAY IS POSITIONAL AND `isItemSlotIndex` DEPENDS ON IT ═══
- * ui/hotbar.ts decides where the talents stop, and the item slots must begin
- * exactly there or the drop test calls an item slot a talent.
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THIS USED TO BE TWO ARRAYS CONCATENATED, AND THE JOIN WAS THE PARTITION.
+ * ═══════════════════════════════════════════════════════════════════════════
+ * It built `talents` (exactly `HOTBAR_TALENT_SLOTS` of them) and `items`
+ * (exactly `HOTBAR_ITEM_SLOTS`) and returned `[...talents, ...items]`, and its
+ * own note said why that mattered: *"ui/hotbar.ts decides where the talents
+ * stop, and the item slots must begin exactly there or the drop test calls an
+ * item slot a talent."* There is no boundary to keep in step any more — one
+ * walk, one store lookup per slot, and no index arithmetic anywhere.
  *
- * ═══ THAT USED TO BE A RUNTIME GUARD AND IT IS A STRUCTURAL FACT NOW ═══
- * This note read: "the item slots are appended ONLY when the loadout is exactly
- * `HOTBAR_TALENT_SLOTS` long. A short loadout ... draws the talents alone rather
- * than sliding four item slots down into indices the drop test would call
- * talents."
- *
- * That was true of a bar built by mapping over `loadout`, whose length is the
- * CLASS's business. The bar is built from the BINDING STORE now — `Array.from({
- * length: HOTBAR_TALENT_SLOTS })` — so the talent half is that many entries or
- * the expression does not compile. The ternary that used to guard it compared a
- * constant against itself and could not take its own false branch; a dead
- * conditional that reads as a live constraint is worse than no conditional,
- * because the next person to change the bar budgets for it.
- *
- * AN EMPTY LOADOUT still draws empty talent slots rather than nothing, which is
- * the one behaviour that did change: the boxes arrive before the frame that
- * fills them. That is the same picture a player sees for an unbound slot on a
- * bar they have arranged, so it advertises nothing that is not already there.
- *
- * ═══ AND EVERY ITEM SLOT'S CAPTION IS RECOMPUTED, NEVER REMEMBERED ═══
+ * ═══ AND EVERY SLOT'S CAPTION IS RECOMPUTED, NEVER REMEMBERED ═══
  * A binding stores an `itemId`, a name and an icon and nothing else;
  * `itemSlotAction` asks the last `inventory` frame whether that id is in the bag
  * (EQUIP), on the body (REMOVE) or in neither (GONE). That is
  * HotkeysIconsDisplay.lua:232-234's own rule — the bar asks the world, every
  * draw — and it is what makes an item equipped from the PANEL flip the caption on
  * the BAR one frame later with nothing wired between them.
+ *
+ * ═══ A BINDING THAT NO LONGER RESOLVES DRAWS EMPTY, NOT STALE ═══
+ * An id can stop being in `loadout` — a class swap, a character load, a talent
+ * this build deleted — and the empty slot is the honest picture. Drawing the
+ * remembered name of something the player cannot press is the same failure as
+ * an item slot showing EQUIP for an item that is gone, which `itemSlotAction`
+ * already refuses to do.
  */
 function hotbarView(): HotbarView {
-  /**
-   * ═══════════════════════════════════════════════════════════════════════════
-   * THE BAR IS BUILT FROM THE BINDINGS AND RESOLVED AGAINST THE LOADOUT.
-   * ═══════════════════════════════════════════════════════════════════════════
-   *
-   * This was `loadout.map(...)` — slot n was `loadout[n]`, full stop. Two
-   * things it could not do, and both of them are the point of the change: a
-   * player could not choose WHICH six, and a class could not own a seventh.
-   *
-   * A BINDING THAT NO LONGER RESOLVES DRAWS EMPTY, NOT STALE. An id can stop
-   * being in `loadout` — a class swap, a character load, a talent this build
-   * deleted — and the empty slot is the honest picture. Drawing the remembered
-   * name of something the player cannot press is the same failure as an item
-   * slot showing EQUIP for an item that is gone, which `itemSlotAction` already
-   * refuses to do.
-   */
-  // THE ACTIVE PAGE'S NINE, and `slotUnder` measures the same nine because it
-  // reads `hotbarView().slots.length` — one number, both readers, which is the
-  // rule hudwiring.test.ts pins after the item slots broke exactly this.
-  const talents: HotbarSlot[] = Array.from({ length: HOTBAR_TALENT_SLOTS }, (_unused, index) => {
-    const talent = talentInSlot(index);
-    if (talent === undefined) return { kind: HotbarSlotKind.Empty };
-    return {
-      // v12: SPELLED OUT AT THE CONSTRUCTION SITE. `HotbarTalentSlot.kind` was
-      // optional purely so this literal kept compiling while ui/hotbar.ts grew
-      // two more members; now that the discriminant is written here it can stop
-      // being a shim, and the `case undefined:` arms in that file are what will
-      // say so.
-      kind: HotbarSlotKind.Talent,
-      talent,
-      // Absent from `cooldowns` means READY — the server deletes the entry at
-      // zero, mirroring ToME's `talents_cd[tid] = nil`.
-      cooldown: cooldowns[talent.id] ?? 0,
-      affordable: affordable(talent),
-    };
-  });
-
   const carried = inventory?.carried ?? [];
   const equipped = inventory?.equipped ?? {};
 
@@ -4816,67 +5069,88 @@ function hotbarView(): HotbarView {
       rows: row.compare,
     };
   };
-  const items: HotbarSlot[] = hotbarBindings.map((binding) =>
-    binding === null
-      ? { kind: HotbarSlotKind.Empty }
-      : {
-          kind: HotbarSlotKind.Item,
-          itemId: binding.itemId,
-          name: binding.name,
-          icon: binding.icon,
-          action: itemSlotAction(binding.itemId, carried, equipped),
-          // ═══ AND WHAT IT DOES, JOINED HERE ═══ ui/hotbar.ts does not hold the
-          // inventory frame and must not learn to, so the join happens at the
-          // construction site where `carried` is already in hand for
-          // `itemSlotAction`. `use` first, exactly as the bag's card builds it:
-          // the sentence the server rendered against THIS body beats the
-          // catalogue's flavour when both exist.
-          ...itemTipFacts(binding.itemId, carried),
-        },
-  );
+
+  const count = hotbarSlotCount();
+  const slots: HotbarSlot[] = Array.from({ length: count }, (_unused, index) => {
+    const talent = talentInSlot(index);
+    if (talent !== undefined) {
+      return {
+        kind: HotbarSlotKind.Talent,
+        talent,
+        // Absent from `cooldowns` means READY — the server deletes the entry at
+        // zero, mirroring ToME's `talents_cd[tid] = nil`.
+        cooldown: cooldowns[talent.id] ?? 0,
+        affordable: affordable(talent),
+      };
+    }
+    const binding = hotbarBindings[index] ?? null;
+    if (binding === null) return { kind: HotbarSlotKind.Empty };
+    return {
+      kind: HotbarSlotKind.Item,
+      itemId: binding.itemId,
+      name: binding.name,
+      icon: binding.icon,
+      action: itemSlotAction(binding.itemId, carried, equipped),
+      // ═══ AND WHAT IT DOES, JOINED HERE ═══ ui/hotbar.ts does not hold the
+      // inventory frame and must not learn to, so the join happens at the
+      // construction site where `carried` is already in hand for
+      // `itemSlotAction`. `use` first, exactly as the bag's card builds it:
+      // the sentence the server rendered against THIS body beats the
+      // catalogue's flavour when both exist.
+      ...itemTipFacts(binding.itemId, carried),
+    };
+  });
 
   const armedId = targeting?.talent()?.id ?? null;
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * WHAT THE BAR IS CURRENTLY TOO SMALL TO DRAW. The shrink's only receipt.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `HotbarView.hidden` carries why this is said out loud. What it is counted
+   * from matters as much: the SAME two resolvers the visible loop above uses,
+   * walked over the rest of the pool. `talentInSlot` and not
+   * `talentBindings[i] != null`, because a binding whose talent has left the
+   * loadout draws as an EMPTY slot when it is visible — counting it here would
+   * report a button that would not be there if the player widened the bar, and
+   * "four are hidden" followed by three appearing is worse than saying nothing.
+   */
+  let hidden = 0;
+  for (let i = count; i < HOTBAR_SLOT_POOL; i += 1) {
+    if (talentInSlot(i) !== undefined || hotbarBindings[i] != null) hidden += 1;
+  }
   return {
-    // ALWAYS BOTH HALVES. See the note above: `talents` is built to exactly
-    // `HOTBAR_TALENT_SLOTS`, so the guard this replaced could not be false.
-    slots: [...talents, ...items],
+    slots,
+    hidden,
     hovered: hoveredSlot,
     /**
-     * ═══════════════════════════════════════════════════════════════════════════
-     * WHICH BOX IS LIT, AND THIS READ `loadout.findIndex` UNTIL JUST NOW.
-     * ═══════════════════════════════════════════════════════════════════════════
+     * ═══════════════════════════════════════════════════════════════════════
+     * WHICH BOX IS LIT. Resolved off the SLOTS BEING DRAWN, never the loadout.
+     * ═══════════════════════════════════════════════════════════════════════
      *
-     * That was right for exactly as long as slot n was `loadout[n]`: the two
-     * arrays were the same list, so an index into one was an index into the
-     * other. The bar takes a binding now, so they are different lists — and the
-     * armed ring would have been drawn on whichever box happened to sit at the
-     * talent's position in the LOADOUT, which is a different button as soon as
-     * anybody rearranges anything.
+     * This read `loadout.findIndex` once, which was right for exactly as long
+     * as slot n was `loadout[n]`. The bar takes a binding, so they are
+     * different lists — and the armed ring would have been drawn on whichever
+     * box happened to sit at the talent's position in the LOADOUT, which is a
+     * different button as soon as anybody rearranges anything. A lit button
+     * that is not the one you pressed does not fail, it just quietly points at
+     * the wrong thing while an aim is open.
      *
-     * A LIT BUTTON THAT IS NOT THE ONE YOU PRESSED is the worst kind of wrong:
-     * it does not fail, it just quietly points at the wrong thing while an aim
-     * is open. Resolved off `talents` — the six actually being drawn, one line
-     * above — so the ring is on the box the player is looking at, or nowhere at
-     * all when the armed talent lives on the page they are not.
-     *
-     * This read a `page` local until the paint and the press were unified. The
-     * six drawn slots ARE that list, resolved once, so the ring can no longer
-     * disagree with the button under it even in principle.
+     * IT IS ALSO WHY THE SEARCH IS BOUNDED BY THE DRAWN SLOTS AND NOT THE
+     * POOL: a talent armed from a slot the player has since shrunk off the bar
+     * has no box to ring, and -1 is the honest answer.
      */
     armed:
       armedId === null
         ? -1
-        : talents.findIndex(
+        : slots.findIndex(
             (slot) => slot.kind === HotbarSlotKind.Talent && slot.talent.id === armedId,
           ),
-    // WHICH PAGE THESE SIX ARE, so the label strip can say so. A bar that
-    // silently swapped its buttons would be indistinguishable from a bug.
-    page: talentPage,
     // WHICH POOL THE TIP SHOULD NAME. See `HotbarView.pool` — the cost clause
     // was the literal word `resolve` for every class. Absent before a loadout
     // arrives, which is exactly when there is no card to draw.
     ...(resource === null ? {} : { pool: resource.kind }),
-    // So an empty item slot takes the hover frame and reads BIND while something
+    // So an empty slot takes the hover frame and reads BIND while something
     // droppable is being carried over the bar. Cosmetic only —
     // `hotbarDropTargetAt` decides what a release actually means.
     drag: liveDragSubject(),
@@ -5287,6 +5561,210 @@ function pointerCardAt(layout: HudLayout, px: number, py: number): boolean {
  * changed a slot size: hotbar, then the resource pips, then the targeting hint,
  * then the refusal notice.
  */
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ *   EVERY CARD THE POINTER OPENS, IN ONE PLACE, AT THE END OF THE FRAME.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Reported from play: *"tooltip when hovering on the bar gets covered by the log
+ * window box"*.
+ *
+ * ═══ THERE WERE FOUR CARD PAINTS AND THEY WERE AT FOUR DIFFERENT DEPTHS ═══
+ * The talent panel's card was drawn INSIDE the talent-panel block, so the
+ * inventory panel, the escape menu, the hotbar and both prose strips were all
+ * painted on top of it. The general hover card — the hotbar's, the bag's, the
+ * pane's, the sheet's, the minimap's — went down straight after the hotbar, so
+ * the targeting hint and the refusal notice (`drawLine` paints an OPAQUE
+ * full-width strip in the band immediately above the bar, which is exactly where
+ * a hotbar card opens) cut a band through it, and the respawn plate, the drag
+ * ghost, the world map and the dialogue window all covered it. The actor card
+ * and the floor card were drawn later still but before the world map and the
+ * conversation.
+ *
+ * Four depths is four separate answers to one question, and each of them was
+ * argued correctly against the surfaces that existed when it was written. So
+ * there is ONE answer now: a card is transient, it is small, and it exists to
+ * explain the thing under the pointer, so it goes last.
+ *
+ * ═══ WHAT STILL OUTRANKS A CARD ═══
+ * The token menu and the class picker, and neither of them even contends: a card
+ * is SUPPRESSED outright while the menu is open (the menu opens AT the pointer,
+ * so a card peeking out from behind the rows it is hiding reads as a rendering
+ * bug) and the picker replaces the HUD entirely.
+ *
+ * ═══ AND THE COMBAT BANNER NO LONGER DOES. THE THREE RULES WERE A CYCLE ═══
+ * This is a decision and not an oversight, so it is written down rather than
+ * discovered later. Three argued precedences existed and they cannot all hold:
+ *
+ *   the CARD beats every panel      — this report, and the reason for this
+ *                                     function.
+ *   the DIALOGUE beats the BANNER   — `drawDialogue`'s own note: *"the banner is
+ *                                     a three-second announcement and this is a
+ *                                     surface somebody is reading and about to
+ *                                     press"*.
+ *   the BANNER beats the CARD       — the old note on the actor card: of the
+ *                                     claims on that space, an incidental hover
+ *                                     is the weakest.
+ *
+ * A dialogue window is a panel, so the first rule makes card > dialogue, the
+ * second makes dialogue > banner, and the third closes the loop. Exactly one
+ * edge has to go, and it is the third: it costs the banner a card-sized patch
+ * for two and a half seconds, once per fight, while the other two each cost a
+ * whole surface the player is actively reading. The banner is still drawn after
+ * the dock and after every panel; it is now drawn before the cards, and the
+ * comment at its call site says so.
+ *
+ * ═══ AND THE ONE SURFACE NO PAINT ORDER CAN BEAT ═══
+ * `domCommandRow` — see `clearOfObstacle` in ui/panel.ts. The Case Log's
+ * composer is a real `<input>` over the canvas, so the cards step around it
+ * rather than under it. That is the half of this report that a reordering alone
+ * would have left broken, and it is passed to all four cards rather than to the
+ * hotbar's, because the pane, the doll, the map and a monster standing in the
+ * bottom-left corner all open cards into the same band.
+ *
+ * ═══ SUPPRESSED WHILE A GESTURE IS LIVE, FOR THE MENU'S OWN REASON ═══
+ * The canvas `mousemove` handler short-circuits on its first line while a drag
+ * is in flight, so `pointerPoint` and the hovered actor are FROZEN at whatever
+ * they were when the button went down. `drawDragGhost` has already put the
+ * carried item under the pointer by the time this runs, so a card left over from
+ * before the press would be drawn on top of it, pinned where the pointer no
+ * longer is. The actor and floor cards already refused a live drag; the hover
+ * card did not, and now does.
+ */
+function paintPointerCards(
+  ctx: CanvasRenderingContext2D,
+  sprites: SpriteSource,
+  layout: HudLayout,
+  sheetRows: readonly SheetRow[] | null,
+  width: number,
+  height: number,
+): void {
+  // THE ONE RECT THE CANVAS CANNOT PAINT OVER, read once for all four cards.
+  const obstacle = domCommandRow() ?? undefined;
+  const busy = drag !== null || tokenMenu?.visible() === true;
+
+  /**
+   * THE TALENT TREE'S CARD FIRST, because it is the only one asked of a
+   * specific panel rather than of the whole screen — `talentCardAt` answers null
+   * unless that panel is open and has no description column of its own.
+   *
+   * The tree is fifteen icons and no prose; this is where the prose went, and it
+   * was asked for in those words. It overlaps the panel BY DESIGN — a card that
+   * respected the panel's bounds would be clipped by the thing it is explaining.
+   */
+  if (layout.talents !== null && pointerPoint !== null && !busy) {
+    const card = talentCardAt(layout.talents, pointerPoint.x, pointerPoint.y);
+    if (card !== null) {
+      drawHoverCard(ctx, sprites, card, pointerPoint.x, pointerPoint.y, width, height, obstacle);
+      pointerCardDrawn = true;
+    }
+  }
+
+  /**
+   * THEN THE SCREEN'S OWN CARD. See `hoverCardAt`, which the mousemove handler
+   * asks too, so the paint and the "should this move repaint?" test can never
+   * disagree about whether a card is under the pointer.
+   */
+  if (pointerPoint !== null && !busy) {
+    const card = hoverCardAt(layout, sheetRows, pointerPoint.x, pointerPoint.y);
+    if (card !== null) {
+      drawHoverCard(ctx, sprites, card, pointerPoint.x, pointerPoint.y, width, height, obstacle);
+      pointerCardDrawn = true;
+    }
+  }
+
+  // ═══ THE ACTOR CARD — WHAT IS UNDER THE POINTER ON THE BOARD ═══
+  //
+  // The precedence paragraph that used to sit here said the card was *"drawn
+  // AFTER the erased plate and BEFORE the combat banner"*, and reasoned from
+  // that: the banner wins, the menu wins, this loses to both. The first clause
+  // stopped being true — the world map and the conversation window were both
+  // painted later — and the ranking the second clause wanted is now stated once,
+  // for all four cards, at the head of this function.
+  //
+  // `busy` IS THE TWO SUPPRESSIONS, hoisted: a live drag and an open token menu.
+  // Both were spelled out inline here and only here, which is how the hover card
+  // came to lack them (see the header).
+  const tip = tooltipView();
+  if (tip !== null && pointerPoint !== null && !busy) {
+    drawTooltip({
+      ctx,
+      sprites,
+      view: tip,
+      px: pointerPoint.x,
+      py: pointerPoint.y,
+      viewportW: width,
+      viewportH: height,
+      obstacle,
+    });
+    pointerCardDrawn = true;
+  }
+
+  /**
+   * ═══ AND THE FLOOR'S CARD, UNDER THE IDENTICAL SUPPRESSIONS ═══
+   *
+   * `pointerPoint` and `busy`, exactly as above and for exactly the reasons the
+   * block above gives: a card painted over a dragged item, or over the menu that
+   * swallowed the pointer, is the stale-tooltip bug in its most visible form.
+   *
+   * MUTUALLY EXCLUSIVE WITH THE ACTOR CARD BY CONSTRUCTION, not by an `else`:
+   * `noteHoveredLoot` refuses to set a tile while a body is on it, so both
+   * conditions can never be true at once and neither branch has to know that.
+   */
+  const lootTile = hoveredLootTile;
+  if (lootTile !== null && pointerPoint !== null && !busy) {
+    const here = ground.filter(
+      (item) => item.cell[0] === lootTile.x && item.cell[1] === lootTile.y,
+    );
+    if (here.length > 0) {
+      drawLootTip({
+        ctx,
+        sprites,
+        items: here.map((item) => ({
+          // A FALLBACK, NOT A GUESS. `name` is optional on the wire so an older
+          // server can still be talked to, and "something here" is the honest
+          // answer when it did not send one — never a prettified `itemId`,
+          // which would read as a name and be wrong.
+          name: item.name ?? 'something here',
+          tier: item.tier,
+          /**
+           * ═══ AND WHAT IT IS, WHERE THE SERVER SAID ═══
+           * All three are optional on the wire, so an older server still draws
+           * the name-and-tier card it always drew. `tooltip.ts` shows them only
+           * when the tile holds ONE thing — a stat block per item on a pile of
+           * four would be forty rows over the fight underneath it.
+           *
+           * The meta line is assembled here rather than on the server for the
+           * reason the bag's is: it is presentation, and `slot` is absent for a
+           * consumable precisely so a surface can say what KIND of thing it is
+           * instead of naming a slot that does not exist.
+           *
+           * ═══ AND A COIN PILE IS NOT A CONSUMABLE ═══
+           * Money is not an `Item` at all — `projectGroundItems` says so in as
+           * many words, because `resolveItem` cannot answer for it and it has no
+           * slot. This keyed off `desc`, which the catalogue always supplied and
+           * money never did; that was an accident of a flavour field being
+           * required, and it is `fromCatalogue` now, which says it on purpose.
+           *
+           * NO PROSE ON THE CARD. Gear is its name, its kind and its numbers.
+           */
+          ...(item.fromCatalogue === true
+            ? { meta: `${item.tier} · ${item.slot ?? 'consumable'}` }
+            : {}),
+          ...(item.compare === undefined ? {} : { rows: item.compare }),
+        })),
+        underfoot: lootAt(lootTile) === TileLoot.Underfoot,
+        px: pointerPoint.x,
+        py: pointerPoint.y,
+        viewportW: width,
+        viewportH: height,
+        obstacle,
+      });
+      pointerCardDrawn = true;
+    }
+  }
+}
+
 const paintHud: HudPainter = (ctx, width, height) => {
   // NOTHING IS UP UNTIL THIS PAINT DRAWS IT. See `pointerCardDrawn`.
   pointerCardDrawn = false;
@@ -5342,16 +5820,15 @@ const paintHud: HudPainter = (ctx, width, height) => {
   }
 
   const view = turnView();
-  // THE TOP HUD, IN TWO PIECES AND ONE MEASUREMENT. The banner is the sentence
-  // and the playfield frame; the cards are the strip of faces under it, drawn
-  // ONLY in combat. `turnHudHeight` is what both the dock and the combat banner
-  // stack against, so nothing below can overlap the strip by carrying its own
-  // copy of how tall it is.
+  // THE TOP HUD, AND IT IS ONE PIECE NOW: the banner sentence and the playfield
+  // frame, 14 pixels, in combat and out of it. The strip of faces that used to
+  // sit under it is deleted — the party pane carries what it carried, and the 46
+  // pixels it spent in every fight went back to the map.
   drawTurnBar({ ctx, view, width, height });
   /**
    * ═══ THE ONLY POINTER ROUTE INTO THE ESCAPE MENU — Minimalist.lua:1888-1897 ═══
    *
-   * AFTER the bar so it sits on top of the strip, and UNCONDITIONALLY because
+   * AFTER the bar so it sits on top of it, and UNCONDITIONALLY because
    * `drawTurnBar` returns early with no `turn` frame — see ui/menubutton.ts. A
    * way into the menu that came and went with a frame would be worse than none.
    */
@@ -5361,7 +5838,6 @@ const paintHud: HudPainter = (ctx, width, height) => {
     view.turn !== null,
   );
   const hudTop = layout.hudTop;
-  drawTurnCards({ ctx, sprites, view, width, y: TURN_BAR_H });
 
   // THE TWO SIDE PANELS, between the turn HUD and the hotbar, and BEFORE the
   // prose lines below — `drawLine` paints an opaque full-width strip, so a
@@ -5526,8 +6002,10 @@ const paintHud: HudPainter = (ctx, width, height) => {
       const said = fitZoneLabel(
         (text) => ctx.measureText(text).width,
         realmName,
-        // As far left as the minimap is wide again, and no further: past that
-        // it would run under where the turn cards appear when a fight starts.
+        // As far left as the minimap is wide again, and no further. It was the
+        // turn card strip this had to stay clear of; that is deleted, and the
+        // bound stays because a label that keeps growing leftwards ends up
+        // across the middle of the screen with nothing to stop it.
         box.w * 2,
       );
       if (said !== '') ctx.fillText(said, box.x + box.w, zoneLabelBaseline(box));
@@ -5655,28 +6133,6 @@ const paintHud: HudPainter = (ctx, width, height) => {
       message: talentMessage,
       now: Date.now(),
     });
-
-    /**
-     * ═════════════════════════════════════════════════════════════════════════
-     * AND THE HOVER CARD, ON TOP OF EVERYTHING THE PANEL DREW.
-     * ═════════════════════════════════════════════════════════════════════════
-     *
-     * The tree is fifteen icons and no prose; this is where the prose went, and
-     * it was asked for in those words. Drawn AFTER the panel because it overlaps
-     * it by design — a card that respected the panel's bounds would be clipped
-     * by the thing it is explaining.
-     *
-     * `pointerPoint` is already in LOGICAL backbuffer pixels, which is the space
-     * every rect in this file lives in; the card clamps itself to the viewport
-     * rather than flipping sides, so it never moves while the pointer is still.
-     */
-    if (pointerPoint !== null) {
-      const card = talentCardAt(layout.talents, pointerPoint.x, pointerPoint.y);
-      if (card !== null) {
-        drawHoverCard(ctx, sprites, card, pointerPoint.x, pointerPoint.y, width, height);
-        pointerCardDrawn = true;
-      }
-    }
   }
 
   // ═══ THE INVENTORY PANEL, AFTER THE OTHER TWO AND FOR THEIR REASONS ═══
@@ -5775,18 +6231,6 @@ const paintHud: HudPainter = (ctx, width, height) => {
     if (hotbarSettingsOpen) {
       const pop = hotbarSettingsRect(layout.hotbar, width, height, layout.hudTop);
       drawHotbarSettings(ctx, sprites, pop, hotbarStyle);
-    }
-  }
-
-  /**
-   * THE HOVER CARDS, LAST, OVER EVERYTHING THEY EXPLAIN. See `hoverCardAt`,
-   * which the mousemove handler asks too.
-   */
-  if (pointerPoint !== null) {
-    const card = hoverCardAt(layout, sheetRows, pointerPoint.x, pointerPoint.y);
-    if (card !== null) {
-      drawHoverCard(ctx, sprites, card, pointerPoint.x, pointerPoint.y, width, height);
-      pointerCardDrawn = true;
     }
   }
 
@@ -5931,111 +6375,13 @@ const paintHud: HudPainter = (ctx, width, height) => {
   // ghost — it follows the pointer directly through `panelOffsets`.
   drawDragGhost(ctx, sprites);
 
-  // ═══ THE HOVER CARD, AND IT LOSES TO BOTH OF THE SURFACES BELOW ═══
+  // THE COMBAT BANNER, over the dock and every panel — but UNDER the hover cards.
   //
-  // Drawn AFTER the erased plate and BEFORE the combat banner, which fixes its
-  // precedence exactly: the banner wins, the token menu wins, this loses to
-  // both. Of the three claims on that piece of screen the incidental one is the
-  // weakest — the banner is on for two and a half seconds and answers "the fight
-  // has started", the menu was opened deliberately and is about to be clicked,
-  // and this appeared because a pointer came to rest. A card that covered either
-  // of them would be the mouse interrupting the two surfaces most likely to be
-  // urgent, in exchange for a number the player can see again by hovering again.
-  //
-  // SUPPRESSED ENTIRELY WHILE THE MENU IS OPEN rather than merely drawn under
-  // it: the menu opens AT THE POINTER, so the two overlap by construction, and a
-  // card peeking out from behind the rows it is hiding reads as a rendering bug.
-  // ═══ ...AND SUPPRESSED WHILE A GESTURE IS LIVE, FOR THE MENU'S OWN REASON ═══
-  // The canvas `mousemove` handler short-circuits on its first line while a drag
-  // is in flight, so `pointerPoint` and the hovered actor are FROZEN at whatever
-  // they were when the button went down. This is painted after `drawDragGhost`,
-  // so a card left over from before the press is drawn on top of the 72px item in
-  // the player's hand, pinned at a position the pointer left — the thing being
-  // carried vanishes under a description of a tile nobody is looking at.
-  const tip = tooltipView();
-  if (tip !== null && pointerPoint !== null && drag === null && tokenMenu?.visible() !== true) {
-    drawTooltip({
-      ctx,
-      sprites,
-      view: tip,
-      px: pointerPoint.x,
-      py: pointerPoint.y,
-      viewportW: width,
-      viewportH: height,
-    });
-    pointerCardDrawn = true;
-  }
-
-  /**
-   * ═══ AND THE FLOOR'S CARD, UNDER THE IDENTICAL THREE SUPPRESSIONS ═══
-   *
-   * `pointerPoint`, `drag` and the token menu, exactly as above and for exactly
-   * the reasons the block above spends a paragraph on: a card painted over a
-   * dragged item, or over the menu that swallowed the pointer, is the
-   * stale-tooltip bug in its most visible form.
-   *
-   * MUTUALLY EXCLUSIVE WITH THE ACTOR CARD BY CONSTRUCTION, not by an `else`:
-   * `noteHoveredLoot` refuses to set a tile while a body is on it, so both
-   * conditions can never be true at once and neither branch has to know that.
-   */
-  const lootTile = hoveredLootTile;
-  if (
-    lootTile !== null &&
-    pointerPoint !== null &&
-    drag === null &&
-    tokenMenu?.visible() !== true
-  ) {
-    const here = ground.filter(
-      (item) => item.cell[0] === lootTile.x && item.cell[1] === lootTile.y,
-    );
-    if (here.length > 0) {
-      drawLootTip({
-        ctx,
-        sprites,
-        items: here.map((item) => ({
-          // A FALLBACK, NOT A GUESS. `name` is optional on the wire so an older
-          // server can still be talked to, and "something here" is the honest
-          // answer when it did not send one — never a prettified `itemId`,
-          // which would read as a name and be wrong.
-          name: item.name ?? 'something here',
-          tier: item.tier,
-          /**
-           * ═══ AND WHAT IT IS, WHERE THE SERVER SAID ═══
-           * All three are optional on the wire, so an older server still draws
-           * the name-and-tier card it always drew. `tooltip.ts` shows them only
-           * when the tile holds ONE thing — a stat block per item on a pile of
-           * four would be forty rows over the fight underneath it.
-           *
-           * The meta line is assembled here rather than on the server for the
-           * reason the bag's is: it is presentation, and `slot` is absent for a
-           * consumable precisely so a surface can say what KIND of thing it is
-           * instead of naming a slot that does not exist.
-           *
-           * ═══ AND A COIN PILE IS NOT A CONSUMABLE ═══
-           * Money is not an `Item` at all — `projectGroundItems` says so in as
-           * many words, because `resolveItem` cannot answer for it and it has no
-           * slot. This keyed off `desc`, which the catalogue always supplied and
-           * money never did; that was an accident of a flavour field being
-           * required, and it is `fromCatalogue` now, which says it on purpose.
-           *
-           * NO PROSE ON THE CARD. Gear is its name, its kind and its numbers.
-           */
-          ...(item.fromCatalogue === true
-            ? { meta: `${item.tier} · ${item.slot ?? 'consumable'}` }
-            : {}),
-          ...(item.compare === undefined ? {} : { rows: item.compare }),
-        })),
-        underfoot: lootAt(lootTile) === TileLoot.Underfoot,
-        px: pointerPoint.x,
-        py: pointerPoint.y,
-        viewportW: width,
-        viewportH: height,
-      });
-      pointerCardDrawn = true;
-    }
-  }
-
-  // THE COMBAT BANNER IS DRAWN LAST, over the dock and everything else.
+  // ═══ IT SAID "DRAWN LAST" AND IT HAS NOT BEEN FOR SOME TIME ═══
+  // The conversation window and the token menu were both already painted after
+  // it, and the hover cards are now too. See `paintPointerCards` for why that
+  // last one is a decision rather than a drift: the three precedences that were
+  // written down formed a cycle, and this is the edge that was cheapest to cut.
   //
   // For the two and a half seconds it is up it is the most important thing on
   // the screen — "the players do not know when combat starts" is the bug it
@@ -6043,9 +6389,11 @@ const paintHud: HudPainter = (ctx, width, height) => {
   // that report with "well, it was there". It costs the top of the dock for
   // three seconds, once per fight, which is the cheapest thing in this file.
   //
-  // `hudTop`, not `TURN_BAR_H`: it opens at the top of the MAP, below the card
-  // strip that has just appeared with it. Covering the cards with the banner
-  // announcing them would hide the answer at the moment it was being given.
+  // `hudTop`, which IS `TURN_BAR_H`: it opens at the top of the MAP, below the
+  // one line of prose. It had to be measured while a card strip appeared with
+  // the fight — covering the cards with the banner announcing them would have
+  // hidden the answer at the moment it was being given — and it is read from the
+  // layout rather than from the constant so that stays true if the HUD grows.
   /**
    * ═══════════════════════════════════════════════════════════════════════════
    * THE MAP, at whichever of its two sizes is called for.
@@ -6228,6 +6576,18 @@ const paintHud: HudPainter = (ctx, width, height) => {
     });
   }
 
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * EVERY CARD THE POINTER OPENS, HERE AND NOWHERE ELSE.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Four separate paints at four different depths, one of which was inside a
+   * panel's own block — see `paintPointerCards` for what each of them lost to.
+   * A card is transient, it is small, and it exists to explain the thing under
+   * the pointer, so it goes after every panel on this screen.
+   */
+  paintPointerCards(ctx, sprites, layout, sheetRows, width, height);
+
   // ...EXCEPT THE TOKEN MENU, which is drawn after even the banner. It is the
   // only surface here the player opened deliberately and is about to click, and
   // a menu underneath a three-second announcement is a menu whose rows cannot be
@@ -6370,6 +6730,12 @@ function scene(): Scene {
     overlays: sweep?.overlays(),
     downed: downedMap(),
     effects,
+    // WHICH WAY EACH BODY IS TURNED, and where the last few blows on this body
+    // came from. Both are RENDER facts derived from the event stream — see
+    // `facings` — so they are handed over exactly as they are held rather than
+    // being rebuilt here.
+    facing: facings,
+    threats: threatArcs(),
     pings: pingMarkers(),
     // WHAT IS ON THE FLOOR, grouped into one mark per TILE on the way out. The
     // renderer holds no game state and must not learn what a pile is
@@ -6553,9 +6919,9 @@ function replaceActors(next: readonly ActorView[]): void {
  * combat banner announces the CROSSING once; this states the CONDITION for as
  * long as it lasts, which is what somebody who tabbed back in needs.
  *
- * Read off `TurnActor.state` — the server's own answer, the same one the cards
- * are drawn from — rather than re-deriving the barrier's precedence from the
- * three id arrays. Exhaustive with no `default`, so a sixth state cannot ship as
+ * Read off `TurnActor.state` — the server's own answer, the same one the party
+ * pane's rows are drawn from — rather than re-deriving the barrier's precedence
+ * from the three id arrays. Exhaustive with no `default`, so a sixth state cannot ship as
  * silence in the one region a screen reader is listening to.
  */
 function turnPhase(): string {
@@ -6588,6 +6954,132 @@ function turnPhase(): string {
  * eventually disagree. protocol.ts wraps the identical payload in both lanes so
  * that this function can be the only reader.
  */
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * WHICH WAY EACH BODY IS TURNED. Derived here, from the events, and nowhere else.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * PORTED. Upstream turns a body in exactly two places and both are in the
+ * client half of its engine:
+ *
+ *   `tome/class/Actor.lua:1427` — on a move, `if self.x < ox then
+ *     MOflipX(isTileFlipped()) elseif self.x > ox then MOflipX(not ...)`.
+ *   `tome/class/interface/Combat.lua:649` — on a blow, the same comparison
+ *     against `target.x`.
+ *
+ * Both compare a PAIR OF TILES the frame already carries: `MoveEvent` has
+ * `fromX/fromY` and `AttackEvent` has the target's `x/y`. So nothing was added
+ * to the wire for this, and nothing should be: a facing is a fact about a
+ * PICTURE, and the server's authority is over what happened, not over which way
+ * the drawing of it points.
+ *
+ * ═══ THE MOVE'S `fromX/fromY` HAD NO READER UNTIL NOW ═══
+ * `applyTurnEvent` says so in as many words — *"`fromX`/`fromY` are ignored:
+ * they exist for a client that interpolates the step, and this one deliberately
+ * does not"*. It still does not interpolate. It reads them once, for the one
+ * bit they carry that the destination does not: which way the body was going.
+ *
+ * ═══ A BODY THAT LEAVES IS FORGOTTEN ═══
+ * Written in `case 'left'` beside `actors.delete`. An id can be reused by a
+ * later spawn — the server's ids are per-run — and a stale heading would put a
+ * tick on a fresh husk claiming it had already acted.
+ */
+const facings = new Map<string, Dir>();
+
+/**
+ * Turn a body to look at a tile. The one writer.
+ *
+ * SILENT FOR A ZERO DISPLACEMENT, which is `headingToward`'s rule and a real
+ * case: a talent that hits the caster's own square, a bump attack resolved
+ * against the tile already occupied. Keeping the previous heading is right —
+ * the body did not turn — and defaulting to north would be a lie.
+ */
+function faceToward(actorId: string, fromX: number, fromY: number, toX: number, toY: number): void {
+  const dir = headingToward(toX - fromX, toY - fromY);
+  if (dir !== null) facings.set(actorId, dir);
+}
+
+/**
+ * WHERE THE LAST FEW BLOWS ON THE VIEWER CAME FROM. THE RULES ARE NOT HERE.
+ *
+ * `rememberThreat` keys by direction, decides which of two grades survives and
+ * stamps each mark with its own deadline; state/threat.ts carries all three
+ * arguments and is where they can be driven by a test. This is the variable
+ * they are held in and the timer that sweeps it, and nothing else.
+ */
+let threatMarks: readonly RememberedThreat[] = [];
+
+/**
+ * The live threat arcs, as the renderer wants them, on the viewer's own tile.
+ *
+ * ═══ FILTERED ON READ, NOT ONLY ON THE TIMER ═══
+ * `threatTells` drops what has expired every time this is called, so a missed
+ * or delayed timeout can leave a stale arc up for one frame at worst. The timer
+ * exists to make the arc VANISH in an idle party — out of combat there may be
+ * no frame for minutes — and not to be the definition of expiry.
+ *
+ * ═══ AND THE ORBS ARE ASKED FOR HERE, EVERY DRAW ═══
+ * Something already in the air aimed at this tile is not a memory (see
+ * `incomingThreats`): it is true while the orb is on the board and false the
+ * moment it lands or the player steps off the frozen aim tile, so it is derived
+ * rather than remembered.
+ */
+function threatArcs(): readonly ThreatMark[] {
+  const self = selfId === null ? undefined : actors.get(selfId);
+  if (self === undefined) return [];
+  return threatTells(threatMarks, projectiles, self, Date.now()).map((tell) => ({
+    x: self.x,
+    y: self.y,
+    ...tell,
+  }));
+}
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * WHICH WAY A BLOW CAME FROM, AND HOW SURE THE FRAME LET US BE. One decision.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * TWO GRADES, AND THE FRAME DECIDES WHICH. A NAMED dealer means this viewer
+ * holds that body, so the bearing is worked out here from both tiles and drawn
+ * as an OCTANT. A dealer whose name was taken away leaves `DamageEvent.from`, a
+ * QUADRANT, and is drawn as a quadrant.
+ *
+ * SILENT WITH NEITHER — a bleed tick, a fall, a trap the server attributed to
+ * nobody. There is no direction to give and an arc pointing anywhere would be
+ * invented.
+ *
+ * `actors.get` AND NOT MERELY `sourceId !== undefined`: the id is only dropped
+ * by `fogEvent` for a body OUT OF SIGHT, and a client can hold an id for a body
+ * it has not been sent yet in the one frame between a sweep and its `joined`.
+ * No body, no tiles, no octant — so it falls through to whatever the server was
+ * willing to say.
+ *
+ * ONE FUNCTION FOR BOTH ARMING SITES. The `damage` frame and the `attack` frame
+ * ask the same question about the same pair of bodies, and a second copy of
+ * this ternary is a second chance to disagree about which grade a blow was.
+ */
+function threatTellOf(
+  sourceId: string | undefined,
+  from: DamageEvent['from'],
+  selfX: number,
+  selfY: number,
+): ThreatTell | null {
+  const dealer = sourceId === undefined ? undefined : actors.get(sourceId);
+  const dir =
+    dealer === undefined ? (from ?? null) : headingToward(dealer.x - selfX, dealer.y - selfY);
+  return dir === null ? null : { dir, seen: dealer !== undefined };
+}
+
+/**
+ * Remember which way a blow on the viewer came from, and start the clock.
+ * Replaced in boot() with the real, self-expiring implementation, for the
+ * reason `addPing` is: the timer belongs with the other bounded timers inside
+ * boot(), and a frame arriving before boot() finishes is dropped, not thrown.
+ */
+let noteThreat: (tell: ThreatTell) => void = () => {
+  // No timer yet.
+};
+
 function applyTurnEvent(event: TurnEvent): void {
   switch (event.k) {
     case 'move': {
@@ -6597,9 +7089,13 @@ function applyTurnEvent(event: TurnEvent): void {
         console.warn(`sweep move for unknown actor ${event.id}`);
         break;
       }
-      // Absolute destination. `fromX`/`fromY` are ignored: they exist for a
-      // client that interpolates the step, and this one deliberately does not.
+      // Absolute destination. This client does not interpolate the step and is
+      // not going to — PLAN.md § 10 puts animation playback under Never.
       actors.set(event.id, { ...actor, x: event.x, y: event.y });
+      // ...BUT `fromX`/`fromY` ARE READ NOW, for the one bit they carry that the
+      // destination does not: which way the body was going. Upstream turns on
+      // exactly this comparison (`tome/class/Actor.lua:1427`). See `facings`.
+      faceToward(event.id, event.fromX, event.fromY, event.x, event.y);
       // THE SWEEP LANE'S COPY OF "I MOVED". A player's own step normally comes
       // back as a `moved` frame, but this lane carries the identical fact for a
       // move resolved inside a batch — and the walk must not conclude it was
@@ -6632,6 +7128,43 @@ function applyTurnEvent(event: TurnEvent): void {
       // `targetId`, not `id`: `id` is the ATTACKER on this frame. Somebody
       // ELSE's swing is not your business; one aimed at you is.
       if (event.targetId === selfId) cancelTravel('you were swung at — travel stopped');
+      // AND THE ATTACKER TURNS TO FACE WHAT IT SWUNG AT, which is upstream's
+      // second and last facing write (`Combat.lua:649`). `event.x/y` is the
+      // TARGET's tile — the frame carries it so the client needs no lookup for
+      // a body that may already be dead — and the attacker's own tile comes
+      // from the board, which is correct at this line because a `move` for the
+      // step it took to get there resolves earlier in the same batch.
+      {
+        const swinger = actors.get(event.id);
+        if (swinger !== undefined) {
+          faceToward(event.id, swinger.x, swinger.y, event.x, event.y);
+        }
+        /**
+         * ═══════════════════════════════════════════════════════════════════
+         * ...AND THE ARC, WHICH IS WHY A MISS IS ON THIS FRAME AT ALL.
+         * ═══════════════════════════════════════════════════════════════════
+         *
+         * The `damage` arm below arms the same tell for a blow that LANDED.
+         * This one is the other half: `hitToWire` emits the `attack` frame
+         * alone on a miss, and a husk that swung at you and missed is exactly
+         * as much of an answer to "which way do I turn" as one that connected.
+         * The travel interrupt above already treats it that way and says why.
+         *
+         * `event.x/y` IS THE VICTIM'S TILE — the frame carries it — and on this
+         * branch the victim is the viewer, so it is the tile the arc is drawn
+         * on. Read from the frame rather than from the board so the two cannot
+         * disagree about where "you" were when the swing was aimed.
+         *
+         * NO `from` FALLBACK, and there is nothing to fall back to: `id` is a
+         * REQUIRED id on this event, so `fogEvent` withholds the whole frame
+         * when the attacker is unheld. A swing out of the dark that misses is
+         * silent, by the gate that was already there.
+         */
+        if (event.targetId === selfId && event.id !== selfId) {
+          const tell = threatTellOf(event.id, undefined, event.x, event.y);
+          if (tell !== null) noteThreat(tell);
+        }
+      }
       break;
     case 'damage': {
       const actor = actors.get(event.id);
@@ -6658,6 +7191,14 @@ function applyTurnEvent(event: TurnEvent): void {
       // the Alchemist is the opposite of a reason to stop walking, and reporting
       // it as "you were hit" would be a lie in the status line.
       if (event.id === selfId && (event.healed ?? 0) === 0) {
+        // AND WHICH WAY IT CAME FROM. Same guard as the interrupt, and for the
+        // same two reasons: somebody else's blow is not the question, and being
+        // patched up by the Alchemist is not a threat. `actor` is the body the
+        // event names, which on this branch is the viewer's own — read from the
+        // board rather than from `selfTile()` so it cannot disagree with the
+        // token the arc is drawn on.
+        const tell = threatTellOf(event.sourceId, event.from, actor.x, actor.y);
+        if (tell !== null) noteThreat(tell);
         cancelTravel('you were hit — travel stopped');
       }
       break;
@@ -7217,6 +7758,40 @@ async function boot(): Promise<void> {
       { x, y, label, diesAt: Date.now() + PING_MS },
     ];
     armPingTimer();
+    requestDraw();
+  };
+
+  // --- where the blow came from --------------------------------------------
+  /**
+   * THE SEVENTH BOUNDED TIMER, and it is the `pings` shape exactly: ONE timeout
+   * for the whole set, aimed at the SOONEST deadline and re-armed only while
+   * something is still standing. Six arcs cost one timer, not six.
+   *
+   * IT IS NOT THE DEFINITION OF EXPIRY — `threatTells` filters on read, so a
+   * late timeout costs one frame and never a wrong picture. It exists because
+   * out of combat the pump idles: without it the last arc of a fight would sit
+   * on the token until something else happened to cause a draw.
+   *
+   * `THREAT_TELL_MS` and the per-mark deadline live in state/threat.ts, which
+   * is where the argument for four seconds is written down.
+   */
+  let threatTimer = 0;
+  function sweepThreats(): void {
+    threatTimer = 0;
+    const before = threatMarks.length;
+    threatMarks = liveThreats(threatMarks, Date.now());
+    if (threatMarks.length !== before) requestDraw();
+    armThreatTimer();
+  }
+  function armThreatTimer(): void {
+    if (threatTimer !== 0) return;
+    const next = nextThreatExpiry(threatMarks, Date.now());
+    if (next === null) return;
+    threatTimer = window.setTimeout(sweepThreats, Math.max(16, next - Date.now()));
+  }
+  noteThreat = (tell) => {
+    threatMarks = rememberThreat(threatMarks, tell, Date.now());
+    armThreatTimer();
     requestDraw();
   };
 
@@ -8029,30 +8604,33 @@ async function boot(): Promise<void> {
     }
   }
 
-  function setTalentPage(page: number): void {
-    if (talentPage === page) return;
-    talentPage = page;
-    requestDraw();
-  }
-
   function activateSlot(index: number): void {
-    // ═══════════════════════════════════════════════════════════════════════
-    // v12 — SLOTS 4-7 ARE ITEMS, AND THE VERB IS EQUIP/UNEQUIP, NOT USE.
-    // ═══════════════════════════════════════════════════════════════════════
-    // A DEVIATION FROM PlayerHotkeys.lua:173-181, which routes an object hotkey
-    // to `playerUseItem`. There is no `use` intent on this wire and there must
-    // not be one yet: `Wielder` is `{ stats?, mods? }` only
-    // (src/server/content/items.ts:231-234), all 22 authored items are passive,
-    // and a verb shipped with nothing to invoke is the dead control this whole
-    // pass was told to avoid. Upstream agrees a wearable on a hotkey is not a
-    // use — tome/class/Object.lua:169-173's `canUseObject` answers "This object has no
-    // usable power." Equip/remove is a real act with a visible effect on the
-    // paper doll and the character sheet.
-    //
-    // THE INDEX DECIDES, NOT THE CONTENTS. `isItemSlotIndex` is ui/hotbar.ts's
-    // own answer, so this file cannot drift about where the talents stop.
-    if (isItemSlotIndex(index)) {
-      pressItemSlot(index);
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * THE CONTENTS DECIDE, AND IT USED TO BE THE INDEX.
+     * ═══════════════════════════════════════════════════════════════════════
+     * This read *"THE INDEX DECIDES, NOT THE CONTENTS. `isItemSlotIndex` is
+     * ui/hotbar.ts's own answer, so this file cannot drift about where the
+     * talents stop"* — a good rule while the bar had a boundary, and the exact
+     * rule that has to go when it does not. `PlayerHotkeys.lua:161-162`
+     * dispatches on `self.hotkey[id][1]`, the kind stored IN the slot
+     * (`self["hotkey"..kind:capitalize()]`), and that is what this is now.
+     *
+     * A SLOT PAST THE END OF THE BAR IS NOT REACHABLE FROM HERE — `onSlot`
+     * bounds the digit and the hit test bounds the pointer — but it is checked
+     * anyway, because the notice it produces is the only thing that explains
+     * `⇧7` on a bar somebody has shrunk to five slots.
+     *
+     * ═══ AND IT HAS TO SAY `⇧7`, WHICH IS WHY IT IS `slotWord` ═══
+     * This read `slot ${index + 1}`, so the sentence explaining a press of
+     * `⇧7` came back naming SLOT 16 — a number printed on nothing, belonging
+     * to an array the player has never seen, while the key in the paragraph
+     * above is the thing under their finger. `slotWord` is the one place a slot
+     * is turned into the label the painter drew on it (`hotbarKeyLabel`), so a
+     * notice and a box cannot disagree about what to call the same square.
+     */
+    if (index < 0 || index >= hotbarSlotCount()) {
+      showNotice(`${slotWord(index)} is not on your bar — add slots from the bar's ⚙`);
       return;
     }
 
@@ -8060,10 +8638,26 @@ async function boot(): Promise<void> {
     // `talentInSlot`, which carries the measurement of what that cost.
     const talent = talentInSlot(index);
     if (talent === undefined) {
+      // ═══════════════════════════════════════════════════════════════════════
+      // AN ITEM ON A KEY IS UPSTREAM'S OWN CASE, not a deviation any more.
+      // ═══════════════════════════════════════════════════════════════════════
+      // `PlayerHotkeys.lua:173-181` routes an object hotkey to `playerUseItem`,
+      // and this used to be labelled A DEVIATION from it on the grounds that
+      // *"there is no `use` intent on this wire and there must not be one yet…
+      // all 22 authored items are passive"*. Both halves went: `UseSchema` is on
+      // the wire and the Draught of Mending restores forty hit points, so
+      // `pressItemSlot` routes a draught to `use` and a wearable to
+      // equip/unequip. Upstream agrees a wearable is not a use —
+      // tome/class/Object.lua:169-173's `canUseObject` answers "This object has
+      // no usable power."
+      if (hotbarBindings[index] != null) {
+        pressItemSlot(index);
+        return;
+      }
       showNotice(
         loadout.length === 0
           ? 'no loadout yet — waiting for the server'
-          : `slot ${index + 1} is empty`,
+          : `${slotWord(index)} is empty`,
       );
       return;
     }
@@ -8086,10 +8680,10 @@ async function boot(): Promise<void> {
     }
   }
 
-  // --- the four item slots on the bar ---------------------------------------
+  // --- an item on a bar slot, whichever slot it is --------------------------
 
   /**
-   * Press one of the four mouse-only slots. Three outcomes and none is silence.
+   * Press a slot with an ITEM in it. Four outcomes and none is silence.
    *
    * THE ACTION IS ASKED FOR AGAIN HERE rather than read off the drawn view,
    * because between the paint and the click a frame can land — a teammate's
@@ -8104,9 +8698,9 @@ async function boot(): Promise<void> {
    * an id in neither collection has no frame left to read one off.
    */
   function pressItemSlot(index: number): void {
-    const binding = hotbarBindings[index - HOTBAR_TALENT_SLOTS] ?? null;
+    const binding = hotbarBindings[index] ?? null;
     if (binding === null) {
-      showNotice(`slot ${String(index + 1)} is empty — drag an item onto it`);
+      showNotice(`${slotWord(index)} is empty — drag an item onto it`);
       return;
     }
     clearNotice();
@@ -8144,7 +8738,7 @@ async function boot(): Promise<void> {
         return;
       }
       case ItemSlotAction.Gone:
-        hotbarBindings[index - HOTBAR_TALENT_SLOTS] = null;
+        hotbarBindings[index] = null;
         showNotice(`you no longer have ${binding.name}`);
         requestDraw();
         return;
@@ -8152,7 +8746,83 @@ async function boot(): Promise<void> {
   }
 
   /**
-   * Put something on an item slot. The ONE place a binding is written.
+   * Where a displaced occupant goes, and the sentence that says so.
+   *
+   * The two are twins on purpose: one rule for both kinds is what stops a
+   * player learning that dropping an item on an occupied slot is safe and
+   * dropping a talent on one is not.
+   *
+   * IT NEVER TRADES INTO THE SLOT THE DROP CAME FROM, because a drop may not
+   * have come from a slot at all — the bag and the talent panel are both
+   * sources. The first free slot is the answer that is true for every source,
+   * and "came off the bar" is the honest one when there is none.
+   */
+  function rehomeTalent(talentId: string): string {
+    const name = loadout.find((entry) => entry.id === talentId)?.name ?? 'that talent';
+    const free = firstFreeSlot();
+    if (free < 0) return `${name} came off the bar`;
+    talentBindings[free] = talentId;
+    return `${name} moved to ${slotWord(free)}`;
+  }
+
+  function rehomeItem(binding: ItemBinding): string {
+    const free = firstFreeSlot();
+    if (free < 0) return `${binding.name} came off the bar`;
+    hotbarBindings[free] = binding;
+    return `${binding.name} moved to ${slotWord(free)}`;
+  }
+
+  /**
+   * Put a talent on a slot. Any slot.
+   *
+   * ═══ IT SWAPS RATHER THAN OVERWRITING ═══
+   * If the talent is already on another slot, the two trade. Overwriting would
+   * silently REMOVE it from wherever it was, so dragging Crude Blow from key 1
+   * to key 3 would leave key 1 empty and the player would have to go and find
+   * it again — and every player who has ever arranged a bar in another game
+   * expects the trade.
+   *
+   * ═══ AND WHAT IT DISPLACES DEPENDS ON WHAT THAT WAS ═══
+   * A talent trades. An ITEM is rehomed instead — see `rehomeItem` — and both
+   * outcomes are announced: a button that moved on its own without a sentence
+   * is the report this file's notices exist to prevent.
+   */
+  function bindTalentSlot(index: number, talentId: string): void {
+    const talent = loadout.find((entry) => entry.id === talentId);
+    if (talent === undefined) {
+      showNotice('you do not have that talent any more');
+      return;
+    }
+    // `indexOf` SEARCHES THE WHOLE POOL, deliberately — including slots the bar
+    // is currently too small to draw. A talent parked on slot 15 that is
+    // dragged onto slot 2 must MOVE rather than appear twice: a bar where the
+    // same button exists in two places is a bar the player has to check before
+    // pressing.
+    const from = talentBindings.indexOf(talentId);
+    const displacedTalent = talentBindings[index] ?? null;
+    const displacedItem = hotbarBindings[index] ?? null;
+    vacateSlot(index);
+    talentBindings[index] = talentId;
+    // THE TRADE. Only when it came from another slot — a talent dragged in from
+    // the panel displaces whatever was there, which is what the player just
+    // asked for.
+    if (from >= 0 && from !== index) talentBindings[from] = displacedTalent;
+    const moved = displacedItem === null ? null : rehomeItem(displacedItem);
+    sendHotbar();
+    showNotice(
+      [
+        `${slotWord(index)}: ${talent.name}`,
+        moved,
+        hotbarPersists ? null : 'this bar will not be remembered',
+      ]
+        .filter((part): part is string => part !== null)
+        .join(' — '),
+    );
+    requestDraw();
+  }
+
+  /**
+   * Put an item on a slot. Any slot. The ONE place an item binding is written.
    *
    * IT TAKES A `DragSubject` AND RESOLVES IT AGAINST THE FRAME, because the two
    * item drags name their subject differently on purpose (ui/drag.ts): a bag item
@@ -8162,48 +8832,11 @@ async function boot(): Promise<void> {
    *
    * A SUBJECT THAT NO LONGER RESOLVES IS REFUSED IN WORDS. The gesture takes a
    * human moment and a `state` resync can land inside it.
-   */
-  /**
-   * Put a talent on one of the six keyed slots.
    *
-   * ═══ IT SWAPS RATHER THAN OVERWRITING ═══
-   * If the talent is already on another slot, the two slots trade. Overwriting
-   * would silently REMOVE it from wherever it was, so dragging Crude Blow from
-   * key 1 to key 3 would leave key 1 empty and the player would have to go and
-   * find it again — and every player who has ever arranged a bar in another
-   * game expects the trade. It is four lines and it is the difference between a
-   * feature and a chore.
+   * AN ITEM ALREADY ON THE BAR MOVES rather than appearing twice, which is
+   * `bindTalentSlot`'s rule applied to the other kind — the bar has one set of
+   * manners now, not two.
    */
-  // `cellOfSlot` IS MODULE-LEVEL NOW (beside `talentInSlot`). It lived here, in
-  // reach of the bind and the unbind only, which is how the paint and the press
-  // came to be the two readers that were NOT paged.
-  function bindTalentSlot(index: number, talentId: string): void {
-    const talent = loadout.find((entry) => entry.id === talentId);
-    if (talent === undefined) {
-      showNotice('you do not have that talent any more');
-      return;
-    }
-    const cell = cellOfSlot(index);
-    // `indexOf` SEARCHES BOTH PAGES, deliberately. A talent already on page 2
-    // that is dragged onto page 1 must MOVE rather than appear twice — a bar
-    // where the same button exists in two places is a bar the player has to
-    // check before pressing.
-    const from = talentBindings.indexOf(talentId);
-    const displaced = talentBindings[cell] ?? null;
-    talentBindings[cell] = talentId;
-    // THE TRADE. Only when it came from another slot — a talent dragged in from
-    // the panel displaces whatever was there, which is what the player just
-    // asked for.
-    if (from >= 0 && from !== cell) talentBindings[from] = displaced;
-    sendHotbar();
-    showNotice(
-      hotbarPersists
-        ? `slot ${String(index + 1)}: ${talent.name}`
-        : `slot ${String(index + 1)}: ${talent.name} — this bar will not be remembered`,
-    );
-    requestDraw();
-  }
-
   function bindItemSlot(index: number, subject: DragSubject): void {
     const item =
       subject.kind === DragKind.Carried
@@ -8215,52 +8848,52 @@ async function boot(): Promise<void> {
       showNotice('that is not in your hands any more');
       return;
     }
-    hotbarBindings[index - HOTBAR_TALENT_SLOTS] = {
-      itemId: item.itemId,
-      name: item.name,
-      icon: item.icon,
-    };
-    // NOTHING IS SENT. A binding is a fact about this browser and this session —
-    // see `hotbarBindings`. The server has no field for it and is not being asked
-    // to grow one for a cosmetic shortcut.
-    showNotice(`slot ${String(index + 1)}: ${item.name}`);
+    const from = hotbarBindings.findIndex((bound) => bound?.itemId === item.itemId);
+    const displacedTalent = talentBindings[index] ?? null;
+    const displacedItem = hotbarBindings[index] ?? null;
+    vacateSlot(index);
+    hotbarBindings[index] = { itemId: item.itemId, name: item.name, icon: item.icon };
+    if (from >= 0 && from !== index) hotbarBindings[from] = displacedItem;
+    const moved = displacedTalent === null ? null : rehomeTalent(displacedTalent);
+    // THE TALENT HALF IS ON THE WIRE AND THE ITEM HALF IS NOT — see
+    // `ItemBinding`. `sendHotbar` still has to run whenever a TALENT moved,
+    // which an item dropped onto an occupied slot can do; it must not run when
+    // nothing about the talent arrangement changed.
+    if (displacedTalent !== null) sendHotbar();
+    showNotice(
+      [`${slotWord(index)}: ${item.name}`, moved]
+        .filter((part): part is string => part !== null)
+        .join(' — '),
+    );
     requestDraw();
   }
 
   /**
-   * Take something off an item slot. Right-click, and nothing else does it.
+   * Take whatever is on a slot off it. Right-click, and nothing else does it.
    *
-   * Silent when the slot was already empty: a right-click on a slot with nothing
-   * in it is not a mistake worth a sentence, and printing one would put a line in
-   * front of a player every time they missed the slot they meant.
+   * ═══ ONE FUNCTION, BECAUSE THERE IS ONE GESTURE ═══
+   * This was `unbindItemSlot` and `unbindTalentSlot`, and the second one's note
+   * already argued for exactly this: *"THE SAME GESTURE ON BOTH HALVES OF THE
+   * BAR, deliberately. A player who has learned that right-click clears slot 8
+   * will try it on slot 2, and a bar where the same press means 'clear' on four
+   * buttons and nothing on six is a bar with two rules in it."* Two functions
+   * keeping one promise is one fork away from breaking it.
+   *
+   * SILENT WHEN THE SLOT WAS ALREADY EMPTY: a right-click on nothing is not a
+   * mistake worth a sentence, and printing one would put a line in front of a
+   * player every time they missed the slot they meant.
+   *
+   * THE SEND IS CONDITIONAL because only the talent half is on the wire.
+   * Clearing an item slot must not spend a frame telling the server about an
+   * arrangement it did not change.
    */
-  function unbindItemSlot(index: number): void {
-    const at = index - HOTBAR_TALENT_SLOTS;
-    const binding = hotbarBindings[at] ?? null;
-    if (binding === null) return;
-    hotbarBindings[at] = null;
-    showNotice(`slot ${String(index + 1)} cleared`);
-    requestDraw();
-  }
-
-  /**
-   * Take a talent off one of the six keyed slots. Right-click, like an item.
-   *
-   * THE SAME GESTURE ON BOTH HALVES OF THE BAR, deliberately. A player who has
-   * learned that right-click clears slot 8 will try it on slot 2, and a bar
-   * where the same press means "clear" on four buttons and nothing on six is a
-   * bar with two rules in it.
-   *
-   * AN EMPTY SLOT IS NOT AN ERROR and says nothing — the early return. A notice
-   * reading "slot 2 cleared" over a slot that was already empty is noise that
-   * makes the real one harder to trust.
-   */
-  function unbindTalentSlot(index: number): void {
-    const cell = cellOfSlot(index);
-    if (talentBindings[cell] === null || talentBindings[cell] === undefined) return;
-    talentBindings[cell] = null;
-    sendHotbar();
-    showNotice(`slot ${String(index + 1)} cleared`);
+  function clearSlot(index: number): void {
+    const hadTalent = talentBindings[index] != null;
+    const hadItem = hotbarBindings[index] != null;
+    if (!hadTalent && !hadItem) return;
+    vacateSlot(index);
+    if (hadTalent) sendHotbar();
+    showNotice(`${slotWord(index)} cleared`);
     requestDraw();
   }
 
@@ -10478,6 +11111,31 @@ async function boot(): Promise<void> {
         // "put my screen back" and a pane left at a dragged width would be
         // putting back some of it while saying it had put back all.
         for (const panel of DRAGGABLE_PANELS) panelSizes[panel] = null;
+        /**
+         * ═══ AND THE ACTION BAR'S SLOT COUNT, WHICH IS A SIZE WEARING A COUNT ═══
+         *
+         * The line above puts `sizes[Hotbar]` back to null, and on its own that
+         * does NOTHING VISIBLE to a bar somebody widened: `hotbarPanelSize`
+         * re-derives the rect from `hotbarStyle.slots`, so an eighteen-slot bar
+         * with no stored size is still an eighteen-slot bar. The one panel the
+         * player resized would be the one panel this row failed to put back,
+         * while the notice said it had put them all back.
+         *
+         * IT IS THE ONLY FIELD OF `HotbarStyle` TOUCHED HERE, and the boundary
+         * is not taste: `slots` is the field the GRIP writes. `vertical`, `icon`
+         * and `opacity` are reachable only from the cogwheel and are the same
+         * kind of preference as the Case Log's font, which this row has never
+         * claimed to reset — resetting them would take away a choice nobody made
+         * with a gesture this row is about. `panelsTouched` draws the same line
+         * on the same argument, and it has to, or the row would grey itself over
+         * a bar it would still change.
+         *
+         * NOTHING ON THE BAR IS LOST. The bindings are `HOTBAR_SLOT_POOL` long
+         * whatever the count says (`HotbarStyle.slots`), so a talent parked on
+         * slot 15 is still on slot 15 and comes back the moment the bar is
+         * widened again — this hides buttons, it does not clear them.
+         */
+        hotbarStyle = { ...hotbarStyle, slots: DEFAULT_HOTBAR_STYLE.slots };
         // PERSISTED, or the reset is undone by the next reload — which is the
         // one outcome that would make this row read as broken.
         savePanelLayout();
@@ -11104,15 +11762,20 @@ async function boot(): Promise<void> {
     onSlot: (slot, shifted) => {
       /**
        * ═══════════════════════════════════════════════════════════════════════
-       * THE DIGITS ARE THE ANSWER LIST'S FIRST, ABOVE EVEN `setTalentPage`.
+       * THE DIGITS ARE THE ANSWER LIST'S FIRST, ABOVE EVERY OTHER READER.
        * ═══════════════════════════════════════════════════════════════════════
        *
-       * NOT MERELY ABOVE THE HOTBAR — ABOVE THE PAGE SET. `setTalentPage` is the
-       * first statement of this handler and it is a WRITE: pressing `2` in a
-       * conversation would flip the bar to page two on the way past, and the
-       * page is a mode every later read resolves through, so the bar would stay
-       * flipped after the conversation ended. Then `activateSlot` would cast
-       * whatever is in that slot. One keypress, two wrong things.
+       * IT USED TO SAY "ABOVE EVEN `setTalentPage`", and that call is gone with
+       * the page. What it was defending is worth keeping in words: that call was
+       * the first statement of this handler and it was a WRITE, so pressing `2`
+       * in a conversation flipped the bar to page two on the way past — and the
+       * page was a mode every later read resolved through, so the bar stayed
+       * flipped after the conversation ended. One keypress, two wrong things.
+       *
+       * NOTHING ABOVE THIS GATE WRITES ANYTHING NOW, and a test asserts exactly
+       * that rather than the absence of one particular call
+       * (`keybindwiring.test.ts`), because the bug was the CLASS of thing —
+       * state changed on the way past a gate — and not the name of it.
        *
        * `slot` IS ZERO-BASED, so this passes `slot + 1` — the digit as it is
        * DRAWN on the row, which is what `dialogueAnswerForDigit` is bounded by.
@@ -11149,20 +11812,24 @@ async function boot(): Promise<void> {
       }
       /**
        * ═══════════════════════════════════════════════════════════════════════
-       * SHIFT PICKS THE PAGE, AND IT IS SET HERE RATHER THAN READ IN THE VIEW.
+       * SHIFT PICKS THE SLOT, AND IT USED TO PICK THE PAGE.
        * ═══════════════════════════════════════════════════════════════════════
        *
-       * `talentPage` is a MODE the whole bar reads — the drawing, the hit test,
-       * the bind and the unbind all resolve through `cellOfSlot`. Setting it
-       * from the press means the key and the picture cannot disagree about
-       * which page is live, which is the one bug a paged bar reliably has.
+       * `setTalentPage(shifted ? 1 : 0)` was the first statement of this
+       * handler and it was a WRITE — which is why it had to be argued about at
+       * length here and again on `window`'s `keydown`, `keyup` and `blur`.
+       * There is no mode to set: the digit and the modifier resolve to an index
+       * and nothing about the bar changes until something is pressed.
        *
-       * THE ROSTER AND THE CLASS CHOOSER BELOW ARE NOT PAGED, and Shift means
-       * nothing to either — they read `slot` alone, exactly as they did. A
-       * modal that suddenly picked a different card because a modifier was down
-       * would be a modal nobody could use with two hands.
+       * `hotbarSlotForKey` IS THE MAPPING, and it lives beside the label the
+       * box wears (`hotbarKeyLabel`) so the key printed on slot 12 and the key
+       * that fires slot 12 are one function read twice.
+       *
+       * THE ROSTER AND THE CLASS CHOOSER BELOW STILL IGNORE SHIFT — they read
+       * `slot` alone, exactly as they did. A modal that suddenly picked a
+       * different card because a modifier was down would be a modal nobody
+       * could use with two hands.
        */
-      setTalentPage(shifted ? 1 : 0);
       if (roster !== null) {
         // 1-8 PICK A ROW OUTRIGHT, the digits drawn on the cards. `slot` is
         // zero-based, so a digit past the end of the list finds nothing and does
@@ -11226,7 +11893,9 @@ async function boot(): Promise<void> {
       // pass cannot undo either without reading this paragraph.
       if (menuOpen) closeMenu();
       sweep?.settle();
-      activateSlot(slot);
+      // SHIFT REACHES THE SECOND NINE. One mapping, in ui/hotbar.ts beside the
+      // label the box wears — see `hotbarSlotForKey`.
+      activateSlot(hotbarSlotForKey(slot, shifted));
     },
     onCancel: () => {
       // ═══════════════════════════════════════════════════════════════════════
@@ -11613,31 +12282,18 @@ async function boot(): Promise<void> {
     // listener runs beside `bindGameKeys` on the same event, and anything it did
     // to the key would be a second opinion about a key the keymap owns.
     //
-    // ═══ EXCEPT THE BAR'S PAGE, WHICH IS NOT AN OPINION ABOUT THE KEY ═══
-    // `setTalentPage` reads a MODIFIER, never a key: it does not consume the
-    // event, does not preventDefault, and does not care which key arrived. The
-    // keymap owns what `Shift+2` DOES; this owns what the player can SEE while
-    // Shift is down, which is the difference between a second page and a second
-    // page nobody can find.
-    setTalentPage(event.shiftKey ? 1 : 0);
+    // ═══ AND NOTHING FOR THE BAR EITHER, WHICH IS THE POINT ═══
+    // This carved out one exception: `setTalentPage(event.shiftKey ? 1 : 0)`,
+    // so a player holding Shift could SEE page 2 before committing to a press —
+    // *"a page you can only see by committing to a press is a page nobody
+    // uses"*. It needed a matching `keyup` and a `blur` to unstick the mode,
+    // because *"a bar frozen on page 2 with no way back is a bar where the
+    // player's reliable attack has vanished."*
+    //
+    // All three listeners are gone with the page. The second nine slots are on
+    // the screen whenever the bar is wide enough to hold them, so there is
+    // nothing to reveal and nothing that can stick.
     cancelTravel();
-  });
-
-  /**
-   * AND THE PAGE FALLS BACK THE MOMENT SHIFT IS RELEASED.
-   *
-   * ON `window`, AND ALSO ON `blur`. A keyup that arrives while the tab is
-   * unfocused never arrives at all — alt-tabbing with Shift held is the
-   * ordinary way to get a modifier stuck — and a bar frozen on page 2 with no
-   * way back is a bar where the player's reliable attack has vanished. Three
-   * exits for a state that must not stick, which is the same rule the drag
-   * gesture keeps two hundred lines up.
-   */
-  window.addEventListener('keyup', (event: KeyboardEvent) => {
-    setTalentPage(event.shiftKey ? 1 : 0);
-  });
-  window.addEventListener('blur', () => {
-    setTalentPage(0);
   });
 
   // --- the mouse -----------------------------------------------------------
@@ -11677,15 +12333,8 @@ async function boot(): Promise<void> {
    * The dock and the top HUD both OVERLAY the map, so without this a click meant
    * for the log lands on whatever tile is underneath it — and with `point` on
    * shift-click, a gesture over a panel would drop a marker on a tile the player
-   * cannot even see. Computed from `dockLayout` and `turnHudHeight`, the same two
-   * functions the painter uses, so the two cannot disagree about where a panel is.
-   *
-   * THE TURN CARDS ARE INCLUDED, and that is new. They are a row of faces the
-   * size of a hotbar slot, so people WILL click one — to check on somebody, or
-   * out of BG3 habit where a portrait is a button. Cards are not buttons here
-   * (there is nothing to select: everyone who owes a move acts in the same
-   * window), so the honest behaviour is that the click does nothing at all
-   * rather than pinging a tile behind the strip that nobody can see.
+   * cannot even see. Computed from `dockLayout` and `TURN_BAR_H`, the same two
+   * the painter uses, so the two cannot disagree about where a panel is.
    */
   function overPanel(clientX: number, clientY: number): boolean {
     // ═══ v12 — A LIVE DRAG ANSWERS TRUE FOR THE WHOLE SCREEN, LETTERBOX AND ALL ═══
@@ -11714,18 +12363,18 @@ async function boot(): Promise<void> {
      * ═══════════════════════════════════════════════════════════════════════
      *
      * This was `point.y < layout.hudTop` alone, and it took the minimap with
-     * it. The box starts at `MINIMAP_MARGIN` — 8 — and `hudTop` is 14 out of
-     * combat and 60 IN it, because the card strip is full-width
-     * (`drawTurnCards` panels `{x: 0, w: width}`). So the top 6 pixels of the
-     * map were unreachable while nothing was happening and the top FIFTY-TWO
-     * were unreachable the moment a fight started: over half the box, in the
-     * one state where knowing what is around the corner matters.
+     * it. The box starts at `MINIMAP_MARGIN` — 8 — and `hudTop` was 14 out of
+     * combat and 60 IN it, because the deleted card strip was full-width. So the
+     * top 6 pixels of the map were unreachable while nothing was happening and
+     * the top FIFTY-TWO were unreachable the moment a fight started: over half
+     * the box, in the one state where knowing what is around the corner matters.
+     * `hudTop` is 14 always now and the guard is kept, because those six pixels
+     * are still six pixels of a box that is painted over the bar.
      *
      * IT IS THIS HANDLER'S OWN RULE APPLIED, not an exception to it. HIT-TEST
-     * ORDER MIRRORS PAINT ORDER, and `paintHud` draws the turn bar and the
-     * cards FIRST and the minimap over them — the minimap paint block argues
-     * that order at length. The strip was winning a press on pixels it is
-     * painted underneath.
+     * ORDER MIRRORS PAINT ORDER, and `paintHud` draws the turn bar FIRST and the
+     * minimap over it — the minimap paint block argues that order at length. The
+     * bar was winning a press on pixels it is painted underneath.
      *
      * THE PANELS STILL WIN, because every one of them is tested above this call
      * in `mousedown` and each of their rects is tested below it here — and the
@@ -12073,7 +12722,7 @@ async function boot(): Promise<void> {
       }
     }
 
-    // Over the hotbar, the turn cards OR either side panel, the pointer is on a
+    // Over the hotbar, the top HUD OR either side panel, the pointer is on a
     // PANEL, not a tile. Letting it drag the aim while it crosses one would move
     // the cursor to whatever happens to be under the HUD on the way there.
     if (slot === -1 && !overPanel(event.clientX, event.clientY)) {
@@ -12355,7 +13004,7 @@ async function boot(): Promise<void> {
      * player had. It feeds `sizeAtGrab`, and `cancelDrag` writes that back, so
      * pressing Escape mid-resize in combat used to shrink the log.
      */
-    return logRectSize(quietLogBand(logicalH), logicalW);
+    return logRectSize(logBand(logicalH, TURN_BAR_H), logicalW);
   }
 
   /**
@@ -12387,14 +13036,14 @@ async function boot(): Promise<void> {
     logicalH: number,
   ): { top: number; bottom: number } {
     // THE PANE IS A TOP-LEFT DOCK and lives in the ordinary panel band; the log
-    // has its own, deliberately independent of the combat card strip.
-    if (panel === DraggablePanel.Hotbar) return hotbarBand(logicalH, turnHudHeight(turnView()));
+    // has its own, which reaches further down — see `logBand`.
+    if (panel === DraggablePanel.Hotbar) return hotbarBand(logicalH, TURN_BAR_H);
     // THE MINIMAP LIVES ABOVE `panelBand.top` and stops at the action bar —
     // `minimapBand`, which takes no `hudTop` so a fight cannot move the box.
     if (panel === DraggablePanel.Minimap) return minimapBand(logicalH);
     return panel === DraggablePanel.Party
-      ? panelBand(logicalH, turnHudHeight(turnView()))
-      : quietLogBand(logicalH);
+      ? panelBand(logicalH, TURN_BAR_H)
+      : logBand(logicalH, TURN_BAR_H);
   }
 
   /**
@@ -12595,6 +13244,43 @@ async function boot(): Promise<void> {
           floor,
         );
         panelSizes[subject.panel] = { w: landed.w, h: landed.h };
+        /**
+         * ═════════════════════════════════════════════════════════════════
+         * DRAGGING THE ACTION BAR'S GRIP ADDS AND REMOVES SLOTS.
+         * ═════════════════════════════════════════════════════════════════
+         *
+         * Asked for by name: *"resizing the actionbar should dynamically add
+         * slots to the actionbar. this functionality should work like Tales of
+         * Maj Eyal."* Upstream's box is exactly this —
+         * `HotkeysIconsDisplay.lua:108-109` derives `max_cols`/`max_rows` from
+         * the box's width and height and the layout loop stops when it runs out
+         * of either (`:270`, `:276`) — so the size of the frame IS the number of
+         * slots on screen. `hotbarSlotsForSize` is that arithmetic.
+         *
+         * ═══ LIVE, NOT ON RELEASE ═══
+         * The slots have to appear under the pointer as it moves, or the gesture
+         * is "drag, let go, find out" — and the bar would be redrawing at a size
+         * that did not match its own contents for the whole drag.
+         *
+         * ═══ IT IS A FIXED POINT, WHICH IS WHY IT DOES NOT FIGHT ITSELF ═══
+         * `hudLayout` re-derives the rect from the COUNT and the stored width on
+         * the very next frame. `hotbarPanelSize` puts `perLine(storedWidth)`
+         * slots on a line and `ceil(count / perLine)` lines, and
+         * `hotbarSlotsForSize` reads those same two numbers back out of the
+         * dragged rect through the same `perLine`, so `size -> count -> size`
+         * lands where it started and the panel does not walk a pixel a frame.
+         *
+         * ═══ AND IT IS SAVED WITH THE REST OF THE LAYOUT ═══
+         * `settlePanel` sends `set_panel_layout` at the end of the gesture and
+         * the count rides `hotbarStyle` inside it, so a bar somebody widened is
+         * the width they left it at next session.
+         */
+        if (subject.panel === DraggablePanel.Hotbar) {
+          hotbarStyle = {
+            ...hotbarStyle,
+            slots: hotbarSlotsForSize({ w: landed.w, h: landed.h }, hotbarStyle),
+          };
+        }
       }
     } else {
       springInventoryTab(point);
@@ -12657,11 +13343,20 @@ async function boot(): Promise<void> {
    * WHERE AN ITEM RELEASED HERE LANDS. Three targets, and a miss is a miss.
    *
    * THE HOTBAR IS ASKED FIRST because it is painted last and is the only surface
-   * a release can be aimed at from outside a panel. `hotbarDropTargetAt` answers
-   * `Talent` rather than `Miss` for slots 1-4 precisely so that this function has
-   * to REFUSE IN WORDS: a coat dragged onto slot 2 that silently snapped back
-   * would be the "control that does nothing" trap with the control being the
-   * whole left half of the bar.
+   * a release can be aimed at from outside a panel.
+   *
+   * ═══ IT USED TO SAY THE BAR REFUSED HALF ITS OWN SLOTS ═══
+   * *"`hotbarDropTargetAt` answers `Talent` rather than `Miss` for slots 1-4
+   * precisely so that this function has to REFUSE IN WORDS: a coat dragged onto
+   * slot 2 that silently snapped back would be the 'control that does nothing'
+   * trap with the control being the whole left half of the bar."* That was true
+   * of a partitioned bar and it is the paragraph a reader would use to work out
+   * why an arm that no longer exists was removed. `HotbarDropKind` is two
+   * values now — a slot, or not the bar — because every slot takes either kind,
+   * so the refusal the note defends has nothing left to refuse. The trap it
+   * names is still real and is still answered: a release that lands on a slot
+   * ALWAYS binds, and one that lands off the bar says so through whatever is
+   * underneath it.
    *
    * THEN THE INVENTORY PANEL, THROUGH ITS ORDINARY HIT TEST. There is no
    * release-only outcome and deliberately none was added (ui/inventory.ts):
@@ -12693,25 +13388,27 @@ async function boot(): Promise<void> {
     );
     switch (drop.kind) {
       case HotbarDropKind.Bind:
-        bindItemSlot(drop.index, subject);
-        return;
-      case HotbarDropKind.Talent:
         /**
-         * A TALENT LANDS; AN ITEM IS STILL REFUSED IN WORDS.
+         * ═══════════════════════════════════════════════════════════════════
+         * THE DRAG DECIDES WHICH BINDER, AND THE SLOT DECIDES NOTHING.
+         * ═══════════════════════════════════════════════════════════════════
          *
-         * The refusal used to be unconditional — "slot n is a class talent" —
-         * because a talent slot was `loadout[n]` and nothing could be put on
-         * it. Half of that is now wrong and half is still exactly right, and
-         * the sentence has to tell them apart: an item on a talent slot is a
+         * There were two arms here and the second one printed a refusal:
+         * *"slot n takes a talent — items go on slots 10-13"*. Its own note
+         * said the sentence existed because *"an item on a talent slot is a
          * mistake worth naming, and the naming is what stops a player
-         * concluding the bar is broken.
+         * concluding the bar is broken."* It is not a mistake any more, so the
+         * sentence would be the thing making the bar look broken.
+         *
+         * A `Resize` subject reaches here only if a grip gesture ended over the
+         * bar, and it binds nothing — `bindItemSlot` resolves it to no item and
+         * says so, which is the same answer it has always given a subject that
+         * does not name one.
          */
         if (subject.kind === DragKind.Talent) {
           bindTalentSlot(drop.index, subject.talentId);
         } else {
-          showNotice(
-            `slot ${String(drop.index + 1)} takes a talent — items go on slots ${String(HOTBAR_TALENT_SLOTS + 1)}-${String(HOTBAR_SLOTS)}`,
-          );
+          bindItemSlot(drop.index, subject);
         }
         return;
       case HotbarDropKind.Miss:
@@ -12850,7 +13547,7 @@ async function boot(): Promise<void> {
    */
   function settlePanel(subject: DragSubject): void {
     const { hudW: logicalW, hudH: logicalH } = renderer.metrics();
-    const band = panelBand(logicalH, turnHudHeight(turnView()));
+    const band = panelBand(logicalH, TURN_BAR_H);
     if (subject.kind === DragKind.Resize) {
       // UPSTREAM CLAMPS HERE AND ONLY HERE — `boundPlaces` is called from
       // `saveSettings`, which is the resize drag's `on_done`.
@@ -12880,7 +13577,7 @@ async function boot(): Promise<void> {
           panelFloor(subject.panel),
         );
       } else if (held !== null) {
-        panelSizes[subject.panel] = sizeIntoBand(held, quietLogBand(logicalH), logicalW);
+        panelSizes[subject.panel] = sizeIntoBand(held, logBand(logicalH, TURN_BAR_H), logicalW);
       }
       savePanelLayout();
       return;
@@ -12902,9 +13599,9 @@ async function boot(): Promise<void> {
       // against a shorter band than the one it is drawn in would jump the box
       // upward the moment the button came up.
       subject.panel === DraggablePanel.Log
-        ? logBand(logicalH, turnHudHeight(turnView()))
+        ? logBand(logicalH, TURN_BAR_H)
         : subject.panel === DraggablePanel.Hotbar
-          ? hotbarBand(logicalH, turnHudHeight(turnView()))
+          ? hotbarBand(logicalH, TURN_BAR_H)
           : subject.panel === DraggablePanel.Minimap
             ? minimapBand(logicalH)
             : band,
@@ -12983,10 +13680,17 @@ async function boot(): Promise<void> {
         hotbarSize: panelSizes[DraggablePanel.Hotbar],
         minimapSize: panelSizes[DraggablePanel.Minimap],
         // ONLY ONCE IT DIFFERS FROM THE DEFAULT, the log style's rule below.
+        // THE SLOT COUNT IS PART OF THIS TEST AND HAS TO BE. It is the one
+        // field of the style a player can change WITHOUT opening the cogwheel —
+        // the resize grip writes it — so a comparison that left it out would
+        // send `null` after somebody had dragged the bar wider, and the width
+        // they chose would be gone on their next session with the gesture
+        // having visibly worked.
         hotbarStyle:
           hotbarStyle.vertical !== DEFAULT_HOTBAR_STYLE.vertical ||
           hotbarStyle.icon !== DEFAULT_HOTBAR_STYLE.icon ||
-          hotbarStyle.opacity !== DEFAULT_HOTBAR_STYLE.opacity
+          hotbarStyle.opacity !== DEFAULT_HOTBAR_STYLE.opacity ||
+          hotbarStyle.slots !== DEFAULT_HOTBAR_STYLE.slots
             ? hotbarStyle
             : null,
         logStyle: touched ? style : null,
@@ -13444,11 +14148,12 @@ async function boot(): Promise<void> {
     // ═══ 2. RIGHT-CLICK IS THE VERB MENU, ON WHATEVER IS UNDER IT ═══
     //
     // THE TILE COMES FROM `renderer.tileAtClient` AND NOWHERE ELSE. Undoing the
-    // letterbox, the integer scale and the camera clamp is render/canvas.ts's
-    // job — a second inverse transform here would be a second copy of
-    // `cameraAxis`, and it would go wrong first at the map edges where the clamp
-    // bites, which is exactly where somebody stands when they are being invited
-    // from across a room.
+    // letterbox, the integer scale and the camera is render/canvas.ts's job — a
+    // second inverse transform here would be a second copy of `cameraAxis`, and
+    // it would go wrong first at the map edges, which is exactly where somebody
+    // stands when they are being invited from across a room. The camera is DEAD
+    // CENTRE now with no edge clamp, so those edges carry a signed camera and a
+    // band of void on every frame rather than only on a small map.
     //
     // Right-click keeps its old meaning everywhere else: cancel the aim, clear
     // the notice. The browser's own menu is suppressed on the canvas only, by
@@ -13511,23 +14216,17 @@ async function boot(): Promise<void> {
       // an aim is open the first right-click still closes it and the second
       // unbinds, which costs one press in a state that lasts a moment.
       //
-      // `isItemSlotIndex` GUARDS IT, so a right-click on a TALENT slot is
-      // untouched and falls through to `clearNotice()` exactly as it always has.
-      // The class loadout is not bindable and there is nothing there to clear.
       /**
-       * ═══ AND IT CLEARS A TALENT SLOT NOW, WHICH THE NOTE ABOVE DENIES ═══
-       * That note ends "the class loadout is not bindable and there is nothing
-       * there to clear", and it was true: slot n WAS `loadout[n]` for the
-       * session. The six keyed slots hold a binding now (`talentBindings`), so
-       * there is something to clear and the same gesture clears it.
+       * ═══ ONE GESTURE, ONE FUNCTION, EVERY SLOT ═══
+       * This was two branches split by `isItemSlotIndex`, under a note ending
+       * *"the class loadout is not bindable and there is nothing there to
+       * clear"* and a second note correcting the first. `clearSlot` takes
+       * whichever kind is there and is silent when there is neither, so there
+       * is no index test left to get wrong.
        */
       const rightSlot = slotUnder(event);
-      if (isItemSlotIndex(rightSlot)) {
-        unbindItemSlot(rightSlot);
-        return;
-      }
       if (rightSlot >= 0) {
-        unbindTalentSlot(rightSlot);
+        clearSlot(rightSlot);
         return;
       }
 
@@ -13674,9 +14373,37 @@ async function boot(): Promise<void> {
     }
 
     const slot = slotUnder(event);
-    if (slot >= 0) {
+    if (slot >= 0 && point !== null) {
       event.preventDefault();
-      activateSlot(slot);
+      /**
+       * ═══════════════════════════════════════════════════════════════════════
+       * A PRESS ON A SLOT MIGHT BE THE START OF A REARRANGEMENT.
+       * ═══════════════════════════════════════════════════════════════════════
+       *
+       * It used to be `activateSlot(slot)` outright, which was right while the
+       * bar was `loadout[n]` plus four mouse-only boxes: there was nothing on
+       * the bar to move. *"1 bar to rearange as people like"* is the whole
+       * request, and a bar you can only fill from two other panels is not one.
+       *
+       * UPSTREAM REGISTERS A DRAG ZONE FOR EVERY SLOT, occupied or not
+       * (`HotkeysIconsDisplay.lua:167`, outside the `if ts then` at :169) and
+       * accepts a drop of either kind onto any slot at :349. This is the
+       * pick-up half of that; `resolveDrop` was already the drop half.
+       *
+       * ═══ DEFERRED, NOT REPLACED — the press still fires ═══
+       * `beginDrag`'s fourth argument is what a SUB-THRESHOLD release means, and
+       * this file already uses it for exactly this ambiguity on the inventory
+       * panel and the talent panel. So a click is still a press: the talent
+       * fires, the draught is drunk, nothing about the keyboard-speed path
+       * changes. Only a press that MOVES becomes a drag.
+       *
+       * AN EMPTY SLOT AND A GONE BINDING START NOTHING. There is nothing to
+       * carry, and a ghost of nothing following the pointer would promise a
+       * drop that cannot land.
+       */
+      const carrying = dragSubjectForSlot(slot);
+      if (carrying === null) activateSlot(slot);
+      else beginDrag(carrying, point.x, point.y, () => activateSlot(slot));
       return;
     }
 
@@ -14506,7 +15233,7 @@ async function boot(): Promise<void> {
     }
 
     // A click on a panel is a click on a panel. Checked before both the ping and
-    // the targeting confirm, so neither side panel nor the turn cards can fire
+    // the targeting confirm, so neither side panel nor the top HUD can fire
     // either.
     if (overPanel(event.clientX, event.clientY)) {
       event.preventDefault();
@@ -14790,6 +15517,15 @@ function forgetTheWorld(): void {
   // turn from the old session, and the ids they are keyed by may belong to
   // somebody else entirely on the new floor.
   forgetInspections();
+  /**
+   * ...AND WHICH WAY EVERYTHING WAS FACING, for `forgetInspections`' own
+   * reason one line up: the ids these are keyed by may belong to somebody else
+   * entirely on the new floor, and a heading is a claim about a body. The
+   * threat arcs go with them — an arc pointing east on a map that has been
+   * replaced is an instruction to turn and fight nothing.
+   */
+  facings.clear();
+  threatMarks = [];
   pings = [];
   // ...and the sky is emptied with them. An orb carried across a welcome is
   // aimed at a tile on a map that no longer exists and was fired by an id
@@ -15095,6 +15831,10 @@ function applyServerMessage(msg: ServerMsg): void {
       // player stands where they fell and shows up under `standingBy` in the
       // next `turn` frame instead.
       actors.delete(msg.id);
+      // AND ITS HEADING WITH IT. The server's ids are per-run and can be
+      // reused by a later spawn; a heading left behind would put a tick on a
+      // fresh husk claiming it had already moved or swung. See `facings`.
+      facings.delete(msg.id);
       break;
     case 'turn': {
       // THE HOVER CARD'S CACHE IS A ONE-TURN CACHE, invalidated wholesale here
@@ -15249,8 +15989,17 @@ function applyServerMessage(msg: ServerMsg): void {
        *
        * It leaves an arranged bar alone and fills only what is empty or dead —
        * see the function, which is where the three rules are written down.
+       *
+       * ═══ AND WHAT IT SEATS OFF THE VISIBLE BAR IS SAID OUT LOUD ═══
+       * The fill prefers a slot the player can see and falls back to the rest
+       * of the pool, so a talent learned while the bar is full lands on a key
+       * that works and a box that is not drawn. Upstream has the same state and
+       * says nothing about it (`HotkeysIconsDisplay.lua:270` simply stops
+       * laying out); a silent button is exactly the "control that does nothing"
+       * this client refuses everywhere else, so ours names the key and the
+       * remedy.
        */
-      reseatTalentBindings();
+      announceOffBar(reseatTalentBindings());
       // ABSENT MEANS NONE — an older server sends no such field, and a class
       // without passives sends no empty array either.
       passives = msg.passives ?? [];
@@ -15967,6 +16716,12 @@ function applyServerMessage(msg: ServerMsg): void {
         // no longer press and fills anything the saved bar left empty. Without
         // it a file older than the class's current talents would come back with
         // dead slots that look like the bar failed to load.
+        //
+        // WHAT IT SEATS OFF THE BAR IS NOT ANNOUNCED HERE, deliberately. This
+        // frame arrives at JOIN, behind the class picker, alongside the roster
+        // and the welcome — a notice about slot 15 there is read by nobody and
+        // pushes aside one that matters. The `loadout` arm announces the case
+        // that is news: a talent learned while somebody is playing.
         reseatTalentBindings();
       }
       /**

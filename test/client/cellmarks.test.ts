@@ -58,12 +58,17 @@ const WRONG_SIZE = TILE_PX / 2;
 /**
  * A map SMALLER than the viewport, deliberately.
  *
- * `cameraAxis` centres a small map instead of pinning it to the corner, so
- * every cell is on screen and a case can name one without doing the camera
- * arithmetic. The first version of this file used a 40x40 map and asserted
- * about cell (5,5), which the camera had parked 352 pixels off the left edge —
- * the painter culled it, nothing was drawn, and the test failed for a reason
- * that had nothing to do with what it was testing.
+ * The camera is centred on the viewer's body, so a map smaller than the
+ * viewport puts every cell on screen and a case can name one without doing the
+ * camera arithmetic. The first version of this file used a 40x40 map and
+ * asserted about cell (5,5), which the camera had parked 352 pixels off the left
+ * edge — the painter culled it, nothing was drawn, and the test failed for a
+ * reason that had nothing to do with what it was testing.
+ *
+ * (`cameraAxis` used to have a second arm that centred a small map explicitly.
+ * It has no arms at all now — it is dead centre on the focus, always — and a
+ * small map still lands wholly on screen for the simpler reason that it is
+ * smaller than the screen.)
  */
 function level(w: number, h: number) {
   return { w, h, tiles: new Array<number>(w * h).fill(1) };

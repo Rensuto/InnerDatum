@@ -21,10 +21,23 @@
  * never an empty box, because "you are playing alone" is worth stating plainly.
  *
  * The old file drew the same surface on the right and is deleted rather than
- * left disabled — two files drawing one panel is the bug ui/turncards.ts was
+ * left disabled — two files drawing one panel is the bug the M5 turn work was
  * opened to fix, and it is not a bug worth having twice. Everything that was
  * right about it is here: the badge column, the Downed rail and countdown, the
  * microphone, and the colour rule below.
+ *
+ * ===========================================================================
+ * AND SINCE 2026-09-18 THIS PANE CARRIES THE TURN. IT IS THE ONLY SURFACE THAT
+ * DOES, PER PERSON.
+ * ===========================================================================
+ * A strip of portrait cards used to sit across the top of the screen answering
+ * "who still owes a decision". The author deleted it — *"lets just go no cards
+ * at all, no turn order indicator. it will also free up more space. we can use
+ * the 'Party' hud UI to indicate that its the players turn, even when doing
+ * multiplayer."* — and the 46 logical pixels it spent in every fight went back
+ * to the map. `stateWord` below is where that fact now lives; ui/turnbar.ts
+ * keeps the one line of prose and the frame, which are about YOU rather than
+ * about the party.
  *
  * ===========================================================================
  * IT DRAWS THE FRAME, AND JOINS ONLY WHAT THE FRAME CANNOT CARRY
@@ -37,7 +50,7 @@
  *
  *   the TOKEN     `ActorView.sprite`, when the body is on screen. 24x32, blitted
  *                 1:1. `PartyStateMember.portrait` is the 64x64 class icon the
- *                 turn cards use and is deliberately NOT drawn here: cropping a
+ *                 inventory doll wears and is deliberately NOT drawn here: cropping a
  *                 64px face into a 24px box is a nose, and scaling it is the
  *                 resampling render/canvas.ts's backbuffer exists to prevent.
  *                 Out of view the row falls back to initials.
@@ -62,9 +75,11 @@
  *   - and nothing at all if even that would bury the playfield.
  *
  * It degrades in one step to a form that spends every pixel on identity rather
- * than shrinking rows until the text is a smear. That is the same cliff
- * ui/turncards.ts drops off at `CARD_W_FULL_MIN`, for the same reason: there is
- * no honest halfway house between "a row with words on it" and "a face".
+ * than shrinking rows until the text is a smear. There is no honest halfway
+ * house between "a row with words on it" and "a face" — a name cut to four
+ * characters and an ellipsis identifies nobody. What the narrow form keeps is
+ * every signal that is a shape: the pennant, the hatch, the rail, the hp sliver
+ * and the turn chip.
  *
  * ===========================================================================
  * THE ROW ORDER IS THE SERVER'S AND IS NEVER RE-SORTED HERE
@@ -73,7 +88,15 @@
  * that guarantee to be respected for a concrete reason: KICK IS ON THIS PANE. A
  * row that moves between two frames is a row somebody misclicks, and the click
  * that lands one row off removes the wrong person from the party. You are found
- * by MARKER instead — a wash, a '>' and gold, the same three the turn cards use.
+ * by MARKER instead — a wash, a '>' and gold.
+ *
+ * ═══ AND THE TURN IS NEVER A SORT EITHER, FOR A SECOND REASON ═══
+ * The game is phase-locked (DECISIONS.md D1): a player action always costs one
+ * full turn of energy, so the WHOLE party decides in the same window and every
+ * member reading `waiting` can act RIGHT NOW. Ordering rows by turn state would
+ * invent a queue that does not exist and make three people sit waiting for
+ * "their go" — the spinner D1 exists to prevent, arrived at through the UI
+ * instead of the engine. The rail and the chip move; the rows do not.
  *
  * ===========================================================================
  * NEVER COLOUR ALONE. EVER.
@@ -86,7 +109,10 @@
  *   - DOWNED is a solid rail down the left of the row, a hatched empty hp track,
  *     and the countdown "DOWN 3/5" — four signals, one of which is colour;
  *   - the LEADER is a gold pennant on the token AND the word LEAD;
- *   - YOU are a wash, a '>' prefix and gold;
+ *   - YOU are a wash, a '>' prefix and gold — and, while the game is waiting on
+ *     you, the words YOUR MOVE and a gold rail down your own row;
+ *   - the TURN is a word (WAITING · BELL · DONE · STANDBY), an authored 12x12
+ *     chip on the token's top-right corner, and a rail on every row still owed;
  *   - a status badge is a distinct 24x24 PICTURE carrying its own turn count;
  *   - hp is a bar AND the digits.
  *
@@ -283,6 +309,21 @@ const FOLLOW_H = 11;
 const FACE_PX = 32;
 /** The authored badge size. Every `icon_status_*` in the manifest is 24x24. */
 const BADGE_PX = 24;
+/**
+ * THE TURN CHIP, HALF ITS AUTHORED SIZE. Every `ui_icon_turn_*` is 24x24 and
+ * this is 12, which is the exact half `blitReduced` will take with smoothing
+ * off. 24 would reach from the top of the token to below the hp bar; 12 sits
+ * inside the token's top-right quarter and leaves the face readable, which is
+ * the other thing a party row is for.
+ */
+const TURN_CHIP_PX = 12;
+/**
+ * THE RAIL, three pixels down the left edge: the signal you catch while looking
+ * at the map. `downed` owns it when there is one, because a body on the floor
+ * outranks a decision nobody has made yet, and the two cannot collide — a Downed
+ * detective is `standing_by` and so is never one of the rows still owed.
+ */
+const ROW_RAIL_W = 3;
 /** The authored speaking indicator. Both `ui_icon_speaking*` are 16x16. */
 const VOICE_PX = 16;
 const BADGE_GAP = 2;
@@ -445,8 +486,8 @@ export type PartyPaneView = {
    * The one thing that decides whether a barrier state is worth a word. Out of
    * combat nobody blocks and every member reads `committed`, so printing DONE
    * beside four names would tell four people they are waiting on each other
-   * while they walk around freely — the exact failure ui/turncards.ts refuses to
-   * draw a strip for.
+   * while they walk around freely. It is the same reason the deleted card strip
+   * drew nothing at all out of combat.
    */
   readonly inCombat: boolean;
   /**
@@ -844,9 +885,9 @@ function initialsOf(name: string): string {
  * Diagonal ink over a token nobody is driving, or a body on the floor.
  *
  * A SHAPE, which is the point — it survives greyscale and the corner of an eye,
- * and it is the same "this one is out" grammar `ui_hotbar_slot_disabled` and the
- * turn cards already carry. Clipped to the box so the strokes cannot run over
- * the text beside it.
+ * and it is the same "this one is out" grammar `ui_hotbar_slot_disabled`
+ * already carries. Clipped to the box so the strokes cannot run over the text
+ * beside it.
  */
 function hatchOver(ctx: CanvasRenderingContext2D, box: PanelRect): void {
   if (box.w <= 0 || box.h <= 0) return;
@@ -1066,29 +1107,132 @@ function drawHpBar(
 }
 
 /**
- * The one word for what this member owes the turn, and its colour.
+ * ═══════════════════════════════════════════════════════════════════════════
+ * WHAT THIS MEMBER OWES THE TURN — AND THIS PANE IS NOW THE ONLY SURFACE THAT
+ * ANSWERS IT PER PERSON.
+ * ═══════════════════════════════════════════════════════════════════════════
  *
- * Read off `PartyStateMember.state` — the server's own answer, the same value
- * the turn cards are drawn from — and never re-derived from id lists here. It
- * appears only IN COMBAT (see `PartyPaneView.inCombat`), and Downed outranks it,
- * because "excluded from the quorum" and "bleeding out" must not read the same.
- * The vocabulary is the turn strip's, to the letter: two surfaces describing one
- * fact must not describe it with two words.
+ * There was a strip of portrait cards across the top of the screen carrying
+ * this. It is deleted (ui/turnbar.ts records both deletions and why), on the
+ * author's ruling of 2026-09-18: *"lets just go no cards at all, no turn order
+ * indicator. it will also free up more space. we can use the 'Party' hud UI to
+ * indicate that its the players turn, even when doing multiplayer."* So what
+ * used to be a supporting word beside a card is the whole telling.
+ *
+ * ═══ `PartyStateMember.state` AND NOTHING ELSE ═══
+ * The server's own answer, decided in src/server/engine/barrier.ts, never
+ * re-derived from id lists here. The strip's predecessor had a `chipFor` that
+ * did exactly that — Standing By outranks a commit, a commit outranks the Bell,
+ * worked out in the browser from three arrays — and it could not express a
+ * Downed detective, who is in NEITHER `whoseTurn` nor `standingBy`: it fell
+ * through to "committed" and told the party that the person bleeding out on the
+ * floor had taken their turn. `turnChipIdFor` below is a state-to-asset lookup
+ * and is not that function returning; it decides nothing.
+ *
+ * ═══ THREE CHANNELS, AND ONLY ONE OF THEM IS COLOUR ═══
+ * Roughly one man in twelve cannot separate red from green, the Discord overlay
+ * is not colour-managed, and this is read in third-of-a-second glances. So every
+ * state is said as a WORD (a shape, and the copy the hover card repeats), as an
+ * authored CHIP on the token's top-right corner (`ui_icon_turn_*` — four
+ * distinct silhouettes), and as the RAIL down the left edge of the rows still
+ * being waited on. Take the colour away and the checklist still reads.
+ *
+ * ═══ THE SELF ROW SAYS "YOUR MOVE", NOT "WAITING" ═══
+ * The single most important fact on this screen is that the game is waiting on
+ * the person reading it, and "WAITING" beside your own name is the passive voice
+ * for it — it reads as *you are waiting*, which is the opposite. The word, the
+ * gold rail, the gold ink and the `>` on the name are four marks on one row.
+ *
+ * DOWNED OUTRANKS ALL OF IT and returns null so the countdown speaks instead:
+ * "excluded from the quorum" and "bleeding out" must never read the same.
  */
-function stateWord(row: PartyPaneRow): { readonly word: string; readonly ink: string } | null {
+type TurnMark = {
+  readonly word: string;
+  readonly ink: string;
+  /** The authored chip for the state, or null where there is no art for it. */
+  readonly chip: string | null;
+  /** Is the barrier still waiting on this row? Drives the rail, nothing else. */
+  readonly owed: boolean;
+};
+
+/**
+ * The authored chip for a state. A LOOKUP, not a derivation — it is handed the
+ * state the server decided and returns an asset key, which is what
+ * protocol.ts's `TurnActorState` note promises when it says the values ARE the
+ * art suffixes.
+ *
+ * `acting` has no chip because it has no PNG: it is the monsters' state and
+ * protocol.ts is explicit that it never appears on a party row. Reusing another
+ * state's icon for it would draw a lie rather than a gap.
+ */
+function turnChipIdFor(state: TurnActorState): string | null {
+  switch (state) {
+    case TurnActorState.Waiting:
+      return 'ui_icon_turn_waiting';
+    case TurnActorState.Committed:
+      return 'ui_icon_turn_committed';
+    case TurnActorState.Bell:
+      return 'ui_icon_turn_bell';
+    case TurnActorState.StandingBy:
+      return 'ui_icon_turn_standing_by';
+    case TurnActorState.Acting:
+      return null;
+  }
+}
+
+function stateWord(row: PartyPaneRow): TurnMark | null {
   if (row.downed !== null) return null; // the countdown says it better
+  const self = row.member.isSelf;
+  const chip = turnChipIdFor(row.member.state);
   switch (row.member.state) {
     case TurnActorState.Waiting:
-      return { word: 'WAITING', ink: PALETTE.VIOLET_HI };
+      return {
+        word: self ? 'YOUR MOVE' : 'WAITING',
+        ink: self ? PALETTE.GOLD : PALETTE.VIOLET_HI,
+        chip,
+        owed: true,
+      };
     case TurnActorState.Bell:
-      return { word: 'BELL', ink: PALETTE.ORANGE };
+      // THE BELL IS STILL A ROW THAT OWES, so it keeps the rail. `BELL` alone on
+      // your own row says a clock is running and not that it is running on YOU,
+      // which is the whole of what a straggler needs to read.
+      return { word: self ? 'BELL — MOVE' : 'BELL', ink: PALETTE.ORANGE, chip, owed: true };
     case TurnActorState.Acting:
-      return { word: 'ACTING', ink: PALETTE.ORANGE };
+      return { word: 'ACTING', ink: PALETTE.ORANGE, chip, owed: false };
     case TurnActorState.Committed:
-      return { word: 'DONE', ink: PALETTE.GREY_HI };
+      return { word: 'DONE', ink: PALETTE.GREY_HI, chip, owed: false };
     case TurnActorState.StandingBy:
-      return { word: 'STANDBY', ink: PALETTE.GREY };
+      return { word: 'STANDBY', ink: PALETTE.GREY, chip, owed: false };
   }
+}
+
+/**
+ * The chip, top-right of the token, in BOTH forms of the pane.
+ *
+ * ONE FIXED PLACE, which is the rule the deleted card strip stated and the one
+ * thing worth keeping from it: the pane changes form when the window is resized
+ * or the grip is dragged, and a state icon that migrates with the layout is a
+ * state icon that has to be found again. Top-right is the one corner of a token
+ * nothing else claims — the leader's pennant is top-left and the microphone is
+ * bottom-right.
+ *
+ * `blitReduced` halves the authored 24x24 exactly and REFUSES rather than
+ * smudging, so a clone with no art draws no chip and the word still carries the
+ * state. Nothing here is the only telling of anything.
+ */
+function drawTurnChip(
+  ctx: CanvasRenderingContext2D,
+  sprites: SpriteSource,
+  chip: string | null,
+  token: PanelRect,
+): void {
+  if (chip === null) return;
+  blitReduced(ctx, sprites, chip, {
+    x: token.x + token.w - TURN_CHIP_PX,
+    y: token.y,
+    w: TURN_CHIP_PX,
+    h: TURN_CHIP_PX,
+  });
 }
 
 /**
@@ -1167,8 +1311,25 @@ function drawRow(
   const away = !member.online;
   const { x, y, w } = rect;
 
-  // The self row gets a wash, exactly as the turn cards do, so the two surfaces
-  // mark "you" the same way.
+  /**
+   * WHAT THE BARRIER IS DOING ABOUT THIS ROW, worked out ONCE at the top because
+   * four marks are made from it — the rail here, the chip on the token, the word
+   * in the name line, and the ink that word is drawn in. It used to be computed
+   * halfway down beside the word, which was fine while the word was the only
+   * thing it fed.
+   *
+   * ═══ A MEMBER IN ANOTHER REALM HAS NO TURN ON THIS SCREEN ═══
+   * `away` (the place, not the disconnection) means they are counting down under
+   * a different Bell, so the state-word slot carries FOLLOW instead and none of
+   * the four marks are made. And out of combat nobody blocks: the projector
+   * marks every member `committed`, so printing DONE beside four names would
+   * tell four people they are waiting on each other while they walk around
+   * freely.
+   */
+  const elsewhere = member.away;
+  const mark = inCombat && elsewhere === null ? stateWord(row) : null;
+
+  // The self row gets a wash so the pane marks "you" the same way everywhere.
   // THE WASH COVERS THE WHOLE ROW, POOLS INCLUDED -- `rect.h` and not
   // `PARTY_ROW_H`, or the strip sits outside the block that marks it as yours
   // and reads as a detached row belonging to whoever is listed next.
@@ -1179,9 +1340,21 @@ function drawRow(
 
   // THE RAIL. Three pixels of solid colour down the left of the row: the signal
   // you catch while looking at the map, backed by the word beside it.
+  //
+  // ═══ AND IN COMBAT IT IS THE CHECKLIST ═══
+  // Downed first, because a body on the floor outranks a decision nobody has
+  // made; otherwise a rail on every row the barrier is still waiting on, gold on
+  // your own. Six rails down the left edge answer "who are we waiting on" in one
+  // glance without reading a word — which is exactly the read the deleted card
+  // strip existed for, and the reason it is NOT a sort: every one of these
+  // people can act right now (DECISIONS.md D1), so the rows stay in join order
+  // and the rail moves instead.
   if (downed !== null) {
     ctx.fillStyle = downed.status === DownedStatus.Erased ? PALETTE.GREY : PALETTE.ORANGE;
-    ctx.fillRect(x, y, 3, rect.h - 1);
+    ctx.fillRect(x, y, ROW_RAIL_W, rect.h - 1);
+  } else if (mark !== null && mark.owed) {
+    ctx.fillStyle = member.isSelf ? PALETTE.GOLD : PALETTE.VIOLET_HI;
+    ctx.fillRect(x, y, ROW_RAIL_W, rect.h - 1);
   }
 
   // `ROW_TOKEN_DX`, NOT A 5. `PARTY_PANE_W` is derived from this offset — the
@@ -1194,6 +1367,9 @@ function drawRow(
   if (away || downed !== null || member.away !== null) hatchOver(ctx, token);
   if (member.isLeader) drawLeaderPennant(ctx, token.x, token.y);
   drawVoice(ctx, sprites, row.voice, token.x + FACE_PX - VOICE_PX, token.y + FACE_PX - VOICE_PX);
+  // AFTER the hatch, so a body nobody is driving still says what the barrier is
+  // doing about it. A null chip, or a clone with no art, simply draws nothing.
+  drawTurnChip(ctx, sprites, mark?.chip ?? null, token);
 
   const right = x + w;
   // --- badges, laid out from the right edge inwards -------------------------
@@ -1335,10 +1511,9 @@ function drawRow(
    * `away` above is `!member.online` — a body whose owner has dropped. This is
    * a body in ANOTHER REALM, with somebody at the keyboard, in a fight you are
    * entitled to join. The two look alike on a row and mean opposite things, so
-   * this one names the place and offers the way in.
+   * this one names the place and offers the way in. Both `elsewhere` and the
+   * turn mark are decided at the top of this function now — see the note there.
    */
-  const elsewhere = member.away;
-  const state = inCombat && elsewhere === null ? stateWord(row) : null;
   if (elsewhere !== null) {
     // THE CONTROL SITS IN THE STATE-WORD SLOT, which is free for exactly this
     // row: the state word says what YOUR barrier is doing about somebody, and a
@@ -1350,11 +1525,11 @@ function drawRow(
     ctx.fillText(word, contentRight, y + 8);
     nameRight -= Math.ceil(ctx.measureText(word).width) + 4;
     ctx.textAlign = 'left';
-  } else if (state !== null) {
+  } else if (mark !== null) {
     ctx.font = FONT_META;
     ctx.textAlign = 'right';
-    ctx.fillStyle = state.ink;
-    const word = fitText(ctx, state.word, Math.max(0, contentRight - textX - 24));
+    ctx.fillStyle = mark.ink;
+    const word = fitText(ctx, mark.word, Math.max(0, contentRight - textX - 24));
     ctx.fillText(word, contentRight, y + 8);
     nameRight -= Math.ceil(ctx.measureText(word).width) + 4;
     ctx.textAlign = 'left';
@@ -1444,20 +1619,29 @@ function drawRow(
  * ONE PORTRAIT-ONLY ROW: the token, its rail, and a 3-pixel hp sliver.
  *
  * Every signal that survives is a SHAPE or a POSITION — the pennant, the hatch,
- * the rail, the bar's length — because there is no room for a word. That is the
- * form's whole justification: at this width a name is four characters and an
- * ellipsis, which identifies nobody, while a 24x32 token identifies everybody
- * who has been on screen all session.
+ * the rail, the bar's length, and now the turn chip — because there is no room
+ * for a word. That is the form's whole justification: at this width a name is
+ * four characters and an ellipsis, which identifies nobody, while a 24x32 token
+ * identifies everybody who has been on screen all session.
+ *
+ * ═══ THE RAIL HERE MEANS "YOU", AND THE CHIP MEANS THE TURN ═══
+ * The full row can spend its rail on the barrier because the `>` and the wash
+ * already say which row is yours; at 52 pixels the wash is the only other mark
+ * there is, and it is a shade of slate on ink. So the two forms divide the
+ * signals differently ON PURPOSE, and the chip — which is in the same corner of
+ * the token in both — is the one that carries the turn in both.
  */
 function drawCompactRow(
   ctx: CanvasRenderingContext2D,
   sprites: SpriteSource,
   row: PartyPaneRow,
   rect: PanelRect,
+  inCombat: boolean,
   air: AirView | null,
 ): void {
   const { member, downed } = row;
   const { x, y, w } = rect;
+  const mark = inCombat && member.away === null ? stateWord(row) : null;
 
   if (member.isSelf) {
     ctx.fillStyle = PALETTE.SLATE;
@@ -1465,10 +1649,10 @@ function drawCompactRow(
   }
   if (downed !== null) {
     ctx.fillStyle = downed.status === DownedStatus.Erased ? PALETTE.GREY : PALETTE.ORANGE;
-    ctx.fillRect(x, y, 3, PARTY_ROW_COMPACT_H - 2);
+    ctx.fillRect(x, y, ROW_RAIL_W, PARTY_ROW_COMPACT_H - 2);
   } else if (member.isSelf) {
     ctx.fillStyle = PALETTE.GOLD;
-    ctx.fillRect(x, y, 3, PARTY_ROW_COMPACT_H - 2);
+    ctx.fillRect(x, y, ROW_RAIL_W, PARTY_ROW_COMPACT_H - 2);
   }
 
   const token: PanelRect = { x: x + 4, y: y + 1, w: FACE_PX, h: FACE_PX };
@@ -1476,6 +1660,7 @@ function drawCompactRow(
   if (!member.online || downed !== null) hatchOver(ctx, token);
   if (member.isLeader) drawLeaderPennant(ctx, token.x, token.y);
   drawVoice(ctx, sprites, row.voice, token.x + FACE_PX - VOICE_PX, token.y + FACE_PX - VOICE_PX);
+  drawTurnChip(ctx, sprites, mark?.chip ?? null, token);
   // YOUR BREATH HERE TOO, on the face's last row and the gap under it: Portraits
   // is the layout a narrow window forces, and the Weir is no kinder there. The
   // hp bar below keeps all three of its rows.
@@ -1535,8 +1720,8 @@ function drawInvite(ctx: CanvasRenderingContext2D, slot: InviteSlot): void {
  * Wrapped in save/restore because it changes `font`, `textAlign`, `textBaseline`,
  * `lineWidth` and `strokeStyle` — none of which the world painter re-sets before
  * every call, so a leak here would surface three milestones from now as a
- * mysteriously outlined sprite. Clipped to its own rect for the same reason the
- * card strip is: a row must never bleed onto the map.
+ * mysteriously outlined sprite. Clipped to its own rect because a row must never
+ * bleed onto the map — a long nickname included.
  */
 export function drawPartyPane(options: PartyPaneOptions): void {
   const { ctx, sprites, view, layout } = options;
@@ -1590,7 +1775,7 @@ export function drawPartyPane(options: PartyPaneOptions): void {
   }
 
   for (const slot of geometry.rows) {
-    if (compact) drawCompactRow(ctx, sprites, slot.row, slot.rect, view.air ?? null);
+    if (compact) drawCompactRow(ctx, sprites, slot.row, slot.rect, view.inCombat, view.air ?? null);
     else drawRow(ctx, sprites, slot.row, slot.rect, view.inCombat, view);
   }
 

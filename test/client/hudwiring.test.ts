@@ -437,31 +437,36 @@ describe('slotUnder asks the view how many slots there are', () => {
     expect(fn).not.toContain('loadout.length');
   });
 
-  it('binds a talent to a keyed slot, and refuses an item there in words', () => {
+  it('binds EITHER kind to ANY slot, and refuses neither', () => {
     /**
      * ═══════════════════════════════════════════════════════════════════════
-     * THIS TEST USED TO ASSERT THE REFUSAL WAS UNCONDITIONAL.
+     * THIS TEST HAS ASSERTED A REFUSAL TWICE, AND THERE IS NONE LEFT.
      * ═══════════════════════════════════════════════════════════════════════
      *
-     * It read "refuses to bind a talent slot and says so in words", and it was
-     * right: slot n WAS `loadout[n]` for the session, so nothing could be put
-     * on the left half of the bar and the only correct behaviour was a sentence
-     * explaining why.
+     * First it read "refuses to bind a talent slot and says so in words" — slot
+     * n WAS `loadout[n]` for the session, so nothing could be put on the left
+     * half of the bar. Then it read "binds a talent to a keyed slot, and
+     * refuses an item there in words", because half of that had become wrong.
      *
-     * The six keyed slots hold a binding now, so HALF of that is wrong and half
-     * is still exactly right — a talent lands, an item does not — and the
-     * branch has to tell them apart. Both halves are asserted here, because the
-     * failure mode of getting it half-done is silent: a drop that snapped back
-     * with no sentence would teach the player the bar is broken, which is the
-     * thing the original test existed to prevent and still is.
+     * Both were pinning the PARTITION, and the partition is what the author
+     * reported: *"the hotbar/actionbar should not segregate items from
+     * abilities."* What is pinned now is the property that replaced it — the
+     * DRAG decides which binder runs and the SLOT decides nothing — plus the
+     * absence of the sentence, because a refusal left behind on one branch is
+     * exactly the half-done state the previous version of this test existed to
+     * catch.
      */
     const fn = between('function resolveDrop(', '\n  }');
-    expect(fn).toContain('case HotbarDropKind.Talent:');
-    // The talent half — it BINDS.
+    // ONE ARM. `HotbarDropKind.Talent` is gone from the union, with the refusal
+    // it existed to route to.
+    expect(fn).toContain('case HotbarDropKind.Bind:');
+    expect(fn).not.toContain('case HotbarDropKind.Talent:');
+    // The branch is on the SUBJECT, never on the index.
+    expect(fn).toContain('if (subject.kind === DragKind.Talent) {');
     expect(fn).toContain('bindTalentSlot(drop.index, subject.talentId);');
-    // The item half — it REFUSES, in words a player can act on.
-    expect(fn).toContain('takes a talent');
     expect(fn).toContain('bindItemSlot(drop.index, subject);');
+    expect(fn).not.toContain('takes a talent');
+    expect(fn).not.toContain('isItemSlotIndex');
   });
 });
 
@@ -523,9 +528,12 @@ describe('endDrag settles the panel offset', () => {
       between('function movePanel(', '\n}'),
       'the painter does not branch where the settle does',
     ).toContain('panel === DraggablePanel.Log');
-    // The band is recomputed the same way `hudLayout` computes it, from the live
-    // turn HUD height rather than from anything cached.
-    expect(fn).toContain('panelBand(logicalH, turnHudHeight(turnView()))');
+    // The band is recomputed the same way `hudLayout` computes it, from the top
+    // HUD's own constant rather than from anything cached. It used to read
+    // `turnHudHeight(turnView())` — a live measurement, because the turn card
+    // strip made the number depend on whether there was a fight on. The cards
+    // are deleted and the HUD is `TURN_BAR_H` in combat and out of it.
+    expect(fn).toContain('panelBand(logicalH, TURN_BAR_H)');
     const layout = between('function hudLayout(width: number, height: number): HudLayout {', '\n}');
     for (const panel of [
       'DraggablePanel.Sheet',
@@ -549,11 +557,25 @@ describe('endDrag settles the panel offset', () => {
       between('function endDrag(clientX: number, clientY: number): void {', '\n  }'),
     ).toContain('clearHoverState();');
     expect(between('function cancelDrag(): boolean {', '\n  }')).toContain('clearHoverState();');
-    // ...and the card is additionally suppressed for the duration, which is the
-    // rule the token menu already has for the same reason.
-    expect(CODE).toContain(
-      'if (tip !== null && pointerPoint !== null && drag === null && tokenMenu?.visible() !== true)',
+    // ...and EVERY card is additionally suppressed for the duration, which is
+    // the rule the token menu already has for the same reason.
+    //
+    // ═══ IT USED TO PIN ONE CARD'S CONDITION, SPELLED OUT, AND THAT WAS THE HOLE
+    // The assertion was the actor card's own line — `tip !== null &&
+    // pointerPoint !== null && drag === null && tokenMenu?.visible() !== true`.
+    // The actor card and the floor card both carried it; the HOVER card, which
+    // is the hotbar's, the bag's, the pane's and the sheet's, never did, and
+    // this test could not tell because it named the one line that had it.
+    //
+    // The four paints share one `busy` now, so the pin is the DEFINITION plus
+    // the fact that every paint reads it. Break either half — drop a clause from
+    // `busy`, or let one card paint without it — and this fails.
+    const cards = between('function paintPointerCards(', '\n}\n');
+    expect(cards, 'the two suppressions are not defined in one place').toContain(
+      'const busy = drag !== null || tokenMenu?.visible() === true;',
     );
+    const guards = cards.split('!busy').length - 1;
+    expect(guards, 'a card paints without checking `busy`').toBe(4);
   });
 });
 
@@ -639,8 +661,9 @@ describe('the player can always see their own health', () => {
    *
    * This is a combat roguelike, and self HP used to have three homes that could
    * each be absent when it mattered: the party pane toggles off with `p` and
-   * degrades to a sliver with no digits on a narrow window; the turn cards are
-   * drawn only in combat; the character sheet is behind a keypress. A permanent
+   * degrades to a sliver with no digits on a narrow window; the turn card strip
+   * was drawn only in combat, and is now deleted outright; the character sheet
+   * is behind a keypress. A permanent
    * bottom strip was added to close that, and `ui/life.ts` was written for it.
    *
    * THE STRIP IS GONE NOW, by request — every number on it was already on the
@@ -961,11 +984,12 @@ describe('the minimap is furniture the player owns', () => {
   /**
    * ═══ AND THE TOP HUD STRIP NO LONGER EATS HALF OF IT ═══
    * `overPanel` swallowed everything above `hudTop`, and the box starts eight
-   * pixels down. Out of combat that was six pixels; in combat the card strip is
-   * full-width and 46 tall, so the top FIFTY-TWO pixels of a 99-pixel map were
-   * unclickable — in the one state where what is around the corner matters.
-   * The minimap is painted OVER the bar and the cards, so hit-test order has to
-   * say the same thing.
+   * pixels down. Out of combat that was six pixels; in combat the turn card
+   * strip was full-width and 46 tall, so the top FIFTY-TWO pixels of a 99-pixel
+   * map were unclickable — in the one state where what is around the corner
+   * matters. The cards are deleted and `hudTop` is 14 always, so it is six
+   * pixels in both states now; the guard stays, because the minimap is painted
+   * OVER the bar and hit-test order has to say the same thing.
    */
   it('answers the mouse above the HUD line, where it is painted', () => {
     expect(
@@ -1557,8 +1581,63 @@ describe('a card follows the pointer between paints', () => {
     );
   });
 
-  it('records every card it paints, before the next one', () => {
+  /**
+   * ═══ THE CARDS LEFT `paintHud`, AND THAT IS THE FIX THIS BLOCK NOW GUARDS ═══
+   * There were four card paints at four different depths inside `paintHud` —
+   * one of them inside the talent panel's own block — so each was covered by
+   * whatever happened to be painted after it. They are one function called at
+   * the end of the frame now. These assertions moved with them; the two below
+   * are new, and they are what stops a fifth card being added back at the wrong
+   * depth.
+   */
+  const CARDS_HEAD = 'function paintPointerCards(';
+  const cards = (): string => between(CARDS_HEAD, '\n}\n');
+
+  it('paints no card inside paintHud at all', () => {
     const body = paint();
+    for (const head of ['drawHoverCard(', 'drawTooltip({', 'drawLootTip({']) {
+      expect(body, `${head} is painted at panel depth again`).not.toContain(head);
+    }
+    expect(body, 'the cards are not painted at all').toContain('paintPointerCards(');
+  });
+
+  it('paints the cards after every panel on the screen', () => {
+    const body = paint();
+    const call = body.indexOf('paintPointerCards(');
+    expect(call).toBeGreaterThan(-1);
+    // Every surface a card is allowed to cover. The escape menu is the widest
+    // panel and the dialogue window the newest; `drawLine` is the opaque
+    // full-width strip that used to cut a band through a hotbar card.
+    for (const before of [
+      'caseLog.draw(',
+      'drawHotbar(',
+      'drawEscapeMenu(',
+      'drawInventoryPanel(',
+      'drawTalentPanel(',
+      'drawLine(',
+      'drawRespawnPrompt(',
+      'drawDragGhost(',
+      'drawDialogue(',
+    ]) {
+      expect(body.indexOf(before), `${before} is painted over the cards`).toBeLessThan(call);
+    }
+    // ...and the combat banner, which is the one argued precedence this change
+    // REVERSES. `paintPointerCards` spells out why: the three written-down
+    // rules formed a cycle and this was the cheapest edge to cut. Pinned so
+    // that reversing it back is a failing test rather than a silent drift.
+    expect(
+      body.indexOf('combatBanner?.draw('),
+      'the banner is painted over the cards',
+    ).toBeLessThan(call);
+    // And the two that still outrank a card — both of which SUPPRESS it rather
+    // than merely covering it, so the ordering is belt to the braces.
+    for (const after of ['tokenMenu?.draw(', 'drawClassPicker(']) {
+      expect(body.indexOf(after), `${after} is painted under the cards`).toBeGreaterThan(call);
+    }
+  });
+
+  it('records every card it paints, before the next one', () => {
+    const body = cards();
     const heads = ['drawHoverCard(', 'drawTooltip({', 'drawLootTip({'];
     const calls: number[] = [];
     for (const head of heads) {
@@ -1587,8 +1666,8 @@ describe('a card follows the pointer between paints', () => {
   });
 
   it('asks the same functions the paint draws from', () => {
-    expect(paint()).toContain('hoverCardAt(layout, sheetRows, pointerPoint.x, pointerPoint.y)');
-    expect(paint()).toContain('talentCardAt(layout.talents, pointerPoint.x, pointerPoint.y)');
+    expect(cards()).toContain('hoverCardAt(layout, sheetRows, pointerPoint.x, pointerPoint.y)');
+    expect(cards()).toContain('talentCardAt(layout.talents, pointerPoint.x, pointerPoint.y)');
     const ask = between('function pointerCardAt(', '\n}\n');
     expect(ask).toContain('hoverCardAt(layout, paintedSheetRows, px, py)');
     expect(ask).toContain('talentCardAt(layout.talents, px, py)');
@@ -1650,7 +1729,7 @@ describe('the action bar is its own panel', () => {
   it('resizes against its own floor, band and rect', () => {
     expect(CODE).toContain('if (panel === DraggablePanel.Hotbar) return hotbarFloor(hotbarStyle);');
     expect(CODE).toContain(
-      'if (panel === DraggablePanel.Hotbar) return hotbarBand(logicalH, turnHudHeight(turnView()));',
+      'if (panel === DraggablePanel.Hotbar) return hotbarBand(logicalH, TURN_BAR_H);',
     );
     expect(CODE).toContain('if (panel === DraggablePanel.Hotbar) return layout.hotbar;');
     expect(between('function settlePanel(subject: DragSubject): void {', '\n  }')).toContain(
@@ -1872,5 +1951,70 @@ describe('the conversation window is wired to its own chrome', () => {
       );
     }
     expect(CODE).toContain('settingsOpen: dialogueSettingsOpen,');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 16. THE BAR EXPANDS, AND THE COGWHEEL AND THE GRIP WRITE ONE NUMBER
+// ---------------------------------------------------------------------------
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * TWO CONTROLS, ONE COUNT — asked for as two requests about one bar.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * *"i want the cogwheel settings button for the action bar to allow you to add
+ * more slots to expand"* and *"resizing the actionbar should dynamically add
+ * slots to the actionbar."*
+ *
+ * `hotbar.test.ts` owns the arithmetic — `hotbarSlotsForSize` and the fixed
+ * point. What is here is the WIRING, which is the half that silently does not
+ * happen: a grip that computes a count and stores it nowhere, a cogwheel row
+ * that steps a style nothing saves, or a count read from two places that drift.
+ */
+describe('the action bar expands', () => {
+  it('derives the drawn count from the style, in ONE function', () => {
+    // A second reader of `hotbarStyle.slots` is a second clamp to get wrong,
+    // and the symptom is a hit test that reaches a slot the painter did not
+    // draw — which fires whatever is bound there.
+    const fn = between('function hotbarSlotCount(): number {', '\n}');
+    expect(fn).toContain('hotbarStyle.slots');
+    expect(fn).toContain('HOTBAR_SLOT_POOL');
+    // CLAMPED HERE, so nothing downstream has to.
+    expect(fn).toContain('Math.max(1,');
+    // The view is built to exactly that many slots.
+    expect(between('function hotbarView(): HotbarView {', '\n}')).toContain(
+      'Array.from({ length: count }',
+    );
+  });
+
+  it('writes the count from the resize gesture, live, and only for the bar', () => {
+    const fn = between('function onDragMove(clientX: number, clientY: number): void {', '\n  }');
+    expect(fn).toContain('if (subject.panel === DraggablePanel.Hotbar) {');
+    expect(fn).toContain('slots: hotbarSlotsForSize({ w: landed.w, h: landed.h }, hotbarStyle)');
+    // AND THE SIZE IT DERIVES FROM IS THE ONE IT STORED, not the raw ask: the
+    // store holds what was DRAWN (see the resize band note), so a count taken
+    // from `asked` would disagree with the bar on screen at every band edge.
+    expect(at('panelSizes[subject.panel] = { w: landed.w, h: landed.h };', fn)).toBeLessThan(
+      at('if (subject.panel === DraggablePanel.Hotbar) {', fn),
+    );
+  });
+
+  it('saves the count, so a widened bar is still widened next session', () => {
+    /**
+     * `savePanelLayout` sends the style ONLY once it differs from the default —
+     * the "record what the player DID" rule. The count is the one field of the
+     * style a player changes WITHOUT opening the cogwheel, so leaving it out of
+     * that comparison would send `null` after a resize and lose the width with
+     * the gesture having visibly worked.
+     */
+    const fn = between('function savePanelLayout(): void {', '\n  }');
+    expect(fn).toContain('hotbarStyle.slots !== DEFAULT_HOTBAR_STYLE.slots');
+  });
+
+  it('routes the cogwheel row through the same setter as every other setting', () => {
+    // `setHotbarStyle` is what saves. A `slots` row that assigned `hotbarStyle`
+    // directly would change the bar and never write the layout.
+    expect(CODE).toContain('setHotbarStyle(stepHotbarStyle(hotbarStyle, hit.key, hit.by));');
   });
 });

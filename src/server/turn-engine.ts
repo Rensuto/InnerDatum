@@ -2011,8 +2011,8 @@ export function createTurnEngine(opts: TurnEngineOptions): ReapingTurnEngine {
       bellDurationMs: bellToArm(),
       // THE MEMBERSHIP THE THREE ARRAYS ABOVE WERE COMPUTED AGAINST. Absent for
       // the level-wide snapshot, which is what it has always meant. The
-      // projector filters the card strip on it so that one card can never be
-      // built from one party's blocking set over another party's roster.
+      // projector filters `actors` on it so that one actor's record can never
+      // be built from one party's blocking set over another party's roster.
       party: scope?.members,
     };
   };

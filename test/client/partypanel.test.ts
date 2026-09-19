@@ -44,6 +44,9 @@ import { DEFAULT_KEYMAP } from '../../src/client/input/keymap.ts';
 import { ActorKind, ActorRank, DownedStatus, PartyAction } from '../../src/shared/protocol.ts';
 import { ResourceKind, TurnActorState, VoiceState } from '../../src/shared/protocol.ts';
 import { PROTOCOL_VERSION } from '../../src/shared/version.ts';
+import { readFileSync } from 'node:fs';
+import { PALETTE } from '../../src/client/render/canvas.ts';
+import type { SpriteSource } from '../../src/client/render/assets.ts';
 import type { MapVerb } from '../../src/client/ui/contextmenu.ts';
 import type {
   PartyPaneHit,
@@ -1574,5 +1577,485 @@ describe('the pane is wide enough for every class to read its own pool', () => {
         `${def.name}: "${wanted}" runs past the row`,
       ).toBeLessThanOrEqual(rowRight);
     }
+  });
+});
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE PANE CARRIES THE TURN NOW, AND IT IS THE ONLY SURFACE THAT DOES.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * A strip of portrait cards across the top of the screen used to answer "who
+ * still owes a decision". It is deleted, on the author's ruling of 2026-09-18:
+ * *"lets just go no cards at all, no turn order indicator. it will also free up
+ * more space. we can use the 'Party' hud UI to indicate that its the players
+ * turn, even when doing multiplayer."* test/client/turnband.test.ts measures the
+ * space; this measures the indication.
+ *
+ * EVERY ASSERTION BELOW IS A PAINT ASSERTION, because that is the only
+ * instrument that can see this. The pane's own history is the argument: the
+ * hover card exists because painting it at 640 wide showed it drawing three
+ * initials and nothing else, which no structural test in the tree could have
+ * told anybody.
+ */
+describe('the party row is what says whose turn it is', () => {
+  type Painted = {
+    readonly texts: readonly string[];
+    /** `fillText` calls as {text, ink}, so a word and its colour stay together. */
+    readonly inked: readonly { readonly text: string; readonly ink: string }[];
+    /** `fillRect` calls as {x, y, w, h, ink}. The rail is found in here. */
+    readonly rects: readonly {
+      readonly x: number;
+      readonly y: number;
+      readonly w: number;
+      readonly h: number;
+      readonly ink: string;
+    }[];
+    /** Asset ids handed to `drawImage`, in order. The chips are found in here. */
+    readonly blits: readonly string[];
+  };
+
+  /**
+   * A recorder that keeps the CONTEXT STATE a call was made under.
+   *
+   * Six pixels a character, the real advance of the 10px monospace this pane
+   * draws with — the same figure every other measuring stub in this file uses,
+   * so a word that fits here fits on the screen.
+   */
+  function painted(): { readonly ctx: CanvasRenderingContext2D; readonly out: Painted } {
+    const texts: string[] = [];
+    const inked: { text: string; ink: string }[] = [];
+    const rects: { x: number; y: number; w: number; h: number; ink: string }[] = [];
+    const blits: string[] = [];
+    let fill = '';
+    const ctx = new Proxy(
+      {},
+      {
+        get: (_target, prop: string) => {
+          if (prop === 'fillStyle') return fill;
+          if (prop === 'measureText') return (t: string) => ({ width: t.length * 6 });
+          if (prop === 'fillText')
+            return (text: string) => {
+              texts.push(text);
+              inked.push({ text, ink: fill });
+            };
+          if (prop === 'fillRect')
+            return (x: number, y: number, w: number, h: number) => {
+              rects.push({ x, y, w, h, ink: fill });
+            };
+          if (prop === 'drawImage')
+            return (image: { readonly id?: string }) => {
+              if (image.id !== undefined) blits.push(image.id);
+            };
+          if (prop === 'canvas') return { width: 640, height: 320 };
+          return () => {};
+        },
+        set: (_target, prop: string, value: unknown) => {
+          if (prop === 'fillStyle') fill = String(value);
+          return true;
+        },
+      },
+    ) as unknown as CanvasRenderingContext2D;
+    return { ctx, out: { texts, inked, rects, blits } };
+  }
+
+  /**
+   * Every `ui_icon_turn_*` at its authored 24x24, and NOTHING else.
+   *
+   * The pane must draw the chips from real art and must keep working without
+   * any: `blitReduced` refuses rather than smudging, so a face with no PNG falls
+   * through to initials in the same pass. Returning only the chips exercises
+   * both halves at once.
+   */
+  const CHIPS: SpriteSource = {
+    sprite: (id: string) =>
+      id.startsWith('ui_icon_turn_')
+        ? { id, w: 24, h: 24, image: { id } as unknown as HTMLImageElement }
+        : undefined,
+  };
+
+  /** A party of `states.length`, the first of whom is the viewer. */
+  function party(states: readonly TurnActorState[], over: Partial<PartyStateMember> = {}) {
+    const names = ['Dalt', 'Sam', 'Mo', 'Ren', 'Wen', 'Isa'];
+    const members = states.map((turnState, i) =>
+      member({
+        id: `actor_${String(i)}`,
+        name: names[i] ?? `P${String(i)}`,
+        state: turnState,
+        isSelf: i === 0,
+        isLeader: i === 0,
+        ...(i === 0 ? over : {}),
+      }),
+    );
+    return partyPaneView({
+      state: state(members),
+      invites: [],
+      roster: members.map((m) => rosterRow(m.id, m.name)),
+      actors: new Map(members.map((m) => [m.id, actor(m.id, m.name)])),
+      effects: new Map<string, readonly EffectView[]>(),
+      inCombat: true,
+      resource: null,
+      progress: null,
+      money: null,
+    });
+  }
+
+  /**
+   * THE FLOOR VIEWPORT, WITH NOTHING RESERVED — the pane's own note measured it:
+   * at 640 wide the pane leaves 373 clear pixels against `MAP_MIN_CLEAR_PX` 320,
+   * so this is Rows, which is the form a player at the floor actually gets. The
+   * narrow form is reached by opening the log, and is covered further down.
+   */
+  function floorLayout(view: PartyPaneView): PartyPaneLayout {
+    const layout = partyPaneLayout({ view, width: 640, top: 14, bottom: 217, rightReserved: 0 });
+    if (layout === null) throw new Error('expected a pane at the 640 floor');
+    return layout;
+  }
+
+  /**
+   * The same 640-wide row form in a box tall enough for a party of six — the
+   * measured Discord Activity box's band (main.ts stacks `panelBand` at 17 and
+   * stops it above the hotbar and the two prose lines). Width is still the
+   * floor's, because width is what decides whether a name survives the row.
+   */
+  function roomyLayout(view: PartyPaneView): PartyPaneLayout {
+    const layout = partyPaneLayout({ view, width: 640, top: 17, bottom: 325, rightReserved: 0 });
+    if (layout === null) throw new Error('expected a pane at 640 wide');
+    return layout;
+  }
+
+  function paint(view: PartyPaneView, layout: PartyPaneLayout = floorLayout(view)): Painted {
+    const { ctx, out } = painted();
+    drawPartyPane({ ctx, sprites: CHIPS, view, layout });
+    return out;
+  }
+
+  // -------------------------------------------------------------------------
+
+  it('reads the state the SERVER decided, and nothing else', () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * THE BUG THAT KILLED THE PREDECESSOR, AS AN ASSERTION.
+     * ═══════════════════════════════════════════════════════════════════════
+     * The old `chipFor` worked the barrier's precedence out in the BROWSER from
+     * three id arrays — whose turn, who has committed, who is standing by — and
+     * `PartyStateMember` carries none of them. Every fact on this row has to
+     * come off `state`, so the same member, with the same id, the same name and
+     * the same roster row, must paint a different word when and only when the
+     * server says a different thing.
+     */
+    // THE VIEWER IS `waiting` IN EVERY CASE, so their own row says YOUR MOVE and
+    // the only word from the ally vocabulary on screen is the ALLY's. A `find`
+    // over a party whose viewer shared that vocabulary would answer with row one
+    // every time and assert nothing about row two.
+    const words = (s: TurnActorState): string =>
+      paint(party([TurnActorState.Waiting, s])).texts.find((t) =>
+        ['WAITING', 'BELL', 'DONE', 'STANDBY', 'ACTING'].includes(t),
+      ) ?? 'nothing';
+
+    expect(words(TurnActorState.Waiting)).toBe('WAITING');
+    expect(words(TurnActorState.Bell)).toBe('BELL');
+    expect(words(TurnActorState.Committed)).toBe('DONE');
+    expect(words(TurnActorState.StandingBy)).toBe('STANDBY');
+
+    // ═══ AND THE SOURCE HAS NO SECOND ROUTE TO THE ANSWER ═══
+    // A word that happened to be right for the four cases above and was derived
+    // from something else would pass everything up to here. `whoseTurn`,
+    // `committed` and `standingBy` are the three arrays the deleted derivation
+    // read; none of them is on this frame, and none of them may be named here.
+    const source = readFileSync('src/client/ui/partypanel.ts', 'utf8');
+    const code = source
+      .split('\n')
+      .filter((line) => {
+        const trimmed = line.trim();
+        return !(trimmed.startsWith('//') || trimmed.startsWith('*') || trimmed.startsWith('/*'));
+      })
+      .join('\n');
+    // `committed` is matched with its dot, because `ui_icon_turn_committed` is
+    // an ASSET KEY the pane legitimately names — a bare substring would go red
+    // for the chip and say nothing about the derivation.
+    for (const array of ['whoseTurn', 'standingBy', '.committed']) {
+      expect(code, `the pane derives the barrier from ${array}`).not.toContain(array);
+    }
+    expect(code, 'the state word stopped reading the server’s answer').toContain(
+      'switch (row.member.state)',
+    );
+  });
+
+  it('renders every state distinctly, and without leaning on colour', () => {
+    /**
+     * Roughly one man in twelve cannot separate the red from the green and the
+     * Discord overlay is not colour-managed. So the five states must differ in
+     * their WORDS — take the ink away and the pane still reads.
+     */
+    const ally = (s: TurnActorState): string | undefined =>
+      paint(party([TurnActorState.Waiting, s])).texts.find((t) =>
+        ['WAITING', 'BELL', 'DONE', 'STANDBY'].includes(t),
+      );
+    const seen = [
+      TurnActorState.Waiting,
+      TurnActorState.Bell,
+      TurnActorState.Committed,
+      TurnActorState.StandingBy,
+    ].map(ally);
+    expect(new Set(seen).size, 'two states paint the same word').toBe(seen.length);
+    expect(seen.includes(undefined)).toBe(false);
+
+    // And the chip is a second, non-textual channel: one authored silhouette per
+    // state, on the token's top-right corner in both forms of the pane.
+    const chips = (s: TurnActorState) =>
+      paint(party([TurnActorState.Waiting, s])).blits.filter((id) =>
+        id.startsWith('ui_icon_turn_'),
+      );
+    expect(chips(TurnActorState.Waiting)).toContain('ui_icon_turn_waiting');
+    expect(chips(TurnActorState.Bell)).toContain('ui_icon_turn_bell');
+    expect(chips(TurnActorState.StandingBy)).toContain('ui_icon_turn_standing_by');
+    expect(chips(TurnActorState.Committed)).toContain('ui_icon_turn_committed');
+  });
+
+  it('never lets a body on the floor read as somebody who has taken their turn', () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * THIS IS THE BUG THE WHOLE `TurnActor.state` SEAM EXISTS FOR.
+     * ═══════════════════════════════════════════════════════════════════════
+     * `surveyQuorum` skips a body that is not standing before it decides
+     * anything, so a Downed detective is in NEITHER `whoseTurn` NOR
+     * `standingBy` — the one case three id arrays cannot express. The browser's
+     * old lookup fell through to "committed" and told the party that the person
+     * bleeding out on the floor had taken their turn.
+     *
+     * They arrive as `standing_by` WITH a survival table, and the countdown is
+     * what the row says. Never DONE, and never STANDBY either: "excluded from
+     * the quorum" and "bleeding out" must not read the same.
+     */
+    const members = [
+      member({ id: 'actor_0', name: 'Dalt', isSelf: true, isLeader: true }),
+      member({ id: 'actor_1', name: 'Sam', state: TurnActorState.StandingBy }),
+    ];
+    const view = partyPaneView({
+      state: state(members),
+      invites: [],
+      roster: [
+        rosterRow('actor_0', 'Dalt'),
+        rosterRow('actor_1', 'Sam', {
+          downed: {
+            status: DownedStatus.Downed,
+            marker: 'ui_marker_downed',
+            turnsLeft: 3,
+            total: 5,
+          },
+        }),
+      ],
+      actors: new Map(members.map((m) => [m.id, actor(m.id, m.name)])),
+      effects: new Map<string, readonly EffectView[]>(),
+      inCombat: true,
+      resource: null,
+      progress: null,
+      money: null,
+    });
+
+    const out = paint(view);
+    expect(out.texts).toContain('DOWN 3/5');
+    expect(out.texts, 'the fallen ally reads as having committed').not.toContain('DONE');
+    expect(out.texts, 'the fallen ally reads as merely out of the quorum').not.toContain('STANDBY');
+    // The hover card is the only surface with words in the narrow form, and it
+    // must agree rather than falling back to the state word.
+    const rect = view.rows.length > 0 ? floorLayout(view).rect : null;
+    expect(rect).not.toBeNull();
+    // The countdown, never the barrier's word.
+    expect(
+      survivalWord({ status: DownedStatus.Downed, marker: 'm', turnsLeft: 3, total: 5 }, false),
+    ).toBe('DOWN 3/5');
+  });
+
+  it('is unmistakable on your own row while the game is waiting on you', () => {
+    /**
+     * The single most important fact on this screen. "WAITING" beside your own
+     * name is the passive voice for it and reads as *you are waiting*, which is
+     * the opposite of what is true.
+     */
+    const out = paint(party([TurnActorState.Waiting, TurnActorState.Committed]));
+    expect(out.texts).toContain('YOUR MOVE');
+    expect(out.inked.find((i) => i.text === 'YOUR MOVE')?.ink).toBe(PALETTE.GOLD);
+    // ...and a gold rail down the left of that row, which is the mark you catch
+    // while looking at the map rather than at the pane.
+    expect(out.rects.some((r) => r.w === 3 && r.ink === PALETTE.GOLD)).toBe(true);
+
+    // The ally who still owes gets the rail too — the pane is a CHECKLIST, and
+    // "who are we waiting on" is answered by the rails without reading a word.
+    const two = paint(party([TurnActorState.Committed, TurnActorState.Waiting]));
+    expect(two.rects.some((r) => r.w === 3 && r.ink === PALETTE.VIOLET_HI)).toBe(true);
+    // Nobody who has finished wears one.
+    const none = paint(party([TurnActorState.Committed, TurnActorState.Committed]));
+    expect(none.rects.some((r) => r.w === 3 && r.ink === PALETTE.VIOLET_HI)).toBe(false);
+    expect(none.rects.some((r) => r.w === 3 && r.ink === PALETTE.GOLD)).toBe(false);
+    expect(none.texts).toContain('DONE');
+  });
+
+  it('says YOUR MOVE to a party of one, which is who most needs telling', () => {
+    // A solo player is a party of one (engine/party.ts) and still has to know
+    // the game is waiting on them. There is nobody else's row to compare with.
+    const out = paint(party([TurnActorState.Waiting]));
+    expect(out.texts).toContain('YOUR MOVE');
+    expect(out.blits).toContain('ui_icon_turn_waiting');
+  });
+
+  it('keeps the rows in the server’s order whatever the barrier says', () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * NO IMPLIED ORDERING, EVER. DECISIONS.md D1.
+     * ═══════════════════════════════════════════════════════════════════════
+     * The game is phase-locked: a player action always costs one full turn, so
+     * the WHOLE party decides in the same window and everybody reading `waiting`
+     * can act RIGHT NOW. Sorting rows by state would invent a queue that does
+     * not exist and make three people sit waiting for "their go" — and KICK is
+     * on this pane, so a row that moves between two frames is a row somebody
+     * misclicks.
+     */
+    const shuffled = party([
+      TurnActorState.Committed,
+      TurnActorState.Waiting,
+      TurnActorState.StandingBy,
+      TurnActorState.Waiting,
+      TurnActorState.Committed,
+      TurnActorState.Bell,
+    ]);
+    expect(shuffled.rows.map((r) => r.member.name)).toEqual([
+      'Dalt',
+      'Sam',
+      'Mo',
+      'Ren',
+      'Wen',
+      'Isa',
+    ]);
+    // And the PAINT follows the rows: names come out top to bottom in the same
+    // order, whatever each of them owes. A box tall enough for all six, so a
+    // truncated pane cannot make a sorted one look unsorted.
+    const out = paint(shuffled, roomyLayout(shuffled));
+    const names = out.texts.filter((t) => /^>?(Dalt|Sam|Mo|Ren|Wen|Isa)$/.test(t));
+    expect(names.map((n) => n.replace('>', ''))).toEqual([
+      'Dalt',
+      'Sam',
+      'Mo',
+      'Ren',
+      'Wen',
+      'Isa',
+    ]);
+  });
+
+  it('is legible for six at the 640 floor: every row keeps its name AND its word', () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * THE PARTY CAP IS SIX AND THE HUD FLOOR IS 640 WIDE. BOTH AT ONCE.
+     * ═══════════════════════════════════════════════════════════════════════
+     * `fitText` truncates to what is left, and the state word is drawn FIRST and
+     * takes its width off the name's. Six rows of `WAITING` beside six names
+     * that came out as `…` would pass every other assertion in this file, so
+     * this asserts the WHOLE of each name and the word beside it.
+     *
+     * ═══ WIDTH IS THE FLOOR'S; HEIGHT IS THE WINDOW'S, AND IT IS MEASURED ═══
+     * At 640 wide with nothing reserved the pane takes the Rows form — its own
+     * width note measured 373 clear pixels against `MAP_MIN_CLEAR_PX` 320. The
+     * HEIGHT is a different question and `paneGeometry` places rows only while
+     * they fit, so the band has to be one that holds six: at the 640x320 HUD
+     * floor the dock band is 200 pixels and six rows want 244, which is the
+     * `PARTY · 4/6` case the header already exists for. The row form itself is
+     * what is under test here, and this is the box it gets in any window with
+     * the height for a party of six.
+     */
+    const view = party([
+      TurnActorState.Waiting,
+      TurnActorState.Waiting,
+      TurnActorState.Bell,
+      TurnActorState.Committed,
+      TurnActorState.StandingBy,
+      TurnActorState.Committed,
+    ]);
+    const layout = roomyLayout(view);
+    expect(layout.mode, 'the floor width no longer gets the row form').toBe(PartyPaneMode.Rows);
+    expect(partyPaneHeight(view, layout.mode)).toBeLessThanOrEqual(layout.rect.h);
+
+    const out = paint(view, layout);
+    // Every name, whole — not an ellipsis, not a prefix of one.
+    for (const name of ['>Dalt', 'Sam', 'Mo', 'Ren', 'Wen', 'Isa']) {
+      expect(out.texts, `${name} did not survive the row`).toContain(name);
+    }
+    // ...and the word beside each of them.
+    expect(out.texts.filter((t) => t === 'WAITING')).toHaveLength(1); // Sam
+    expect(out.texts).toContain('YOUR MOVE'); // Dalt, the viewer
+    expect(out.texts).toContain('BELL');
+    expect(out.texts.filter((t) => t === 'DONE')).toHaveLength(2);
+    expect(out.texts).toContain('STANDBY');
+  });
+
+  it('shows more of the party at the 640x320 floor than the card strip left room for', () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * WHAT THE DELETION BOUGHT, COUNTED IN PEOPLE RATHER THAN PIXELS.
+     * ═══════════════════════════════════════════════════════════════════════
+     * The dock band in combat was `TURN_BAR_H + 46 + DOCK_MARGIN` down to the
+     * hotbar's reserve: 63..217 at the HUD floor, 154 pixels. It is 17..217 now,
+     * 200 — and `paneGeometry` places rows while they fit and then stops, so the
+     * band is the party. Measured here through the real layout rather than
+     * asserted from arithmetic, because `partyPaneHeight`'s own note is that the
+     * self row is taller than everybody else's.
+     */
+    const view = party([
+      TurnActorState.Waiting,
+      TurnActorState.Waiting,
+      TurnActorState.Bell,
+      TurnActorState.Committed,
+      TurnActorState.StandingBy,
+      TurnActorState.Committed,
+    ]);
+    const rowsIn = (top: number, bottom: number): number => {
+      const layout = partyPaneLayout({ view, width: 640, top, bottom, rightReserved: 0 });
+      if (layout === null) return 0;
+      const out = painted();
+      drawPartyPane({ ctx: out.ctx, sprites: CHIPS, view, layout });
+      return out.out.texts.filter((t) => /^>?(Dalt|Sam|Mo|Ren|Wen|Isa)$/.test(t)).length;
+    };
+    // The band's floor is the hotbar's reserve and did not move; only its top did.
+    const was = rowsIn(14 + 46 + 3, 217);
+    const now = rowsIn(14 + 3, 217);
+    expect(now, 'the reclaimed band did not reach the pane').toBeGreaterThan(was);
+  });
+
+  it('says nothing about the turn while nobody is fighting', () => {
+    /**
+     * Out of combat `engagement` is 0, nobody blocks, and the projector marks
+     * every member `committed` — a true statement about the BARRIER and the
+     * opposite of the truth about the PLAYER, who may act freely. Printing DONE
+     * beside four names would tell four people they are waiting on each other
+     * while they walk around a town.
+     */
+    const view = party([TurnActorState.Committed, TurnActorState.Committed]);
+    const quiet: PartyPaneView = { ...view, inCombat: false };
+    const out = paint(quiet, floorLayout(quiet));
+    expect(out.texts).not.toContain('DONE');
+    expect(out.texts).not.toContain('YOUR MOVE');
+    expect(out.blits.filter((id) => id.startsWith('ui_icon_turn_'))).toHaveLength(0);
+    // The slot the word would have used says who is in charge instead.
+    expect(out.texts).toContain('LEAD');
+  });
+
+  it('carries the turn into the narrow form, where there is no room for a word', () => {
+    /**
+     * Portraits mode paints three initials and nothing else — measured, and the
+     * reason the hover card exists. With the card strip deleted, a player on a
+     * narrow window would otherwise have NO per-member turn state anywhere on
+     * screen. The chip costs no width: it is in the same corner of the same
+     * token as in the wide form.
+     */
+    const view = party([TurnActorState.Waiting, TurnActorState.Committed]);
+    const narrow = partyPaneLayout({ view, width: 640, top: 14, bottom: 300, rightReserved: 214 });
+    expect(narrow).not.toBeNull();
+    if (narrow === null) return;
+    expect(narrow.mode).toBe(PartyPaneMode.Portraits);
+
+    const out = paint(view, narrow);
+    expect(out.texts).toEqual(['D', 'S']); // still only initials
+    expect(out.blits).toContain('ui_icon_turn_waiting');
+    expect(out.blits).toContain('ui_icon_turn_committed');
   });
 });

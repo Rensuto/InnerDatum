@@ -210,8 +210,9 @@ describe('doorwayLine', () => {
  * `minimapRect` floors its cell size, so the map draws 99x99 and the reserve
  * claimed 150.
  *
- * Those 31 pixels mattered exactly once and badly: in combat the top HUD grows
- * by the turn cards, and on a 384-tall logical viewport the band left for the
+ * Those 31 pixels mattered exactly once and badly: in combat the top HUD grew
+ * by a strip of turn cards (since deleted), and on a 384-tall logical viewport
+ * the band left for the
  * dock fell to 62 against a `DOCK_MIN_H` of 84 — so the Case Log VANISHED the
  * moment a fight started, taking the transcript of who hit whom with it. 8.8% of
  * 9,440 sampled windows had a log while walking and none while fighting.
@@ -372,12 +373,13 @@ describe('the name of the place you are standing in', () => {
     expect(fitZoneLabel(measure, 'Alderbrook', 60)).toBe('Alderbrook');
   });
 
-  it('cuts a long name rather than letting it run under the turn cards', () => {
+  it('cuts a long name rather than letting it run the width of the screen', () => {
     /**
      * The label is right-aligned to the minimap and runs LEFT across empty
-     * screen — but the top-left of that strip is where the turn cards appear
-     * the moment a fight starts, so a long name is shortened rather than
-     * allowed to reach them.
+     * screen. The cut was for the turn card strip, which appeared across that
+     * top-left the moment a fight started; the strip is deleted and the cut
+     * stays, because a label with nothing to stop it ends up across the middle
+     * of the map.
      */
     const said = fitZoneLabel(measure, 'The Drowned Chapel of Saint Alder', 60);
     expect(measure(said)).toBeLessThanOrEqual(60);

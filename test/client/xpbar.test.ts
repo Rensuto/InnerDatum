@@ -37,7 +37,7 @@ import type { ProgressMsg } from '../../src/shared/protocol.ts';
  *                     and clear of the widest pip row at the narrowest viewport.
  *
  * THE `reference lib="dom"` ON LINE 1 IS REQUIRED and its cost is documented at
- * test/client/turncards.test.ts:51-60.
+ * test/client/turnbar.test.ts.
  */
 
 // ---------------------------------------------------------------------------
@@ -327,7 +327,7 @@ describe('the widget inside the resource strip', () => {
   it('pairs every save with a restore, so no font or alignment leaks out', () => {
     // An unbalanced restore leaks `textAlign: right` into every painter that
     // runs later in the frame, and it presents as a bug in whichever surface
-    // happens to be drawn next (ui/turncards.ts:786-790 records the same trap
+    // happens to be drawn next (ui/panel.ts's `drawScrim` records the same trap
     // for `ctx.filter`). This widget sets `textAlign`, so it is a live risk.
     const ops = paint(progressFrame());
     expect(ops.filter((op) => op.kind === 'save')).toHaveLength(

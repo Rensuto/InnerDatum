@@ -12,27 +12,35 @@
  * corner, and never only in the status line under the canvas.
  *
  * ===========================================================================
- * THE COLUMN STRIP THAT USED TO LIVE HERE IS GONE. ui/turncards.ts REPLACED IT
+ * TWO PER-ACTOR STRIPS HAVE NOW LIVED AT THE TOP OF THIS FILE'S SCREEN AND BOTH
+ * ARE DELETED. THE PARTY PANE CARRIES THE TURN.
  * ===========================================================================
- * It was a row of chips-and-names across the top, and by M5 it was the SECOND
- * thing on screen drawing turn state — the party panel already had the people,
- * and the new card strip has the turn. Two surfaces answering one question is
- * the bug this milestone was opened to fix, so the strip was deleted rather than
- * hidden behind a flag.
+ * The first was a row of chips-and-names in THIS file. By M5 it was the SECOND
+ * thing on screen drawing turn state — the party panel already had the people —
+ * so it was replaced by a strip of portrait cards in a module of its own.
  *
- * `chipFor` went with it, and that is the more important half. It derived the
- * barrier's precedence — Standing By outranks a commit, a commit outranks the
- * Bell — in the BROWSER, from three id arrays, which was a second implementation
- * of rules that live in src/server/engine/barrier.ts. It also could not express
- * the case that matters most: a Downed detective is in neither `whoseTurn` nor
- * `standingBy`, so the old lookup fell through to "committed" and told the party
- * that the person bleeding out on the floor had taken their turn.
- * `TurnActor.state` is now sent per actor and is the only answer anything reads.
+ * That module then became the second surface itself, and on 2026-09-18 the
+ * author ruled it out entirely: *"lets just go no cards at all, no turn order
+ * indicator. it will also free up more space. we can use the 'Party' hud UI to
+ * indicate that its the players turn, even when doing multiplayer."* So there is
+ * no card, no order and no per-actor marker at the top of the screen at all. The
+ * pane that already lists exactly the people a turn can be owed by says what
+ * each of them owes — see `stateWord` in ui/partypanel.ts.
+ *
+ * `chipFor` went with the first strip, and that is the half worth remembering.
+ * It derived the barrier's precedence — Standing By outranks a commit, a commit
+ * outranks the Bell — in the BROWSER, from three id arrays, which was a second
+ * implementation of rules that live in src/server/engine/barrier.ts. It also
+ * could not express the case that matters most: a Downed detective is in neither
+ * `whoseTurn` nor `standingBy`, so the old lookup fell through to "committed"
+ * and told the party that the person bleeding out on the floor had taken their
+ * turn. `TurnActor.state` is sent per actor and is the only answer anything
+ * reads — here, and on every party row.
  *
  * WHAT IS LEFT HERE IS THE PROSE AND THE BORDER, and both are deliberate. The
  * sentence is the copy a screen reader can be given and the one people quote at
  * each other in voice; the frame is what you catch out of the corner of your eye
- * while looking at the map rather than at the HUD. The cards are the third
+ * while looking at the map rather than at the HUD. The party row is the third
  * telling. Three tellings of one fact is the point, not redundancy — but three
  * PLACES deciding that fact would be the bug.
  *
@@ -48,21 +56,122 @@
  * it sits above.
  */
 
-import { TurnActorState } from '../../shared/protocol.ts';
+import { TurnActorKind, TurnActorState } from '../../shared/protocol.ts';
 import { PALETTE } from '../render/canvas.ts';
 import { MENU_BUTTON_W } from './menubutton.ts';
 import { drawPlayfieldFrame } from './combatbanner.ts';
 import { fitText } from './panel.ts';
-import { bellSeconds, owedCount, selfCard, turnCardsHeight } from './turncards.ts';
-import type { TurnView } from './turncards.ts';
+import type { TurnActor, TurnMsg } from '../../shared/protocol.ts';
 
 /**
- * The view is SHARED WITH THE CARD STRIP and is declared in ui/turncards.ts —
- * see the note there. This alias exists because main.ts already speaks the name;
- * the banner and the cards must never be built from two different `turn` frames,
- * and one type is how that is enforced rather than remembered.
+ * ═══════════════════════════════════════════════════════════════════════════
+ * EVERYTHING THE TOP HUD NEEDS OF A `turn` FRAME, assembled by main.ts once per
+ * frame.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * IT USED TO LIVE IN THE CARD STRIP'S OWN MODULE, because the banner and the
+ * cards had to describe the same instant and two view types is two chances for
+ * main.ts to build one from a `turn` frame and the other from the previous one.
+ * That module is deleted; the type MOVED here rather than being re-declared, so
+ * nothing about what the banner reads changed on the way.
+ *
+ * `bellMs` is NOT read from `turn.bellMs`. The server sends the milliseconds
+ * remaining at the instant it sent the frame, and a countdown that only moves
+ * when a packet arrives is not a countdown — main.ts holds the deadline and
+ * ticks it locally, and hands the current value in here.
+ *
+ * There is deliberately no `selfId` and no actor list. `TurnActor.isSelf` is the
+ * server's answer to "which one is you" (protocol.ts: that flag is the reason
+ * `turn` is unicast), and every name and hp value anything here needs is on the
+ * record. A join against the actor map would be a second source for facts the
+ * frame already carries.
+ */
+export type TurnView = {
+  /** Null until the first `turn` frame; nothing is drawn. */
+  readonly turn: TurnMsg | null;
+  /** Milliseconds left on the Bell, ticked locally. Null when none is running. */
+  readonly bellMs: number | null;
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * WHAT THE VIEWER HAS LEFT TO SPEND THIS ROUND.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * FROM `ResourceMsg` AND NOT FROM `TurnActor`, and that is not a convenience —
+   * it is the only place it may come from. `ResourceView` is viewer-private for
+   * a stated reason: another detective's remaining budget is not yours to read.
+   * Putting AP on the public per-actor record would leak every player's round to
+   * every other player.
+   *
+   * OPTIONAL, because a client can outlive a server that never sends it and
+   * because there is no budget at all before the first `resource` frame lands.
+   * Absent means the banner says what it always said.
+   */
+  readonly budget?: {
+    readonly ap: number;
+    readonly maxAp: number;
+    readonly mp: number;
+    readonly maxMp: number;
+  } | null;
+};
+
+/**
+ * The name main.ts and this file's own signatures already speak. Kept as an
+ * alias rather than renamed at thirty call sites, and it is the SAME type — the
+ * banner and every other reader of a `turn` frame must never be built from two
+ * different frames, and one type is how that is enforced rather than remembered.
  */
 export type TurnBarView = TurnView;
+
+/**
+ * WHICH RECORD IS YOU, or null.
+ *
+ * Straight off the server's flag, never a comparison against a local `selfId`.
+ * A spectating or bodiless socket genuinely has no record, and "nobody is
+ * highlighted" has to be a fact the server states rather than a comparison that
+ * happens to fail — see the note on `TurnActor.isSelf`.
+ */
+export function selfCard(turn: TurnMsg | null): TurnActor | null {
+  if (turn === null) return null;
+  return turn.actors.find((actor) => actor.isSelf) ?? null;
+}
+
+/**
+ * HOW MANY PEOPLE STILL OWE A DECISION.
+ *
+ * Counted off `actors`, which is the authoritative per-actor state, so this
+ * number and the party pane's own words can never disagree. The old
+ * `whoseTurn.length - committed.length` cannot be used for it: protocol.ts
+ * records that `whoseTurn` holds only the actors that still owe, so `committed`
+ * is empty by construction and the subtraction is a no-op that merely looks like
+ * arithmetic.
+ *
+ * The aggregate is excluded. The hostile side owes nothing — it resolves after
+ * the party, and counting it would tell four people they are waiting on five.
+ */
+export function owedCount(turn: TurnMsg | null): number {
+  if (turn === null) return 0;
+  let owed = 0;
+  for (const actor of turn.actors) {
+    if (actor.kind !== TurnActorKind.Player) continue;
+    if (actor.state === TurnActorState.Waiting || actor.state === TurnActorState.Bell) owed += 1;
+  }
+  return owed;
+}
+
+/**
+ * Whole seconds, rounded up, so a live Bell never displays 0 while it runs.
+ *
+ * EXPORTED FOR ITS TEST AND FOR NO OTHER CALLER, deliberately, and `check:inert`
+ * will list it as over-exported for exactly that reason. It had a second caller
+ * while the turn card strip printed the digits on the straggler's card; the
+ * strip is deleted and `bannerFor` below is the only one left. The rounding is
+ * the rule — a countdown that reads 0 for the last 999 ms has already lied about
+ * the deadline once per turn — and a rule worth stating is worth asserting
+ * directly rather than through the sentence it happens to appear in.
+ */
+export function bellSeconds(bellMs: number | null): number | null {
+  return bellMs === null ? null : Math.max(0, Math.ceil(bellMs / 1000));
+}
 
 export type TurnBarOptions = {
   readonly ctx: CanvasRenderingContext2D;
@@ -75,36 +184,33 @@ export type TurnBarOptions = {
 const PAD = 3;
 
 /**
- * The bar is now exactly one line of prose.
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE WHOLE TOP HUD. ONE LINE OF PROSE, 14 PIXELS, IN COMBAT AND OUT OF IT.
+ * ═══════════════════════════════════════════════════════════════════════════
  *
- * It was 44 pixels — a 30px chip column plus this — and it is 14. The 30 went to
- * ui/turncards.ts, which spends 78 but ONLY IN COMBAT, so the top HUD costs less
- * than it used to for the majority of a session that is spent walking around.
- * Callers stacking anything under the HUD want `turnHudHeight`, not this.
+ * It was 44 — a 30px chip column plus this line — then 14 out of combat and 60
+ * in it, because the card strip under this bar spent another 46 whenever there
+ * was a fight on. It is 14 unconditionally now: the cards are deleted and the
+ * party pane carries what they carried.
+ *
+ * THAT IS THE MEASURED HALF OF THE DELETION AND IT IS WHY THIS IS A CONSTANT
+ * AGAIN. `turnHudHeight(view)` used to sit here, a function precisely because
+ * the number moved when a monster joined the initiative — and everything that
+ * derives from it moved too. `panelBand.top` was 17 walking around and 63 in a
+ * fight; the log's own band jumped under it so hard that `quietLogBand` existed
+ * to stop the box ratcheting smaller every time somebody walked into a room.
+ * Stacking is arithmetic against this one number now, so a band cannot move
+ * because of something that happened in the world.
  */
 export const TURN_BAR_H = 14;
 
 const FONT_BOLD = 'bold 10px ui-monospace, Consolas, monospace';
 
 /**
- * EVERYTHING THE TOP HUD OCCUPIES, banner plus cards, right now.
- *
- * A function rather than a constant because the card strip is drawn only while
- * `inCombat` — the dock below it grows back the moment a fight ends, which is
- * the whole reason the strip is allowed to be 78 pixels tall in the first place.
- * Exported so main.ts stacks the dock and the combat banner by arithmetic rather
- * than by a second hard-coded number that drifts the first time a card changes
- * size.
- */
-export function turnHudHeight(view: TurnBarView): number {
-  return TURN_BAR_H + turnCardsHeight(view.turn);
-}
-
-/**
  * THE question. True when the game is waiting on this client.
  *
  * Read off `TurnActor.state`, which the server decides, so this cannot disagree
- * with the card strip about whether you owe a move.
+ * with the party pane about whether you owe a move.
  *
  * OUT OF COMBAT THE ANSWER IS STILL YES, and the special case is honest rather
  * than convenient: with `engagement === 0` nobody blocks, so the projector marks
@@ -132,8 +238,8 @@ export function isYourTurn(view: TurnBarView): boolean {
  * the old inference printed "nothing is hunting you" in the middle of one.
  *
  * The counts come from `owedCount`, which reads the same `actors` array the
- * cards are drawn from, so the sentence and the strip can never disagree about
- * how many people the party is waiting on.
+ * server decides every party row's state from, so the sentence and the pane can
+ * never disagree about how many people the party is waiting on.
  *
  * Exhaustive over `TurnActorState` with no `default`, so a sixth state cannot
  * ship without words.
@@ -278,21 +384,22 @@ export function drawTurnBar(options: TurnBarOptions): void {
   // lives in ui/combatbanner.ts — see the long note there on why combat does not
   // simply recolour this one. Gold still means "the game is waiting on you" and
   // is the signal you catch out of the corner of your eye while looking at the
-  // map rather than at the strip; the crimson ring outside it means the fight is
+  // map rather than at the bar; the crimson ring outside it means the fight is
   // on, for as long as it is on, and is the persistent half of the answer to a
   // player who missed the banner.
   //
-  // `top` is the whole top HUD, so the frame starts BELOW the card strip when
-  // there is one. A frame drawn from `TURN_BAR_H` would put a crimson rail
-  // across the middle of the cards, which is both ugly and a lie about where the
-  // playfield begins.
+  // `top` IS `TURN_BAR_H` NOW AND THAT IS THE WHOLE TOP HUD. It used to be
+  // `turnHudHeight(view)`, which added the card strip's 46 pixels while a fight
+  // was on, because a frame drawn from `TURN_BAR_H` would have put a crimson
+  // rail across the middle of the cards. There are no cards, so the playfield
+  // begins directly under this one line of prose — in combat and out of it.
   //
   // `inCombat` comes STRAIGHT OFF THE WIRE and is never derived from
   // `whoseTurn` being non-empty: that inference cannot tell the start of a fight
   // from one straggler still deciding, which is the bug this whole seam fixes.
   drawPlayfieldFrame({
     ctx,
-    top: turnHudHeight(view),
+    top: TURN_BAR_H,
     width,
     height,
     inCombat: turn.inCombat,

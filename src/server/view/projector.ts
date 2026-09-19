@@ -323,8 +323,8 @@ export type TurnState = {
    *
    * It is here rather than passed beside `TurnState` because the two must not
    * be able to disagree: `whoseTurn` was computed against this membership, and
-   * a card strip built from one party's blocking set and another party's roster
-   * would say the game is waiting on nobody in particular.
+   * an `actors` list built from one party's blocking set and another party's
+   * roster would say the game is waiting on nobody in particular.
    */
   readonly party?: readonly string[];
 };
@@ -577,7 +577,24 @@ const OPTIONAL_ACTOR_IDS = ['sourceId', 'killerId', 'targetId'] as const;
  * where the grep expected a colon. That is the whole argument for scraping the
  * declaration instead of trusting a search.
  */
-export function fogEvent(event: TurnEvent, held: ReadonlySet<string>): TurnEvent | null {
+export function fogEvent(
+  event: TurnEvent,
+  held: ReadonlySet<string>,
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * WHERE A BODY IS STANDING — the one thing this function cannot work out.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * OPTIONAL, AND ABSENT MEANS "SAY NOTHING EXTRA". Every existing caller and
+   * every fixture keeps exactly the behaviour it had; the gateway passes one
+   * because it is the only caller that holds a world.
+   *
+   * IT RESOLVES AN ACTOR, NOT A TILE, so this function never learns what a
+   * level is. `null` for a body that has left the map between the blow and this
+   * call, which is a real case — a killer can be erased inside the same pump.
+   */
+  tileOf?: (actorId: string) => TileXY | null,
+): TurnEvent | null {
   for (const id of actorsNamedBy(event)) {
     if (!held.has(id)) return null;
   }
@@ -585,12 +602,65 @@ export function fogEvent(event: TurnEvent, held: ReadonlySet<string>): TurnEvent
   for (const key of OPTIONAL_ACTOR_IDS) {
     const named: unknown = (out as unknown as Record<string, unknown>)[key];
     if (typeof named !== 'string' || held.has(named)) continue;
+    /**
+     * ═════════════════════════════════════════════════════════════════════════
+     * THE ONE FACT THAT SURVIVES THE REDACTION, AND IT IS COARSER THAN THE ONE
+     * BEING REDACTED.
+     * ═════════════════════════════════════════════════════════════════════════
+     *
+     * `DamageEvent.from` is a QUADRANT — see its docblock for the whole
+     * argument, including why an octant would be a different game. Written HERE
+     * rather than where the blow is resolved because this is the only place
+     * that knows the redaction happened: the engine has no idea who can see
+     * what, and a `from` attached upstream of this would be sent to viewers who
+     * can see the attacker perfectly well and work the bearing out themselves.
+     *
+     * `damage` AND `sourceId` ONLY. `killerId` on a death and `targetId` on a
+     * talent are about somebody ELSE's body, and a bearing from a third party's
+     * tile to a fourth's is a position leak with no question behind it.
+     */
+    if (out.k === 'damage' && key === 'sourceId' && tileOf !== undefined) {
+      const from = threatQuadrant(tileOf(named), tileOf(out.id));
+      if (from !== null) out = { ...out, from };
+    }
     // `JSON.stringify` omits an undefined value, so this reaches the wire as a
     // frame with no such key at all — which is exactly what these fields' own
     // docblocks say absent must mean: "do not say", never a default.
     out = { ...out, [key]: undefined };
   }
   return out;
+}
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * WHICH QUARTER OF THE COMPASS `from` LIES IN, AS SEEN FROM `to`.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * FOUR ANSWERS AND NOT EIGHT, and the whole point is that the finer one is
+ * never computed here. `DamageEvent.from` carries the reasoning: an octant plus
+ * the adjacency a melee blow implies is a single tile, which would let a player
+ * swing exactly at a body they cannot see. A quadrant never narrows below three
+ * adjacent tiles.
+ *
+ * TIES GO TO THE VERTICAL AXIS. A perfect diagonal has to break somewhere; any
+ * deterministic rule leaks nothing, because the answer is still one of four.
+ *
+ * `null` FOR THE SAME TILE and for either body being unresolvable — a direction
+ * from a square to itself is not a direction, and a default would be a lie
+ * pointing north.
+ *
+ * `dy` IS SCREEN-DOWN, as everywhere in shared/coords.ts, so north is negative.
+ */
+export function threatQuadrant(
+  from: TileXY | null,
+  to: TileXY | null,
+): 'n' | 'e' | 's' | 'w' | null {
+  if (from === null || to === null) return null;
+  const dx = from.x - to.x;
+  const dy = from.y - to.y;
+  if (dx === 0 && dy === 0) return null;
+  if (Math.abs(dx) > Math.abs(dy)) return dx > 0 ? 'e' : 'w';
+  return dy > 0 ? 's' : 'n';
 }
 
 /**
@@ -740,9 +810,10 @@ const MONSTERS_DISPLAY_NAME = 'The Taken';
  * `class-wiring.test.ts` calls "a fourth class shipping a generic face", and
  * the card would then be WRONG rather than merely undrawn.
  *
- * With the row present and the art absent, `blitPortrait` draws the character's
- * initials instead (ui/turncards.ts:449) — which that file notes is the common
- * case rather than the regression case, since half this family is uncut.
+ * With the row present and the art absent, the party pane's `drawFace` draws
+ * the character's initials instead (ui/partypanel.ts) — which that file notes is
+ * the common case rather than the regression case, since half this family is
+ * uncut.
  *
  * `icon_character_the_detective` is the generic and it is a REAL portrait rather
  * than a placeholder. It still has work to do: `world.ts#PLAYER_SPRITES` keeps
@@ -1334,8 +1405,8 @@ function airFieldOf(viewer: Actor): { air?: AirView } {
  * `toResourceView(sheetForClass(def))`, so `discrete` still arrives from
  * `RESOURCE_RULES` and a resource cannot be pips on the picker and a bar in the
  * HUD. The portrait comes from `PORTRAIT_BY_CLASS` above, which is already the
- * turn card's and the party pane's table, so one face means one class on every
- * surface in the game.
+ * `turn` frame's and the party pane's table, so one face means one class on
+ * every surface in the game.
  */
 
 /**
@@ -1866,13 +1937,23 @@ export function projectProjectiles(
       targetX: aim.x,
       targetY: aim.y,
       turnsToImpact: turnsToImpact(proj),
+      // WHAT ELEMENT IT IS, AND NOTHING ELSE OUT OF `damage`. See
+      // `ProjectileView.damageType`: the renderer picks one of twelve
+      // `ui_fx_bolt_*` strips from it, and until it was sent every shot in the
+      // game was drawn as the same orange square. ONE FIELD OFF `proj.damage`,
+      // named explicitly — the rule the comment below states is that the object
+      // is never spread, not that nothing in it may ever be sent.
+      damageType: proj.damage.type,
     });
-    // NOT COPIED, AND EACH IS A REASON THE SPREAD IS BANNED ABOVE: `damage` (the
-    // frozen roll, the apr and the resist penetration — a client that knew it
-    // could decide whether to bother dodging), `path` (every tile the shot will
-    // cross, i.e. the future), `range`, `origin`, and all four energy fields,
-    // which would let a client compute the exact tick of impact and therefore
-    // the whole turn order — the same disclosure `toActorView` withholds.
+    // NOT COPIED, AND EACH IS A REASON THE SPREAD IS BANNED ABOVE: `damage.dam`
+    // (the frozen roll), `damage.apr` and `damage.penetration` (a client that
+    // knew them could decide whether to bother dodging), `path` (every tile the
+    // shot will cross, i.e. the future), `range`, `origin`, and all four energy
+    // fields, which would let a client compute the exact tick of impact and
+    // therefore the whole turn order — the same disclosure `toActorView`
+    // withholds. `damage.type` IS sent, one line above, and the difference is
+    // the whole argument: the element is drawn on the screen either way the
+    // instant the bolt lands, and the number is not.
   }
 
   return { v: PROTOCOL_VERSION, t: 'projectiles', projectiles };
@@ -3303,8 +3384,8 @@ export function projectPartyState(
       // Hostile input, filtered here as it is in every other projection, and
       // for the same reason: this is the last function it passes through.
       name: toDisplayName(actor.name),
-      // The SAME class icon the turn card wears, so one face means one person
-      // across both surfaces rather than two pictures of the same detective.
+      // The SAME class icon `TurnActor.portrait` carries, so one face means one
+      // person wherever it is drawn rather than two pictures of one detective.
       portrait: portraitForPlayer(actor.sprite),
       // CARRIED HERE AND NOT ON `PartyMember`, on purpose — see the note on
       // `PartyStateMember`: this pane cannot rely on a join to `ActorView`,

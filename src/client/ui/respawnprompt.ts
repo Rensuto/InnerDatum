@@ -296,7 +296,7 @@ export function respawnPromptHit(rect: PanelRect | null, px: number, py: number)
  * Paint it.
  *
  * The crimson border is the same colour the playfield frame uses for "the fight
- * is on" and the turn cards use for "that one is on the floor" — one alarm
+ * is on" and the party pane uses for "that one is on the floor" — one alarm
  * colour, three surfaces, and here it is a 2px ring around a plate rather than a
  * ring around the world, so the two can never be read as the same statement.
  * Colour is never the whole signal anyway: the words say it outright.

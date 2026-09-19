@@ -2,7 +2,7 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { pathCellOrigin } from '../../src/client/render/canvas.ts';
+import { cameraAxis, pathCellOrigin } from '../../src/client/render/canvas.ts';
 import { TILE_PX } from '../../src/shared/version.ts';
 import type { TileXY } from '../../src/shared/coords.ts';
 
@@ -12,12 +12,12 @@ import type { TileXY } from '../../src/shared/coords.ts';
  * ═══════════════════════════════════════════════════════════════════════════
  *
  * NOTHING BELOW IS DRAWN. vitest.config.ts sets the environment to `node` with
- * deliberately no jsdom, which is the same ground test/client/turncards.test.ts
+ * deliberately no jsdom, which is the same ground test/client/turnbar.test.ts
  * and test/client/tooltip.test.ts stand on: the claim under test is a DECISION
  * the painter makes, never a pixel it puts down.
  *
  * THE `/// <reference lib="dom" />` ABOVE IS DELIBERATE AND HAS A COST, and it
- * is the identical line and identical trade turncards.test.ts documents. Tests
+ * is the identical line and identical trade turnbar.test.ts documents. Tests
  * compile under tsconfig.server.json, whose `lib` is ES2024 with no DOM, and
  * render/canvas.ts names `HTMLCanvasElement` and `CanvasRenderingContext2D` in
  * its types — so importing anything at all from it does not compile without the
@@ -36,15 +36,15 @@ import type { TileXY } from '../../src/shared/coords.ts';
  */
 
 /**
- * The camera the renderer computes for one axis, restated here rather than
- * exported: `cameraAxis` is module-private in render/canvas.ts and should stay
- * that way. This mirrors it exactly, including the branch that matters below —
- * a map smaller than the viewport is CENTRED, which yields a negative camera.
+ * ═══ THIS FILE USED TO CARRY ITS OWN COPY OF THE CAMERA, AND IT WENT STALE ═══
+ * The copy was `cameraAxis(worldPx, viewPx, focusPx)` with the edge clamp and
+ * the centre-a-small-map arm, under a note saying the real one *"is
+ * module-private in render/canvas.ts and should stay that way"*. The real one
+ * lost both arms — the camera is dead centre on the focus now — and the copy
+ * would have gone on asserting a transform the renderer no longer performs,
+ * which is exactly the two-copies failure the preview's own painters were split
+ * to avoid. It is imported above instead.
  */
-function cameraAxis(worldPx: number, viewPx: number, focusPx: number): number {
-  if (worldPx <= viewPx) return -Math.floor((viewPx - worldPx) / 2);
-  return Math.min(Math.max(Math.floor(focusPx - viewPx / 2), 0), worldPx - viewPx);
-}
 
 describe('pathCellOrigin — tile to backbuffer pixel', () => {
   it('offsets a tile by the camera, mid-map', () => {
@@ -68,25 +68,28 @@ describe('pathCellOrigin — tile to backbuffer pixel', () => {
   /**
    * THE CASE A NAIVE CONVERTER GETS WRONG, and the reason this file exists.
    *
-   * `cameraAxis` returns a NEGATIVE camera whenever the whole map is smaller
-   * than the viewport: it centres the map rather than pinning it to the
-   * top-left corner, which would look like a bug. Subtracting a negative camera
-   * ADDS, so every origin on a small map is pushed right and down by the
-   * letterbox of floor around it. Anything written assuming `camX >= 0` — a
-   * clamp to zero, an unsigned cast, a `Math.abs` — is wrong here, and it is
-   * wrong ONLY on small maps and ONLY at the edges, which is where it will
-   * survive playtesting and then land in a real session.
+   * `cameraAxis` returns a NEGATIVE camera whenever the focus is within half a
+   * viewport of the map's origin. Subtracting a negative camera ADDS, so those
+   * origins are pushed right and down by the band of void around the map.
+   * Anything written assuming `camX >= 0` — a clamp to zero, an unsigned cast, a
+   * `Math.abs` — is wrong here.
+   *
+   * ═══ AND IT IS NO LONGER A RARE CASE, WHICH IS WHY IT IS WORTH MORE NOW ═══
+   * This used to read *"wrong ONLY on small maps and ONLY at the edges, which is
+   * where it will survive playtesting"*. The camera lost its edge clamp when the
+   * player became dead centre, so a negative camera is what EVERY map produces
+   * for as long as a player is within half a screen of its top or left edge.
    */
-  it('handles the negative camera a small map produces', () => {
-    // A 10x8 map in a 16x12 viewport: three spare columns and two spare rows
-    // either side, expressed in tiles so the cell size may move under it.
+  it('handles the negative camera the origin of a map produces', () => {
+    // A 10x8 map in a 16x12 viewport, with the focus placed so the map lands
+    // centred — three spare columns and two spare rows either side, expressed in
+    // tiles so the cell size may move under it.
     const mapW = 10;
     const mapH = 8;
     const viewW = 16 * TILE_PX;
     const viewH = 12 * TILE_PX;
-    // The focus is ignored on this branch, so any tile does.
-    const camX = cameraAxis(mapW * TILE_PX, viewW, 5 * TILE_PX);
-    const camY = cameraAxis(mapH * TILE_PX, viewH, 4 * TILE_PX);
+    const camX = cameraAxis(viewW, 5 * TILE_PX);
+    const camY = cameraAxis(viewH, 4 * TILE_PX);
     expect(camX).toBe(-3 * TILE_PX);
     expect(camY).toBe(-2 * TILE_PX);
 

@@ -108,17 +108,22 @@ describe('hovering a pile', () => {
   });
 
   it('is suppressed by the same three things the actor card is', () => {
-    // ASSERTED AS THREE CLAUSES, NOT ONE LINE. Prettier wraps a condition this
-    // long across five lines, so pinning the whole thing would pin the
-    // FORMATTER rather than the rule.
+    // ═══ THE THREE CLAUSES ARE STILL THREE, AND TWO OF THEM MOVED INTO `busy` ═══
+    // They were spelled out on this line and again on the actor card's, and the
+    // hover card — which has the same reasons — had neither. All four cards read
+    // one `busy` now, so the rule is pinned where it is decided. Prettier still
+    // wraps the guard, which is why nothing here pins a whole line.
     const start = at('lootTile !== null &&');
-    const guard = CODE.slice(start, start + 200);
+    const guard = CODE.slice(start, start + 120);
     expect(guard, 'the loot card is drawn while the pointer is unknown').toContain(
       'pointerPoint !== null',
     );
-    expect(guard, 'the loot card is drawn over a dragged item').toContain('drag === null');
-    expect(guard, 'the loot card is drawn over the token menu').toContain(
-      'tokenMenu?.visible() !== true',
+    expect(guard, 'the loot card ignores the shared suppression').toContain('!busy');
+    const busy = at('const busy =');
+    const definition = CODE.slice(busy, busy + 120);
+    expect(definition, 'the loot card is drawn over a dragged item').toContain('drag !== null');
+    expect(definition, 'the loot card is drawn over the token menu').toContain(
+      'tokenMenu?.visible() === true',
     );
   });
 });

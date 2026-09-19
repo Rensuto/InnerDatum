@@ -772,13 +772,20 @@ export const ACTIONS = [
   },
 
   // ═══════════════════════════════════════════════════════════════════════════
-  // HOTBAR — FOUR KEYED SLOTS OUT OF EIGHT, NONE OF THE FOUR REBINDABLE, AND THE
-  // REASON IS PAINTED ON THE SCREEN. src/client/ui/hotbar.ts:953-957 draws
-  // `${index + 1}` as the label of each slot below `HOTBAR_TALENT_SLOTS`, so a
-  // rebound digit makes four on-screen buttons lie, and there is no art budget to
-  // redraw them — the manifest has no keycap glyphs. The other four slots are the
-  // ITEM half of the bar (hotbar.ts:215): mouse-only, no key, no digit, and
-  // therefore nothing here at all.
+  // HOTBAR — NINE DIGITS, NONE OF THEM REBINDABLE, AND THE REASON IS PAINTED ON
+  // THE SCREEN. `hotbarKeyLabel` (src/client/ui/hotbar.ts) is what each box
+  // wears, so a rebound digit makes nine on-screen buttons lie, and there is no
+  // art budget to redraw them — the manifest has no keycap glyphs.
+  //
+  // ═══ AND THE NINE ARE HALF THE SLOTS, NOT ALL OF THEM ═══
+  // This note used to end *"the other four slots are the ITEM half of the bar:
+  // mouse-only, no key, no digit, and therefore nothing here at all."* There is
+  // no item half. Shift is the second row — `hotbarSlotForKey(digit, shifted)`
+  // — so these nine actions address EIGHTEEN slots, and nothing was added here
+  // to do it: a modifier is *"a fact about a panel rather than about a key"*,
+  // which is `scroll_back`'s own rule two hundred lines down. Eighteen
+  // `hotbar_n` rows nobody can rebind would be eighteen rows explaining a
+  // modifier.
   //
   // MATCHED ON `key` AND NOT `code`, so a French AZERTY player (where the number
   // row is shifted) still presses what is printed on the cap. The counterpart
@@ -851,13 +858,16 @@ export const ACTIONS = [
    *
    * That was a real hazard while the bar was built by mapping over `loadout`,
    * whose length is the CLASS's business. It is built from the BINDING STORE
-   * now, to exactly `HOTBAR_TALENT_SLOTS` entries, so raising this constant adds
-   * EMPTY squares and takes nothing away — which is what let slots 7, 8 and 9
-   * ship against classes that author six actives.
+   * now — and from ONE store per kind over one index space, since the item half
+   * stopped being a separate tail — so a digit added here reaches an EMPTY
+   * square and takes nothing away. That is what let slots 7, 8 and 9 ship
+   * against classes that author six actives.
    *
-   * The half of the old argument that still stands is the one about keys: two
-   * buttons with no key is a worse bar than four with one each, which is why
-   * every slot added here arrives with a digit bound to it.
+   * The half of the old argument that still stands is the one about keys: a
+   * button with no key is a worse bar than one fewer button, which is why every
+   * slot added here arrives with a digit bound to it — and why
+   * `HOTBAR_SLOT_POOL` is exactly nine times the two rows these nine reach,
+   * rather than a round number somebody liked.
    *
    * SLOTS 1-4 STAY ON THEIR KEY BINDINGS. Moving them to codes would fix their
    * diagonal collision too, and would also change what a player on a non-QWERTY

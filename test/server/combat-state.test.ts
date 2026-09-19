@@ -294,7 +294,7 @@ describe('the zero crossing is a frame, not a silence', () => {
 // The strip's order — the property that makes it readable at all
 // ---------------------------------------------------------------------------
 
-describe('the card strip is stable, because it is not a queue', () => {
+describe('the actor list is stable, because it is not a queue', () => {
   it('holds join order through commits, a disconnect and a reconnect', () => {
     // Deliberately joined out of alphabetical order, and out of hp order, so a
     // strip sorted by ANYTHING would show up here. The order carries no

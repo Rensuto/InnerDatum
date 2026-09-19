@@ -78,7 +78,7 @@
  * anchoring, the draw order and the scaling are all already atlas-shaped.
  */
 
-import { inBounds } from '../../shared/coords.ts';
+import { DIR_VECTORS, inBounds } from '../../shared/coords.ts';
 import { tileAt } from '../../shared/level.ts';
 import { MAP_OBSCURE_BRIGHTNESS, fovBrightness, sightDistance } from '../../shared/sight.ts';
 import type { VisionView } from '../vision.ts';
@@ -87,7 +87,7 @@ import type { ZoneTileView } from '../../shared/protocol.ts';
 import type { TrapView } from '../../shared/protocol.ts';
 import { TILE_PX, UI_SCALE_MAX, UI_SCALE_MIN } from '../../shared/version.ts';
 import { isLowLife, lifeFraction } from '../../shared/vitals.ts';
-import type { TileXY } from '../../shared/coords.ts';
+import type { Dir, TileXY } from '../../shared/coords.ts';
 import type {
   ActorView,
   DownedView,
@@ -101,6 +101,59 @@ import { DamageType } from '../../shared/damagetype.ts';
 import type { Sprite, SpriteSource } from './assets.ts';
 
 /** Sampled from the real art. The only colours this game is allowed to use. */
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * WHERE A BLOW CAME FROM, DRAWN ON THE BODY IT LANDED ON.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Asked for: *"we need to give a small indication to the direction that the
+ * attack or enemy targetting you is coming from."*
+ *
+ * ═══ THE SPAN IS THE PRECISION, AND THAT IS THE WHOLE HONESTY OF IT ═══
+ * `seen` is not a colour switch. A blow from a body the viewer can SEE is drawn
+ * as a short, thick arc — one eighth of the compass, because the client holds
+ * both tiles and knows the bearing exactly. A blow out of the dark is drawn as
+ * a long, thin one — one QUARTER, because a quarter is all the server sent
+ * (`DamageEvent.from`), and it sent a quarter precisely so that an adjacent
+ * unseen attacker is never narrowed below three tiles.
+ *
+ * So the picture cannot claim more than the frame carried, the two states are
+ * told apart by SHAPE and WEIGHT rather than by colour alone, and a viewer who
+ * learns to read the wide arc has learnt something true: it means "I do not
+ * know where that is".
+ */
+export type ThreatMark = {
+  /** The tile the arc is drawn on — the body that took the blow. */
+  readonly x: number;
+  readonly y: number;
+  /** The direction it came FROM, as seen from that tile. */
+  readonly dir: Dir;
+  /** The dealer was named on the frame, so the viewer can see it. */
+  readonly seen: boolean;
+};
+
+/**
+ * WHERE `headingToward` WENT, because this file used to export it.
+ *
+ * A displacement -> one of eight headings is client LOGIC, and this renderer
+ * never called it: it took `Scene.facing` and `Scene.threats` already snapped.
+ * It lives in state/threat.ts with the rest of the rules behind those two
+ * fields, where a node test can reach it without a canvas — that module's
+ * header has the argument, which is state/projectiles.ts's argument.
+ */
+
+/** How long the facing tick is along the rim, and how deep it cuts inward. */
+const FACING_TICK_LEN = 7;
+const FACING_TICK_DEPTH = 2;
+
+/**
+ * How wide the threat arc is, per grade. One eighth and one quarter of the
+ * compass — the two precisions the wire can carry, drawn as the two precisions
+ * they are. See `ThreatMark`.
+ */
+export const THREAT_ARC_SEEN_DEG = 45;
+export const THREAT_ARC_UNSEEN_DEG = 90;
+
 export const PALETTE = {
   INK: '#0a0813',
   VOID: '#21082e',
@@ -384,6 +437,36 @@ export type Scene = {
    */
   readonly sites?: readonly SiteView[];
   readonly actors: readonly ActorView[];
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * WHICH WAY EACH BODY IS TURNED. A RENDER FACT, DERIVED, NEVER ON THE WIRE.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * PORTED FROM UPSTREAM'S OWN FACING, which is also art and also derived:
+   * `tome/class/Actor.lua:1427` flips a sprite on a move by comparing the new
+   * x to the old one, and `tome/class/interface/Combat.lua:649` flips it toward
+   * the target at the moment of a blow (`isTileFlipped`, `Actor.lua:4014-4019`,
+   * says which way the art natively points; `engine/Entity.lua:591-603` does
+   * the flip). No field, no save, nothing on a network.
+   *
+   * EIGHT HEADINGS WHERE UPSTREAM HAS TWO. Upstream flips horizontally only —
+   * `MOflipY` exists and nothing calls it for facing — because its facing lives
+   * in a mirrored sprite and a sprite can only be mirrored. Ours is a tick on
+   * the token's rim, which can point anywhere, and half the information in
+   * "which way is it facing" on a square grid is the vertical half.
+   *
+   * ABSENT FOR A BODY NOBODY HAS SEEN ACT. A default would claim a fact —
+   * "it is looking north" — about a monster that has not moved or swung since
+   * it came into view, and a tick pointing the wrong way is worse than none.
+   */
+  readonly facing?: ReadonlyMap<string, Dir>;
+  /**
+   * Where the blows that landed on the VIEWER came from. See `ThreatMark`.
+   *
+   * Empty or absent almost always: this is a few seconds after a hit, not a
+   * permanent ring.
+   */
+  readonly threats?: readonly ThreatMark[];
   /** Which actor the camera follows. Null before `welcome` arrives. */
   readonly selfId: string | null;
   /**
@@ -875,9 +958,12 @@ export function viewLayout(
    * MEASURED, at 1262x428 — the window this game is actually played in.
    * `DEFAULT_VIEWPORT` asks for 8 rows, 8 x 64 = 512 against a 428-pixel window,
    * so `offsetY` was -42 and 84 pixels of map were off-screen. `cameraAxis`
-   * clamps at the level edge rather than centring, so a player standing on the
+   * clamped at the level edge rather than centring, so a player standing on the
    * TOP ROW of a level was drawn at buffer y 0 — screen y -42 to 22. TWO THIRDS
-   * OF YOUR OWN CHARACTER WAS ABOVE THE TOP OF THE SCREEN.
+   * OF YOUR OWN CHARACTER WAS ABOVE THE TOP OF THE SCREEN. (That clamp is gone
+   * now — the camera is dead centre — so the top row is drawn in the middle of
+   * the buffer with void above it. The letterbox arithmetic below is what still
+   * matters, and it is unchanged.)
    *
    * The cost of the fix is 0.68 of a row of visibility on such a window: six
    * whole rows instead of six-and-two-thirds clipped ones. A character you
@@ -1010,12 +1096,17 @@ export type Renderer = {
    * it, or null when the pointer is on the letterbox or off the map.
    *
    * IT LIVES HERE BECAUSE THE CAMERA DOES. Undoing the transform means undoing
-   * the letterbox offset, the integer scale AND the camera clamp, and all three
-   * are computed in this file — a second copy in the input layer would be a
-   * second copy of `cameraAxis`, and it would go wrong first at the map edges
-   * where the clamp bites. It reads the camera from the LAST draw, which is
-   * correct by construction: the pixels the player is pointing at ARE the last
-   * frame.
+   * the letterbox offset, the integer scale AND the camera, and all three are
+   * computed in this file — a second copy in the input layer would be a second
+   * copy of `cameraAxis`, and it would go wrong first at the map edges. It
+   * reads the camera from the LAST draw, which is correct by construction: the
+   * pixels the player is pointing at ARE the last frame.
+   *
+   * THIS IS THE ONLY PIXEL -> TILE CONVERSION FOR THIS MAP, and that is what
+   * makes it safe for the camera to have lost its edge clamp. The targeting
+   * cursor, the verb menu, the travel route, the ping and the hover card all
+   * come through here (main.ts pins that by name at each call site), so there
+   * is one answer to "which tile is under the pointer" and it is signed.
    */
   readonly tileAtClient: (clientX: number, clientY: number) => TileXY | null;
 };
@@ -1253,7 +1344,15 @@ const ZONE_RIM_SIDES: readonly (readonly [number, number])[] = [
 ];
 
 /**
- * AN ORB IN FLIGHT: size and its centring inset.
+ * HOW BIG THE FALLBACK DART IS — the orb when there is no art to draw it with.
+ *
+ * ═══ IT IS NO LONGER THE ORB'S OWN SIZE, AND THE INSET IS GONE WITH IT ═══
+ * This was the side of a filled square centred in the cell by `ORB_DOT_INSET`.
+ * A shot is drawn from `ui_fx_bolt_<element>` now, at the cell's full size like
+ * every other cell mark (`blitCell`'s invariant), so there is nothing left to
+ * inset: `paintProjectiles` pivots on the cell's centre and the dart is measured
+ * from there. The inset had exactly one reader and keeping it would have left a
+ * constant that looks like it still places something.
  *
  * TWO PIXELS BIGGER THAN THE ROUTE DOT, AND AT FULL OPACITY, which is the whole
  * difference between the two and is deliberate in both directions. The route
@@ -1265,14 +1364,108 @@ const ZONE_RIM_SIDES: readonly (readonly [number, number])[] = [
  * It stays SMALL regardless: `paintTiles` puts a one-pixel SLATE grid on every
  * floor tile because counting tiles is how a player measures a move, and a
  * measurement is exactly what somebody works out when an orb is three tiles
- * away. A dot that filled the cell would take away the thing it is asking for.
- *
- * The inset is ROUNDED rather than left as a division, for the same reason the
- * route dot's is: an odd size would land the fill on a half pixel, which is the
- * fractional sampling the backbuffer exists to prevent (see the header).
+ * away. A mark that filled the cell would take away the thing it is asking for —
+ * which is a claim about the DART, not about the sprite: the bolt art is drawn
+ * inside a 64x64 frame with clear margins by its own R-FLIGHT brief, so it reads
+ * as an object crossing a tile rather than as a tile.
  */
 const ORB_DOT_PX = 8;
-const ORB_DOT_INSET = Math.round((TILE_PX - ORB_DOT_PX) / 2);
+
+/**
+ * ONE FRAME OF A `ui_fx_*` STRIP. ASSETS-REQUIRED.md's R-GRID4/R-GRID6 rules:
+ * *"frame i spans x 64i to 64i+63"*, four frames in a 256x64 loop and six in a
+ * 384x64 once-strip.
+ *
+ * SPELLED OUT RATHER THAN `TILE_PX`, although the two are the same number
+ * today. They are two different contracts — this one is the art's grid and
+ * `TILE_PX` is the world's cell — and the day either moves, a shared constant
+ * would silently slice the strip at the wrong offset, which looks like a broken
+ * PNG rather than like a changed number.
+ */
+const PROJECTILE_FRAME_PX = 64;
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE PICTURE OF A SHOT, ONE PER DAMAGE TYPE — `ui_fx_bolt_<type>`.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Reported from play: *"it seems projectiles are using solid colored boxes
+ * instead of the sprites codex made for the projectiles"*. They were, and the
+ * sprites had been sitting in the manifest the whole time — the orb had no way
+ * to say which one it was, which is what `ProjectileView.damageType` fixes.
+ *
+ * ═══ LITERAL IDS, NOT `ui_fx_bolt_${type}` ═══
+ * The same rule `MARKER_SPRITE` states a few hundred lines up: the asset audit
+ * in test/client/assets.test.ts can prove a literal id exists, while a template
+ * string quietly turns every future `DamageType` member into an unrecorded
+ * commission. `Record<DamageType, string>` makes the table TOTAL, so the day a
+ * seventh element lands the compiler names this line.
+ *
+ * ═══ ALL SIX VERIFIED PRESENT BEFORE THE PREFIX WAS ADDED ═══
+ * `ui_fx_bolt_physical`, `_fire`, `_cold`, `_lightning`, `_darkness` and
+ * `_mind` are ids in `client/public/assets/manifest.placeholders.json` AND PNGs
+ * under `client/public/assets/ui/effects/`, at 256x64. That check is
+ * `NEEDED_ASSET_PREFIXES`'s one rule (main.ts) and it is why `ui_fx_bolt_` may
+ * be listed there: a prefix for art that does not exist ships a violet
+ * missing-asset box to every clone.
+ */
+const PROJECTILE_SPRITE: Readonly<Record<DamageType, string>> = {
+  [DamageType.Physical]: 'ui_fx_bolt_physical',
+  [DamageType.Fire]: 'ui_fx_bolt_fire',
+  [DamageType.Cold]: 'ui_fx_bolt_cold',
+  [DamageType.Lightning]: 'ui_fx_bolt_lightning',
+  [DamageType.Darkness]: 'ui_fx_bolt_darkness',
+  [DamageType.Mind]: 'ui_fx_bolt_mind',
+};
+
+/**
+ * WHICH SPRITE AN ORB WANTS, or undefined for "the server did not say".
+ *
+ * Exported so the asset test can walk EVERY damage type rather than sample one:
+ * the failure this feature can actually have is one element out of six
+ * resolving to nothing, and a test that fired a fire bolt would never see it.
+ */
+export function projectileSpriteId(orb: Pick<ProjectileView, 'damageType'>): string | undefined {
+  const type = orb.damageType;
+  return type === undefined ? undefined : PROJECTILE_SPRITE[type];
+}
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE ART IS DRAWN POINTING EAST, SO THE RENDERER TURNS IT. ASSETS-REQUIRED.md
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * That file's effects section is explicit — *"Projectiles are drawn pointing
+ * east"* — and its R-FLIGHT rule pins the bolt vertically centred with its tip
+ * at a fixed x. So there is one frame per element and the heading is ours to
+ * apply, which is the only reason twelve strips cover every direction.
+ *
+ * ═══ EIGHT HEADINGS, BECAUSE AN ORB TRAVELS ON EIGHT ═══
+ * The flight path is a frozen Bresenham line (engine/projectile.ts), so every
+ * step an orb actually takes is one of the eight compass directions. Snapping
+ * to those draws the direction it is MOVING rather than an arbitrary angle
+ * through its aim tile, and it means two orbs on the same line are drawn
+ * identically instead of a degree apart.
+ *
+ * ═══ FROM THE AIM TILE, WHICH IS ALREADY ON THE WIRE ═══
+ * `targetX`/`targetY` minus `x`/`y`. Not from `origin`, which is deliberately
+ * NOT sent: the orb's tile is fogged per viewer and its shooter may be standing
+ * somewhere the viewer cannot see, so a heading computed from the muzzle would
+ * hand back the shooter's position that `sourceId`'s redaction withholds.
+ *
+ * ZERO IS EAST, and an orb standing on its own aim tile takes it — that is the
+ * art's native orientation, and it is at most the one frame between arriving
+ * and detonating.
+ */
+export function projectileHeading(
+  orb: Pick<ProjectileView, 'x' | 'y' | 'targetX' | 'targetY'>,
+): number {
+  const dx = orb.targetX - orb.x;
+  const dy = orb.targetY - orb.y;
+  if (dx === 0 && dy === 0) return 0;
+  const step = Math.PI / 4;
+  return Math.round(Math.atan2(dy, dx) / step) * step;
+}
 
 /**
  * A PILE ON THE FLOOR: how big the mark is, per tier.
@@ -1475,10 +1668,6 @@ export function lifeBar(hp: number, maxHp: number, cellX: number, cellY: number)
 const PIP_MAX = 4;
 const PIP_SIZE = 4;
 const PIP_STEP = 5;
-
-function clamp(value: number, min: number, max: number): number {
-  return Math.min(Math.max(value, min), max);
-}
 
 /**
  * `getContext` returns `CanvasRenderingContext2D | null` (null on a canvas that
@@ -3014,18 +3203,57 @@ export function ringIdFor(actor: ActorView, selfId: string | null): string {
 /**
  * The world-pixel coordinate that maps to backbuffer 0 on one axis.
  *
- * Centred on the focus, then clamped so the camera never shows the void beyond
- * the map edge. When the whole map is smaller than the viewport the clamp would
- * pin it to the top-left corner, which looks like a bug, so that case centres
- * the map instead and returns a negative camera.
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE FOCUS IS ALWAYS IN THE MIDDLE. THERE IS NO EDGE CLAMP ANY MORE.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * This used to read `clamp(focus - view/2, 0, world - view)`, with a separate
+ * arm centring a map smaller than the viewport. The clamp is what put the
+ * player off centre near a boundary — reported with a screenshot: *"the player
+ * character should always be centered on the screen … the player is off center
+ * while exploring"*.
+ *
+ * ═══ WHY IT IS THE CLAMP AND NOT A SECOND BUG ═══
+ * A clamped camera trades "the player is in the middle" for "no void is on
+ * screen", and near an edge it can only keep one. Every surface docked over the
+ * playfield — the Case Log bottom-left, the party pane left, the hotbar
+ * bottom-centre — is placed against the MIDDLE of the screen being the
+ * interesting part; the same report says so from the other side, *"centering
+ * causes the chat box to cover the player so player should be dead centered"*.
+ * A body that drifts into the bottom-left corner drifts under the log.
+ *
+ * ═══ WHAT IS OFF THE MAP IS DRAWN, AND IT IS ALREADY DRAWN ═══
+ * Nothing new had to be taught to paint void. `draw` fills the whole backbuffer
+ * with `PALETTE.INK` before the level pass, `paintTiles`/`paintLight` clamp
+ * their loops to `[0, level.w-1] x [0, level.h-1]`, and every other painter
+ * places itself with `tile * TILE_PX - cam` and is culled by `visible`. So a
+ * tile off the grid is ink — the same ink a never-seen tile is painted at alpha
+ * 1 (see `paintLight`'s third state), which is the honest equivalence: in both
+ * cases there is nothing there to know about.
+ *
+ * ═══ AND THE INVERSE ALREADY AGREED ═══
+ * `tileAtClient` is the ONLY pixel -> tile conversion for this map, and it was
+ * already written for a negative camera (the small-map arm this function used
+ * to have produced one): it floors `point + cam` — correct for negatives, since
+ * `Math.floor(-1 / 64)` is -1 and not 0 — and then answers null on
+ * `!inBounds`. The minimap's conversion is `mapTileAt`, which inverts
+ * `mapPlacement` and never reads this function at all, so the two cannot
+ * disagree by construction.
  *
  * Everything is floored to a whole pixel: a camera at x = 12.5 offsets every
  * sprite in the frame by half a pixel, which is precisely the fractional
  * sampling the backbuffer exists to prevent.
+ *
+ * ═══ THE MAP'S SIZE IS NO LONGER A PARAMETER, AND THAT IS THE PROOF ═══
+ * It took `worldPx` for the clamp and for the small-map arm, and both are gone.
+ * Keeping it would have left a dead argument that reads as though the camera
+ * still consults the map's bounds — which is exactly the claim this change
+ * withdraws. EXPORTED so a test can drive it: the camera is otherwise reachable
+ * only through `lastCamX`/`lastCamY`, which `draw` writes at the end of a frame
+ * and `tileAtClient` alone reads.
  */
-function cameraAxis(worldPx: number, viewPx: number, focusPx: number): number {
-  if (worldPx <= viewPx) return -Math.floor((viewPx - worldPx) / 2);
-  return clamp(Math.floor(focusPx - viewPx / 2), 0, worldPx - viewPx);
+export function cameraAxis(viewPx: number, focusPx: number): number {
+  return Math.floor(focusPx - viewPx / 2);
 }
 
 /**
@@ -3043,10 +3271,11 @@ function cameraAxis(worldPx: number, viewPx: number, focusPx: number): number {
  *
  * IT DELIBERATELY DOES NOT CLAMP AND DOES NOT CULL. Both operands are signed:
  * a tile behind the camera yields a negative origin, and `cameraAxis` returns a
- * NEGATIVE camera whenever the whole map is smaller than the viewport, which it
- * does to centre a small map instead of pinning it to the corner. Anything that
- * assumes either is non-negative is wrong only on small maps and only at the
- * edges, which is the worst place for a bug to hide.
+ * NEGATIVE camera whenever the focus is within half a viewport of the map's
+ * top-left — which, since the camera became DEAD CENTRE and lost its edge
+ * clamp, is every frame a player spends near a boundary rather than only the
+ * rare map smaller than the screen. Anything that assumes either is
+ * non-negative is now wrong at every map edge and not merely on a small map.
  *
  * This is NOT the tile->screen accessor a HUD painter might want, and it must
  * not grow into one on the `Renderer` type: the hover tooltip is anchored to the
@@ -3444,6 +3673,87 @@ export function createRenderer(options: RendererOptions): Renderer {
    * AN UNKNOWN MARKER FAMILY FALLS BACK TO `gate`. A client meeting a marker a
    * newer server invented should draw *a door* rather than nothing at all.
    */
+  /**
+   * The rim point of a cell in a direction, and the angle of that direction.
+   *
+   * ONE COPY for the facing tick and the threat arc. Two would be two chances
+   * to disagree about where "east" is on a 32-pixel square, and they are drawn
+   * on the same token within a second of each other.
+   */
+  function rimOf(dir: Dir, cellX: number, cellY: number, inset: number) {
+    const v = DIR_VECTORS[dir];
+    const len = Math.hypot(v.dx, v.dy);
+    const r = TILE_PX / 2 - inset;
+    return {
+      cx: cellX + TILE_PX / 2,
+      cy: cellY + TILE_PX / 2,
+      // `atan2(dy, dx)` with SCREEN-DOWN y, which is the same convention
+      // `DIR_VECTORS` is written in — north is dy = -1 and comes out as -90°.
+      angle: Math.atan2(v.dy, v.dx),
+      x: cellX + TILE_PX / 2 + (v.dx / len) * r,
+      y: cellY + TILE_PX / 2 + (v.dy / len) * r,
+      r,
+    };
+  }
+
+  /**
+   * ═════════════════════════════════════════════════════════════════════════
+   * WHICH WAY A BODY IS TURNED — one tick on the rim. See `Scene.facing`.
+   * ═════════════════════════════════════════════════════════════════════════
+   *
+   * A TICK AND NOT A SPRITE, because there is no directional art and there is
+   * not going to be: upstream's facing is a MIRRORED sprite (`MOflipX`,
+   * `Actor.lua:1427`), which needs one image per creature and gives two
+   * headings; ours needs none and gives eight. The manifest has no facing
+   * frames and `NEEDED_ASSET_PREFIXES` admits a prefix only when its reader
+   * lands with it, so drawing this would have meant commissioning art for every
+   * creature in the game before anybody could see which way a husk was looking.
+   *
+   * GREY, NOT AN ALARM COLOUR. It is on every visible body all the time,
+   * friend and enemy alike; a tell that shouts on every token teaches people to
+   * stop seeing it. The one that shouts is the threat arc below, and it is on
+   * screen for a few seconds a fight.
+   */
+  function paintFacing(dir: Dir, cellX: number, cellY: number): void {
+    const rim = rimOf(dir, cellX, cellY, 1);
+    backCtx.save();
+    backCtx.translate(rim.x, rim.y);
+    backCtx.rotate(rim.angle);
+    backCtx.fillStyle = PALETTE.GREY_HI;
+    // Drawn INWARD from the rim point: a tick that stuck out of the cell would
+    // overlap the neighbouring tile, and on a full board every token would be
+    // wearing its neighbour's tick.
+    backCtx.fillRect(-FACING_TICK_DEPTH, -FACING_TICK_LEN / 2, FACING_TICK_DEPTH, FACING_TICK_LEN);
+    backCtx.restore();
+  }
+
+  /**
+   * ═════════════════════════════════════════════════════════════════════════
+   * WHERE THE BLOW CAME FROM — an arc whose WIDTH is how much is known.
+   * ═════════════════════════════════════════════════════════════════════════
+   *
+   * See `ThreatMark`. A seen dealer gets an OCTANT, thick; an unseen one gets a
+   * QUADRANT, thin — the wide arc means "somewhere in that quarter", which is
+   * exactly what the server was willing to say.
+   *
+   * ORANGE AND NOT CRIMSON. `PALETTE.CRIMSON` is reserved, in writing, for one
+   * fact — hostiles are engaged — and is spent by the combat banner and the
+   * playfield ring. A second meaning on it would cost the ring the property it
+   * exists for: that a player can answer "are we in a fight?" from peripheral
+   * vision without reading anything.
+   */
+  function paintThreat(mark: ThreatMark, cellX: number, cellY: number): void {
+    const rim = rimOf(mark.dir, cellX, cellY, 2);
+    const span = ((mark.seen ? THREAT_ARC_SEEN_DEG : THREAT_ARC_UNSEEN_DEG) * Math.PI) / 180;
+    backCtx.save();
+    backCtx.strokeStyle = PALETTE.ORANGE;
+    backCtx.lineWidth = mark.seen ? 3 : 1;
+    backCtx.beginPath();
+    backCtx.arc(rim.cx, rim.cy, rim.r, rim.angle - span / 2, rim.angle + span / 2);
+    backCtx.stroke();
+    backCtx.restore();
+  }
+
   function paintSites(sites: readonly SiteView[], camX: number, camY: number): void {
     for (const site of sites) {
       const sx = site.x * TILE_PX - camX;
@@ -4180,46 +4490,67 @@ export function createRenderer(options: RendererOptions): Renderer {
   }
 
   /**
-   * WHAT IS IN THE AIR. NO ART, DELIBERATELY — `fillRect` and nothing else, and
-   * written in the same shape as `paintPath` above for exactly its reasons.
+   * ═══════════════════════════════════════════════════════════════════════════
+   * WHAT IS IN THE AIR — the element's own bolt, turned to face where it is going.
+   * ═══════════════════════════════════════════════════════════════════════════
    *
-   * THE OBVIOUS IMPLEMENTATION IS THE SAME TRAP `paintPath` NAMES, so it is
-   * named again rather than left to be rediscovered. Adding a `MarkerKind.Orb`
-   * member and blitting `ui_tile_marker_orb` — or a `fx_projectile_*` sprite —
-   * would follow the shape of every other overlay in this file and would fail
-   * loudly for everyone: that id exists in no manifest, client/public/assets/ is
-   * gitignored WHOLESALE so a bare clone has no manifest at all, and
-   * `blitSprite` resolves a missing sprite to the intentionally shouty violet
-   * fallback box. The result would be a broken-manifest alarm fired by a feature
-   * that is working perfectly, on the one object the player most needs to read
-   * correctly. So: no `blitSprite`, no new `MarkerKind` member, no new
-   * NEEDED_ASSET_PREFIXES entry in main.ts, and the orb draws on a clone with
-   * zero PNGs in it.
+   * ═══ THIS BLOCK USED TO ARGUE THE OPPOSITE, AND THE PREMISE HAS EXPIRED ═══
+   * It read *"NO ART, DELIBERATELY — `fillRect` and nothing else"*, and the
+   * reason given was that a projectile sprite *"exists in no manifest"*, so
+   * blitting one would fire the loud violet missing-asset box for a feature that
+   * works. That was true when it was written. It is not true now: there are
+   * twelve `ui_fx_bolt_*` strips in
+   * `client/public/assets/manifest.placeholders.json`, one per ToME damage type,
+   * all six of the ones this game can fire are 256x64 PNGs on disk, and
+   * ASSETS-REQUIRED.md carries a per-sprite brief for each. Leaving the refusal
+   * standing is how a deferral note rots: a "we cannot, because there is no Y"
+   * that gets believed twice after Y has shipped for something else.
    *
-   * ORANGE BY ELIMINATION, and it is the codebase's existing word for "this is
-   * being done TO you" — `paintStatusPips` picks it for a HARMFUL badge and
-   * ui/tooltip.ts for a blocked reason. VIOLET_HI *is* the missing-asset box
-   * above, so an orb painted in it is indistinguishable from the bug. CRIMSON is
-   * reserved by `PALETTE` for the single fact "hostiles are engaged" and is
-   * spent on the playfield ring. GOLD is this file's affirmative/cursor colour
-   * and is already spent on the player's own route and targeting bracket — an
-   * ENEMY orb in gold reads as your own aim, which is the one misreading that
-   * would get somebody killed by standing still.
+   * ═══ FRAME 0 OF FOUR, AND THAT IS A FACT ABOUT THE ART ═══
+   * The strips are R-GRID4 loops: four 64x64 frames, frame i at x 64i.
+   * PLAN.md's Non-goals put *"animation playback of any kind"* out of scope, so
+   * exactly one frame is drawn and it is the FIRST. Not an arbitrary one —
+   * ASSETS-REQUIRED.md's review of the delivered set records that nine of the
+   * twelve bolts *"end their flight loop on a shatter or impact frame"*, and
+   * names the failure per sprite (`ui_fx_bolt_fire`: *"Frame 4 is five orange
+   * fragments"*; `ui_fx_bolt_darkness`: *"Frame 4 has no bolt body"*). Frame 0 is
+   * the intact bolt in all six of ours. Cycling the loop would put a shattered
+   * bolt on screen one frame in four while it is still flying.
    *
-   * A ONE-PIXEL INK SURROUND, the legibility trick `paintStatusPips` uses: the
-   * orb crosses floor, wall and the lit top edge of a wall within one flight,
-   * and without the surround it disappears against exactly one of them.
+   * ═══ ROTATED ABOUT THE CELL'S CENTRE ═══
+   * The art points east (ASSETS-REQUIRED.md), so `projectileHeading` supplies the
+   * turn. `save`/`restore` around the transform is not optional here, for the
+   * reason this file gives everywhere: a leaked transform moves every sprite
+   * drawn afterwards, which reads as the map tearing rather than as a missing
+   * restore.
    *
-   * NO `globalAlpha`, so no save/restore is needed — and that is a reason to
-   * keep it that way rather than an accident. A leaked alpha makes every later
-   * sprite in the frame translucent, which reads as a broken PNG rather than as
-   * a missing restore; whoever adds a fade here must wrap it, as `paintPath`
-   * does.
+   * ═══ THE FALLBACK IS A DART, NOT A BOX, AND NOT `blitSprite` ═══
+   * `client/public/assets/` is gitignored wholesale, so a bare clone has no
+   * manifest at all and every orb takes this path — which is why it may not be
+   * `blitSprite`'s violet missing-asset box. It is drawn geometry: a triangle
+   * pointing along the SAME heading the sprite would have used, in the element's
+   * own `ZONE_WASH_INK`. That carries both facts the sprite carries — something
+   * is flying, and what it is made of — and it is obviously primitive, so it can
+   * never be mistaken for finished art.
    *
-   * `turnsToImpact`, `sourceId` and the frozen aim tile are deliberately NOT
-   * drawn. The dot answers "where is it and which way is it going"; how long you
-   * have is a sentence, not a pixel, and the client raises it on the notice line
-   * (main.ts) rather than stacking a number over a token.
+   * `ZONE_WASH_INK` AND NOT `DAMAGE_INK`, which is the table that already
+   * answered this exact question for the burning-floor wash: `DAMAGE_INK[Mind]`
+   * is GOLD, and gold on this canvas is the player's OWN route and cursor — an
+   * enemy shot in gold reads as your own aim, the one misreading that gets
+   * somebody killed by standing still. `DAMAGE_INK[Physical]` is PARCHMENT, a
+   * colour meaning "untinted" on a page and a pale smear on a floor. The wash
+   * table overrides exactly those two and copies the other four, so the dart, the
+   * burning tile and the Case Log's damage line agree about every element.
+   *
+   * Never VIOLET_HI (that IS the missing-asset box) and never CRIMSON (reserved
+   * by `PALETTE` for "hostiles are engaged"). A ONE-PIXEL INK SURROUND stays: the
+   * orb crosses floor, wall and the lit top edge of a wall within one flight, and
+   * without it the shot disappears against exactly one of them.
+   *
+   * `turnsToImpact` and `sourceId` are still deliberately NOT drawn. The bolt
+   * answers "where is it and which way is it going"; how long you have is a
+   * sentence, not a pixel, and the client raises it on the notice line (main.ts)
+   * rather than stacking a number over a token.
    */
   function paintProjectiles(orbs: readonly ProjectileView[], camX: number, camY: number): void {
     if (orbs.length === 0) return;
@@ -4232,15 +4563,57 @@ export function createRenderer(options: RendererOptions): Renderer {
       const origin = pathCellOrigin({ x: orb.x, y: orb.y }, camX, camY);
       if (!visible(origin.x, origin.y)) continue;
 
+      const heading = projectileHeading(orb);
+      const id = projectileSpriteId(orb);
+      const sprite = id === undefined ? undefined : sprites.sprite(id);
+
+      backCtx.save();
+      // THE CELL'S CENTRE IS THE PIVOT on both paths, so the blitted bolt and the
+      // drawn dart stand on the same tile and turn about the same point.
+      backCtx.translate(origin.x + TILE_PX / 2, origin.y + TILE_PX / 2);
+      backCtx.rotate(heading);
+
+      if (sprite !== undefined) {
+        // FRAME 0 OF THE STRIP. The SOURCE rect is one frame; the DESTINATION is
+        // the whole CELL — `blitCell`'s invariant, stated there at length: a cell
+        // mark fills the cell rather than trusting the art to be the right size.
+        backCtx.drawImage(
+          sprite.image,
+          0,
+          0,
+          PROJECTILE_FRAME_PX,
+          PROJECTILE_FRAME_PX,
+          -TILE_PX / 2,
+          -TILE_PX / 2,
+          TILE_PX,
+          TILE_PX,
+        );
+        backCtx.restore();
+        continue;
+      }
+
+      // THE HONEST FALLBACK — see the header for why it is geometry and never
+      // `blitSprite`. Two darts, the outer one a pixel fatter, which is the same
+      // INK surround the dot had and the same trick `paintStatusPips` uses.
+      const dart = (nose: number, half: number): void => {
+        backCtx.beginPath();
+        backCtx.moveTo(nose, 0);
+        backCtx.lineTo(-nose, -half);
+        backCtx.lineTo(-nose, half);
+        backCtx.closePath();
+        backCtx.fill();
+      };
+      const nose = ORB_DOT_PX / 2;
       backCtx.fillStyle = PALETTE.INK;
-      backCtx.fillRect(
-        origin.x + ORB_DOT_INSET - 1,
-        origin.y + ORB_DOT_INSET - 1,
-        ORB_DOT_PX + 2,
-        ORB_DOT_PX + 2,
-      );
-      backCtx.fillStyle = PALETTE.ORANGE;
-      backCtx.fillRect(origin.x + ORB_DOT_INSET, origin.y + ORB_DOT_INSET, ORB_DOT_PX, ORB_DOT_PX);
+      dart(nose + 1, ORB_DOT_PX / 2 + 1);
+      // ORANGE FOR AN ORB WHOSE ELEMENT WAS NOT SENT — an older server, and the
+      // colour this painter gave every shot before there was anything to ask. It
+      // is also this file's existing word for "this is being done TO you"
+      // (`paintStatusPips` picks it for a harmful badge).
+      const type = orb.damageType;
+      backCtx.fillStyle = type === undefined ? PALETTE.ORANGE : ZONE_WASH_INK[type];
+      dart(nose, ORB_DOT_PX / 2);
+      backCtx.restore();
     }
   }
 
@@ -4444,8 +4817,8 @@ export function createRenderer(options: RendererOptions): Renderer {
       // Before `welcome` names a self, look at the middle of the map.
       const focusX = (self === undefined ? level.w / 2 : self.x + 0.5) * TILE_PX;
       const focusY = (self === undefined ? level.h / 2 : self.y + 0.5) * TILE_PX;
-      const camX = cameraAxis(level.w * TILE_PX, logicalW, focusX);
-      const camY = cameraAxis(level.h * TILE_PX, logicalH, focusY);
+      const camX = cameraAxis(logicalW, focusX);
+      const camY = cameraAxis(logicalH, focusY);
 
       paintTiles(level, scene.realmKind, camX, camY);
       // THE LIGHT, IMMEDIATELY AFTER THE FLOOR IT DIMS and before every marker.
@@ -4522,6 +4895,26 @@ export function createRenderer(options: RendererOptions): Renderer {
         if (visible(cellX, cellY)) blitSprite(actor.sprite, cellX, cellY);
       }
 
+      // WHICH WAY EACH BODY IS TURNED. Its own pass, after every sprite, for
+      // the reason the life bars and the pips below are: interleaved, the tick
+      // of a body standing behind would be painted over by the boots of the one
+      // in front, and a facing you cannot see is worse than none because its
+      // absence reads as "that one has not acted".
+      //
+      // ONLY WHAT HAS BEEN SEEN TO ACT gets one — `Scene.facing` has no entry
+      // for a body that has neither moved nor swung since it came into view,
+      // and a default would be a tick confidently pointing the wrong way.
+      const facing = scene.facing;
+      if (facing !== undefined) {
+        for (const actor of ordered) {
+          const dir = facing.get(actor.id);
+          if (dir === undefined) continue;
+          const cellX = actor.x * TILE_PX - camX;
+          const cellY = actor.y * TILE_PX - camY;
+          if (visible(cellX, cellY)) paintFacing(dir, cellX, cellY);
+        }
+      }
+
       // THE LIFE PASS, and it is its own pass for the reason the pips below are:
       // interleaved with the sprite loop, the bar of an actor standing behind
       // would be painted over by the boots of the one in front — and a life bar
@@ -4546,6 +4939,16 @@ export function createRenderer(options: RendererOptions): Renderer {
           const cellY = actor.y * TILE_PX - camY;
           if (visible(cellX, cellY)) paintStatusPips(badges, cellX, cellY);
         }
+      }
+
+      // WHERE THE BLOWS CAME FROM. Above the pips and below the orbs: it is a
+      // fact about the body it is drawn on, like a badge, but it is the one the
+      // player is being asked to act on, so nothing that is also about that
+      // body may cover it.
+      for (const mark of scene.threats ?? []) {
+        const cellX = mark.x * TILE_PX - camX;
+        const cellY = mark.y * TILE_PX - camY;
+        if (visible(cellX, cellY)) paintThreat(mark, cellX, cellY);
       }
 
       // WHAT IS IN THE AIR — the first thing in the band above the tokens, and
@@ -4739,11 +5142,18 @@ export function createRenderer(options: RendererOptions): Renderer {
     if (backX < 0 || backY < 0 || backX >= logicalW || backY >= logicalH) return null;
     const point = { x: backX, y: backY };
 
+    // SIGNED ARITHMETIC, AND IT HAS TO BE. `Math.floor` of a negative quotient
+    // rounds DOWN — `Math.floor(-1 / 64)` is -1, not 0 — so a pixel half a tile
+    // to the left of column 0 resolves to tile -1 and is refused below. A
+    // `Math.trunc` or a `| 0` here would fold that whole half-tile band onto
+    // column 0, and the pointer would pick up the map's west edge while hovering
+    // the void beside it.
     const tx = Math.floor((point.x + lastCamX) / TILE_PX);
     const ty = Math.floor((point.y + lastCamY) / TILE_PX);
-    // Reachable whenever the map is smaller than the viewport: `cameraAxis`
-    // centres it and returns a negative camera, so the backbuffer legitimately
-    // contains pixels that are off the grid.
+    // OFF THE GRID IS THE ORDINARY CASE NOW, not the small-map corner case it
+    // was: the camera is dead centre with no edge clamp, so every frame a player
+    // spends within half a viewport of a boundary legitimately paints void, and
+    // the pointer is over none of it.
     if (!inBounds(tx, ty, level.w, level.h)) return null;
     return { x: tx, y: ty };
   }

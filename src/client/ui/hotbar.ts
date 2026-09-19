@@ -1,30 +1,36 @@
 /**
- * The hotbar: EIGHT slots — four class talents on keys 1-4, then four ITEM
- * slots that are mouse-only — a 64x64 icon inside a 72x72 frame.
+ * The hotbar: ONE row of identical slots, each holding a class talent, a bound
+ * item or nothing, a 32x32 icon inside a 44x44 frame.
  *
  * ===========================================================================
- * IT USED TO BE FOUR SLOTS AND "THAT IS THE WHOLE UI". IT IS NOT ANY MORE.
+ * IT USED TO BE TWO HALVES IN ONE STRIP. IT IS ONE BAR NOW.
  * ===========================================================================
- * The old header argued that the bar "is still the class itself rather than a
- * container the player fills, and there is still deliberately no drag-and-drop,
- * no page 2, no empty-slot state and no binding UI". THAT IS NOW FALSE and is
- * rewritten rather than amended, because a comment that lies is worse than no
- * comment. The player played the deployed build and asked for exactly the thing
- * it refused: "the action bar at the bottom should be slightly smaller and have
- * empty slots so users can drag items out to the bar."
+ * The old header described *"EIGHT slots — four class talents on keys 1-4, then
+ * four ITEM slots that are mouse-only"*, later nine and four. That partition is
+ * gone, on the author's report: *"the hotbar/actionbar should not segregate
+ * items from abilities. we need it it be 1 bar to rearange as people like."*
+ * The argument the partition rested on is answered where it was made — see
+ * `HOTBAR_SLOT_POOL` — rather than deleted, because the argument was sound and
+ * it was its premise that moved.
  *
  * WHAT SURVIVED THE CHANGE, because it was right for its own reason and the
  * reason has not moved:
  *
- *   SLOTS 0-3 ARE STILL THE CLASS. A talent point DEEPENS one of the four rather
- *   than adding a fifth, so the talent half of the bar is still fixed, still
- *   arrives in `LoadoutMsg.talents` order, and is still NEVER sorted here:
- *   muscle memory for which key is Ward Rush is worth more than any ordering a
- *   renderer could impose, and a hotbar that re-sorted by cooldown would move
- *   the buttons around mid-fight.
+ *   THE BAR IS NEVER SORTED HERE. It draws the slots it is GIVEN, in the order
+ *   it is given them. Muscle memory for which key is Ward Rush is worth more
+ *   than any ordering a renderer could impose, and a hotbar that re-sorted by
+ *   cooldown would move the buttons around mid-fight.
  *
- *   KEYS 1-4 ARE UNCHANGED, and slots 4-7 have NO KEY AT ALL. That is a decision
- *   with a hard reason, not an omission — see the note on `HOTBAR_ITEM_SLOTS`.
+ *   A SLOT'S CONTENTS ARE NEVER REMEMBERED BY THIS FILE. An item slot's caption
+ *   is recomputed from the last `inventory` frame on every draw
+ *   (`itemSlotAction`), and a talent slot is resolved from the loadout by its
+ *   caller. That is what makes an item equipped from the PANEL flip the caption
+ *   on the BAR one frame later with nothing wired between them.
+ *
+ *   EVERY SLOT NOW HAS A KEY, which is the one thing the partition cost. Slots
+ *   0-8 are `1`..`9` and slots 9-17 are `⇧1`..`⇧9` — see `hotbarKeyLabel`,
+ *   which the painter and the press both read so the printed key and the sent
+ *   key cannot disagree.
  *
  * PORTED, WITH CITATIONS. Upstream's bar holds two kinds of thing in one row of
  * identical boxes: HotkeysIconsDisplay.lua:159-162 tags each occupied slot
@@ -192,70 +198,88 @@ const SLOT_GAP = 4;
 const ICON_INSET = Math.floor((SLOT_PX - ICON_DRAW_PX) / 2);
 
 /**
- * Slots 0-3: the class talents, on keys 1-4.
+ * ═══════════════════════════════════════════════════════════════════════════
+ * ONE BAR. EVERY SLOT TAKES EITHER KIND, AND THE KEY FOLLOWS THE POSITION.
+ * ═══════════════════════════════════════════════════════════════════════════
  *
- * ═══ IT IS THE WIDTH THAT CHOOSES THIS, NOT THE CLASS ═══
- * This note used to read *"the count is not this file's to choose — it is
- * `LoadoutMsg.talents.length`, four per class by PLAN.md's MVP cap."* That was
- * true of a bar that drew `loadout[n]` and it is not true of one drawn from
- * BINDINGS: a slot is a box a player may put anything in, so what decides how
- * many there are is how many FIT.
+ * THIS USED TO BE FOUR CONSTANTS DESCRIBING TWO HALVES: `HOTBAR_TALENT_SLOTS`
+ * (nine, keyed), `HOTBAR_TALENT_PAGES` (two, swapped by Shift),
+ * `HOTBAR_TALENT_BINDINGS` and `HOTBAR_ITEM_SLOTS` (four, mouse-only, appended
+ * after the talents). The split is gone, on the author's report: *"the
+ * hotbar/actionbar should not segregate items from abilities. we need it it be
+ * 1 bar to rearange as people like."*
  *
- * ═══ NINE, BECAUSE THIRTEEN IS WHAT THE FLOOR HOLDS ═══
- * `hotbarRowWidth(n)` is `44n + 4(n-1)`, and the interface floors at 640
- * logical pixels (render/canvas.ts, `HUD_MIN_W`). Solving `48n - 4 <= 640`
- * gives thirteen slots. Four of those are the
- * item half, so the talents get NINE and the whole row is 620 — twenty pixels
- * of slack at the SMALLEST viewport this client can produce, which means no
- * window size loses a drop target.
+ * ═══ THE OLD ARGUMENT FOR THE SPLIT, AND WHY IT NO LONGER HOLDS ═══
+ * `HOTBAR_ITEM_SLOTS` carried it in full and it was a good argument for as long
+ * as its premise stood: *"THE LIVE REASON IS THAT THERE ARE NO DIGITS LEFT.
+ * Nine talent slots take `Digit1`..`Digit9`, and `Digit0` is not a tenth in any
+ * sane reading of a row that starts at 1. What remains is punctuation or a
+ * modifier, and both are worse than a mouse."*
  *
- *   six talents + four items = 476px   a third of the floor left bare
- *   nine talents + four items = 620px  the row the floor actually holds
+ * The premise was that the digits were SPENT ON TALENTS. They were not spent on
+ * talents — they were spent on POSITIONS, and it was the bar that decided a
+ * position could only hold a talent. Shift was already the second row of
+ * positions (`HOTBAR_TALENT_PAGES`, and `scroll_back`'s note in keymap.ts calls
+ * Shift *"the other lane"* the house rule). So there are EIGHTEEN keyed
+ * positions, not nine, and once a position takes either kind every slot on the
+ * bar has a key — which is strictly more than the old split could give, and the
+ * opposite of what the old note concluded from the same facts.
  *
- * Ten would be 668 and would fit a 768-wide device while wrapping the default
- * bar onto a second line at 640. A bar wraps rather than drop a slot now, but
- * the whole row on one line at the floor is still what the count is for.
+ * THE MOUSE-ONLY DECISION IS THEREFORE REVERSED RATHER THAN OVERRULED: nothing
+ * about the keyboard changed, the reading of it did.
  *
- * ═══ AND NINE IS EXACTLY THE DIGIT ROW ═══
- * Slots 7-9 are bound in input/keymap.ts by CODE (`Digit7`..`Digit9`), the
- * precedent slots 5 and 6 set, so none of them can be reached from the numpad
- * and `move_north`'s Numpad8 is untouched. Every talent slot on the bar has a
- * key printed on it; the item slots remain mouse-only by the argument below.
+ * ═══ AND THIS IS UPSTREAM'S OWN SHAPE, WHICH THE OLD HEADER ALREADY CITED ═══
+ * `HotkeysIconsDisplay.lua:159-162` tags each occupied slot `"talent"` or
+ * `"inventory"` off ONE `a.hotkey[j]` table, and `:349` accepts a drop of
+ * either kind onto any slot. `PlayerHotkeys.lua:104-155` (`addNewHotkey`) walks
+ * that one table for the first free index whichever kind is being placed. Ours
+ * was the same file's drawing with a partition upstream does not have.
  */
-export const HOTBAR_TALENT_SLOTS = 9;
 
 /**
- * ═══════════════════════════════════════════════════════════════════════════
- *   HOW MANY PAGES OF THOSE NINE. TWO, AND SHIFT PICKS THE OTHER ONE.
- * ═══════════════════════════════════════════════════════════════════════════
- *
- * Eighteen talents on nine keys. The bar cannot grow SIDEWAYS — that is
- * `HOTBAR_TALENT_SLOTS`'s own argument one rule up, and it is about PIXELS:
- * thirteen slots is what the 640-wide floor holds, and four of them are the
- * item half.
- *
- * (This paragraph used to say "twelve talents on six keys" and blame the
- * numpad. Both halves went stale when slots 5-9 shipped bound by CODE —
- * `Digit5`..`Digit9`, which the numpad does not report — so the bar's limit is
- * the width of the window and nothing else.)
- *
- * ═══ SHIFT, AND IT IS ALREADY THE HOUSE RULE ═══
- * `scroll_back`'s note in input/keymap.ts says it exactly: *"Shift picks the
- * other lane, and that is a fact about a panel rather than about a key, so it
- * is not an action here."* Eighteen `hotbar_n` actions in the keybind list
- * would be eighteen rows nobody can rebind (the digits are `fixed`) explaining
- * a modifier — so the page is decided where the press is READ, not in the map.
- *
- * ═══ TWO AND NOT FOUR ═══
- * Upstream's bar pages further and ours will when there is anything to put on
- * page three. Eighteen already covers `TALENTS_PER_CLASS_MAX` half again over,
- * so a third page would be a control with nothing behind it — and every page
- * after the first costs a modifier a player has to remember.
+ * How many slots one press of the digit row addresses. NINE, and it is the
+ * DIGITS that choose it: `Digit1`..`Digit9` are bound by CODE in
+ * input/keymap.ts, so none of them can be reached from the numpad and
+ * `move_north`'s Numpad8 is untouched. `Digit0` is not a tenth in any sane
+ * reading of a row that starts at 1.
  */
-export const HOTBAR_TALENT_PAGES = 2;
+export const HOTBAR_KEY_ROW = 9;
 
-/** Every keyed binding a character has, across both pages. */
-export const HOTBAR_TALENT_BINDINGS = HOTBAR_TALENT_SLOTS * HOTBAR_TALENT_PAGES;
+/**
+ * How many rows of digits there are: the plain one and the Shifted one.
+ *
+ * SHIFT IS NOT A PAGE ANY MORE. It used to swap which nine talents the nine
+ * boxes drew, which is why a `page` was a mode the drawing, the hit test, the
+ * bind and the unbind all had to resolve through. The bar can now BE eighteen
+ * boxes, so Shift reaches the second nine instead of replacing the first nine —
+ * the picture never changes under the player's hand, which was the one thing a
+ * paged bar could always get wrong.
+ */
+export const HOTBAR_KEY_ROWS = 2;
+
+/**
+ * Every slot a character can address. Derived, so the two above cannot drift
+ * from it.
+ *
+ * IT IS ALSO THE POOL. Upstream's is `12 * nb_hotkey_pages` — sixty
+ * (`PlayerHotkeys.lua:33`, and the same expression at :94, :125, :149 and
+ * :212) — and every one of those sixty has a key. Ours is the same rule with
+ * our key row: the pool is exactly what the keyboard can reach, so no slot in
+ * it is ever a box with no way to press it.
+ */
+export const HOTBAR_SLOT_POOL = HOTBAR_KEY_ROW * HOTBAR_KEY_ROWS;
+
+/**
+ * How many slots a bar has before anybody touches the cogwheel or the grip.
+ *
+ * `HOTBAR_SLOTS_DEFAULT` is 13, which is EXACTLY THE BAR THAT SHIPPED: nine
+ * talent boxes and four item boxes. Day one is unchanged to the pixel, which is
+ * the property that lets a bar with a different model land without a word to
+ * anybody playing — and `hotbarRowWidth(13)` is 620, twenty pixels inside the
+ * 640 logical floor (`HUD_MIN_W`, render/canvas.ts), so the whole row is still
+ * on one line at the smallest viewport this client can produce.
+ */
+export const HOTBAR_SLOTS_DEFAULT = 13;
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════
@@ -263,60 +287,62 @@ export const HOTBAR_TALENT_BINDINGS = HOTBAR_TALENT_SLOTS * HOTBAR_TALENT_PAGES;
  * ═══════════════════════════════════════════════════════════════════════════
  *
  * `TALENTS_PER_CLASS_MAX` is the rule (src/shared/progression.ts); this is the
- * bar's answer to it. Shrinking a page, or dropping back to one, would leave a
- * class holding actives no key could reach — a talent a player owns, can see
- * in the panel, and can never press. That is silent: nothing throws, the bar
- * just quietly stops at nine and the rest are unreachable.
+ * bar's answer to it. Shrinking the key row, or dropping to one row, would
+ * leave a class holding actives no key could reach — a talent a player owns,
+ * can see in the panel, and can never press. That is silent: nothing throws.
+ *
+ * IT IS THE POOL THAT MUST COVER IT, NOT THE VISIBLE COUNT. A player may set
+ * the bar to one slot; that is a choice they made and can undo, and the talent
+ * is still in the store and still on its key. What may never happen is a talent
+ * with no ADDRESS at all.
  *
  * A TYPE-LEVEL ASSERTION rather than a runtime one, so it costs nothing at
  * runtime and fails at the only moment it matters — the commit that changes
  * either number.
  */
-type _BarAddressesEveryTalent = typeof HOTBAR_TALENT_BINDINGS extends number
+type _BarAddressesEveryTalent = typeof HOTBAR_SLOT_POOL extends number
   ? typeof TALENTS_PER_CLASS_MAX extends number
     ? true
     : never
   : never;
 const _barCoversTheClass: _BarAddressesEveryTalent = true;
-if (HOTBAR_TALENT_BINDINGS < TALENTS_PER_CLASS_MAX || !_barCoversTheClass) {
+if (HOTBAR_SLOT_POOL < TALENTS_PER_CLASS_MAX || !_barCoversTheClass) {
   throw new Error(
-    `hotbar: ${String(HOTBAR_TALENT_BINDINGS)} bindings cannot address ` +
+    `hotbar: ${String(HOTBAR_SLOT_POOL)} slots cannot address ` +
       `${String(TALENTS_PER_CLASS_MAX)} talents — see TALENTS_PER_CLASS_MAX`,
   );
 }
 
 /**
- * Slots 10-13: the item slots. MOUSE-ONLY, AND THAT IS THE DECISION, NOT A GAP.
+ * The key printed on slot `index`, or null when the pool does not reach it.
  *
- * ═══════════════════════════════════════════════════════════════════════════
- * THE REASON THIS GIVES IS NOT THE REASON ANY MORE. THE DECISION STANDS.
- * ═══════════════════════════════════════════════════════════════════════════
+ * ═══ ONE COPY, READ BY THE PAINTER AND BY THE PRESS ═══
+ * `main.ts`'s `onSlot` turns a digit and a Shift state back into an index with
+ * the same arithmetic inverted, and a bar that PRINTED one key while SENDING
+ * another is the single worst failure a hotbar has — it does not look broken,
+ * it just casts the wrong thing. So the label is derived here and the inverse
+ * is named after it.
  *
- * It used to read: *"there is no key 5, 6, 7 or 8"* because keymap.ts maps
- * Numpad5-Numpad9 onto the STRINGS '5'-'9', so a `hotbar_5` bound BY KEY would
- * collide with `move_north` and the other cardinals — far worse than the
- * diagonal collision `hotbar_1` already carries.
- *
- * THAT PROBLEM WAS SOLVED, FOR SOMEBODY ELSE. `hotbar_5` through `hotbar_9`
- * exist today, bound by CODE (`Digit5`..`Digit9`), which the numpad never
- * reports — so the collision argument no longer refuses anything, and reading
- * this block as written would say the item slots COULD be keyed the same way.
- *
- * ═══ THE LIVE REASON IS THAT THERE ARE NO DIGITS LEFT ═══
- * Nine talent slots take `Digit1`..`Digit9`, and `Digit0` is not a tenth in any
- * sane reading of a row that starts at 1. What remains is punctuation or a
- * modifier, and both are worse than a mouse: a bracket over an item slot is a
- * key nobody guesses, and a modifier is the one Shift already spends on the
- * talent page.
- *
- * A mouse-only slot in a turn-based game is fine. So the label under an item
- * slot is its STATE CAPTION and never a key, and keymap.ts is not touched by
- * this file at all.
+ * `⇧` RATHER THAN THE WORD. The glyph fits the five pixels a 44-slot's corner
+ * has, and it is the one every keyboard legend uses.
  */
-export const HOTBAR_ITEM_SLOTS = 4;
+export function hotbarKeyLabel(index: number): string | null {
+  if (index < 0 || index >= HOTBAR_SLOT_POOL) return null;
+  const digit = (index % HOTBAR_KEY_ROW) + 1;
+  return index < HOTBAR_KEY_ROW ? `${String(digit)}` : `⇧${String(digit)}`;
+}
 
-/** Thirteen. Derived, so the two halves above cannot drift from the total. */
-export const HOTBAR_SLOTS = HOTBAR_TALENT_SLOTS + HOTBAR_ITEM_SLOTS;
+/**
+ * Which slot a digit press means. The inverse of `hotbarKeyLabel`, and the
+ * reason that one is a function rather than a template string at the paint.
+ *
+ * `digit` IS ZERO-BASED — key `1` is 0 — because that is what `onSlot` already
+ * hands out, and converting in two places is how the two ends of one mapping
+ * come to disagree.
+ */
+export function hotbarSlotForKey(digit: number, shifted: boolean): number {
+  return (shifted ? HOTBAR_KEY_ROW : 0) + digit;
+}
 
 /** How dark the cooldown wedge goes. Dark enough to read, light enough to identify the icon. */
 const WIPE_ALPHA = 0.72;
@@ -362,11 +388,11 @@ type FrameState = (typeof FrameState)[keyof typeof FrameState];
  * Same shape as `Slot`, `DragKind`, `PanelSkin` and every other closed set here.
  */
 export const HotbarSlotKind = {
-  /** A class talent. Slots 0-3, keys 1-4. */
+  /** A class talent, on whichever slot it was put. */
   Talent: 'talent',
-  /** A bound item. Slots 4-7, mouse only. */
+  /** A bound item, on whichever slot it was put. Keyed exactly as a talent is. */
   Item: 'item',
-  /** An item slot nobody has bound yet — a drop target, not a gap. */
+  /** A slot nobody has bound yet — a drop target, not a gap. */
   Empty: 'empty',
 } as const;
 export type HotbarSlotKind = (typeof HotbarSlotKind)[keyof typeof HotbarSlotKind];
@@ -406,7 +432,7 @@ export const ItemSlotAction = {
 export type ItemSlotAction = (typeof ItemSlotAction)[keyof typeof ItemSlotAction];
 
 /**
- * A class talent on keys 1-4. Assembled by main.ts from three separate frames.
+ * A class talent on a slot. Assembled by main.ts from three separate frames.
  *
  * ═══ THE DISCRIMINANT IS REQUIRED, AS IT IS ON THE OTHER TWO MEMBERS ═══
  * It was optional for exactly one pass, as a written-down shim: this file grew
@@ -432,7 +458,7 @@ export type HotbarTalentSlot = {
   readonly affordable: boolean;
 };
 
-/** A bound item on slots 4-7. */
+/** A bound item on a slot. */
 export type HotbarItemSlot = {
   readonly kind: typeof HotbarSlotKind.Item;
   /** The binding itself. The only thing that is remembered between frames. */
@@ -466,7 +492,7 @@ export type HotbarItemSlot = {
   readonly rows?: readonly { readonly label: string; readonly value: string }[];
 };
 
-/** An item slot with nothing in it. Still a slot, still a drop target. */
+/** A slot with nothing in it. Still a slot, still a drop target. */
 export type HotbarEmptySlot = {
   readonly kind: typeof HotbarSlotKind.Empty;
 };
@@ -480,17 +506,6 @@ export type HotbarView = {
   readonly hovered: number;
   /** Index currently in targeting mode, or -1. */
   readonly armed: number;
-  /**
-   * WHICH PAGE OF THE KEYED SLOTS THIS IS — 0 ordinarily, 1 while Shift is down.
-   *
-   * OPTIONAL, so every fixture that builds a view by hand keeps compiling and
-   * reads as page 1, which is what they all mean. It changes nothing about the
-   * SLOTS — main.ts has already sliced the page it is handing over — and is
-   * carried purely so the label strip can say which page a player is looking
-   * at. A bar that silently swapped its nine buttons would be indistinguishable
-   * from a bug.
-   */
-  readonly page?: number;
   /**
    * ════════════════════════════════════════════════════════════════════════
    * WHICH POOL THIS BODY SPENDS — the tooltip said `resolve` to EVERYONE.
@@ -521,6 +536,30 @@ export type HotbarView = {
    * thirty test cases to buy nothing the compiler can check.
    */
   readonly drag?: DragSubject | null;
+  /**
+   * ════════════════════════════════════════════════════════════════════════
+   * HOW MANY BOUND SLOTS ARE PAST THE END OF THE BAR. The shrink's receipt.
+   * ════════════════════════════════════════════════════════════════════════
+   *
+   * Shrinking the bar HIDES buttons and never erases them — `HotbarStyle.slots`
+   * argues that at length, and it is upstream's behaviour exactly
+   * (`HotkeysIconsDisplay` stops laying out at `:270`/`:276` and leaves
+   * `a.hotkey` alone). The trouble is that it was true and entirely UNSAID: a
+   * player who dragged the grip in and watched four buttons vanish has no way
+   * to tell "hidden, drag it back" from "gone, bind them again", and the
+   * conservative reading of a disappearing button is the wrong one.
+   *
+   * SO THE BAR SAYS IT ITSELF, in the header strip it already owns, and only
+   * when the pointer is not on a slot — see `stripFor`. It is a number and not
+   * a warning: nothing has gone wrong, and an ORANGE line about a thing the
+   * player just did on purpose would read as a refusal.
+   *
+   * OPTIONAL, like `drag` and `pool` above and for their reason: every fixture
+   * that builds a view by hand keeps compiling, and absent means "nothing to
+   * report" rather than "unknown" — which is the honest default, because a
+   * caller that does not count cannot have any.
+   */
+  readonly hidden?: number;
 };
 
 export type HotbarOptions = {
@@ -605,6 +644,33 @@ export type HotbarStyle = {
   readonly icon: number;
   /** Backing opacity, as a percentage. The slots never fade. */
   readonly opacity: number;
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * HOW MANY SLOTS THE BAR HAS. 1..`HOTBAR_SLOT_POOL`.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Asked for twice, as two controls over one number: *"i want the cogwheel
+   * settings button for the action bar to allow you to add more slots to
+   * expand"* and *"resizing the actionbar should dynamically add slots to the
+   * actionbar."* ONE number with two writers, never two numbers: a cogwheel
+   * count and a dragged count would be two opinions about the same bar, and the
+   * moment they disagreed the row would redraw itself out from under whichever
+   * gesture was still in flight.
+   *
+   * IT LIVES ON THE STYLE AND NOT ON THE SIZE, although the grip writes it.
+   * `hotbarSize` is where the player put the EDGES; this is what the bar HOLDS.
+   * Deriving the count from the stored size on every draw would mean a bar that
+   * silently gained a slot when the viewport got wider, which is the class of
+   * surprise `PanelLayoutView.logSize` already refuses by storing the dragged
+   * value rather than recomputing it.
+   *
+   * IT IS A COUNT, NOT A CAPACITY. The BINDINGS are `HOTBAR_SLOT_POOL` long
+   * whatever this says, so shrinking the bar hides buttons and never erases
+   * them — expand it again and everything is where it was left. That is
+   * upstream's behaviour exactly: `HotkeysIconsDisplay` stops laying out when
+   * it runs out of rows (`:270`, `:276`) and `a.hotkey` is untouched by it.
+   */
+  readonly slots: number;
 };
 
 const ICON_STEPS = [ICON_DRAW_PX, 48, 64] as const;
@@ -615,6 +681,7 @@ export const DEFAULT_HOTBAR_STYLE: HotbarStyle = {
   vertical: false,
   icon: ICON_DRAW_PX,
   opacity: 100,
+  slots: HOTBAR_SLOTS_DEFAULT,
 };
 
 /** How much bigger than the drawn-at-32 slot this style's slot is. */
@@ -675,6 +742,52 @@ export function hotbarPanelSize(
   return style.vertical
     ? { w: HOTBAR_INSET * 2 + wide, h: HOTBAR_INSET * 2 + HOTBAR_HEADER_H + long }
     : { w: HOTBAR_INSET * 2 + long, h: HOTBAR_INSET * 2 + HOTBAR_HEADER_H + wide };
+}
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * HOW MANY SLOTS A BAR THIS SIZE HOLDS. THE GRIP'S HALF OF THE COUNT.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * PORTED. `HotkeysIconsDisplay.lua:108-109` is the whole rule:
+ *
+ *     self.max_cols = math.floor(self.w / self.frames.w)
+ *     self.max_rows = math.floor(self.h / self.frames.h)
+ *
+ * and the layout loop at `:265-278` walks the hotkey table filling columns
+ * then rows and STOPS when it runs out of either (`if row >= self.max_rows then
+ * return end`). So in upstream the size of the box decides how many of the
+ * sixty slots are on screen, and that is precisely what was asked for:
+ * *"resizing the actionbar should dynamically add slots to the actionbar. this
+ * functionality should work like Tales of Maj Eyal."*
+ *
+ * ═══ ONE DIFFERENCE, AND IT IS THE GAP ═══
+ * Upstream's `frames.w` is `icon_w + 8` — the pitch INCLUDES the padding on
+ * both sides, so `floor(w / pitch)` is exact for it. Ours puts the gap BETWEEN
+ * slots and not after the last one, so the same division is short by one
+ * whenever the row ends flush. `perLine` already solves that (`(along + gap) /
+ * (slot + gap)`) and is reused here rather than re-derived — two copies of a
+ * fencepost is how a bar comes to disagree with itself about its own last box.
+ *
+ * ═══ AT LEAST ONE, AT MOST THE POOL ═══
+ * A grip dragged into the corner leaves one slot rather than none: a bar with
+ * no slots is a panel with a cogwheel and nothing to configure, and the player
+ * would have to find the same grip again to get their game back. The ceiling is
+ * the pool because a slot past it would have no key — see `HOTBAR_SLOT_POOL`.
+ */
+export function hotbarSlotsForSize(
+  size: PanelSize,
+  style: HotbarStyle = DEFAULT_HOTBAR_STYLE,
+): number {
+  const along = style.vertical
+    ? size.h - HOTBAR_INSET * 2 - HOTBAR_HEADER_H
+    : size.w - HOTBAR_INSET * 2;
+  const across = style.vertical
+    ? size.w - HOTBAR_INSET * 2
+    : size.h - HOTBAR_INSET * 2 - HOTBAR_HEADER_H;
+  const cols = perLine(along, HOTBAR_SLOT_POOL, style);
+  const rows = perLine(across, HOTBAR_SLOT_POOL, style);
+  return Math.max(1, Math.min(HOTBAR_SLOT_POOL, cols * rows));
 }
 
 /** The header strip: inside the frame, over the first line. */
@@ -743,20 +856,26 @@ export function hotbarSlotAt(
   return -1;
 }
 
-/** Is this index one of the four mouse-only ITEM slots? */
-export function isItemSlotIndex(index: number): boolean {
-  return index >= HOTBAR_TALENT_SLOTS && index < HOTBAR_SLOTS;
-}
-
 /**
- * What a drop landing here means. Three answers, and the set is closed.
+ * What a drop landing here means. Two answers, and the set is closed.
  *
- * A TALENT SLOT IS AN ANSWER, NOT A MISS, and that is the whole reason this is
- * not just `hotbarSlotAt`. Slots 0-3 are the class and cannot be rebound, so a
- * player who drags a coat onto slot 2 has to be TOLD that — "the first four
- * slots are your class talents" — rather than watching the coat snap back for no
- * stated reason. `Miss` is the genuinely empty answer: the release was not over
- * the bar at all, and whatever else is under the pointer gets it.
+ * ═══════════════════════════════════════════════════════════════════════════
+ * IT USED TO HAVE THREE, AND THE THIRD WAS THE PARTITION.
+ * ═══════════════════════════════════════════════════════════════════════════
+ * `HotbarDropKind.Talent` meant "this half of the bar will not take what you
+ * are carrying — refuse it IN WORDS", and it existed so that a player who
+ * dragged a coat onto slot 2 was told *"the first four slots are your class
+ * talents"* rather than watching the coat snap back for no stated reason. A
+ * good answer to a question this bar no longer asks: every slot takes either
+ * kind, so there is nothing left to refuse and nothing left to explain.
+ *
+ * `Miss` is still the genuinely empty answer: the release was not over the bar
+ * at all, and whatever else is under the pointer gets it.
+ *
+ * ═══ THE CALLER STILL CHECKS THE DRAG, AND MUST ═══
+ * `Bind` says a SLOT was hit, not that the thing in hand belongs in it. A
+ * `Panel` or `Resize` drag can end over the bar and means nothing there; the
+ * caller resolves the subject and writes the binding, exactly as before.
  *
  * Upstream registers a drop zone for EVERY slot, occupied or not, before it
  * branches on what is in one (HotkeysIconsDisplay.lua:167, outside the
@@ -764,10 +883,8 @@ export function isItemSlotIndex(index: number): boolean {
  * with the filtering made into a value the caller must handle.
  */
 export const HotbarDropKind = {
-  /** An item slot. The caller may bind, and a right-click here means UNBIND. */
+  /** A slot. The caller may bind, and a right-click here means UNBIND. */
   Bind: 'bind',
-  /** A talent slot. The caller must refuse IN WORDS. */
-  Talent: 'talent',
   /** Not over the bar. */
   Miss: 'miss',
 } as const;
@@ -775,11 +892,10 @@ export type HotbarDropKind = (typeof HotbarDropKind)[keyof typeof HotbarDropKind
 
 export type HotbarDrop =
   | { readonly kind: typeof HotbarDropKind.Bind; readonly index: number }
-  | { readonly kind: typeof HotbarDropKind.Talent; readonly index: number }
   | { readonly kind: typeof HotbarDropKind.Miss };
 
 /**
- * Which slot a release lands on, and whether it may be bound.
+ * Which slot a release lands on.
  *
  * Same geometry as `hotbarSlotAt` — it literally calls it — so a drop can never
  * disagree with a hover about which box the pointer is in.
@@ -792,29 +908,7 @@ export function hotbarDropTargetAt(
   style: HotbarStyle = DEFAULT_HOTBAR_STYLE,
 ): HotbarDrop {
   const index = hotbarSlotAt(rect, px, py, count, style);
-  if (index < 0) return { kind: HotbarDropKind.Miss };
-  /**
-   * ═══════════════════════════════════════════════════════════════════════════
-   * BOTH HALVES OF THE BAR TAKE A DROP NOW, AND THE KINDS SAY WHICH IS WHICH.
-   * ═══════════════════════════════════════════════════════════════════════════
-   *
-   * `HotbarDropKind.Talent` used to mean "this is a class talent, it cannot be
-   * bound, tell the player in words" — the caller's whole job with it was to
-   * print a refusal. A talent slot was `loadout[n]` for the session and that
-   * was that.
-   *
-   * It now means "a TALENT may be bound here", which is the same discriminant
-   * doing the opposite thing. The rename would be honest and is deliberately
-   * not made: `Talent` names the slot's KIND, not the old refusal, and every
-   * call site is being read in this commit anyway.
-   *
-   * WHAT DOES NOT CHANGE: an item still cannot go on a talent slot and a talent
-   * still cannot go on an item slot. The caller checks the DRAG against the
-   * kind, so the wrong pairing is still a sentence rather than a silent no-op.
-   */
-  return isItemSlotIndex(index)
-    ? { kind: HotbarDropKind.Bind, index }
-    : { kind: HotbarDropKind.Talent, index };
+  return index < 0 ? { kind: HotbarDropKind.Miss } : { kind: HotbarDropKind.Bind, index };
 }
 
 // ---------------------------------------------------------------------------
@@ -914,46 +1008,39 @@ export function isSlotDisabled(slot: HotbarSlot): boolean {
 /**
  * Is the pointer carrying something a hotbar slot could hold?
  *
- * Both ITEM drags qualify. A `Worn` drag names a `Slot` rather than an id
- * (drag.ts:358-361), so the caller resolves it to an item before binding — but
- * the SLOT still has to light up while the pointer is over it, or the player
- * learns that dragging off the doll is not allowed, which is not true.
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THIS WAS TWO PREDICATES AND THE SECOND ONE ARGUED FOR THE PARTITION.
+ * ═══════════════════════════════════════════════════════════════════════════
+ * `isTalentDrag` was *"the exact twin of `isItemDrag` and deliberately a
+ * separate function. One predicate answering 'could this go on the bar
+ * somewhere' would light every slot for every drag, and the player would learn
+ * that a talent can go on an item slot — which it cannot."*
  *
- * A `Panel` drag never does: a panel is clamped into `panelBand` and can never
- * come to rest over the hotbar in the first place (drag.ts:165-180).
+ * A talent CAN go on any slot now, so the sentence that made them twins is the
+ * sentence that merges them: one predicate lights every slot for every drag
+ * because every slot takes every drag, and the highlight is telling the truth
+ * again rather than in spite of itself.
+ *
+ * ALL THREE BINDABLE KINDS QUALIFY. A `Worn` drag names a `Slot` rather than an
+ * id (drag.ts:358-361), so the caller resolves it to an item before binding —
+ * but the SLOT still has to light up while the pointer is over it, or the
+ * player learns that dragging off the doll is not allowed, which is not true.
+ *
+ * A `Panel` or `Resize` drag never does: both belong to a panel clamped into
+ * `panelBand`, which stops above the hotbar, so neither can come to rest over a
+ * slot in the first place (drag.ts:165-180).
  */
-function isItemDrag(drag: DragSubject | null | undefined): boolean {
+function isBindableDrag(drag: DragSubject | null | undefined): boolean {
   if (drag === undefined || drag === null) return false;
   switch (drag.kind) {
     case DragKind.Carried:
     case DragKind.Worn:
-      return true;
-    // A RESIZE IS NOT AN ITEM DRAG, and it cannot reach the bar for the reason
-    // the header gives about `Panel`: the gesture belongs to a panel clamped
-    // inside `panelBand`, which stops above the hotbar.
-    case DragKind.Resize:
-      return false;
-    // A TALENT IS NOT AN ITEM DRAG. It lights up the other half of the bar —
-    // see `isTalentDrag` below — and the two are kept apart rather than merged
-    // into one `isBindableDrag` precisely so a talent cannot light an item
-    // slot it is about to be refused from.
     case DragKind.Talent:
+      return true;
+    case DragKind.Resize:
     case DragKind.Panel:
       return false;
   }
-}
-
-/**
- * Is the pointer carrying a TALENT, which the six keyed slots now take?
- *
- * The exact twin of `isItemDrag` above and deliberately a separate function.
- * One predicate answering "could this go on the bar somewhere" would light every
- * slot for every drag, and the player would learn that a talent can go on an
- * item slot — which it cannot, and finding that out by being refused is the
- * thing highlighting exists to prevent.
- */
-function isTalentDrag(drag: DragSubject | null | undefined): boolean {
-  return drag !== undefined && drag !== null && drag.kind === DragKind.Talent;
 }
 
 /**
@@ -988,7 +1075,11 @@ function frameIdFor(
   }
 }
 
-/** The word an item slot wears, per state. Never a key digit — see `HOTBAR_ITEM_SLOTS`. */
+/**
+ * The word an item slot wears under its icon, per state. The KEY is drawn
+ * top-left by `paintSlot` on every kind; this is the second, worded signal,
+ * which is why the two never competed for the same corner.
+ */
 function captionForAction(action: ItemSlotAction): string {
   switch (action) {
     case ItemSlotAction.Equip:
@@ -1256,7 +1347,7 @@ function drawFrame(
    * An inset outline the other three states do not draw, so the difference
    * survives at a glance and for the roughly one man in twelve who cannot
    * separate the violet from the slate — the same rule ui/resource.ts applies to
-   * the pips and ui/turncards.ts to the chips. VIOLET_HI because a raised stance
+   * the pips and ui/partypanel.ts to the turn chips. VIOLET_HI because a raised stance
    * is a thing the player did on purpose, and gold is already spoken for by
    * hover.
    */
@@ -1342,17 +1433,22 @@ function paintSlot(
   switch (slot.kind) {
     case HotbarSlotKind.Empty: {
       drawEmptyPlate(ctx, sprites, iconX, iconY);
-      // BIND while a drop would land, ITEM otherwise. The caption is what makes
-      // this a SLOT rather than a gap in the row — the player's own words for
-      // what was missing — and on a bare clone it is the only thing here at all.
-      drawCaption(ctx, rect, dragging ? 'BIND' : 'ITEM', PALETTE.GREY_HI);
-      return;
+      // BIND while a drop would land, EMPTY otherwise. The caption is what makes
+      // this a SLOT rather than a gap in the row, and on a bare clone it is the
+      // only thing here at all.
+      //
+      // IT READ `ITEM` AND THAT WAS THE PARTITION TALKING. An empty slot took
+      // an item and nothing else, so naming the one kind it accepted was a
+      // useful instruction; it now accepts either kind, so the same word would
+      // send a player who wanted a talent on it to the wrong panel.
+      drawCaption(ctx, rect, dragging ? 'BIND' : 'EMPTY', PALETTE.GREY_HI);
+      break;
     }
 
     case HotbarSlotKind.Item: {
       drawIconArt(ctx, sprites, slot.icon, slot.name, iconX, iconY);
       drawCaption(ctx, rect, captionForAction(slot.action), captionColourForAction(slot.action));
-      return;
+      break;
     }
 
     case HotbarSlotKind.Talent: {
@@ -1373,20 +1469,6 @@ function paintSlot(
         ctx.fillRect(rect.x + rect.w - 2, rect.y, 2, rect.h);
       }
 
-      // The key number, top-left. This is the label that actually gets used —
-      // nobody clicks a hotbar in a keyboard game, they press 2.
-      //
-      // GUARDED ON THE INDEX, not merely on the kind: `${i + 1}` is only the
-      // truth for the first four boxes, and a talent that somehow landed at
-      // index 5 would otherwise wear a "6" that no key sends. A slot with no
-      // digit is honest; a slot advertising a key that walks you north is not.
-      if (index < HOTBAR_TALENT_SLOTS) {
-        ctx.font = FONT_KEY;
-        ctx.fillStyle = PALETTE.PARCHMENT;
-        ctx.textAlign = 'left';
-        ctx.fillText(`${index + 1}`, rect.x + 5, rect.y + 8);
-      }
-
       // The cost, bottom-right, in ORANGE when it cannot be paid — a second,
       // worded signal beside the hatched frame, for the same reason the turn chips
       // carry names.
@@ -1404,8 +1486,36 @@ function paintSlot(
         ctx.fillText(`${shown}`, rect.x + rect.w - 5, rect.y + rect.h - 8);
         ctx.textAlign = 'left';
       }
-      return;
+      break;
     }
+  }
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE KEY, TOP-LEFT, ON EVERY SLOT — AND IT USED TO BE INSIDE THE TALENT ARM.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * This is the label that actually gets used: nobody clicks a hotbar in a
+   * keyboard game, they press 2.
+   *
+   * IT WAS GUARDED ON THE INDEX AND THE GUARD WAS RIGHT — *"a talent that
+   * somehow landed at index 5 would otherwise wear a '6' that no key sends. A
+   * slot with no digit is honest; a slot advertising a key that walks you north
+   * is not."* It still is, and `hotbarKeyLabel` IS that guard: it answers null
+   * past the pool, and the press resolves the same mapping back through
+   * `hotbarSlotForKey`, so a printed key that sends nothing cannot exist.
+   *
+   * WHAT CHANGED IS THE KIND, NOT THE GUARD. The label was drawn only for a
+   * talent because only a talent slot had a key; an item on slot 3 now presses
+   * on `3` exactly as a talent does, and a bar where four of thirteen buttons
+   * silently have no key is the segregation the split was reported for.
+   */
+  const key = hotbarKeyLabel(index);
+  if (key !== null) {
+    ctx.font = FONT_KEY;
+    ctx.fillStyle = PALETTE.PARCHMENT;
+    ctx.textAlign = 'left';
+    ctx.fillText(key, rect.x + 5, rect.y + 8);
   }
 }
 
@@ -1451,48 +1561,76 @@ export function itemStrip(name: string, action: ItemSlotAction): StripLine {
   }
 }
 
+/**
+ * What the header says when the pointer is on nothing: how many bound slots the
+ * bar is currently too small to draw, or nothing at all.
+ *
+ * ═══ THE HOVER OUTRANKS IT, AND THAT IS THE WHOLE PLACEMENT ARGUMENT ═══
+ * The strip has one line. A permanent count would take it away from the name of
+ * the talent under the pointer, which is the thing a player is reading the
+ * strip FOR. So this is the idle state of the same line: it is on screen
+ * exactly when the strip would otherwise be blank, it costs no pixels, and it
+ * is gone the moment the pointer wants the row for something else.
+ *
+ * `HotbarView.hidden` carries the argument for the number itself.
+ *
+ * ═══ THE ORDER OF THE WORDS IS LOAD-BEARING, AND IT WAS MEASURED ═══
+ * The strip is cut to the header's width by `fitText`, and the header of a
+ * FIVE-slot bar is about thirty-six characters of the 10px monospace this
+ * draws in. The first version of this line read *"3 past the end of the bar —
+ * still bound, widen it to reach them"* and came out as *"3 past the end of the
+ * bar — still b…"* on exactly the bar somebody has just shrunk — which is to
+ * say it lost the clause it exists for and kept the one a player could already
+ * see. `still bound` therefore comes THIRD WORD, so the sentence degrades from
+ * the far end and the fact survives every width the bar has.
+ */
+function offBarLine(view: HotbarView): StripLine | null {
+  const hidden = view.hidden ?? 0;
+  if (hidden <= 0) return null;
+  return {
+    text: `${String(hidden)} still bound past the end — widen the bar`,
+    colour: PALETTE.GREY_HI,
+  };
+}
+
 function stripFor(view: HotbarView, count: number): StripLine | null {
   const focused = view.armed >= 0 ? view.armed : view.hovered;
   /**
    * ═══════════════════════════════════════════════════════════════════════════
-   * PAGE 2 ANNOUNCES ITSELF, AND IT OUTRANKS THE NAME UNDER THE POINTER.
+   * THE PAGE LINE IS GONE, WITH THE PAGE.
    * ═══════════════════════════════════════════════════════════════════════════
    *
-   * The strip's ordinary job is naming whatever the pointer is on. This is more
-   * urgent than that for exactly as long as it is true: the six buttons a
-   * player has spent the whole game learning have just been replaced, and the
-   * one thing they need to know is that it was on purpose. It is also
-   * self-limiting — the sentence is only ever on screen while Shift is held.
-   *
-   * BELOW THE WIDTH REFUSAL ABOVE, which outranks everything: a bar that could
-   * not fit is a bar whose page label would be explaining boxes that are not
-   * there.
+   * This opened with `page 2 (hold Shift)` in VIOLET_HI, outranking the name
+   * under the pointer, because *"the six buttons a player has spent the whole
+   * game learning have just been replaced, and the one thing they need to know
+   * is that it was on purpose."* That sentence was the cost of a bar whose
+   * picture changed under the player's hand. It does not change any more —
+   * Shift reaches the second nine slots rather than replacing the first nine —
+   * so the warning has nothing left to warn about, and a permanently-possible
+   * line of prose that can never be true is furniture.
    */
-  if ((view.page ?? 0) > 0) {
-    const slot = focused >= 0 && focused < count ? view.slots[focused] : undefined;
-    const name =
-      slot !== undefined && slot.kind === HotbarSlotKind.Talent ? ` — ${slot.talent.name}` : '';
-    return { text: `page 2 (hold Shift)${name}`, colour: PALETTE.VIOLET_HI };
-  }
-  if (focused < 0 || focused >= count) return null;
+  if (focused < 0 || focused >= count) return offBarLine(view);
   const slot = view.slots[focused];
-  if (slot === undefined) return null;
+  if (slot === undefined) return offBarLine(view);
+  const key = hotbarKeyLabel(focused);
+  /** `3. ` or `⇧3. `, and nothing at all past the pool. One label, both readers. */
+  const lead = key === null ? '' : `${key}. `;
 
   switch (slot.kind) {
     case HotbarSlotKind.Empty:
-      // WHICH HALF OF THE BAR DECIDES THE NOUN. "drag an item here" over a
-      // keyed slot is a sentence that sends the player to the wrong panel, and
-      // both halves can be empty now.
+      // ONE SENTENCE, BECAUSE THERE IS ONE KIND OF SLOT. It used to pick a noun
+      // off `isItemSlotIndex` — *"'drag an item here' over a keyed slot is a
+      // sentence that sends the player to the wrong panel"* — and naming only
+      // one of the two kinds an empty slot now takes would be that same bug
+      // with the halves swapped.
       return {
-        text: isItemSlotIndex(focused)
-          ? 'empty slot — drag an item here to bind it'
-          : 'empty slot — drag a talent here from the talent panel',
+        text: `${lead}empty — drag a talent or an item here`,
         colour: PALETTE.GREY_HI,
       };
     case HotbarSlotKind.Item:
       return itemStrip(slot.name, slot.action);
     case HotbarSlotKind.Talent:
-      return { text: `${focused + 1}. ${slot.talent.name}`, colour: PALETTE.GOLD };
+      return { text: `${lead}${slot.talent.name}`, colour: PALETTE.GOLD };
   }
 }
 
@@ -1512,23 +1650,20 @@ export function drawHotbar(options: HotbarOptions): void {
 
   /**
    * ═══════════════════════════════════════════════════════════════════════════
-   * "IS THIS DRAG ONE THAT COULD LAND ON *THIS* SLOT" — PER SLOT, NOT PER BAR.
+   * ONE FLAG FOR THE WHOLE BAR AGAIN, AND THIS TIME IT IS THE HONEST ONE.
    * ═══════════════════════════════════════════════════════════════════════════
    *
-   * This was one flag for the whole bar: `isItemDrag(view.drag)`, which every
-   * slot then read. Correct while only items could be bound, because the only
-   * slots that could take a drop were the item ones and the talent slots were
-   * never empty — `frameIdFor` reads the flag ONLY in its `Empty` arm, so a
-   * bar-wide flag and a per-slot one gave the same picture.
+   * It was one flag (`isItemDrag`), then two resolved per slot: *"a single flag
+   * would light an empty TALENT slot while the player carries an ITEM,
+   * promising a drop that `hotbarDropTargetAt` will refuse in words."*
    *
-   * A talent slot can be empty now, and a talent drag can land on one. A single
-   * flag would light an empty TALENT slot while the player carries an ITEM,
-   * promising a drop that `hotbarDropTargetAt` will refuse in words — which is
-   * precisely the lie highlighting exists to prevent.
+   * There is no refusal left to promise. Every slot takes every bindable kind,
+   * so the per-slot resolution would now compute the same answer for all of
+   * them — and a `landsOn(index)` that ignores its argument is a control
+   * pretending to have a rule. `frameIdFor` reads it only in its `Empty` arm,
+   * which is where a drop actually changes the picture.
    */
-  const itemDrag = isItemDrag(view.drag);
-  const talentDrag = isTalentDrag(view.drag);
-  const landsOn = (index: number): boolean => (isItemSlotIndex(index) ? itemDrag : talentDrag);
+  const dragLands = isBindableDrag(view.drag);
 
   ctx.save();
   ctx.imageSmoothingEnabled = false;
@@ -1550,7 +1685,7 @@ export function drawHotbar(options: HotbarOptions): void {
     if (slot === undefined) continue;
     const at = slotRect(rect, i, count, style);
     if (scale === 1) {
-      paintSlot(ctx, sprites, slot, i, at, view.hovered === i, view.armed === i, landsOn(i));
+      paintSlot(ctx, sprites, slot, i, at, view.hovered === i, view.armed === i, dragLands);
       continue;
     }
     // A BIGGER ICON IS THE SAME SLOT DRAWN BIGGER, so every frame, caption and
@@ -1559,7 +1694,7 @@ export function drawHotbar(options: HotbarOptions): void {
     ctx.translate(at.x, at.y);
     ctx.scale(scale, scale);
     const unit = { x: 0, y: 0, w: SLOT_PX, h: SLOT_PX };
-    paintSlot(ctx, sprites, slot, i, unit, view.hovered === i, view.armed === i, landsOn(i));
+    paintSlot(ctx, sprites, slot, i, unit, view.hovered === i, view.armed === i, dragLands);
     ctx.restore();
   }
 
@@ -1831,8 +1966,17 @@ export function hotbarCogAt(rect: PanelRect | null, px: number, py: number): boo
   return px >= cog.x && px < cog.x + cog.w && py >= cog.y && py < cog.y + cog.h;
 }
 
-/** The popover's rows, in the order a player reads them. */
+/**
+ * The popover's rows, in the order a player reads them.
+ *
+ * SLOTS IS FIRST because it is the one that changes what the bar HOLDS; the
+ * other three change how it looks. It was the request that opened this pass —
+ * *"i want the cogwheel settings button for the action bar to allow you to add
+ * more slots to expand"* — and a player who came here for it should not have to
+ * read past two appearance settings to find it.
+ */
 const SETTING_ROWS = [
+  { key: 'slots', label: 'SLOTS' },
   { key: 'vertical', label: 'LAYOUT' },
   { key: 'icon', label: 'SIZE' },
   { key: 'opacity', label: 'FADE' },
@@ -1865,6 +2009,12 @@ export function snapHotbarStyle(style: HotbarStyle): HotbarStyle {
     vertical: style.vertical,
     icon: ICON_STEPS[nearestIndex(ICON_STEPS, style.icon)] ?? ICON_DRAW_PX,
     opacity: FADE_STEPS[nearestIndex(FADE_STEPS, style.opacity)] ?? 100,
+    // THE COUNT IS CLAMPED, NOT SNAPPED. It has no steps — every whole number
+    // from one to the pool is a bar somebody might want — so what a stored
+    // value needs is a bound, and it needs one for the same reason the others
+    // need a step: a file written by a build with a bigger pool would otherwise
+    // hand this build a count it has no key for.
+    slots: Math.max(1, Math.min(HOTBAR_SLOT_POOL, Math.round(style.slots))),
   };
 }
 
@@ -1881,6 +2031,14 @@ export function stepHotbarStyle(
       return { ...style, icon: stepOf(ICON_STEPS, style.icon, by) };
     case 'opacity':
       return { ...style, opacity: stepOf(FADE_STEPS, style.opacity, by) };
+    // ONE SLOT A PRESS, and it stops at both ends like every other row here —
+    // `drawHotbarSettings` draws a step that changes nothing dead, so the
+    // player can see the bar is already as wide as it goes.
+    case 'slots':
+      return {
+        ...style,
+        slots: Math.max(1, Math.min(HOTBAR_SLOT_POOL, style.slots + by)),
+      };
   }
 }
 
@@ -1893,6 +2051,11 @@ export function hotbarSettingText(style: HotbarStyle, key: HotbarSettingKey): st
       return ICON_NAMES[nearestIndex(ICON_STEPS, style.icon)] ?? `${String(style.icon)}px`;
     case 'opacity':
       return `${String(style.opacity)}%`;
+    // THE NUMBER ITSELF. A bar of thirteen says `13` — there is no name for it
+    // the way `Large` names an icon size, and inventing one ("Wide") would hide
+    // the only fact a player pressing `+` is watching.
+    case 'slots':
+      return `${String(style.slots)}`;
   }
 }
 
