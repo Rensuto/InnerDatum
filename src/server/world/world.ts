@@ -563,6 +563,24 @@ export type World = {
   /** Put a body on a named tile. False if it is solid or taken. See the impl. */
   placeAt(id: string, tile: TileXY): boolean;
   /**
+   * ══════════════════════════════════════════════════════════════════════════════
+   * WHERE A SECOND BODY GOES WHEN THE DOORSTEP IS TAKEN.
+   * ══════════════════════════════════════════════════════════════════════════════
+   *
+   * The tile itself when it is free, otherwise the nearest one a body could
+   * WALK to — breadth-first, eight ways, no draw, so two machines answer the
+   * same. It is `findSpawn`'s own overflow search, named on the interface
+   * because a caller outside this file needs the same question answered: a
+   * recall lands a whole party on one doorstep, and the members who lose the
+   * race must stand next to it rather than wherever the level's spawn happens
+   * to be. Upstream shoves the body already standing there
+   * (`tome/class/Game.lua:1198-1203`, `util.findFreeGrid`); the effect is the
+   * same and this way nobody is moved who did not ask to be.
+   *
+   * Undefined when nothing within `SPAWN_SEARCH_RADIUS` steps is free.
+   */
+  nearestSeat(from: TileXY): TileXY | undefined;
+  /**
    * Which drawn room contains this tile, or undefined. Upstream's
    * `map.attrs(x, y, "vault_id")` — see the implementation for why footprints
    * rather than a per-tile layer, and why it must not reach the client.
@@ -1695,6 +1713,7 @@ export function createWorld(
     reclothePlayer,
     addMonster,
     placeAt,
+    nearestSeat: nearestReachableFreeTile,
     vaultAt,
     placeAtSpawn,
     removePlayer: removeActor,

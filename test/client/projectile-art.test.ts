@@ -14,6 +14,8 @@ import {
   projectileSpriteId,
   ZONE_WASH_INK,
 } from '../../src/client/render/canvas.ts';
+import { MONSTER_TEMPLATES, monsterById, monsterInit } from '../../src/server/content/monsters.ts';
+import { DEFAULT_PROJECTILE_DAMAGE_TYPE } from '../../src/server/engine/projectile.ts';
 import { DAMAGE_TYPES, DamageType } from '../../src/shared/damagetype.ts';
 import { ActorRank } from '../../src/shared/protocol.ts';
 import { TILE_PX } from '../../src/shared/version.ts';
@@ -492,5 +494,105 @@ describe('a clone with no art still shows the shot, and says what it is', () => 
     expect(withOne.ops.filter((op) => op.op === 'path').length).toBeGreaterThan(
       empty.ops.filter((op) => op.op === 'path').length,
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 5. THE ROSTER — the four creatures that fire one, and what each throws
+// ---------------------------------------------------------------------------
+
+describe('every shooter on the roster names its element', () => {
+  /**
+   * ══════════════════════════════════════════════════════════════════════════
+   * THREE OF THE FOUR DECLARED NOTHING, AND THE FALLBACK IS SILENT.
+   * ══════════════════════════════════════════════════════════════════════════
+   *
+   * The cases above prove that every ELEMENT has a picture. They cannot see the
+   * failure that was actually shipped, which is a creature that never names one:
+   * `fire` (engine/scheduler.ts) reads `sheet?.damageType ??
+   * DEFAULT_PROJECTILE_DAMAGE_TYPE`, so a template with no element does not
+   * fail — it quietly throws a physical bolt. The Index Cairn, the High
+   * Inquisitor and the Watcher were all in that state: a stone lit violet, a
+   * darkness caster whose own docblock says three times that it throws the
+   * wraith's dark orb, and an eleven-tile boss that stuns you by looking at you
+   * — all three firing the steel dart.
+   *
+   * THE TABLE IS CONTENT, not a rule to be relaxed: an archer that really does
+   * fire a physical bolt belongs in it as `Physical`, which is one line here.
+   */
+  const SHOOTERS: readonly (readonly [string, DamageType])[] = [
+    ['index_wraith', DamageType.Darkness],
+    ['index_cairn', DamageType.Mind],
+    ['index_inquisitor', DamageType.Darkness],
+    ['index_watcher', DamageType.Mind],
+  ];
+
+  it('is every creature that can fire one, in roster order', () => {
+    // `damageMin` IS THE PREDICATE, and content/monsters.ts says why in as many
+    // words: absent is not "3-6", it is *"this creature never reaches `fire`"*.
+    // Written this way so a fifth shooter lands in this table rather than
+    // shipping whatever the default happens to be.
+    expect(MONSTER_TEMPLATES.filter((t) => t.damageMin !== undefined).map((t) => t.id)).toEqual(
+      SHOOTERS.map(([id]) => id),
+    );
+  });
+
+  /**
+   * ═══ ASKED OF THE BODY THAT FIRES, NOT OF THE TEMPLATE IT WAS CUT FROM ═══
+   *
+   * `fire` reads `sheet?.damageType` off the LIVE actor's combat sheet
+   * (engine/scheduler.ts), and the sheet is what `monsterInit` builds. Reading
+   * `monsterById(id).combat` instead asks the authored half of a two-step join
+   * and cannot see the step in between drop the field — which is the whole
+   * failure this block exists for. One `monsterInit` call closes it, and costs
+   * nothing: the field is either carried across or it is not.
+   */
+  const sheetOf = (id: string) => {
+    const template = MONSTER_TEMPLATES.find((t) => t.id === id);
+    if (template === undefined) throw new Error(`no such creature: ${id}`);
+    return monsterInit(template, { x: 5, y: 5 }).combat;
+  };
+
+  it('declares an element rather than falling through to the default', () => {
+    for (const [id] of SHOOTERS) {
+      expect(sheetOf(id)?.damageType, `${id} declares no element`).toBeDefined();
+      // AND THE DEFAULT IS WHAT "falling through" MEANS, named rather than
+      // implied: a creature that resolved to it by accident would be
+      // indistinguishable from one that chose it.
+      expect(
+        sheetOf(id)?.damageType ?? DEFAULT_PROJECTILE_DAMAGE_TYPE,
+        `${id} throws the steel dart`,
+      ).not.toBe(DEFAULT_PROJECTILE_DAMAGE_TYPE);
+    }
+  });
+
+  it('throws what its own fiction says it throws', () => {
+    // Two families, two elements: the wraith and the Inquisitor share the dark
+    // orb on purpose (the Inquisitor *"is not a bigger gun, it is the same gun
+    // you cannot walk away from"*), and the Cairn and the Watcher are one stone
+    // family — the same base, the same stat line, the same speed.
+    for (const [id, type] of SHOOTERS) {
+      expect(sheetOf(id)?.damageType, id).toBe(type);
+      // THE AUTHORED HALF TOO, so a failure says WHICH of the two steps lost it.
+      expect(monsterById(id)?.combat.damageType, `${id}, as authored`).toBe(type);
+    }
+  });
+
+  it('draws each one with the bolt for its element', () => {
+    const drawn = SHOOTERS.map(([id]) =>
+      projectileSpriteId({ damageType: sheetOf(id)?.damageType }),
+    );
+    // THE WHOLE CHAIN IN ONE LINE: the template's field, `PROJECTILE_SPRITE`,
+    // and the ids the commission carries. A template that lost its element
+    // resolves to `ui_fx_bolt_physical` here and this fails by NAME rather than
+    // by a missing picture, which is how the bug was invisible the first time.
+    expect(drawn).toEqual([
+      'ui_fx_bolt_darkness',
+      'ui_fx_bolt_mind',
+      'ui_fx_bolt_darkness',
+      'ui_fx_bolt_mind',
+    ]);
+    for (const id of drawn)
+      expect(COMMISSION, `${id ?? ''} is in no commission entry`).toContain(id ?? '');
   });
 });

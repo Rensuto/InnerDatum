@@ -256,6 +256,26 @@ export const EffectId = {
    * shipped map names (the Weir). `ZONE_AURAS` says where the rest are.
    */
   ZoneAuraUnderwater: 'effect:zone_aura_underwater',
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * COMING UNDONE — the Knot of Elsewhere's wind-up. EFF_RECALL,
+   * timed_effects/other.lua:3331-3355.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * THE FIRST EFFECT IN THIS GAME WHOSE ONLY JOB IS TO END. It has no
+   * `onTimeout`, contributes nothing, resists nothing and takes nothing — the
+   * badge counts down and the EXPIRY is the whole mechanic
+   * (`:3343-3350`: `deactivate` tests `eff.dur <= 0` and yanks the body out of
+   * the level). Upstream's is identical in that respect and for the same
+   * reason: forty turns in which nothing happens is what makes an escape a
+   * decision instead of a button.
+   *
+   * WHICH IS ALSO WHY `EffectLogLine.expired` had to exist first. Every other
+   * effect here is indifferent to HOW it left; this one does one thing on
+   * expiry and the opposite thing on cancellation, so a reader that could not
+   * tell them apart would teleport somebody who called the recall off.
+   */
+  Elsewhere: 'effect:elsewhere',
 } as const;
 export type EffectId = (typeof EffectId)[keyof typeof EffectId];
 
@@ -2289,6 +2309,112 @@ export const ZONE_AURA_UNDERWATER: EffectDef = zoneAura({
  */
 export const ZONE_AURAS: readonly EffectDef[] = Object.freeze([ZONE_AURA_UNDERWATER]);
 
+// ---------------------------------------------------------------------------
+// COMING UNDONE — EFF_RECALL, timed_effects/other.lua:3331-3355
+// ---------------------------------------------------------------------------
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE WIND-UP. It counts, and then something else happens.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * ```lua
+ * newEffect{
+ *   name = "RECALL", desc = "Recalling",
+ *   type = "magical", subtype = { unknown=true }, status = "beneficial",
+ *   cancel_on_level_change = true, parameters = { },
+ *   activate = function(self, eff) eff.leveid = ... end,
+ *   deactivate = function(self, eff)
+ *     if (... and eff.dur <= 0) then ... "You are yanked out of this place!" ...
+ *     else game.logPlayer(self, "Space restabilizes around you.") end
+ * ```
+ *
+ * ═══ `type = "magical"`, NOT "other", AND THE DESIGN NOTE HAD IT WRONG ═══
+ * A written-up design pass for this feature said *"type other / typeOther"*.
+ * `other.lua:3335` is `type = "magical"`. When the notes and the Lua disagree,
+ * the Lua wins — CLAUDE.md says so, and this is the fourth time. It costs
+ * nothing either way (a beneficial effect rolls no save: `canBe` skips the
+ * immunity checks for one, and `creditForLanding` refuses to pay for one), and
+ * that is exactly why it would never have been noticed.
+ *
+ * ═══ NO `onTimeout`, DELIBERATELY ═══
+ * Upstream's has none either. Nothing happens on any of the twenty turns, so
+ * this never touches the hot path: `timedEffects` walks it, decrements it and
+ * moves on. The badge on the party panel IS the feedback, and `describe` puts
+ * the count in the sentence so the card says how long is left.
+ *
+ * ═══ AND IT IS BENEFICIAL, WHICH TWO OTHER RULES READ ═══
+ * `:3337`, `status = "beneficial"`. `restCheck`'s `afflicted` clause therefore
+ * does NOT see it — waiting one out is what `RestView.recalling` is for, which
+ * is why upstream needs both clauses and so do we — and `dispel` will not take
+ * it off, which is correct: nothing in this game should be able to strip
+ * somebody's way home.
+ *
+ * ═══ WHAT IS NOT HERE, AND WHERE IT LIVES INSTEAD ═══
+ * `cancel_on_level_change` (`:3338`) is a per-effect flag upstream because
+ * `Player:onEnterLevel` walks the table looking for it (Player.lua:173-181).
+ * This codebase has no such sweep — effects are process-wide and keyed by actor
+ * id, so they survive a realm change by construction — and the cancellation is
+ * an explicit `removeEffect` at the two crossings in net/gateway.ts, which is
+ * also where the sentence it prints can be written. `eff.leveid` (`:3341`,
+ * checked at `:3346`) is the same story: the realm the wind-up started in is
+ * the gateway's ledger, because this module may not know what a realm is.
+ */
+export const ELSEWHERE: EffectDef = Object.freeze({
+  id: EffectId.Elsewhere,
+  badge: 'El',
+  // `desc = "Recalling"` (:3333) is upstream's word for its own artefact. Ours
+  // is a knot of something that was never made, and the register is the reason
+  // the item is not a rod: void-eldritch, not filing.
+  displayName: 'Coming Undone',
+  description: 'The space around you is coming undone. When it finishes, it takes you with it.',
+  /**
+   * THE SAME SENTENCE WITH THE COUNT IN IT. `EffectView.turns` already carries
+   * the number to the badge, and the card is where a player reads what the
+   * number MEANS — see `EffectDef.describe`, and Infusion Saturation, which is
+   * the precedent for composing the sentence from the instance.
+   */
+  describe: (instance: EffectInstance): string =>
+    instance.dur <= 1
+      ? 'The space around you is coming undone. It finishes this turn.'
+      : `The space around you is coming undone. ${String(instance.dur)} turns until it takes you with it.`,
+  // :3335 — `type = "magical"`.
+  type: SaveChannel.Magical,
+  // :3337.
+  status: EffectStatus.Beneficial,
+  /**
+   * A SECOND PULL DOES NOT LAND A SECOND ONE — it CANCELS
+   * (quest-artifacts.lua:329-333, the first clause of the rod's `use`). The
+   * gateway refuses to reach `setEffect` at all while one is live, so this mode
+   * is the answer to a question nothing asks; `Refresh` is what upstream's
+   * declaration amounts to (no `on_merge`) and is the honest value.
+   */
+  stackMode: StackMode.Refresh,
+  // :3336 — `subtype = { unknown=true }`.
+  subtypes: ['unknown'],
+  // No `decrease` upstream, so the default: one turn per game turn.
+  decrease: 1,
+  icon: 'icon_status_elsewhere',
+  // Player.lua:1066-1077 — `wait_recall`. THIS is the flag that makes twenty
+  // turns playable; see `EffectDef.restWaitsFor` and `RestView.recalling`.
+  restWaitsFor: true,
+  /**
+   * NOTHING ON `activate` OR `deactivate`, AND THAT IS NOT AN OMISSION.
+   *
+   * Upstream's `activate` writes `eff.leveid` and its `deactivate` writes the
+   * log line and calls `changeLevel`. Neither is available from here: this
+   * module is content, it has no world, no realm registry and no socket, and
+   * `EffectCtx.log` carries a structured `EffectLogLine` rather than prose.
+   *
+   * So the three things upstream does in this block are done at the one place
+   * that can do them — net/gateway.ts: the realm is remembered in the recall
+   * ledger when the Knot is pulled, the crossing is `yankOut`, and both
+   * sentences (*"You are yanked out of this place!"* and *"Space restabilizes
+   * around you."*, `:3347` and `:3352`) are Record-lane lines written there.
+   * Stated here so the next reader does not go looking for a hook.
+   */
+} satisfies EffectDef);
+
 export const MVP_EFFECTS: readonly EffectDef[] = Object.freeze([
   STUNNED,
   BLEEDING,
@@ -2316,6 +2442,10 @@ export const MVP_EFFECTS: readonly EffectDef[] = Object.freeze([
   OUT_OF_PHASE,
   SUFFOCATING,
   ...ZONE_AURAS,
+  // APPENDED, which the note on the roster pin in test/server/effects.test.ts
+  // calls the free operation: a client holding an older badge atlas keeps every
+  // index it already has.
+  ELSEWHERE,
 ]);
 
 /** Effect ids, for a content-completeness check and for the client's badge atlas. */

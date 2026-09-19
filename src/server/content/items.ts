@@ -664,10 +664,45 @@ export type Item = {
    * cannot say this, because the tier is what the thing is WORTH to a player,
    * not whether it is for sale.
    *
-   * THE `on_drop` REFUSAL HAS NO PORT YET: dropping is the gateway's, and this
-   * lane does not own it. See the report.
+   * ═══ AND A FOURTH DOOR, WHICH WAS OPEN FOR ONE COMMIT ═══
+   * `refuseToPartWith` (src/server/net/gateway.ts) answers `drop` and `give`
+   * with upstream's own sentence — *"You cannot bring yourself to drop the
+   * %s"*, quest-artifacts.lua:357-362. It is here rather than on the item
+   * because our verbs live in the net layer, and it covers BOTH verbs because
+   * `give` is a way to lose a unique that upstream does not have: one player
+   * hands it to another, and the latch that already fired never fires again.
+   *
+   * While that was missing this field's own docblock said so and
+   * `spillOrderOf`'s said the opposite — *"it is unsellable and undroppable"* —
+   * and the second one was the load-bearing half of the once-per-character
+   * rule. Two docblocks disagreeing about a rule is the rule not existing.
    */
   readonly quest?: boolean;
+  /**
+   * ════════════════════════════════════════════════════════════════════════════
+   * A CHARACTER IS HANDED ONE OF THESE ONCE, EVER — `allowRodRecall`.
+   * ════════════════════════════════════════════════════════════════════════════
+   *
+   * `NPC:onDie` (tome/class/NPC.lua:393-406) drops the Rod of Recall from the
+   * first body of rank 4 or over a character kills, and its last act is
+   * `game.state:allowRodRecall(false)` at :406 — a one-shot latch on that
+   * character's own game state (class/GameState.lua:93-96). The second boss
+   * drops nothing and so does the hundredth.
+   *
+   * SEPARATE FROM `quest` ABOVE, because they answer different questions and
+   * the answers genuinely differ: `quest` says an object is outside the economy
+   * (no price, no shelf, no drop pool), and a future quest token that must be
+   * obtainable on every visit would want `quest` and not this. This one says
+   * HOW MANY TIMES A GIVEN CHARACTER MAY BE HANDED IT, which is a rule about
+   * the character rather than about the object's place in the world.
+   *
+   * READ BY `spillOrderOf` (src/server/turn-engine.ts), the one implementation
+   * of the engine's loot seam, against the KILLER'S `kitGranted` — the
+   * per-character "already handed over" ledger the brass lantern has used since
+   * birth kits shipped. The whole rule, its party consequences and what a
+   * character who lost theirs gets are written out there.
+   */
+  readonly oncePerCharacter?: boolean;
   /**
    * ═══════════════════════════════════════════════════════════════════════════
    * WHAT SWINGING IT DOES — ToME's object `combat` table, and only a weapon
@@ -741,22 +776,71 @@ export type Item = {
  * WHAT A CONSUMABLE DOES WHEN IT IS USED.
  * ═══════════════════════════════════════════════════════════════════════════
  *
- * ONE KIND FOR NOW, and the shape is a discriminated union rather than a bare
- * `heal: number` so the second kind is an addition instead of a rewrite. ToME's
+ * TWO KINDS, and the shape was a discriminated union from the first one for
+ * exactly this: *"the second kind is an addition instead of a rewrite."* ToME's
  * `inscription_kind` is the same idea — "heal", "wild", "shield" — with the
  * numbers hanging off `inscription_data`.
+ *
+ * ═══ AND THE UNION IS NOW A REAL ONE, WHICH IS THE CHANGE THAT MATTERS ═══
+ * `ItemUse` was `{ kind: ItemUseKind; amount: number }` — a union in its
+ * DISCRIMINANT and a single record in its fields, so a second kind would have
+ * inherited `amount` and meant nothing by it. Split into one member per kind,
+ * so the compiler carries the discriminant to every reader: `useText` in
+ * view/projector.ts becomes non-exhaustive the moment a third kind is added,
+ * and `handleUse` cannot read a heal's number off a recall.
  */
 export const ItemUseKind = {
   /** Restore hit points, now, to the drinker. Never to anybody else. */
   Heal: 'heal',
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * PULL THE PARTY OUT OF THIS PLACE — after a wind-up, never at once.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Ported from the Rod of Recall's `use_power`
+   * (data/general/objects/quest-artifacts.lua:325-354): it applies a timed
+   * effect and returns. The effect counts, and its EXPIRY does the crossing
+   * (data/timed_effects/other.lua:3343-3350). Nothing happens on the turn you
+   * press it, and that is the whole design: an escape that is instant is an
+   * escape with no decision in it.
+   */
+  Elsewhere: 'elsewhere',
 } as const;
 export type ItemUseKind = (typeof ItemUseKind)[keyof typeof ItemUseKind];
 
-export type ItemUse = {
-  readonly kind: ItemUseKind;
+/** Restore hit points to the drinker. `DRAUGHT_OF_MENDING` is the only one. */
+export type ItemHealUse = {
+  readonly kind: typeof ItemUseKind.Heal;
   /** Hit points restored. Flat: see the note on `DRAUGHT_OF_MENDING`. */
   readonly amount: number;
 };
+
+/** Start a recall. See `ItemUseKind.Elsewhere` and `KNOT_OF_ELSEWHERE_ID`. */
+export type ItemElsewhereUse = {
+  readonly kind: typeof ItemUseKind.Elsewhere;
+  /**
+   * GAME TURNS OF WIND-UP. Upstream's is 40 (`quest-artifacts.lua:326`, `:336`)
+   * and this codebase's conversion halves it: `tomeCooldownToTurns(40)` is
+   * `ceil(40 / TOME_ACTIONS_PER_TURN)` = 20 (engine/talents.ts), the same rule
+   * `phase_door_rune.ts` applies to a DURATION and not only to a cooldown.
+   */
+  readonly windUpTurns: number;
+  /**
+   * GAME TURNS BEFORE IT WILL TAKE HOLD AGAIN. Upstream rate-limits with charge
+   * rather than cooldown — `max_power = 400, power_regen = 1` and a use costing
+   * 202 (`:325-326`) is 202 turns to recharge from empty — but its own
+   * alternative is right there: `Object:useObject` writes an object's cooldown
+   * into the ACTOR's talent-cooldown table (class/Object.lua:214-222), which is
+   * a table we have, persist and carry across realms.
+   *
+   * SO IT IS A RATE LIMIT, NOT A STOCK, and the Knot is never consumed. A
+   * consumable escape hatch is one a player hoards and never presses, and a
+   * spent one is a party with no way home.
+   */
+  readonly cooldownTurns: number;
+};
+
+export type ItemUse = ItemHealUse | ItemElsewhereUse;
 
 // ---------------------------------------------------------------------------
 // The verified icon set
@@ -1672,22 +1756,21 @@ const LIGHT_SOURCES: readonly Item[] = [
  * campaign, once, latched by `GameState:allowRodRecall` (class/GameState.lua:93-96).
  * The warden is that body here.
  *
- * ═══ AND THE LATCH IS NOT PORTED, WHICH THIS DOCBLOCK USED TO ARGUE AWAY ═══
- * It said: *"every character in the game meets one boss on the way out of the
- * place it was born, and it is the same one"* — which was true while the
- * Undermost was `noWayBack` and on no map. It is a marked, walkable,
- * re-populating destination NOW (item 7, the same changeset), `lingerMs` is the
- * ordinary five minutes, and `realm-wipe.test.ts` puts the warden back after a
- * wipe. MEASURED: three visits, three instances, three wardens, three Knots.
- * Upstream's uniqueness is `allowRodRecall`, a ONE-SHOT PER CHARACTER, and
- * nothing here carries it.
+ * ═══ AND THE LATCH IS PORTED NOW, WHICH THIS DOCBLOCK USED TO DEFER ═══
+ * It said the latch was *"a per-character flag … read on the drop path"* that
+ * belonged to a lane this one did not own, and that without it the Knot was *"a
+ * five-minute farm from the town gate"* the day the button landed. The button
+ * landed, so it shipped: `Item.oncePerCharacter` above, read by `spillOrderOf`
+ * (src/server/turn-engine.ts) against the killer's `kitGranted`. The first
+ * warden a character kills hands them one; no later warden ever does.
  *
- * It is inert today because the Knot has no `use` and cannot be sold — see
- * below. It stops being inert the day the button lands, and on that day this is
- * a five-minute farm from the town gate. The latch is a per-character flag, so
- * it belongs beside `filed` in `CharacterFile` and is read on the drop path;
- * both of those are `persist/` and `gateway.ts`, which this lane does not own.
- * Written down here rather than left as a premise the next lane inherits.
+ * The reason it was needed is still true and is worth keeping: this docblock
+ * once argued the farm away with *"every character in the game meets one boss
+ * on the way out of the place it was born, and it is the same one"*, which held
+ * while the Undermost was `noWayBack` and on no map. It is a marked, walkable,
+ * re-populating destination now, `lingerMs` is the ordinary five minutes, and
+ * `realm-wipe.test.ts` puts the warden back after a wipe. MEASURED: three
+ * visits, three instances, three wardens, three Knots.
  *
  * ═══ THE NAME IS OURS, AND THE REGISTER IS THE REASON ═══
  * The rest of this world is bureaucratic on purpose — the Watchman, the Case
@@ -1695,19 +1778,47 @@ const LIGHT_SOURCES: readonly Item[] = [
  * or a transfer order, it is a thing that was never made. Void-eldritch, not
  * filing.
  *
- * ═══ WHAT IT IS NOT YET, STATED HERE RATHER THAN DISCOVERED ═══
- * IT CARRIES NO `use`. Pulling it is a twenty-turn wind-up
- * (`quest-artifacts.lua:326`, `:336` — forty upstream turns, which is twenty of
- * ours through `tomeCooldownToTurns`), an effect that counts down and then
- * yanks the party out to the overworld cell they walked in from
- * (data/timed_effects/other.lua:3331-3355). Every one of those pieces lives on
- * the far side of `gateway.ts` — a new `ItemUseKind`, a new `EffectDef`, the
- * rest clause at `Player.lua:1066-1077`, and the crossing itself — and this lane
- * does not own that file. So the object, the drop and the rules that keep it out
- * of the economy are here, and the button is reported rather than half-built.
- * An item with a `use` nothing implements would be worse than one without.
+ * ═══ AND IT CARRIES ITS `use` NOW, WHICH THIS DOCBLOCK USED TO DEFER ═══
+ * It said *"IT CARRIES NO `use` ... the button is reported rather than
+ * half-built"*, and that was the right call for a lane that did not own
+ * `gateway.ts`. It shipped an item on the action bar whose slot captioned USE,
+ * whose tooltip said *"press to use it"*, and whose press was answered *"that
+ * is not something you can use"* — reported from play, ten times in a row,
+ * because the player kept trying. A HUD that offers an action the server
+ * refuses is worse than no button. The whole path is built: this `use`, the
+ * `ItemUseKind.Elsewhere` branch in `handleUse`, `ELSEWHERE` in
+ * content/effects.ts, `yankOut` and `crossOut` in net/gateway.ts, and the rest
+ * clause at `Player.lua:1066-1077` in shared/rest.ts.
  */
 export const KNOT_OF_ELSEWHERE_ID = 'item_knot_of_elsewhere';
+
+/**
+ * TWENTY GAME TURNS OF WIND-UP — upstream's forty through this codebase's own
+ * conversion.
+ *
+ * `quest-artifacts.lua:326` and `:336` both say 40, in ToME turns.
+ * `tomeCooldownToTurns(40)` is `ceil(40 / TOME_ACTIONS_PER_TURN)` = 20
+ * (engine/talents.ts), and `talents/phase_door_rune.ts` already applies that
+ * rule to a DURATION rather than only to a cooldown.
+ *
+ * WRITTEN OUT RATHER THAN COMPUTED, because this file imports TYPES ONLY (see
+ * the header: a runtime edge into the engine closes a cycle in a project with
+ * no build step). test/server/elsewhere.test.ts imports both sides and pins the
+ * arithmetic, which is the place that may.
+ */
+export const KNOT_WIND_UP_TURNS = 20;
+
+/**
+ * THIRTY GAME TURNS BEFORE IT WILL TAKE HOLD AGAIN — `MAX_COOLDOWN_TURNS`
+ * (engine/talents.ts), the longest cooldown anything in this game carries.
+ *
+ * One escape per expedition, and never the reason a party dies. Upstream's
+ * equivalent is longer and is charge rather than cooldown (`max_power = 400`,
+ * `power_regen = 1`, a use costing 202 — `quest-artifacts.lua:325-326`), so
+ * this is a rate limit in our units rather than a port of a number. Pinned
+ * against the constant in the same test, for the same reason as above.
+ */
+export const KNOT_COOLDOWN_TURNS = 30;
 
 const QUEST_ARTEFACTS: readonly Item[] = [
   {
@@ -1721,6 +1832,17 @@ const QUEST_ARTEFACTS: readonly Item[] = [
     tier: 'rare',
     wielder: {},
     quest: true,
+    // AND ONE PER CHARACTER, FOR EVER — `allowRodRecall`. See the field, and
+    // `spillOrderOf` (turn-engine.ts) for the rule it is read by.
+    oncePerCharacter: true,
+    // AND IT IS NEVER SPENT. See `ItemElsewhereUse.cooldownTurns`: upstream's
+    // rod is a rate limit, not a stock, and a consumable way home is one a
+    // player hoards until the run they cannot afford to lose it on.
+    use: {
+      kind: ItemUseKind.Elsewhere,
+      windUpTurns: KNOT_WIND_UP_TURNS,
+      cooldownTurns: KNOT_COOLDOWN_TURNS,
+    },
   },
 ];
 

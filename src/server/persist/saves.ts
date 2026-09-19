@@ -553,11 +553,16 @@ export type CharacterFile = {
    */
   readonly carried?: readonly string[];
   /**
-   * THE BIRTH KIT ALREADY GIVEN, by item id — see the gateway's `grantBirthKit`.
+   * WHAT THIS CHARACTER HAS ALREADY BEEN HANDED, by item id — the birth kit
+   * (the gateway's `grantBirthKit`) and the Knot of Elsewhere, which the first
+   * warden a character kills hands over once (`spillOrderOf`, turn-engine.ts).
    *
    * OPTIONAL, AND ABSENT MEANS NOTHING GIVEN YET: every file written before the
-   * kit existed has been given nothing, so it gets the kit once on its next join.
-   * `SCHEMA_VERSION` stays 1 for the reason `carried` gives.
+   * kit existed has been given nothing, so it gets the kit once on its next join
+   * — and every file written before the Knot's latch existed has not been given
+   * a Knot, which is the answer that makes an old save load correctly rather
+   * than the answer that needs a migration. `SCHEMA_VERSION` stays 1 for the
+   * reason `carried` gives.
    */
   readonly kitGranted?: readonly string[];
   /**
@@ -1089,7 +1094,7 @@ export type CharacterInit = {
    */
   readonly carried?: readonly string[];
   readonly equipped?: Readonly<Record<string, string>>;
-  /** The birth kit already handed over, by item id. See `PlayerActor.kitGranted`. */
+  /** What this character has already been handed, by item id. See `PlayerActor.kitGranted`. */
   readonly kitGranted?: readonly string[];
   /**
    * THE KEYMAP, PASSED STRAIGHT THROUGH — INCLUDING THE ABSENCE, for the reason
@@ -1813,14 +1818,16 @@ const KEYBIND_PROBLEMS_PER_ACTION = 2;
  * applied to one more field.
  */
 /**
- * THE BIRTH KIT ALREADY GIVEN: item ids, kept whether or not this build still
- * knows the item, because the record is of a GIFT and not of a holding, and
- * dropping an id would hand the piece over again. Absent stays absent.
+ * WHAT HAS ALREADY BEEN HANDED OVER: item ids, kept whether or not this build
+ * still knows the item, because the record is of a GIFT and not of a holding,
+ * and dropping an id would hand the piece over again. Absent stays absent.
  */
 function parseKitGranted(value: unknown, problems: string[]): string[] | undefined {
   if (value === undefined || value === null) return undefined;
   if (!Array.isArray(value)) {
-    problems.push('kitGranted: not an array — dropped, so the birth kit is given again');
+    problems.push(
+      'kitGranted: not an array — dropped, so everything it recorded is handed over again',
+    );
     return undefined;
   }
   const out: string[] = [];
@@ -3602,7 +3609,7 @@ type Binding = {
    */
   readonly carried?: readonly string[];
   readonly equipped?: Readonly<Record<string, string>>;
-  /** The birth kit already handed over, by item id. See `PlayerActor.kitGranted`. */
+  /** What this character has already been handed, by item id. See `PlayerActor.kitGranted`. */
   readonly kitGranted?: readonly string[];
   /**
    * ═══ AND THE SAME FALLBACK ONE MORE TIME, FOR THE KEYMAP ═══

@@ -136,7 +136,10 @@ import type { OriginDef } from '../content/origins.ts';
  * an item id carries NOTHING on its own (slot, icon and wielder all live in the
  * catalogue), so a layer that has to validate one has to be able to ask.
  */
-import { BIRTH_KIT, SLOT_ORDER } from '../content/items.ts';
+import { BIRTH_KIT, ItemUseKind, KNOT_OF_ELSEWHERE_ID, SLOT_ORDER } from '../content/items.ts';
+// THE ONE STATUS THIS FILE NAMES, and it names it because it is the one status
+// whose EXPIRY this file has to act on. See `yankOut`.
+import { EffectId } from '../content/effects.ts';
 import { moneyAmountOf, moneyName } from '../content/money.ts';
 import { partyMaxLevel } from '../content/loot.ts';
 import { blurbFor } from '../content/places.ts';
@@ -181,7 +184,15 @@ import { resolveItem } from '../content/resolve.ts';
  * at the chooser owes no decision anybody may wait for, and `standingOrder` is
  * the field engine/barrier.ts:302-303 already reads to mean exactly that.
  */
-import { Faction, StandingOrder, incMoney, isHostile, isMonster } from '../engine/actor.ts';
+import {
+  Faction,
+  StandingOrder,
+  cooldownOf,
+  incMoney,
+  isHostile,
+  isMonster,
+  setCooldown,
+} from '../engine/actor.ts';
 /**
  * THE SINGLE WRITER OF `actor.combat`, IMPORTED RATHER THAN INJECTED, AND THE
  * ASYMMETRY WITH `attachClass` IS DELIBERATE.
@@ -205,9 +216,12 @@ import { Faction, StandingOrder, incMoney, isHostile, isMonster } from '../engin
  */
 import { combatArmor, stat as statValue } from '../engine/derived.ts';
 import {
+  SetEffectOutcome,
   boughtSheet,
   recomposeCombat,
+  removeEffect,
   restoreOnReentry,
+  setEffect,
   stripZoneEffects,
 } from '../engine/effects.ts';
 import { applyZoneEffectsIn } from '../world/zone-effects.ts';
@@ -365,7 +379,7 @@ import type {
   ViewerMsg,
 } from '../../shared/protocol.ts';
 import type { ClassDef } from '../content/classes.ts';
-import type { Slot } from '../content/items.ts';
+import type { Item, ItemElsewhereUse, Slot } from '../content/items.ts';
 import type { EngineActor, PlayerActor } from '../engine/actor.ts';
 import type { PartyState } from '../engine/party.ts';
 import type { AwayMember, PartyOffer, TalentBadgeSource, TurnState } from '../view/projector.ts';
@@ -1204,6 +1218,28 @@ export type PumpResult = {
   readonly displaced?: readonly string[];
   /**
    * ═══════════════════════════════════════════════════════════════════════════
+   * COUNTDOWNS THAT RAN OUT THIS PUMP — AND NOT THE ONES THAT WERE CANCELLED.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * The same shape and the same argument as `displaced` and `reaped` above:
+   * bookkeeping the caller needs and the wire does not. `effect_expired` is
+   * already on the wire and already means "the badge is gone", which is all a
+   * CLIENT can do with it — so the protocol does not move.
+   *
+   * ═══ WITHOUT THE DISTINCTION THIS FIELD WOULD BE A BUG, NOT A FEATURE ═══
+   * The wire event fires for a cancellation too. A reader that acted on it
+   * would pull somebody out of a delve for pressing the item a SECOND time to
+   * call the recall off — which is upstream's own cancel gesture
+   * (quest-artifacts.lua:329-333). `EffectLogLine.expired` is where that was
+   * taken apart; this is the far end of it, and `yankOut` is its one reader.
+   *
+   * OPTIONAL, like every structural member added after the fact: a hand-written
+   * test scheduler must not grow a field for one branch's benefit, and absent
+   * means "this engine does not report expiries" rather than "none happened".
+   */
+  readonly expired?: readonly { readonly id: string; readonly effectId: string }[];
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
    * MONSTERS THAT DIED IN THIS PUMP AND ARE STILL IN THE WORLD.
    * ═══════════════════════════════════════════════════════════════════════════
    *
@@ -1557,8 +1593,18 @@ export type TurnEngine = {
    *
    * It advances many game turns in one synchronous call. The caller broadcasts
    * ONCE afterwards; see `handleRest`.
+   *
+   * ═══ AND IT REPORTS WHAT RAN OUT WHILE IT RAN ═══
+   * A rest is N pumps and it consumes every `PumpResult` itself, so `expired` —
+   * the one member of a result this file has to ACT on rather than forward —
+   * would otherwise be invisible through this door. Resting is how a party
+   * sits through a twenty-turn wind-up (`RestView.recalling`), so losing it
+   * here means the countdown reaches zero and nothing happens. Optional, like
+   * every structural member added after the fact.
    */
-  rest(actorId: string): RestResult;
+  rest(actorId: string): RestResult & {
+    readonly expired?: readonly { readonly id: string; readonly effectId: string }[];
+  };
   /**
    * ═════════════════════════════════════════════════════════════════════════
    * "THIS PLAYER IS AT THE KEYBOARD." CLEARS STANDING BY AND NOTHING ELSE.
@@ -1877,7 +1923,7 @@ export type CharacterSnapshot = {
    * that filled these unconditionally would empty a returning player's bag the
    * first time a fixture snapshot was written.
    */
-  /** The birth kit already handed over, by item id. See `PlayerActor.kitGranted`. */
+  /** What this character has already been handed, by item id. See `PlayerActor.kitGranted`. */
   readonly kitGranted?: readonly string[];
   readonly carried?: readonly string[];
   /** Slot name -> item id. See `carried` above; the two travel together. */
@@ -2167,7 +2213,7 @@ export type CharacterRestore = {
    * `CharacterSnapshot.carried` for why that is a compile-time guarantee rather
    * than a convention.
    */
-  /** The birth kit already handed over, by item id. See `PlayerActor.kitGranted`. */
+  /** What this character has already been handed, by item id. See `PlayerActor.kitGranted`. */
   readonly kitGranted?: readonly string[];
   readonly carried?: readonly string[];
   /** Slot name -> item id, as the file holds it. Validated on the way onto the body. */
@@ -3062,6 +3108,20 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    * put the new connection's actor on Standing By.
    */
   const connByActor = new Map<string, string>();
+
+  /**
+   * THE LIVE SOCKET DRIVING A BODY, or `undefined` for a body nobody is at.
+   *
+   * TWO HOPS, AND THE SECOND IS THE ONE THAT MATTERS: `connByActor` survives a
+   * socket closing until the grace expires (`recallBody` clears it), so an
+   * entry here is not by itself a session. A body inside the disconnect grace
+   * resolves to `undefined` from the second lookup, which is the honest answer
+   * to "is there anybody to send a frame to".
+   */
+  const sessionOf = (actorId: string): Session | undefined => {
+    const conn = connByActor.get(actorId);
+    return conn === undefined ? undefined : sessions.get(conn);
+  };
 
   /** Actor id -> the timer that will recall its unattended body. */
   const graceTimers = new Map<string, ReturnType<typeof setTimeout>>();
@@ -4832,6 +4892,12 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       // broadcasts, exactly as `bellExpired()` does.
       still.engine.tide();
       pumpRealm(still);
+      // AND ANYTHING THAT RAN OUT ON THAT TICK. This was the one `pumpRealm`
+      // call in the file with no drain behind it — the other two are inside
+      // `pumpAndBroadcast` — so a wind-up started in a town while the party
+      // stood still reached zero here and then waited for somebody, anywhere,
+      // to press a key before the crossing happened. See `drainWindUps`.
+      drainWindUps();
       armTide(realmId);
     }, tideMs);
     timer.unref?.();
@@ -6475,6 +6541,27 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       app.log.warn({ gameTurn: result.turn.gameTurn }, 'pump exhausted its tick budget');
     }
 
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * WHOSE WIND-UP RAN OUT. COLLECTED HERE, ACTED ON AFTER THE PUMP.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * `PumpResult.expired` carries only the countdowns that reached zero, never
+     * the ones something took off — which is the distinction `yankOut` is
+     * standing on, because acting on a cancellation would pull out somebody who
+     * had just called the recall off.
+     *
+     * WHETHER ANYBODY PULLED IT is `yankOut`'s question and is asked there, once
+     * — an `EffectId.Elsewhere` that this file did not start (a console, a
+     * future talent) has no ledger entry and is inert. A `windUps.has` filter
+     * here as well was a third copy of one rule; mutating any single copy of it
+     * changed no behaviour, which is what redundancy looks like from the
+     * outside. `elsewhere.test.ts` pins the behaviour instead.
+     */
+    for (const note of result.expired ?? []) {
+      if (note.effectId === EffectId.Elsewhere) firedWindUps.push(note.id);
+    }
+
     // MEMORY FIRST, before any frame this pump sends, so every frame below is
     // built against what each player has now seen. See `rememberWhatPlayersSee`.
     rememberWhatPlayersSee(realm);
@@ -7061,9 +7148,14 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
   const pumpAndBroadcast = (only?: PumpTarget): void => {
     if (only !== undefined) {
       pumpRealm(only);
+      drainWindUps();
       return;
     }
     for (const realm of pumpTargets()) pumpRealm(realm);
+    // AND ANY COUNTDOWN THAT FINISHED DURING THAT, AFTER EVERY FRAME IS OUT.
+    // `handleMove`'s precedent, and re-entrant by construction — the crossing
+    // pumps both realms itself. See `drainWindUps`.
+    drainWindUps();
   };
 
   // -------------------------------------------------------------------------
@@ -8339,11 +8431,8 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    * connection table because `markersFor` is handed an actor id and the record
    * lives on the SESSION — see `Session.enteredFromRealm`.
    */
-  const enteredFromRealmOf = (actorId: string): string | null => {
-    const conn = connByActor.get(actorId);
-    const owner = conn === undefined ? undefined : sessions.get(conn);
-    return owner?.enteredFromRealm ?? null;
-  };
+  const enteredFromRealmOf = (actorId: string): string | null =>
+    sessionOf(actorId)?.enteredFromRealm ?? null;
 
   /**
    * ═════════════════════════════════════════════════════════════════════════
@@ -10658,6 +10747,39 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
      */
     to.maxHp = from.maxHp;
     to.hp = Math.max(1, Math.min(to.maxHp, from.hp));
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * AND WHETHER THEY ARE ON THEIR FEET, WHICH THIS LIST COULD NEVER FORGET
+     * UNTIL SOMETHING CROSSED A BODY THAT WAS NOT.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * A NO-OP FOR EVERY CALLER THAT EXISTED BEFORE THE KNOT. `leaveRealm` and
+     * `crossIntoRealm` both refuse a body that is not `alive` before they get
+     * here, so this branch was unreachable and the clamp above — deliberately
+     * `Math.max(1, ...)` — was the whole truth. The Knot of Elsewhere takes the
+     * party out of a floor INCLUDING anyone lying on it, which is the first time
+     * a downed body ever changes realm.
+     *
+     * ═══ WITHOUT IT, AN ESCAPE IS A FREE REVIVE ═══
+     * `addPlayer` builds a fresh body and a fresh body is standing up. So a
+     * downed friend carried out would have arrived alive at 1 hp, and the way to
+     * beat the five-turn countdown would be to pull the Knot — which is the
+     * Downed system deleted by a side effect of a door.
+     *
+     * ═══ THE COUNTDOWN ITSELF NEEDS NOTHING HERE ═══
+     * `DownedState` is process-wide and keyed by actor id exactly so that *"a
+     * five-turn countdown must follow a body across a boundary"*
+     * (world/realms.ts). It does. What does not follow is the two fields the
+     * survival module writes onto the ACTOR — `alive`/`hp` and the downed
+     * sprite (engine/downed.ts) — because the actor is a new object. The sprite
+     * is carried rather than re-derived, and `revive` puts the standing one back
+     * from `record.upSprite`, so the two stay agreed.
+     */
+    if (!from.alive) {
+      to.alive = false;
+      to.hp = 0;
+      to.sprite = from.sprite;
+    }
     // AIR IS A PROPERTY OF THE BODY, as upstream's actor object keeps it across a
     // zone change. Unclamped: `actBase` bounds it on the next base turn.
     to.air = from.air;
@@ -11040,106 +11162,66 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     );
   };
 
-  const leaveRealm = (session: Session, viaExit = false): boolean => {
-    const realms = opts.realms;
-    const actorId = session.actorId;
-    if (realms === undefined || actorId === null || session.realmId === null) return false;
-
-    const from = realms.get(session.realmId);
-    /**
-     * ═════════════════════════════════════════════════════════════════════════
-     * YOU MAY LEAVE ANY MAP YOU WALKED INTO. YOU MAY NOT LEAVE THE ONE YOU WOKE
-     * UP ON.
-     * ═════════════════════════════════════════════════════════════════════════
-     *
-     * THIS READ `from.kind === RealmKind.Overworld` AND IT WOULD HAVE STRANDED
-     * SOMEBODY PERMANENTLY. The rule it encoded — *"the overworld's edge is the
-     * edge of the world"* — is true of Alderbrook and is a statement about the
-     * ONE map that existed when it was written. A second landmass is an
-     * overworld too, so the first player to cross into the dark territory would
-     * have found the door refusing to open from the far side, with no verb in
-     * the protocol that could have brought them home. It is the fifth of the
-     * four second-landmass blockers, and the only one that ends somebody's
-     * character.
-     *
-     * The honest test is not what KIND of place this is, it is whether there is
-     * anywhere to go back TO. `Session.enteredFromRealm` is set only by
-     * `crossIntoRealm` when leaving an overworld, so:
-     *
-     *   Alderbrook — you woke up there, nothing recorded, refused. Unchanged.
-     *   The Redaction — you walked in from Alderbrook, so the way back is the
-     *     way you came, which is what `leaveRealm` already computes below.
-     *
-     * A body that arrives by reconnect rather than by walking has no record and
-     * is refused, which is the same conservative answer as before and the reason
-     * this is a `null` check rather than a kind check.
-     */
-    if (from === undefined) return false;
-    if (from.kind === RealmKind.Overworld && session.enteredFromRealm === null) return false;
-    // ═══ BOTH DIRECTIONS ARE A LEVEL CHANGE ═══ Upstream's `changeLevelCheck`
-    // guards the act rather than the direction, and the exploit uses both legs:
-    // in, kill, straight back out to a floor that regenerates.
-    {
-      const leaver = from.world.getActor(actorId);
-      if (leaver !== undefined && stairsShut(session, leaver, from.world)) return false;
-    }
-
-    const body = from.world.getActor(actorId);
-    if (body === undefined || body.kind !== ActorKind.Player || !body.alive) return false;
-
-    // ═══ A ZONE'S EXIT IS NOT A THRESHOLD ═══ It is a cell somewhere on the last
-    // floor, stepped onto on purpose, so none of the doorstep rules below apply.
-    if (!viaExit) {
-      const onThreshold = from.spawns.some((t) => t.x === body.x && t.y === body.y);
-      if (!onThreshold) {
-        // Stepped off the doorstep. From here, standing on it again means leaving.
-        session.exitArmed = true;
-        return false;
-      }
-      // On the threshold, but they have not left it since arriving — this is the
-      // shuffle across a six-tile spawn cluster, not a decision to go. See
-      // `Session.exitArmed`.
-      if (!session.exitArmed) return false;
-      // AND ON A FLOOR WITH NO WAY BACK, the threshold is only floor. See
-      // `SiteDef.noWayBack`.
-      if (hasNoWayBack(from)) return false;
-    }
-
-    /**
-     * BACK THE WAY YOU CAME IN, and `realms.overworld` only as the fallback.
-     *
-     * The fallback is not dead code: a body can be standing in a delve without
-     * this session having recorded an entry — a reconnect resolves into whatever
-     * realm holds the body, and `hello` does not replay the walk that put it
-     * there. Sending that player to the one overworld is the same answer this
-     * line has always given, and it is the right one while there is one map.
-     */
-    // ═══ ON A LOWER FLOOR THE THRESHOLD IS THE STAIR BACK UP ═══ Upstream's UP
-    // grid, "previous level", `change_level = -1`
-    // (data/general/grids/basic.lua:34-42), arriving on the floor above's stair
-    // down (`default_down`, class/Game.lua:1250). The party strength is read only
-    // if that floor was reaped and has to be built again.
-    const above =
-      !viaExit && from.kind === RealmKind.Inner && from.floor > 1 && from.siteId !== undefined
-        ? SITES.get(from.siteId)
-        : undefined;
-    const cameFrom =
-      session.enteredFromRealm === null ? undefined : realms.get(session.enteredFromRealm);
-    const to =
-      above !== undefined
-        ? realms.open(
-            above,
-            from.partyId ?? actorId,
-            { level: body.level, size: 1 },
-            undefined,
-            undefined,
-            from.floor - 1,
-          )
-        : cameFrom !== undefined && cameFrom.kind === RealmKind.Overworld
-          ? cameFrom
-          : realms.overworld;
+  /**
+   * ═════════════════════════════════════════════════════════════════════════
+   * A BODY LEAVES ONE REALM AND ARRIVES IN ANOTHER. THE ONLY WAY OUT.
+   * ═════════════════════════════════════════════════════════════════════════
+   *
+   * LIFTED VERBATIM OUT OF `leaveRealm`, which is where every line of it was
+   * written and argued. It is extracted for the reason `crossInto` and
+   * `crossIntoRealm` were split from each other: *"two crossing paths would be
+   * two places for a body to arrive without its coat."* The Knot of Elsewhere
+   * takes a party out of a floor without anybody walking to a door, and a
+   * hand-rolled second copy of this sequence is a bug waiting to be written —
+   * two of the frame calls below carry multi-paragraph essays about what broke
+   * when they were MISSING, and a second path would have started without them.
+   *
+   * ═══ WHAT VARIES BETWEEN THE TWO CALLERS, AND IT IS EXACTLY TWO THINGS ═══
+   * `leaveRealm` computed both from one local, `above`: the arrival tile is the
+   * floor-above's stair down when climbing and the recorded entry cell when
+   * going out, and the entry record is kept while you are still inside the
+   * zone. Neither is a fact this function can work out — `above` is a decision
+   * about stairs that only the walking path makes — so both are parameters and
+   * the decision stays with the caller that has it.
+   *
+   * ═══ IT DOES NOT ASK WHETHER THE BODY IS ALLOWED TO GO ═══
+   * The threshold rules, the kill lock, `noWayBack` and the overworld-edge
+   * refusal are all `leaveRealm`'s, and they stay there. Deliberately: a recall
+   * has its own refusals (they are answered when the Knot is PULLED, twenty
+   * turns before this runs) and re-running the walker's would refuse a crossing
+   * that has already been paid for. What this function does is move a body
+   * correctly, once the decision has been taken.
+   *
+   * ═══ AND IT CARRIES A BODY THAT IS ON THE FLOOR ═══
+   * `leaveRealm` refuses a downed body outright, so until now nothing ever
+   * crossed one. `carryAcross` keeps `alive === false` and the Downed table is
+   * process-wide precisely so *"a five-turn countdown must follow a body across
+   * a boundary"* (world/realms.ts) — which is what lets the Knot take an
+   * unconscious friend out with the party instead of leaving them behind.
+   *
+   * @param back where to put the body down, or null for wherever `addPlayer` put it
+   * @param keepEntry keep `session.enteredFrom` — true only when still inside the zone
+   * @param why one word for the log, so "I was suddenly somewhere else" is answerable
+   */
+  const crossOut = (
+    session: Session,
+    actorId: string,
+    body: PlayerActor,
+    from: Realm,
+    to: Realm,
+    back: TileXY | null,
+    keepEntry: boolean,
+    why: string,
+  ): void => {
     // ONE-WAY, AND ONLY FOR AN AMBUSH. A delve stays open behind you.
     if (from.lingerMs === 0) from.sealed = true;
+
+    // AND A WIND-UP DOES NOT FOLLOW YOU THROUGH A DOOR — upstream's
+    // `cancel_on_level_change` (other.lua:3338). See `cancelWindUpOnCrossing`.
+    // Silent for the body the recall itself is moving: its entry is cleared by
+    // `yankOut` before this runs, so the only thing this can catch here is
+    // somebody who walked out under their own power mid-count.
+    cancelWindUpOnCrossing(session, actorId);
 
     from.world.removePlayer(actorId);
     announceLeft(actorId, session.connId, audienceFor(from.id));
@@ -11162,17 +11244,55 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     carryAcross(body, placed);
     // AND WHATEVER THIS PLACE LAYS ON A BODY (tome/class/Actor.lua:7263-7267).
     applyZoneEffectsIn(to.world, to.zoneEffects, opts.effects);
-    // BACK WHERE THEY WENT IN, when the tile is still free. `placeAtSpawn` has
-    // already put a body somewhere legal, so a taken doorstep costs a step of
-    // accuracy rather than an error.
-    const back = above !== undefined ? stairsDownOf(to) : session.enteredFrom;
-    if (back !== null && to.world.actorAt(back.x, back.y) === undefined) {
-      const moved = to.world.placeAt(actorId, back);
-      if (!moved) app.log.warn({ actorId, back }, 'could not restore the entry tile');
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * BACK WHERE THEY WENT IN — OR AS CLOSE TO IT AS THERE IS ROOM FOR.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * THIS USED TO GIVE UP WHEN THE DOORSTEP WAS TAKEN, on the argument that
+     * *"`placeAtSpawn` has already put a body somewhere legal, so a taken
+     * doorstep costs a step of accuracy rather than an error"*. That is true of
+     * one body walking out of one door. It is not true of a RECALL, which hands
+     * every member of the party the SAME `back` cell in the same instant: the
+     * first is seated and everybody after them falls through to the level's
+     * spawn.
+     *
+     * MEASURED, a party of two out of the Underworks: the lead landed on the
+     * door cell at (94,44) and the friend at (104,62) — the overworld's start
+     * spawn, eighteen tiles away against a `DEFAULT_SIGHT_RADIUS` of ten. They
+     * arrived unable to see each other, out of an item whose card promises *"it
+     * takes the party out to the moor you came in from"*. With four, three land
+     * at the town gate and one at the delve mouth.
+     *
+     * SO IT WALKS OUTWARD INSTEAD — `World.nearestSeat`, the same breadth-first
+     * search `findSpawn` already uses for its own overflow, which is upstream's
+     * shape at `tome/class/Game.lua:1198-1203` (`util.findFreeGrid` around the
+     * arrival, and only then a random teleport). Nobody standing there is
+     * moved, which is the one way ours differs from upstream's and the better
+     * answer for a game where the body on the doorstep is another player.
+     */
+    if (back !== null && !to.world.placeAt(actorId, back)) {
+      /**
+       * THE TILE ITSELF FIRST, THROUGH `placeAt`, AND THAT ORDER IS LOAD-BEARING.
+       * `nearestSeat` asks `isFree`, which counts THIS body as an occupant — so
+       * asking it first moved a body that was already standing exactly where it
+       * belonged one tile sideways. Measured by `undermost.test.ts`, whose
+       * whole subject is coming out where you went in: (102,62) became (103,61)
+       * because `addPlayer` had seated them on the entry cell already.
+       * `placeAt` is the one function that knows the difference between an
+       * occupied tile and your own feet (`sitting.id !== id`).
+       */
+      const seat = to.world.nearestSeat(back);
+      if (seat === undefined) {
+        app.log.warn({ actorId, back }, 'no free ground near the entry tile');
+      } else {
+        const moved = to.world.placeAt(actorId, seat);
+        if (!moved) app.log.warn({ actorId, back, seat }, 'could not restore the entry tile');
+      }
     }
     // KEPT WHILE THEY ARE STILL INSIDE: going up a floor is not the way out, and
-    // the way out still needs the door they came in by.
-    if (above === undefined) {
+    // the way out still needs the door they came in by. See `keepEntry`.
+    if (!keepEntry) {
       session.enteredFrom = null;
       // CLEARED WITH THE TILE IT DESCRIBES. Two halves of one fact, and a stale
       // realm id under a null coordinate would be a doorway to nowhere.
@@ -11277,13 +11397,618 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     announceArrival(session, to, to.name);
     announceJoined(to.world.getActor(actorId) ?? placed, session.connId, audienceFor(to.id));
 
-    app.log.info({ actorId, from: from.id, sealed: from.sealed, to: to.id }, 'a body left a realm');
+    app.log.info(
+      { actorId, from: from.id, sealed: from.sealed, to: to.id, why },
+      'a body left a realm',
+    );
     reapIfEmpty(from);
-    // BOTH ENDS OF THE DOOR, and `from` may already have been reaped — pumping
-    // a realm that no longer exists is why this names them rather than looking
-    // them up again.
+  };
+
+  /**
+   * BOTH ENDS OF THE DOOR, after a crossing — and `from` may already have been
+   * reaped, which is why this names the realms rather than looking them up.
+   *
+   * ═══════════════════════════════════════════════════════════════════════════
+   * SPLIT OUT OF `crossOut`, AND THE SPLIT IS A BUG FIX RATHER THAN A TIDY-UP.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * These two lines were the last of `leaveRealm`, where one body crosses and
+   * the world advances behind it. `yankOut` moves a WHOLE PARTY, and pumping
+   * between two of them advances a world in which the party is split across two
+   * realms — where each half is surveyed on its own.
+   *
+   * MEASURED, BOTH WAYS ROUND, because the first fix moved the failure rather
+   * than removing it. A party wipe is *"no survivor, and at least one player on
+   * the floor"* (engine/downed.ts `surveyParty`), asked per party per REALM:
+   *
+   *   PULLER FIRST — the survivor leaves, the delve holds only the body on the
+   *     floor, that realm's pump reads a wipe, and `resetFloorParty` stands the
+   *     downed friend up on a freshly re-seeded floor. A free revive, handed
+   *     out by the item that was rescuing them.
+   *   FALLEN FIRST — the downed body arrives on the overworld alone, and THAT
+   *     realm's pump reads the same wipe for the same reason.
+   *
+   * There is no order that is safe, because the split itself is what is unsafe.
+   * So nothing advances until every body is across, and then both ends advance
+   * once. `leaveRealm` calls this immediately and is unchanged in behaviour.
+   */
+  const pumpBothEnds = (from: Realm, to: Realm): void => {
     pumpAndBroadcast(to);
     if (opts.realms?.get(from.id) !== undefined) pumpAndBroadcast(from);
+  };
+
+  const leaveRealm = (session: Session, viaExit = false): boolean => {
+    const realms = opts.realms;
+    const actorId = session.actorId;
+    if (realms === undefined || actorId === null || session.realmId === null) return false;
+
+    const from = realms.get(session.realmId);
+    /**
+     * ═════════════════════════════════════════════════════════════════════════
+     * YOU MAY LEAVE ANY MAP YOU WALKED INTO. YOU MAY NOT LEAVE THE ONE YOU WOKE
+     * UP ON.
+     * ═════════════════════════════════════════════════════════════════════════
+     *
+     * THIS READ `from.kind === RealmKind.Overworld` AND IT WOULD HAVE STRANDED
+     * SOMEBODY PERMANENTLY. The rule it encoded — *"the overworld's edge is the
+     * edge of the world"* — is true of Alderbrook and is a statement about the
+     * ONE map that existed when it was written. A second landmass is an
+     * overworld too, so the first player to cross into the dark territory would
+     * have found the door refusing to open from the far side, with no verb in
+     * the protocol that could have brought them home. It is the fifth of the
+     * four second-landmass blockers, and the only one that ends somebody's
+     * character.
+     *
+     * The honest test is not what KIND of place this is, it is whether there is
+     * anywhere to go back TO. `Session.enteredFromRealm` is set only by
+     * `crossIntoRealm` when leaving an overworld, so:
+     *
+     *   Alderbrook — you woke up there, nothing recorded, refused. Unchanged.
+     *   The Redaction — you walked in from Alderbrook, so the way back is the
+     *     way you came, which is what `leaveRealm` already computes below.
+     *
+     * A body that arrives by reconnect rather than by walking has no record and
+     * is refused, which is the same conservative answer as before and the reason
+     * this is a `null` check rather than a kind check.
+     */
+    if (from === undefined) return false;
+    if (from.kind === RealmKind.Overworld && session.enteredFromRealm === null) return false;
+    // ═══ BOTH DIRECTIONS ARE A LEVEL CHANGE ═══ Upstream's `changeLevelCheck`
+    // guards the act rather than the direction, and the exploit uses both legs:
+    // in, kill, straight back out to a floor that regenerates.
+    {
+      const leaver = from.world.getActor(actorId);
+      if (leaver !== undefined && stairsShut(session, leaver, from.world)) return false;
+    }
+
+    const body = from.world.getActor(actorId);
+    if (body === undefined || body.kind !== ActorKind.Player || !body.alive) return false;
+
+    // ═══ A ZONE'S EXIT IS NOT A THRESHOLD ═══ It is a cell somewhere on the last
+    // floor, stepped onto on purpose, so none of the doorstep rules below apply.
+    if (!viaExit) {
+      const onThreshold = from.spawns.some((t) => t.x === body.x && t.y === body.y);
+      if (!onThreshold) {
+        // Stepped off the doorstep. From here, standing on it again means leaving.
+        session.exitArmed = true;
+        return false;
+      }
+      // On the threshold, but they have not left it since arriving — this is the
+      // shuffle across a six-tile spawn cluster, not a decision to go. See
+      // `Session.exitArmed`.
+      if (!session.exitArmed) return false;
+      // AND ON A FLOOR WITH NO WAY BACK, the threshold is only floor. See
+      // `SiteDef.noWayBack`.
+      if (hasNoWayBack(from)) return false;
+    }
+
+    /**
+     * BACK THE WAY YOU CAME IN, and `realms.overworld` only as the fallback.
+     *
+     * The fallback is not dead code: a body can be standing in a delve without
+     * this session having recorded an entry — a reconnect resolves into whatever
+     * realm holds the body, and `hello` does not replay the walk that put it
+     * there. Sending that player to the one overworld is the same answer this
+     * line has always given, and it is the right one while there is one map.
+     */
+    // ═══ ON A LOWER FLOOR THE THRESHOLD IS THE STAIR BACK UP ═══ Upstream's UP
+    // grid, "previous level", `change_level = -1`
+    // (data/general/grids/basic.lua:34-42), arriving on the floor above's stair
+    // down (`default_down`, class/Game.lua:1250). The party strength is read only
+    // if that floor was reaped and has to be built again.
+    const above =
+      !viaExit && from.kind === RealmKind.Inner && from.floor > 1 && from.siteId !== undefined
+        ? SITES.get(from.siteId)
+        : undefined;
+    const cameFrom =
+      session.enteredFromRealm === null ? undefined : realms.get(session.enteredFromRealm);
+    const to =
+      above !== undefined
+        ? realms.open(
+            above,
+            from.partyId ?? actorId,
+            { level: body.level, size: 1 },
+            undefined,
+            undefined,
+            from.floor - 1,
+          )
+        : cameFrom !== undefined && cameFrom.kind === RealmKind.Overworld
+          ? cameFrom
+          : realms.overworld;
+    // BACK WHERE THEY WENT IN, when the tile is still free. `placeAtSpawn` has
+    // already put a body somewhere legal, so a taken doorstep costs a step of
+    // accuracy rather than an error.
+    const back = above !== undefined ? stairsDownOf(to) : session.enteredFrom;
+    // AND THE CROSSING ITSELF, WHICH IS NO LONGER WRITTEN HERE. Every line of
+    // it still is what it was; it moved so that the Knot of Elsewhere cannot
+    // grow a second copy of it. See `crossOut`, and `above` for the two things
+    // that vary: where they land, and whether the way in is still theirs.
+    crossOut(session, actorId, body, from, to, back, above !== undefined, 'walked');
+    // ONE BODY WENT THROUGH ONE DOOR, so the world may advance at once. See
+    // `pumpBothEnds` for the caller that cannot.
+    pumpBothEnds(from, to);
+    return true;
+  };
+
+  // -------------------------------------------------------------------------
+  // The Knot of Elsewhere — a wind-up, and then the party is somewhere else
+  // -------------------------------------------------------------------------
+
+  /**
+   * ═════════════════════════════════════════════════════════════════════════
+   * WHERE EACH WIND-UP WAS STARTED. Actor id -> realm id.
+   * ═════════════════════════════════════════════════════════════════════════
+   *
+   * UPSTREAM'S `eff.leveid` (data/timed_effects/other.lua:3341), kept here
+   * rather than on the effect because `content/effects.ts` may not know what a
+   * realm is — it is content, with no world, no registry and no socket.
+   *
+   * ═══ IT IS BELT AND BRACES, AND UPSTREAM WEARS BOTH TOO ═══
+   * A crossing cancels the wind-up outright (`cancelWindUpOnCrossing`, called
+   * from both crossing paths — upstream's `cancel_on_level_change`,
+   * Player.lua:173-181), so a stale entry should be impossible. `:3346`
+   * re-checks `eff.leveid` anyway, at the moment of firing, and so does
+   * `yankOut`: this codebase's effects are process-wide and keyed by actor id,
+   * so one that survived a door would otherwise fire from a town.
+   *
+   * AN ENTRY HERE IS ALSO THE AUTHORITY ON "IS ONE RUNNING". The effect table is
+   * the other half and the two are written and cleared together; `yankOut`
+   * refuses to act on an expiry it holds no entry for, which makes a
+   * hand-applied `EffectId.Elsewhere` inert rather than a crossing to nowhere.
+   */
+  const windUps = new Map<string, string>();
+
+  /**
+   * ═════════════════════════════════════════════════════════════════════════
+   * TAKE IT OFF WITHOUT FIRING IT — upstream's *"Space restabilizes around
+   * you."* (other.lua:3352).
+   * ═════════════════════════════════════════════════════════════════════════
+   *
+   * The ledger entry goes FIRST, so that even if the removal below throws, the
+   * expiry it produces can never be read as a completed countdown.
+   * `removeEffect` leaves `dur` above zero on every path but the clock's, which
+   * is what `EffectLogLine.expired` reads — so this is unambiguous rather than
+   * merely unlikely, and `PumpResult.expired` never carries a cancellation.
+   *
+   * @returns true when there was one to take off.
+   */
+  const cancelWindUp = (actorId: string): boolean => {
+    if (!windUps.delete(actorId)) return false;
+    const effects = opts.effects;
+    const home = homeOf(actorId);
+    const body = home.world.getActor(actorId);
+    if (effects !== undefined && body !== undefined) {
+      removeEffect(effects, body, EffectId.Elsewhere, home.world.rng);
+    }
+    return true;
+  };
+
+  /**
+   * ═════════════════════════════════════════════════════════════════════════
+   * A DOOR CANCELS IT — `cancel_on_level_change` (other.lua:3338), swept by
+   * `Player:onEnterLevel` at Player.lua:173-181.
+   * ═════════════════════════════════════════════════════════════════════════
+   *
+   * OURS IS AN EXPLICIT REMOVAL AT THE CROSSINGS RATHER THAN A SWEEP, because
+   * there is nothing here for a sweep to hang off: this codebase has no
+   * `onEnterLevel`, and its effects are process-wide and keyed by actor id, so
+   * they follow a body through a door by construction — `carryAcross` never
+   * touches them, deliberately, and says so.
+   *
+   * THE SENTENCE IS A MARGIN LINE AND NOT A RECORD ONE. The room they are
+   * arriving in has no idea what they were doing in the last one, and the room
+   * they left cannot hear a line sent after they are out of it.
+   */
+  const cancelWindUpOnCrossing = (session: Session, actorId: string): void => {
+    if (!cancelWindUp(actorId)) return;
+    sendMargin(session, homeOf(actorId), {
+      text: 'The knot goes slack. You are not where you pulled it.',
+    });
+  };
+
+  /**
+   * ═════════════════════════════════════════════════════════════════════════
+   * THE COUNTDOWN FINISHED. TAKE THE PARTY OUT.
+   * ═════════════════════════════════════════════════════════════════════════
+   *
+   * Upstream: *"You are yanked out of this place!"*, then `changeLevel(1,
+   * game.player.last_wilderness)` — level 1 of the WORLD MAP zone, where
+   * class/Game.lua:1194-1205 puts the body back on `wild_x, wild_y`, the cell it
+   * was standing on when it went in. `session.enteredFrom` /
+   * `enteredFromRealm` are exactly that pair: written only when leaving an
+   * overworld and preserved all the way down, so a recall from floor three of a
+   * delve lands on the moor in ONE step. That is the whole point of the item
+   * against the three-stair walk `leaveRealm` otherwise imposes.
+   *
+   * ═══ NOT CALLED `recall*`, AND THAT IS NOT STYLE ═══
+   * `recallBody` in this same file is the DISCONNECT GRACE — ten minutes after a
+   * socket dies, the body is retired. Two "recalls" in one file is a bug waiting
+   * to be read. `yankOut` is upstream's own word for this one (`:3347`).
+   *
+   * ═════════════════════════════════════════════════════════════════════════
+   * WHO LEAVES — the rule, written down, because upstream cannot answer it
+   * ═════════════════════════════════════════════════════════════════════════
+   * ToME has one played character and `changeLevel` takes `game.party.members`
+   * with it (class/Game.lua:339-341, :820-836) because the party IS the player.
+   * Six friends is our question, and the author ruled it on 2026-09-17: the Knot
+   * takes the WHOLE PARTY standing in the same realm, downed members included,
+   * and nobody on another floor.
+   *
+   *   IN THIS REALM, WITH SOMEBODY AT THE KEYBOARD — taken. One arrival cell for
+   *     everybody: the first body gets `back` and the rest are put down wherever
+   *     `addPlayer` found room, which is upstream shoving aside a body already
+   *     standing on the cell (class/Game.lua:1198-1203) and is exactly what
+   *     already happens when two people walk out of a door together.
+   *   DOWNED, OR ERASED — taken. Losing a friend for being unconscious is the
+   *     outcome the Downed system exists to prevent, and an escape that leaves
+   *     the body on the floor is that outcome with extra steps. They arrive
+   *     still down: `carryAcross` keeps `alive === false`, and the countdown is
+   *     process-wide so it neither restarts nor stops.
+   *   ON ANOTHER FLOOR, OR IN ANOTHER REALM — not taken. The Knot undoes one
+   *     room and they are not in it. Their own way out is unchanged.
+   *   DISCONNECTED MID-WIND-UP — not taken, and this is the one that needed
+   *     deciding rather than stating. Every frame a crossing sends is addressed
+   *     to a socket, and `crossOut` ends with `setConnected(actorId, true)` —
+   *     putting a body nobody is driving into the destination's quorum, where
+   *     the barrier would then wait on a decision that cannot come. So the body
+   *     stays exactly where it is, which is also what happens today when a party
+   *     walks out by the stairs, and the disconnect grace still owns it.
+   *   THE PULLER, IF THEY WENT DOWN DURING THE WIND-UP — the countdown keeps
+   *     running. A downed player is still ticked by the scheduler on purpose
+   *     (engine/scheduler.ts: *"a fallen detective is still on the clock"*), so
+   *     they leave with everybody else.
+   *
+   * ═══ WHERE IT RUNS: DRAINED AFTER A PUMP, NEVER INSIDE ONE ═══
+   * `crossOut` pumps both ends itself, so firing from inside `pumpRealm` would
+   * re-enter the pump it is standing in. The precedent is `handleMove`, which
+   * pumps and THEN calls `leaveRealm`, for the stated reason that the `moved`
+   * frame must reach the client before the map it describes is replaced.
+   */
+  const yankOut = (actorId: string): void => {
+    const realms = opts.realms;
+    /**
+     * NOBODY PULLED IT, SO NOTHING HAPPENS. The one place this is asked.
+     *
+     * An `EffectId.Elsewhere` applied by anything but `pullTheKnot` has no
+     * ledger entry, and a crossing with no recorded origin is a body moved
+     * somewhere nobody chose. The realm check below over-determines it — an
+     * absent `startedIn` fails that comparison too — so no single line here can
+     * be mutated into a teleport, and the rule is pinned by behaviour in
+     * `elsewhere.test.ts` rather than by any one guard.
+     */
+    const startedIn = windUps.get(actorId);
+    windUps.delete(actorId);
+    if (realms === undefined || startedIn === undefined) return;
+
+    const session = sessionOf(actorId);
+    if (session === undefined || session.realmId === null) {
+      // NOBODY AT THE KEYBOARD ANY MORE. Twenty turns is long enough for a
+      // socket to die; the body stays where it is and the grace owns it.
+      app.log.info({ actorId }, 'a recall finished with nobody driving the body');
+      return;
+    }
+    const from = realms.get(session.realmId);
+    if (from === undefined || from.id !== startedIn) {
+      /**
+       * UPSTREAM'S `eff.leveid` CHECK, at upstream's own moment
+       * (other.lua:3346). Unreachable while both crossings cancel, and kept
+       * because the day one of them stops this is the difference between a
+       * no-op and a body torn out of a town it walked into.
+       *
+       * IT SURVIVES MUTATION, DELIBERATELY, AND BOTH ITS PARTNERS DO NOT.
+       * Deleting this line alone changes no test, because the two crossings
+       * are what keep it unreachable — and each of those now has a case that
+       * dies without it: *"does not follow you through a door"* for
+       * `crossIntoRealm` and *"does not follow you out of the door either"*
+       * for `crossOut`. That is what makes this belt rather than the only
+       * thing holding the trousers up, and it is the reason it is worth
+       * keeping rather than a reason to delete it.
+       */
+      app.log.info({ actorId, startedIn }, 'a recall finished somewhere else and did nothing');
+      return;
+    }
+
+    /**
+     * BACK THE WAY THEY CAME IN, and `realms.overworld` only as the fallback —
+     * the same two lines `leaveRealm` computes, for the same reason. A body
+     * that arrived by reconnect rather than by walking has no record, and the
+     * one overworld is the conservative answer that path already gives.
+     */
+    const cameFrom =
+      session.enteredFromRealm === null ? undefined : realms.get(session.enteredFromRealm);
+    const to =
+      cameFrom !== undefined && cameFrom.kind === RealmKind.Overworld ? cameFrom : realms.overworld;
+    const back = session.enteredFrom;
+
+    /**
+     * EVERYBODY WHO IS GOING, RESOLVED BEFORE ANYBODY MOVES. The list cannot be
+     * walked lazily: the first `crossOut` removes a body from `from.world` and
+     * pumps both realms, so a later lookup would be reading a floor that has
+     * already changed underneath it.
+     */
+    const going: { readonly id: string; readonly owner: Session; readonly body: PlayerActor }[] =
+      [];
+    for (const memberId of [actorId, ...partyMembersOf(actorId).filter((id) => id !== actorId)]) {
+      /**
+       * TWO QUESTIONS, AND EACH IS A DIFFERENT HALF OF THE RULE.
+       *
+       * IS THERE A BODY IN THIS ROOM — asked of `from.world` and NOT of
+       * `Session.realmId`. The session's routing is a statement about where
+       * frames go; the world is where the body is, and "the Knot undoes one
+       * room" is a fact about the room. A member on another floor is in another
+       * world and simply is not found here. (A `realmId` test alongside this one
+       * was redundant by construction and is gone: mutating it away changed
+       * nothing, twice.)
+       *
+       * IS ANYBODY DRIVING IT — `sessionOf` is undefined for a body inside the
+       * disconnect grace, and `crossOut` ends with `setConnected(true)`. Moving
+       * a body nobody is at would put it back into the destination's quorum, and
+       * the barrier would then wait on a decision that cannot come.
+       */
+      const member = from.world.getActor(memberId);
+      if (member === undefined || member.kind !== ActorKind.Player) continue;
+      const owner = sessionOf(memberId);
+      if (owner === undefined) continue;
+      going.push({ id: memberId, owner, body: member });
+    }
+    if (going.length === 0) {
+      /**
+       * THERE IS NO "THE PARTY COULD NOT BE ASSEMBLED" REFUSAL, and that is a
+       * statement about the design rather than a gap. The list always holds the
+       * puller — they were in this realm twenty turns ago and a crossing would
+       * have cancelled the wind-up — so the only way to reach this line is for
+       * their body to have left `from.world` by some path that is not a
+       * crossing. Logged rather than refused, because by then there is nobody
+       * in the room to refuse to.
+       */
+      app.log.warn({ actorId, realmId: from.id }, 'a recall finished with nobody left to take');
+      return;
+    }
+
+    // SAID WHILE THEY ARE STILL IN THE ROOM. A line broadcast to `from` after
+    // the last body has left it reaches an empty audience — which is how the
+    // payoff of twenty turns becomes silent.
+    broadcastRecordLine(
+      from,
+      `${going.map((who) => nameOf(who.id)).join(', ')} ${
+        going.length === 1 ? 'is' : 'are'
+      } yanked out of ${from.name}.`,
+    );
+
+    for (const who of going) {
+      // AND ANY WIND-UP OF THEIR OWN GOES WITH THE ROOM, silently: they are
+      // being told a larger thing on the same frame. The puller's has already
+      // expired, which is what put us here.
+      windUps.delete(who.id);
+      crossOut(who.owner, who.id, who.body, from, to, back, false, 'recall');
+    }
+    // AND ONLY NOW DOES THE WORLD MOVE. See `pumpBothEnds`: a party split
+    // across two realms is a party each end reads as wiped.
+    pumpBothEnds(from, to);
+  };
+
+  /**
+   * COUNTDOWNS THAT FINISHED AND HAVE NOT BEEN ACTED ON YET.
+   *
+   * A QUEUE AND A FLAG, because `yankOut` calls `crossOut`, which calls
+   * `pumpAndBroadcast`, which is where this is drained. Without the flag a
+   * recall re-enters its own drain; without the queue the crossing would have to
+   * happen inside `pumpRealm`, mid-pump, with half of that turn's frames unsent.
+   */
+  const firedWindUps: string[] = [];
+  let drainingWindUps = false;
+
+  const drainWindUps = (): void => {
+    if (drainingWindUps) return;
+    drainingWindUps = true;
+    try {
+      for (let next = firedWindUps.shift(); next !== undefined; next = firedWindUps.shift()) {
+        yankOut(next);
+      }
+    } finally {
+      drainingWindUps = false;
+    }
+  };
+
+  /**
+   * ═════════════════════════════════════════════════════════════════════════
+   * PULL IT — `ItemUseKind.Elsewhere`, the Rod of Recall's `use_power`
+   * (data/general/objects/quest-artifacts.lua:328-354).
+   * ═════════════════════════════════════════════════════════════════════════
+   *
+   * The whole of upstream's function is four decisions in this order, and so is
+   * this one:
+   *
+   *   :329-333  one is already running -> CANCEL it, and that is a USE
+   *   :334-335  the body or the level forbids it -> fizzle
+   *   :336      `setEffect(EFF_RECALL, 40, ...)`
+   *   :337      *"Space around you starts to dissolve..."*
+   *
+   * ═══ THE CANCEL IS FIRST, AND IT IS FIRST ON PURPOSE ═══
+   * It comes before the party-lead rule below, which reads backwards until you
+   * notice what the alternative does: the lead badge MOVES (somebody leaves, or
+   * is kicked), and a player who started a wind-up and then stopped being lead
+   * would be holding a countdown they could not call off. Starting one is a
+   * story-scope act; undoing your own is not.
+   *
+   * ═══ EVERY REFUSAL NAMES SOMETHING THE PLAYER CAN DO ABOUT IT ═══
+   * *"that is not something you can use"* is what this item answered for three
+   * commits, and a bare refusal is worse than a missing button. Five arms, five
+   * reasons: whose turn it is to decide, where you are standing, what this place
+   * is, how long since the last kill, and how long until it will take hold.
+   *
+   * @returns true when the turn was spent.
+   */
+  const pullTheKnot = (session: Session, body: PlayerActor, use: ItemElsewhereUse): boolean => {
+    const realm = opts.realms?.get(session.realmId ?? '');
+    const effects = opts.effects;
+    if (realm === undefined || effects === undefined) {
+      sendError(session.socket, ErrorCode.Internal, 'the knot cannot find this place');
+      return false;
+    }
+
+    /**
+     * :329-333 — PRESSED AGAIN IS CALLED OFF. Upstream still charges a use for
+     * it; ours does not, because upstream recharges in four turns and ours in
+     * thirty — eating a whole expedition's escape for a mis-press is a rule
+     * that teaches people not to touch the button.
+     *
+     * ═══ AND THE PARAGRAPH ABOVE USED TO BE A CLAIM, NOT A RULE ═══
+     * The cooldown is armed at the PULL, and this branch did not give it back,
+     * so the code did exactly what the comment said it refused to do. Driven
+     * over a socket with the ten presses from the bug report: press 1 started a
+     * wind-up, press 2 cancelled it, and presses 3-10 were answered *"the knot
+     * is still slack — 28 turns before it will take hold"*. The player who
+     * pressed twice by accident had lost the escape for the rest of the
+     * expedition and been told so eight times.
+     *
+     * SO THE CANCEL HANDS IT BACK. There is nothing to farm: a pull costs a
+     * turn and a cancel costs a turn, neither moves anybody, and the count
+     * starts again from twenty. And it cannot collide with a cooldown from an
+     * earlier FIRE, because a body that is cooling cannot start a wind-up at
+     * all (the refusal below) — so the only cooldown this can be giving back is
+     * the one this same wind-up armed.
+     */
+    if (cancelWindUp(body.id)) {
+      setCooldown(body, KNOT_OF_ELSEWHERE_ID, 0);
+      broadcastRecordLine(realm, `${nameOf(body.id)} lets the knot go slack. The room settles.`);
+      spendLootTurn(body, 'use');
+      saveLoot('use');
+      return true;
+    }
+
+    /**
+     * ═══ ONLY THE LEAD MAY PULL IT ═══
+     * The author's co-op ruling, 2026-09-17: *"for coop, only the host's
+     * decisions matter as its their playthrough."* This is the same rule
+     * `handleDialogueChoose` applies to a `DialogueScope.Story` option and the
+     * same refusal, in the same two channels — an error the client can flash
+     * and a Margin line they can scroll back to, because the thing worth
+     * remembering is WHO TO ASK.
+     *
+     * It belongs here and not only on dialogue because taking a party off a
+     * floor is a story-scope act by any reading: it ends the expedition, it
+     * moves five other people, and it is not reversible by the people it moves.
+     */
+    if (!isPartyLead(body.id)) {
+      const leadName = leadNameFor(body.id);
+      sendError(session.socket, ErrorCode.Refused, `only ${leadName} can pull it for the party`);
+      sendMargin(session, realm, {
+        text: `The knot will not answer you. Only ${leadName} can pull it for the party.`,
+      });
+      return false;
+    }
+
+    // ═══ THERE IS NOTHING OUT HERE TO BE PULLED OUT OF ═══ Upstream reaches
+    // the same place from the other side: the rod's destination IS the world
+    // map (`changeLevel(1, ...)`, other.lua:3348), so pulling it on the world
+    // map is asking to be taken where you are.
+    if (realm.kind === RealmKind.Overworld) {
+      sendError(
+        session.socket,
+        ErrorCode.Refused,
+        'you are already out in the open — there is nothing here to be pulled out of',
+      );
+      return false;
+    }
+
+    // ═══ AND SOME PLACES DO NOT LET GO ═══ `no_worldport` on the level
+    // (Actor.lua:6918, read through `canBe("worldport")` at
+    // quest-artifacts.lua:335). See `SiteDef.noRecall` for which places, and for
+    // why the Undermost is deliberately not one of them.
+    if (realm.noRecall) {
+      sendError(session.socket, ErrorCode.Refused, 'nothing here will let go of you');
+      return false;
+    }
+
+    /**
+     * ═══ AND NOT STRAIGHT AFTER A KILL ═══ `changeLevelCheck`,
+     * Game.lua:879-884, which `stairsShut` already says out loud with its count.
+     *
+     * AT THE PULL AND NOT AT THE FIRE, and that is a labelled divergence.
+     * Upstream re-checks `can_change_zone` when the effect expires
+     * (other.lua:3346), so a kill on turn 39 silently eats the whole wind-up.
+     * The lock is two turns and the wind-up is twenty, so re-checking here
+     * costs nothing anybody can feel and re-checking there would spend somebody's
+     * twenty turns on a rule they had already satisfied.
+     */
+    if (stairsShut(session, body, realm.world)) return false;
+
+    // ═══ AND NOT WHILE IT IS STILL SLACK ═══ Upstream rate-limits by charge
+    // (`max_power`/`power_regen`, quest-artifacts.lua:325-326); ours is a body
+    // cooldown, which is upstream's own alternative — `Object:useObject` writes
+    // an object's cooldown into the actor's talent-cooldown table
+    // (class/Object.lua:214-222). The refusal carries the count, as `stairsShut`
+    // does, because a wait with no number is a rule nobody can plan around.
+    const cooling = cooldownOf(body, KNOT_OF_ELSEWHERE_ID);
+    if (cooling > 0) {
+      sendError(
+        session.socket,
+        ErrorCode.Refused,
+        `the knot is still slack — ${String(cooling)} turn${cooling === 1 ? '' : 's'} before it will take hold`,
+      );
+      return false;
+    }
+
+    // :336 — and the wind-up starts. `applyPower` is deliberately absent from
+    // the parameters: a beneficial effect rolls no save (`canBe` skips the
+    // immunity checks for one), so this lands at its full duration and consumes
+    // no draw.
+    const landed = setEffect(
+      effects,
+      body,
+      EffectId.Elsewhere,
+      use.windUpTurns,
+      {},
+      realm.world.rng,
+    );
+    if (landed.outcome !== SetEffectOutcome.Applied || landed.dur <= 0) {
+      // UNREACHABLE AS AUTHORED and checked anyway: a beneficial effect rolls no
+      // save and `canBe` cannot refuse one, so the only remaining refusals are
+      // an unregistered id and a dead body — both of which `lootActor` and
+      // `MVP_EFFECTS` have already ruled out. If it ever does fire, the honest
+      // answer is that nothing happened, not twenty turns of silence.
+      app.log.warn({ actorId: body.id, outcome: landed.outcome }, 'the knot did not take hold');
+      sendError(session.socket, ErrorCode.Internal, 'the knot does not take hold');
+      return false;
+    }
+    windUps.set(body.id, realm.id);
+    // AND THE COOLDOWN STARTS NOW, not when it fires, so most of it is spent
+    // during the wind-up — upstream charges its power at the same moment
+    // (class/Object.lua:204-231). It rides `actor.cooldowns`, which is
+    // persisted, carried across realms, and which `restCheck` already waits on
+    // exactly as upstream waits on an object cooldown (Player.lua:1055-1060).
+    setCooldown(body, KNOT_OF_ELSEWHERE_ID, use.cooldownTurns);
+
+    // :337 — *"Space around you starts to dissolve..."*, in this game's voice.
+    // A Record line and not a Margin one: it is the party's business, because
+    // in twenty turns it moves all of them.
+    broadcastRecordLine(
+      realm,
+      `${nameOf(body.id)} pulls the Knot of Elsewhere. The air around them starts to come undone.`,
+    );
+    spendLootTurn(body, 'use');
+    saveLoot('use');
     return true;
   };
 
@@ -11518,6 +12243,12 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     // maps forever, because client/main.ts forbids inferring removal from
     // absence. The old world drops the body first so nothing can act on it
     // between the two worlds.
+    // THE OTHER HALF OF `cancel_on_level_change` (other.lua:3338). A wind-up
+    // started on floor one must not fire from floor two, nor from a town — see
+    // `cancelWindUpOnCrossing`, and `windUps` for the belt-and-braces check at
+    // the moment of firing that upstream also keeps (`:3346`).
+    cancelWindUpOnCrossing(session, actorId);
+
     from.world.removePlayer(actorId);
     // EXCEPT THE PERSON LEAVING. Their own client is about to be handed a whole
     // new board by the `realm` frame below, and `case 'left'` deletes an actor
@@ -12260,6 +12991,13 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     }
 
     const result = engine.rest(actorId);
+    // AND ANY COUNTDOWN THAT RAN OUT WHILE THEY SAT THERE. The same collection
+    // `pumpRealm` makes, and it has to be made here too because a rest swallows
+    // the pumps it runs — see `TurnEngine.rest`, and the note there on what is
+    // lost without this.
+    for (const note of result.expired ?? []) {
+      if (note.effectId === EffectId.Elsewhere) firedWindUps.push(note.id);
+    }
     const threat = result.threat;
     sendMargin(session, realm, {
       text: restStopText(
@@ -12274,7 +13012,26 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     // A rest that passed no turns changed nothing — the same argument `ping`
     // makes. Broadcasting a world that did not move is a frame the whole party
     // pays for so that one person can be told "no".
+    //
+    /**
+     * ═══ UNLESS SOMETHING IS WAITING TO BE ACTED ON ═══
+     *
+     * `RestStop.Budget` returns from BELOW the line that collects expiries, so
+     * in principle it can answer `turns === 0` with a non-empty `expired` — a
+     * pump on which the clock did not advance and a countdown did reach zero —
+     * and the entry `handleRest` queued above would then sit there until
+     * somebody pressed something else.
+     *
+     * NO TEST DIES WHEN THIS `else` IS DELETED, and that is said out loud
+     * rather than papered over: a pump that does not advance the clock does not
+     * run the status pass either, so nothing has been found that reaches it.
+     * It is one branch guarding a queue that must never be left holding
+     * something, on the one handler that fills that queue outside
+     * `pumpAndBroadcast`, and the alternative shape — drain unconditionally —
+     * is the same line with a redundant call in the common case.
+     */
     if (result.turns > 0) pumpAndBroadcast(realm);
+    else drainWindUps();
   };
 
   // -------------------------------------------------------------------------
@@ -16788,6 +17545,32 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       return;
     }
 
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * NOT EVERY `use` IS A DRINK, AND THE SECOND ONE IS WHY THIS IS A SWITCH.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * The Knot of Elsewhere shipped with no `use` at all, on the argument that
+     * *"an item with a `use` nothing implements would be worse than one
+     * without."* What shipped instead was the third thing: a HOTBAR slot
+     * captioned USE, a card reading *"press to use it"*, and a server answering
+     * *"that is not something you can use"* — reported from play with a
+     * screenshot, ten refusals deep, because the player kept pressing.
+     *
+     * IT IS NOT CONSUMED, NOTHING IS HEALED, AND NOTHING HAPPENS THIS TURN. All
+     * three of those are the draught's rules and none of them are this one's, so
+     * the branch is taken before any of them run — and `ItemUse` is a real
+     * discriminated union now, so the compiler will not let a reader take
+     * `amount` off a recall.
+     */
+    if (item.use.kind === ItemUseKind.Elsewhere) {
+      // THE TURN IS SPENT INSIDE, OR NOT AT ALL. A refused pull costs nothing,
+      // exactly as a refused move does; a cancel costs the turn, because
+      // reaching for the thing is the action.
+      if (pullTheKnot(session, body, item.use)) pumpAndBroadcast(realmFor(session));
+      return;
+    }
+
     const healed = healActor(body, item.use.amount);
 
     // SPENT WHETHER OR NOT IT HELPED. A draught drunk at full health is gone —
@@ -17058,6 +17841,46 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    * DEVIATION with no citation — see `handlePickup` — and this verb is the half
    * of it that makes the social answer possible at all.
    */
+  /**
+   * ═════════════════════════════════════════════════════════════════════════
+   * *"YOU CANNOT BRING YOURSELF TO DROP THE %s"* — quest-artifacts.lua:357-362.
+   * ═════════════════════════════════════════════════════════════════════════
+   *
+   * Upstream hangs this on the Rod of Recall itself as an `on_drop` that
+   * returns true (refuse); ours hangs it on `Item.quest`, which is the field
+   * that already means *"this object is not part of the economy"* and which the
+   * shop, the shelf and the drop pool all read. One flag, four doors.
+   *
+   * ═══ IT WAS THE HOLE UNDER TWO OTHER RULES, AND BOTH SAID SO IN PROSE ═══
+   * `Item.quest`'s own docblock read *"THE `on_drop` REFUSAL HAS NO PORT YET"*
+   * while `spillOrderOf` — the once-per-character latch — was already defending
+   * itself with *"it is unsellable and undroppable"*. Measured over a socket
+   * before this landed: `{"t":"drop"}` succeeded, the bag emptied, and because
+   * the latch is spent at the DROP and records being HANDED one rather than
+   * holding one, that character's next warden would have paid nothing. One
+   * keypress permanently removed a character's only way home.
+   *
+   * ═══ AND `give` TOO, WHICH UPSTREAM HAS NO ANALOGUE FOR ═══
+   * `PartySendItem` moves things between bodies the one player already owns, so
+   * "hand it to somebody else" is not a way to lose a unique there. Here it is:
+   * A kills the first warden and is latched, hands the Knot to B, and A's second
+   * warden pays nothing while B's own warden still pays B. The party ends with
+   * two and A with none, forever. `handleDrop` and `handleGive` are deliberately
+   * the same shape (see `give`'s docblock) precisely so a rule about parting
+   * with something cannot land on one and miss the other.
+   *
+   * @returns true when the caller must stop.
+   */
+  const refuseToPartWith = (session: Session, item: Item, verb: string): boolean => {
+    if (item.quest !== true) return false;
+    sendError(
+      session.socket,
+      ErrorCode.Refused,
+      `you cannot bring yourself to ${verb} the ${item.name}`,
+    );
+    return true;
+  };
+
   const handleDrop = (session: Session, msg: ClientDrop): void => {
     const { world } = realmFor(session);
     const body = lootActor(session, 'drop');
@@ -17073,6 +17896,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       sendError(session.socket, ErrorCode.BadMessage, 'that item is not in this build');
       return;
     }
+    if (refuseToPartWith(session, item, 'put down')) return;
 
     body.carried = withoutOneCopy(bag, msg.itemId);
     // THE SENDER'S OWN TILE, and no terrain check: world.ts's `addGroundItem`
@@ -17143,6 +17967,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       sendError(session.socket, ErrorCode.BadMessage, 'that item is not in this build');
       return;
     }
+    if (refuseToPartWith(session, item, 'hand over')) return;
 
     // THE TILE, RESOLVED SERVER-SIDE FROM ONE OF EIGHT DIRECTIONS. See
     // `GiveSchema`: the wire never carries the recipient's id, so there is no

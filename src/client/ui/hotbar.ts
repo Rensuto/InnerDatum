@@ -490,6 +490,28 @@ export type HotbarItemSlot = {
    */
   readonly desc?: string;
   readonly rows?: readonly { readonly label: string; readonly value: string }[];
+  /**
+   * ════════════════════════════════════════════════════════════════════════════
+   * GAME TURNS UNTIL PRESSING IT COULD WORK. 0 is ready, and absent is 0.
+   * ════════════════════════════════════════════════════════════════════════════
+   *
+   * AN ITEM CAN BE ON COOLDOWN NOW. The Knot of Elsewhere rides `actor.cooldowns`
+   * keyed by its item id — upstream's own mechanism, `tome/class/Object.lua:214-222`
+   * writes an object's cooldown into the actor's talent-cooldown table — and the
+   * projector dumps that map wholesale, so the number is already on the wire and
+   * was simply not read. Observed with `cooldowns: {item_knot_of_elsewhere: 25}`
+   * live: the slot was undimmed, had no wedge and its card still said *“press to
+   * use it”*, which is a button promising something the server would refuse.
+   *
+   * ═══ NO FRACTION, BECAUSE NOTHING SENDS THE TOTAL ═══
+   * `HotbarTalentSlot` can draw a wedge because `LoadoutTalent.cooldownTurns`
+   * rides beside it; `ItemView` carries no such field and adding one is a
+   * protocol bump this does not need. So the item's wedge is drawn FULL — which
+   * `drawCooldownWipe`'s own docblock already defines as “this is unavailable” —
+   * and the digits over it carry the count. Ready versus not-ready, and how
+   * long: the two questions a player standing in a delve actually has.
+   */
+  readonly cooldown?: number;
 };
 
 /** A slot with nothing in it. Still a slot, still a drop target. */
@@ -997,7 +1019,10 @@ export function itemSlotAction(
 export function isSlotDisabled(slot: HotbarSlot): boolean {
   switch (slot.kind) {
     case HotbarSlotKind.Item:
-      return slot.action === ItemSlotAction.Gone;
+      // AND A LIVE COOLDOWN IS THE SECOND WAY AN ITEM SLOT CANNOT BE PRESSED,
+      // exactly as it is the first way a talent slot cannot — see
+      // `HotbarItemSlot.cooldown`.
+      return slot.action === ItemSlotAction.Gone || (slot.cooldown ?? 0) > 0;
     case HotbarSlotKind.Empty:
       return false;
     case HotbarSlotKind.Talent:
@@ -1447,6 +1472,9 @@ function paintSlot(
 
     case HotbarSlotKind.Item: {
       drawIconArt(ctx, sprites, slot.icon, slot.name, iconX, iconY);
+      // A FULL WIPE AND THE DIGITS — see `HotbarItemSlot.cooldown` for why the
+      // total is 0 here and what that means to `drawCooldownWipe`.
+      if ((slot.cooldown ?? 0) > 0) drawCooldownWipe(ctx, iconX, iconY, slot.cooldown ?? 0, 0);
       drawCaption(ctx, rect, captionForAction(slot.action), captionColourForAction(slot.action));
       break;
     }
@@ -1893,15 +1921,44 @@ export function hotbarTipAt(
     // THE SAME COLUMNS THE ITEM CARD USES -- one helper, so a coat hovered on
     // the bar and the same coat hovered in the bag cannot lay out differently.
     const stats = cardStatLines(slot.rows ?? []);
-    const prose = slot.desc === undefined || slot.desc === '' ? [] : [slot.desc];
+    /**
+     * ═══ AND IT IS WRAPPED, WHICH IT WAS NOT ═══
+     * This built `[slot.desc]` raw while the talent branch fourteen lines above
+     * called `wrapForCard`, so an item sentence was laid out as ONE line
+     * however long it was. Measured at the 1262-pixel Activity viewport the
+     * Knot of Elsewhere's card was 924 pixels wide — 73% of the window, over
+     * the Case Log — and at the 640 floor it truncated mid-word at *“Pull it
+     * again to call it of…”*, losing both the cancel affordance and the one
+     * refusal a non-lead is guaranteed to hit. The bag's card next door wraps
+     * the identical sentence correctly, so the two surfaces disagreed about one
+     * string.
+     */
+    const prose = slot.desc === undefined || slot.desc === '' ? [] : wrapForCard(slot.desc);
     return {
       title: slot.name,
-      meta: itemActionWord(slot.action),
+      meta: itemMetaLine(slot),
       lines: [...stats, ...prose],
     };
   }
 
   return null;
+}
+
+/**
+ * ═════════════════════════════════════════════════════════════════════════════
+ * THE ITEM CARD'S ONE-LINE HEADER — the verb, or the reason there is no verb.
+ * ═════════════════════════════════════════════════════════════════════════════
+ *
+ * The talent card's meta already says `cooling — Nt` (see its assembly below);
+ * the item card said `press to use it` whatever the state, which on the one
+ * item that HAS a cooldown was a promise the server would refuse for the next
+ * twenty-nine turns. Same sentence, same units, same card, so a player reads
+ * one rule rather than two.
+ */
+function itemMetaLine(slot: HotbarItemSlot): string {
+  const cooling = slot.cooldown ?? 0;
+  if (cooling > 0) return `cooling — ${String(cooling)}t`;
+  return itemActionWord(slot.action);
 }
 
 /** The verb a press on this slot would perform, in the player's words. */

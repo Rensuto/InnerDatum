@@ -1087,8 +1087,22 @@ export type LootResolution = {
    *
    * The implementation must therefore never iterate a Map or an object's keys.
    * See `spillOrderOf` in src/server/turn-engine.ts for the one that ships.
+   *
+   * ═══ AND WHO PUT IT DOWN, BECAUSE ONE ITEM IN THE GAME ASKS ═══
+   * `NPC:onDie` (tome/class/NPC.lua:393-406) does not spill the Rod of Recall
+   * from a table at all: it checks the KILLER'S OWN CAMPAIGN LATCH
+   * (`game.state:allowRodRecall()`, class/GameState.lua:93-96), mints the rod,
+   * and spends the latch at :406 so no later boss ever drops another. That
+   * question cannot be asked of the corpse, so the body that did the killing is
+   * handed over with it. `null` is a body nobody is credited with — a bleed
+   * whose author has already been buried, and `noteMonsterDeath`'s own
+   * `killerId: string | null`.
+   *
+   * IT IS STILL A CONTENT DECISION AND IT STAYS ON THIS SIDE OF THE SEAM: the
+   * engine knows nothing about which ids are handed over once, and `Item` is
+   * `src/server/content/**`, which this file may not import.
    */
-  spillOrder(actor: EngineActor): readonly string[];
+  spillOrder(actor: EngineActor, killer: EngineActor | null): readonly string[];
 };
 
 // ---------------------------------------------------------------------------
@@ -4523,7 +4537,7 @@ function noteMonsterDeath(
   // ...AND THE BODY EMPTIES ITS POCKETS ONTO THE TILE IT FELL ON. See
   // `spillLoot`: it takes NO DRAW, and it is here rather than at the kill site
   // in damage.ts for exactly that reason.
-  spillLoot(run, victim, sweepTurn);
+  spillLoot(run, victim, sweepTurn, killerId);
 }
 
 /** Every body this effect killed. Empty for anything that killed nothing. */
@@ -4665,11 +4679,21 @@ function noteCasualty(effect: Effect, run: Run, sweepTurn: number | null, killer
  * returns (see `PumpResult.reaped`), so `victim.x/y` is still the tile it died
  * on. Spilling after the reap would have nowhere to spill to.
  */
-function spillLoot(run: Run, victim: EngineActor, sweepTurn: number | null): void {
+function spillLoot(
+  run: Run,
+  victim: EngineActor,
+  sweepTurn: number | null,
+  killerId: string | null,
+): void {
   const loot = run.ctx.loot;
   if (loot === undefined) return;
 
-  const itemIds = loot.spillOrder(victim);
+  // THE BODY, NOT THE ID, because the seam has to read a ledger off it — see
+  // `LootResolution.spillOrder`. A killer that has already been buried resolves
+  // to `null` here and the seam treats it as "nobody is credited", which is the
+  // same answer `awardExperience` gives an id it cannot resolve.
+  const killer = killerId === null ? null : (run.world.getActor(killerId) ?? null);
+  const itemIds = loot.spillOrder(victim, killer);
   if (itemIds.length === 0) return;
 
   // SNAPSHOTTED ONCE, BEFORE ANYTHING ELSE. Both the ground items and the event

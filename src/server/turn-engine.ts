@@ -819,7 +819,7 @@ function resetFloor(
  * 0, a different spill order is literally a different item picked up, and the bug
  * report reads "the wrong thing got taken".
  *
- * ═══ TWO FILTERS, BOTH DELIBERATE ═══
+ * ═══ THREE FILTERS, ALL DELIBERATE ═══
  *   AN ID THE CATALOGUE DOES NOT KNOW IS DROPPED, not spilled. It would reach the
  *     floor, ride the ground frame to every client, and render as the LOUD violet
  *     fallback box — the one failure this project's asset rules exist to make
@@ -829,10 +829,99 @@ function resetFloor(
  *     rest), and `equipped` wins over `carried` for the same id on load. Honouring
  *     that here means a body cannot leave two of a thing it could only ever have
  *     owned one of.
+ *   AND AN `oncePerCharacter` ID IS HANDED TO A GIVEN CHARACTER ONCE, EVER. See
+ *     below — it is the whole of the latch.
+ *
+ * ═════════════════════════════════════════════════════════════════════════════
+ * THE FIRST WARDEN YOU KILL GIVES YOU A KNOT. NO OTHER ONE EVER DOES.
+ * ═════════════════════════════════════════════════════════════════════════════
+ *
+ * Ported from `NPC:onDie`, tome/class/NPC.lua:393-406:
+ *
+ * ```lua
+ * :393  if self.rank >= 4 and game.state:allowRodRecall() and not self:attr("no_rod_recall") then
+ * :394    local rod = game.zone:makeEntityByName(game.level, "object", "ROD_OF_RECALL")
+ * :403      game.zone:addEntity(game.level, rod, "object", self.x, self.y)
+ * :406    game.state:allowRodRecall(false)
+ * ```
+ *
+ * `allowRodRecall` (class/GameState.lua:93-96) is a ONE-SHOT PER CHARACTER —
+ * one boolean on that character's own game state, set true at birth for the
+ * campaign (`data/birth/worlds.lua:82`, read at class/Game.lua:216) and spent at
+ * :406. The second boss drops nothing, and so does the hundredth.
+ *
+ * WE NEED IT MORE THAN UPSTREAM DOES, NOT LESS. Upstream's first boss is
+ * somewhere in a campaign; ours is the warden standing between a new character
+ * and daylight, in a delve that is marked on the world map, re-enterable and
+ * re-populating — `realm-wipe.test.ts` puts the warden back after a wipe.
+ * MEASURED, before this filter existed: three visits, three wardens, three
+ * Knots. `content/items.ts`'s own docblock predicted what that would be worth
+ * the day the button landed, and the button landed the day before this.
+ *
+ * ═══ THE LEDGER IS `kitGranted`, AND THAT IS NOT A SECOND MECHANISM ═══
+ * `PlayerActor.kitGranted` (engine/actor.ts) is already the per-character,
+ * saved, restored, carried-across-realms list of ids this character HAS BEEN
+ * HANDED, and its own words are *"a character who drops or sells the lantern
+ * does not get another on the next join"*. That is this rule exactly, so the
+ * Knot joins the lantern in it rather than getting a flag of its own: no new
+ * `CharacterFile` field, no parse, no migration — and a save written before
+ * this shipped reads as "has not been given one yet", because an absent entry
+ * has always meant that.
+ *
+ * ═══ WHOSE LEDGER: THE KILLER'S, WHICH IS UPSTREAM'S OWN ANSWER ═══
+ * `game.state` belongs to the character doing the killing. In a party of four
+ * that pays whoever put the warden down, and the other three are NOT latched —
+ * each of them is paid by their own first warden, which is the rule that does
+ * not punish a fifth friend for arriving late (the sentence `awardExperience`
+ * is built on). It still cannot be farmed: a character is handed one Knot,
+ * `carried` is a set so a second copy cannot be held, it is unsellable
+ * (`Item.quest`) and undroppable, and the pull is the party lead's alone — so
+ * one Knot in a group already carries the whole group out.
+ *
+ * ═══ AND A CHARACTER WHO LOST THEIRS GETS NOTHING, DELIBERATELY ═══
+ * The ledger records being HANDED one, never holding one, so it is never
+ * un-written — which is what makes it a latch rather than a second copy of the
+ * bag that can disagree with it. Upstream is stricter still (one per campaign,
+ * and its rod cannot be lost because death ends the campaign). Ours closes the
+ * loss routes first: it cannot be dropped, cannot be sold, cannot be duplicated
+ * in a bag that is a set, and it survives being Downed (game-design.md § 9, no
+ * permadeath and no loss). What is left is walking away from the tile it fell
+ * on until the realm lingers out — and the cost of that is a walk to the
+ * stairs, not a stranded character.
+ *
+ * ═══ NOBODY CREDITED MEANS SPILL IT AND SPEND NOTHING ═══
+ * `killer` is `null` for a body nobody is paid for. Upstream's insurance clause
+ * (NPC.lua:397-401) puts the rod straight into the player's bag rather than
+ * risk it being unreachable — *"make absolutely sure they get the Rod of
+ * Recall"* — so the failure upstream is afraid of is the item being LOST, not
+ * the item being minted twice. A warden that bleeds out from a wound whose
+ * author has already been buried pays out, and no ledger moves.
  */
-function spillOrderOf(actor: Actor): readonly string[] {
+function spillOrderOf(actor: Actor, killer: Actor | null): readonly string[] {
   const out: string[] = [];
   const seen = new Set<string>();
+
+  /**
+   * THE CHARACTER THIS DEATH IS CREDITED TO, or `null` for nobody. A monster
+   * killer is nobody too — only a character has a ledger to spend.
+   */
+  const credited = killer !== null && isPlayer(killer) ? killer : null;
+  /** Their `kitGranted`, read ONCE here and written back at most once, below. */
+  const handed = credited === null ? null : new Set(credited.kitGranted ?? []);
+  let spent = false;
+
+  /**
+   * `allowRodRecall` in two lines: refuse when this character has already been
+   * handed one, spend the latch when they have not. No ledger at all means
+   * nobody is credited, which hands it over and spends nothing.
+   */
+  const handOver = (id: string): boolean => {
+    if (handed === null) return true;
+    if (handed.has(id)) return false;
+    handed.add(id);
+    spent = true;
+    return true;
+  };
 
   const take = (id: string | undefined): void => {
     if (id === undefined || seen.has(id)) return;
@@ -841,7 +930,10 @@ function spillOrderOf(actor: Actor): readonly string[] {
     // and deliberately has no `slot` (content/money.ts says why). Without this
     // clause a corpse carrying gold would spill nothing, and the failure would
     // read as "the drop table stopped working" rather than as a missing case.
-    if (!isMoneyId(id) && resolveItem(id) === undefined) return;
+    const item = isMoneyId(id) ? undefined : resolveItem(id);
+    if (!isMoneyId(id) && item === undefined) return;
+    // ...AND THE LATCH, the only filter here that writes anything down.
+    if (item?.oncePerCharacter === true && !handOver(id)) return;
     seen.add(id);
     out.push(id);
   };
@@ -854,6 +946,13 @@ function spillOrderOf(actor: Actor): readonly string[] {
   // ...then the backpack, in the order things went into it — which is upstream's
   // `INVEN`-last rule and, for a monster, is just its one pre-rolled drop.
   for (const id of actor.carried ?? []) take(id);
+
+  // THE LATCH IS SPENT HERE, ONCE, AND ONLY IF SOMETHING WAS ACTUALLY HANDED
+  // OVER — upstream's `game.state:allowRodRecall(false)` at NPC.lua:406 is
+  // likewise the LAST line of the branch that placed the rod. A body that
+  // spilled nothing latches nobody, so a warden killed by two characters pays
+  // them both and a second warden killed by one of them pays neither.
+  if (credited !== null && handed !== null && spent) credited.kitGranted = [...handed];
 
   return out;
 }
@@ -1162,6 +1261,42 @@ export function saveLines(
     if (event.t === 'status') say(event.note);
     else if (event.t === 'sweep') {
       for (const step of event.steps) if (step.t === 'status') say(step.note);
+    }
+  }
+  return out;
+}
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * WHICH EFFECTS RAN OUT THIS PUMP — and not which ones were TAKEN OFF.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * THE SAME WALK `saveLines` ABOVE DOES, and here for the same reason: the fact
+ * is in the event stream, the wire cannot carry it, and the caller needs it.
+ * `statusToWire` maps every `lost` note to one `effect_expired` event and goes
+ * on doing so — a new `TurnEvent` variant independently forces a protocol bump
+ * (`shared/version.ts`), and this needs none.
+ *
+ * ═══ THE DISTINCTION IS THE WHOLE POINT, NOT THE LIST ═══
+ * `effect_expired` fires for a cancellation too, so a caller reading it to
+ * decide "the countdown finished, do the thing" would do the thing to somebody
+ * who cancelled. `EffectLogLine.expired` is where that was fixed; this is where
+ * it reaches net/. Upstream's own recall makes the same cut at the same place
+ * (other.lua:3343-3353, `eff.dur <= 0`).
+ *
+ * ONE ENTRY PER EXPIRY, in the order they happened, and never filtered against
+ * the world: a body erased later in the same pump still had the effect run out.
+ */
+function expiredNotes(events: readonly GameEvent[]): { id: string; effectId: string }[] {
+  const out: { id: string; effectId: string }[] = [];
+  const take = (note: EffectLogLine): void => {
+    if (note.kind !== 'lost' || note.expired !== true) return;
+    out.push({ id: note.actorId, effectId: note.effectId });
+  };
+  for (const event of events) {
+    if (event.t === 'status') take(event.note);
+    else if (event.t === 'sweep') {
+      for (const step of event.steps) if (step.t === 'status') take(step.note);
     }
   }
   return out;
@@ -1576,6 +1711,24 @@ function sweepStepsToWire(world: World, steps: readonly SweepStep[]): TurnEvent[
  * still typed as the narrower `PumpResult` simply cannot see `reaped`, which is
  * correct: it has no `reap` to call either.
  */
+/**
+ * WHAT ONE REST DID, plus THE COUNTDOWNS THAT RAN OUT WHILE IT RAN.
+ *
+ * A WIDENING OF `RestResult` rather than a field on it, for `ReapingPumpResult`'s
+ * exact reason: `RestResult` lives in `src/shared/rest.ts`, which is pure and
+ * has no business knowing that this game has an effect table. The caller states
+ * the shape it needs and the compiler proves the two meet.
+ *
+ * ═══ IT EXISTS BECAUSE A REST SWALLOWS ITS OWN PUMPS ═══
+ * `rest` is N calls to `pump` and it consumes every result. `PumpResult.expired`
+ * is the one thing in a result that a CALLER has to act on rather than forward,
+ * so it is the one thing that has to come back out of this door.
+ */
+export type RestingResult = RestResult & {
+  /** See `PumpResult.expired` in engine/scheduler.ts, and `yankOut` in net/. */
+  readonly expired?: readonly { readonly id: string; readonly effectId: string }[];
+};
+
 export type ReapingPumpResult = PumpResult & {
   /**
    * Monsters that died during this pump, in the order they fell. STILL IN THE
@@ -1623,7 +1776,7 @@ export type ReapingTurnEngine = Omit<TurnEngine, 'pump'> & {
    * sentence. See `src/shared/rest.ts` for the rule and why it is a pure
    * predicate here when upstream's heals inside itself.
    */
-  rest(actorId: string): RestResult;
+  rest(actorId: string): RestingResult;
   /**
    * A WALL-CLOCK TICK ARRIVED — one game turn is owed to this realm.
    *
@@ -1724,12 +1877,23 @@ function buildRestView(
    * `status` rather than merely `dur > 0`.
    */
   let afflicted = false;
+  /**
+   * AND WHETHER ANY OF THEM IS ONE REST WAITS FOR — `wait_recall`,
+   * Player.lua:1066-1077, declared on the effect rather than named here. See
+   * `EffectDef.restWaitsFor` and `RestView.recalling`.
+   *
+   * Both flags are settled in ONE walk of the table, and the walk no longer
+   * breaks early: `afflicted` could stop at the first detrimental effect when it
+   * was the only question, and a body that is both bleeding and waiting on a
+   * wind-up has to answer both.
+   */
+  let recalling = false;
   if (effects !== undefined) {
     for (const instance of effectsOn(effects, self.id)) {
-      if (effectDef(effects, instance.effectId)?.status === EffectStatus.Detrimental) {
-        afflicted = true;
-        break;
-      }
+      const def = effectDef(effects, instance.effectId);
+      if (def?.status === EffectStatus.Detrimental) afflicted = true;
+      if (def?.restWaitsFor === true) recalling = true;
+      if (afflicted && recalling) break;
     }
   }
 
@@ -1747,6 +1911,7 @@ function buildRestView(
     // `> 0` and not `.size > 0`: a cooldown map holds zeroes for talents that are
     // ready, because `projectCooldowns` reads the same map to grey the buttons.
     cooling: [...self.cooldowns.values()].some((turns) => turns > 0),
+    recalling,
     threat,
     /**
      * THE LUNGS, and the ground under them. `losing` is `suffocate`'s
@@ -2811,21 +2976,37 @@ export function createTurnEngine(opts: TurnEngineOptions): ReapingTurnEngine {
      * found a state the rule does not describe, and saying so is the only honest
      * answer.
      */
-    rest(actorId: string): RestResult {
+    rest(actorId: string): RestingResult {
       const self = world.getActor(actorId);
       if (self === undefined || !self.alive) return { turns: 0, stop: RestStop.Done };
 
       let turns = 0;
+      /**
+       * ═══════════════════════════════════════════════════════════════════════
+       * AND WHAT RAN OUT WHILE THEY SAT THERE. See `RestingResult.expired`.
+       * ═══════════════════════════════════════════════════════════════════════
+       *
+       * A rest is N pumps and it consumes every one of their results itself, so
+       * anything a caller learns from `PumpResult` is invisible through this
+       * door unless it is carried back out. That is not a general problem —
+       * events, saves and the reap are all delivered by the pumps themselves —
+       * but `expired` is bookkeeping the CALLER acts on, and the whole point of
+       * `RestView.recalling` is that resting is how you sit through a wind-up.
+       * Lose it here and the one thing the rest exists to wait for never
+       * happens: measured before the fix, a recall rested through counted down
+       * to zero and the party stayed exactly where it was.
+       */
+      const expired: { id: string; effectId: string }[] = [];
+      const done = (stop: RestStop, threat?: RestView['threat']): RestingResult => ({
+        turns,
+        stop,
+        ...(threat == null ? {} : { threat }),
+        ...(expired.length === 0 ? {} : { expired }),
+      });
       for (;;) {
         const answer = restCheck(buildRestView(world, self, talents, opts.effects));
-        if (!answer.rest) {
-          return {
-            turns,
-            stop: answer.stop,
-            ...(answer.threat == null ? {} : { threat: answer.threat }),
-          };
-        }
-        if (turns >= REST_MAX_TURNS) return { turns, stop: RestStop.Budget };
+        if (!answer.rest) return done(answer.stop, answer.threat);
+        if (turns >= REST_MAX_TURNS) return done(RestStop.Budget);
 
         /**
          * THE BONUS IS PAID BEFORE THE TURN, not after, and it uses the count
@@ -2957,6 +3138,32 @@ export function createTurnEngine(opts: TurnEngineOptions): ReapingTurnEngine {
 
         /**
          * ═══════════════════════════════════════════════════════════════════
+         * WHAT THIS PUMP FINISHED, COLLECTED BEFORE ANY REASON TO STOP.
+         * ═══════════════════════════════════════════════════════════════════
+         *
+         * IT WAS BELOW THE `hurt` RETURN AND THAT LOST THE FEATURE. A rest is N
+         * pumps and the caller sees only the LAST result, so every note this
+         * loop does not carry out is a countdown that reached zero and that
+         * nothing acted on — which for the Knot of Elsewhere is twenty turns
+         * spent, a thirty-turn cooldown spent, the badge gone, and the party
+         * still standing in the delve.
+         *
+         * MEASURED against the real engine: a wind-up of one turn expiring on a
+         * pump that also landed a bleed returned `{turns:1, stop:"hurt"}` with
+         * no `expired` key at all, while the identical rest without the bleed
+         * returned the note. Every other exit from this loop carries them; this
+         * one did not, and it is the exit a party takes in exactly the
+         * situation the item exists for — taking damage in a delve, reaching
+         * for the way out.
+         *
+         * SO IT IS COLLECTED FIRST, AND THE STOP IS DECIDED AFTER. The fact
+         * that a clock ran out is not contingent on what else happened on the
+         * same pump.
+         */
+        expired.push(...(outcome.expired ?? []));
+
+        /**
+         * ═══════════════════════════════════════════════════════════════════
          * ANYTHING LANDED A HIT — Player.lua:722-724, `onTakeHit`.
          * ═══════════════════════════════════════════════════════════════════
          *
@@ -2975,7 +3182,7 @@ export function createTurnEngine(opts: TurnEngineOptions): ReapingTurnEngine {
           event.k === 'damage' && event.id === actorId && event.healed === undefined;
         if (outcome.playerEvents.some(hurt) || outcome.sweep.some(hurt)) {
           turns += 1;
-          return { turns, stop: RestStop.Hurt };
+          return done(RestStop.Hurt);
         }
 
         /**
@@ -2986,13 +3193,38 @@ export function createTurnEngine(opts: TurnEngineOptions): ReapingTurnEngine {
          * as `Budget` because that is what it is: the loop stopped because it
          * could not make progress, and the player is told so.
          */
-        if (world.turn.clock.gameTurn === beforeTurn) return { turns, stop: RestStop.Budget };
+        if (world.turn.clock.gameTurn === beforeTurn) return done(RestStop.Budget);
         turns += 1;
+
+        /**
+         * ═══════════════════════════════════════════════════════════════════
+         * AND THE THING IT WAS WAITING FOR HAS HAPPENED. STOP.
+         * ═══════════════════════════════════════════════════════════════════
+         *
+         * `RestView.recalling` is the clause that keeps a rest going through a
+         * wind-up (Player.lua:1066-1077). The turn it runs out, the rest is
+         * over — upstream reaches the same place by a different road, because
+         * its recall fires on the same tick and `changeLevel` interrupts rest
+         * outright.
+         *
+         * WITHOUT THIS, resting past the countdown is legal and the crossing is
+         * LATE: `restCheck` falls through to its remaining "anything to gain"
+         * arms, so a body still short of full health would sit in the delve for
+         * another forty turns before the caller drained the expiry and moved
+         * them. Twenty turns is the promise the item makes.
+         */
+        const table = opts.effects;
+        if (
+          table !== undefined &&
+          expired.some((note) => effectDef(table, note.effectId)?.restWaitsFor === true)
+        ) {
+          return done(RestStop.Done);
+        }
 
         // A REST THE WORLD ENDED. Dying mid-rest, or being reaped, must not keep
         // asking a body that is no longer there whether it feels better.
         const still = world.getActor(actorId);
-        if (still === undefined || !still.alive) return { turns, stop: RestStop.Bleeding };
+        if (still === undefined || !still.alive) return done(RestStop.Bleeding);
       }
     },
 
@@ -3428,6 +3660,9 @@ export function createTurnEngine(opts: TurnEngineOptions): ReapingTurnEngine {
        * with the refusals below.
        */
       const saves = saveLines(world, opts.effects, result.events);
+      // AND WHICH COUNTDOWNS FINISHED, as opposed to being cancelled. Built
+      // from the same walk and for the same reason. See `expiredNotes`.
+      const expired = expiredNotes(result.events);
 
       return {
         status: result.status,
@@ -3436,6 +3671,9 @@ export function createTurnEngine(opts: TurnEngineOptions): ReapingTurnEngine {
         sweep: toWireEvents(world, sweepEvents, 'sweep'),
         refusals,
         ...(saves.length === 0 ? {} : { saves }),
+        // OMITTED WHEN EMPTY, like `saves` above: an engine with no status
+        // table produces none, and a caller that never reads it pays nothing.
+        ...(expired.length === 0 ? {} : { expired }),
         // The engine's own sentences, forwarded. See `PumpResult.records`.
         ...(result.records.length === 0 ? {} : { records: result.records }),
         // ═══ AND WHO WAS MOVED WITHOUT ASKING TO BE ═══

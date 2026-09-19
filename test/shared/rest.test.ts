@@ -16,6 +16,8 @@ const settled: RestView = {
   resource: { value: 100, max: 100, regenPerTurn: 0.6 },
   afflicted: false,
   cooling: false,
+  // Player.lua:1066-1077's `wait_recall`, off. See `RestView.recalling`.
+  recalling: false,
   threat: null,
   air: { value: 100, max: 100, regen: 3, suffocating: false, losing: false },
 };
@@ -53,6 +55,41 @@ describe('what keeps a body resting', () => {
   it('rests out a cooldown, so the next room starts with buttons', () => {
     // :1041-1049's `wait_cooldowns`.
     expect(restCheck({ ...settled, cooling: true }).rest).toBe(true);
+  });
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * AND IT SITS THROUGH A WIND-UP — `wait_recall`, Player.lua:1066-1077.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * The clause without which the Knot of Elsewhere does not ship. Twenty turns
+   * in which nothing happens is twenty presses of hold in a phase-locked co-op
+   * game, every one of them waiting on five other people. Upstream added this
+   * to its own rest for its own forty-turn recall.
+   *
+   * AND IT IS A SEPARATE CLAUSE FROM `afflicted` BECAUSE THE EFFECT IS
+   * BENEFICIAL (other.lua:3337). `afflicted` counts detrimental effects — you
+   * rest a slow off — so it is deliberately false here, and a body waiting on a
+   * recall with full health, a full pool and nothing cooling would otherwise
+   * stand up on turn one.
+   */
+  it('sits through a wind-up with nothing else to gain', () => {
+    expect(restCheck({ ...settled, afflicted: false, cooling: false, recalling: true }).rest).toBe(
+      true,
+    );
+  });
+
+  it('still stands up for a hostile while it is waiting on one', () => {
+    // The order is upstream's: the recall clause is the LAST "keep going" arm,
+    // and every interrupt above it still outranks it.
+    const answer = restCheck({
+      ...settled,
+      recalling: true,
+      threat: { name: 'Index Husk', dx: 2, dy: 0 },
+    });
+    expect(answer.rest).toBe(false);
+    if (answer.rest) return;
+    expect(answer.stop).toBe(RestStop.Hostile);
   });
 
   it('stops when there is genuinely nothing left to gain', () => {

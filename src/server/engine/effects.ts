@@ -531,6 +531,36 @@ export type EffectDef = {
    * more than zero.
    */
   readonly breaksOnDamage?: boolean;
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * REST SITS THROUGH THIS ONE — `wait_recall`, Player.lua:1066-1077.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Upstream names the effect in the rest rule: `if self:hasEffect(self.EFF_RECALL)
+   * then return true end`. Ported as a DECLARATION on the effect instead,
+   * because `restCheck` lives in `src/shared/` and may not import this
+   * catalogue, and because the engine must not learn the name of one item's
+   * status to answer a question about resting.
+   *
+   * ═══ IT IS NOT `afflicted` ═══
+   * That clause (`:1023-1029`) keeps resting while something DETRIMENTAL runs,
+   * so you can rest a slow off. This one is for a BENEFICIAL countdown the body
+   * is waiting on, which `afflicted` deliberately does not count. Upstream needs
+   * both, one after the other, and so do we.
+   *
+   * ═══ AND IT IS WHY THE BADGE GOES FIRST ═══
+   * `projectEffects` reads it a second time, to sort. An effect the REST waits
+   * on is, by construction, the one countdown the player is watching — and the
+   * party row draws two badges and prints “+1” for the rest. Measured: a body
+   * that was Bleeding and Slowed when it pulled the Knot showed `Bl 28 / Sl 28
+   * / +1`, with the wind-up's number nowhere on the screen, in the one
+   * situation the item exists for. The effect's own docblock says *“the badge
+   * on the party panel IS the feedback”*, so the sort is the rule that makes
+   * that sentence true rather than a preference.
+   *
+   * Read by `buildRestView` and by `projectEffects`. Absent is every effect but one.
+   */
+  readonly restWaitsFor?: boolean;
 
   readonly modifiers?: EffectModifiers;
   /**
@@ -841,6 +871,36 @@ export type EffectLogLine = {
   readonly actorId: string;
   readonly effectId: string;
   readonly kind: 'gained' | 'lost' | 'negated' | 'resisted' | 'immune' | 'merged';
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * DID IT RUN OUT, OR WAS IT TAKEN OFF? Only ever set on `lost`.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `kind: 'lost'` meant BOTH, and every reader downstream — the Record lane,
+   * `statusToWire`'s `effect_expired` — treated them as one thing, correctly,
+   * because for a bleed they are one thing: the badge goes away either way.
+   *
+   * ═══ THE DAY THAT STOPS BEING TRUE IS THE DAY AN EXPIRY DOES SOMETHING ═══
+   * Upstream's own recall is the case: `other.lua:3343-3353` is one `deactivate`
+   * with two arms, and the test between them is exactly `eff.dur <= 0` —
+   * expiry yanks you out of the level, any other removal prints *"Space
+   * restabilizes around you."* A reader that cannot tell them apart would
+   * teleport somebody who CANCELLED. Fixed here, once, rather than at each
+   * reader, and fixed BEFORE anything is load-bearing on it.
+   *
+   * ═══ WHY `eff.dur <= 0` IS THE WHOLE TEST, HERE AS THERE ═══
+   * `timedEffects` queues an instance only once `dur` has already reached zero
+   * (:2041-2044, ToME's ActorTemporaryEffects.lua:80-81) and decrements
+   * AFTERWARDS — so an expired instance is at or below zero when this runs, and
+   * every other removal path (`dispel`, `breakDamageSensitive`, a caller's own
+   * `removeEffect`) leaves it above. Read BEFORE `deactivate`, so a hook that
+   * writes to its own instance cannot change the answer to a question about
+   * what the clock said when removal began.
+   *
+   * OPTIONAL, so nothing that builds an `EffectLogLine` by hand has to grow a
+   * field, and absent reads as "this producer does not distinguish them".
+   */
+  readonly expired?: boolean;
   /** Turns that landed, for `gained`/`merged`. */
   readonly dur?: number;
   /** What was asked for, so the log can print "Slowed 1 turn, not 3". */
@@ -1798,6 +1858,13 @@ export function removeEffect(
   // ActorTemporaryEffects.lua:191 — `if ...no_remove and not force then return end`.
   // BEFORE `deactivate`, exactly as upstream refuses before `on_lose`.
   if (def?.noRemove === true && !force) return false;
+  /**
+   * DID THE CLOCK RUN OUT, OR IS SOMETHING TAKING IT OFF? Upstream's own test,
+   * `other.lua:3344`'s `eff.dur <= 0`, read at upstream's own moment — the
+   * removal — and read BEFORE `deactivate` so no hook can change the answer.
+   * See `EffectLogLine.expired`.
+   */
+  const expired = eff.dur <= 0;
   // :192-196 — deactivate BEFORE the instance leaves the table, so a hook can
   // still read its own parameters.
   def?.deactivate?.({ state, actor, eff, def, rng, ctx });
@@ -1816,7 +1883,7 @@ export function removeEffect(
    */
   if (def?.wielder !== undefined) ctx.sheetDirty?.(actor.id);
 
-  if (!silent) ctx.log?.({ actorId: actor.id, effectId, kind: 'lost' });
+  if (!silent) ctx.log?.({ actorId: actor.id, effectId, kind: 'lost', expired });
   return true;
 }
 

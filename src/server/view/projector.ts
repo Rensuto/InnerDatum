@@ -1763,6 +1763,30 @@ export function projectEffects(
     if (seen !== undefined && !seen.has(actor.id)) continue;
 
     const live = effectsOn(effects, actor.id);
+    /**
+     * ═══════════════════════════════════════════════════════════════════════════
+     * TWO LISTS, BECAUSE THE ROW ONLY DRAWS TWO BADGES.
+     * ═══════════════════════════════════════════════════════════════════════════
+     *
+     * `MAX_BADGES` is 2 and the overflow is printed as “+N” (ui/partypanel.ts),
+     * so the ORDER of this array decides which two facts a player can read off
+     * a party row. It used to be talent badges first and then live effects in
+     * whatever order they were applied — an order nobody chose.
+     *
+     * MEASURED: a body already Bleeding and Slowed pulled the Knot of Elsewhere
+     * and the row read `Bl 28 / Sl 28 / +1`. The twenty-turn countdown the whole
+     * item is built around had no number anywhere on the screen, and a Watchman
+     * who is Guarded and Marked hid it whatever the effects did, because talent
+     * badges always sorted first.
+     *
+     * SO ONE CLASS OF BADGE IS PROMOTED, AND IT IS DECLARED ON THE EFFECT
+     * (`EffectDef.restWaitsFor`) RATHER THAN NAMED HERE. That field already
+     * means “the body is waiting for this to finish” — it is what keeps a rest
+     * running through the wind-up — which is exactly the property that makes a
+     * countdown the one the player is watching. A projector that knew the id of
+     * one effect would be the view layer holding an opinion about content.
+     */
+    const awaited: EffectView[] = [];
     const badges: EffectView[] = [];
 
     for (const row of TALENT_BADGES) {
@@ -1790,7 +1814,7 @@ export function projectEffects(
       // next pass; until then it has no name and no icon, so there is nothing
       // honest to draw.
       if (def === undefined) continue;
-      badges.push({
+      const view: EffectView = {
         id: eff.effectId,
         name: def.displayName,
         // WHAT IT DOES. Authored on the definition, or COMPOSED FROM THIS
@@ -1809,10 +1833,13 @@ export function projectEffects(
         // actor, and a negative number on a HUD is a bug report.
         turns: Math.max(0, eff.dur),
         harmful: def.status === EffectStatus.Detrimental,
-      });
+      };
+      if (def.restWaitsFor === true) awaited.push(view);
+      else badges.push(view);
     }
 
-    if (badges.length > 0) actors.push({ id: actor.id, effects: badges });
+    const shown = [...awaited, ...badges];
+    if (shown.length > 0) actors.push({ id: actor.id, effects: shown });
   }
 
   return { v: PROTOCOL_VERSION, t: 'effects', actors };
@@ -2407,6 +2434,33 @@ function useText(use: ItemUse, drinker?: Combatant): string {
       const factor = bound(healingFactor(drinker ?? {}), HEAL_FACTOR_MIN, HEAL_FACTOR_MAX);
       return `Restores ${String(Math.round(use.amount * factor))} health.`;
     }
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * AND THE ONE THAT PROMISES NOTHING THE SERVER WILL NOT DO.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * THE AUTHORED NUMBER, not a per-viewer one, and the asymmetry with `Heal`
+     * above is real rather than an oversight: a heal is multiplied by the
+     * DRINKER's healing factor so the authored figure is the one number nobody
+     * actually gets, while twenty turns is twenty turns for everybody. Nothing
+     * on the sheet moves it.
+     *
+     * ═══ IT SAYS "NOT EVERYWHERE" BECAUSE THE SERVER REFUSES SOMEWHERE ═══
+     * This is the tooltip that was reported from play: the slot captioned USE,
+     * the card said *"press to use it"*, and the press came back *"that is not
+     * something you can use"*. The path is built now, and the remaining
+     * refusals — out in the open, a place that will not let go, too soon after
+     * a kill, still slack, and not the party lead — are all states a player can
+     * act on, so the card names the shape of them rather than pretending there
+     * are none. Each refusal says its own reason when it happens; this is what
+     * you read before you press.
+     */
+    case ItemUseKind.Elsewhere:
+      return (
+        `Pull it and, ${String(use.windUpTurns)} turns later, it takes the party out to ` +
+        `the moor you came in from. Pull it again to call it off. Not usable everywhere, ` +
+        `and only by whoever is leading.`
+      );
   }
 }
 

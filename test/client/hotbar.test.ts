@@ -1,6 +1,8 @@
 import { cardStatLines } from '../../src/client/ui/panel.ts';
 /// <reference lib="dom" />
 
+import { readFileSync } from 'node:fs';
+
 import { describe, expect, it } from 'vitest';
 
 import { HUD_MIN_W } from '../../src/client/render/canvas.ts';
@@ -498,6 +500,28 @@ describe('itemSlotAction', () => {
     expect(isSlotDisabled(talentSlot())).toBe(false);
     expect(isSlotDisabled(talentSlot({ cooldown: 2 }))).toBe(true);
     expect(isSlotDisabled(talentSlot({ affordable: false }))).toBe(true);
+  });
+
+  /**
+   * ══════════════════════════════════════════════════════════════════════════════
+   * AND AN ITEM CAN BE ON COOLDOWN NOW, WHICH IT COULD NOT WHEN THAT WAS WRITTEN.
+   * ══════════════════════════════════════════════════════════════════════════════
+   *
+   * The Knot of Elsewhere rides `actor.cooldowns` keyed by its ITEM id, so the
+   * number was on the wire from the day it shipped and nothing read it.
+   * Observed live at `cooldowns: {item_knot_of_elsewhere: 25}`: the slot was
+   * undimmed, carried no wedge, and its card still read *"press to use it"* —
+   * a button promising something the server would refuse for the next
+   * twenty-five turns, which is the exact shape of the bug this whole feature
+   * was reported for.
+   */
+  it('greys a bound item that is still cooling, and lets a ready one alone', () => {
+    expect(isSlotDisabled(itemSlot(ItemSlotAction.Use, { cooldown: 25 }))).toBe(true);
+    expect(isSlotDisabled(itemSlot(ItemSlotAction.Use, { cooldown: 0 }))).toBe(false);
+    // ABSENT MEANS READY, which is how the `cooldowns` frame spells it (the
+    // server deletes the entry at zero) and how every slot built before this
+    // field existed still behaves.
+    expect(isSlotDisabled(itemSlot(ItemSlotAction.Use))).toBe(false);
   });
 });
 
@@ -1055,6 +1079,96 @@ describe('hotbarTipAt', () => {
     expect(card, 'the bound item produced no card').not.toBeNull();
     expect(card?.lines.join(' ')).toContain('Restores 24 hit points.');
     expect(card?.lines.join(' ')).toContain('Armour');
+  });
+
+  /**
+   * ══════════════════════════════════════════════════════════════════════════════
+   * AND IT WRAPS, WHICH IS WHY A SENTENCE FITS ON A CARD AT ALL.
+   * ══════════════════════════════════════════════════════════════════════════════
+   *
+   * The talent branch called `wrapForCard`; the item branch pushed the raw
+   * string. Measured at the Activity viewport the Knot of Elsewhere's card was
+   * 924 pixels wide — 73% of the window, one line, laid over the Case Log —
+   * and at the 640 floor it truncated at *"Pull it again to call it of…"*,
+   * losing the cancel affordance and the lead-only refusal. The bag's card
+   * wrapped the identical sentence correctly, so two surfaces disagreed about
+   * one string.
+   *
+   * NO PIXEL MEASUREMENT HERE: the measurer needs a DOM canvas and returns the
+   * whole string when there is none, so what is asserted is the SHAPE — the
+   * long sentence no longer arrives as one undivided line while a short one is
+   * left alone.
+   */
+  it('lays an item sentence out exactly as it lays a talent sentence out', () => {
+    const long =
+      'Pull it and, 20 turns later, it takes the party out to the moor you came in from. ' +
+      'Pull it again to call it off. Not usable everywhere, and only by whoever is leading.';
+
+    // A TWO-SLOT BAR BUILT BY HAND, because `barSlots` owns the talent half and
+    // would discard the description under test.
+    const view: HotbarView = {
+      slots: [
+        talentSlot({ talent: { ...talent(), desc: long } }),
+        itemSlot(ItemSlotAction.Use, { desc: long }),
+      ],
+      hovered: -1,
+      armed: -1,
+    };
+    const talentRect = slotRect(rectFor(W), 0, view.slots.length);
+    const itemRect = slotRect(rectFor(W), 1, view.slots.length);
+    const talentCard = hotbarTipAt(view, rectFor(W), talentRect.x + 2, talentRect.y + 2);
+    const itemCard = hotbarTipAt(view, rectFor(W), itemRect.x + 2, itemRect.y + 2);
+
+    expect(itemCard, 'the bound item produced no card').not.toBeNull();
+    expect(talentCard, 'the talent produced no card').not.toBeNull();
+    // THE RULE IS THAT THEY AGREE. Under this runner there is no DOM measurer
+    // and both come back whole, so what this pins is the JOIN rather than a
+    // pixel: an item branch that stops calling the wrapper starts disagreeing
+    // with the talent branch, in one assertion, whatever the environment.
+    //
+    // CONTAINMENT RATHER THAN EQUALITY, because a talent card carries stat rows
+    // above its prose and a `Scales:` row below it. What must match is the
+    // paragraph, line for line: two surfaces breaking one sentence in two
+    // different places is the bug.
+    const prose = itemCard?.lines ?? [];
+    expect(prose.length, 'the item card has no prose at all').toBeGreaterThan(0);
+    expect(talentCard?.lines).toEqual(expect.arrayContaining([...prose]));
+    expect(prose.join(' ')).toContain('only by whoever is leading');
+  });
+
+  /**
+   * AND THE SOURCE SAYS IT ONCE, because this runner is deliberately node-only
+   * (see vitest.config.ts: *"no test for the canvas, no jsdom"*) and the
+   * wrapper is a no-op without a DOM. The assertion above cannot see a wrap; it
+   * can only see a disagreement. This one sees the call.
+   */
+  it('runs a bound item`s prose through the card wrapper', () => {
+    const source = readFileSync(new URL('../../src/client/ui/hotbar.ts', import.meta.url), 'utf8');
+    const branch = source.slice(source.indexOf('if (slot.kind === HotbarSlotKind.Item) {'));
+    const prose = branch.slice(0, branch.indexOf('itemMetaLine'));
+    expect(prose, 'the item card builds its prose unwrapped').toContain('wrapForCard(slot.desc)');
+  });
+
+  /**
+   * AND THE HEADER SAYS WHY IT CANNOT BE PRESSED, in the talent card's own
+   * words and units. It read *"press to use it"* for all thirty turns of the
+   * Knot's cooldown.
+   */
+  it('says how long an item has left instead of offering the verb', () => {
+    const cooling = itemSlot(ItemSlotAction.Use, { cooldown: 25 });
+    const view: HotbarView = { slots: barSlots([cooling]), hovered: -1, armed: -1 };
+    const index = view.slots.findIndex((slot) => slot.kind === HotbarSlotKind.Item);
+    const rect = slotRect(rectFor(W), index, view.slots.length);
+    const card = hotbarTipAt(view, rectFor(W), rect.x + 2, rect.y + 2);
+    expect(card?.meta).toBe('cooling — 25t');
+
+    const ready: HotbarView = {
+      slots: barSlots([itemSlot(ItemSlotAction.Use)]),
+      hovered: -1,
+      armed: -1,
+    };
+    const readyCard = hotbarTipAt(ready, rectFor(W), rect.x + 2, rect.y + 2);
+    expect(readyCard?.meta).toBe('press to use it');
   });
 });
 

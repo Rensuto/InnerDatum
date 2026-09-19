@@ -136,6 +136,37 @@ export type RestView = {
   /** Any talent still on cooldown — Player.lua:1041-1049's `wait_cooldowns`. */
   readonly cooling: boolean;
   /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * IS SOMETHING COUNTING DOWN THAT THIS BODY IS WAITING ON? — `wait_recall`,
+   * Player.lua:1066-1077.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * ```lua
+   * if self.resting.cnt == 0 and self:hasEffect(self.EFF_RECALL) then self.resting.wait_recall = true end
+   * if self.resting.wait_recall then if self:hasEffect(self.EFF_RECALL) then return true end end
+   * ```
+   *
+   * ═══ IT IS THE CLAUSE THAT MAKES A TWENTY-TURN WIND-UP PLAYABLE ═══
+   * The Knot of Elsewhere counts twenty turns and does nothing on any of them.
+   * Without this the party presses hold twenty times, in a phase-locked co-op
+   * game where every one of those presses waits on four other people — which is
+   * not a cost, it is an ordeal, and an item nobody would pull twice.
+   *
+   * ═══ A BOOLEAN, NOT THE EFFECT ID, AND NOT A COUNT ═══
+   * This file may not import the effect catalogue (`src/shared/` is pure) and
+   * the rule does not ask WHICH effect or HOW LONG — only whether one is
+   * running that rest should sit through. The engine answers it from
+   * `EffectDef.restWaitsFor`, so the CONTENT declares "rest waits for me" and
+   * neither this rule nor the engine ever names the Knot.
+   *
+   * ═══ AND IT IS NOT `afflicted` WITH A DIFFERENT NAME ═══
+   * `afflicted` counts DETRIMENTAL effects — you rest a slow off. This one is
+   * beneficial (other.lua:3337, `status = "beneficial"`), so `afflicted` is
+   * deliberately false for it and upstream needs both clauses for the same
+   * reason: one waits out something bad, the other waits for something good.
+   */
+  readonly recalling: boolean;
+  /**
    * THE BODY'S BREATH, and whether the ground under it is taking any.
    *
    * REQUIRED, so a caller cannot build a view that forgets the lungs and rests a
@@ -212,6 +243,11 @@ export function restCheck(view: RestView): RestAnswer {
 
   // :1041-1049 — and anything still on cooldown.
   if (view.cooling) return { rest: true };
+
+  // :1066-1077 — `wait_recall`. AFTER the cooldown clause, where upstream puts
+  // it, and it is the last "keep going" arm: a body with nothing else to gain
+  // still sits through a wind-up it is waiting on. See `RestView.recalling`.
+  if (view.recalling) return { rest: true };
 
   return { rest: false, stop: RestStop.Done };
 }

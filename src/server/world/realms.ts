@@ -516,6 +516,23 @@ export type Realm = {
   /** Copied from the site. See `SiteDef.lingerMs`. */
   readonly lingerMs: number;
   /**
+   * Copied from the site, the same way `lingerMs` is. See `SiteDef.noRecall`.
+   *
+   * ═══ ON THE INSTANCE AND NOT LOOKED UP FROM `SITES`, WHICH IS THE ONE
+   *     PLACE THIS DIFFERS FROM `hasNoWayBack` ═══
+   * That predicate resolves `SITES.get(realm.siteId)` at the point of use, which
+   * is fine for a rule about the AUTHORED site. This one is asked of a realm the
+   * gateway is already holding — the floor a body is standing on — and a field
+   * copied at `open` makes "does this place let go" a property of the instance,
+   * which is what a caller has, what a test can build, and what an instance
+   * created from a site definition the global table does not hold can still
+   * answer honestly.
+   *
+   * Always present, never optional: absent would be a third state between yes
+   * and no, and the answer to "may I leave here" must never be "no idea".
+   */
+  readonly noRecall: boolean;
+  /**
    * ONE-WAY. Set when a body leaves a realm that must not be re-entered, which
    * today means exactly the roaming encounter.
    *
@@ -695,6 +712,33 @@ export type SiteDef = {
    * (data/zones/reknor-escape/zone.lua:67-69): the only way out is forward.
    */
   readonly noWayBack?: boolean;
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * NOTHING HERE LETS GO — a place the Knot of Elsewhere will not pull you out
+   * of. Upstream's `no_worldport` on the LEVEL's data.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `Actor.lua:6918` is `worldport = function(self) return game.level.data.no_worldport
+   * and 100 or 0 end`, read through `canBe("worldport")` at
+   * quest-artifacts.lua:335 — so upstream asks the PLACE, not the item. Thirteen
+   * zones set it, among them the Infinite Dungeon
+   * (data/zones/infinite-dungeon/zone.lua:32) and Escape from Reknor
+   * (data/zones/reknor-escape/zone.lua:31), which the Undermost is our port of.
+   *
+   * ═══ NOTHING SETS IT TODAY, AND THAT IS A RULING RATHER THAN AN OVERSIGHT ═══
+   * The author ruled on 2026-09-17 that the Knot DOES work inside the Undermost
+   * — a deliberate divergence from upstream, which flags reknor-escape
+   * `no_worldport` AND denies its tutorial the rod outright
+   * (data/birth/descriptors.lua:129, data/zones/tutorial/npcs.lua:58). Our
+   * warden stands beside the exit; a party that has beaten it has earned the
+   * door, and the alternative is *"you won, then died walking ten tiles"*.
+   *
+   * It exists from day one anyway, because the endless content this game is
+   * heading for is exactly upstream's own case: the Infinity Tower ships
+   * `noRecall: true` and that is a one-line answer rather than a later data
+   * migration. `Realm.noRecall` is where the gateway reads it.
+   */
+  readonly noRecall?: boolean;
   /**
    * WHERE A NEW CHARACTER IS PUT, rather than a place anybody walks to. Upstream
    * sends a new character straight to its starting zone (class/Game.lua:287).
@@ -916,6 +960,8 @@ export function createRealms(opts: RealmsOptions): Realms {
       readonly partyId?: string;
       readonly siteId?: string;
       readonly lingerMs?: number;
+      /** See `SiteDef.noRecall`. Absent is a place that lets go. */
+      readonly noRecall?: boolean;
       readonly lighting?: SiteLighting;
       readonly floor?: number;
       /** How the floor is put back after a party wipe. See `World.reseedFloor`. */
@@ -957,6 +1003,10 @@ export function createRealms(opts: RealmsOptions): Realms {
       // A shared space is never reaped, so its linger is meaningless; 0 is the
       // honest value rather than a large number pretending to be a policy.
       lingerMs: extra.lingerMs ?? 0,
+      // THE DEFAULT IS "YOU MAY LEAVE". Every place in the game lets go unless
+      // its site says otherwise, which is upstream's shape too: `no_worldport`
+      // is an opt-in on thirteen zones out of the whole campaign.
+      noRecall: extra.noRecall ?? false,
       sealed: false,
       floor: extra.floor ?? 1,
       ...extra,
@@ -1150,6 +1200,9 @@ export function createRealms(opts: RealmsOptions): Realms {
       siteId: site.id,
       floor,
       lingerMs: site.lingerMs,
+      // See `SiteDef.noRecall`. Carried onto the instance for the reason
+      // `Realm.noRecall` gives.
+      noRecall: site.noRecall === true,
       ...(lighting === undefined ? {} : { lighting }),
       // THE SAME CALL AS THE LINE BELOW, SCOPED TO HOSTILES: the same site, map,
       // party, lead and floor, so a wipe puts back this floor's own population

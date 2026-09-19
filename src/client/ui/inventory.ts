@@ -1510,11 +1510,19 @@ function detailRow(view: InventoryPanelView, inventory: InventoryMsg | null): In
        * the word `undefined` on the detail card of the only consumable in the
        * game, which is also the one item a player most needs to understand.
        *
-       * A CONSUMABLE IS NAMED FOR WHAT IT IS rather than for the slot it lacks.
-       * "uncommon · consumable" answers the same question the slot answers for
-       * everything else: what KIND of thing am I holding.
+       * SOMETHING WITH NO SLOT IS NAMED FOR WHERE IT LIVES rather than for the
+       * slot it lacks. "uncommon · carried" answers the same question the slot
+       * answers for everything else: what KIND of thing am I holding.
+       *
+       * ═══ IT SAID "consumable", AND ONE OF THE TWO IS NOT ═══
+       * That was written when the draught was the only slotless item in the
+       * game. The Knot of Elsewhere is the second, and its whole design note is
+       * *“reusable with a cooldown, not consumed”* — so the card that a player
+       * reads while deciding whether to press it was telling them it would be
+       * spent. `carried` is true of both, and it is this codebase's own word for
+       * the bag (`Item.carried`, `CarriedItemView`).
        */
-      meta: `${tierWord(carried.tier)} · ${carried.slot ?? 'consumable'}`,
+      meta: `${tierWord(carried.tier)} · ${carried.slot ?? 'carried'}`,
       /**
        * AND WHAT IT DOES, ABOVE THE FLAVOUR. `ItemView.use` is a sentence the
        * SERVER rendered against this viewer's own Constitution, so the number
@@ -1590,10 +1598,11 @@ function detailRow(view: InventoryPanelView, inventory: InventoryMsg | null): In
       /**
        * AND WHAT KIND OF THING IT IS. `ShopItemView.slot` — you could not tell
        * whether the thing you were about to pay for was a ring, a coat or a
-       * drink. A consumable has no slot and is named for what it is, the same
-       * answer the bag gives.
+       * drink. Something with no slot is named for where it lives, the same
+       * answer the bag gives — see the detail card above for why that word is
+       * not "consumable".
        */
-      meta: `${tierWord(shelved.tier)} · ${shelved.slot ?? 'consumable'} · ${String(shelved.buy)} gold · sells back for ${String(shelved.sell)}`,
+      meta: `${tierWord(shelved.tier)} · ${shelved.slot ?? 'carried'} · ${String(shelved.buy)} gold · sells back for ${String(shelved.sell)}`,
       // A SHELF ROW NEEDS NO FALLBACK NOW. This used to reach into the player's
       // OWN bag for a description when the shelf sent none, which answered for a
       // coat you already owned and for nothing else. `use` rides the shelf frame

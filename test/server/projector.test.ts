@@ -9,8 +9,9 @@ import type { LoadoutTalent } from '../../src/shared/protocol.ts';
 
 import { DOWNED_TURNS, createDownedState, goDown } from '../../src/server/engine/downed.ts';
 import { createEffectState, setEffect } from '../../src/server/engine/effects.ts';
-import { BLEEDING, STUNNED } from '../../src/server/content/effects.ts';
+import { BLEEDING, ELSEWHERE, STUNNED } from '../../src/server/content/effects.ts';
 import { moneyIdFor } from '../../src/server/content/money.ts';
+import { ItemUseKind, KNOT_OF_ELSEWHERE_ID, itemById } from '../../src/server/content/items.ts';
 import { ORIGINS } from '../../src/server/content/origins.ts';
 import { DamageType } from '../../src/server/engine/damage.ts';
 import { stepProjectile } from '../../src/server/engine/projectile.ts';
@@ -162,6 +163,42 @@ describe('projectEffects', () => {
     expect(Object.keys(row?.effects[0] ?? {}).sort()).toEqual(
       ['badge', 'desc', 'harmful', 'icon', 'id', 'name', 'turns'].sort(),
     );
+  });
+
+  /**
+   * ══════════════════════════════════════════════════════════════════════════════
+   * THE ONE THE BODY IS WAITING ON GOES FIRST, BECAUSE THE ROW DRAWS TWO.
+   * ══════════════════════════════════════════════════════════════════════════════
+   *
+   * `MAX_BADGES` is 2 in ui/partypanel.ts and the rest are printed as “+N”, so
+   * the order of this array decides what a player can read. Measured live: a
+   * body already Bleeding and Slowed pulled the Knot of Elsewhere and the row
+   * read `Bl 28 / Sl 28 / +1`, with the twenty-turn countdown the whole item is
+   * built around nowhere on the screen.
+   *
+   * `EffectDef.restWaitsFor` IS THE PROMOTION and not an id, so this is a rule
+   * about a KIND of effect — one the body is waiting to finish — rather than
+   * the view layer holding an opinion about one item.
+   */
+  it('puts the countdown the body is waiting on ahead of the badges it merely has', () => {
+    const world = room();
+    const dalt = world.addPlayer('actor_a', 'Dalt');
+    const effects = createEffectState([BLEEDING, STUNNED, ELSEWHERE]);
+
+    // APPLIED LAST, which is where it lost. Insertion order was the old rule.
+    setEffect(effects, dalt, BLEEDING.id, 8, {}, RNG());
+    setEffect(effects, dalt, STUNNED.id, 8, {}, RNG());
+    setEffect(effects, dalt, ELSEWHERE.id, 20, {}, RNG());
+
+    const [row] = projectEffects(world, effects).actors;
+    expect(row?.effects.map((badge) => badge.id)[0], 'the wind-up was pushed into "+1"').toBe(
+      ELSEWHERE.id,
+    );
+    // AND NOTHING WAS DROPPED on the way — the promotion is a sort, not a filter.
+    expect([...(row?.effects ?? [])].map((badge) => badge.id).sort()).toEqual(
+      [BLEEDING.id, STUNNED.id, ELSEWHERE.id].sort(),
+    );
+    expect(ELSEWHERE.restWaitsFor, 'the rule is keyed on a field nothing sets').toBe(true);
   });
 
   it('draws no badges on a body that is not standing — a corpse OR a Downed ally', () => {
@@ -2098,6 +2135,51 @@ describe('a consumable says what it does, in this body’s own number', () => {
     const tough = cardFor(100)?.use;
     expect(tough).toBe('Restores 60 health.');
     expect(tough).not.toBe(cardFor(10)?.use);
+  });
+
+  /**
+   * ══════════════════════════════════════════════════════════════════════════════
+   * AND THE SECOND KIND OF `use`, WHICH IS THE ONE THE BUG REPORT WAS ABOUT.
+   * ══════════════════════════════════════════════════════════════════════════════
+   *
+   * The card and the server disagreeing about what a button does is the whole
+   * reason the Knot of Elsewhere was rewritten — *"press to use it"* against
+   * *"that is not something you can use"*, ten times, with a screenshot. The
+   * `Heal` arm of `useText` is pinned three times in this file and the
+   * `Elsewhere` arm was pinned nowhere, on the one item whose card has to stay
+   * true of FIVE server refusals.
+   *
+   * WHAT IS ASSERTED IS WHAT THE CARD PROMISES, clause by clause, because each
+   * clause is a rule somewhere else in the tree: the wind-up is a number the
+   * item authors, the party is the ruling of 2026-09-17, "again to call it off"
+   * is quest-artifacts.lua:329-333, "not usable everywhere" is `SiteDef.noRecall`
+   * and the overworld refusal, and "only by whoever is leading" is the co-op
+   * ruling `pullTheKnot` enforces.
+   */
+  it('tells the truth about the Knot, clause by clause', () => {
+    const world = room();
+    const body = watchman(world);
+    body.carried = [KNOT_OF_ELSEWHERE_ID];
+    const said = projectInventory(body).carried[0]?.use;
+    expect(said, 'the one item on the bar with no sentence').toBeDefined();
+    const sentence = said ?? '';
+
+    const knot = itemById(KNOT_OF_ELSEWHERE_ID);
+    const use = knot?.use;
+    if (use === undefined || use.kind !== ItemUseKind.Elsewhere) {
+      throw new Error('the Knot no longer carries an Elsewhere use');
+    }
+    // THE NUMBER IS THE AUTHORED ONE, not a copy of it written into prose — the
+    // failure `hardcoded-word-for-a-value` is named after.
+    expect(sentence).toContain(`${String(use.windUpTurns)} turns later`);
+    expect(sentence, 'the card promises a solo escape').toContain('the party');
+    expect(sentence, 'the cancel is unadvertised').toContain('again to call it off');
+    expect(sentence, 'nowhere says it can be refused').toContain('Not usable everywhere');
+    expect(sentence, 'the lead-only rule is not on the card').toContain(
+      'only by whoever is leading',
+    );
+    // AND IT IS NOT THE DRAUGHT'S SENTENCE.
+    expect(sentence).not.toContain('Restores');
   });
 
   it('says nothing at all about an item you cannot drink', () => {

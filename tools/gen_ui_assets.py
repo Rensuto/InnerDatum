@@ -334,6 +334,15 @@ STATUS_GLYPHS = {
     "brainlocked": (["....#####.....", "...#.....#....", "...#.....#....",
                      ".###########..", ".#.........#..", ".#....#....#..",
                      ".#...###...#..", ".#....#....#..", ".###########.."], BONE),
+    # --- the Knot of Elsewhere's wind-up (EFF_RECALL, other.lua:3331) --------
+    # TWO LOOPS TIED, and nothing else in this set is a closed double curve:
+    # spellshocked is a BROKEN ring, confused is a ring with marks inside it,
+    # shielded is a shield. The badge has to read as a KNOT at 24 px, because
+    # what it counts down to is the room coming undone. STAND-IN, like the three
+    # above it; redraw when the real pass happens.
+    "elsewhere": (["...###..###...", "..#...##...#..", ".#....##....#.",
+                   ".#...#..#...#.", ".#..#....#..#.", ".#...#..#...#.",
+                   ".#....##....#.", "..#...##...#..", "...###..###..."], VIOLET_HI),
 }
 
 

@@ -5091,6 +5091,12 @@ function hotbarView(): HotbarView {
       name: binding.name,
       icon: binding.icon,
       action: itemSlotAction(binding.itemId, carried, equipped),
+      // ═══ AND WHETHER IT CAN BE PRESSED AT ALL ═══ The same `cooldowns` map
+      // the talent branch reads, keyed by the ITEM id — which is where the
+      // server puts an item's cooldown (`tome/class/Object.lua:214-222`). It was already on
+      // the wire and nothing read it, so the Knot of Elsewhere looked ready for
+      // the whole thirty turns it was not. See `HotbarItemSlot.cooldown`.
+      cooldown: cooldowns[binding.itemId] ?? 0,
       // ═══ AND WHAT IT DOES, JOINED HERE ═══ ui/hotbar.ts does not hold the
       // inventory frame and must not learn to, so the join happens at the
       // construction site where `carried` is already in hand for
@@ -5749,7 +5755,7 @@ function paintPointerCards(
            * NO PROSE ON THE CARD. Gear is its name, its kind and its numbers.
            */
           ...(item.fromCatalogue === true
-            ? { meta: `${item.tier} · ${item.slot ?? 'consumable'}` }
+            ? { meta: `${item.tier} · ${item.slot ?? 'carried'}` }
             : {}),
           ...(item.compare === undefined ? {} : { rows: item.compare }),
         })),
@@ -6272,7 +6278,38 @@ const paintHud: HudPainter = (ctx, width, height) => {
    * of them belongs to the strip. They move down by `RESOURCE_H` into the space
    * the strip used to occupy, which is where they always should have been.
    */
-  const hintY = height - HOTBAR_TOTAL_H - LINE_H;
+  /**
+   * ═════════════════════════════════════════════════════════════════════════════
+   * AND CLEAR OF THE ONE PIECE OF DOM OVER THE CANVAS.
+   * ═════════════════════════════════════════════════════════════════════════════
+   *
+   * `logBand`'s docblock says these two strips are drawn AFTER the panels so a
+   * notice lands on top of the Case Log, *“which is the correct precedence: a
+   * refusal a player cannot see is the worst outcome in the exchange”*. That is
+   * true of everything the canvas draws and false of `#cmdrow`, the composer's
+   * real `<input>`, which is opaque and which DOM beats canvas at every paint
+   * order there is — the same fact `domCommandRow` already exists to tell the
+   * hover cards.
+   *
+   * MEASURED at 1262x428: the composer sat across the notice's band and ate its
+   * first clause every time. Three refusals out of five were caught doing it —
+   * *“there is nothing here to be pulled out of”* with the *“you are already out
+   * in the open”* gone, *“25 turns before it will take hold”* with the subject
+   * gone, *“n pull it for the party”*. The part that survives is never the part
+   * that says WHY.
+   *
+   * SO THE PAIR LIFTS TOGETHER, by exactly as much as it takes to clear the
+   * obstacle, and by nothing at all when there is none (a client with no
+   * composer, or one whose row is hidden). Together, because they are two lines
+   * of one block and lifting only the covered one would close the gap between
+   * them. This is a general fix — the targeting hint was being clipped the same
+   * way — and the Knot is merely what made it matter, having added five
+   * refusals to a game that had few.
+   */
+  const obstacle = domCommandRow();
+  const floorY = height - HOTBAR_TOTAL_H - LINE_H;
+  const lift = obstacle === null ? 0 : Math.max(0, floorY + LINE_H - obstacle.y);
+  const hintY = floorY - lift;
   if (hint !== '') {
     // GOLD for a legal aim, ORANGE for one this client expects to be refused —
     // and the words say which, because colour is never the only signal here.

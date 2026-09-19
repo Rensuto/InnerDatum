@@ -1246,6 +1246,13 @@ describe('the status roster (game-design.md § 12)', () => {
       // THE PLACE'S OWN AIR: the zone aura a shipped map names
       // (timed_effects/other.lua:2899-2916). Nothing casts it; a realm lays it.
       EffectId.ZoneAuraUnderwater,
+      /**
+       * THE WIND-UP ON THE KNOT OF ELSEWHERE — EFF_RECALL,
+       * timed_effects/other.lua:3331-3355. Nothing casts this one either: an
+       * item starts it, it does nothing for twenty turns, and its EXPIRY takes
+       * the party out of the floor.
+       */
+      EffectId.Elsewhere,
     ]);
     expect(MVP_EFFECTS.map((def) => def.icon)).toEqual([
       'icon_status_stunned',
@@ -1274,6 +1281,7 @@ describe('the status roster (game-design.md § 12)', () => {
       'icon_status_out_of_phase',
       'icon_status_suffocating',
       'icon_status_zone_aura_underwater',
+      'icon_status_elsewhere',
     ]);
   });
 
@@ -1431,6 +1439,14 @@ describe('the status roster (game-design.md § 12)', () => {
       [EffectId.Suffocating]: SaveChannel.Physical,
       // `type = "other"` on every aura, and Physical for Suffocating's reason.
       [EffectId.ZoneAuraUnderwater]: SaveChannel.Physical,
+      /**
+       * timed_effects/other.lua:3335 — `type = "magical"`, UPSTREAM'S OWN, and
+       * worth a note because a written-up design pass for this feature said
+       * "other / typeOther" and would have been ported as written. The Lua
+       * wins. Nothing rolls against it either way (it is beneficial), which is
+       * exactly why the error would never have surfaced.
+       */
+      [EffectId.Elsewhere]: SaveChannel.Magical,
     });
   });
 

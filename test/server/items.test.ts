@@ -5,6 +5,7 @@ import {
   DEAD_MOD_KEYS,
   ITEMS,
   ITEM_CATALOGUE,
+  ItemUseKind,
   KNOWN_ICON_IDS,
   PENDING_ICON_IDS,
   SLOT_ORDER,
@@ -184,7 +185,19 @@ describe('the item catalogue', () => {
     // warden of the Undermost is holding it. `Item.quest`.
     expect(ITEMS).toHaveLength(38);
     expect(ITEMS.filter((item) => item.slot !== undefined)).toHaveLength(36);
-    expect(ITEMS.filter((item) => item.use !== undefined)).toHaveLength(1);
+    // TWO CARRY A `use` AND ONLY ONE OF THEM IS DRUNK. This asserted ONE, which
+    // was the whole catalogue's shape while `ItemUse` had a single kind; the
+    // second kind is a wind-up and a crossing, so the count that stays true of
+    // "things you drink" is taken over the DISCRIMINANT.
+    expect(ITEMS.filter((item) => item.use !== undefined)).toHaveLength(2);
+    expect(
+      ITEMS.filter((item) => item.use?.kind === ItemUseKind.Heal),
+      'things you drink',
+    ).toHaveLength(1);
+    expect(
+      ITEMS.filter((item) => item.use?.kind === ItemUseKind.Elsewhere),
+      'things you pull',
+    ).toHaveLength(1);
     expect(ITEMS.filter((item) => item.quest === true)).toHaveLength(1);
     // ═══ ONE ICON PER ITEM — DRAWN OR COMMISSIONED ═══
     // This read "23 drawn icons still, and 26 items", and had already gone stale
@@ -406,9 +419,17 @@ describe('the item catalogue', () => {
     }).map((item) => item.id);
     expect(inert).toEqual([]);
     // …and the things that are not worn all do something when they are drunk.
+    // EXEMPT ON THE FIELD, NEVER THE ID: a quest artefact is the third kind of
+    // item and its `use` is not a number of hit points at all — the Knot of
+    // Elsewhere's is a wind-up and a crossing. `ItemUse` is a discriminated
+    // union, so the narrowing below is the compiler agreeing rather than a cast.
     for (const item of ITEMS) {
       if (item.slot !== undefined || item.quest === true) continue;
-      expect(item.use?.amount ?? 0, `${item.id} does nothing when used`).toBeGreaterThan(0);
+      const use = item.use;
+      expect(
+        use !== undefined && use.kind === ItemUseKind.Heal ? use.amount : 0,
+        `${item.id} does nothing when used`,
+      ).toBeGreaterThan(0);
     }
     // ...and a weapon's whole mechanic is its damage, so it must have one.
     for (const item of ITEMS) {

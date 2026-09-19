@@ -2018,3 +2018,65 @@ describe('the action bar expands', () => {
     expect(CODE).toContain('setHotbarStyle(stepHotbarStyle(hotbarStyle, hit.key, hit.by));');
   });
 });
+
+// ---------------------------------------------------------------------------
+// 5. THE TWO THINGS THE HOTBAR'S ITEM SLOT COULD NOT LEARN ON ITS OWN
+// ---------------------------------------------------------------------------
+
+describe('a bound item knows whether it can be pressed, and the prose lines stay visible', () => {
+  /**
+   * ══════════════════════════════════════════════════════════════════════════════
+   * THE JOIN, WHICH `ui/hotbar.ts` CANNOT REACH AND `test/client/hotbar.test.ts`
+   * THEREFORE CANNOT SEE.
+   * ══════════════════════════════════════════════════════════════════════════════
+   *
+   * `HotbarItemSlot.cooldown` is drawn, greys the slot and titles the card — all
+   * covered next door — and every one of those tests passes against a client
+   * that never fills the field in. That is the shape of the bug being fixed
+   * here: the Knot of Elsewhere's cooldown was on the wire from the day it
+   * shipped, keyed by its item id in the same `cooldowns` map the talent branch
+   * two lines above already reads, and the item branch simply did not read it.
+   * Observed live at 25 turns remaining: an undimmed slot, no wedge, and a card
+   * still reading *"press to use it"*.
+   *
+   * A mutation check is what put this file in the loop: deleting the line left
+   * every case in `test/client/hotbar.test.ts` green.
+   */
+  it('reads an item slot`s cooldown out of the same map the talent slot uses', () => {
+    const fn = between('function hotbarView(): HotbarView {', '\n}');
+    expect(fn).toContain('cooldown: cooldowns[talent.id] ?? 0,');
+    expect(fn).toContain('cooldown: cooldowns[binding.itemId] ?? 0,');
+  });
+
+  /**
+   * ══════════════════════════════════════════════════════════════════════════════
+   * AND THE PROSE LINES CLEAR THE ONE PIECE OF DOM OVER THE CANVAS.
+   * ══════════════════════════════════════════════════════════════════════════════
+   *
+   * `logBand`'s docblock claims the refusal notice *"is drawn AFTER the panels,
+   * so it lands on top of the log"*. True of the canvas and false of `#cmdrow`,
+   * the Case Log's composer, which is a real opaque `<input>` — and DOM beats
+   * canvas at every paint order there is, which is why `domCommandRow` exists at
+   * all for the hover cards. Measured at 1262x428: the composer sat across the
+   * notice's band and ate its FIRST clause, which is always the one that says
+   * why. *"there is nothing here to be pulled out of"* with the subject gone;
+   * *"25 turns before it will take hold"* with the subject gone; *"n pull it for
+   * the party"*.
+   *
+   * WHERE A LINE SITS IS EXACTLY THE KIND OF RULE THIS FILE EXISTS FOR, and it
+   * is not reachable any other way: the obstacle is a DOM rect and the runner
+   * has no DOM.
+   */
+  it('lifts the hint and the notice above the composer input', () => {
+    const fn = between('const paintHud: HudPainter = (ctx, width, height) => {', '\n};');
+    expect(fn).toContain('const obstacle = domCommandRow();');
+    expect(fn).toContain('const floorY = height - HOTBAR_TOTAL_H - LINE_H;');
+    // BOTH LINES BY THE SAME AMOUNT: they are one block, and lifting only the
+    // covered one would close the gap between them.
+    expect(fn).toContain('const hintY = floorY - lift;');
+    expect(fn).toContain('Math.max(0, floorY + LINE_H - obstacle.y)');
+    // AND NOTHING MOVES WHEN THERE IS NO OBSTACLE — a client with no composer,
+    // or one whose row is hidden, draws exactly where it always drew.
+    expect(fn).toContain('obstacle === null ? 0 :');
+  });
+});

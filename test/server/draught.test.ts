@@ -3,7 +3,7 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import Fastify from 'fastify';
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { ITEMS, isConsumable, itemById } from '../../src/server/content/items.ts';
+import { ITEMS, ItemUseKind, isConsumable, itemById } from '../../src/server/content/items.ts';
 import { resolveMBonus } from '../../src/server/content/resolvers.ts';
 import { healActor } from '../../src/server/engine/damage.ts';
 import { wsGateway } from '../../src/server/net/gateway.ts';
@@ -31,10 +31,36 @@ import { TileCode } from '../../src/shared/protocol.ts';
  * situation is a button nobody presses at the moment it matters.
  */
 
+/**
+ * The heal, narrowed through `ItemUse`'s discriminant.
+ *
+ * `use.amount` used to be readable off any `ItemUse` because there was one kind
+ * of use and the union was a union in name only. There are two now — the second
+ * is a twenty-turn wind-up with no number of hit points anywhere in it — so the
+ * discriminant is checked here rather than assumed at four call sites.
+ */
+function healAmountOf(id: string): number {
+  const use = itemById(id)?.use;
+  return use !== undefined && use.kind === ItemUseKind.Heal ? use.amount : 0;
+}
+
 describe('there is something to drink', () => {
-  it('ships exactly one consumable, and the rest of the catalogue is worn', () => {
-    const drinkable = ITEMS.filter(isConsumable);
+  it('ships exactly one thing to drink, and the rest of the catalogue is worn', () => {
+    /**
+     * TWO ITEMS CARRY A `use` NOW and only one of them is drunk, so the count
+     * is taken over the KIND rather than over `isConsumable`. The Knot of
+     * Elsewhere is the other: held, pulled, never consumed, and exempted on
+     * `Item.quest` a few lines below for the reason stated there.
+     */
+    const drinkable = ITEMS.filter(
+      (item) => item.use !== undefined && item.use.kind === ItemUseKind.Heal,
+    );
     expect(drinkable).toHaveLength(1);
+    expect(
+      ITEMS.filter(isConsumable)
+        .map((item) => item.id)
+        .sort(),
+    ).toEqual(['item_draught_mending', 'item_knot_of_elsewhere']);
     // ONE, NOT A LADDER OF THREE, because there is one vial on disk and two
     // items sharing a picture is a player squinting at a tooltip to tell their
     // healing apart. See the note on `DRAUGHTS`.
@@ -45,12 +71,13 @@ describe('there is something to drink', () => {
        * worn, a `use` means drunk, and nothing sensible is in the middle.
        *
        * ═══ EXCEPT A QUEST ARTEFACT, WHICH IS A THIRD KIND AND SAYS SO ═══
-       * The Knot of Elsewhere is held and pulled: no slot, and no `use` YET,
-       * because pulling it is twenty turns of wind-up and a crossing that live
-       * on the far side of `gateway.ts`. `Item.quest` is the field production
-       * reads to keep it out of the shops and the drop pools, so it is the
-       * field this exempts on — never the id, which would exempt the next one
-       * by accident and only this one on purpose.
+       * The Knot of Elsewhere is held and pulled: no slot, AND a `use` — which
+       * is neither of the two states this rule knows about, because pulling it
+       * is a twenty-turn wind-up and a crossing rather than anything you
+       * swallow. `Item.quest` is the field production reads to keep it out of
+       * the shops and the drop pools, so it is the field this exempts on —
+       * never the id, which would exempt the next one by accident and only this
+       * one on purpose.
        *
        * IT IS AN EXEMPTION AND NOT A HOLE: the case below asserts that a quest
        * artefact is exactly that shape, so an ordinary item that lost its slot
@@ -62,13 +89,16 @@ describe('there is something to drink', () => {
     for (const item of ITEMS.filter((i) => i.quest === true)) {
       expect(item.slot, `${item.id} is worn`).toBeUndefined();
       expect(item.wielder, `${item.id} contributes something worn`).toEqual({});
+      // AND IT IS NOT A DRINK. The exemption above is for the third kind of
+      // item, not a hole big enough to walk a healing potion through.
+      expect(item.use?.kind, `${item.id}`).not.toBe(ItemUseKind.Heal);
     }
   });
 
   it('heals what ToME says it heals', () => {
     // scrolls.lua:142 `resolvers.mbonus_level(80, 40, ...)` = 40 at level 1.
-    expect(itemById('item_draught_mending')?.use?.amount).toBe(resolveMBonus(80, 40));
-    expect(itemById('item_draught_mending')?.use?.amount).toBe(40);
+    expect(healAmountOf('item_draught_mending')).toBe(resolveMBonus(80, 40));
+    expect(healAmountOf('item_draught_mending')).toBe(40);
   });
 
   it('cannot be worn, and cannot take an ego', () => {
@@ -105,7 +135,7 @@ describe('drinking it', () => {
 
     const draught = itemById('item_draught_mending');
     expect(draught?.use).toBeDefined();
-    const healed = healActor(body, draught?.use?.amount ?? 0);
+    const healed = healActor(body, healAmountOf('item_draught_mending'));
 
     expect(healed).toBe(40);
     expect(body.hp).toBe(52);

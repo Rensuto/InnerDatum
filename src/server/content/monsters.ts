@@ -2162,6 +2162,40 @@ export const INDEX_CAIRN: MonsterTemplate = Object.freeze({
       },
     },
     range: 8,
+    /**
+     * ══════════════════════════════════════════════════════════════════════
+     * THE SAME LIGHT THAT LEAKS OUT OF IT — AND THE FIELD WAS NEVER WRITTEN.
+     * ══════════════════════════════════════════════════════════════════════
+     *
+     * Absent, this fell through to `DEFAULT_PROJECTILE_DAMAGE_TYPE`
+     * (engine/projectile.ts) and the creature threw a physical bolt — the steel
+     * dart, in the one family in this game that is not made of steel. Three of
+     * the four shooters in the roster were in that state and it was reported
+     * from play as bolts that all look the same.
+     *
+     * MIND, AND THE WATCHER'S NOTE IS THE ARGUMENT: the cairn and `INDEX_WATCHER`
+     * are one family — the same `BASE_NPC_CRYSTAL`, the same `crystal.lua:35`
+     * stat line, the same 0.7 speed, the same `no_breath` — and the Watcher is
+     * what a cairn becomes when a country spends a few hundred years adding to
+     * it. One family, one element, exactly as the wraith and the Inquisitor
+     * share theirs.
+     *
+     * AND IT IS THE COLOUR THE DESCRIPTION ALREADY NAMES: *"lit violet where
+     * they do not quite meet"*, and Mind is the element this game draws violet
+     * (`ZONE_WASH_INK`, client/render/canvas.ts). Cold was the other candidate,
+     * for the fen and the slow orb, and it loses to that sentence.
+     *
+     * OURS, AND LABELLED, on `INDEX_WRAITH`'s precedent a thousand lines up.
+     * Upstream's crystals each throw what they are made of — red resists FIRE
+     * and casts `T_FLAME_BOLT` (`crystal.lua:101`, `:103`), white resists COLD
+     * and casts `T_ICE_BOLT` (`:113`, `:115`) — and ours is neither of those
+     * stones. `MIND` is upstream's own damage type (`data/damage_types.lua:874-877`).
+     *
+     * IT MOVES NO NUMBER. An orb takes no armour stage at all
+     * (engine/projectile.ts:694-707) and nothing in the game grants a Physical
+     * or a Mind resist (content/egos.ts), so what changes is what a player sees.
+     */
+    damageType: DamageType.Mind,
     minRange: 3,
   },
 });
@@ -2845,6 +2879,28 @@ export const INDEX_INQUISITOR: MonsterTemplate = Object.freeze({
       },
     },
     range: 9,
+    /**
+     * ══════════════════════════════════════════════════════════════════════
+     * A CORRECTION, NOT A CHOICE: THIS TEMPLATE ALREADY SAID IT THREE TIMES.
+     * ══════════════════════════════════════════════════════════════════════
+     *
+     * `damageMin`/`damageMax` above are *"INDEX_WRAITH's orb, taken deliberately
+     * rather than tuned"*; the blind rider is ported verbatim from
+     * `cursed/darkness.lua:399-401`, whose own line above it (`:398`) projects
+     * `DamageType.DARKNESS`; and the note beside that rider says *"of the two
+     * darkness bodies in the roster this is the one built on elven-caster.lua"*.
+     *
+     * Three statements that this creature throws the wraith's dark orb, and the
+     * one field that says so was never written — so it fell through to
+     * `DEFAULT_PROJECTILE_DAMAGE_TYPE` (engine/projectile.ts) and the deepest
+     * caster in the bestiary threw a steel dart at you, drawn with the physical
+     * bolt. `INDEX_WRAITH`'s own `damageType` line is the one being matched.
+     *
+     * The wraith and the Inquisitor SHARING a bolt is the point rather than a
+     * collision: the header's whole claim is that this is not a bigger gun, it
+     * is the same gun you cannot walk away from.
+     */
+    damageType: DamageType.Darkness,
     minRange: 3,
   },
 });
@@ -3097,6 +3153,37 @@ export const INDEX_WATCHER: MonsterTemplate = Object.freeze({
       },
     },
     range: 11,
+    /**
+     * ══════════════════════════════════════════════════════════════════════
+     * SOMETHING LOOKS BACK OUT, AND THAT IS WHAT THE SHOT IS.
+     * ══════════════════════════════════════════════════════════════════════
+     *
+     * The field was never written, so every shot this boss has fired since it
+     * landed was physical by default (`DEFAULT_PROJECTILE_DAMAGE_TYPE`,
+     * engine/projectile.ts) and drew the steel-dart bolt — an eleven-tile
+     * artillery piece made of stone and appetite, throwing a dart.
+     *
+     * MIND, AND THE DESCRIPTION IS THE WHOLE ARGUMENT: *"the altar, still being
+     * added to … something a long way under the stones looks back out."* What
+     * it does when it connects is take the turn away (`onHit` above — the first
+     * thing in this game that stuns a player), and a stun landed by something
+     * looking at you from eleven tiles is a mind attack in every sense this game
+     * has. Physical was a default, not a decision.
+     *
+     * OURS, AND LABELLED, on `INDEX_WRAITH`'s precedent: upstream's crystals
+     * throw what they are made of — red resists FIRE and casts `T_FLAME_BOLT`
+     * (`crystal.lua:101`, `:103`), white resists COLD and casts `T_ICE_BOLT`
+     * (`:113`, `:115`) — and this is neither. `MIND` is upstream's own damage
+     * type (`data/damage_types.lua:874-877`) and the Watcher and the Cairn are
+     * the first bodies in this game to throw it.
+     *
+     * IT MOVES NO NUMBER, WHICH IS WHY IT COULD LAND WITHOUT A REBALANCE. An
+     * orb takes no armour stage at all (engine/projectile.ts:694-707), nothing
+     * in the game grants a Physical or a Mind resist (content/egos.ts), and
+     * `onHit` does not read the damage type. The fight arithmetic in the header
+     * is unchanged to the point.
+     */
+    damageType: DamageType.Mind,
     minRange: 3,
   },
 });

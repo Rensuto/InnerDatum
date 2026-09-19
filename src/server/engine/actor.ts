@@ -559,11 +559,23 @@ type ActorCommon = {
    */
   carried?: readonly string[];
   /**
-   * THE BIRTH KIT ALREADY HANDED OVER, by item id. Upstream equips every new
-   * character with a brass lantern (data/birth/descriptors.lua:75-77). This is the
-   * record that it happened: a character who drops or sells the lantern does not
-   * get another on the next join, and a character made before the lantern existed
-   * gets it once. See the gateway's `grantBirthKit`.
+   * WHAT THIS CHARACTER HAS ALREADY BEEN HANDED, by item id.
+   *
+   * Upstream equips every new character with a brass lantern
+   * (data/birth/descriptors.lua:75-77). This is the record that it happened: a
+   * character who drops or sells the lantern does not get another on the next
+   * join, and a character made before the lantern existed gets it once. See the
+   * gateway's `grantBirthKit`.
+   *
+   * ═══ TWO WRITERS NOW, AND THE SECOND IS WHY THIS SAYS "HANDED" ═══
+   * `spillOrderOf` (src/server/turn-engine.ts) records the Knot of Elsewhere
+   * here when the warden that was holding it dies, which is upstream's
+   * `game.state:allowRodRecall(false)` (class/GameState.lua:93-96, spent at
+   * class/NPC.lua:406) in the ledger this game already had. The entry means
+   * HANDED OVER, never HOLDING: it is never un-written, so it cannot drift out
+   * of agreement with the bag, and an id that is absent has always meant "has
+   * not been given one yet" — which is what makes a save written before either
+   * feature load correctly.
    */
   kitGranted?: readonly string[];
 

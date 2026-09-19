@@ -2542,10 +2542,14 @@ describe('a consumable is a thing you can read', () => {
   it('never prints the word undefined where a slot would go', () => {
     const card = cardFor({});
     expect(card.meta).not.toContain('undefined');
-    // NAMED FOR WHAT IT IS rather than for the slot it lacks — the meta line
+    // NAMED FOR WHERE IT LIVES rather than for the slot it lacks — the meta line
     // answers "what kind of thing am I holding" for every other row and must
     // answer it here too.
-    expect(card.meta).toBe('uncommon · consumable');
+    //
+    // AND THE WORD IS NOT "consumable". Two items have no slot now and only one
+    // of them is spent: the Knot of Elsewhere is reusable on a cooldown, so the
+    // old word told a player their one way out of a delve would be used up.
+    expect(card.meta).toBe('uncommon · carried');
   });
 
   it('still names the slot for anything that has one', () => {
