@@ -71,7 +71,7 @@ import {
 import { ActorRank } from '../../shared/protocol.ts';
 import { RANK_VALUE, rankLevelAdjust } from '../../shared/leveling.ts';
 import { computeRarities, pickEntity } from './rarity.ts';
-import type { RarityCandidate } from './rarity.ts';
+import type { RarityCandidate, RarityList } from './rarity.ts';
 import type { Rng } from '../../shared/rng.ts';
 import { REDACTION_SITE_ID } from '../../shared/level.ts';
 import { embellish } from './encounter.ts';
@@ -168,249 +168,298 @@ export function actorAdjustLevel(
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════
- * THE ONE NUMBER THAT IS NOT UPSTREAM'S, AND IT IS HERE SO THERE IS ONLY ONE.
+ *   WHERE A COUNT COMES FROM — AND IT IS NO LONGER "THE ZONE THIS DELVE IS".
  * ═══════════════════════════════════════════════════════════════════════════
  *
- * Every `nbNpc` in `DELVES` is its zone's own `nb_npc`, read off the zone file
- * with the line cited beside it. This is the single factor they are all taken
- * at. `engine/generator/actor/Random.lua:126` has no such factor, so this field
- * is a divergence by definition, and its whole job is to be the ONE place that
- * divergence can be argued — never twelve.
+ * Every `nbNpc` in `DELVES` is an upstream `nb_npc`, read off a zone file. For
+ * a long time the zone it was read off was the zone the site's FLOOR is built
+ * from (`shared/mapgen/zones.ts` names those), and nothing checked that the
+ * level we stand the delve at is a level upstream builds that count for. It
+ * mostly was not. The Underworks carried orc-breeding-pit's forty to fifty —
+ * `level_range = {30, 60}` — at level three. The Hollow Mine carried
+ * ardhungol's seventy to eighty, `{25, 32}`, at level nine.
+ *
+ * `NB_NPC_SCALE`, a single global factor, WAS 0.85 and stood here to absorb
+ * that. It could not: lowering it starves a delve standing above its band and
+ * raising it kills you in one standing below, and the measured sweep it was set
+ * from was PEAKED for exactly that reason. It is deleted. This field is what
+ * replaced it.
  *
  * ═══════════════════════════════════════════════════════════════════════════
- * ITS VALUE IS A MEASUREMENT OF THE AUTHOR'S OWN SENTENCE.
+ * FIRST, THE THING THAT MAKES "GIVE EACH DELVE ITS ZONE'S BAND" THE WRONG FIX.
  * ═══════════════════════════════════════════════════════════════════════════
  *
- * *"the goal is to level up before encountering the boss at the end. you are
- * not meant to get to the end of the dungeon without leveling at least twice.
- * this is exactly like ToME does."*
+ * EVERY ToME ZONE THAT ROLLS A POPULATION IS `level_scheme = "player"`.
+ * Counted over the tree: eighty-one zone files carry an `nb_npc` and
+ * seventy-eight of them set it (`data/zones/orc-breeding-pit/zone.lua:23`,
+ * `data/zones/ardhungol/zone.lua:23`, `data/zones/deep-bellow/zone.lua:23`, and
+ * so on). The three that do not are two Sher'Tul fortresses whose count is
+ * `{0, 0}` (`data/zones/shertul-fortress/zone.lua:46`) and a town
+ * (`data/zones/town-lumberjack-village/zone.lua:41`) — none of them rolls
+ * anybody onto a generated floor. `engine/Zone.lua:141-148` is
  *
- * That is not a feel, it is a curve, and it has an instrument:
- * `tools/delve-climb.mjs` walks ONE character from a delve's first floor to the
- * floor its boss is standing on, carrying level, experience and the paper doll
- * down the stairs. Six descents a delve, the twelve delves on the moor, the
- * Watchman — because he is the only class that completes a descent at all, so
- * he is the only one this question can be asked of today:
+ * ```lua
+ * self.base_level = self.level_range[1]
+ * if self.level_scheme == "player" then
+ *     self.base_level = util.bound(plev, self.level_range[1], self.level_range[2])
+ * ```
  *
- *     factor   full descents   delves where EVERY completed run
- *                              gained two levels by the boss
- *      0.40      53 of 72              4 of 12
- *      0.70      48 of 72              8 of 12
- *      0.80      47 of 72              8 of 12
- *      0.85      50 of 72             10 of 12      <- here
- *      0.90      46 of 72              9 of 12
- *      0.95      43 of 72              9 of 12
- *      1.00      45 of 72              8 of 12
+ * so a zone's `level_range` is A CLAMP ON THE PLAYER'S OWN LEVEL, not a
+ * statement of what level the content is. Inside the band, `base_level` IS the
+ * player's level: the zone's `nb_npc` is the count upstream puts in front of a
+ * character standing at exactly their own level. Outside it the clamp fires and
+ * the zone stops being tuned for whoever walked in.
  *
- * ═══ THE RULING HAS A PEAK AND IT IS NOT AT EITHER END ═══
- * That right-hand column is the acceptance test, and it is not monotonic. It
- * climbs because a fuller floor pays more experience, and then it FALLS —
- * because the experience on a floor you cannot finish is not experience. At
- * 1.00 the Hollow Mine and the Weir stop being completable at all (they are 3
- * of 6 and 2 of 6 at 0.40), and a delve nobody reaches the bottom of cannot pay
- * anything. 0.85 is where those two curves cross.
- *
- * SO IT IS NOT A CEILING SET BY DIFFICULTY AND THEN ARGUED DOWN. Both bounds
- * are the same measurement read from its two sides, which is why the number is
- * this rather than a round one.
- *
- * ═══ THE ARITHMETIC HALF AGREES, AND IT IS A TEST RATHER THAN A PROBE ═══
- * `test/server/levelling-curve.test.ts` asks the same question without a
- * driver — what the floors before the boss PAY, at each band's midpoint and at
- * the roster's own rank mix, against `expChart` — over all twenty-eight delves
- * including the twins through the Redaction:
- *
- *     factor   delves that pay two levels
- *      0.40     8 of 28
- *      0.55    11 of 28
- *      0.70    17 of 28
- *      0.85    21 of 28
- *      1.00    21 of 28
- *
- * IT COSTS NOTHING TO STOP AT 0.85. The arithmetic bar is already flat there:
- * every delve that 1.00 would pay for, 0.85 pays for. The whole of the
- * difference between them is on the driven side, and on that side 1.00 is
- * strictly worse.
+ * THE COUNTS ARE THEREFORE ALMOST BAND-INDEPENDENT. Twenty-four of the
+ * sixty-three fight-zone variants that state a count carry `{20, 30}`, and they
+ * carry it at `{1, 5}`, `{7, 16}`, `{10, 25}`, `{15, 25}`, `{15, 26}`,
+ * `{30, 40}`, `{30, 45}`, `{35, 45}` and `{45, 55}` alike. Moving our levels to
+ * the source zones' bands would push a
+ * twelve-delve overworld that spans one to fifteen up to twenty-five and sixty,
+ * and it would be answering a question `level_range` does not ask.
  *
  * ═══════════════════════════════════════════════════════════════════════════
- * IT WAS 0.40, AND THE RECEIPT FOR THAT IS VOID ON ITS OWN TERMS.
+ * SO THE RULE IS ABOUT THE COUNT, AND IT IS ONE RULE RATHER THAN TWELVE NUMBERS.
  * ═══════════════════════════════════════════════════════════════════════════
  *
- * 0.40 was set by fighting every class through every floor with
- * `tools/delve-density.mjs` and reading where the game stopped being playable.
- * Three rows stood here as the receipt. THE PROBE THAT TOOK THEM HAS SINCE BEEN
- * FIXED IN FIVE WAYS — it wore no birth lantern, ran no remember pass, built
- * floors for the wrong party size, banked the points a level pays without ever
- * spending them, and folded NO PASSIVE TALENTS onto the body at all — and
- * `AuthoredMap.forceLevel` landed after it. Re-run: same sites, same levels,
- * the same factor of 1.00 those rows were taken at, twelve runs a row not two.
- *
- *     the row the old receipt quoted        it said          it says now
- *     The Drowned Chapel, lvl 1, 25 bodies  Watchman 0/2     Watchman 11/12, 70 dmg
- *     The Underworks,     lvl 3, 46 bodies  Watchman 1/2     Watchman  8/12
- *     The Undermost,      lvl 1             every class 0/2  Watchman 9/12,
- *                                                            Inspector 9/12
- *
- * The Underworks row is the one that settles it: the SAME forty-six bodies, the
- * same level, the same generated floor. Nothing about the room changed. The
- * measurement did. (The Undermost's old row read 55 bodies because it predates
- * `nbNpcByFloor`; the spec states 20-30 for its first two floors now, for its
- * own separate and still-live reason — see that field.)
+ *     A DELVE'S COUNT IS READ FROM AN UPSTREAM ZONE WHOSE `level_range`
+ *     COVERS THE LEVEL WE PLACE THE DELVE AT. The zone's out-of-depth
+ *     `filters` come with it, because `filters` sits inside `generator.actor`
+ *     beside `nb_npc` and is half of the same answer. The SCATTER (`class`,
+ *     `nb_spots`, `on_spot_chance`) does not: that is a fact about the shape
+ *     of the room, and it stays with the zone the floor came from.
  *
  * ═══════════════════════════════════════════════════════════════════════════
- * WHAT 0.85 COSTS, MEASURED ACROSS THE WHOLE SWEEP AND ACROSS ALL FOUR CLASSES.
+ * AND THE FLOOR'S SIZE IS NOT A SECOND CLAUSE. IT WAS, AND ToME REFUTES IT.
  * ═══════════════════════════════════════════════════════════════════════════
  *
- * THE FIRST RECEIPT FOR THIS VALUE WAS TAKEN ON THE WATCHMAN, and this note said
- * in its own next breath that *"the Watchman is flat across the whole range"* —
- * a number chosen with the one instrument that cannot see it. Re-measured, six
- * solo runs a cell, floor 1 of the two level-1 delves at level 1, sweeping:
+ * This rule used to end "...AND WHOSE FLOOR IS THE SIZE WE BUILD — so the count
+ * transfers as a DENSITY rather than as a bare number". That clause was OURS. It
+ * was never checked against upstream, and upstream does not do it.
  *
- *     The Drowned Chapel    0.40   0.55   0.70   0.85
- *       Watchman             6/6    6/6    6/6    6/6
- *       Inspector            0/6    0/6    0/6    0/6
- *       Alchemist            4/6    2/6    0/6    0/6
- *       Redactor             0/6    0/6    0/6    0/6
- *       party of four        4/6    4/6    2/6    1/6
- *       party turns          445    508    718    799
+ * `nb_npc` IS A PROPERTY OF THE ZONE, AND A FLOOR INHERITS IT WHATEVER SIZE IT
+ * IS. Scanned over every `levels[n]` in the tree that changes a floor's
+ * `width`/`height`, there are fifteen that also roll a population, and:
  *
- *     The Undermost         0.40   0.55   0.70   0.85
- *       Watchman             6/6    5/6    4/6    4/6
- *       Inspector            6/6    6/6    6/6    5/6
- *       Alchemist            6/6    6/6    2/6    0/6
- *       Redactor             2/6    0/6    0/6    0/6
- *       party of four        5/6    5/6    5/6    4/6
- *       party turns          368    404    415    549
+ *   SIX KEEP THE COUNT EXACTLY. `data/zones/high-peak/zone.lua:190-207` is the
+ *     plainest: six floors shrinking from 50x75 (`:191`) to 30x30 (`:206`) — a
+ *     quarter of the ground — every one inheriting `{35, 40}` (`:64`), a
+ *     four-fold density CLIMB authored on purpose as the zone gets worse.
+ *     `data/zones/ardhungol/zone.lua:69` drops 60x60 to 40x40 and keeps
+ *     `{70, 80}` (`:50`). And the limit case is
+ *     `data/zones/orc-breeding-pit/zone.lua:83`: a 15x15 floor, `min_floor=120`
+ *     written on the same line, inheriting `{40, 50}` (`:47`). FORTY BODIES ON A
+ *     HUNDRED AND TWENTY WALKABLE TILES. Whatever upstream is doing with a
+ *     count, it is not holding a density.
+ *   NINE RESTATE IT, and only one of the nine is anywhere near proportional
+ *     (`data/zones/sandworm-lair/zone.lua:134`, ground x0.36 and count x0.33).
+ *     The rest move the count far less than the ground:
+ *     `data/zones/maze/zone.lua:181` and `:186` are x0.11 ground and x0.20
+ *     count, `data/zones/ancient-elven-ruins/zone.lua:68` and `:78` x11.1
+ *     ground and x3.0 count.
  *
- * THREE THINGS IN THAT TABLE AND ALL THREE ARE THE PRICE OF THIS NUMBER:
+ * So a count is a NUMBER OF BODIES that belongs to a zone, and the density that
+ * falls out of it is a property of the floor it lands on. The old clause did two
+ * pieces of damage while it stood: it split the Hollow Mine's four floors across
+ * two Maze layouts that upstream picks BETWEEN and never runs together
+ * (`data/zones/maze/zone.lua:20`), and it condemned the Glass Archive as
+ * permanently unalignable on a density objection that
+ * `data/zones/orc-breeding-pit/zone.lua:83` had already answered.
  *
- *   THE ALCHEMIST IS THE DENSITY CANARY. She clears the Drowned Chapel four runs
- *     in six at 0.40 and none at 0.70. The Inspector and the Redactor lose it at
- *     every factor, which is the class lane's residual and not this field's.
- *   THE PARTY GETS LONGER, NOT DEADLIER. Zero wipes in every party cell at every
- *     factor; the clear rate falls because the runs hit the 900-turn cap. That is
- *     the *"merely longer rather than more urgent"* failure, named.
- *   AND IT IS THE CO-OP CASE, which is the game that ships.
+ * ═══ WHAT REPLACES IT: THE GROUND IS STATED, NOT ENFORCED ═══
+ * `CountSource.floor`/`floorCite` carry the source zone's own `width`/`height`,
+ * so every row says what ground its number was authored over and
+ * `test/server/delve-alignment.test.ts` reads that off the Lua line too. Where
+ * ours differs the row says so and by how much. That is the difference between
+ * the density ToME built and the density we get, written down — which is what
+ * the clause was really for, and all it could honestly be.
  *
- * ═══ AND THE OLD DIAGNOSIS OF WHY IS STILL STANDING, SO IT IS KEPT ═══
- * An earlier draft of this note said: *"a body here costs far more turns to kill
- * and deals far more per turn relative to what a level-1 character has. The count
- * is upstream's; the per-body arithmetic is not."* The WIPE rows beside it were
- * taken with a broken probe and were voided; that sentence was not, and the turn
- * counts above are it, measured from the other side. ToME puts 20-30 bodies in
- * front of a level-1 character in four of its tier-1 zones
- * (`trollmire/zone.lua:197`, `heart-gloom/zone.lua:76`,
- * `rhaloren-camp/zone.lua:53`, `ruins-kor-pul/zone.lua:55`, all
- * `level_range = {1, 5}`) and its level-1 characters live. The count is not what
- * differs. Until the per-body arithmetic does cross, this factor is the receipt
- * for that gap rather than a decision about how crowded a room should be.
+ * ═══ WHAT THE RULE COSTS: THE IDENTITY OF A DELVE IS NOW A SPLIT ═══
+ * After this a delve is not "a port of zone X". It is
  *
- * ═══ IT IS HELD ANYWAY, AND HERE IS THE ARGUMENT ═══
- * Every one of those costs is an argument for a SMALLER divergence from upstream
- * — and this field IS the divergence. 1.00 is upstream; 0.40 was further from it
- * than 0.85 and paid for that with a levelling curve that could not close. The
- * ruling this whole system answers to is the author's: *"you are not meant to get
- * to the end of the dungeon without leveling at least twice. this is exactly like
- * ToME does"*, and the way to that is upstream's counts, not ours. Lowering the
- * number buys a beginner room by moving away from the thing being ported.
+ *     generator + floor size + terrain palette + lighting from zone X;
+ *     population count and its out-of-depth filter from zone Y, a zone
+ *     upstream authors at this delve's level; roster ours.
  *
- * SO THE COST IS WRITTEN DOWN RATHER THAN AVERAGED AWAY, and the residual it
- * leaves is named and owned somewhere else: the Inspector and the Redactor lose
- * the Drowned Chapel at EVERY factor, and that is a class problem with a class
- * answer (`classes.ts`, `indelible.ts`). The three lines above are what has to be
- * re-measured before this number moves again —
- * `test/server/monster-scaling.test.ts`'s change-detector names all of them, and
- * the table in `test/server/first-room.test.ts` is the per-class half.
+ * That split was already half-true — `zones.ts` has owned the generator and this
+ * file the count since both existed — and the two were merely pretending to name
+ * the same zone. IT IS A FIELD AND NOT A COMMENT (`countFrom`, below) so that
+ * every row states its own split, `check:citations` proves the line exists, and
+ * `test/server/delve-alignment.test.ts` opens that line in `reference/` and
+ * proves it says what the row says it says.
  *
- * ═══ AND THE ROOM THE GAME NAMES STILL DOES NOT ERASE THE CLASS IT IS FOR ═══
- * A lone level-1 Watchman on floor 1, counting WIPES rather than clears, because
- * a stall is the driver and a wipe is the room (`delve-run.mjs` closes by saying
- * exactly that).
- *
- *     factor   The Drowned Chapel   The Undermost
- *      0.40       0 of 40             0 of 40
- *      0.70       0 of 40             0 of 40
- *      0.85       1 of 80             0 of 80
- *      0.90       1 of 80             1 of 80
- *      0.95       0 of 40             3 of 40
- *      1.00       3 of 40             2 of 40
- *
- * About one run in a hundred here, and about one in fifteen from 0.95 up. The
- * driven case in `test/server/first-room.test.ts` is that bound, and it replaced
- * a crude duel model whose verdict this measurement refuted — see it for why.
+ * ═══ AND THE RATIOS SURVIVE, WHICH IS THE POINT OF SOURCING AT ALL ═══
+ * Every band carries its own spread: `{1, 5}` runs `{7, 10}`
+ * (`data/zones/slazish-fen/zone.lua:61`) to `{50, 60}`
+ * (`data/zones/reknor-escape/zone.lua:50`), and `{7, 16}` runs `{20, 30}`
+ * (`data/zones/daikara/zone.lua:56`) to `{50, 60}`
+ * (`data/zones/maze/zone.lua:160`). The rule is KEEP EACH DELVE'S RANK WITHIN
+ * ITS OWN LEVEL'S SPREAD — the Hollow Mine takes the Maze's counts rather than
+ * Daikara's because it is the most crowded room on the moor and the Maze is the
+ * most crowded thing `{7, 16}` states. That is still one rule. Twelve
+ * hand-picked numbers is where this file started, and it is not where it is
+ * going back to.
  *
  * ═══════════════════════════════════════════════════════════════════════════
- * WHAT IS STILL SHORT, AND WHAT WOULD HAVE TO CHANGE TO REACH 1.00.
+ * NINE OF TWELVE DID NOT NEED A NUMBER CHANGED, AND THAT IS THE EVIDENCE.
  * ═══════════════════════════════════════════════════════════════════════════
  *
- * Seven of the twenty-eight still cannot pay two levels at 0.85 — the Glass
- * Archive, its twin, and the five `REDACTED_TOWN` sites that share one spec at
- * level 14 — and one, the Outer Index, cannot be completed at any factor at
- * all.
+ * `{20, 30}` is upstream's answer for a 50x50 at every band from `{1, 5}` to
+ * `{45, 55}`, so eight of the twelve rows re-cite the count they already carried
+ * and place the identical band. Their drift was a CITATION defect, not a balance
+ * defect — which is exactly why Barrow End, the Watcher's Altar, Cairnfoot and
+ * Blackwood never behaved like broken rooms while the drift table said they
+ * should. Four counts actually move, and they are the four extremes:
  *
- * ═══ AND IT IS SEVEN FOR TWO DIFFERENT REASONS, WHICH THIS NOTE GOT WRONG ═══
- * It used to say *"every one of those seven is still short at 1.00, which is the
- * test's own way of saying NONE OF IT IS THE COUNT."* That was true of the two
- * Glass Archives and false of the other five, and the only thing holding it up
- * was a bug in the acceptance test: it priced every body at `delveLevel + floor
- * - 1` when the placer births them at `actorAdjustLevel`'s four terms, an
- * under-count of about 6%. On the placer's own levels the five `REDACTED_TOWN`
- * sites pay 1.004 of two levels at upstream's own count and 0.854 of it at ours.
- * THEIR SHORTFALL IS THE COUNT, and the count is held where it is by the
- * beginner-room bound above.
- * `test/server/levelling-curve.test.ts` now carries two lists and pins each entry
- * from both sides, so an entry cannot sit in the wrong one again.
+ *     delve              was        is        why
+ *     The Underworks     40-50      20-30     27 levels below its band
+ *     The Hollow Mine    70-80      35-40     16 levels below its band
+ *     The Glass Archive  12-16      20-30     6 levels ABOVE its band, and the
+ *                                             only room that could not pay two
+ *                                             levels at any factor
+ *     The Weir           20-25      20-30     no zone states 20-25 at a band
+ *                                             anywhere near six
  *
- * WHAT IS LEFT OF THE ORIGINAL CLAIM IS THE GLASS ARCHIVE AND ITS TWIN, and for
- * those it is exactly right.
- * Upstream tunes a `nb_npc` and a `level_range` TOGETHER. We ported the count
- * and kept our own authored level, and this is the drift that leaves:
+ * ═══════════════════════════════════════════════════════════════════════════
+ * TWO THINGS THE RULE CANNOT REACH, BOTH NAMED RATHER THAN AVERAGED.
+ * ═══════════════════════════════════════════════════════════════════════════
  *
- *     delve                  ours  the zone its nbNpc came from     level_range
- *     The Undermost            1   reknor-escape/zone.lua:22        {1, 5}    ok
- *     The Drowned Chapel       1   halfling-ruins/zone.lua:22       {10, 25}  -9
- *     The Underworks           3   orc-breeding-pit/zone.lua:22     {30, 60}  -27
- *     Barrow End               5   old-forest/zone.lua:25           {7, 16}   -2
- *     Cairnfoot                6   heart-gloom/zone.lua:25          {1, 5}    +5
- *     The Weir                 6   lake-nur/zone.lua:25             {15, 25}  -9
- *     The Watcher's Altar      7   rhaloren-camp/zone.lua:26        {1, 5}    +6
- *     The Hollow Mine          9   ardhungol/zone.lua:22            {25, 32}  -16
- *     The Outer Index         10   maze/zone.lua:25                 {7, 16}   +3
- *     The Glass Archive       11   scintillating-caves/zone.lua:25  {1, 5}    +10
- *     Gearford Ward           13   infinite-dungeon/zone.lua:25     scales
- *     Blackwood Outskirts     15   trollmire/zone.lua:26            {1, 5}    +14
+ * There were three. The Glass Archive was the third, marked `CountFit.Unaligned`
+ * because no 30x30 count could pay at level eleven and a 50x50 count on a 30x30
+ * floor was refused on density. The refusal was the size clause's and the size
+ * clause is gone, so the Archive takes `data/zones/halfling-ruins/zone.lua:50`
+ * at `{10, 25}` and the label came off. `CountFit.Unaligned` now has NO members,
+ * and the census in `test/server/delve-alignment.test.ts` asserts that, so
+ * earning one back is a deliberate act with an argument attached.
  *
- * A body pays LINEARLY in its level (`worthExp`) while `expChart` climbs
- * quadratically, so a delve standing far ABOVE its zone's band is starved: the
- * Glass Archive carries the sparsest count in the twelve, `{12, 16}`, at level
- * eleven, and pays two thirds of two levels here — it would still be short at
- * 1.00, and it clears the bar at level 7 and fails from 8 up. A delve standing
- * far BELOW its band is the opposite: the Hollow Mine puts ardhungol's seventy
- * to eighty bodies, which upstream hands to a character in the twenty-fives, in
- * front of a level-9 one, and that is why it is the first delve to fall off the
- * top of the sweep.
+ * ONE — LEVEL SIX IS A GAP IN ToME. No upstream zone that GENERATES a floor and
+ * rolls a population has a `level_range` covering six: the bands run `{1, 5}`
+ * and then `{7, 16}`. The tables spanning six are the two arenas
+ * (`data/zones/arena/zone.lua:22` `{1, 50}` and
+ * `data/zones/arena-unlock/zone.lua:22` `{5, 12}`, neither of which rolls onto a
+ * generated floor), the developer zone (`data/zones/test/zone.lua:22` `{1, 50}`,
+ * whose count is `{0, 0}` at `:95`), three talent-summoned planes, a sixth town
+ * that rolls nobody (`data/zones/town-point-zero/zone.lua:51`, `{0, 0}`), and
+ * the five perpetual towns that do, whose `{10, 10}`
+ * (`data/zones/town-derth/zone.lua:47`) populates a hand-drawn Static map
+ * (`:42`, `towns/derth` at `:43`) with townsfolk. Cairnfoot and The Weir stand at
+ * six. Both are marked `CountFit.Clamped` and BOTH CLAMP DOWN, to `{1, 5}` —
+ * one step, which is what `engine/Zone.lua:141-148`'s own clamp hands a
+ * level-six character. Down rather than up because `{1, 5}` is where upstream
+ * writes a tier's whole spread, `{7, 10}` to `{50, 60}`, and because the
+ * tier-one `max_ood` refusal comes with it; `{7, 16}` states three counts and no
+ * filter at all. Cairnfoot takes heart-gloom, which is its own floor's zone, so
+ * nothing about it splits; The Weir takes Murgol Lair, a dark 50x50 Roomer lair
+ * of the things that live in ToME's water, which is what `WEIR` is. Neither
+ * count moves by a body: `{20, 30}` either way.
  *
- * ═══ SO: ALIGN THE LEVELS WITH THE ZONES, AND THIS FIELD DELETES ITSELF ═══
- * Give each delve the `level_range` of the zone its `nbNpc` was read from, or
- * read its count from a zone whose band matches the level the map wants it at.
- * ONE GLOBAL FACTOR CANNOT BE RIGHT FOR BOTH DIRECTIONS of that drift —
- * lowering it starves the delves above their band and raising it kills you in
- * the ones below — which is the exact shape of the peaked sweep at the top of
- * this note, and the reason no value of this number was ever going to be the
- * answer. It moves the whole overworld progression, nothing measured here can
- * price that, and it is recorded in `DECISIONS.md` rather than taken.
+ * TWO — GEARFORD WARD AND THE REDACTED TOWNS HAVE NO BAND TO ALIGN. The
+ * Infinite Dungeon is `level_range = {1, 1}` with `level_scheme = "player"` and
+ * `max_level = 1000000000` (`data/zones/infinite-dungeon/zone.lua:25-27`), and
+ * its bodies are levelled off the FLOOR NUMBER rather than off the band:
+ * `actor_adjust_level` at `:28` is `floor((base_level + level.level-1) * 1.2)`.
+ * Its count is a function of the floor's own area (`:255-256`, `nbNpcPerArea`).
+ * `{1, 1}` is not a band, a drift against it is not a number, and those rows are
+ * marked `CountFit.PlayerScheme`.
  *
- * ═══ WHY ONE GLOBAL FACTOR RATHER THAN A BAND PER SITE ═══
- * Because the RATIOS are the tuning. Ardhungol is 3.5x the Glass Archive's
- * original, the escape from Reknor is the densest thing in the first tier, the
- * Maze is denser than the forest it sits under — fifteen years of somebody
- * deciding that, and per-site bands would throw all of it away and put us back
- * where this file started, with twelve numbers somebody picked. At 0.85 every
- * one of those ratios is intact and no delve in the game is less crowded than
- * it was; `test/server/monster-scaling.test.ts` holds both of those and the
- * hard ceiling of 1.00, above which the counts stop being upstream's at all.
+ * ═══════════════════════════════════════════════════════════════════════════
+ * AND THE TWINS RE-CITE RATHER THAN INHERIT.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * A Redaction twin is its original four levels up (`redactedSpec`). Three of
+ * them land outside their original's band — the Underworks' at seven, Barrow
+ * End's at nine and Cairnfoot's at ten, all sourced from `{1, 5}` zones — and
+ * each takes its own `countFrom` at its own level. THE COUNT DOES NOT MOVE IN
+ * ANY OF THE THREE: it is `{20, 30}` before and after, because `{20, 30}` is
+ * what upstream states at `{1, 5}`, at `{7, 16}` and at `{10, 25}` alike. That
+ * is the band-independence at the top of this note, demonstrated on our own
+ * table rather than asserted.
  */
-export const NB_NPC_SCALE = 0.85;
+
+/** How a `countFrom` row's band stands to the level the delve is placed at. */
+export const CountFit = {
+  /**
+   * The band covers our level. Upstream's clamp is a no-op there, so this count
+   * is what it hands a character standing at exactly their own level.
+   */
+  Covers: 'covers',
+  /**
+   * Our level is ONE step outside the band, because upstream authors no
+   * generated-floor population at it at all. Six, and only six — see the note
+   * above. A row may not claim this without being exactly one level out, and
+   * both rows that carry it clamp DOWN, to `{1, 5}`.
+   */
+  Clamped: 'clamped',
+  /**
+   * The band does not cover our level and no zone upstream states a count this
+   * room could take. Argued at the site. A row claiming this MUST be out of
+   * band, so the label dies the moment its cause does.
+   *
+   * ═══ IT HAS NO MEMBERS, AND THAT IS THE LABEL WORKING ═══
+   * The Glass Archive carried it, on the ground that a 50x50 count on its 30x30
+   * floor was denser than anything upstream builds. That was the size clause
+   * talking and `data/zones/orc-breeding-pit/zone.lua:83` refutes it, so the
+   * Archive took a band-covering count and the label came off by itself. The
+   * census in `test/server/delve-alignment.test.ts` pins the count at zero: a
+   * new one is a deliberate act with an argument, not a place to put a room
+   * nobody wants to think about.
+   */
+  Unaligned: 'unaligned',
+  /**
+   * The source's `level_range` is not a band at all: `level_scheme = "player"`
+   * with an unbounded `max_level`, whose bodies are levelled off the floor
+   * number. The Infinite Dungeon, and only it. Requires `nbNpcPerArea` on the
+   * spec, because that is the mechanism that makes its count level-independent.
+   */
+  PlayerScheme: 'player-scheme',
+} as const;
+
+export type CountFit = (typeof CountFit)[keyof typeof CountFit];
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * WHERE ONE BAND IN `DELVES` WAS READ FROM — the citation, as data.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `cite` and `bandCite` are ordinary `file.lua:line` citations, so
+ * `npm run check:citations` proves the line exists, and
+ * `test/server/delve-alignment.test.ts` opens that line in `reference/` and
+ * proves it says what this row says it says. That is the half `check:citations`
+ * cannot do — it can only prove a cited line EXISTS — and this file has already
+ * shipped four `max_ood` citations that were each one line low, plus two
+ * sentences invented outright, with the gate green throughout.
+ */
+export type CountSource = {
+  /** The source zone's `level_range`. */
+  readonly band: ZoneLevelRange;
+  /** Where that `level_range` is written. */
+  readonly bandCite: string;
+  /** The source zone's `nb_npc`, verbatim — the band this delve places. */
+  readonly nbNpc: readonly [number, number];
+  /** Where that `nb_npc` is written. */
+  readonly cite: string;
+  /**
+   * The source zone's own `width`/`height` — THE GROUND ITS COUNT WAS AUTHORED
+   * OVER, which is not a constraint on what we may take and is not decoration
+   * either. A count is a number of bodies (see the note above `CountFit`);
+   * where this differs from the floor we build, the density differs by the same
+   * ratio and the row is expected to say so in words.
+   */
+  readonly floor: readonly [number, number];
+  /** Where that `width`/`height` pair is written. */
+  readonly floorCite: string;
+  /**
+   * Which floors take this count, from 1. Absent means "every floor with no
+   * override" — the row that `DelveSpec.nbNpc` itself states.
+   */
+  readonly floors?: readonly number[];
+  /** `filters = { {max_ood=N} }` beside the count. Absent is no filter. */
+  readonly maxOod?: number;
+  /** Where that filter is written. Present exactly when `maxOod` is. */
+  readonly maxOodCite?: string;
+  /** How this band stands to the level the delve is placed at. */
+  readonly fit: CountFit;
+};
 
 /** How a floor's bodies are scattered over it — upstream's `OnSpots` fields. */
 export type SpotSpec = {
@@ -441,35 +490,60 @@ export type DelveSpec = {
    * ═══ SO IT IS `nb_npc` NOW, AND THE NAME IS UPSTREAM'S ON PURPOSE ═══
    * `engine/generator/actor/Random.lua:126` is
    * `for i = current, rng.range(self.nb_npc[1], self.nb_npc[2]) do generateOne()`
-   * — one body per count, no area term, no headcount term. Every row below cites
-   * the zone file and line it was read from, so `npm run check:citations`
-   * verifies the numbers exist rather than taking this comment's word for it.
+   * — one body per count, no area term, no headcount term.
+   *
+   * ═══ AND THE ZONE IT IS READ OFF IS `countFrom`, NOT THE SITE'S OWN ═══
+   * It used to be the zone the site's FLOOR is built from, and the level we
+   * stand the delve at was nobody's business. It is a zone whose `level_range`
+   * covers that level now, and `countFrom` below is where the citation lives —
+   * as data, so a test can read the Lua line rather than trust a comment.
    *
    * ═══ AND THE FLOORS ARE ALREADY UPSTREAM'S SIZE, WHICH IS WHY IT TRANSFERS ═══
    * `shared/sitemap.ts` builds each site at its zone's own `width`/`height`, so
-   * the ground a count is spread over here is the ground it was tuned on there.
-   * `forArea` still scales LITTER and TRAPS off a 34x30 baseline — those bands
-   * are ours — and deliberately does not touch this one.
+   * the ground a count is spread over here is the ground it was tuned on there —
+   * and `countFrom` will only take a count from a zone built at the size we
+   * build, for exactly that reason. `forArea` still scales LITTER and TRAPS off
+   * a 34x30 baseline — those bands are ours — and deliberately does not touch
+   * this one.
    */
   readonly nbNpc: readonly [number, number];
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * WHERE `nbNpc` AND `nbNpcByFloor` WERE READ FROM. ONE ROW PER BAND.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * The row with no `floors` states `nbNpc`; a row with `floors` states the
+   * `nbNpcByFloor` entry for each of them. Every floor of every delve must be
+   * covered by exactly one row, and each row's `nbNpc` must be the band the
+   * placer actually uses on the floors it claims —
+   * `test/server/delve-alignment.test.ts` drives `nbNpcFor` to check it rather
+   * than reading the table.
+   *
+   * REQUIRED, NOT OPTIONAL. A spec without a source is a count nobody can check,
+   * which is the state this file was in for the whole of its life.
+   */
+  readonly countFrom: readonly CountSource[];
   /**
    * `levels[n].generator.actor.nb_npc` — the zone's override for one floor
    * (`engine/Zone.lua:833-843` deep-merges it over the base table). Indexed by
    * floor from 1; a floor with no entry uses `nbNpc`.
    *
-   * THREE OF OUR TWELVE ZONES CARRY ONE AND EXACTLY ONE IS REACHABLE. Ardhungol's
-   * third level drops from 70-80 to 20-25 on a 20x20 (`ardhungol/zone.lua:70`)
-   * and the Maze's second from 50-60 to 10-12 (`maze/zone.lua:186`), but
-   * `shared/mapgen/zones.ts` maps our floors onto those zones' earlier levels and
-   * repeats the last entry, so neither override is ever read — stated in the row
-   * it belongs to rather than left for somebody to discover.
+   * ONE OF OUR FLOOR ZONES CARRIES ONE THAT IS READ: the escape from Reknor's
+   * last, `{0, 0}` (`reknor-escape/zone.lua:79`), because its bodies are drawn
+   * on a static map instead. That is also the answer to "the tutorial's final
+   * floor is empty": the floor is meant to hold no ROLLED population, and the
+   * bug was that `populate` returned before placing anything at all — no boss,
+   * no litter, no note.
    *
-   * The one that IS read is the escape from Reknor's last, `{0, 0}`
-   * (`reknor-escape/zone.lua:79`), because its bodies are drawn on a static map
-   * instead. That is also the answer to "the tutorial's final floor is empty":
-   * the floor is meant to hold no ROLLED population, and the bug was that
-   * `populate` returned before placing anything at all — no boss, no litter, no
-   * note.
+   * ═══ AND IT IS ALSO WHERE A DELVE WHOSE FLOORS CHANGE SIZE STATES ITS SECOND
+   * COUNT. THE HOLLOW MINE IS THE ONLY ONE. ═══
+   * Its floor 1 is 60x60 and its floors 2-4 are 40x40 (ardhungol's level 1 and
+   * level 2, `shared/mapgen/zones.ts`), and a count only means a density on the
+   * floor it was authored for. The Maze is authored at BOTH sizes inside one
+   * band — `{50, 60}` on a 60x60 (`maze/zone.lua:160`) and `{35, 40}` on a 40x40
+   * (`:49`) — so each of our floors takes the one built for its size. That is a
+   * use of this field upstream does not make (its overrides are one zone's own
+   * levels, not two layouts of it), and it is written down in the row.
    */
   readonly nbNpcByFloor?: ReadonlyMap<number, readonly [number, number]>;
   /**
@@ -553,16 +627,28 @@ export type DelveSpec = {
    * under-depth candidate rare — divided by `3 x levelsBelow` — but rare is not
    * never, and a zone that does not want its floor-one player meeting a
    * floor-fifteen body says so with this instead of hoping the division is
-   * enough. Six of our twelve zones carry it: heart-gloom (`zone.lua:77`),
-   * rhaloren-camp (`:54`), scintillating-caves (`:54`), trollmire (`:198`),
-   * reknor-escape (`:51`) at 2, and infinite-dungeon (`:89`) at 6.
+   * enough.
    *
-   * ABSENT IS NO FILTER, which is upstream's own default and what the other six
-   * zones do: NONE of halfling-ruins, orc-breeding-pit, ardhungol, maze,
-   * old-forest or lake-nur passes a filter to its ACTOR generator at all.
+   * ═══ IT COMES WITH THE COUNT NOW, AND THAT MADE IT A TIER-1 DEVICE ═══
+   * `filters` sits inside `generator.actor` beside `nb_npc`, so it is part of
+   * the same answer to "who may stand on this floor and how many" and it is
+   * sourced with it (`countFrom.maxOod`). Read off the aligned sources rather
+   * than off the zones our floors are drawn from, the pattern is stark and is
+   * upstream's own: EVERY `{1, 5}` zone carries `max_ood = 2` —
+   * `data/zones/blighted-ruins/zone.lua:54`, `data/zones/deep-bellow/zone.lua:49`,
+   * `data/zones/norgos-lair/zone.lua:58`, `data/zones/heart-gloom/zone.lua:77`,
+   * `data/zones/ruins-kor-pul/zone.lua:56`, `data/zones/reknor-escape/zone.lua:51`,
+   * `data/zones/scintillating-caves/zone.lua:54` — and NOTHING at `{7, 16}`,
+   * `{10, 25}` or `{15, 25}` carries one: not daikara, not the Maze, not
+   * halfling-ruins, not mark-spellblaze. The filter protects a beginner, and
+   * upstream stops protecting you after the first tier. The one exception is the
+   * Infinite Dungeon at 6 (`data/zones/infinite-dungeon/zone.lua:89`), the zone
+   * whose whole job is to hand you something over your head.
    *
-   * ═══ FOUR OF THE SIX LINES ABOVE POINTED AT `nb_npc + 2`, AND TWO SENTENCES
-   * HERE WERE INVENTED OUTRIGHT. `check:citations` PASSED ALL OF THEM. ═══
+   * ABSENT IS NO FILTER, which is upstream's own default.
+   *
+   * ═══ AN EARLIER LIST HERE HAD FOUR LINES POINTING AT `nb_npc + 2`, AND TWO
+   * SENTENCES INVENTED OUTRIGHT. `check:citations` PASSED ALL OF THEM. ═══
    * The four `max_ood` lines were each one line low — a guessed offset, not a
    * read — and this paragraph used to say old-forest "passes an empty one
    * (`old-forest/zone.lua:59`)" and lake-nur "a `special_rarity` one
@@ -572,6 +658,8 @@ export type DelveSpec = {
    * the FLOODED variant, which our Weir is not built from. The conclusion —
    * neither zone gets a `maxOod` — was right, which is exactly why nobody
    * checked. `tools/check-citations.mjs` can only prove a cited line EXISTS.
+   * `test/server/delve-alignment.test.ts` is the half that was missing: it opens
+   * every `countFrom` line in `reference/` and reads the value off it.
    */
   readonly maxOod?: number;
   /**
@@ -835,10 +923,11 @@ const WEIR: readonly MonsterTemplate[] = [INDEX_RIBBON, INDEX_INKWELL, INDEX_STR
  *
  * ═══ AND IT IS THE `levelRange` COLUMN, NOT THE COUNT ═══
  * It used to be read down the `monsters` column, which worked while every band
- * in this table was authored here. The bands are their zones' own `nb_npc` now,
- * and upstream's density is a fact about the ZONE rather than about danger:
- * Ardhungol packs 70-80 bodies and the Trollmire 20-30, and the Trollmire is the
- * gentler place. What orders the map is the level every body in a room is born at
+ * in this table was authored here. The bands are upstream's `nb_npc` now, taken
+ * from a zone whose band covers the level we place each delve at (`countFrom`),
+ * and a count is a fact about a ZONE rather than about danger. Eight of the
+ * twelve state the identical `{20, 30}` — at levels one, three, five, six, six,
+ * seven, eleven and fifteen — so the column no longer sorts anything at all. What orders the map is the level every body in a room is born at
  * — `delveLevel`, which `actor_adjust_level` feeds and `rankLifeAdjust` compounds
  * — and `dangerWord` reads that column now.
  */
@@ -939,9 +1028,39 @@ export const DELVES: ReadonlyMap<string, DelveSpec> = new Map<string, DelveSpec>
   [
     'site:drowned_chapel',
     {
-      // halfling-ruins, levels 1-3. `nb_npc = {20, 30}` —
-      // data/zones/halfling-ruins/zone.lua:50.
+      /**
+       * THE FLOOR IS halfling-ruins (`shared/mapgen/zones.ts`) AND THE COUNT IS
+       * NOT, and the count did not move by a body.
+       *
+       * halfling-ruins is `level_range = {10, 25}`
+       * (`data/zones/halfling-ruins/zone.lua:22`) and this room is level one:
+       * nine levels of drift, and it read `{20, 30}` off that zone anyway. The
+       * Blighted Ruins is the same 50x50 (`:28`) Roomer (`:38`) at `{1, 5}`
+       * (`:22`) and states the same `{20, 30}` — because `{20, 30}` is what
+       * upstream states for a 50x50 at every band it has. The drift was a
+       * citation defect and this room was never the broken one.
+       */
       nbNpc: [20, 30],
+      countFrom: [
+        {
+          band: [1, 5],
+          bandCite: 'data/zones/blighted-ruins/zone.lua:22',
+          nbNpc: [20, 30],
+          cite: 'data/zones/blighted-ruins/zone.lua:53',
+          floor: [50, 50],
+          floorCite: 'data/zones/blighted-ruins/zone.lua:28',
+          maxOod: 2,
+          maxOodCite: 'data/zones/blighted-ruins/zone.lua:54',
+          fit: CountFit.Covers,
+        },
+      ],
+      // AND THE FILTER CAME WITH IT — every `{1, 5}` zone carries `max_ood = 2`
+      // and this room had none, because halfling-ruins passes no filter at all.
+      // Inert on this roster (`DROWNED` is two entities both `levelRange` `[1,
+      // undefined]`), and kept anyway: it is half of the sourced answer, and the
+      // day a deep creature joins this roster it is the line that keeps it out
+      // of the room the first case sends every new character to by name.
+      maxOod: 2,
       roster: DROWNED,
       litter: [1, 2],
       levelRange: [1, 1],
@@ -1006,10 +1125,11 @@ export const DELVES: ReadonlyMap<string, DelveSpec> = new Map<string, DelveSpec>
        *
        * ═══ THIS IS THE ROW THAT REVERTS ═══
        * The day the escort lands — the tutorial lane's work — this override
-       * comes out and the Undermost carries `nbNpc` like everything else. It is
-       * a SEPARATE divergence from `NB_NPC_SCALE` and reverts separately: that
-       * factor is one number about every delve, and this is one row about this
-       * one, for a reason the factor knows nothing about.
+       * comes out and the Undermost carries `nbNpc` like everything else. It
+       * was a separate divergence from the global `NB_NPC_SCALE`, and it
+       * outlived it: that factor is deleted and this row is not, because it is
+       * one cited count about one floor rather than one uncited number about
+       * twelve delves.
        */
       // And `levels[3].generator.actor.nb_npc = {0, 0}` — reknor-escape/zone.lua:79.
       // The last level is a STATIC map with its bodies drawn on it
@@ -1020,6 +1140,56 @@ export const DELVES: ReadonlyMap<string, DelveSpec> = new Map<string, DelveSpec>
         [2, [20, 30]],
         [3, [0, 0]],
       ]),
+      /**
+       * THE ONE DELVE WHOSE FLOOR ZONE ALREADY STOOD AT THE RIGHT LEVEL. The
+       * escape from Reknor is `{1, 5}` and this is level one, so the base row
+       * needs nothing re-sourced; the `{20, 30}` override above is the one that
+       * has to name a different zone, and it names the Ruins of Kor'Pul —
+       * `{1, 5}`, 50x50, the first of the four tier-1 zones the note above
+       * already cites.
+       *
+       * (The Ruins of Kor'Pul scatters on spots rather than uniformly,
+       * `ruins-kor-pul/zone.lua:54`. That does NOT come with the count: see
+       * `DelveSpec.spots` and the rule at the top of this file. The floors here
+       * are the escape's, so the scatter is the escape's.)
+       */
+      countFrom: [
+        {
+          band: [1, 5],
+          bandCite: 'data/zones/reknor-escape/zone.lua:22',
+          nbNpc: [50, 60],
+          cite: 'data/zones/reknor-escape/zone.lua:50',
+          floor: [50, 50],
+          floorCite: 'data/zones/reknor-escape/zone.lua:27',
+          maxOod: 2,
+          maxOodCite: 'data/zones/reknor-escape/zone.lua:51',
+          fit: CountFit.Covers,
+        },
+        {
+          floors: [1, 2],
+          band: [1, 5],
+          bandCite: 'data/zones/ruins-kor-pul/zone.lua:25',
+          nbNpc: [20, 30],
+          cite: 'data/zones/ruins-kor-pul/zone.lua:55',
+          floor: [50, 50],
+          floorCite: 'data/zones/ruins-kor-pul/zone.lua:30',
+          maxOod: 2,
+          maxOodCite: 'data/zones/ruins-kor-pul/zone.lua:56',
+          fit: CountFit.Covers,
+        },
+        {
+          floors: [3],
+          band: [1, 5],
+          bandCite: 'data/zones/reknor-escape/zone.lua:22',
+          nbNpc: [0, 0],
+          cite: 'data/zones/reknor-escape/zone.lua:79',
+          floor: [50, 50],
+          floorCite: 'data/zones/reknor-escape/zone.lua:27',
+          maxOod: 2,
+          maxOodCite: 'data/zones/reknor-escape/zone.lua:51',
+          fit: CountFit.Covers,
+        },
+      ],
       roster: DROWNED,
       litter: [1, 2],
       levelRange: [1, 1],
@@ -1034,9 +1204,49 @@ export const DELVES: ReadonlyMap<string, DelveSpec> = new Map<string, DelveSpec>
   [
     'site:underworks',
     {
-      // orc-breeding-pit, level 2 on every floor (`shared/mapgen/zones.ts`).
-      // `nb_npc = {40, 50}` — data/zones/orc-breeding-pit/zone.lua:47.
-      nbNpc: [40, 50],
+      /**
+       * ═══════════════════════════════════════════════════════════════════════
+       * FORTY TO FIFTY WAS A LEVEL-THIRTY ROOM'S COUNT, AND THIS IS LEVEL THREE.
+       * ═══════════════════════════════════════════════════════════════════════
+       *
+       * The worst drift in the table by a distance. The floor is the orc
+       * breeding pit (`shared/mapgen/zones.ts`), whose `level_range` is
+       * `{30, 60}` (`data/zones/orc-breeding-pit/zone.lua:22`), and this room
+       * read its `{40, 50}` (`:47`) and stood at three — twenty-seven levels
+       * below the shallowest character upstream ever hands that count to. It is
+       * also the only count in our twelve that is illegal by the rule at any
+       * level we use: the earliest band anywhere in ToME carrying `{40, 50}` is
+       * `{15, 22}` (`data/zones/tempest-peak/zone.lua:22`, `:49`).
+       *
+       * ═══ AND UPSTREAM WROTE THE TIER-1 EDITION OF THIS EXACT ROOM ═══
+       * The Deep Bellow is `{1, 5}` (`data/zones/deep-bellow/zone.lua:22`), a
+       * 50x50 (`:27`) `Cavern` (`:37`) on `UNDERGROUND_FLOOR` and
+       * `UNDERGROUND_TREE` (`:40-41`) — THE SAME GENERATOR CLASS, THE SAME
+       * FLOOR SIZE AND THE SAME TWO GRIDS as the breeding pit (`:36`, `:27`,
+       * `:39-40`). They differ in zoom (14 against 23), in `min_floor` (700
+       * against 900, in the same map table) and in lighting — the Deep Bellow
+       * sets `all_lited` (`:30`) and the pit does not — and in nothing else that
+       * decides what the room IS. Upstream wrote both editions of it and we had
+       * taken the count off the wrong one.
+       */
+      nbNpc: [20, 30],
+      countFrom: [
+        {
+          band: [1, 5],
+          bandCite: 'data/zones/deep-bellow/zone.lua:22',
+          nbNpc: [20, 30],
+          cite: 'data/zones/deep-bellow/zone.lua:48',
+          floor: [50, 50],
+          floorCite: 'data/zones/deep-bellow/zone.lua:27',
+          maxOod: 2,
+          maxOodCite: 'data/zones/deep-bellow/zone.lua:49',
+          fit: CountFit.Covers,
+        },
+      ],
+      // The breeding pit passes no filter; every `{1, 5}` zone does. Inert on
+      // `RANK_AND_FILE`, whose two entities are both `levelRange` `[1,
+      // undefined]` — kept because it is half of the sourced answer.
+      maxOod: 2,
       roster: RANK_AND_FILE,
       litter: [2, 3],
       levelRange: [3, 3],
@@ -1048,10 +1258,35 @@ export const DELVES: ReadonlyMap<string, DelveSpec> = new Map<string, DelveSpec>
   [
     'site:watchers_altar',
     {
-      // rhaloren-camp. `nb_npc = {20, 30}` — data/zones/rhaloren-camp/zone.lua:53.
+      /**
+       * THE FLOOR IS THE RHALOREN CAMP AND THE COUNT IS DAIKARA'S — same band,
+       * same 50x50 Roomer, same `{20, 30}`, six levels later.
+       *
+       * The camp is `{1, 5}` (`data/zones/rhaloren-camp/zone.lua:26`) and this
+       * room is seven. Daikara is `{7, 16}`
+       * (`data/zones/daikara/zone.lua:25`), 50x50 (`:30`), Roomer (`:41`) and
+       * states the identical `{20, 30}` (`:56`). Not one body moves.
+       *
+       * ═══ AND `max_ood` COMES OFF, WHICH IS UPSTREAM'S OWN RULE ═══
+       * The camp filters at 2 (`:54`); Daikara passes no filter, and neither
+       * does anything else at `{7, 16}`. That is not an oversight in ToME — the
+       * out-of-depth refusal is a tier-1 protection and upstream stops applying
+       * it past the first tier. Inert here either way (`RANK_AND_FILE` is two
+       * entities at `levelRange` `[1, undefined]`), so this is a change of
+       * citation rather than of room.
+       */
       nbNpc: [20, 30],
-      // `filters = { {max_ood=2} }` — rhaloren-camp/zone.lua:54.
-      maxOod: 2,
+      countFrom: [
+        {
+          band: [7, 16],
+          bandCite: 'data/zones/daikara/zone.lua:25',
+          nbNpc: [20, 30],
+          cite: 'data/zones/daikara/zone.lua:56',
+          floor: [50, 50],
+          floorCite: 'data/zones/daikara/zone.lua:30',
+          fit: CountFit.Covers,
+        },
+      ],
       roster: RANK_AND_FILE,
       litter: [2, 4],
       levelRange: [7, 7],
@@ -1062,11 +1297,92 @@ export const DELVES: ReadonlyMap<string, DelveSpec> = new Map<string, DelveSpec>
   [
     'site:hollow_mine',
     {
-      // ardhungol, levels 1-2. `nb_npc = {70, 80}` — data/zones/ardhungol/zone.lua:50,
-      // the densest band in our twelve. Its `levels[3]` drop to {20, 25}
-      // (ardhungol/zone.lua:70) is NOT reachable here: `zones.ts` gives this site
-      // two level entries, so floors 3 and 4 repeat ardhungol level 2.
-      nbNpc: [70, 80],
+      /**
+       * ═══════════════════════════════════════════════════════════════════════
+       * THE ONE ROW WHERE THE SPLIT COSTS SOMETHING, AND IT IS SAID OUT LOUD.
+       * ═══════════════════════════════════════════════════════════════════════
+       *
+       * The floor is ardhungol — a 60x60 Cavern and then three 40x40s
+       * (`shared/mapgen/zones.ts`) — and it stays ardhungol: the webbing, the
+       * palette, the shape of the tunnels. THE COUNT IS THE MAZE'S, and a Maze
+       * is not a spider hole. That sentence is the price of this row and there
+       * is no version of it that is not paid.
+       *
+       * ═══ WHY THE COUNT COULD NOT STAY ═══
+       * Ardhungol is `level_range = {25, 32}` (`data/zones/ardhungol/zone.lua:22`)
+       * and this room is level nine. Its `{70, 80}` (`:50`) is what upstream
+       * hands a character in the mid-twenties, and on our floors 2-4 — 40x40,
+       * about 650 walkable tiles — that measured at ten bodies per hundred
+       * walkable, twice the densest thing anywhere else on the moor. It is the
+       * first delve to become uncompletable in every sweep ever run here.
+       *
+       * ═══ WHY THE MAZE AND NOT DAIKARA ═══
+       * `{7, 16}` runs from `{20, 30}` to `{50, 60}`, and the rule is to keep
+       * each delve's rank inside its own level's spread. This is the most
+       * crowded room on the moor at its own floor size, and the Maze is the most
+       * crowded thing `{7, 16}` states on ground anything like ours — so it
+       * takes the Maze's count and not Daikara's `{20, 30}`.
+       *
+       * ═══ WHAT THAT RANK IS, MEASURED, AND IT IS NOT FIRST ═══
+       * `{35, 40}` on our 40x40 floors is 5.6 to 5.7 bodies per hundred walkable
+       * tiles (`tools/delve-density.mjs 4 --floors`), against a moor median of
+       * 2.7. Two rooms are denser: Cairnfoot at 6.2, whose Octopus generator
+       * walks only 404 of 2500 cells, and the Glass Archive at 9 to 10, which is
+       * a 900-cell floor. BOTH OF THOSE ARE THE FLOOR AND NOT THE COUNT — all
+       * three rooms carry a band upstream states, and the ground under them is
+       * what differs. Rank inside a BAND is the thing this rule orders, and
+       * inside `{7, 16}` the Maze is still above Daikara.
+       *
+       * ═══ AND THERE IS NO `Cavern` AT `{7, 16}` AT ALL ═══
+       * Checked, zone by zone: the second tier is Roomers and Mazes. So the
+       * generator could not have been matched either, and this row pays for
+       * that in the sentence at the top rather than pretending otherwise.
+       *
+       * ═══════════════════════════════════════════════════════════════════════
+       * ONE MAZE LAYOUT, NOT TWO: THE SPLICE WAS AN ARTEFACT OF THE SIZE CLAUSE.
+       * ═══════════════════════════════════════════════════════════════════════
+       *
+       * This row used to take the DEFAULT layout's `{50, 60}` (`:160`) on floor
+       * one because our floor one is 60x60, and the COLLAPSED layout's
+       * `{35, 40}` (`:49`) on floors 2-4 because those are 40x40 — each floor
+       * matched to the Maze authored at its size. `data/zones/maze/zone.lua:20`
+       * is `game.state:alternateZone(short_name, {"COLLAPSED", 2})`: THOSE TWO
+       * TABLES ARE ALTERNATIVES. Upstream rolls one of them per game and never
+       * runs a DEFAULT first floor into a COLLAPSED second. Splicing them
+       * produced a Maze that exists in no ToME game, and the note above
+       * `CountFit` is where the clause that forced it is retired.
+       *
+       * ═══ AND COLLAPSED IS THE ONE THAT IS OUR SHAPE ═══
+       * It is the only four-floor Maze upstream authors — `max_level = 4`
+       * (`:27`) against DEFAULT's 2 (`:139`) — and its `levels` block (`:62-72`)
+       * overrides no count on any of the four, so every floor of a four-floor
+       * `{7, 16}` Maze carries `{35, 40}`. We have four floors. It states one
+       * count for them and we take it for all four, which is what upstream does
+       * with its own.
+       *
+       * ═══ AND OUR FIRST FLOOR IS 3600 CELLS AGAINST ITS 1600 ═══
+       * Said rather than corrected, because a count is a number of bodies:
+       * `data/zones/ardhungol/zone.lua:69` — this delve's own floor zone — runs
+       * `{70, 80}` across exactly that step, 60x60 down to 40x40, without
+       * touching the count. So floor one is the thin one here, 37 bodies over
+       * about 1400 walkable tiles against 37 over about 660 below it, and the
+       * delve gets worse as it goes down. That is the right direction and it is
+       * the direction the spliced version ran backwards: floor one used to carry
+       * 56 bodies and stopped the Watchman 2 runs in 4 while floors 2-4, denser
+       * and deeper, went 4/4, 3/4 and 4/4.
+       */
+      nbNpc: [35, 40],
+      countFrom: [
+        {
+          band: [7, 16],
+          bandCite: 'data/zones/maze/zone.lua:25',
+          nbNpc: [35, 40],
+          cite: 'data/zones/maze/zone.lua:49',
+          floor: [40, 40],
+          floorCite: 'data/zones/maze/zone.lua:30',
+          fit: CountFit.Covers,
+        },
+      ],
       roster: RANK_AND_FILE,
       litter: [2, 4],
       levelRange: [9, 9],
@@ -1079,10 +1395,66 @@ export const DELVES: ReadonlyMap<string, DelveSpec> = new Map<string, DelveSpec>
   [
     'site:outer_index',
     {
-      // maze, the DEFAULT layout (`zones.ts`). `nb_npc = {50, 60}` —
-      // data/zones/maze/zone.lua:160. Its `levels[2]` {10, 12} (maze/zone.lua:186)
-      // is not reachable: every floor here is maze level 1.
+      /**
+       * ALREADY IN BAND, AND THE DRIFT TABLE SAID OTHERWISE FOR MONTHS.
+       *
+       * The Maze is `{7, 16}` and this room is ten, so it is the one delve that
+       * never needed re-sourcing at all. The old table read it as "+3" because
+       * it measured against `level_range[0]` — the FIXED-scheme base level — and
+       * every ToME zone carrying an `nb_npc` is `player`-scheme, where the first
+       * number is the bottom of a clamp rather than the level of the content.
+       *
+       * ═══ AND THE BAND'S CITATION NAMED THE WRONG TABLE ═══
+       * It was `maze/zone.lua:25`, which is the COLLAPSED layout's
+       * `level_range`. We build the DEFAULT layout (`shared/mapgen/zones.ts`
+       * says `'maze DEFAULT'`), whose `level_range` is `:137`. Same two numbers,
+       * different table — and `check:citations` verifies that a line exists, not
+       * that it is the line the value was read from. This is the shape of defect
+       * `countFrom` and its test exist for.
+       *
+       * Its `levels[2]` `{10, 12}` (`data/zones/maze/zone.lua:186`) is not
+       * reachable: every floor here is maze level 1.
+       *
+       * ═══════════════════════════════════════════════════════════════════════
+       * AND IT IS THE ONE DELVE WHERE THE FLOOR AND THE COUNT ARE THE SAME LINE.
+       * ═══════════════════════════════════════════════════════════════════════
+       *
+       * `zones.ts` builds it as `'maze DEFAULT'` and the count is that same
+       * table's — one layout, one zone, no split at all. THAT IS WHY THE COUNT
+       * DID NOT MOVE HERE even though the sweeps say this is the only room on
+       * the map nobody finishes: zero clears in sixty-four solo runs, zero full
+       * descents, and zero for a party of four Watchmen.
+       *
+       * ═══ BECAUSE IT IS NOT A DIFFICULTY, AND THAT IS MEASURED ═══
+       * Every one of those is a STALL, not a wipe. `tools/delve-run.mjs`'s own
+       * reachability diagnostic (`DELVE_DIAG=1`) reports every survivor
+       * `reachable` at ranges out to fifty-four tiles, with five hundred of the
+       * nine hundred turns spent moving. Driven at the same seeds with the turn
+       * cap as the only lever — 900, 1800, 3600, 7200 — the Watchman goes 0/4,
+       * 1/4, 2/4, 2/4 and HIS WORST HEALTH IS 68% AT EVERY ONE OF THEM.
+       * Fifty-four bodies over 1800 walkable tiles is 3.0 per hundred — a
+       * shade over this map's median of 2.7 and under a third of the Glass
+       * Archive's. The room is not hurting anybody; a 900-turn probe cannot
+       * sweep 3600 cells of corridor two tiles wide.
+       *
+       * So the count stays where the zone put it, and the thing that is short
+       * here is the PROBE'S BAR — "clear" means exterminate, and no player
+       * exterminates a maze. `levelling-curve.test.ts` scores this delve the
+       * largest payer on the map at 3.4x two levels, which is the half a player
+       * actually collects.
+       */
       nbNpc: [50, 60],
+      countFrom: [
+        {
+          band: [7, 16],
+          bandCite: 'data/zones/maze/zone.lua:137',
+          nbNpc: [50, 60],
+          cite: 'data/zones/maze/zone.lua:160',
+          floor: [60, 60],
+          floorCite: 'data/zones/maze/zone.lua:142',
+          fit: CountFit.Covers,
+        },
+      ],
       roster: DEEP,
       litter: [3, 4],
       levelRange: [10, 10],
@@ -1093,12 +1465,79 @@ export const DELVES: ReadonlyMap<string, DelveSpec> = new Map<string, DelveSpec>
   [
     'site:glass_archive',
     {
-      // scintillating-caves, the TWISTED layout (`zones.ts`), which is 30x30 and
-      // the smallest floor in the game. `nb_npc = {12, 16}` —
-      // data/zones/scintillating-caves/zone.lua:53.
-      nbNpc: [12, 16],
-      // `filters = { {max_ood=2} }` — scintillating-caves/zone.lua:54.
-      maxOod: 2,
+      /**
+       * ═══════════════════════════════════════════════════════════════════════
+       * THE ROOM THAT WAS STARVED, AND THE LABEL THAT WAS HOLDING IT THERE.
+       * ═══════════════════════════════════════════════════════════════════════
+       *
+       * The floor is the Scintillating Caves' TWISTED layout, 30x30
+       * (`data/zones/scintillating-caves/zone.lua:30`) — 900 cells, about 280
+       * walkable, the smallest floor in the game — and it stays that. The COUNT
+       * used to be that layout's too: `{12, 16}` (`:53`) at a `{1, 5}` band
+       * (`:25`), read off a tier-one room and placed at level ELEVEN. It is the
+       * starved end of the whole drift. A body pays linearly in its level
+       * (`worthExp`) while `expChart` climbs quadratically, so sixteen bodies at
+       * eleven paid 0.79 of the two levels this delve owes by its boss — the
+       * only room on the moor that could not pay at any factor.
+       *
+       * ═══ IT WAS MARKED `Unaligned` ON A DENSITY ARGUMENT THAT WAS NOT ToME'S ═══
+       * The refusal ran: every count that would pay is a 50x50 count, and
+       * `{20, 30}` on 280 walkable tiles is nine bodies per hundred, "half again
+       * denser than anything upstream builds anywhere". The second half of that
+       * sentence is false. `data/zones/orc-breeding-pit/zone.lua:83` is a 15x15
+       * floor with `min_floor=120` on the same line, inheriting `{40, 50}`
+       * (`:47`) — FORTY BODIES ON A HUNDRED AND TWENTY WALKABLE TILES, three or
+       * four times what this room is being refused. The clause that produced the
+       * refusal was ours; it is retired in the note above `CountFit`, and the
+       * label went with it. THAT IS THE ANTI-ROT MECHANISM WORKING: `Unaligned`
+       * was written to die the moment its cause did.
+       *
+       * ═══ SO IT TAKES THE COUNT ITS OWN ROW ALREADY NAMED AS THE EXIT ═══
+       * `data/zones/halfling-ruins/zone.lua:50` `{20, 30}`, band `{10, 25}`
+       * (`:22`) — a band that starts at ten and covers both this room at eleven
+       * and its twin at fifteen — on a 50x50 (`:27`). It is `{20, 30}`, which is
+       * what upstream states at `{1, 5}`, `{7, 16}`, `{10, 25}` and `{15, 25}`
+       * alike: the count ToME places when it is not making a point. It pays 1.4.
+       *
+       * ═══ AND THE FLOOR IS STILL THE UNUSUAL THING HERE, SAID PLAINLY ═══
+       * Measured (`tools/delve-density.mjs 4 --floors`): 25 bodies over about
+       * 250 walkable tiles, 9 to 10 PER HUNDRED on all four floors. THIS IS NOW
+       * THE MOST CROWDED ROOM IN THE GAME — all eight of the densest floors
+       * across both maps are this delve and its twin — against Cairnfoot's 6.2
+       * and a moor median of 2.7. That is a consequence of a 900-cell floor and
+       * not of the count: every other room carrying this band runs at 1.2 to
+       * 3.8. Upstream's own small floors look exactly like this
+       * (`data/zones/high-peak/zone.lua:206` is a 30x30 carrying `{35, 40}`,
+       * MORE than this takes), and it is the character of the room: a tiny
+       * bright vault, packed. The solo Watchman's cost is measured and real — he
+       * went from four clears in four to three, taking 373 damage where he took
+       * 131 — and in a party of four the room is cleared 3 of 4 times by one of
+       * each class, which is the shape this game is played in.
+       *
+       * ═══ WHAT IT COSTS: THE ONE `max_ood` THAT DID ANYTHING COMES OFF ═══
+       * The Caves filter at 2 (`:54`) and nothing at `{10, 25}` filters at all —
+       * the refusal is a tier-one device (see `maxOod` on `DelveSpec`). It was
+       * the only filter in the game that bit: at eleven with `DEEP` it rejected
+       * `INDEX_HUSK_ELITE` (`[15, undefined]`) on floors 1-2 and admitted it
+       * from floor 3, the single place where a roster changed with depth. Losing
+       * it means the elite is drawn from floor one here. That is a real loss and
+       * it is not this file's to make up: ten of the eleven bestiary templates
+       * are `levelRange` `[1, undefined]`, so the rarity gate has nothing to gate
+       * and NO sourcing decision can make floors escalate. That is
+       * `content/monsters.ts`.
+       */
+      nbNpc: [20, 30],
+      countFrom: [
+        {
+          band: [10, 25],
+          bandCite: 'data/zones/halfling-ruins/zone.lua:22',
+          nbNpc: [20, 30],
+          cite: 'data/zones/halfling-ruins/zone.lua:50',
+          floor: [50, 50],
+          floorCite: 'data/zones/halfling-ruins/zone.lua:27',
+          fit: CountFit.Covers,
+        },
+      ],
       roster: DEEP,
       litter: [2, 3],
       levelRange: [11, 11],
@@ -1118,6 +1557,34 @@ export const DELVES: ReadonlyMap<string, DelveSpec> = new Map<string, DelveSpec>
       // reports no area.
       nbNpc: [29, 39],
       nbNpcPerArea: 60,
+      /**
+       * AND IT IS THE ONE DELVE WITH NO BAND TO ALIGN, WHICH IS A FACT ABOUT THE
+       * ZONE RATHER THAN AN EXEMPTION WE GRANTED IT.
+       *
+       * The Infinite Dungeon is `level_range = {1, 1}` with
+       * `level_scheme = "player"` and `max_level = 1000000000`
+       * (`data/zones/infinite-dungeon/zone.lua:25-27`): it admits everybody and
+       * levels its bodies off the FLOOR NUMBER, not off the band —
+       * `actor_adjust_level` at `:28` is
+       * `floor((base_level + level.level-1) * 1.2)`. Its count is a function of
+       * the floor's own area rather than a stated pair. `{1, 1}` is not a band
+       * and a drift against it is not a number, so this row is
+       * `CountFit.PlayerScheme` — a label the test only accepts from a spec that
+       * carries `nbNpcPerArea`, which is the mechanism that earns it.
+       */
+      countFrom: [
+        {
+          band: [1, 1],
+          bandCite: 'data/zones/infinite-dungeon/zone.lua:25',
+          nbNpc: [29, 39],
+          cite: 'data/zones/infinite-dungeon/zone.lua:88',
+          floor: [70, 70],
+          floorCite: 'data/zones/infinite-dungeon/zone.lua:29',
+          maxOod: 6,
+          maxOodCite: 'data/zones/infinite-dungeon/zone.lua:89',
+          fit: CountFit.PlayerScheme,
+        },
+      ],
       // `filters = { {max_ood=6} }` — infinite-dungeon/zone.lua:89. Six, not two:
       // the one zone in the game that is meant to hand you something well over
       // your head.
@@ -1155,9 +1622,36 @@ export const DELVES: ReadonlyMap<string, DelveSpec> = new Map<string, DelveSpec>
   [
     'site:cairnfoot',
     {
-      // heart-gloom. `nb_npc = {20, 30}` — data/zones/heart-gloom/zone.lua:76.
+      /**
+       * LEVEL SIX, AND ToME HAS NO RUNG THERE. Scanned over every zone file:
+       * the bands run `{1, 5}` and then `{7, 16}`, and the only tables spanning
+       * six carry no rolled population at all — the arena
+       * (`data/zones/arena-unlock/zone.lua:22`), three talent-summoned planes,
+       * and the perpetual towns, whose `{10, 10}`
+       * (`data/zones/town-derth/zone.lua:47`) fills a hand-drawn Static map
+       * (`:42`, `towns/derth` at `:43`) with townsfolk.
+       *
+       * So this row is `CountFit.Clamped` — one step outside, which is exactly
+       * what `engine/Zone.lua:141-148` hands a level-six character walking into
+       * a `{1, 5}` zone. IT CLAMPS DOWN, to heart-gloom, WHICH IS ITS OWN
+       * FLOOR'S ZONE: the count does not move, the filter does not move, and
+       * this is the one delve on the moor with no split in its identity at all.
+       * The test refuses this label to anything more than one level out.
+       */
       nbNpc: [20, 30],
-      // `filters = { {max_ood=2} }` — heart-gloom/zone.lua:77.
+      countFrom: [
+        {
+          band: [1, 5],
+          bandCite: 'data/zones/heart-gloom/zone.lua:25',
+          nbNpc: [20, 30],
+          cite: 'data/zones/heart-gloom/zone.lua:76',
+          floor: [50, 50],
+          floorCite: 'data/zones/heart-gloom/zone.lua:30',
+          maxOod: 2,
+          maxOodCite: 'data/zones/heart-gloom/zone.lua:77',
+          fit: CountFit.Clamped,
+        },
+      ],
       maxOod: 2,
       roster: DROWNED,
       litter: [3, 4],
@@ -1169,8 +1663,38 @@ export const DELVES: ReadonlyMap<string, DelveSpec> = new Map<string, DelveSpec>
   [
     'site:barrow_end',
     {
-      // old-forest. `nb_npc = {20, 30}` — data/zones/old-forest/zone.lua:58.
+      /**
+       * THE FLOOR IS THE OLD FOREST, `{7, 16}`
+       * (`data/zones/old-forest/zone.lua:25`), and this room is level five — two
+       * below. Norgos' Lair is `{1, 5}` (`data/zones/norgos-lair/zone.lua:25`),
+       * the same 50x50 (`:30`) Roomer (`:45`), a lair among trees, and states
+       * the same `{20, 30}` (`:57`). Nothing in the room changes.
+       *
+       * ═══ EXCEPT ONE THING, AND IT IS THE ONLY ROSTER THIS PASS MOVES ═══
+       * `max_ood = 2` comes with the count (`:58`) and `THICKET` holds
+       * `INDEX_HUSK_ELITE` at `levelRange` `[15, undefined]`. At level five,
+       * `5 + 2 < 15`, so the elite is now REFUSED here rather than drawn at
+       * three tenths of a percent. That is upstream's tier-1 rule doing exactly
+       * what it is for: a beginner's room does not hand out a level-fifteen
+       * body, however rarely. Its twin on the far map is level nine, sources
+       * from Daikara, carries no filter, and draws elites from its first floor —
+       * so the escalation is between the two maps rather than inside this one.
+       */
       nbNpc: [20, 30],
+      countFrom: [
+        {
+          band: [1, 5],
+          bandCite: 'data/zones/norgos-lair/zone.lua:25',
+          nbNpc: [20, 30],
+          cite: 'data/zones/norgos-lair/zone.lua:57',
+          floor: [50, 50],
+          floorCite: 'data/zones/norgos-lair/zone.lua:30',
+          maxOod: 2,
+          maxOodCite: 'data/zones/norgos-lair/zone.lua:58',
+          fit: CountFit.Covers,
+        },
+      ],
+      maxOod: 2,
       roster: THICKET,
       litter: [3, 5],
       levelRange: [5, 5],
@@ -1181,10 +1705,57 @@ export const DELVES: ReadonlyMap<string, DelveSpec> = new Map<string, DelveSpec>
   [
     'site:the_weir',
     {
-      // lake-nur, level 2 on every floor (`zones.ts`). `nb_npc = {20, 25}` —
-      // data/zones/lake-nur/zone.lua:54. Its level 1 is {0, 0} (:76) and its
-      // level 3 {30, 35} (:106); neither is reachable from here.
-      nbNpc: [20, 25],
+      /**
+       * THE SECOND OF THE TWO ROOMS STANDING IN ToME'S GAP AT SIX — see
+       * Cairnfoot for the scan. BOTH OF THEM CLAMP DOWN, to `{1, 5}`, and that
+       * is a rule rather than a pair of choices.
+       *
+       * ═══ WHY DOWN, NOW THAT THE DIRECTION IS ARGUED AND NOT ASSUMED ═══
+       * This row used to clamp UP to Daikara's `{7, 16}`, reasoned from where
+       * its own FLOOR's zone sits: the Lake of Nur is `{15, 25}`
+       * (`data/zones/lake-nur/zone.lua:25`), nine levels above, so "the whole of
+       * its distance is upward". That is a fact about the zone we LEFT, and it
+       * decided nothing — `{20, 30}` is what `{1, 5}` and `{7, 16}` both state,
+       * so the direction picked a citation and not a number. What it did pick
+       * was an identity: Daikara is an `all_lited` snowy mountain pass
+       * (`data/zones/daikara/zone.lua:32`) and this is a dark flooded room, and
+       * that transfer was never argued the way the Hollow Mine's is.
+       *
+       * ═══ SO IT TAKES MURGOL LAIR, AND ALMOST NOTHING ABOUT IT IS A SPLIT ═══
+       * `data/zones/murgol-lair/zone.lua:56` `{20, 30}`, band `{1, 5}` (`:25`),
+       * a 50x50 (`:30`) Roomer (`:43`) with `all_lited` commented out (`:33`) —
+       * dark, the size we build, the generator we build, and the lair of the
+       * things that live in ToME's water. `WEIR` is what lives in the Lake of
+       * Nur's water. The count does not move by one body and the clamp is now
+       * the same one step DOWN that Cairnfoot takes, from the same tier.
+       *
+       * ═══ AND THE FILTER COMES BACK WITH IT ═══
+       * `filters = { {max_ood=2} }` (`:57`). Daikara states none, so this row
+       * had none; murgol-lair is `{1, 5}` and every `{1, 5}` zone in the tree
+       * carries the tier-one refusal. It is inert on `WEIR` — ribbon, inkwell
+       * and strongbox are all `levelRange` `[1, undefined]` — so it changes no
+       * draw here. It is carried because it is half of the answer the count came
+       * from, not because it does anything.
+       *
+       * Lake-nur's own `{20, 25}` (`:54`) exists nowhere in ToME below
+       * `{15, 25}`; its level 1 is `{0, 0}` (`:76`) and its level 3 `{30, 35}`
+       * (`:106`). None of the three was ever reachable from here.
+       */
+      nbNpc: [20, 30],
+      countFrom: [
+        {
+          band: [1, 5],
+          bandCite: 'data/zones/murgol-lair/zone.lua:25',
+          nbNpc: [20, 30],
+          cite: 'data/zones/murgol-lair/zone.lua:56',
+          floor: [50, 50],
+          floorCite: 'data/zones/murgol-lair/zone.lua:30',
+          maxOod: 2,
+          maxOodCite: 'data/zones/murgol-lair/zone.lua:57',
+          fit: CountFit.Clamped,
+        },
+      ],
+      maxOod: 2,
       roster: WEIR,
       litter: [3, 4],
       levelRange: [6, 6],
@@ -1199,11 +1770,45 @@ export const DELVES: ReadonlyMap<string, DelveSpec> = new Map<string, DelveSpec>
   [
     'site:blackwood_outskirts',
     {
-      // trollmire, the DEFAULT layout (`zones.ts`). `nb_npc = {20, 30}` —
-      // data/zones/trollmire/zone.lua:197.
+      /**
+       * THE FLOOR IS THE TROLLMIRE AND THE COUNT IS THE MARK OF THE SPELLBLAZE'S
+       * — same `{20, 30}`, fourteen levels later, and still a forest.
+       *
+       * The Trollmire's DEFAULT layout is `{1, 5}`
+       * (`data/zones/trollmire/zone.lua:155`, the table at `:151-242`) and this
+       * is the level-fifteen end of the road: the worst drift in the table after
+       * the Underworks and the Hollow Mine, and the one that never showed,
+       * because `{20, 30}` is what upstream states at `{15, 25}` as well. The
+       * Mark of the Spellblaze is that band (`data/zones/mark-spellblaze/zone.lua:22`),
+       * a `Forest` (`:38`) like this one, with the identical count (`:55`).
+       *
+       * ═══ AND ITS FLOOR IS 50x50 (`:27`) WHERE OURS IS 65x40 ═══
+       * 2500 cells against 2600 — four per cent, the closest mismatch in the
+       * table and still a mismatch, so it is written down rather than rounded
+       * away. Our floor is the Trollmire's own
+       * (`data/zones/trollmire/zone.lua:160`), and no zone at any band covering
+       * fifteen is 65x40, so it could not have been matched on size even when
+       * the rule asked for that. It does not matter: upstream carries one count
+       * across far larger steps than this — see the note above `CountFit` — and
+       * four per cent of a body is not a body.
+       *
+       * ═══ AND `max_ood` COMES OFF ═══
+       * The Trollmire filters at 2 (`:198`); nothing at `{15, 25}` filters at
+       * all. Inert either way here — at level fifteen `15 + 2 >= 15`, so
+       * `THICKET`'s elite was already admitted — so the room does not move.
+       */
       nbNpc: [20, 30],
-      // `filters = { {max_ood=2} }` — trollmire/zone.lua:198.
-      maxOod: 2,
+      countFrom: [
+        {
+          band: [15, 25],
+          bandCite: 'data/zones/mark-spellblaze/zone.lua:22',
+          nbNpc: [20, 30],
+          cite: 'data/zones/mark-spellblaze/zone.lua:55',
+          floor: [50, 50],
+          floorCite: 'data/zones/mark-spellblaze/zone.lua:27',
+          fit: CountFit.Covers,
+        },
+      ],
       // AND THE ONE ZONE IN OUR TWELVE THAT CLUSTERS. `class =
       // "mod.class.generator.actor.OnSpots"` with `nb_spots = 2,
       // on_spot_chance = 35` — trollmire/zone.lua:196 and :199. `spot_radius`
@@ -1356,15 +1961,16 @@ export function dangerWord(spec: DelveSpec): string {
    *
    * This read `spec.monsters[1] + elite + ranged + underwater` against
    * thresholds of 7 / 9 / 12, and it worked because the counts were authored on
-   * a scale of two to ten. They are upstream's `nb_npc` now — twelve to eighty —
-   * and on that scale every room in the game is `grim`, which is the same as no
-   * grade at all.
+   * a scale of two to ten. They are upstream's `nb_npc` now — twelve to sixty,
+   * and twelve to eighty before the counts were sourced at each delve's own
+   * level — and on that scale every room in the game is `grim`, which is the
+   * same as no grade at all.
    *
    * ═══ AND THE COUNT WAS NEVER THE GRADIENT ANYWAY ═══
-   * Under upstream's numbers the Hollow Mine holds 70-80 bodies and Blackwood
-   * Outskirts 20-30, while Blackwood is six levels deeper. Density is a fact
-   * about the ZONE a delve is built as — a cavern packs more than a forest — and
-   * has never been a fact about how dangerous the place is. The thing that
+   * The Hollow Mine holds fifty to sixty bodies on its first floor and Blackwood
+   * Outskirts twenty to thirty, while Blackwood is six levels deeper. Density is
+   * a fact about the ZONE a delve's count is read from — a Maze packs more than
+   * a forest — and has never been a fact about how dangerous the place is. The thing that
    * actually decides that is the level everything in the room is born at, which
    * is `delveLevel` and which this table has carried in `levelRange` since the
    * curve pass.
@@ -1646,6 +2252,39 @@ const REDACTED_TOWN: DelveSpec = {
    */
   nbNpc: [29, 39],
   nbNpcPerArea: 34,
+  /**
+   * NO BAND TO ALIGN, FOR THE ZONE'S OWN REASON — the same one Gearford Ward
+   * carries. The Infinite Dungeon is `level_range = {1, 1}` with
+   * `level_scheme = "player"` and an unbounded `max_level`
+   * (`data/zones/infinite-dungeon/zone.lua:25-27`); its bodies take their level
+   * from the floor number (`:28`) and its count from the floor's own area
+   * (`:255`). `CountFit.PlayerScheme`, and the test only grants that label to a
+   * spec carrying `nbNpcPerArea`.
+   */
+  countFrom: [
+    {
+      band: [1, 1],
+      bandCite: 'data/zones/infinite-dungeon/zone.lua:25',
+      nbNpc: [29, 39],
+      cite: 'data/zones/infinite-dungeon/zone.lua:88',
+      floor: [70, 70],
+      floorCite: 'data/zones/infinite-dungeon/zone.lua:29',
+      maxOod: 6,
+      maxOodCite: 'data/zones/infinite-dungeon/zone.lua:89',
+      fit: CountFit.PlayerScheme,
+    },
+  ],
+  /**
+   * AND THE FILTER THAT CAME WITH THE COUNT WAS MISSING HERE. `alter_level_data`
+   * overwrites `generator.actor.nb_npc` and nothing else
+   * (`data/zones/infinite-dungeon/zone.lua:256`), so the base table's
+   * `filters = { {max_ood=6} }` (`:89`) applies to the town layout exactly as it
+   * does to the building layout Gearford Ward is built from. Inert on `DEEP` at
+   * level fourteen — `14 + 6` clears `INDEX_HUSK_ELITE`'s floor of fifteen on
+   * every floor — so this is the citation being completed rather than the room
+   * changing.
+   */
+  maxOod: 6,
   roster: DEEP,
   litter: [3, 5],
   /**
@@ -1673,19 +2312,131 @@ const REDACTED_TOWN: DelveSpec = {
  */
 const WATCHERS_ALTAR = 'site:watchers_altar';
 
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE FOUR TWINS WHOSE ORIGINAL'S BAND DOES NOT REACH FOUR LEVELS UP.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * A twin is its original plus four (`redactedSpec`), and a `{1, 5}` source
+ * cannot cover seven, nine or ten. Those four re-cite at their own level —
+ * everything else inherits, because its original's band already covers the
+ * twin's level: Daikara's `{7, 16}` reaches thirteen, the Maze's reaches
+ * thirteen and fourteen, halfling-ruins' `{10, 25}` reaches fifteen,
+ * mark-spellblaze's `{15, 25}` reaches nineteen, and the Drowned Chapel's
+ * `{1, 5}` covers its twin's level five exactly.
+ *
+ * ═══ AND A RE-CITE IS THE ONLY WAY A TWIN'S SOURCE MOVES ═══
+ * There used to be a second mechanism beside this one: `alignedFourLevelsUp`,
+ * which silently upgraded an inherited `Clamped` or `Unaligned` row to `Covers`
+ * when the twin's own level happened to fall inside the band. It existed for
+ * exactly one row — The Weir's, clamping up to Daikara — and that row now
+ * clamps DOWN with the other level-six room, so nothing was left for it to
+ * re-judge. It is deleted rather than kept inert. What it was guarding against
+ * is guarded better: `test/server/delve-alignment.test.ts` drives every row
+ * over `SITES` and judges each `fit` from both sides, so a twin carrying a
+ * label that stopped being true goes RED and gets an argument, which is what
+ * the deleted function's own docblock said should happen.
+ *
+ * ═══ AND NOT ONE OF THE THREE COUNTS MOVES ═══
+ * `{20, 30}` before and `{20, 30}` after, at `{1, 5}`, at `{7, 16}` and at
+ * `{10, 25}` alike. That is the whole argument at the top of this file — a
+ * `level_range` is a clamp on the player and not a statement about the count —
+ * demonstrated on our own table rather than asserted about ToME's.
+ *
+ * ═══ THE FILTER DOES MOVE, AND THAT IS THE ONE ROSTER CHANGE ON THIS MAP ═══
+ * All three originals source from `{1, 5}` zones and carry `max_ood = 2`; none
+ * of the second-tier zones filters at all. So a redacted Barrow End draws
+ * `INDEX_HUSK_ELITE` from its first floor while Alderbrook's refuses it — the
+ * escalation is between the two maps, which is what walking through that door
+ * is supposed to mean.
+ */
+const TWIN_COUNT_FROM: ReadonlyMap<string, readonly CountSource[]> = new Map<
+  string,
+  readonly CountSource[]
+>([
+  [
+    // Level 7. Deep Bellow's `{1, 5}` does not reach it; Daikara's does, with
+    // the identical count on the identical 50x50.
+    'site:underworks',
+    [
+      {
+        band: [7, 16],
+        bandCite: 'data/zones/daikara/zone.lua:25',
+        nbNpc: [20, 30],
+        cite: 'data/zones/daikara/zone.lua:56',
+        floor: [50, 50],
+        floorCite: 'data/zones/daikara/zone.lua:30',
+        fit: CountFit.Covers,
+      },
+    ],
+  ],
+  [
+    // Level 9. Norgos' Lair's `{1, 5}` does not reach it.
+    'site:barrow_end',
+    [
+      {
+        band: [7, 16],
+        bandCite: 'data/zones/daikara/zone.lua:25',
+        nbNpc: [20, 30],
+        cite: 'data/zones/daikara/zone.lua:56',
+        floor: [50, 50],
+        floorCite: 'data/zones/daikara/zone.lua:30',
+        fit: CountFit.Covers,
+      },
+    ],
+  ],
+  [
+    // Level 10. Murgol Lair's `{1, 5}` does not reach it, and the Halfling Ruins
+    // is the band that starts exactly there with the identical count. The
+    // tier-one `max_ood` does NOT come with it — nothing at `{10, 25}` filters —
+    // which is inert on `WEIR` either way.
+    'site:the_weir',
+    [
+      {
+        band: [10, 25],
+        bandCite: 'data/zones/halfling-ruins/zone.lua:22',
+        nbNpc: [20, 30],
+        cite: 'data/zones/halfling-ruins/zone.lua:50',
+        floor: [50, 50],
+        floorCite: 'data/zones/halfling-ruins/zone.lua:27',
+        fit: CountFit.Covers,
+      },
+    ],
+  ],
+  [
+    // Level 10. Heart of the Gloom's `{1, 5}` does not reach it. The Halfling
+    // Ruins is `{10, 25}` — the band that starts exactly here — 50x50 (`:27`),
+    // and states the same count. It is also the zone the Drowned Chapel's floor
+    // is built from, which is where this whole drift was first read off.
+    'site:cairnfoot',
+    [
+      {
+        band: [10, 25],
+        bandCite: 'data/zones/halfling-ruins/zone.lua:22',
+        nbNpc: [20, 30],
+        cite: 'data/zones/halfling-ruins/zone.lua:50',
+        floor: [50, 50],
+        floorCite: 'data/zones/halfling-ruins/zone.lua:27',
+        fit: CountFit.Covers,
+      },
+    ],
+  ],
+]);
+
 export function redactedSpec(originalId: string): DelveSpec | undefined {
   const spec = DELVES.get(originalId);
   // NO ENTRY MEANS A TOWN. `DELVES` is keyed only by the sites that are fights,
   // so the absence IS the classification — the same way the registry already
   // reads it when it decides whether to attach a `populate` hook at all.
   if (spec === undefined) return REDACTED_TOWN;
+  const countFrom = TWIN_COUNT_FROM.get(originalId) ?? spec.countFrom;
   return {
     /**
      * THE COUNT IS ITS TWIN'S, UNCHANGED — AND THAT IS A CHANGE.
      *
      * This read `[spec.monsters[0] + 2, spec.monsters[1] + 2]`, argued as *"a
      * consistent half-again across the whole range"* against bands of two to
-     * ten. The bands are upstream's `nb_npc` now, twelve to eighty, and +2 on
+     * ten. The bands are upstream's `nb_npc` now, twelve to sixty, and +2 on
      * those is between 3% and 17% — a constant that used to mean something and
      * would now be noise dressed as a rule. The twin is four levels worse than
      * its original (`levelRange` below), which is upstream's own way of saying
@@ -1696,7 +2447,17 @@ export function redactedSpec(originalId: string): DelveSpec | undefined {
     ...(spec.nbNpcByFloor === undefined ? {} : { nbNpcByFloor: spec.nbNpcByFloor }),
     ...(spec.nbNpcPerArea === undefined ? {} : { nbNpcPerArea: spec.nbNpcPerArea }),
     ...(spec.spots === undefined ? {} : { spots: spec.spots }),
-    ...(spec.maxOod === undefined ? {} : { maxOod: spec.maxOod }),
+    /**
+     * THE SOURCE IS RE-READ AT THE TWIN'S OWN LEVEL, and the filter follows it.
+     *
+     * `maxOod` is the `filters` beside the count, so it cannot be inherited past
+     * a row that re-cites: a twin sourcing from Daikara carries Daikara's
+     * absence of a filter, not its original's `{1, 5}` two. Taken off the rows
+     * rather than off `spec.maxOod` so there is no second place for the two to
+     * disagree — `test/server/delve-alignment.test.ts` pins that they cannot.
+     */
+    countFrom,
+    ...(countFrom[0]?.maxOod === undefined ? {} : { maxOod: countFrom[0].maxOod }),
     roster: spec.roster,
     litter: [spec.litter[0] + 1, spec.litter[1] + 1],
     /**
@@ -1784,8 +2545,12 @@ export function delveLevel(spec: DelveSpec, party: PartyStrength = LONE_BEGINNER
  * `engine/Zone.lua:833-843` merges `levels[n]` over the zone's own table, so a
  * floor's band is its override if it has one; `infinite-dungeon/zone.lua:255-256`
  * computes the band from the floor's own area instead, which `nbNpcPerArea`
- * carries. Then `NB_NPC_SCALE`, which is the one number here that is not
- * upstream's and has its own argument written above it.
+ * carries. AND THEN NOTHING: the band this returns is verbatim upstream.
+ *
+ * There used to be a third step, a global `NB_NPC_SCALE`, and it was 0.85. It
+ * is deleted — see the note above `CountFit` for why one factor could never be
+ * right for a table that drifted in both directions at once, and for the
+ * measurements that replaced it.
  *
  * EXPORTED so the probes and the tests ask the same question the placer does,
  * rather than re-deriving three quarters of it and drifting.
@@ -1793,26 +2558,62 @@ export function delveLevel(spec: DelveSpec, party: PartyStrength = LONE_BEGINNER
  * `area` is the floor's cell count, needed only by the one zone that scales
  * with it; absent falls back to that zone's base table.
  */
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * WHO MAY STAND ON THIS FLOOR — the placer's own two lines.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `Zone:makeEntity` (`engine/Zone.lua:380-427`) builds a probability list from
+ * the zone's npc list at `resolvers.current_level = base_level + level.level - 1`
+ * and draws one entity from it per body. Both halves of that are here: the LEVEL
+ * the floor is drawn at, and the weighted list `Zone.lua:214` produces from the
+ * roster behind `checkFilter`'s `max_ood` (`:306`).
+ *
+ * ═══ EXPORTED BECAUSE TWO TEST FILES HAD COPIED IT ═══
+ * `delve-alignment.test.ts` computed `delveLevel(spec) + floor - 1` and rebuilt
+ * this filter to census the rosters, and `levelling-curve.test.ts` carries the
+ * same pair in `averageWorth`. A mutation audit proved the cost: dropping
+ * `+ floor - 1` from the placer, and switching the filter off in the placer,
+ * both left the whole alignment file GREEN, because the file was asking its own
+ * copy. One function now, called by the placer and read by the tests.
+ */
+export function eligibleOn(
+  spec: DelveSpec,
+  floor: number,
+  party?: PartyStrength,
+): RarityList<MonsterTemplate & RarityCandidate> {
+  const roomLevel = delveLevel(spec, party) + floor - 1;
+  return computeRarities(
+    spec.roster.filter(
+      // `Zone.lua:214` — an entity with no `rarity` or no `level_range` is not
+      // a candidate at all. `INDEX_WATCHER` is ours: a guardian, placed apart.
+      (t): t is MonsterTemplate & RarityCandidate =>
+        t.rarity !== undefined && t.levelRange !== undefined,
+    ),
+    roomLevel,
+    // `checkFilter`'s `max_ood` — engine/Zone.lua:306, and `computeRarities`
+    // takes a filter for exactly this (`Zone.lua:214`'s `not filter or filter(e)`).
+    spec.maxOod === undefined
+      ? undefined
+      : (e) => roomLevel + (spec.maxOod ?? 0) >= e.levelRange[0],
+  );
+}
+
 export function nbNpcFor(spec: DelveSpec, floor: number, area?: number): readonly [number, number] {
   const perArea =
     spec.nbNpcPerArea === undefined || area === undefined
       ? undefined
       : Math.ceil((area * spec.nbNpcPerArea) / 4900);
-  const stated: readonly [number, number] =
-    perArea !== undefined
-      ? // CLAMPED AT ZERO, WHICH UPSTREAM IS NOT. `infinite-dungeon/zone.lua:256`
-        // is a bare `enemy_count-5`, and on a floor small enough to make that
-        // negative `rng.range(-2, 8)` would still place bodies — Lua's own
-        // range simply runs from the lower number. Ours would hand
-        // `Math.max(1, ...)`'s successor a negative floor. Labelled rather than
-        // silent, because it is the only divergence in this function.
-        [Math.max(0, perArea - 5), perArea + 5]
-      : (spec.nbNpcByFloor?.get(floor) ?? spec.nbNpc);
-  // APPLIED TO THE BAND, NOT TO THE DRAW: a scaled draw would be a different
-  // number of random values taken and would move every later draw on the floor.
-  // `{0, 0}` stays `{0, 0}` under any factor, which is what keeps the escape
-  // from Reknor's static last level empty of rolled bodies.
-  return [Math.round(stated[0] * NB_NPC_SCALE), Math.round(stated[1] * NB_NPC_SCALE)];
+  if (perArea !== undefined) {
+    // CLAMPED AT ZERO, WHICH UPSTREAM IS NOT. `infinite-dungeon/zone.lua:256`
+    // is a bare `enemy_count-5`, and on a floor small enough to make that
+    // negative `rng.range(-2, 8)` would still place bodies — Lua's own range
+    // simply runs from the lower number. Ours would hand `Math.max(1, ...)`'s
+    // successor a negative floor. Labelled rather than silent, because it is
+    // the only divergence left in this function.
+    return [Math.max(0, perArea - 5), perArea + 5];
+  }
+  return spec.nbNpcByFloor?.get(floor) ?? spec.nbNpc;
 }
 
 /**
@@ -2055,21 +2856,7 @@ export function populateDelve(
    * `genprob > 0` is the same rule. The loop below places nobody and the
    * caller's log line says so.
    */
-  const roomLevel = delveLevel(spec, party) + floor - 1;
-  const weighted = computeRarities(
-    spec.roster.filter(
-      // `Zone.lua:214` — an entity with no `rarity` or no `level_range` is not a
-      // candidate at all. `INDEX_WATCHER` is ours: a guardian, placed below.
-      (t): t is MonsterTemplate & RarityCandidate =>
-        t.rarity !== undefined && t.levelRange !== undefined,
-    ),
-    roomLevel,
-    // `checkFilter`'s `max_ood` — engine/Zone.lua:306, and `computeRarities`
-    // takes a filter for exactly this (`Zone.lua:214`'s `not filter or filter(e)`).
-    spec.maxOod === undefined
-      ? undefined
-      : (e) => roomLevel + (spec.maxOod ?? 0) >= e.levelRange[0],
-  );
+  const weighted = eligibleOn(spec, floor, party);
   /**
    * ═══════════════════════════════════════════════════════════════════════════
    * WHERE THEY STAND — AND THE STRIDE IS GONE, WHICH WAS THE WHOLE PROBLEM.

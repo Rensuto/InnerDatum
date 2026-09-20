@@ -282,7 +282,15 @@ is missing.
 
 ## `icon_ui_cog` — the settings button on THREE panels now, and it is a nicety
 
-**Still open, but not outstanding in the sense a missing file is.** The button is DRAWN — a hub,
+**DELIVERED AND WIRED, 2026-09-19/20. This entry is closed.** The PNG is installed and
+`drawCog` blits it at all three call sites; the open state is laid over the glyph with
+`source-atop`, which is what the silhouette request below was for. The drawn gear stays as
+the fallback and is still what a bare clone gets, pinned by
+`test/client/caselog.test.ts` (blit present, blit absent, tint, and the composite put back).
+The loader prefix `icon_ui_` went in with the reader, per the rule at `NEEDED_ASSET_PREFIXES`.
+
+Kept below because the brief is the record of WHAT WAS ASKED FOR, and the three call
+sites and their sizes are still true. The button is DRAWN — a hub,
 a bore and six teeth, at thirteen pixels — so it is visible, pressable and
 correct on a bare clone with no art at all. `npm run art:needs` does not demand
 it, because no source line names it.
@@ -313,16 +321,14 @@ survives being tinted gold when the menu under it is open.
 **Cut it at 64x64**, matching every other `icon_ui_*` on disk; the header scales
 it down.
 
-**Until it exists nothing is lost**, which is why it is the last open item in
-this file rather than the first. `drawLogCog` in `src/client/ui/caselog.ts` is the
-fallback, and it is the same bargain `drawLogGrip` above it makes: a widget that
-needs art to be USABLE cannot ship behind a missing file.
+The PNG is `ui/icons/icon_ui_cog.png` and the client consumes it. `drawCog` in
+`src/client/ui/caselog.ts` remains the fallback for a checkout with no asset tree.
 
 ## Three lanterns for the light source slot
 
-**Commissioned, not drawn.** The LITE slot and upstream's three lanterns
-(`data/general/objects/lites.lua:30-70`) ship ahead of their art. Until the
-files exist the doll and the bag draw a letter in their place.
+**Delivered 2026-09-17.** All three 64x64 icons are present as derived finals
+in `items/equipment/`. The LITE slot and upstream's three lanterns
+(`data/general/objects/lites.lua:30-70`) remain the reason for the commission.
 
 | Id | Tier | What it is |
 |---|---|---|
@@ -378,6 +384,10 @@ the commission. **Nothing is missing:** every element this game can fire already
 had its strip. What the wiring adds is two requirements the briefs did not state,
 and they are folded into R-FLIGHT below — the renderer shows FRAME 0 ONLY, and it
 ROTATES the frame.
+
+**Art delivered locally 2026-09-19:** the six reachable bolts were regenerated
+as complete four-frame strips with a stable tip and a checked 32px rotation
+radius. The other six remain under the review below.
 
 **Style.** Gaslit Alderbrook: soot, brass, fog and lamplight. The Redacted show
 pieces cut clean out of them, holes with depth behind them, wrong angles and a
@@ -519,7 +529,7 @@ In every entry here the poses were drawn 32-55 px apart instead of one per 64 px
 
 ##### 2c. Flight loops that break every cycle (15 majors)
 
-Every entry takes R-FLIGHT, and the six that the renderer now draws additionally take R-FLIGHT-F0 and R-FLIGHT-ROT: `ui_fx_bolt_physical`, `_fire`, `_cold`, `_lightning`, `_darkness` and `_mind`. Those six are on a player's screen today, so they are the ones to regenerate first within this family — the other six are still a catalogue nobody sees.
+Every entry takes R-FLIGHT, and the six that the renderer now draws additionally take R-FLIGHT-F0 and R-FLIGHT-ROT: `ui_fx_bolt_physical`, `_fire`, `_cold`, `_lightning`, `_darkness` and `_mind`. **Those six were replaced locally 2026-09-19; the observations below record the old strips.** The other six are still a catalogue nobody sees.
 
 - **ui_fx_bolt_physical** (effect_256x64_01) [MAJOR]. Frame 4 is loose shards (3.1% visible, against 8.8-14.6% in the other frames), so the bolt blinks out every fourth frame. Frame 3's tip runs about 3 px past x=192, and the tip creeps 51, 56, 63 and snaps back. Keep the steel shaft, bone-white point and grey/bone palette.
 - **ui_fx_bolt_fire** (effect_256x64_01) [MAJOR]. Frame 4 is five orange fragments, frame 3's tip crosses into frame 4, and the tip creeps 50 to 63. Keep orange and yellow. Letting flame dominate over the metal casing is optional.
@@ -908,7 +918,7 @@ Each line gives the issue, then the fix. (v) marks a finding the second reviewer
 
 **effect_256x64_03** (the four areas have the same tiling defect that was rated major on sheets 01-02; see style note 2)
 - ui_fx_bolt_temporal: 2-3 px of the tip crosses into frame 4; the head shuffles. Fix: pin the core and tip, with the tip ending by x=61.
-- ui_fx_bolt_mind: dusty rose (hue 300-315) sits in arcane's band and doesn't match area_mind's lavender. Fix: pale lavender-violet at hue 265-280.
+- ui_fx_bolt_mind: **resolved locally 2026-09-19.** The old dusty rose (hue 300-315) sat in arcane's band and did not match area_mind's lavender; the replacement is pale lavender-violet.
 - ui_fx_area_darkness: a centred plume that tiles as fountains; 1-2 px edge cuts; slate highlights. Fix: R-AREA with deep-blue highlights.
 - ui_fx_area_arcane: a centred magenta campfire that tiles as a grid. Fix: R-AREA, keeping the magenta.
 - ui_fx_area_mind: rings cut at alternating side edges. Fix: R-AREA and R-GRID4.
@@ -989,10 +999,10 @@ Each line gives the issue, then the fix. (v) marks a finding the second reviewer
 
 ## The Undermost's mouth on the overworld
 
-**Wired, not yet drawn.** The intro cave is a place on the moor now — glyph `J`
+**Art delivered locally 2026-09-19.** The intro cave is a place on the moor now — glyph `J`
 at (109,62), six tiles off Alderbrook's gate — and every other site on that map
-draws its own 32x32 silhouette. Until this lands the cell draws the generic
-`stair` family marker.
+draws its own 32x32 silhouette. The 32x32 hole now replaces the generic
+`stair` family marker when the local art tree is deployed.
 
 | Id | Size | What it is |
 |---|---|---|
@@ -1003,9 +1013,11 @@ Mine's or the Underworks' silhouette, which are both worked places.
 
 ## The Knot of Elsewhere
 
-**Wired, not yet drawn.** The Undermost's warden holds it, and it is the port of
-upstream's Rod of Recall. Until the icon lands the inventory draws a letter
-(`PENDING_ICON_IDS`, `src/server/content/items.ts`).
+**Art delivered locally 2026-09-19.** The Undermost's warden holds it, and it is
+the port of upstream's Rod of Recall. The icon now resolves from the manifest;
+`PENDING_ICON_IDS` in `src/server/content/items.ts` still carries the old
+commission classification and should be reconciled with `KNOWN_ICON_IDS` by the
+content owner.
 
 | Id | Size | What it is |
 |---|---|---|
@@ -1017,9 +1029,9 @@ mistakable for the rope, cord or belt icons.
 
 ### And the badge for its wind-up
 
-`icon_status_elsewhere` ships as a PROCEDURAL STAND-IN — two loops tied, violet,
-generated by `status_badges()` in `tools/gen_ui_assets.py` like the cross-tier
-trio beside it. It is wired and it loads; it is not drawn.
+`icon_status_elsewhere` was a procedural stand-in from `status_badges()` in
+`tools/gen_ui_assets.py`. Drawn art replaced the runtime file locally on
+2026-09-19. It is wired and loads.
 
 | Id | Size | What it is |
 |---|---|---|
@@ -1033,12 +1045,10 @@ so the shape has to carry "something is about to happen to you" on its own.
 
 ## The Unwritten — the Redactor's fourth tree
 
-**Wired, loading, and drawn by a script.** All four ids below ship as
-PROCEDURAL STAND-INS generated into the gitignored asset tree, so nothing
-renders as a violet box and `art:needs` folds them into "active stand-ins"
-with no individual handle. That aggregate is exactly why they are written out
-here: a stand-in is invisible to `PENDING_ICON_IDS` (which only covers ids with
-no file at all) and therefore invisible to the art lane.
+**Drawn art delivered locally 2026-09-19.** All four ids below had shipped as
+procedural stand-ins in the gitignored asset tree. Their runtime files are now
+replaced. This section preserves the acceptance brief and the reason stand-ins
+need explicit review even when `art:needs --missing` is empty.
 
 Register: `ledger/unwritten` is void-eldritch, not clerical. No pages, no
 stamps, no ink bottles, no clerks — the resource happens to be called Ink and
@@ -1046,10 +1056,10 @@ that is the only clerical word allowed anywhere near these four.
 
 | Id | Size | What it is |
 |---|---|---|
-| `enemy_bound_shadow_s` | 64x64 | A piece of the dark that has agreed, for now, to stand where it is put. Roughly upright and roughly person-sized, with NO edges you could point to: the silhouette should dissolve at its boundary rather than end. No face, no limbs you could count, no cloth. It must read as a body occupying a tile at 64x64 and must not be mistakable for `enemy_index_wraith`, which is the nearest silhouette in the bestiary and is a THING THAT WANTS SOMETHING; this one wants nothing and is simply in the way. |
-| `icon_sustain_call_shadows` | 24x24 | The stance that puts a body between you and what is coming. Two shapes, one in front of the other, the front one darker and less resolved than the back. Not a summoning circle, not hands, not a sigil. |
-| `icon_sustain_gesture_of_pain` | 24x24 | The stance where the attack stops being physical. A hand held open — the only anatomical shape in this set, and deliberately so, because the whole talent is "both hands empty" — with the strike leaving it as a distortion rather than a line. It must be told apart at a glance from `icon_sustain_call_shadows`, which sits next to it on the same tree and the same bar. |
-| `icon_passive_shadow_warriors` | 24x24 | Hate lent to something that has none. The same two-shape motif as Call Shadows with the FRONT shape sharpened rather than softened — the passive's whole effect is that the thing you put in front hits harder. It must read as a passive: the passive icons in this set carry no frame, where the two sustains above do. |
+| `enemy_bound_shadow_s` | 48x64 native | A piece of the dark that has agreed, for now, to stand where it is put. Roughly upright and roughly person-sized, with NO edges you could point to: the silhouette should dissolve at its boundary rather than end. No face, no limbs you could count, no cloth. It must read as a body occupying a tile and must not be mistakable for `enemy_index_wraith`, which is the nearest silhouette in the bestiary and is a THING THAT WANTS SOMETHING; this one wants nothing and is simply in the way. |
+| `icon_sustain_call_shadows` | 64x64 native, 24px read | The stance that puts a body between you and what is coming. Two shapes, one in front of the other, the front one darker and less resolved than the back. Not a summoning circle, not hands, not a sigil. |
+| `icon_sustain_gesture_of_pain` | 64x64 native, 24px read | The stance where the attack stops being physical. A hand held open — the only anatomical shape in this set, and deliberately so, because the whole talent is "both hands empty" — with the strike leaving it as a distortion rather than a line. It must be told apart at a glance from `icon_sustain_call_shadows`, which sits next to it on the same tree and the same bar. |
+| `icon_passive_shadow_warriors` | 64x64 native, 24px read | Hate lent to something that has none. The same two-shape motif as Call Shadows with the FRONT shape sharpened rather than softened — the passive's whole effect is that the thing you put in front hits harder. It must read as a passive: the passive icons in this set carry no frame, where the two sustains above do. |
 
 All three 24x24 icons must survive the bar's own contrast at `HOTBAR` scale and
 must not be mistakable for the three `ledger/testimony` stance icons, which are

@@ -43,6 +43,19 @@ type Client = {
   markers(): Set<string>;
   /** Site name -> the landmark sprite id sent with it, where one was sent. */
   landmarks(): Map<string, string>;
+  /**
+   * Waits until the frames this socket has received satisfy `ready`, or throws.
+   *
+   * ═══ A FIXED SLEEP IS A GUESS ABOUT A MACHINE, NOT A WAIT ═══
+   * Every assertion here used to stand behind `await sleep(150)`, which is a
+   * bet that the server pumps a turn and the frame crosses the loopback inside
+   * a fixed wall-clock window. It holds on an idle machine and stops holding
+   * when the rest of the suite is on the CPU: this file went red in full runs
+   * and green in isolation, which is the definition of a test that reports the
+   * load and not the code. `hello` already polls to a deadline; this is the
+   * same wait for every other frame.
+   */
+  until(ready: () => boolean, what: string): Promise<void>;
   close(): void;
 };
 
@@ -109,6 +122,14 @@ async function connect(port: number): Promise<Client> {
       }
       return out;
     },
+    async until(ready: () => boolean, what: string): Promise<void> {
+      const deadline = Date.now() + FRAME_TIMEOUT_MS;
+      for (;;) {
+        if (ready()) return;
+        if (Date.now() >= deadline) throw new Error(`timed out waiting for ${what}`);
+        await sleep(5);
+      }
+    },
     close(): void {
       socket.close();
     },
@@ -171,7 +192,7 @@ describe('the three hidden sites have to be found', () => {
   it('shows a fresh character every ordinary marker and none of the hidden ones', async () => {
     const client = await connect(server.port);
     await client.hello();
-    await sleep(80);
+    await client.until(() => client.markers().size > 0, 'the first list of markers');
 
     const shown = client.markers();
     // The thirteen that have always been there are all still there. Nothing a
@@ -199,7 +220,7 @@ describe('the three hidden sites have to be found', () => {
      */
     const client = await connect(server.port);
     const actorId = await client.hello();
-    await sleep(80);
+    await client.until(() => client.markers().size > 0, 'the first list of markers');
 
     const weir = cellOf('site:the_weir');
     const body = server.realms.overworld.world.getActor(actorId);
@@ -212,7 +233,7 @@ describe('the three hidden sites have to be found', () => {
     body.x = weir.x - 1;
     body.y = weir.y;
     client.send({ t: 'move', dir: 'e' });
-    await sleep(150);
+    await client.until(() => client.markers().has('The Weir'), 'the Weir to be revealed');
 
     expect(client.markers().has('The Weir')).toBe(true);
   });
@@ -228,7 +249,8 @@ describe('the three hidden sites have to be found', () => {
     const other = await connect(server.port);
     const finderId = await finder.hello();
     await other.hello();
-    await sleep(80);
+    await finder.until(() => finder.markers().size > 0, 'the finder’s first markers');
+    await other.until(() => other.markers().size > 0, 'the other player’s first markers');
 
     const weir = cellOf('site:the_weir');
     const body = server.realms.overworld.world.getActor(finderId);
@@ -236,8 +258,14 @@ describe('the three hidden sites have to be found', () => {
     body.x = weir.x - 1;
     body.y = weir.y;
     finder.send({ t: 'move', dir: 'e' });
-    await sleep(150);
-
+    await finder.until(() => finder.markers().has('The Weir'), 'the Weir to be revealed');
+    /**
+     * THE NEGATIVE HALF CANNOT BE WAITED FOR, so it is read only once the
+     * positive half has ALREADY arrived: the broadcast that would have leaked
+     * the marker to the other socket is the same pump that has just delivered
+     * it to this one, so by the time the line above returns the leak has had
+     * its chance. Waiting longer only re-reads the same answer.
+     */
     expect(finder.markers().has('The Weir')).toBe(true);
     expect(other.markers().has('The Weir')).toBe(false);
   });
@@ -261,7 +289,7 @@ describe('the three hidden sites have to be found', () => {
      */
     const client = await connect(server.port);
     await client.hello();
-    await sleep(80);
+    await client.until(() => client.landmarks().size > 0, 'the first list of landmarks');
 
     const landmarks = client.landmarks();
 

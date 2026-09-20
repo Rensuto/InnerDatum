@@ -37,6 +37,19 @@
 //                                                  body, to show what the probe
 //                                                  fix was worth
 //   node tools/delve-density.mjs 4 --only=undermost,drowned_chapel
+//
+// ═══ A BEFORE AND AN AFTER MUST BE THE SAME INVOCATION, FLAGS INCLUDED ═══
+// `delve-run.mjs#run` is deterministic per invocation and NOT hermetic across
+// them. `shared/rng.ts` is one sequential PCG32 stream in which a label is
+// documentation: `bounded` uses rejection sampling, so changing a band's span
+// changes how many `u32`s that draw consumes and shifts every later draw from
+// that seed. Measured: the same site, the same seed and the same band give a
+// different floor inside a `--floors` sweep than inside `--only=<that site>`.
+//
+// So a comparison is only a comparison when BOTH sides ran with the identical
+// site list and the identical flags. `--only` is for diagnosis, never for a
+// before/after table — and a row that did not move between two full sweeps is
+// evidence its band did not move, which is most of what such a table says.
 
 import { SITES, RealmKind, createRealms, floorsOfSite } from '../src/server/world/realms.ts';
 import { canWalk } from '../src/shared/level.ts';
@@ -44,7 +57,6 @@ import { createTurnEngine } from '../src/server/turn-engine.ts';
 import { CLASSES } from '../src/server/content/classes.ts';
 import {
   DELVES,
-  NB_NPC_SCALE,
   delveHeadroom,
   delveLevel,
   nbNpcFor,
@@ -172,20 +184,31 @@ for (const site of sites) {
  * The rows above are what a driver managed; this is what the TABLE promises,
  * and the two are different facts.
  *
- * ═══ "20-30" IS NOT THE TARGET, AND REPEATING IT WOULD BE A GUESS ═══
- * Every moor delve is a named upstream zone, generator and level size included
- * (`shared/mapgen/zones.ts` cites each one at the top of the file). So the
- * honest target for a delve is ITS OWN zone's `nb_npc`, and those are not all
- * 20-30: the Glass Archive's original runs 12-16 on a 30x30, the Underworks'
- * 40-50, the Hollow Mine's 70-80 on a 60x60. `UPSTREAM` below is that column,
- * read off each zone file with its line.
+ * ═══ `UPSTREAM` IS THE FLOOR'S ZONE, AND IT IS NOT THE TARGET ═══
+ * Every moor delve's FLOOR is a named upstream zone, generator and level size
+ * included (`shared/mapgen/zones.ts` cites each one at the top of the file).
+ * `UPSTREAM` below is that zone's own `nb_npc`, read off the zone file with its
+ * line. It used to be described here as "the honest target for a delve", and it
+ * is not: `content/delve.ts` takes each count from a zone whose `level_range`
+ * COVERS THE LEVEL WE PLACE THE DELVE AT, which is usually a different zone,
+ * and the `countFrom` field on every spec is where that citation lives. The
+ * column is kept because the ratio between the two is the alignment made
+ * visible — Ardhungol states 70-80 for a character in the mid-twenties and the
+ * Hollow Mine stands at nine.
  *
  * ═══ AND IT IS DIVIDED BY WALKABLE GROUND, NOT BY CELLS ═══
  * A count is meaningless without the floor it is spread over, and a 50x50
  * cavern and a 50x50 ruin do not have the same amount of ground in them. The
- * denominator here is the site's OWN generated floor, counted with `canWalk` —
- * and because the generator and the size are upstream's, that same denominator
- * is what upstream's count would have been spread over. One number, both rows.
+ * denominator here is the site's OWN generated floor, counted with `canWalk`.
+ *
+ * THAT DENOMINATOR IS OURS AND NOT UPSTREAM'S ON THE ROWS WHERE THE COUNT
+ * MOVED. It was once claimed to be "one number, both rows", true while the
+ * count came from the floor's own zone. The Hollow Mine's count is now the
+ * Maze's and its floor is Ardhungol's Cavern, which walks about forty per cent
+ * of its cells against a widen-2 Maze's fifty — so the `x` column there is a
+ * ratio between two different rooms and reads about a fifth high. Said rather
+ * than corrected: `delve.ts`'s note is where a count's ground is argued, and
+ * the row to trust for OUR density is `per100`, which is measured.
  */
 const UPSTREAM = new Map([
   ['site:drowned_chapel', ['halfling-ruins', 20, 30, 'data/zones/halfling-ruins/zone.lua:50']],
@@ -234,7 +257,12 @@ function groundOf(site) {
 
 console.log(
   `
-THE ZONE'S OWN nb_npc, AT NB_NPC_SCALE = ${String(NB_NPC_SCALE)}, AGAINST WHAT UPSTREAM STATES
+THE BAND EACH DELVE PLACES, AGAINST THE ZONE ITS FLOOR IS BUILT FROM
+
+The two differ now and they are meant to: a count comes from a zone whose
+level_range covers the level we place the delve at (DelveSpec.countFrom), and
+the 'upstream zone' column below is the zone the FLOOR came from. A ratio away
+from 1.0 is the alignment, not a divergence.
 `,
 );
 console.log(
@@ -246,9 +274,9 @@ for (const [id, spec] of DELVES) {
   const site = SITES.get(id);
   if (site === undefined) continue;
   const g = groundOf(site);
-  // THE BAND THE PLACER USES — `nbNpcFor`: the zone's own `nb_npc` at
-  // `NB_NPC_SCALE`, with this site's real cell count for the one zone that
-  // reads it. `spec.monsters` is gone; `spec.nbNpc` is the zone's raw statement.
+  // THE BAND THE PLACER USES — `nbNpcFor`: the sourced zone's own `nb_npc`,
+  // verbatim, with this site's real cell count for the one zone that reads it.
+  // `spec.monsters` is gone; `spec.nbNpc` is the sourced zone's raw statement.
   const band = nbNpcFor(spec, 1, g.cells);
   const mine = (100 * (band[0] + band[1])) / 2 / g.walk;
   const up = UPSTREAM.get(id);

@@ -6,6 +6,8 @@ import { describe, expect, it } from 'vitest';
 import { DELVES, dangerWord, delveLevel } from '../../src/server/content/delve.ts';
 import { computeRarities, rarityShare } from '../../src/server/content/rarity.ts';
 import { SITES, createRealms } from '../../src/server/world/realms.ts';
+import type { SiteDef } from '../../src/server/world/realms.ts';
+import { ZONES, zoneFloor, zoneTable } from '../../src/shared/mapgen/zones.ts';
 import { CLASSES } from '../../src/server/content/classes.ts';
 import { run } from '../../tools/delve-run.mjs';
 import { createTurnEngine } from '../../src/server/turn-engine.ts';
@@ -328,6 +330,33 @@ function packOf(siteId: string): {
   return { arrival, worst, together, roster, knotShare };
 }
 
+/**
+ * The delve placing the most bodies per cell of floor, over every floor of every
+ * moor delve. `undefined` if nothing in `DELVES` has a zone to measure.
+ *
+ * PER CELL AND NOT PER WALKABLE TILE, deliberately: walkable needs a generated
+ * floor and this has to be cheap enough to run inside a unit test. The two
+ * orders agree on which room is fullest — the Glass Archive is 900 cells against
+ * everything else's 2500 to 3600 — and the point is to FIND the exposed room
+ * rather than to grade the map.
+ */
+function fullestRoom(): SiteDef | undefined {
+  let best: { site: SiteDef; per: number } | undefined;
+  for (const site of SITES.values()) {
+    const spec = DELVES.get(site.id);
+    const zone = ZONES.get(site.id);
+    if (spec === undefined || zone === undefined) continue;
+    for (let floor = 1; floor <= zone.floors.length; floor += 1) {
+      const table = zoneTable(zoneFloor(zone, floor), zone.palette);
+      if (typeof table === 'function') continue;
+      const band = spec.nbNpcByFloor?.get(floor) ?? spec.nbNpc;
+      const per = (band[0] + band[1]) / 2 / (table.width * table.height);
+      if (best === undefined || per > best.per) best = { site, per };
+    }
+  }
+  return best?.site;
+}
+
 describe('the gentlest room in the game', () => {
   /**
    * THE PICKER NAMES BY GRADE, so the invariant is about grades and not about
@@ -354,14 +383,15 @@ describe('the gentlest room in the game', () => {
      * standing within `MELEE_CONVERGENCE` of one of its own, maxed over six
      * seeds — and pinned a level-1 Watchman in the middle of it with no talents,
      * no step back and no doorway until somebody died. At the counts this
-     * repository shipped for a while (`NB_NPC_SCALE = 0.4`) that knot was three
+     * repository shipped for a while (a global factor of 0.4 on every band,
+     * since deleted) that knot was three
      * and the model said he lived on 7 of 72 hit points. At upstream's own
      * counts the knot is four and the model says "dead in 5 turns".
      *
      * ═══ AND THE INSTRUMENT THIS FILE ALREADY DEFERS TO SAYS OTHERWISE ═══
      * The docblock below `packOf` says it in as many words: *"no model here
      * should be trusted over it"*, meaning the driven probe. Measured through
-     * `tools/delve-run.mjs` on this exact floor, at `NB_NPC_SCALE = 1.00`, a
+     * `tools/delve-run.mjs` on this exact floor, at upstream's own counts, a
      * level-1 Watchman alone clears the Drowned Chapel **20 runs out of 20**,
      * taking 76 damage of 72 hit points' worth of pool and bottoming out at 31%.
      * A party of four clears it 8 of 20 and WIPES 0 of 20. The model's verdict
@@ -393,7 +423,10 @@ describe('the gentlest room in the game', () => {
      * It read: *"the other three lose this floor at EVERY factor from 0.4 up,
      * which is a fact about them and not about the room."* Two of the three, and
      * not the third. Driven, six solo runs a cell, the Drowned Chapel's first
-     * floor at level 1, sweeping the factor:
+     * floor at level 1, sweeping the global factor this repository used to carry
+     * on every band — HISTORY NOW, because that factor is deleted and the counts
+     * are each zone's own (`DelveSpec.countFrom`). The column that ships is the
+     * right-hand one plus about a sixth:
      *
      *     factor        0.40   0.55   0.70   0.85
      *     Watchman       6/6    6/6    6/6    6/6
@@ -415,10 +448,18 @@ describe('the gentlest room in the game', () => {
      * NONE OF THAT IS ASSERTED HERE, and deliberately: those cells cost minutes
      * (a losing class runs to the 900-turn cap) and a unit test that takes
      * minutes stops being run, which is this file's own standing argument about
-     * the wipe RATE. The bar the suite fails on is the one in
-     * `monster-scaling.test.ts` that names every measurement a factor change has
-     * to be re-taken with — this table is what happens when a factor is set
-     * against one instrument.
+     * the wipe RATE. This table is what happens when one number about twelve
+     * delves is set against one instrument, and it is most of the reason there is
+     * no such number any more.
+     *
+     * ═══ AND THE ALIGNMENT DID NOT MOVE THIS ROOM, WHICH WAS THE WORRY ═══
+     * Deleting the factor took the Drowned Chapel from `{17, 26}` to the
+     * Blighted Ruins' `{20, 30}` — a sixth more bodies on the floor a
+     * four-minute-old character is sent to by name. Measured, eighty solo runs
+     * of a level-1 Watchman: ONE wipe here and none on the Undermost, which is
+     * the same rate the old note recorded at 0.85. The beginner-room bound did
+     * not need a row of its own after all, and that is a measurement rather than
+     * a hope.
      *
      * THE WATCHMAN is still the driven class here, because he is the class the
      * crude model was written as and the one whose answer is a fact about the
@@ -457,11 +498,14 @@ describe('the gentlest room in the game', () => {
        * These are seeds 0..N-1 of one labelled sequence, so this case is
        * DETERMINISTIC — it does not pass on Tuesday and fail on Wednesday, which
        * is the failure `vitest.config.ts` says is worse than a slow test. What
-       * it cannot see is a RATE: at the shipping factor a lone level-1 Watchman
-       * is erased on about one floor of this delve in eighty, and eighty runs do
-       * not belong in a unit test. That sweep, and how it moves with the factor,
-       * is the table on `NB_NPC_SCALE` in `content/delve.ts`. What this catches
-       * is a room that became lethal rather than one that drifted a point.
+       * it cannot see is a RATE: a lone level-1 Watchman is erased on about one
+       * floor of this delve in eighty, and eighty runs do not belong in a unit
+       * test. MEASURED AGAIN AFTER THE COUNTS WERE ALIGNED — the Drowned Chapel
+       * went from `{17, 26}` to the Blighted Ruins' `{20, 30}` when the global
+       * factor came off — and the rate did not move: 1 wipe in 80 here and 0 in
+       * 80 on the Undermost, worst run bottoming out at 7% of the bar. What this
+       * catches is a room that became lethal rather than one that drifted a
+       * point.
        */
       const wiped = runs.filter((r) => r.outcome === 'wipe').length;
       expect(
@@ -482,6 +526,87 @@ describe('the gentlest room in the game', () => {
     }
   });
 
+  it('does not kill the CLASS THE ROOM IS BUILT FOR in the fullest room there is', () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * THE GUARD THAT DID NOT EXIST: NOTHING FAILED WHEN A DELVE STOPPED BEING
+     * WALKABLE.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * `grep -rn "delve-run.mjs" test/` used to return exactly one file — this
+     * one — and it drove ONE floor of ONE delve with ONE class at level one.
+     * Everything past the beginner's room was covered by arithmetic about the
+     * table and by nobody walking into it, so the Hollow Mine could ship at ten
+     * bodies per hundred walkable tiles with the suite green, and it did.
+     *
+     * ═══ THE ROOM IS FOUND, NOT NAMED ═══
+     * A list of ids here would be the same defect one level up: it would pass
+     * the day a thirteenth delve arrived. The room asked about is the one with
+     * the most bodies per CELL OF FLOOR in the whole table — the most exposed to
+     * a count going the wrong way, because a count landing on a small floor is
+     * where density actually moves. Read off `nbNpc` and the zone's own
+     * `width`/`height`, so it costs nothing to find: today it is the Glass
+     * Archive, `{20, 30}` on 900 cells, whose count this alignment raised by
+     * three quarters.
+     *
+     * ═══ AND A WIPE IS THE BAR, FOR THE REASON THE CASE ABOVE GIVES ═══
+     * A stall is the driver and never the room. The Outer Index is 0 clears in
+     * 64 runs and every survivor is REACHABLE at the end — it is 3600 cells of
+     * two-wide corridor against a 900-turn cap, and its worst health is 68%
+     * whatever the cap is raised to. Asserting clears here would pin that probe
+     * limit as though it were a fact about the game. A WIPE is a fact about the
+     * game: the room killed the class it is easiest on, standing at its own
+     * level.
+     */
+    const site = fullestRoom();
+    expect(site, 'no delve has a floor to measure').toBeDefined();
+    const beginner = CLASSES[0];
+    if (site === undefined || beginner === undefined) return;
+    const spec = DELVES.get(site.id);
+    expect(spec, `${site.id} is not in DELVES`).toBeDefined();
+    if (spec === undefined) return;
+
+    const runs = Array.from({ length: DRIVEN_SEEDS }, (_unused, i) =>
+      run(site, 1, `fullest-room-driven:${site.id}:${String(i)}`, {
+        party: [beginner],
+        level: delveLevel(spec),
+        floor: 1,
+      }),
+    );
+    const roster = runs.reduce((a, r) => a + r.roster, 0) / runs.length;
+    expect(roster, `${site.id} puts nothing on its floor`).toBeGreaterThan(0);
+
+    /**
+     * ═══ A MAJORITY, NOT ALL OF THEM, AND THAT IS NOT A HEDGE ═══
+     * The measured rate here is one wipe in four at the moment — this IS the
+     * fullest room in the game, the class is alone, and being alone is not the
+     * configuration this game is built for. "Zero wipes over six fixed seeds"
+     * was the first bar written and it was seed luck: the sweep and this case
+     * disagreed on the same room because they draw different labels. A bar a
+     * harmless change can turn red by reshuffling the stream is a bar about the
+     * fixture. A MAJORITY WALKS OUT is a statement about the room, and it is the
+     * one that moves when a count does: with the placer tripled it goes red.
+     */
+    const wiped = runs.filter((r) => r.outcome === 'wipe').length;
+    expect(
+      wiped * 2,
+      `${site.id} — the fullest room in the game — erased a Watchman standing at its own` +
+        ` level ${String(wiped)} of ${String(DRIVEN_SEEDS)} times, on ${roster.toFixed(1)} bodies`,
+    ).toBeLessThan(DRIVEN_SEEDS);
+
+    /**
+     * AND IT CAN BE FINISHED. A room nobody walks out of with the floor cleared
+     * is not a fight, and the wipe count above cannot see that: a room that
+     * stalled every run at full health would pass it. One clear is the bar,
+     * because a stall is the driver and never the room (see the case above).
+     */
+    const cleared = runs.filter((r) => r.outcome === 'clear').length;
+    expect(
+      cleared,
+      `${site.id} was never finished in ${String(DRIVEN_SEEDS)} runs`,
+    ).toBeGreaterThan(0);
+  });
+
   it('leaves a beginner a real margin for walking in, not a coin flip', () => {
     /**
      * WINNING IS NOT ENOUGH. The model gives the player every benefit it can —
@@ -490,9 +615,10 @@ describe('the gentlest room in the game', () => {
      * is won on fumes is a fight lost in practice, which is exactly what the
      * live probe found.
      *
-     * A THIRD OF THE BAR is the bound, and it is the rule `NB_NPC_SCALE` was set
-     * against: it decides how far upstream's `nb_npc` can be taken before the
-     * room the first case NAMES stops being beatable by walking into it.
+     * A THIRD OF THE BAR is the bound, and it was the rule the old global factor
+     * was set against. The factor is gone and the bound is not: it decides
+     * whether the room the first case NAMES is beatable by walking into it, and
+     * the counts it is asked of are upstream's own now (`DelveSpec.countFrom`).
      */
     for (const [id, spec] of quiet) {
       const packs = packOf(id);

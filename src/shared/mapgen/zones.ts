@@ -44,6 +44,26 @@
  * The Undermost is not here: its two cave floors are `shared/sitemap.ts`'s
  * cave and its third is drawn by hand (`server/world/realms.ts`).
  *
+ * ═══════════════════════════════════════════════════════════════════════════
+ * AND THIS FILE OWNS THE ROOM, NOT ITS POPULATION. THE TWO NAME DIFFERENT
+ * ZONES NOW.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * The table above is the GENERATOR, the level size, the terrain palette and the
+ * lighting, and it is a complete statement of those. It is NOT a statement of
+ * how many bodies stand on the floor, and the column heading "which ToME zone
+ * each site is built as" has to be read that narrowly.
+ *
+ * A count is read from a zone whose `level_range` covers the level the delve is
+ * placed at, which is frequently not the zone its floor came from: Ardhungol is
+ * `{25, 32}` and the Hollow Mine stands at nine. `DelveSpec.countFrom`
+ * (`server/content/delve.ts`) is where every count's citation lives, one row per
+ * band, with the argument for each split written beside it. So the Hollow Mine's
+ * floor is Ardhungol's and its population is the Maze's; the Weir's floor is the
+ * Lake of Nur's and its population is Murgol Lair's; the Glass Archive's floor
+ * is the Scintillating Caves' and its population is the Halfling Ruins'. ASK
+ * `countFrom`, NOT THIS TABLE, WHAT LIVES IN A ROOM.
+ *
  * ═══ A FLOOR IS A LEVEL, AND A LEVEL THIS PORT CANNOT BUILD IS SKIPPED ═══
  * Floor n is `floors[n - 1]`; a floor past the end is the last entry, which is
  * how a Redaction twin a floor deeper than its original gets one. What is NOT

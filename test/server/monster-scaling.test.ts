@@ -6,7 +6,6 @@ import { describe, expect, it } from 'vitest';
 import {
   BOSS_LEVELS_ABOVE_ROOM,
   DELVES,
-  NB_NPC_SCALE,
   actorAdjustLevel,
   delveHeadroom,
   delveLevel,
@@ -15,6 +14,7 @@ import {
   populateDelve,
   specFor,
 } from '../../src/server/content/delve.ts';
+import type { DelveSpec } from '../../src/server/content/delve.ts';
 import { computeRarities, pickEntity, rarityShare } from '../../src/server/content/rarity.ts';
 import {
   INDEX_CAIRN,
@@ -189,8 +189,8 @@ describe('how many — `nb_npc`, per zone and per level', () => {
     expect(large[1] - large[0], 'the band is upstream`s +/-5, scaled once').toBe(
       small[1] - small[0],
     );
-    // ceil(70*70*60/4900) = 60, band {55, 65}, at the one factor that is ours.
-    expect(large).toEqual([Math.round(55 * NB_NPC_SCALE), Math.round(65 * NB_NPC_SCALE)]);
+    // ceil(70*70*60/4900) = 60, band {55, 65}, verbatim: there is no factor.
+    expect(large).toEqual([55, 65]);
 
     expect(nbNpcFor(underworks, 1, 70 * 70), 'a flat-band zone grew with the floor').toEqual(
       nbNpcFor(underworks, 1, 20 * 20),
@@ -348,13 +348,24 @@ describe('which ones — the rarity draw, and it changes with depth', () => {
   it('refuses a candidate further out of depth than the zone allows', () => {
     /**
      * `max_ood` — `engine/Zone.lua:306`. A HARD refusal on top of the weight,
-     * and six of our twelve zones carry it. The Trollmire, which Blackwood
-     * Outskirts is built as, is `filters = { {max_ood=2} }`
-     * (`trollmire/zone.lua:198`).
+     * carried by every `{1, 5}` zone in ToME and by nothing past the first tier
+     * (see `DelveSpec.maxOod`), so it reaches our table through `countFrom` on
+     * the delves whose count is sourced from a tier-1 zone.
+     *
+     * ═══ THE VEHICLE IS FOUND, NOT NAMED ═══
+     * This read `specFor('site:blackwood_outskirts')` and asserted the Trollmire's
+     * `max_ood = 2` on it. Blackwood's count is the Mark of the Spellblaze's now
+     * (`{15, 25}` filters at nothing) and the case went red on a site id rather
+     * than on the rule it is about. The rule needs SOME shipped spec carrying
+     * the filter; which one is content's business.
      */
-    const spec = specFor('site:blackwood_outskirts');
-    if (spec === undefined) throw new Error('no Blackwood spec');
-    expect(spec.maxOod, 'Blackwood lost its filter').toBe(2);
+    const filtered = [...SITES.values()]
+      .filter((s) => s.kind === RealmKind.Inner)
+      .map((s) => ({ id: s.id, spec: specFor(s.id) }))
+      .filter((s) => s.spec?.maxOod === 2);
+    const spec = filtered[0]?.spec;
+    expect(filtered.length, 'no delve in the game carries max_ood = 2 any more').toBeGreaterThan(0);
+    if (spec === undefined) throw new Error('no filtered spec');
 
     /**
      * ═══ DRIVEN THROUGH THE PLACER, NOT THROUGH A COPY OF THE RULE ═══
@@ -616,18 +627,30 @@ describe('the gaps the mutation audit found', () => {
    * ═════════════════════════════════════════════════════════════════════════
    *
    * SURVIVED: `site:hollow_mine`'s `nbNpc` taken from `[70, 80]` to
-   * `[700, 800]` — roughly three hundred bodies a floor after `NB_NPC_SCALE` —
-   * and `REDACTED_TOWN.nbNpcPerArea` from 34 to 340. The case above is
+   * `[700, 800]` — roughly three hundred bodies a floor — and
+   * `REDACTED_TOWN.nbNpcPerArea` from 34 to 340. The case above is
    * `toBeGreaterThanOrEqual` and nothing else in the tree bounds a count from
    * above, so a ten-fold typo in any of the twelve bands ships green. That is
    * exactly the failure this port's own notes warn about: *"a previous attempt
    * made nearly every delve UNCLEARABLE"*.
    *
    * THE CEILING IS UPSTREAM'S OWN NUMBER, not a tolerance invented here. Every
-   * band is its zone's `nb_npc` taken at `NB_NPC_SCALE`, and the densest thing
-   * in ToME's whole first tier is ardhungol at 70-80. A band whose top is over
-   * `MOST_BODIES_UPSTREAM_STATES` is a band that is no longer a port of
-   * anything, whatever else it is.
+   * band is some zone's `nb_npc` verbatim (`DelveSpec.countFrom`), and the
+   * largest `nb_npc` any ToME zone states ANYWHERE is 80 —
+   * `data/zones/ardhungol/zone.lua:50` and `data/zones/sandworm-lair/zone.lua:120`.
+   * (It used to read "on a floor of a size we build", which was wrong about the
+   * second of those: sandworm-lair states it on a 350x20, seven thousand cells,
+   * and we build nothing like that. The bound does not need the clause — nothing
+   * in ToME states more than 80 on any floor at all.)
+   * A band whose top is over `MOST_BODIES_UPSTREAM_STATES` is a band that is no
+   * longer a port of anything, whatever else it is.
+   *
+   * IT IS A LOOSE CEILING NOW AND DELIBERATELY SO. Nothing on the map reaches it
+   * since the alignment — the largest band in the twelve is `{50, 60}` — and
+   * tightening it to what ships would make this a change-detector rather than a
+   * bound on the port. The tight statement is in
+   * `test/server/delve-alignment.test.ts`: every band equals the Lua line it
+   * cites.
    */
   const MOST_BODIES_UPSTREAM_STATES = 80;
 
@@ -641,7 +664,7 @@ describe('the gaps the mutation audit found', () => {
         expect(
           band[1],
           `${site.id} floor ${String(floor)} asks for ${String(band[1])} bodies`,
-        ).toBeLessThanOrEqual(Math.ceil(MOST_BODIES_UPSTREAM_STATES * NB_NPC_SCALE));
+        ).toBeLessThanOrEqual(MOST_BODIES_UPSTREAM_STATES);
         // AND THE BAND IS A BAND: a top under its own floor is a typo that
         // `rng.range` would silently answer backwards.
         expect(
@@ -682,7 +705,7 @@ describe('the gaps the mutation audit found', () => {
           expect(
             each,
             `${site.id} floor ${String(floor)} puts ${each.toFixed(1)} bodies on each of ${String(size)}`,
-          ).toBeLessThanOrEqual(Math.ceil(MOST_BODIES_UPSTREAM_STATES * NB_NPC_SCALE));
+          ).toBeLessThanOrEqual(MOST_BODIES_UPSTREAM_STATES);
         }
       }
     }
@@ -744,66 +767,96 @@ describe('the gaps the mutation audit found', () => {
   });
 
   /**
-   * ═════════════════════════════════════════════════════════════════════════
-   * `max_ood` WHERE IT ACTUALLY BITES — the Glass Archive's first two floors.
-   * ═════════════════════════════════════════════════════════════════════════
+   * ═══════════════════════════════════════════════════════════════════════════
+   * AND THE FILTER ON A SHIPPED SPEC, FOUND RATHER THAN NAMED.
+   * ═══════════════════════════════════════════════════════════════════════════
    *
-   * SURVIVED: `maxOod: 2` deleted from `site:glass_archive`. The mechanism has a
-   * case above, but it drives a SYNTHETIC spec — so the rule was pinned and its
-   * one shipped use was not. Measured across every inner site and every floor,
-   * the Glass Archive at room level 11 and 12, refusing the Overwritten Husk at
-   * `levelRange[0] = 15`, is the only place in the shipped table where the
-   * filter refuses anything at all.
+   * `populateDelve` is driven with a real `DelveSpec` and a real roster in the
+   * case above, but that one builds a SYNTHETIC spec — so the rule was pinned
+   * and its one shipped use was not.
+   *
+   * ═══ WHICH SPEC IS NOT WRITTEN DOWN, BECAUSE IT KEEPS MOVING ═══
+   * This has now gone red twice on an id rather than on its rule. It read
+   * `site:blackwood_outskirts` until Blackwood's count came from a `{15, 25}`
+   * zone that states no filter; it then read `site:glass_archive` until the
+   * Archive's came from `{10, 25}`, which states none either. The rule needs
+   * SOME shipped delve whose filter actually refuses somebody, and which one
+   * that is is content's business: the search below finds it. Today it is
+   * Barrow End, at level five with `THICKET`, taking Norgos' Lair's tier-1
+   * `max_ood = 2` against `INDEX_HUSK_ELITE` at `levelRange` fifteen.
    */
-  it('keeps the Overwritten Husk out of the Glass Archive first floors', () => {
-    const spec = specFor('site:glass_archive');
-    if (spec === undefined) throw new Error('no Glass Archive');
-    expect(spec.roster.some((t) => t.sprite === INDEX_HUSK_ELITE.sprite)).toBe(true);
+  it('refuses an out-of-depth body on whichever shipped delve filters one', () => {
+    const elite = INDEX_HUSK_ELITE.sprite;
+    /** The delves whose own filter would refuse a member of their own roster. */
+    const biting: { id: string; spec: DelveSpec }[] = [];
+    for (const site of SITES.values()) {
+      if (site.kind !== RealmKind.Inner) continue;
+      const candidate = specFor(site.id);
+      if (candidate === undefined) continue;
+      const ood = candidate.maxOod;
+      if (ood === undefined) continue;
+      const reach = delveLevel(candidate) + ood;
+      const refuses = candidate.roster.some(
+        (t) => t.levelRange !== undefined && reach < t.levelRange[0],
+      );
+      if (refuses) biting.push({ id: site.id, spec: candidate });
+    }
+    expect(
+      biting.map((r) => r.id),
+      'no shipped delve carries a filter that refuses anybody — the rule below is vacuous',
+    ).not.toEqual([]);
+    const spec = biting[0]?.spec;
+    if (spec === undefined) throw new Error('no biting spec');
 
     /**
-     * ═══ MANY FLOORS, BECAUSE THE FADE ALREADY MAKES IT RARE AND THAT IS THE
-     * WHOLE POINT OF THE FILTER ═══
-     * `computeRarities` puts the elite at 0.69% of floor 1 and 0.92% of floor 2
-     * WITHOUT `max_ood`. Eight floors is fifty bodies and would see neither, so
-     * a case that size passes with the filter deleted — measured, it did. The
-     * rule the zone is stating is *never*, not *seldom*, and the only honest way
-     * to tell those two apart is a sample big enough for *seldom* to show.
+     * ═══ MANY FLOORS, BECAUSE THE FADE ALREADY MAKES IT RARE ═══
+     * `computeRarities` puts the elite under one percent of the draw WITHOUT
+     * `max_ood`. A handful of floors is fifty bodies and would see neither, so a
+     * case that size passes with the filter deleted — measured, it did. The rule
+     * the zone states is *never*, not *seldom*, and the only honest way to tell
+     * those apart is a sample big enough for *seldom* to show.
      *
      * DRIVEN THROUGH `populateDelve` ON A BARE FLOOR rather than through
-     * `createRealms`, because two hundred generated caves is a minute of wall
+     * `createRealms`, because two hundred generated floors is a minute of wall
      * clock and the generator is not what is being asked about.
      */
-    const elitesOnFloor = (floor: number): { elites: number; bodies: number } => {
-      let elites = 0;
-      let bodies = 0;
+    const elitesOn = (
+      use: DelveSpec,
+      floor: number,
+      tag: string,
+    ): { hits: number; all: number } => {
+      let hits = 0;
+      let all = 0;
       for (let n = 0; n < 200; n += 1) {
-        const { world, map } = openFloor(`ood-archive:${String(floor)}:${String(n)}`);
-        populateDelve(world, map, spec, { level: 1, size: 1 }, floor);
+        const { world, map } = openFloor(`ood:${tag}:${String(floor)}:${String(n)}`);
+        populateDelve(world, map, use, { level: 1, size: 1 }, floor);
         for (const body of bodiesOf(world)) {
-          bodies += 1;
-          if (body.sprite === INDEX_HUSK_ELITE.sprite) elites += 1;
+          all += 1;
+          if (body.sprite === elite) hits += 1;
         }
       }
-      return { elites, bodies };
+      return { hits, all };
     };
 
-    const first = elitesOnFloor(1);
-    const second = elitesOnFloor(2);
-    expect(first.bodies, 'floor 1 placed nothing').toBeGreaterThan(500);
-    expect(first.elites, 'the Archive first floor let an out-of-depth elite in').toBe(0);
-    expect(second.elites, 'the Archive second floor let an out-of-depth elite in').toBe(0);
+    for (let floor = 1; floor <= floorsOf(spec); floor += 1) {
+      const on = elitesOn(spec, floor, 'on');
+      expect(on.all, `floor ${String(floor)} placed nothing`).toBeGreaterThan(300);
+      expect(on.hits, `floor ${String(floor)} let a body out of its depth past max_ood`).toBe(0);
+    }
 
     /**
-     * AND THE THIRD FLOOR LETS IT IN, which is what makes the two lines above a
-     * statement about the FILTER and not about the fade: room level 13 plus
-     * `maxOod` 2 is exactly the elite's `levelRange[0]` of 15, so `Zone.lua:306`
-     * stops refusing it on the floor upstream's arithmetic says it should.
+     * AND THE SAME SPEC WITHOUT THE FILTER LETS IT IN, which is what makes the
+     * lines above a statement about `max_ood` rather than about the fade. Same
+     * roster, same level, same floors: one field removed.
      */
-    const third = elitesOnFloor(floorsOf(spec));
-    expect(
-      third.elites,
-      'the filter never stops biting — the first two floors prove nothing',
-    ).toBeGreaterThan(0);
+    const { maxOod: _off, ...unfiltered } = spec;
+    let without = 0;
+    for (let floor = 1; floor <= floorsOf(spec); floor += 1) {
+      without += elitesOn(unfiltered, floor, 'off').hits;
+    }
+    expect(without, 'precondition: without the filter the elite is drawn at all').toBeGreaterThan(
+      0,
+    );
   });
 
   /**
@@ -903,66 +956,98 @@ describe('the gaps the mutation audit found', () => {
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════
- *   THE FACTOR ITSELF — `NB_NPC_SCALE`, AND WHAT IT IS ALLOWED TO BE.
+ *   THERE IS NO FACTOR ANY MORE, AND THIS IS WHAT KEEPS IT THAT WAY.
  * ═══════════════════════════════════════════════════════════════════════════
  *
- * The cases above check that every band is the zone's own `nb_npc` and that
- * nothing is denser than the densest zone upstream states. Both of them take
- * `NB_NPC_SCALE` as given and scale their own bound by it, which is right — they
- * are about the BANDS — and it means nothing in the tree says anything about the
- * factor. A factor of 0.05 passes every one of them, and so does 12.
+ * `NB_NPC_SCALE` stood here and WAS 0.85: one global multiplier on every band,
+ * the only number in `content/delve.ts` that was not upstream's. Three cases in
+ * this file were about it — a ceiling of 1.00, a floor under rounding, and a
+ * change-detector naming the probes to re-run. It is deleted, because the drift
+ * it was absorbing was a mis-sourced count and one factor cannot be right for a
+ * table that drifts in both directions at once: lowering it starved the delves
+ * standing above their band and raising it killed you in the ones standing
+ * below. The alignment is in `DelveSpec.countFrom` and
+ * `test/server/delve-alignment.test.ts`.
  *
- * The receipt for its value lives on the constant in `content/delve.ts`. These
- * are the two bounds that receipt cannot be written outside of.
+ * WHAT IS LEFT IS THE PART THAT WAS NEVER ABOUT THE FACTOR'S VALUE. A future
+ * factor — a multiplier, a party term, a "just this once" +2 — would reappear
+ * in exactly one observable place, which is that `nbNpcFor` stopped returning
+ * the band a delve states. That is the first case. The second is the structural
+ * floor the old one had: a band that rounds to an empty room.
  */
-describe('the one factor that is not upstream’s', () => {
-  it('never places MORE than the zone states, because then it is not a port', () => {
+describe('the band the placer uses is the band the delve states', () => {
+  it('returns each floor`s stated band verbatim, with nothing applied to it', () => {
     /**
      * ═══════════════════════════════════════════════════════════════════════
-     * ONE IS THE CEILING AND IT IS A DEFINITION, NOT A TOLERANCE.
+     * A FACTOR REINTRODUCED *HERE* CANNOT PASS — AND THAT IS THE NARROW CLAIM.
      * ═══════════════════════════════════════════════════════════════════════
      *
-     * Every `nbNpc` in `DELVES` cites a zone file and a line. At 1.00 the band
-     * this game rolls IS the band that line states, and the whole claim of the
-     * port — *"reuse fifteen years of tuning"* — rests on that. Above 1.00 the
-     * counts stop being upstream's and start being ours, and nothing in the
-     * bestiary, the rarity weighting or `actor_adjust_level` was tuned for them.
+     * This said "the one case a reintroduced factor cannot pass" and that was
+     * too wide. Measured: `Math.round(rolled * 0.85)` put on `populateDelve`'s
+     * own line, ONE line after `nbNpcFor` returns, with the same draw label and
+     * the same range, leaves this case green. It is caught — by `delve-air`, by
+     * `weir-roster`, and by the placer-driven count case in this file — but not
+     * by this one, which asks the TABLE's question and not the FLOOR's.
      *
-     * A floor is deliberately NOT asserted here. A factor can be argued down
-     * with a measurement — that is what the constant's docblock is — and the
-     * bar that decides how far down is the levelling curve, which has its own
-     * file (`test/server/levelling-curve.test.ts`) and fails from below.
+     * `nbNpcFor` is the placer's own question (`populateDelve` asks it, and so
+     * do the probes and `levelling-curve.test.ts`), so anything applied to a
+     * count anywhere has to pass through here. Driven over every inner site and
+     * every floor rather than over `DELVES`, because the Redaction's twenty-two
+     * specs are DERIVED and a factor added in `redactedSpec` would be invisible
+     * to a case that only read the table.
+     *
+     * ═══ THE ONE SPEC THIS CANNOT ASK THE FLAT QUESTION OF ═══
+     * `nbNpcPerArea` computes its band from the floor's own area
+     * (`data/zones/infinite-dungeon/zone.lua:255-256`), so there is no stated
+     * pair to compare against — its band is checked against the formula
+     * instead, which is the same demand made of the same arithmetic.
      */
-    expect(
-      NB_NPC_SCALE,
-      'the delves hold more bodies than the zones they port',
-    ).toBeLessThanOrEqual(1);
-    expect(NB_NPC_SCALE, 'a factor of zero or less empties every delve').toBeGreaterThan(0);
+    let flat = 0;
+    let scaled = 0;
+    for (const site of SITES.values()) {
+      if (site.kind !== RealmKind.Inner) continue;
+      const spec = specFor(site.id);
+      if (spec === undefined) continue;
+      for (let floor = 1; floor <= floorsOf(spec); floor += 1) {
+        if (spec.nbNpcPerArea === undefined) {
+          flat += 1;
+          const stated = spec.nbNpcByFloor?.get(floor) ?? spec.nbNpc;
+          expect(
+            nbNpcFor(spec, floor, 2500),
+            `${site.id} floor ${String(floor)}: the placer does not use the band the spec states`,
+          ).toEqual(stated);
+        } else {
+          scaled += 1;
+          const each = Math.ceil((2500 * spec.nbNpcPerArea) / 4900);
+          expect(
+            nbNpcFor(spec, floor, 2500),
+            `${site.id} floor ${String(floor)}: the area band is not upstream's +/-5`,
+          ).toEqual([Math.max(0, each - 5), each + 5]);
+        }
+      }
+    }
+    expect(flat, 'no flat-band floor left to check').toBeGreaterThan(0);
+    expect(scaled, 'no area-band floor left to check').toBeGreaterThan(0);
   });
 
   it('leaves every delve a band that can still put a body on the floor', () => {
     /**
      * ═══════════════════════════════════════════════════════════════════════
-     * THE FLOOR UNDER THE FACTOR THAT IS A RULE RATHER THAN A MEASUREMENT.
+     * THE STRUCTURAL FLOOR, WHICH OUTLIVED THE FACTOR IT WAS WRITTEN FOR.
      * ═══════════════════════════════════════════════════════════════════════
      *
-     * How far DOWN the factor may be argued is the levelling curve's question
-     * and it has its own file — `test/server/levelling-curve.test.ts` fails
-     * from below, because a thinner floor pays less experience and the ruling
-     * is about experience. This is the other floor, the structural one: a
-     * factor low enough to round a band to nothing turns a delve into an empty
-     * room, and no amount of levelling arithmetic would notice, because an
-     * empty room fails that case for the same reason a poor one does.
-     *
-     * `nbNpcFor` rounds, so the smallest band in the game is what decides this:
-     * the Glass Archive's `{12, 16}` off `scintillating-caves/zone.lua:53`.
+     * A band that rounds to nothing turns a delve into an empty room, and no
+     * amount of levelling arithmetic would notice, because an empty room fails
+     * `levelling-curve.test.ts` for the same reason a poor one does. Nothing
+     * rounds any more — the bands are verbatim — but a band authored as
+     * `{0, n}` or an area formula on a tiny floor would land in exactly the same
+     * place, so the bound stays.
      *
      * THE ONE EXEMPTION IS UPSTREAM'S OWN ZERO. `reknor-escape/zone.lua:79`
-     * states `nb_npc = {0, 0}` for its last level, and `nbNpcFor`'s docblock is
-     * explicit that `{0, 0}` must stay `{0, 0}` under any factor — that static
-     * floor has its bodies drawn on the map. So the rule is about bands the
-     * spec states as non-empty, and a band that was never meant to hold anybody
-     * is not evidence of a factor that is too low.
+     * states `nb_npc = {0, 0}` for its last level, because that static floor has
+     * its bodies drawn on the map. So the rule is about bands the spec states as
+     * non-empty, and a band that was never meant to hold anybody is not evidence
+     * of an empty room.
      */
     let checked = 0;
     for (const site of SITES.values()) {
@@ -987,53 +1072,10 @@ describe('the one factor that is not upstream’s', () => {
         const area = spec.nbNpcPerArea === undefined ? undefined : areaOf(site.id, floor);
         expect(
           nbNpcFor(spec, floor, area)[1],
-          `${site.id} floor ${String(floor)} rounds to an empty room at this factor`,
+          `${site.id} floor ${String(floor)} is an empty room`,
         ).toBeGreaterThan(0);
       }
     }
     expect(checked, 'no delve states a non-empty band any more').toBeGreaterThan(0);
-  });
-
-  it('is the number the probes measured, and moving it means re-running them', () => {
-    /**
-     * ═══════════════════════════════════════════════════════════════════════
-     * THE ONE CHANGE-DETECTOR IN THIS FILE, AND IT IS DELIBERATE.
-     * ═══════════════════════════════════════════════════════════════════════
-     *
-     * Every other case here scales its own bound by `NB_NPC_SCALE`, which is
-     * right — they are about the BANDS — and it means all of them would go on
-     * passing at 0.05 or at 12. The two bounds above are real and neither of
-     * them picks a value inside the range they leave.
-     *
-     * The value is picked by things a unit test cannot run, and there are THREE
-     * of them, not two — which is the lesson this message now carries:
-     *
-     *   `tools/delve-climb.mjs`, every delve descended by every class, carrying
-     *     level and experience. This is the LEVELLING bound and it wants the
-     *     factor HIGH.
-     *   `tools/delve-density.mjs` / `tools/delve-run.mjs`, the two level-1 delves
-     *     solo for ALL FOUR CLASSES and as a party of four, counting wipes AND
-     *     TURNS. This is the BEGINNER-ROOM bound and it wants the factor LOW.
-     *   and only then the arithmetic in `levelling-curve.test.ts`, which is a
-     *     bound on the delve rather than on the player.
-     *
-     * THE SECOND ONE WAS ONCE TAKEN ON THE WATCHMAN ALONE, and the constant's own
-     * note said in the same breath that *"the Watchman is flat across the whole
-     * range"* — a value chosen with the one instrument that cannot see it. Driven
-     * across the four classes the same sweep moves a great deal: see the table in
-     * `first-room.test.ts`.
-     *
-     * THE HONEST THING IS TO SAY SO RATHER THAN TO INVENT A FAST PROXY that would
-     * be a worse bound wearing a test's clothes. So this line exists to make
-     * moving the number a deliberate act: change it and this case names every
-     * measurement that has to move with it.
-     */
-    expect(
-      NB_NPC_SCALE,
-      'the factor moved — re-run tools/delve-climb.mjs (every delve, EVERY' +
-        ' CLASS) and the first-room sweep in tools/delve-density.mjs for all' +
-        ' four classes AND a party of four, counting wipes and TURNS, and' +
-        ' rewrite every table on the constant and in first-room.test.ts',
-    ).toBe(0.85);
   });
 });

@@ -192,16 +192,23 @@ describe('the Weir`s roster', () => {
     }
   });
 
-  it('keeps its bands and its level: 4-6 bodies at level 6, and the twin 6-8 at 10', () => {
+  it('keeps its level and takes the band ToME states near it: 20-30 at 6, and the twin at 10', () => {
     /**
-     * `nb_npc = {20, 25}` — `data/zones/lake-nur/zone.lua:54`, the zone the Weir
-     * is built as. The twin inherits it: `redactedSpec` used to add +2 to a band
-     * of two to ten, which on a band of twenty to twenty-five would be noise
-     * dressed as a rule, and the twin is four LEVELS worse instead.
+     * IT USED TO BE `{20, 25}` — `data/zones/lake-nur/zone.lua:54`, the zone the
+     * Weir is BUILT as, whose own `level_range` is `{15, 25}` (`:22`): nine
+     * levels above this room. `{20, 25}` exists nowhere in ToME below that band,
+     * so it could not be re-cited at six, only replaced, and the replacement is
+     * the band every 50x50 at `{7, 16}` states — `data/zones/daikara/zone.lua:56`.
+     * See `DelveSpec.countFrom` and the row itself for why the Weir clamps
+     * UPWARD out of ToME`s gap at level six.
+     *
+     * The twin still inherits the count: `redactedSpec` used to add +2 to a band
+     * of two to ten, which on a band of twenty to thirty would be noise dressed
+     * as a rule, and the twin is four LEVELS worse instead.
      */
-    expect(specFor('site:the_weir')).toMatchObject({ nbNpc: [20, 25], levelRange: [6, 6] });
+    expect(specFor('site:the_weir')).toMatchObject({ nbNpc: [20, 30], levelRange: [6, 6] });
     expect(specFor('site:redaction:the_weir')).toMatchObject({
-      nbNpc: [20, 25],
+      nbNpc: [20, 30],
       levelRange: [10, 10],
     });
     expect(specFor('site:redaction:the_weir')?.roster).toBe(roster);
@@ -279,7 +286,7 @@ describe('the Weir, populated', () => {
           // THE BAND THE PLACER ITSELF USES — `nbNpcFor`, per floor, so this asks
           // one question rather than re-deriving three quarters of it. Neither
           // Weir carries a per-floor override or the area formula, so it is the
-          // zone's `nb_npc` at `NB_NPC_SCALE`.
+          // sourced zone's `nb_npc` verbatim (`DelveSpec.countFrom`).
           const stated = nbNpcFor(spec, floor);
           const low = Math.round(stated[0] * delveHeadroom(party));
           const high = Math.round(stated[1] * delveHeadroom(party));
@@ -323,6 +330,8 @@ describe('the Weir, populated', () => {
     for (const seed of ['weir-drown-1', 'weir-drown-2']) {
       for (const siteId of WEIRS) {
         for (let floor = 1; floor <= floorsOfSite(siteId); floor += 1) {
+          /** Every rule broken on this floor, named; asserted empty below. */
+          const faults: string[] = [];
           const { realm, effects, bodies } = open(siteId, seed, floor, THREE_STRONG);
           const level = realm.world.level;
           const dalt = realm.world.addPlayer('p1', 'Dalt', { maxHp: 1_000_000 });
@@ -353,19 +362,31 @@ describe('the Weir, populated', () => {
             dalt.hp = dalt.maxHp;
             for (const body of bodies) {
               const at = `${seed} ${siteId} floor ${String(floor)} turn ${String(turn)}: ${body.name}`;
-              expect(body.maxAir, at).toBe(MAX_AIR);
-              expect(body.air, `${at} lost air`).toBeGreaterThanOrEqual(body.maxAir);
+              if (body.maxAir !== MAX_AIR) faults.push(`${at}: maxAir ${String(body.maxAir)}`);
+              if (body.air < body.maxAir) faults.push(`${at}: lost air, ${String(body.air)}`);
               // The bubble's gift and its flag, together or not at all.
-              expect(body.isSuffocating, `${at} air ${String(body.air)}`).toBe(
-                body.air > body.maxAir,
-              );
+              if (body.isSuffocating !== body.air > body.maxAir) {
+                faults.push(
+                  `${at}: isSuffocating ${String(body.isSuffocating)} at air ${String(body.air)}`,
+                );
+              }
               if (body.isSuffocating) bubbled += 1;
-              expect(hasEffect(effects, body.id, EffectId.Suffocating), at).toBe(false);
+              if (hasEffect(effects, body.id, EffectId.Suffocating))
+                faults.push(`${at}: SUFFOCATING`);
             }
           }
           for (const body of bodies) {
             if (start.get(body.id) !== `${String(body.x)},${String(body.y)}`) moved += 1;
           }
+          // ONE ASSERTION PER FLOOR, NOT FOUR PER BODY PER TURN. The rule is
+          // identical — every body is read after every pump and the first
+          // violation is named — but the loop above ran ~640,000 `expect` calls
+          // and the case spent twelve seconds building assertion objects against
+          // a 20s budget (`vitest.config.ts:60`), which `vitest.config.ts`'s own
+          // note says is for WS handshake latency and "not a licence for a slow
+          // test". It went red under full-suite load and green in isolation,
+          // which is a test reporting the machine.
+          expect(faults.slice(0, 5), `${seed} ${siteId} floor ${String(floor)}`).toEqual([]);
         }
       }
     }

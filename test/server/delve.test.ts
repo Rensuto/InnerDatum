@@ -353,11 +353,12 @@ describe('the map has a gradient now', () => {
      *
      * This asserted `hard.monsters[0] > easy.monsters[1]`, which held while the
      * counts were authored on a scale of two to ten. They are upstream's
-     * `nb_npc` now, and upstream's density is a fact about the ZONE rather than
-     * about danger: the Hollow Mine is `ardhungol` and packs 70-80 bodies at
-     * level 9, Blackwood is `trollmire` and holds 20-30 at level 15. Asserting
-     * the old inequality would now be asserting that a cavern is scarier than a
-     * forest.
+     * `nb_npc` now, read off a zone whose band covers the level each delve
+     * stands at (`DelveSpec.countFrom`), and a count is a fact about a ZONE
+     * rather than about danger: EIGHT OF THE TWELVE STATE THE SAME `{20, 30}`,
+     * at levels one through fifteen, because `{20, 30}` is what ToME writes at
+     * every band it has. Asserting the old inequality would now be asserting
+     * something about which zone a room was cited from.
      *
      * WHAT THE GRADIENT IS MADE OF is the level every body in the room is born
      * at — `delveLevel`, which `actor_adjust_level` feeds and `rankLifeAdjust`

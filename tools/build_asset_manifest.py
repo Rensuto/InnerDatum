@@ -46,6 +46,8 @@ PROVENANCE = [
     # reported as procedural slot silhouettes - finished art counted as debt.
     ("items/equipment/",                         "derived",  "ImageGen source + deterministic native reduction"),
     ("items/commission/",                        "derived",  "ImageGen standing-commission master + deterministic native reduction"),
+    ("ui/icons/status/icon_status_elsewhere.png", "derived",  "ImageGen source + deterministic native reduction"),
+    ("ui/icons/icon_ui_cog.png",                   "derived",  "ImageGen source + deterministic native reduction"),
     ("ui/icons/status/production/",              "derived",  "native code-authored status glyph"),
     # The six attribute icons for the stat rail. Same reason as `items/equipment/`:
     # the broad `ui/` row is a stand-in row and would claim them.
@@ -74,6 +76,7 @@ PROVENANCE = [
     ("enemies/enemy_index_cairn_s.png",             "derived",  "ImageGen source + deterministic native reduction"),
     ("enemies/enemy_index_glut_s.png",              "derived",  "ImageGen source + deterministic native reduction"),
     ("enemies/enemy_index_husk_elite_s.png",        "derived",  "ImageGen source + deterministic native reduction"),
+    ("enemies/enemy_bound_shadow_s.png",           "derived",  "ImageGen source + deterministic native reduction"),
     ("enemies/commission/",                         "derived",  "ImageGen standing-commission master + deterministic native reduction"),
     ("enemies/",                                    "derived",  "paper-doll composite"),
     ("props/commission/",                           "derived",  "ImageGen standing-commission master + deterministic native reduction"),

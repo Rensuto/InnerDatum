@@ -1035,7 +1035,7 @@ export function createCaseLog(options: CaseLogOptions): CaseLog {
        * answering presses.
        */
       drawSettings(ctx, sprites, rect, inner);
-      drawLogCog(ctx, rect, settingsShown);
+      drawLogCog(ctx, sprites, rect, settingsShown);
       ctx.restore();
       return;
     }
@@ -1129,7 +1129,7 @@ export function createCaseLog(options: CaseLogOptions): CaseLog {
     composerRect = composer;
 
     drawSettings(ctx, sprites, rect, inner);
-    drawLogCog(ctx, rect, settingsShown);
+    drawLogCog(ctx, sprites, rect, settingsShown);
 
     ctx.restore();
   }
@@ -1562,23 +1562,57 @@ export function logCogAt(rect: PanelRect, px: number, py: number): boolean {
 }
 
 /**
- * A GEAR, DRAWN RATHER THAN BLITTED, for `drawLogGrip`'s reason: a control that
- * is the only way to reach a setting must not be invisible behind a missing PNG.
- * `icon_ui_cog` is logged in ASSETS-REQUIRED.md to replace it; until then this
- * is a hub, a bore and six teeth, which at thirteen pixels is all a gear is.
+ * A GEAR, BLITTED WHEN THE PNG IS THERE AND DRAWN WHEN IT IS NOT, for
+ * `drawLogGrip`'s reason: a control that is the only way to reach a setting must
+ * not be invisible behind a missing PNG. The drawn form is a hub, a bore and six
+ * teeth, which at thirteen pixels is all a gear is, and it is what a bare clone
+ * with no asset tree at all still gets.
  *
  * It brightens when the popover is open, so the button says whether the thing it
  * opens is showing — the same signal the tab strip gives.
  */
-export function drawLogCog(ctx: CanvasRenderingContext2D, rect: PanelRect, open: boolean): void {
-  drawCog(ctx, logCogRect(rect), open);
+export function drawLogCog(
+  ctx: CanvasRenderingContext2D,
+  sprites: SpriteSource,
+  rect: PanelRect,
+  open: boolean,
+): void {
+  drawCog(ctx, sprites, logCogRect(rect), open);
 }
 
 /**
- * A COGWHEEL IN A GIVEN SQUARE, gold while its popover is open. The case log's
- * and the action bar's are the same control, so they are one drawing.
+ * A COGWHEEL IN A GIVEN SQUARE, gold while its popover is open. The case log's,
+ * the action bar's and the conversation window's are the same control, so they
+ * are one drawing — and now one blit.
+ *
+ * ═══ THE OPEN STATE IS A TINT, AND A TINT IS WHY THE PNG NEEDED A SILHOUETTE ═══
+ * `ASSETS-REQUIRED.md` asked for a gear whose shape "survives being tinted gold
+ * when the menu under it is open", because that brightening is the only thing
+ * telling a player whether the popover they are looking for is already up. A
+ * blit cannot change an image's colour, so the gold is laid over the glyph with
+ * `source-atop`, which paints only where the sprite already put pixels and
+ * leaves the header showing through everywhere else. The save/restore around it
+ * is not decoration: a composite left set leaks into every later draw on this
+ * context.
  */
-export function drawCog(ctx: CanvasRenderingContext2D, cog: PanelRect, open: boolean): void {
+export function drawCog(
+  ctx: CanvasRenderingContext2D,
+  sprites: SpriteSource,
+  cog: PanelRect,
+  open: boolean,
+): void {
+  const art = sprites.sprite(COG_ICON_ID);
+  if (art !== undefined) {
+    ctx.save();
+    ctx.drawImage(art.image, cog.x, cog.y, cog.w, cog.h);
+    if (open) {
+      ctx.globalCompositeOperation = 'source-atop';
+      ctx.fillStyle = PALETTE.GOLD;
+      ctx.fillRect(cog.x, cog.y, cog.w, cog.h);
+    }
+    ctx.restore();
+    return;
+  }
   const cx = cog.x + cog.w / 2;
   const cy = cog.y + cog.h / 2;
   const outer = cog.w / 2;
@@ -1607,6 +1641,12 @@ export function drawCog(ctx: CanvasRenderingContext2D, cog: PanelRect, open: boo
 }
 
 const COG_TEETH = 6;
+
+/**
+ * The gear's id. Named here rather than at each of the three call sites, because
+ * a second spelling of it is a second thing that can go stale when the art moves.
+ */
+const COG_ICON_ID = 'icon_ui_cog';
 
 /**
  * The popover's numbers. `POP_W` is what the three rows want; a log narrower

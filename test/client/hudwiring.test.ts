@@ -1758,7 +1758,13 @@ describe('the action bar’s cogwheel', () => {
   });
 
   it('draws the log’s cogwheel on the bar, and the popover while it is open', () => {
-    expect(CODE).toContain('drawCog(ctx, hotbarCogRect(layout.hotbar), hotbarSettingsOpen);');
+    // THE CALL GAINED ITS SPRITE SOURCE on 2026-09-20, when `icon_ui_cog` landed
+    // and `drawCog` started blitting it. The bar must hand over the same
+    // `sprites` every other painter here uses, or the action bar would be the one
+    // header of the three still drawing the wire-frame gear.
+    expect(CODE).toContain(
+      'drawCog(ctx, sprites, hotbarCogRect(layout.hotbar), hotbarSettingsOpen);',
+    );
     expect(CODE).toContain('drawHotbarSettings(ctx, sprites, pop, hotbarStyle);');
   });
 

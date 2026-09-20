@@ -1026,7 +1026,7 @@ export function drawDialogue(options: DialogueDrawOptions): void {
   // same missing file and ASSETS-REQUIRED.md logs the request. This is that
   // same function, not a second gear — a control that is the only way to reach
   // a setting must not be invisible behind a PNG nobody has drawn yet.
-  drawCog(ctx, geometry.cog, settingsOpen);
+  drawCog(ctx, sprites, geometry.cog, settingsOpen);
 
   // ═══ THE FACE ═══
   const source = dialoguePortraitSource(view, sprites);

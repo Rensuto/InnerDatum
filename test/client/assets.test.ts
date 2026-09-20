@@ -292,6 +292,15 @@ describe('the fillRect overlays stay art-free', () => {
       'icon_monster_',
       'icon_stat_',
       'icon_status_',
+      // ═══ `icon_ui_` IS THE FIRST KIND: ART THAT ALREADY EXISTS ═══
+      // Added 2026-09-20 with its reader, not ahead of it. `icon_ui_cog` is on
+      // disk and in the manifest (delivered 2026-09-19), and `drawCog` blits it
+      // at all three call sites — the Log, the action bar and the conversation
+      // window. The drawn hub-bore-and-teeth is still what a clone with no asset
+      // tree gets, so this prefix resolving nothing is the documented harmless
+      // no-op rather than a violet box, and `test/client/caselog.test.ts` pins
+      // both halves.
+      'icon_ui_',
       'icon_character_',
       'ui_panel_',
       'ui_marker_',

@@ -4,7 +4,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
-  NB_NPC_SCALE,
+  CountFit,
   actorAdjustLevel,
   delveHeadroom,
   delveLevel,
@@ -43,12 +43,12 @@ import type { Rng } from '../../src/shared/rng.ts';
  * floor; it does not say anybody lived to collect it, and reading it that way is
  * how the two halves get confused. At the time of writing the Watchman collects
  * it on eleven delves and the other three classes complete a descent on one or
- * two — see `DECISIONS.md` and the receipt on `NB_NPC_SCALE`.
+ * two — see `DECISIONS.md` and the note above `CountFit` in `content/delve.ts`.
  *
  * ═══ THE ARITHMETIC, AND EVERY TERM IS THE GAME'S OWN FUNCTION ═══
  * For floor `f` of a delve whose own level is `L` (`delveLevel`):
  *
- *     bodies      `nbNpcFor(spec, f, area)`, the zone's `nb_npc` at NB_NPC_SCALE
+ *     bodies      `nbNpcFor(spec, f, area)`, the sourced zone's `nb_npc`, verbatim
  *     their level `actorAdjustLevel`'s own answer   — engine/Zone.lua:195
  *     each pays   `worthExp(thatLevel, rank, L)`    — Actor.lua:6513-6531
  *     two levels  `expChart(L + 1) + expChart(L + 2)` — load.lua:205
@@ -223,18 +223,13 @@ function averageWorth(spec: DelveSpec, roomLevel: number, level: number): number
 }
 
 /** What floors 1..N-1 of this delve pay, on an average floor, if all of it dies. */
-function experienceBeforeTheBoss(siteId: string, spec: DelveSpec, scale = NB_NPC_SCALE): number {
+function experienceBeforeTheBoss(siteId: string, spec: DelveSpec): number {
   const level = delveLevel(spec);
   let paid = 0;
   for (let floor = 1; floor < floorsOf(spec); floor += 1) {
     const area = spec.nbNpcPerArea === undefined ? undefined : areaOf(siteId, floor);
     const band = nbNpcFor(spec, floor, area);
-    // THE FACTOR IS RE-APPLIED, NOT RE-ROLLED. `nbNpcFor` has already taken the
-    // shipping `NB_NPC_SCALE`; the counterfactual asks what the same band would
-    // be at another factor, which is that band divided out and multiplied back.
-    const mid = (band[0] + band[1]) / 2;
-    const bodies = scale === NB_NPC_SCALE ? mid : (mid / NB_NPC_SCALE) * scale;
-    paid += bodies * averageWorth(spec, level + floor - 1, level);
+    paid += ((band[0] + band[1]) / 2) * averageWorth(spec, level + floor - 1, level);
   }
   return paid;
 }
@@ -247,75 +242,61 @@ function twoLevels(spec: DelveSpec): number {
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════
- * THE DELVES THAT CANNOT — AND THERE ARE TWO REASONS, NOT ONE.
+ * THE DELVES THAT CANNOT — AND THE EXCEPTION IS NOW EARNED, NOT ASSERTED.
  * ═══════════════════════════════════════════════════════════════════════════
  *
- * There was ONE list here and it carried one claim: *"taking the factor to 1.00
- * leaves it short anyway"*, which made every entry a statement that the count is
- * innocent. That claim was true of two of the seven and false of five, and the
- * only reason it passed was the body-level bug above — a 6% under-count that put
- * the `REDACTED_TOWN` sites at 0.95 of the bar at 1.00 when the placer's own
- * levels put them at 1.004.
+ * There were TWO lists here and the split between them was "short at
+ * `NB_NPC_SCALE` and not at 1.00" against "short at both". THAT DISTINCTION NO
+ * LONGER EXISTS: the factor is deleted and every band is an upstream `nb_npc`
+ * verbatim, so there is one count and one question.
  *
- * So the entries are split by WHICH REASON, and each list is pinned from both
- * sides: an entry has to be short at the shipping factor to be excepted at all,
- * and has to be short (or not) at 1.00 to be in the list it is in. Neither list
- * can be grown to hide a delve that is simply fine, and a delve cannot sit in
- * the wrong one.
+ * ═══ WHAT REPLACED IT IS A CONTRACT AGAINST THE ALIGNMENT ITSELF ═══
+ * `DelveSpec.countFrom` says, per row, how the source zone's `level_range`
+ * stands to the level we place the delve at, and
+ * `test/server/delve-alignment.test.ts` checks each of those labels against the
+ * band. THE RULE HERE IS THAT ALIGNMENT IS THE LICENCE TO BE EXCEPTED: a delve
+ * every row of which is `CountFit.Covers` — a count upstream authors at exactly
+ * the level we place it at — has no excuse left and must pay. Only a delve
+ * carrying a row that is NOT `Covers` may sit on this list, and it must still
+ * actually be short.
  *
- * ═══ ONE: SHORT AT ANY COUNT. The level, not the number of bodies ═══
- * Upstream tunes a `nb_npc` and a `level_range` TOGETHER. We ported the count
- * off the zone file and kept our own authored level, and where those two drift
- * far apart the arithmetic cannot close: a body pays LINEARLY in its level
- * (`worthExp`) while `expChart` climbs quadratically, so a count that buys two
- * levels at level 5 buys a fifth of one at level 15. No factor fixes that,
- * because it is not the factor.
+ * That is what stops an exception list outliving its cause. The old one could be
+ * grown by adding an id; this one can only be grown by first admitting, in
+ * `content/delve.ts` and under a test that reads the Lua, that a delve's count
+ * is not the one upstream states for its level.
  *
- * THE GLASS ARCHIVE is `scintillating-caves`
- * (`data/zones/scintillating-caves/zone.lua:53`), `nb_npc = {12, 16}` — the
- * sparsest band in the twelve — and its own `level_range` is `{1, 5}` (`:25`).
- * We stand it at ELEVEN. At `NB_NPC_SCALE = 1.00`, which is upstream's count
- * with no divergence left at all, it still pays about four fifths of the two
- * levels. Its Redaction twin inherits that band and adds FOUR LEVELS
- * (`redactedSpec`), so it is the same arithmetic with the expensive half of the
- * ratio moved up and the cheap half held exactly still.
+ * ═══ SO: FIVE ENTRIES, AND THEY ARE ONE ROOM ═══
  *
- * ═══ TWO: SHORT AT THIS COUNT. The factor, and a bound that outranks it ═══
- * The five `REDACTED_TOWN` sites share one spec at level 14 and therefore share
- * one number to the digit. They clear the bar at upstream's own count and fail
- * at ours, so their shortfall IS the factor — and the factor is held where it is
- * by the other bound on it, which is a measured one and not arithmetic: the room
- * the game names to a four-minute-old character (`first-room.test.ts`) and the
- * turn cost of a floor for a party. `NB_NPC_SCALE`'s own docblock is the
- * receipt. This list is the price of that bound, written down rather than
- * averaged away.
+ * THE GLASS ARCHIVE AND ITS TWIN WERE ON THIS LIST AND HAVE COME OFF IT, which
+ * is this rule doing the work it was written for. They were `CountFit.Unaligned`
+ * because a 50x50 count on their 30x30 floor was refused as denser than anything
+ * upstream builds — a clause of OURS that
+ * `data/zones/orc-breeding-pit/zone.lua:83` refutes, forty bodies inheriting
+ * onto a floor with `min_floor=120`. With the clause gone the Archive takes
+ * `data/zones/halfling-ruins/zone.lua:50` at `{10, 25}`, every row is `Covers`,
+ * and the contract above STOPS PERMITTING the exception: the case below reports
+ * it as paying 1.43x and demands the id be removed. It was 0.79 for two years of
+ * this file's life and no factor could have reached it.
  *
- * ═══ AND THE DRIVEN PROBE AGREES WITH BOTH LISTS, WHICH IS THE BAR THIS FILE
- * SET ITSELF ═══
- * Its own header says a model that disagrees with `tools/delve-climb.mjs` about
- * a delve the probe actually walked is wrong whichever way it errs. Walked, four
- * descents a class: the Watchman gains +1.0 by the Glass Archive's boss (0 of 4
- * runs at +2) and +1.0 to +2.0 on the five towns (0/4, 1/4, 2/4, 2/3, 4/4). The
- * seven entries here are the seven the probe is short on. Every other delve the
- * Watchman reaches the boss of pays its two levels.
+ * THE FIVE `REDACTED_TOWN` SITES are `CountFit.PlayerScheme`: their count is not
+ * a band at all but the Infinite Dungeon's own area formula
+ * (`data/zones/infinite-dungeon/zone.lua:255-256`), `ceil(2500 * 34/4900)` on
+ * our 50x50 floors, so `{13, 23}`. There is no other zone to take it from —
+ * that IS the zone's statement — and it lands at 0.991 of two levels. Short by
+ * nine parts in a thousand, at upstream's own arithmetic, with nothing to
+ * substitute. It was 0.85 before the factor came off.
+ *
+ * AND THE FIVE ARE ONE NUMBER, not five: they share a single spec
+ * (`REDACTED_TOWN`) at level 14 and therefore agree to the digit.
  */
-const SHORT_AT_ANY_COUNT = new Set([
-  // The sparsest band in the game, six levels above the band it was tuned for.
-  'site:glass_archive',
-  // The Archive's band, four levels further up again.
-  'site:redaction:glass_archive',
-]);
-
-/** Short at `NB_NPC_SCALE` and NOT at 1.00 — see "TWO" above. */
-const SHORT_AT_THIS_COUNT = new Set([
+const CANNOT_PAY_TWO = new Set([
+  // One spec, five doors: the Infinite Dungeon's area formula on a 50x50.
   'site:redaction:alderbrook',
   'site:redaction:ashwick_row',
   'site:redaction:saints_rest',
   'site:redaction:threadneedle_row',
   'site:redaction:wayfarers_camp',
 ]);
-
-const CANNOT_PAY_TWO = new Set([...SHORT_AT_ANY_COUNT, ...SHORT_AT_THIS_COUNT]);
 
 describe('a delve pays two levels before its boss', () => {
   it('reads the area only where upstream does', () => {
@@ -386,24 +367,21 @@ describe('a delve pays two levels before its boss', () => {
    *
    *   IT IS A LIVE DELVE. A renamed or deleted site leaves a dead entry silently
    *     excusing nothing, which is how an exception list outlives its reason.
-   *   IT IS ACTUALLY SHORT, at the factor that ships. Anything else is a delve
-   *     that is FINE being carried as though it were not, and the case above
-   *     would never notice.
-   *   IT IS IN THE RIGHT LIST. Short at 1.00 is the level; short only at ours is
-   *     the count. Those are different problems with different fixes, and the
-   *     single list that used to be here asserted the first about all seven when
-   *     it was true of two.
+   *   IT IS ACTUALLY SHORT. Anything else is a delve that is FINE being carried
+   *     as though it were not, and the case above would never notice.
+   *   ITS COUNT IS NOT ONE UPSTREAM STATES AT ITS LEVEL. This is the one that
+   *     replaced the old two-list split, and it is the reason the list cannot be
+   *     grown quietly: a delve whose every `countFrom` row is `CountFit.Covers`
+   *     has no excuse to offer, so excusing it fails here and the fix has to be
+   *     made in `content/delve.ts` under a test that reads the Lua.
    */
   it('excepts only delves that are still delves', () => {
     const live = new Set(delves.map(({ site }) => site.id));
     for (const id of CANNOT_PAY_TWO)
       expect(live.has(id), `${id} is excepted and is not a delve any more`).toBe(true);
-    expect(CANNOT_PAY_TWO.size, 'the two lists overlap').toBe(
-      SHORT_AT_ANY_COUNT.size + SHORT_AT_THIS_COUNT.size,
-    );
   });
 
-  it('excepts nothing that is not short at the factor that ships', () => {
+  it('excepts nothing that is not short', () => {
     for (const { site, spec } of delves) {
       if (!CANNOT_PAY_TWO.has(site.id)) continue;
       const paid = experienceBeforeTheBoss(site.id, spec);
@@ -416,25 +394,31 @@ describe('a delve pays two levels before its boss', () => {
     }
   });
 
-  it('names the shortfall that is the delve`s LEVEL and not its count', () => {
+  it('excepts nothing whose count is the one upstream states at its own level', () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * ALIGNMENT IS THE LICENCE TO BE EXCEPTED, AND IT IS THE ONLY ONE.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * `CountFit.Covers` means the source zone's `level_range` covers the level
+     * we place the delve at, on a floor the size we build — so the count is
+     * exactly what ToME puts in front of a character standing at their own
+     * level. A delve made of nothing but those rows has spent its excuse: if it
+     * still cannot pay two levels, the thing to change is the delve, not this
+     * list.
+     *
+     * The converse is deliberately NOT asserted. Gearford Ward's rows are
+     * `PlayerScheme` and it pays 1.7 of two levels — being unalignable is
+     * permission to be short, not a prediction that you will be.
+     */
     for (const { site, spec } of delves) {
       if (!CANNOT_PAY_TWO.has(site.id)) continue;
-      const atUpstream = experienceBeforeTheBoss(site.id, spec, 1);
-      const need = twoLevels(spec);
-      const ratio = (atUpstream / need).toFixed(3);
-      if (SHORT_AT_ANY_COUNT.has(site.id)) {
-        expect(
-          atUpstream,
-          `${site.id} pays ${ratio} of two levels at NB_NPC_SCALE = 1.00, which CLEARS` +
-            ` the bar — its shortfall is the COUNT, so it belongs in SHORT_AT_THIS_COUNT`,
-        ).toBeLessThan(need);
-      } else {
-        expect(
-          atUpstream,
-          `${site.id} pays ${ratio} of two levels at NB_NPC_SCALE = 1.00 and is still` +
-            ` short — no count fixes it, so it belongs in SHORT_AT_ANY_COUNT`,
-        ).toBeGreaterThanOrEqual(need);
-      }
+      const fits = spec.countFrom.map((row) => row.fit);
+      expect(
+        fits.some((fit) => fit !== CountFit.Covers),
+        `${site.id} is excepted from paying two levels and every one of its counts is` +
+          ` one upstream states at its own level (${fits.join(', ')}) — it has no excuse`,
+      ).toBe(true);
     }
   });
 

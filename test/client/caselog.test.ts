@@ -10,8 +10,11 @@ import { readFileSync } from 'node:fs';
 
 import { describe, expect, it } from 'vitest';
 
+import { stubCanvas } from './canvasstub.ts';
+import type { StubCtx } from './canvasstub.ts';
 import {
   DEFAULT_LOG_STYLE,
+  drawCog,
   LOG_TABS,
   LogTab,
   createCaseLog,
@@ -744,5 +747,69 @@ describe('Enter talks, and the numpad still commits', () => {
     expect(byCode, 'the code-keyed command lookup is gone').toBeGreaterThan(-1);
     expect(ui).toBeGreaterThan(-1);
     expect(byCode, 'a verb on `enter` steals the frozen NumpadEnter commit').toBeLessThan(ui);
+  });
+});
+
+describe('the settings gear blits its PNG and still draws itself without one', () => {
+  /**
+   * ═══ THE CONTROL MUST SURVIVE A BARE CLONE, WHICH IS WHY BOTH HALVES ARE PINNED ═══
+   *
+   * `icon_ui_cog` arrived on 2026-09-19 and is the ONLY route to a panel's
+   * reset-position control on three surfaces: the Log, the action bar and the
+   * conversation window. Art is never in git, so a fresh checkout resolves no
+   * sprite at all — and a cog that blits nothing there is a setting nobody can
+   * reach, which is exactly the bargain `drawLogGrip` records one rule above it.
+   *
+   * So the two cases are one rule and neither is optional: the PNG when it is
+   * there, the hub-bore-and-teeth when it is not.
+   */
+  const cog = { x: 40, y: 12, w: 13, h: 13 };
+  const withArt = {
+    sprite: (id: string) =>
+      id === 'icon_ui_cog' ? { id, image: { id, w: 64, h: 64 }, w: 64, h: 64 } : undefined,
+  };
+  const withoutArt = { sprite: () => undefined };
+
+  it('blits the gear at the rect the hit test answers on', () => {
+    const ctx = stubCanvas(0, 0).getContext('2d') as StubCtx;
+    drawCog(ctx as never, withArt as never, cog, false);
+    expect(ctx.blits).toHaveLength(1);
+    const [blit] = ctx.blits;
+    expect({ dx: blit?.dx, dy: blit?.dy, dw: blit?.dw, dh: blit?.dh }).toEqual({
+      dx: cog.x,
+      dy: cog.y,
+      dw: cog.w,
+      dh: cog.h,
+    });
+    // ...AND THE DRAWN GEAR IS NOT ALSO PAINTED UNDER IT. Two gears at one rect
+    // would look like one gear and hide which of the two a change moved.
+    expect(ctx.arcs).toHaveLength(0);
+  });
+
+  it('draws the hub, the bore and six teeth when nothing resolves', () => {
+    const ctx = stubCanvas(0, 0).getContext('2d') as StubCtx;
+    drawCog(ctx as never, withoutArt, cog, false);
+    expect(ctx.blits).toHaveLength(0);
+    // The body and the bore. The teeth are strokes, not arcs.
+    expect(ctx.arcs.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('lays the open tint only over the glyph, and puts the composite back', () => {
+    // THE TINT IS THE WHOLE REASON THE BRIEF ASKED FOR A SILHOUETTE: the gold is
+    // the only thing telling a player the popover they want is already up. A
+    // blit cannot recolour an image, so it is painted `source-atop` — and the
+    // save/restore is load-bearing, because a composite left set leaks into
+    // every later draw on the same context.
+    const ctx = stubCanvas(0, 0).getContext('2d') as StubCtx;
+    drawCog(ctx as never, withArt as never, cog, true);
+    expect(ctx.rects).toContainEqual({ x: cog.x, y: cog.y, w: cog.w, h: cog.h });
+    expect(ctx.ops.filter((o) => o === 'save()')).toHaveLength(1);
+    expect(ctx.ops.filter((o) => o === 'restore()')).toHaveLength(1);
+  });
+
+  it('paints no tint while the popover is shut', () => {
+    const ctx = stubCanvas(0, 0).getContext('2d') as StubCtx;
+    drawCog(ctx as never, withArt as never, cog, false);
+    expect(ctx.rects).toHaveLength(0);
   });
 });

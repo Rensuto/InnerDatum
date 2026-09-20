@@ -96,8 +96,9 @@ describe('Grid.lua:102-109 — nobody is born under water', () => {
         halfAndHalf(TileCode.POND_WATER, [WET_ROOM]),
         rosterOf([INDEX_HUSK]),
       );
-      // THE BAND THE PLACER USES, not the one the fixture states: `nbNpcFor`
-      // applies `NB_NPC_SCALE` to it (see `DelveSpec.nbNpc`).
+      // THE BAND THE PLACER USES, asked through `nbNpcFor` rather than read
+      // off the fixture, so a per-floor source or a reintroduced factor shows
+      // up here (see `DelveSpec.countFrom`).
       expect(husks.placed).toBe(nbNpcFor(rosterOf([INDEX_HUSK]), 1)[1]);
       expect(husks.under).not.toContain(TileCode.POND_WATER);
     }

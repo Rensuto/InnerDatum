@@ -181,9 +181,10 @@ for (const [id, def] of SITES) {
   if (def.kind !== 'inner') continue;
   const spec = specFor(id);
   if (spec === undefined) continue;
-  // THE BAND THE PLACER USES — `nbNpcFor`, which is the zone's own `nb_npc`
-  // (`engine/generator/actor/Random.lua:126`) at `NB_NPC_SCALE`. 2500 cells is
-  // what a generated site reports and only Gearford Ward reads it.
+  // THE BAND THE PLACER USES — `nbNpcFor`, which is the sourced zone's own
+  // `nb_npc` verbatim (`engine/generator/actor/Random.lua:126`, and see
+  // `DelveSpec.countFrom`). 2500 cells is what a generated site reports and only
+  // Gearford Ward reads it.
   const [lo, hi] = nbNpcFor(spec, 1, 2500);
   const bodies = Math.round((lo + hi) / 2);
   // The roster is a rarity-weighted list now, so the mix is the list's shares

@@ -597,6 +597,9 @@ const NEEDED_ASSET_PREFIXES = [
   'icon_stat_',
   // M4. `chr_player_` above already covers the three `*_downed_s` bodies.
   'icon_status_',
+  // The settings gear on the log, the action bar and the conversation window.
+  // `ui/caselog.ts` draws a hub, a bore and six teeth when this resolves nothing.
+  'icon_ui_',
   // M5. The class portraits (`icon_character_the_*`) — the party pane's faces
   // and the inventory doll's. Half the family is uncut today — the manifest has
   // the alchemist and the cipher-clerk and not the watchman, the inspector or
@@ -6254,7 +6257,7 @@ const paintHud: HudPainter = (ctx, width, height) => {
     drawHotbar({ ctx, sprites, view: hotbarView(), rect: layout.hotbar, style: hotbarStyle });
     // THE CASE LOG'S GRIP AND COGWHEEL, the one drawing of each in the client.
     drawLogGrip(ctx, layout.hotbar);
-    drawCog(ctx, hotbarCogRect(layout.hotbar), hotbarSettingsOpen);
+    drawCog(ctx, sprites, hotbarCogRect(layout.hotbar), hotbarSettingsOpen);
     if (hotbarSettingsOpen) {
       const pop = hotbarSettingsRect(layout.hotbar, width, height, layout.hudTop);
       drawHotbarSettings(ctx, sprites, pop, hotbarStyle);
