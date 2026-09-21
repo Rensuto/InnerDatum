@@ -8,11 +8,14 @@ import { createPartyState } from '../../src/server/engine/party.ts';
 import { createTurnEngine } from '../../src/server/turn-engine.ts';
 import {
   ENCOUNTER_SITE,
+  INFINITY_TOWER_SITE_ID,
   SITES,
   UNDERMOST_SITE_ID,
   createRealms,
   floorsOfSite,
 } from '../../src/server/world/realms.ts';
+import { towerFloorAt } from '../../src/shared/mapgen/tower.ts';
+import type { TowerFloor } from '../../src/shared/mapgen/infinite.ts';
 import { createWorld } from '../../src/server/world/world.ts';
 import type { AuthoredMap } from '../../src/shared/level.ts';
 import { REDACTION_SITE_ID } from '../../src/shared/level.ts';
@@ -106,10 +109,75 @@ describe('how each place is lit', () => {
         (s) => s.populate !== undefined && s.id.startsWith('site:') && !s.id.includes(':redaction'),
       )
       .map((s) => s.id)
-      .filter((id) => id !== UNDERMOST_SITE_ID);
+      .filter((id) => id !== UNDERMOST_SITE_ID)
+      /**
+       * ═══════════════════════════════════════════════════════════════════════
+       * EXCEPT THE ONE WITH A BILLION FLOORS AND NO PER-FLOOR TABLE.
+       * ═══════════════════════════════════════════════════════════════════════
+       *
+       * `BY_FLOOR` is one row per delve and one entry per FLOOR, read off the
+       * zone file that builds that level. The Infinity Tower has no per-floor
+       * table to read: its light is a fact about the LAYOUT a floor rolled —
+       * 50 for the hewn rooms (`zone.lua:116`), `RoomsLoader`'s 100 for a
+       * forest, a town or a cavern, the building's own roll (`:158`), and
+       * nothing at all for a maze, an octopus or a hexacle — and there are a
+       * billion floors to list.
+       *
+       * It gets its own case below, driven through the same `built()` so this
+       * file still measures the real `lit` bitmap rather than the field.
+       */
+      .filter((id) => id !== INFINITY_TOWER_SITE_ID);
     expect(Object.keys(BY_FLOOR).toSorted()).toEqual(delves.toSorted());
     for (const [id, floors] of Object.entries(BY_FLOOR)) {
       expect(floors.length, id).toBe(floorsOfSite(id));
+    }
+  });
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * AND THE TOWER, WHOSE LIGHT IS ITS LAYOUT'S RATHER THAN ITS FLOOR'S.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `all_lited` is COMMENTED OUT on this zone (`zone.lua:31`), so nothing is lit
+   * except what a layout lights — and an ABSENT `SiteLighting` means LIT
+   * EVERYWHERE (`shared/light.ts`), which is the failure this guards. Measured
+   * through the same `built()` as every row above: the real bitmap, not the
+   * field, so this catches a `lighting` that never reaches `createWorld`.
+   */
+  it('lights a Tower floor the way its layout lights a room, and a maze not at all', () => {
+    const table = (floor: number): TowerFloor => towerFloorAt(floor);
+    const find = (layout: string): number => {
+      for (let floor = 1; floor <= 40; floor += 1)
+        if (table(floor).layoutName === layout) return floor;
+      throw new Error(`no ${layout} floor in the first forty`);
+    };
+    // A MAZE ROLLS NO LIGHT FOR ANYTHING, so the whole floor is dark.
+    const maze = built(INFINITY_TOWER_SITE_ID, find('maze'));
+    expect(count(maze.lit), 'a Tower maze is lit').toBe(0);
+    // AND THE HEWN ROOMS ROLL FIFTY (`zone.lua:116`), so a floor of eleven
+    // rooms has some lit and some not. THIS IS THE CASE THAT CATCHES A LIGHT
+    // THAT NEVER LEFT THE TABLE: a maze has no room at all, so it reads as dark
+    // whatever chance it is given, and a town at 100 reads the same at 100.
+    const hewn = built(INFINITY_TOWER_SITE_ID, find('default'));
+    const hewnRooms = inRooms(hewn.map);
+    expect(count(hewnRooms), 'a hewn Tower floor placed no room').toBeGreaterThan(0);
+    expect(count(hewn.lit), 'a hewn Tower floor lit nothing at 50').toBeGreaterThan(0);
+    expect(
+      count(hewn.lit),
+      'a hewn Tower floor lit every room, so the roll is not 50',
+    ).toBeLessThan(count(hewnRooms));
+    for (let t = 0; t < hewn.lit.length; t += 1) {
+      if (hewn.lit[t] === 1) expect(hewnRooms[t], 'lit outside every room').toBe(1);
+    }
+    // A TOWN LIGHTS EVERY ROOM IT PLACES (`RoomsLoader.lua:625`, no table sets
+    // one), and nothing outside them.
+    const town = built(INFINITY_TOWER_SITE_ID, find('town'));
+    const rooms = inRooms(town.map);
+    expect(count(rooms), 'a Tower town placed no room to light').toBeGreaterThan(0);
+    expect(count(town.lit), 'a Tower town is dark').toBeGreaterThan(0);
+    expect(count(town.lit), 'a Tower town is lit everywhere').toBeLessThan(town.lit.length);
+    for (let t = 0; t < town.lit.length; t += 1) {
+      if (town.lit[t] === 1) expect(rooms[t], 'lit outside every room').toBe(1);
     }
   });
 

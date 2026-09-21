@@ -7,7 +7,7 @@ import {
   newLevel,
 } from '../../src/shared/mapgen/level.ts';
 import { ZONES, zoneFloor } from '../../src/shared/mapgen/zones.ts';
-import { REDACTION_SITE_ID } from '../../src/shared/level.ts';
+import { INFINITY_TOWER_SITE_ID, REDACTION_SITE_ID } from '../../src/shared/level.ts';
 import { ON_STAND, airOf } from '../../src/shared/terrain.ts';
 import type { AuthoredMap } from '../../src/shared/level.ts';
 import type { TileXY } from '../../src/shared/coords.ts';
@@ -247,6 +247,25 @@ describe('every shipped site is painted with a legal pair', () => {
     // interiors, greens, water, bridges, doors, buildings and a boundary.
     // Their stronger geometry contract lives in server/towns.test.ts.
     if (site.kind === RealmKind.Overworld || site.kind === RealmKind.Common) continue;
+    /**
+     * ═════════════════════════════════════════════════════════════════════════
+     * AND THE ONE SITE WHOSE WAY DOWN IS DRAWN IN ANOTHER FLOOR'S GROUND.
+     * ═════════════════════════════════════════════════════════════════════════
+     *
+     * "One ground, and every other code solid" is a claim about a room carved
+     * in a palette. The Infinity Tower's palette is one of seventeen and changes
+     * every floor, and upstream deliberately draws the DOWN grid from the set of
+     * the floor it LEADS TO (`data/zones/infinite-dungeon/zone.lua:246`) — the
+     * exit is a patch of the ground on the other side of it. So a Tower floor
+     * has a second walkable code by construction, under the stair, and that is
+     * the feature rather than a palette that got away.
+     *
+     * ITS OWN CONTRACT IS STRICTER AND LIVES WITH THE GENERATOR:
+     * `test/shared/mapgen/tower.test.ts` asserts that every code on a Tower
+     * floor is one of exactly four — the set's floor, its wall, its door, and
+     * the destination set's floor — over the first forty floors.
+     */
+    if (id === INFINITY_TOWER_SITE_ID) continue;
     it(`${id} opens onto ground you can stand on, behind walls you cannot`, () => {
       const built = site.map(`palette-check-${id}`);
       // The Redaction carries transformed instances of the five shared

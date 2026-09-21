@@ -335,7 +335,7 @@ describe('it is wilderness, not a town', () => {
 describe('every settlement can be reached on foot', () => {
   const reach = reachableFrom(OVERWORLD.view, ALDERBROOK);
 
-  it('places all eighteen sites, three hidden, one on another map and one you woke in', () => {
+  it('places all nineteen sites, three hidden, one on another map, one you woke in and one with no bottom', () => {
     /**
      * THIRTEEN OF THESE ARE ON YOUR MAP FROM THE FIRST FRAME. The last three are
      * `SiteDef.hidden` and appear only once your own fog holds their cell — see
@@ -361,6 +361,19 @@ describe('every settlement can be reached on foot', () => {
      * that did not exist once you left it. `J` at (109,62) is its mouth, six
      * tiles off Alderbrook's gate, carrying the TileCode of the `j` it replaced
      * like every glyph before it. It is NOT hidden: you have been inside it.
+     *
+     * AND THE NINETEENTH IS THE ONLY ONE WITH NO LAST FLOOR. `site:infinity_tower`
+     * is ToME's Infinite Dungeon (`shared/mapgen/tower.ts`) and it goes down for
+     * a billion floors; `Y` at (57,4) is its mouth, in the northern snowfield,
+     * measured as the furthest walkable ground on this map from any marker
+     * already drawn on it. It carries the TileCode of the `n` it replaced, so
+     * the reachable-cell count held unchanged when it landed, as it did for
+     * every glyph before it — 8,346 today, and the number is asserted once,
+     * further down this file, rather than quoted here. (This sentence said
+     * `reach.size === 9327`, which is the v1 moor's count and has been wrong
+     * since the landmass was redrawn; `check:constants` does not read prose
+     * inside a test.) It is NOT hidden — it is already the one place with no
+     * bottom, and making it a secret as well is two surprises at once.
      */
     expect([...OVERWORLD.sites.values()].sort()).toEqual([
       'site:alderbrook',
@@ -372,6 +385,7 @@ describe('every settlement can be reached on foot', () => {
       'site:gearford_ward',
       'site:glass_archive',
       'site:hollow_mine',
+      'site:infinity_tower',
       'site:outer_index',
       'site:redaction',
       'site:saints_rest',

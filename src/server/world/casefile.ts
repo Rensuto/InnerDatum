@@ -59,8 +59,10 @@
  * that were authored onto a map and have something in them.
  */
 
-import { RealmKind } from './realms.ts';
+import { RealmKind, floorsOfSite } from './realms.ts';
 import type { SiteDef } from './realms.ts';
+// UPSTREAM'S OWN SPELLING OF "no bottom" — see `hasALastFloor`.
+import { TOWER_MAX_FLOOR } from '../../shared/mapgen/tower.ts';
 
 /**
  * Can this site ever appear in a case file?
@@ -71,7 +73,35 @@ import type { SiteDef } from './realms.ts';
  * caller supplies the second by only ever passing sites out of `SITES`.
  */
 export function isFileable(site: SiteDef): boolean {
-  return site.kind === RealmKind.Inner && site.birthplace !== true;
+  return site.kind === RealmKind.Inner && site.birthplace !== true && hasALastFloor(site);
+}
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * AND A CASE CLOSES ON THE LAST FLOOR, SO A PLACE WITH NO LAST FLOOR IS NOT
+ * A CASE.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * The gateway files a site when the party clears a floor and
+ * `full.floor >= floorsOfSite(siteId)` — *"the place is not cleared while a
+ * floor under it is still full"*. The Infinity Tower's depth is upstream's own
+ * way of writing "no bottom", `max_level = 1000000000`
+ * (`data/zones/infinite-dungeon/zone.lua:27`), so that test can never pass and
+ * the entry could never be closed by anybody.
+ *
+ * WITHOUT THIS, THE TOWER WOULD SHOW UP IN THE COUNT AND NOWHERE ELSE. The
+ * number is shown to the player — *"Filed 3 of 18"* — and `fileableCount`'s own
+ * note says why it is counted rather than written down: a literal *"would be a
+ * lie about the size of the game rather than about an implementation detail"*.
+ * An entry nobody can ever close is the same lie by a different route, and it
+ * lands on the one screen a player looks at to feel they are getting somewhere.
+ *
+ * ASKED OF THE DEPTH RATHER THAN OF THE ID, so the next endless place needs no
+ * edit here — and so the rule reads as what it is, which is a statement about
+ * places with an end rather than a list of exceptions.
+ */
+function hasALastFloor(site: SiteDef): boolean {
+  return floorsOfSite(site.id) < TOWER_MAX_FLOOR;
 }
 
 /**

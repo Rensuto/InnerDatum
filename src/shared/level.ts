@@ -549,7 +549,7 @@ const ALDERBROOK_ROWS: readonly string[] = [
   'XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX',
   'XXWWWWiiiiiiiiiissssTTTTTTTTTTTTTTTTTTTTTTTTTTTffffffffffnnnsssiiiiiiiWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWXX',
   'XXWWWiiiiiiiiiissshTTTTTTTTTTTTTTTTTTTTTTTTTTTfffffffffffnnnnnsssiiiiiiiWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWXX',
-  'XXWWiiiisssiisssshhTTTTTTTTTTTTTTTTTTTTTTTTffffffffffffffnnnnnnnssiiiiiiiWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWXX',
+  'XXWWiiiisssiisssshhTTTTTTTTTTTTTTTTTTTTTTTTffffffffffffffYnnnnnnssiiiiiiiWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWXX',
   'XXiiiiisssssssshhhhhTTTTTTTTTTTTTTTTTTTTTTTTffffffffffffffnnnnnnnsssiiiiiiiWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWXX',
   'XXiiiissppssshhhhhhhTTTTTTTTTTTTTTTTTTTTTTTTffffffffffffffnnnnnnneessiiiiiiiiWWWWWWWWWWWWWiiiiiiiiiiiiiiiiiiiiiiiWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWXX',
   'XXiiissppssshhhhhhhhhTTTTTTTTTTTTTTTTTTTTTTTTffffffffffffffnnnnnnneessiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWXX',
@@ -670,6 +670,20 @@ export const REDACTION_SITE_ID = 'site:redaction';
  * to refuse to copy it.
  */
 export const BIRTHPLACE_SITE_ID = 'site:undermost';
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE ONE PLACE ON THIS MAP WITH NO BOTTOM — and the same file for the same
+ * reason as the two constants above.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `src/shared/` may not import from `src/server/`, and three shared modules
+ * need this spelling: the legend below, which puts its mouth on the moor;
+ * `shared/redaction.ts`, which has to refuse to copy it; and nothing else yet.
+ * `world/realms.ts` re-exports it as `INFINITY_TOWER_SITE_ID` so the server
+ * still has one name for it in the place the server looks.
+ */
+export const INFINITY_TOWER_SITE_ID = 'site:infinity_tower';
 
 /** The legend. Every character is a real TileCode; nothing defaults. */
 const ALDERBROOK_LEGEND: Readonly<Record<string, Glyph>> = {
@@ -876,6 +890,53 @@ const ALDERBROOK_LEGEND: Readonly<Record<string, Glyph>> = {
    * `UNDERMOST_SITE_ID` from here rather than the other way round.
    */
   J: { tile: TileCode.FIELD, site: BIRTHPLACE_SITE_ID },
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * AND THE ONE DOOR WITH NOTHING BEHIND IT BUT MORE — (57,4), in the snow.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Every other site on this map is a place with a last floor: three or four
+   * rooms, a warden at the bottom, an entry in the case file when you have
+   * walked all of it. This one is ToME's Infinite Dungeon
+   * (`data/zones/infinite-dungeon/zone.lua`, `shared/mapgen/tower.ts`) and it
+   * goes down for a billion floors. Nothing closes it and nobody finishes it.
+   *
+   * ═══ THE CELL WAS MEASURED, LIKE THE OTHER FOUR ═══
+   * Ranked over all 8,346 walkable cells this map reaches from the gate — an
+   * eight-way walk, as movement is — by distance to the NEAREST existing
+   * marker, which is the same measurement that placed Cairnfoot, Barrow End and
+   * the Weir. The top three cells are (57,4), (57,3) and (57,2), all at 27; the
+   * next is 26.
+   *
+   *   (57,4)   27 tiles from the nearest marker — the Hollow Mine and Gearford
+   *            Ward are both exactly 27 away — and 101 steps from the gate.
+   *
+   * 101 steps is a long walk and it is deliberately inside the range the map
+   * already asks for: the Outer Index is 90, Blackwood Outskirts 106 and
+   * Gearford Ward 109, so the Tower is the fourth-furthest marker rather than a
+   * new record. It stands in the northern snowfield above the Cold Furrows,
+   * between the cold forest and the frozen sea, with nothing else within a
+   * screen of it in any direction.
+   *
+   * ═══ IT IS NOT HIDDEN, AND THAT IS A DECISION ═══
+   * `SiteDef.hidden` is for the three places that reward looking. This one is
+   * on the map from the first frame, because it is already the one place in the
+   * game with no bottom and making it a secret as well would be two surprises
+   * at once — and because a marker at the top of the world that nobody has
+   * walked to is the best reason this map has ever had to go north.
+   *
+   * ═══ `Y` IS A FREE CAPITAL, AND THAT IS THE WHOLE ARGUMENT ═══
+   * The convention here is the capital of the ground the glyph stands on, and
+   * this ground is `n`, SNOWFIELD, whose `N` is the Hollow Mine's. So are every
+   * letter of its own name: `T` is TREES, `I` the Outer Index, `F` Gearford
+   * Ward. It takes a free capital exactly as `J` did for the Undermost.
+   *
+   * ═══ SNOWFIELD, UNCHANGED ═══
+   * The cell walks and blocks exactly as the `n` it replaces, so
+   * `overworld.test.ts`'s walkable count holds bit for bit and adding a
+   * destination stays a data change.
+   */
+  Y: { tile: TileCode.SNOWFIELD, site: INFINITY_TOWER_SITE_ID },
 };
 
 const ALDERBROOK = parseMap(ALDERBROOK_ROWS, ALDERBROOK_LEGEND);

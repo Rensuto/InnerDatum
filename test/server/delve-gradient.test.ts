@@ -123,6 +123,33 @@ function delvesByDistance(): readonly Row[] {
      * has never been able to name it.
      */
     if (def?.birthplace === true) continue;
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * AND THE PLACE WHOSE DANGER IS NOT ON THIS MAP AT ALL — same argument as
+     * the two above, and the sharpest version of it.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * The Infinity Tower is `level_range = {1, 1}`
+     * (`data/zones/infinite-dungeon/zone.lua:25`), so `delveLevel` is 1 and it
+     * reads here as the gentlest room on the moor, standing a hundred steps
+     * out. That is not a mistake in the table: floor 1 of the Tower really is a
+     * level-1 room. Its difficulty is not a function of HOW FAR YOU WALKED, it
+     * is a function of how far you have gone DOWN — `actor_adjust_level`'s
+     * `* 1.2` per floor, without limit (`:28`, `DelveSpec.depthScale`).
+     *
+     * A gradient about what the MAP promises cannot contain a place whose
+     * difficulty axis is not on the map. Excluded by the spec's own endlessness
+     * rather than by its id, so a second endless place drops out of this
+     * gradient for the same reason rather than needing a new name here.
+     *
+     * ═══ AND THE COUNT IS ASSERTED BELOW, IN THIS FILE ═══
+     * This note used to say the count "is asserted" and point at nothing: the
+     * assertion lived in `delve-curve.test.ts` and this file had none, so a
+     * second row carrying `maxFloors` would have dropped silently out of the
+     * distance gradient with nothing red anywhere. One line is cheaper than a
+     * cross-reference that nobody re-checks.
+     */
+    if (spec.maxFloors !== undefined) continue;
     const weight = ['quiet', 'restless', 'dangerous', 'grim'].indexOf(dangerWord(spec));
     rows.push({ id: siteId, steps: steps ?? 0, weight });
   }
@@ -131,6 +158,25 @@ function delvesByDistance(): readonly Row[] {
 }
 
 describe('the map stops lying about which way danger lies', () => {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * EXACTLY ONE ROW IS LEFT OUT, SO THE EXEMPTION CANNOT WIDEN QUIETLY.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `delvesByDistance` skips any spec that states its own depth — see the note
+   * at the `continue`. That is the right rule and it is also a door: a second
+   * row carrying `maxFloors` would drop out of every case below with nothing
+   * red. This is the line that makes adding one a deliberate act, and it lives
+   * in THIS file, because the identical assertion in `delve-curve.test.ts`
+   * covers `delve-curve.test.ts`.
+   */
+  it('leaves exactly one place out, and it is the one with no bottom', () => {
+    const endless = [...DELVES.entries()].filter(([, spec]) => spec.maxFloors !== undefined);
+    expect(endless.map(([id]) => id)).toEqual(['site:infinity_tower']);
+    // AND IT REALLY IS OUT of the rows every case below reads.
+    expect(delvesByDistance().some((row) => row.id === 'site:infinity_tower')).toBe(false);
+  });
+
   it('never puts the worst room nearest the gate', () => {
     /**
      * THE REGRESSION, and the weakest form of it that still catches the bug:
@@ -230,14 +276,22 @@ describe('the map stops lying about which way danger lies', () => {
      * construction. If this count changes, somebody added or dropped a room
      * while claiming to reorder them.
      */
-    // ELEVEN NOW: the eight that shipped, re-attached to different doors by the
-    // gradient re-key, plus the three hidden sites. All three of those sit in
-    // the MIDDLE band on purpose — a secret that is also the hardest room in the
-    // game is one you can only survive after you no longer need it.
+    // TWELVE NOW: the eight that shipped, re-attached to different doors by the
+    // gradient re-key, plus the three hidden sites, plus the Infinity Tower.
+    // All three hidden ones sit in the MIDDLE band on purpose — a secret that is
+    // also the hardest room in the game is one you can only survive after you no
+    // longer need it.
     // ON THE MAP: the birthplace has a spec, but it is where a character is put,
-    // not a room anybody walks to, and it is none of these eleven.
+    // not a room anybody walks to, and it is none of these twelve.
+    // AND THE TWELFTH IS `restless`, WHICH IS TRUE OF ITS FIRST FLOOR AND OF NO
+    // OTHER. `dangerWord` reads the spec's base `nb_npc` and its roster, and the
+    // Tower's real count is a function of the floor's own area
+    // (`nbNpcPerArea`) while its real level is a function of the floor number
+    // (`depthScale`) — so one word cannot describe it and the word it gets is
+    // the word for walking in the door. That is why it is off the distance
+    // gradient above, and it is stated here rather than left to be discovered.
     const rooms = [...DELVES].filter(([id]) => SITES.get(id)?.birthplace !== true);
-    expect(rooms.length).toBe(11);
+    expect(rooms.length).toBe(12);
     const words = rooms.map(([, spec]) => dangerWord(spec)).sort();
     expect(words).toEqual([
       'dangerous',
@@ -246,6 +300,7 @@ describe('the map stops lying about which way danger lies', () => {
       'grim',
       'grim',
       'quiet',
+      'restless',
       'restless',
       'restless',
       'restless',

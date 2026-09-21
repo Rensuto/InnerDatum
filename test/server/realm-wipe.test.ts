@@ -21,6 +21,7 @@ import { describe, expect, it } from 'vitest';
 
 import { createDownedState, goDown } from '../../src/server/engine/downed.ts';
 import { createTurnEngine } from '../../src/server/turn-engine.ts';
+import { DEEPER_FLOORS, floorsToWalk, specFor } from '../../src/server/content/delve.ts';
 import {
   ENCOUNTER_SITE,
   RealmKind,
@@ -87,12 +88,47 @@ function wipe(realm: Realm, downed: DownedState): void {
   expect(back?.alive, `${realm.id}: the wipe did not restore the body`).toBe(true);
 }
 
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * FIRST FLOOR AND LAST, FOR EVERY DELVE THAT BUILDS A POPULATION.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `floorsToWalk` RATHER THAN `floorsOfSite`, AND THIS FILE IS THE READER THAT
+ * SWEEP MISSED. `floorsToWalk`'s own note lists eleven callers that ENUMERATED
+ * a site's floors and had to be bounded when a site with no bottom landed. This
+ * was the twelfth, and it was missed because it does not enumerate: it uses the
+ * answer as a FLOOR NUMBER, one row of an `it.each`. `[1, 1000000000]` is two
+ * rows and looks cheap — and then `realms.open` calls `site.map(seed, ground,
+ * 1000000000)` unconditionally (`world/realms.ts`), which is a billion links of
+ * the Tower's chain, about four core-hours, in a synchronous loop that
+ * `--testTimeout` cannot interrupt. Not a slow test: a suite that never returns.
+ *
+ * So the shape to check a new caller against is not the `for` loop. It is
+ * ANY use of a site's depth as a number to hand to something.
+ */
 const DELVE_FLOORS = [...SITES.values()]
   .filter((site) => site.kind === RealmKind.Inner && site.populate !== undefined)
   .flatMap((site) => {
-    const last = floorsOfSite(site.id);
+    const spec = specFor(site.id);
+    const last = spec === undefined ? floorsOfSite(site.id) : floorsToWalk(spec);
     return [...new Set([1, last])].map((floor) => ({ site, floor }));
   });
+
+/**
+ * AND THE BOUND IS CHECKED AT IMPORT, NOT IN A CASE — because the failure it
+ * guards is a HANG, and a hang inside `it.each` never reaches an assertion. A
+ * `throw` here fails the whole file in milliseconds with the reason on it;
+ * an `expect` in the first case would go red and then the run would stop
+ * anyway on the case after it. Revert the two lines above and this fires.
+ */
+const DEEPEST_SWEPT = Math.max(...DELVE_FLOORS.map(({ floor }) => floor));
+if (DEEPEST_SWEPT > DEEPER_FLOORS) {
+  throw new Error(
+    `realm-wipe: this sweep opens floor ${String(DEEPEST_SWEPT)}, past the deepest floor any ` +
+      `site with a bottom has (${String(DEEPER_FLOORS)}). Opening a floor is not free — see ` +
+      `\`floorsToWalk\`. Bound it rather than letting the run hang.`,
+  );
+}
 
 describe('a party wipe puts the floor back as itself', () => {
   it('covers every delve that builds a population, first floor and last', () => {

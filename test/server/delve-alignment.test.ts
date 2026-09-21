@@ -10,6 +10,7 @@ import {
   delveLevel,
   eligibleOn,
   floorsOf,
+  floorsToWalk,
   nbNpcFor,
   specFor,
 } from '../../src/server/content/delve.ts';
@@ -120,7 +121,7 @@ describe('every delve says where its count came from', () => {
         1,
       );
 
-      for (let floor = 1; floor <= floorsOf(spec); floor += 1) {
+      for (let floor = 1; floor <= floorsToWalk(spec); floor += 1) {
         const claiming = spec.countFrom.filter((row) => row.floors?.includes(floor) === true);
         expect(
           claiming.length,
@@ -267,7 +268,7 @@ describe('every delve says where its count came from', () => {
       if (spec.nbNpcPerArea !== undefined) continue;
       // EVERY FLOOR, through the row that claims it — the same walk `nbNpcFor`
       // makes, so a per-floor source is measured on its own floors.
-      for (let floor = 1; floor <= floorsOf(spec); floor += 1) {
+      for (let floor = 1; floor <= floorsToWalk(spec); floor += 1) {
         const row =
           spec.countFrom.find((r) => r.floors?.includes(floor) === true) ??
           spec.countFrom.find((r) => r.floors === undefined);
@@ -397,8 +398,13 @@ describe('the band a delve stands on covers the level it stands at', () => {
      *     the one label with no upstream fact behind it, only an argument, and a
      *     table that can reach for it without going red has a place to put rooms
      *     nobody wants to think about.
-     *   PLAYER-SCHEME, seven — Gearford Ward, its twin, and the five redacted
-     *     towns, all of them the Infinite Dungeon, which has no band.
+     *   PLAYER-SCHEME, eight — the Infinity Tower itself, Gearford Ward, its
+     *     twin and the five redacted towns. All of them are the Infinite
+     *     Dungeon, which has no band: `level_range = {1, 1}` with
+     *     `level_scheme = "player"` and `max_level = 1000000000`
+     *     (`data/zones/infinite-dungeon/zone.lua:25-27`). The seven that are
+     *     not the Tower borrow its `enemy_count` formula for a floor built as
+     *     one of its layouts; the Tower IS the zone.
      *
      * Everything else is `Covers`: twenty-two of twenty-eight delves carrying a
      * count ToME states for a character standing at exactly their level.
@@ -410,6 +416,7 @@ describe('the band a delve stands on covers the level it stands at', () => {
     expect(by(CountFit.Unaligned)).toEqual([]);
     expect(by(CountFit.PlayerScheme)).toEqual([
       'site:gearford_ward',
+      'site:infinity_tower',
       'site:redaction:alderbrook',
       'site:redaction:ashwick_row',
       'site:redaction:gearford_ward',
@@ -519,7 +526,7 @@ describe('who is eligible, floor by floor', () => {
      * a per-floor source or a twin's `+4` would land it.
      */
     for (const { id, spec } of delves) {
-      for (let floor = 1; floor <= floorsOf(spec); floor += 1) {
+      for (let floor = 1; floor <= floorsToWalk(spec); floor += 1) {
         expect(
           eligible(spec, floor).length,
           `${id} floor ${String(floor)}: the filter refuses its own whole roster`,
@@ -528,15 +535,27 @@ describe('who is eligible, floor by floor', () => {
     }
   });
 
-  it('narrows exactly one room in the game, and it is Barrow End', () => {
+  it('narrows two rooms in the game: Barrow End, and the top of the Tower', () => {
     /**
-     * ═══ THE CENSUS, SO THAT A SECOND IS A DELIBERATE ACT ═══
+     * ═══ THE CENSUS, SO THAT A THIRD IS A DELIBERATE ACT ═══
      * `THICKET` and `DEEP` are the only rosters holding a template with a
      * `levelRange` floor above one (`INDEX_HUSK_ELITE`, fifteen), and Barrow End
-     * is the only delve carrying either at a level low enough for a tier-1
-     * filter to bite AND sourcing its count from a zone that states one. So the
-     * answer below is not a fixture of one id: it is what is left when the one
-     * gate in the bestiary meets the one filter that can close it.
+     * is the only delve on the moor carrying either at a level low enough for a
+     * tier-1 filter to bite AND sourcing its count from a zone that states one.
+     * So the answer below is not a fixture of one id: it is what is left when
+     * the one gate in the bestiary meets the filters that can close it.
+     *
+     * ═══ AND THE SECOND ONE NARROWS FOR THE OPPOSITE REASON ═══
+     * The Infinity Tower's first floors stand at base level 1 and it filters at
+     * `max_ood = 6` (`data/zones/infinite-dungeon/zone.lua:89`) — SIX, the
+     * loosest filter in the game, on the one zone meant to hand you something
+     * over your head. Six is still not fourteen: a level-15 elite is out of
+     * depth on floor 1 of anything, so the Tower's shallow floors hold the rank
+     * and file and nothing else, and the elites arrive as the floor number does.
+     * That is upstream's own rule doing exactly what it is for, and it is the
+     * only thing in this table that gets LOOSER as you walk — see
+     * `test/server/tower.test.ts`, which asserts the roster never empties at
+     * any depth.
      *
      * THE TITLE IS WHAT IS ASSERTED. This case used to be called "moves exactly
      * two rooms" while asserting which delves NARROW — it has no before and
@@ -552,7 +571,7 @@ describe('who is eligible, floor by floor', () => {
         const whole = spec.roster.filter(
           (t) => t.rarity !== undefined && t.levelRange !== undefined,
         ).length;
-        for (let floor = 1; floor <= floorsOf(spec); floor += 1) {
+        for (let floor = 1; floor <= floorsToWalk(spec); floor += 1) {
           if (eligible(spec, floor).length < whole) return true;
         }
         return false;
@@ -560,7 +579,7 @@ describe('who is eligible, floor by floor', () => {
       .map(({ id }) => id)
       .sort();
 
-    expect(narrowed).toEqual(['site:barrow_end']);
+    expect(narrowed).toEqual(['site:barrow_end', 'site:infinity_tower']);
 
     /**
      * AND IT IS READ FROM BOTH SIDES, because "one delve narrows" is only half a
@@ -796,7 +815,7 @@ describe('the sources are the Lua (reads reference/, skipped without it)', () =>
       // with an unbounded `max_level`; there is no "other zone at this level".
       if (spec.nbNpcPerArea !== undefined) continue;
       const level = delveLevel(spec);
-      for (let floor = 1; floor <= floorsOf(spec); floor += 1) {
+      for (let floor = 1; floor <= floorsToWalk(spec); floor += 1) {
         const row =
           spec.countFrom.find((r) => r.floors?.includes(floor) === true) ??
           spec.countFrom.find((r) => r.floors === undefined);

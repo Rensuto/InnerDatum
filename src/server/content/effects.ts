@@ -2298,7 +2298,29 @@ export const ZONE_AURA_UNDERWATER: EffectDef = zoneAura({
  * COLD (:1926), LIGHTNING (:1947), DARKNESS (:1989), MIND (:2010), PHYSICAL
  * (:2094), FEARSCAPE (:2918), OUT_OF_TIME (:2937) and THUNDERSTORM (:2994). The
  * Infinite Dungeon's aura roll reaches all but Fearscape
- * (data/zones/infinite-dungeon/zone.lua:353-357); they land with the Tower.
+ * (data/zones/infinite-dungeon/zone.lua:352-357).
+ *
+ * ═══ THIS SENTENCE USED TO END "they land with the Tower". THEY DID NOT. ═══
+ * The Tower shipped and the roll did not come with it, so the line became a
+ * false statement about this tree sitting next to a green gate — the exact
+ * shape of rot a deferral note takes. It is rewritten as a DEFERRAL with its
+ * cost and its reason rather than deleted, because the port is still worth
+ * doing and the next reader needs the shape of it:
+ *
+ *   `zone.lua:350` is `if level.level >= 5 and rng.percent(level.level * 4)`
+ *   then one draw from `rng.table` of EIGHTEEN ids (`:352-357`) into
+ *   `level.data.effects` (`:359`). The channel here is already end to end —
+ *   `AuthoredMap.zoneEffects` -> `Realm.zoneEffects` -> `applyZoneEffectsIn` —
+ *   so the port is one roll on the floor's own seed. It must draw from all
+ *   EIGHTEEN slots and land nothing when the slot names one of the ten we do
+ *   not have, or both the chance of an aura at all AND each aura's own odds
+ *   move.
+ *
+ *   WHY IT IS NOT IN THE COMMIT THAT FIXED THIS NOTE: `level.level * 4` is 20%
+ *   at floor 5 and 100% from floor 25 down, so this is not a garnish — it is a
+ *   damage-over-time on every deep floor in the game's one unbounded place, and
+ *   every measurement the Tower shipped against was taken without it. It needs
+ *   its own pass and its own numbers, not a free ride on a review.
  *
  * NOT PORTABLE, THIRTEEN, each for a damage type or a mechanic this game does
  * not have: ACID (:1968), LIGHT (:2031), ARCANE (:2052), TEMPORAL (:2073),

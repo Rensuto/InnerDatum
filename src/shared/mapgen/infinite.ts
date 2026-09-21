@@ -88,8 +88,13 @@
  *   names no vault list, so it draws every auto vault; the pool here is the
  *   works rooms, as the Gearford building floors use (`TOWER_VAULTS`).
  * - `pit` and a clearing's pit are geometry, with no monsters in them.
- * - The `items-vault` addon is not in the reference tree: no `I` key and no
- *   `!items-vault` room (`:214`, `:249`).
+ * - The `items-vault` ADDON ROOM is not in the reference tree: no `!items-vault`
+ *   (`:21`, `:214`). The `I` KEY is a separate thing and is dropped for its own
+ *   reason: `:249` sets `data.generator.map.I = "ITEMS_VAULT"` unconditionally,
+ *   addon or not, and `ITEMS_VAULT` is a real grid (`grids.lua:384`) — but
+ *   nothing draws an `I` once the room that would place one is gone, so the key
+ *   has nothing to resolve. Consequence nil either way; recorded because the
+ *   earlier note filed `:249` under the addon and it is not.
  * - `InfiniteDungeon:getLayouts` and `:getGrids` (`:182`, `:204`) are hooks
  *   nothing in the tome tree binds, so there is nothing to call.
  * - `infiniteDungeonChallenge` (`:258`) is not ported. It is the last thing
@@ -145,6 +150,46 @@ export const TOWER_LAYOUTS: readonly TowerLayout[] = Object.freeze([
   // data/zones/infinite-dungeon/zone.lua:171-173
   { id: 'hexa', desc: ', geometrically ordered area', generator: 'Hexacle' },
 ] as const);
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * `enemy_count`'s DENOMINATOR AND ITS THREE NUMERATORS, IN ONE PLACE.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `local enemy_count = layout.enemy_count or math.ceil(vx * vy * 34/4900)`
+ * (`data/zones/infinite-dungeon/zone.lua:255`) — so 34 is the number a layout
+ * that states none falls back to, and exactly two layouts state one: the forest
+ * at 40 (`:129`) and the building at 60 (`:161`, *"more room for enemies and
+ * more cover on this map"*).
+ *
+ * THEY ARE HERE RATHER THAN SPELLED AT EACH SITE because the server needs the
+ * same three numbers: `DelveSpec.nbNpcPerArea` is this numerator, and a second
+ * copy of 40 and 60 in `content/delve.ts` would be two answers to one question.
+ * `towerEnemyCountPerArea` is the reader; the rolls below and `alterLevelData`
+ * use it too, so there is one place to change and one place to be wrong.
+ *
+ * ═══ AND THAT SENTENCE WAS AN INTENTION, NOT A DESCRIPTION, FOR A WHILE ═══
+ * It was written while `content/delve.ts` still spelled `nbNpcPerArea: 60` on
+ * the Gearford Ward row (the building layout) and `nbNpcPerArea: 34` on the
+ * redacted town (the town layout), and while `nbNpcFor` divided by a bare
+ * `4900` against the denominator below. Four copies of three facts, under a
+ * comment saying there was one. They read from here now, which is what the
+ * paragraph above claimed all along.
+ */
+export const TOWER_ENEMY_COUNT_AREA = 4900;
+
+/** `enemy_count`'s numerator for a layout that states none (`:255`). */
+export const TOWER_ENEMY_COUNT_PER_AREA = 34;
+
+/** The two layouts that state their own (`:129`, `:161`). */
+const LAYOUT_ENEMY_COUNT_PER_AREA: Readonly<Partial<Record<TowerLayoutId, number>>> = Object.freeze(
+  { forest: 40, building: 60 },
+);
+
+/** `layout.enemy_count`'s numerator, or the fallback `:255` uses. */
+export function towerEnemyCountPerArea(layout: TowerLayoutId): number {
+  return LAYOUT_ENEMY_COUNT_PER_AREA[layout] ?? TOWER_ENEMY_COUNT_PER_AREA;
+}
 
 /**
  * Which layout and grid set a floor is built in, 1-based as upstream's
@@ -324,7 +369,8 @@ export function alterLevelData(lev: number, entry: TowerEntry | undefined, rng: 
     spec: { width: vx, height: vy, map: roll.map(grid) },
     exits: [exit1, exit2],
     // :255.
-    enemyCount: roll.enemyCount ?? Math.ceil((vx * vy * 34) / 4900),
+    enemyCount:
+      roll.enemyCount ?? Math.ceil((vx * vy * TOWER_ENEMY_COUNT_PER_AREA) / TOWER_ENEMY_COUNT_AREA),
     lighting: roll.lighting,
     layoutName: layout.id,
     gridsName: set.id,
@@ -395,7 +441,9 @@ function rollForest(rng: Rng, lev: number, vx: number, vy: number): TowerRoll {
   range(rng, 'tower.alter.forest.sqrt_percent', 30, 50);
   const sqrtPercent = range(rng, 'tower.alter.forest.sqrt_percent', 5, 10);
   const nbRooms = mathRandom(rng, 'tower.alter.forest.nb_rooms', 1, Math.ceil((vx * vy) / 2000));
-  const enemyCount = Math.ceil((vx * vy * 40) / 4900);
+  const enemyCount = Math.ceil(
+    (vx * vy * towerEnemyCountPerArea('forest')) / TOWER_ENEMY_COUNT_AREA,
+  );
   const edgeEntrances = edges.value;
   return {
     map: (grid) => ({
@@ -485,7 +533,9 @@ function rollTown(rng: Rng, lev: number): TowerRoll {
  */
 function rollBuilding(rng: Rng, lev: number, size: number, vx: number, vy: number): TowerRoll {
   const rolled = infiniteDungeonBuilding(rng, size, vx, vy, lev);
-  const enemyCount = Math.ceil((vx * vy * 60) / 4900);
+  const enemyCount = Math.ceil(
+    (vx * vy * towerEnemyCountPerArea('building')) / TOWER_ENEMY_COUNT_AREA,
+  );
   return {
     map: (grid) => ({
       class: 'Building',

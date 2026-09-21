@@ -1064,3 +1064,26 @@ that is the only clerical word allowed anywhere near these four.
 All three 24x24 icons must survive the bar's own contrast at `HOTBAR` scale and
 must not be mistakable for the three `ledger/testimony` stance icons, which are
 the nearest neighbours a Redactor actually looks at.
+
+## The Infinity Tower's mouth on the overworld
+
+**Not drawn.** The Tower is a cell on the moor now — glyph `Y` at (57,4), in the
+northern snowfield, 101 steps from Alderbrook's gate and 27 tiles from the
+nearest other marker, which is the furthest walkable ground on the map from
+anything already drawn on it. Every other site there draws its own 32x32
+silhouette; `landmarkIdFor` (`src/shared/redaction.ts`) names this one so that
+the missing id resolves to nothing and the client draws the generic `stair`
+family marker, which is the right fallback. With NO row at all it would fall
+through to `tile_ow_landmark_redaction` — the gate onto the dark territory —
+which is the one wrong picture that would be read as a second door to somewhere
+real.
+
+| Id | Size | What it is |
+|---|---|---|
+| `tile_ow_landmark_infinity_tower` | 32x32 | A tower driven DOWNWARD into the snow: what is above the ground is the last few courses of something much longer, canted, with the drifts up one side and a mouth at the top going straight down out of sight. It must read as a way DOWN, because that is what it is — you enter at the top and descend for ever. No door, no windows, no roof, nothing lived in. |
+
+It must read at 32x32 against SNOWFIELD, must not be mistakable for
+`tile_ow_landmark_undermost` (a torn hole in a field, which is also a way down
+but is somewhere a person was put), and must not read as a building — the
+Watcher's Altar and the Glass Archive are the nearest silhouettes that do, and
+both are places with a last room.

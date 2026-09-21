@@ -38,16 +38,32 @@
 // Usage:
 //   node tools/delve-climb.mjs [runs]                  every inner site
 //   node tools/delve-climb.mjs 6 --only=undermost,hollow_mine
+//   node tools/delve-climb.mjs 6 --only=infinity_tower --depth=20
+//                                                  how deep to walk a site that
+//                                                  has no bottom (default 4)
 //   node tools/delve-climb.mjs 4 --at=1                start every delve at 1
 
-import { SITES, RealmKind, floorsOfSite } from '../src/server/world/realms.ts';
+import { SITES, RealmKind } from '../src/server/world/realms.ts';
 import { CLASSES } from '../src/server/content/classes.ts';
-import { delveLevel, specFor } from '../src/server/content/delve.ts';
+import { delveLevel, floorsToWalk, specFor } from '../src/server/content/delve.ts';
 import { run } from './delve-run.mjs';
 
 const args = process.argv.slice(2);
 const RUNS = Number(args.find((a) => !a.startsWith('-')) ?? 4);
 const ONLY = (args.find((a) => a.startsWith('--only=')) ?? '').replace('--only=', '');
+/**
+ * HOW DEEP TO WALK A SITE WITH NO BOTTOM.
+ *
+ * `floorsToWalk` caps at four, which is right for a default sweep and wrong for
+ * the one probe most likely to be pointed at the Infinity Tower: without this
+ * flag `--only=infinity_tower` stopped at floor 4 WITH NO MESSAGE, and the
+ * floors worth measuring there start at about 5 (three dark mazes in a row) and
+ * run to 40 (where the xp economy is tightest). A probe that cannot reach the
+ * interesting floors of the one endless place is a probe with a hole in it.
+ *
+ * `floorsToWalk` already takes a cap; this is the flag that sets it.
+ */
+const DEPTH = Number((args.find((a) => a.startsWith('--depth=')) ?? '').replace('--depth=', ''));
 const AT = args.find((a) => a.startsWith('--at='));
 const SIZE = Number(
   (args.find((a) => a.startsWith('--size=')) ?? '--size=1').replace('--size=', ''),
@@ -96,7 +112,11 @@ const avg = (xs) => (xs.length === 0 ? 0 : xs.reduce((a, b) => a + b, 0) / xs.le
 function climb(site, cls, seed) {
   const spec = specFor(site.id);
   const start = AT === undefined ? Math.max(1, delveLevel(spec)) : Number(AT.replace('--at=', ''));
-  const floors = floorsOfSite(site.id);
+  // BOUNDED: `floorsOfSite` is upstream's `max_level`, and the Infinity
+  // Tower's is a billion. See `floorsToWalk` in content/delve.ts, and `DEPTH`
+  // above for reaching past the default cap on purpose.
+  const floors =
+    Number.isFinite(DEPTH) && DEPTH > 0 ? floorsToWalk(spec, DEPTH) : floorsToWalk(spec);
   let level = start;
   let xp = 0;
   let equipped;

@@ -73,7 +73,17 @@ import { RANK_VALUE, rankLevelAdjust } from '../../shared/leveling.ts';
 import { computeRarities, pickEntity } from './rarity.ts';
 import type { RarityCandidate, RarityList } from './rarity.ts';
 import type { Rng } from '../../shared/rng.ts';
-import { REDACTION_SITE_ID } from '../../shared/level.ts';
+import { INFINITY_TOWER_SITE_ID, REDACTION_SITE_ID } from '../../shared/level.ts';
+// THE TOWER'S OWN THREE NUMBERS, EACH READ OFF ITS OWN LINE OF ITS OWN ZONE
+// FILE — `max_level` (:27), the `* 1.2` (:28) and `enemy_count`'s numerator
+// (:255). They live in `shared/mapgen/` because the map generator needs them
+// too, and a second copy here would be a second answer.
+import { TOWER_DEPTH_SCALE, TOWER_MAX_FLOOR } from '../../shared/mapgen/tower.ts';
+import {
+  TOWER_ENEMY_COUNT_AREA,
+  TOWER_ENEMY_COUNT_PER_AREA,
+  towerEnemyCountPerArea,
+} from '../../shared/mapgen/infinite.ts';
 import { embellish } from './encounter.ts';
 import { canWalk, tileAt } from '../../shared/level.ts';
 import { airOf, breathes } from '../../shared/terrain.ts';
@@ -161,9 +171,35 @@ export function actorAdjustLevel(
   baseLevel: number,
   rank: ActorRank,
   floor: number,
+  /**
+   * ═════════════════════════════════════════════════════════════════════════
+   * AND THE ONE ZONE THAT MULTIPLIES ITS DEPTH — `DelveSpec.depthScale`.
+   * ═════════════════════════════════════════════════════════════════════════
+   *
+   * The Trollmire line above is seventy-nine zones' line. The Infinite Dungeon
+   * writes its own:
+   *
+   * ```lua
+   * actor_adjust_level = function(zone, level, e)
+   *     return math.floor((zone.base_level + level.level-1) * 1.2)
+   *            + e:getRankLevelAdjust() + rng.range(-1,2) end
+   * ```
+   *
+   * — `data/zones/infinite-dungeon/zone.lua:28`. Same four terms, and the first
+   * two are multiplied before the other two are added: `math.floor` of the
+   * product, THEN rank, THEN the jitter. It is the only thing making a tower
+   * with no bottom get harder faster than a straight line, and without it a
+   * floor-50 body would be level 50 where upstream's is 60, widening forever.
+   *
+   * ONE, WHICH IS EVERY OTHER ZONE, and `Math.floor` of an integer times one is
+   * that integer — so the default is not an approximation of the old line, it
+   * IS the old line. See `DelveSpec.depthScale`.
+   */
+  depthScale = 1,
 ): number {
   const jitter = rng.int(label, -1, 2);
-  return Math.max(1, baseLevel + rankLevelAdjust(RANK_VALUE[rank]) + floor - 1 + jitter);
+  const depth = Math.floor((baseLevel + floor - 1) * depthScale);
+  return Math.max(1, depth + rankLevelAdjust(RANK_VALUE[rank]) + jitter);
 }
 
 /**
@@ -769,6 +805,81 @@ export type DelveSpec = {
    * this table at all. See `zoneBaseLevel` for the whole argument.
    */
   readonly levelScheme?: ZoneLevelScheme;
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * HOW DEEP, WHEN THE TIER CANNOT SAY — upstream's `max_level`, stated.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `floorsOf` reads a delve's depth off the tier its level falls in, because a
+   * delve names a level rather than an upstream zone and every ToME zone in
+   * that tier is the same depth. ONE ZONE IN THE GAME BREAKS THAT, and it is
+   * the one whose whole point is that it does: the Infinite Dungeon is
+   * `max_level = 1000000000` (`data/zones/infinite-dungeon/zone.lua:27`) with a
+   * `level_range` of `{1, 1}`, so the tier rule would call it three floors deep
+   * and a party would find the way down withheld at the bottom of floor 3.
+   *
+   * ABSENT ON EVERY OTHER ROW, and it must stay that way unless a row can cite
+   * a `max_level` that its tier gets wrong: this field is an override of a rule
+   * that is right eleven times out of twelve, and a table full of them would be
+   * the rule deleted one row at a time.
+   */
+  readonly maxFloors?: number;
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * HOW FAST DEPTH TURNS INTO LEVELS — the ×1.2 in one zone's own line.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `math.floor((zone.base_level + level.level-1) * 1.2)`
+   * (`data/zones/infinite-dungeon/zone.lua:28`) where every other zone here
+   * writes `zone.base_level + level.level-1` — see `actorAdjustLevel`, which
+   * takes this as its last argument and defaults it to 1.
+   *
+   * IT IS THE WHOLE DIFFICULTY CURVE OF A PLACE WITH NO BOTTOM. Upstream's
+   * Infinite Dungeon is entered at any character level and admits everybody
+   * (`level_range = {1, 1}`, `level_scheme = "player"`, `:25-26`), so `base_level`
+   * is pinned at 1 for every character forever (`engine/Zone.lua:141-148` is
+   * `util.bound(plev, 1, 1)`) and ALL of its danger comes from the floor number.
+   * A straight line would put a floor-50 body at 50; upstream puts it at 60, and
+   * the gap grows without limit. The multiplier is not a tuning knob we chose.
+   *
+   * NOTHING CLAMPS IT AND NOTHING NEEDS TO. `actorAdjustLevel` floors at 1 and
+   * the life curve is monotonic; the ceiling in this game is
+   * `MAX_CHARACTER_LEVEL`, which bounds the PLAYER and says nothing about how
+   * deep a floor may be.
+   */
+  readonly depthScale?: number;
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * `infinite_dungeon = true` — and the OTHER half of `depthScale`'s bargain.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `data/zones/infinite-dungeon/zone.lua:33`, the only zone upstream that sets
+   * it, and it is read in exactly one place: `Actor.lua:6519` picks a SECOND
+   * rank ladder for `worthExp` (`shared/progression.ts` `RANK_WORTH_INFINITE`).
+   * An ordinary body pays 2 there instead of 0.8, an elite 3.5 instead of 3 and
+   * a boss 6 instead of 25.
+   *
+   * ═══ WHY IT IS A SEPARATE FIELD FROM `depthScale` AND NOT THE SAME FLAG ═══
+   * They are two lines of the same table five apart (`:28` and `:33`) and today
+   * exactly one row carries both, so one field would work and would be wrong:
+   * `:28` is read by `actorAdjustLevel` and is a number a future zone could
+   * want at 1.1, while `:33` is a boolean upstream reads in a different file for
+   * a different purpose. Upstream keeps them apart; so does this.
+   *
+   * ═══ AND IT SHIPPED HALF-DONE ONCE, WHICH IS WHY THIS NOTE IS LONG ═══
+   * The Tower landed with `depthScale` and without this, so it took the
+   * difficulty half of upstream's bargain and left the payout. Measured on the
+   * built floors: clearing one paid 0.57-1.15 character levels from floor 10
+   * down against the 1.2 a floor the bodies gain, so a descending party fell
+   * behind about 0.2 levels per floor and never caught up. `progression.ts`'s
+   * own note had named `:6519` and ported past it — correctly, on the day it
+   * was written, because there was no infinite dungeon then.
+   *
+   * It reaches the payout on the BODY (`MonsterActor.infiniteDungeon`), set by
+   * `populateDelve` from this field, because `payParty` is handed a corpse and
+   * has no zone to ask.
+   */
+  readonly infiniteDungeon?: true;
 };
 
 /** The common roster. Husks with a wraith or two behind them. */
@@ -1555,8 +1666,13 @@ export const DELVES: ReadonlyMap<string, DelveSpec> = new Map<string, DelveSpec>
       // (:255-256) with the building layout's own numerator (:161) — see
       // `nbNpcPerArea`. The band below is the base table, used if a floor ever
       // reports no area.
+      //
+      // THE BUILDING LAYOUT'S OWN NUMERATOR, ASKED FOR RATHER THAN SPELLED.
+      // `towerEnemyCountPerArea('building')` is `:161`'s 60, and it is the same
+      // function `TOWER_SITE.populate` asks per floor — so this row and the
+      // Tower cannot answer the same question differently.
       nbNpc: [29, 39],
-      nbNpcPerArea: 60,
+      nbNpcPerArea: towerEnemyCountPerArea('building'),
       /**
        * AND IT IS THE ONE DELVE WITH NO BAND TO ALIGN, WHICH IS A FACT ABOUT THE
        * ZONE RATHER THAN AN EXEMPTION WE GRANTED IT.
@@ -1818,6 +1934,100 @@ export const DELVES: ReadonlyMap<string, DelveSpec> = new Map<string, DelveSpec>
       roster: THICKET,
       litter: [4, 6],
       levelRange: [15, 15],
+    },
+  ],
+  // ─── and the one with no far end ────────────────────────────────────────
+  //     101 steps, in the northern snow. See `INFINITY_TOWER_SITE_ID`.
+  [
+    INFINITY_TOWER_SITE_ID,
+    {
+      /**
+       * ═══════════════════════════════════════════════════════════════════════
+       * THE INFINITY TOWER — ToME's INFINITE DUNGEON, ROW FOR ROW.
+       * ═══════════════════════════════════════════════════════════════════════
+       *
+       * Every other entry in this table is a level we chose, standing in for a
+       * zone whose band happens to cover it. This one IS the zone
+       * (`data/zones/infinite-dungeon/zone.lua`), and the floors are that zone's
+       * floors: `shared/mapgen/tower.ts` walks `alter_level_data`'s own chain of
+       * layouts and grid sets, so what is on the far side of the door is what
+       * upstream would have built there.
+       *
+       * ═══ THE COUNT IS A FUNCTION OF THE FLOOR'S AREA, AND ONLY HERE ═══
+       * `nb_npc = {29, 39}` (`:88`) is the base table, and `alter_level_data`
+       * overwrites it on every floor from the floor's own size:
+       * `enemy_count = layout.enemy_count or math.ceil(vx * vy * 34/4900)`
+       * (`:255`), `nb_npc = {enemy_count-5, enemy_count+5}` (`:256`). This is
+       * the one zone in ToME that does that, and it does it because it is the
+       * one zone whose level SIZE is rolled per floor (`infiniteDungeonSize`).
+       * `nbNpcPerArea` is that numerator; the band below is the base table, used
+       * only if a floor ever reports no area.
+       *
+       * THE NUMERATOR CHANGES WITH THE LAYOUT — 40 on a forest floor (`:129`),
+       * 60 on a building floor (`:161`) — and the floor's own layout picks it.
+       * `TOWER_SITE` passes the right one per floor
+       * (`towerEnemyCountPerArea`, `shared/mapgen/infinite.ts`); 34 stands here
+       * as the zone's stated default so a reader of this table sees the row
+       * upstream wrote.
+       *
+       * ═══ NO BAND TO ALIGN AGAINST, WHICH IS A FACT ABOUT THE ZONE ═══
+       * `level_range = {1, 1}` with `level_scheme = "player"` and
+       * `max_level = 1000000000` (`:25-27`) — so `Zone:updateBaseLevel`
+       * (`engine/Zone.lua:141-148`) is `util.bound(plev, 1, 1)` and the base
+       * level is 1 for a level-40 Inspector exactly as it is for a level-1
+       * Watchman. `level_scheme = "player"` is INERT on this zone, and it is
+       * worth saying plainly because the word promises otherwise: the depth
+       * comes entirely from the floor number, through `depthScale`.
+       *
+       * ═══ SIX TO NINE OBJECTS, FLAT, AND NO TRAPS AT ALL ═══
+       * `nb_object = {6, 9}` (`:93`) and `nb_trap = {0, 0}` (`:97`). The trap
+       * band is ABSENT rather than `[0, 0]` because absent is what this file
+       * means by "this place lays none". The litter band is NOT scaled by
+       * `forArea` here — see `TOWER_SITE`, which calls `populateDelve` with this
+       * spec unscaled: `forArea`'s 34x30 baseline is ours, every band in this
+       * table was measured on it, and upstream states this one flat over a floor
+       * whose own size it rolls.
+       *
+       * ═══ NO BOSS ROW ═══
+       * `populateDelve` places `spec.boss` on the last floor, and this zone has
+       * no last floor. Upstream's set piece here is a different mechanism
+       * entirely — `RandomStairGuard` (`:76-90`) puts a rank-3.5 random boss
+       * within five tiles of the DOWN stair on nearly every floor, on a curve —
+       * and it is deferred with the second exit rather than faked with a boss
+       * that fires at floor a billion.
+       */
+      nbNpc: [29, 39],
+      nbNpcPerArea: TOWER_ENEMY_COUNT_PER_AREA,
+      countFrom: [
+        {
+          band: [1, 1],
+          bandCite: 'data/zones/infinite-dungeon/zone.lua:25',
+          nbNpc: [29, 39],
+          cite: 'data/zones/infinite-dungeon/zone.lua:88',
+          floor: [70, 70],
+          floorCite: 'data/zones/infinite-dungeon/zone.lua:29',
+          maxOod: 6,
+          maxOodCite: 'data/zones/infinite-dungeon/zone.lua:89',
+          fit: CountFit.PlayerScheme,
+        },
+      ],
+      // `filters = { {max_ood=6} }` — infinite-dungeon/zone.lua:89. Six, not
+      // two: the one zone in the game meant to hand you something well over
+      // your head.
+      maxOod: 6,
+      roster: DEEP,
+      litter: [6, 9],
+      levelRange: [1, 1],
+      levelScheme: ZoneLevelScheme.Player,
+      maxFloors: TOWER_MAX_FLOOR,
+      depthScale: TOWER_DEPTH_SCALE,
+      // ═══ AND THE OTHER HALF OF THE SAME BARGAIN — `:33` ═══
+      // `infinite_dungeon = true`, which is upstream's second xp ladder
+      // (`Actor.lua:6519`). `depthScale` two lines up makes the floors harder
+      // at 1.2 a floor; this is what pays for them. Shipping one without the
+      // other is a difficulty increase with the reward removed, and that is
+      // exactly what the first cut of this row was.
+      infiniteDungeon: true,
     },
   ],
 ]);
@@ -2251,7 +2461,9 @@ const REDACTED_TOWN: DelveSpec = {
    * (`:88`), used only if a floor reports no area.
    */
   nbNpc: [29, 39],
-  nbNpcPerArea: 34,
+  // THE TOWN LAYOUT'S NUMERATOR, which is the zone's default because the town
+  // layout states none (`:255`). Asked for, not spelled — see Gearford Ward.
+  nbNpcPerArea: towerEnemyCountPerArea('town'),
   /**
    * NO BAND TO ALIGN, FOR THE ZONE'S OWN REASON — the same one Gearford Ward
    * carries. The Infinite Dungeon is `level_range = {1, 1}` with
@@ -2576,6 +2788,16 @@ export function delveLevel(spec: DelveSpec, party: PartyStrength = LONE_BEGINNER
  * `+ floor - 1` from the placer, and switching the filter off in the placer,
  * both left the whole alignment file GREEN, because the file was asking its own
  * copy. One function now, called by the placer and read by the tests.
+ *
+ * ═══ `DelveSpec.depthScale` IS DELIBERATELY NOT APPLIED HERE ═══
+ * The Infinity Tower multiplies its depth by 1.2, and that multiply belongs to
+ * `actor_adjust_level` (`data/zones/infinite-dungeon/zone.lua:28`), which
+ * decides what level a body is BORN at. The level a candidate is WEIGHED at is
+ * a different number: `resolvers.current_level = base_level + level.level - 1`
+ * (`engine/Zone.lua:1031`), unscaled, which is what `Zone:makeEntity` builds
+ * its probability list against. Scaling it here would thin a roster faster than
+ * upstream thins it, and on a floor deep enough would leave nobody eligible at
+ * all — see `test/server/tower.test.ts`, which asks at a billion.
  */
 export function eligibleOn(
   spec: DelveSpec,
@@ -2603,7 +2825,7 @@ export function nbNpcFor(spec: DelveSpec, floor: number, area?: number): readonl
   const perArea =
     spec.nbNpcPerArea === undefined || area === undefined
       ? undefined
-      : Math.ceil((area * spec.nbNpcPerArea) / 4900);
+      : Math.ceil((area * spec.nbNpcPerArea) / TOWER_ENEMY_COUNT_AREA);
   if (perArea !== undefined) {
     // CLAMPED AT ZERO, WHICH UPSTREAM IS NOT. `infinite-dungeon/zone.lua:256`
     // is a bare `enemy_count-5`, and on a floor small enough to make that
@@ -2623,8 +2845,14 @@ export function nbNpcFor(spec: DelveSpec, floor: number, area?: number): readonl
 const FIRST_TIER_TOP_LEVEL = 5;
 /** How deep a first-tier zone goes. See `floorsOf`. */
 const FIRST_TIER_FLOORS = 3;
-/** How deep a zone past the first tier goes. See `floorsOf`. */
-const DEEPER_FLOORS = 4;
+/**
+ * How deep a zone past the first tier goes. See `floorsOf`.
+ *
+ * EXPORTED because it is `floorsToWalk`'s default cap, and a sweep that wants
+ * to assert it stayed bounded needs the number rather than a second copy of 4
+ * (`test/server/realm-wipe.test.ts`).
+ */
+export const DEEPER_FLOORS = 4;
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════
@@ -2644,7 +2872,45 @@ const DEEPER_FLOORS = 4;
  * the tier its level falls in.
  */
 export function floorsOf(spec: DelveSpec): number {
+  // AND THE ONE ZONE THAT STATES ITS OWN. See `DelveSpec.maxFloors`: the tier
+  // rule would read the Infinite Dungeon's `level_range = {1, 1}` as a
+  // first-tier zone and stop it at three floors.
+  if (spec.maxFloors !== undefined) return spec.maxFloors;
   return spec.levelRange[0] <= FIRST_TIER_TOP_LEVEL ? FIRST_TIER_FLOORS : DEEPER_FLOORS;
+}
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * HOW MANY FLOORS TO WALK, FOR A CALLER THAT WALKS THEM ONE AT A TIME.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `floorsOf` is upstream's `max_level` and is asked as a BOUND — `goDown`
+ * refuses at it, `withStairsDown` withholds a stair at it, the case file closes
+ * at it. None of those enumerate. ELEVEN CALLERS DID, across six test files and
+ * two probes: the art census over every floor of every site, the per-floor
+ * source check in `delve-alignment`, four density and depth loops in
+ * `monster-scaling`, three in `levelling-curve` — one of which OPENS A REALM
+ * per floor — `zone-floors`, and both delve probes. The Infinity Tower's
+ * `max_level` is a billion (`DelveSpec.maxFloors`), so every one of them was a
+ * HANG rather than a slow loop: no failure, no message, a test run that simply
+ * stops. It is the one thing an endless site breaks in a codebase that had only
+ * ever had places with a bottom, and it is worth checking a new caller against.
+ *
+ * THE ONES THAT ARE SAFE ARE SAFE FOR A REASON, not by luck: they walk a NAMED
+ * site, or the Redaction's twins (the Tower has none), or they guard on
+ * membership of a zone table the Tower is not in, or — `casefile-wire` — they
+ * descend the first FILEABLE site, and the Tower is not one.
+ *
+ * FOUR IS THE DEEPEST PLACE IN THE GAME THAT HAS ONE (`DEEPER_FLOORS`), so for
+ * every site but the Tower this returns `floorsOf` unchanged and the walk is
+ * still every floor. For the Tower it returns a prefix, which is the honest
+ * answer: a census of per-floor authored data over a place that authors none is
+ * as complete after four floors as after a billion, and the questions that ARE
+ * depth-dependent belong in `test/server/tower.test.ts`, asked at depths chosen
+ * on purpose.
+ */
+export function floorsToWalk(spec: DelveSpec, cap = DEEPER_FLOORS): number {
+  return Math.min(floorsOf(spec), cap);
 }
 
 /**
@@ -3031,7 +3297,11 @@ export function populateDelve(
           delveLevel(spec, party),
           template.rank,
           floor,
+          spec.depthScale,
         ),
+        // WHICH LADDER ITS CORPSE PAYS ON — `DelveSpec.infiniteDungeon`. Absent
+        // everywhere but the Tower, and absent means upstream's ordinary ladder.
+        spec.infiniteDungeon,
       ),
     );
     /**
@@ -3133,7 +3403,12 @@ export function populateDelve(
             delveLevel(spec, party),
             spec.boss.rank,
             floor,
+            spec.depthScale,
           ),
+          // AS EVERY OTHER BODY ON THE FLOOR — see the rank-and-file call above.
+          // A set piece in an infinite dungeon is paid on the same ladder as the
+          // things around it; upstream's branch is on the ZONE, not the rank.
+          spec.infiniteDungeon,
         ),
       );
       /**

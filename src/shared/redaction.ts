@@ -6,6 +6,7 @@ import { tileIndex } from './coords.ts';
 import {
   ALDERBROOK_REGIONS,
   BIRTHPLACE_SITE_ID,
+  INFINITY_TOWER_SITE_ID,
   REDACTION_SITE_ID,
   makeOverworld,
 } from './level.ts';
@@ -394,6 +395,27 @@ export function makeRedaction(): AuthoredMap {
      * same. What the Index took was the way down.
      */
     if (siteId === BIRTHPLACE_SITE_ID) continue;
+    /**
+     * AND THE TOWER, WHICH THERE IS ALSO EXACTLY ONE OF.
+     *
+     * Same shape as the two skips above and the same general rule: A MAP DOES
+     * NOT CONTAIN A SECOND INFINITY. The Infinity Tower goes down a billion
+     * floors from one cell in the northern snow (`ALDERBROOK_LEGEND`, glyph
+     * `Y`); a twin of it on the dark moor would not be a second place, it would
+     * be a second mouth onto the same endless stair, and "which Tower is floor
+     * 40 of" is a question with no answer.
+     *
+     * ═══ AND IT WOULD NOT BOOT ═══
+     * Stated because it is the loud half. Every other twin is built by
+     * SPREADING its original out of `AUTHORED_SITES` (`world/realms.ts`), and
+     * the Tower is hand-written beside `UNDERMOST_SITE` rather than a row in
+     * that table — for the same reason the Undermost is — so a surviving glyph
+     * here would throw `no site behind site:redaction:infinity_tower` at
+     * module load. The skip is the rule; not throwing is the symptom.
+     *
+     * The ground is untouched: the cell is SNOWFIELD on both maps.
+     */
+    if (siteId === INFINITY_TOWER_SITE_ID) continue;
     // The cell the room ENDED UP in, which is the original unless it moved.
     const key = `${String(i % w)},${String(Math.floor(i / w))}`;
     sites.set(key, `${REDACTION_SITE_ID}:${siteId.replace('site:', '')}`);
@@ -471,6 +493,18 @@ const LANDMARK_ID_BY_SITE: Readonly<Record<string, string>> = {
    * before this row existed. Naming it now is what makes the art a drop-in.
    */
   [BIRTHPLACE_SITE_ID]: 'tile_ow_landmark_undermost',
+  /**
+   * THE TOWER, AND THE ROW IS HERE BECAUSE THE FALLBACK IS WRONG WITHOUT IT.
+   *
+   * The art is not drawn (see ASSETS-REQUIRED.md). An id with no file behind it
+   * resolves to nothing and the client draws the `stair` family marker, which is
+   * the right picture for a way down and exactly what the Undermost's row above
+   * did while its hole was in production. NO row is the failure case, not this
+   * one: `landmarkIdFor` falls through to `tile_ow_landmark_redaction`, so the
+   * Tower would be drawn as the gate onto the dark territory — a second door to
+   * somewhere else entirely, at the one end of the map nobody has walked.
+   */
+  [INFINITY_TOWER_SITE_ID]: 'tile_ow_landmark_infinity_tower',
   [REDACTION_SITE_ID]: 'tile_ow_landmark_redaction',
 };
 

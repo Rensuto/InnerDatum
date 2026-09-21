@@ -655,6 +655,61 @@ describe('when it finishes', () => {
       server.realms.overworld.id,
     );
   });
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * AND IT STAYS OUT WHEN THE WIND-UP IS BURNT BY WALKING, NOT BY RESTING.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * EVERY OTHER CASE IN THIS FILE BURNS THE WIND-UP WITH `rest`, and that is
+   * the one path where this bug cannot happen. `handleRest` does not ask where
+   * the body ended up; `handleMove` does, because a step can land on a door —
+   * and `crossIntoSite` was its single call site.
+   *
+   * So the sequence nobody drove: the twentieth turn after the pull is a MOVE.
+   * `pumpAndBroadcast` drains the wind-up inside that move, `yankOut` puts the
+   * body on `session.enteredFrom` — which IS the site's door glyph, because
+   * that is the tile it was standing on when it crossed in — and then the rest
+   * of `handleMove` reads that tile as the tile this step reached and crosses
+   * them straight back in.
+   *
+   * MEASURED before the guard, over a socket: pulled on Infinity Tower floor
+   * 12, burnt with moves, landed in `realm:site:infinity_tower:1`. Reproduced
+   * from Underworks floor 2, which is what this case drives — it is every
+   * delve, not a Tower bug.
+   *
+   * MUTANT: delete `if (session.realmId !== startedIn) return;` from
+   * `handleMove` and this case ends in the delve instead of on the moor. It is
+   * the only case in the suite that does.
+   *
+   * AND THIS IS THE REALISTIC PATH. You cannot rest at depth with hostiles
+   * standing (`handleRest` refuses above zero engagement), and you are running
+   * when you pull the Knot.
+   */
+  it('stays out when the wind-up is burnt by walking rather than resting', async () => {
+    const client = await connect(server.port);
+    const delve = await walkIn(client);
+    handTheKnot(client);
+    await pull(client);
+    expect(hasEffect(server.effects, client.actorId, EffectId.Elsewhere), 'never armed').toBe(true);
+
+    // ONE STEP PER TURN, and one turn more than the wind-up, so the drain
+    // happens ON a move. No `rest` anywhere in this case, deliberately.
+    for (let turn = 0; turn <= KNOT_WIND_UP_TURNS + 2; turn += 1) {
+      if (realmOf(client).id === server.realms.overworld.id) break;
+      await stepAnywhere(client);
+    }
+
+    expect(
+      realmOf(client).id,
+      'the step that drained the wind-up crossed them back through the door they left by',
+    ).toBe(server.realms.overworld.id);
+    expect(realmOf(client).id, 'it never came out at all').not.toBe(delve.id);
+    // AND ON THE DOOR CELL, as the resting path lands: the yank is unchanged,
+    // only what `handleMove` does afterwards.
+    const out = server.realms.overworld.world.getActor(client.actorId);
+    expect(out === undefined ? null : { x: out.x, y: out.y }).toEqual(doorTo(UNDERWORKS));
+  });
 });
 
 // ---------------------------------------------------------------------------

@@ -47,6 +47,8 @@ type Site = {
   readonly level: number;
   /** Marked on the world map, or found only by walking into it. */
   readonly hidden: boolean;
+  /** A place with no last floor. See the gradient case. */
+  readonly endless: boolean;
   /** How much it pays. The hidden sites' reward axis — see `walkedSites`. */
   readonly litter: readonly [number, number];
 };
@@ -76,6 +78,9 @@ function walkedSites(): readonly Site[] {
       steps: path.length,
       level: delveLevel(spec, { level: 1, size: 1 }),
       hidden: SITES.get(siteId)?.hidden === true,
+      // A place with no bottom is not a rung on a ladder of distance — see the
+      // note in the gradient case below.
+      endless: spec.maxFloors !== undefined,
       litter: spec.litter,
     });
   }
@@ -120,10 +125,35 @@ describe('the difficulty gradient across the moor', () => {
      * gradient is asserted over the rooms a player can SEE and plan a walk
      * around, and the hidden ones get their own contract in the test below.
      */
-    const sites = walkedSites().filter((site) => !site.hidden);
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * AND THE PLACE WHOSE DANGER IS NOT ON THIS MAP AT ALL — same argument as
+     * the two above, and the sharpest version of it.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * The Infinity Tower is `level_range = {1, 1}`
+     * (`data/zones/infinite-dungeon/zone.lua:25`), so `delveLevel` is 1 and it
+     * reads here as the gentlest room on the moor, standing a hundred steps
+     * out. That is not a mistake in the table: floor 1 of the Tower really is a
+     * level-1 room. Its difficulty is not a function of HOW FAR YOU WALKED, it
+     * is a function of how far you have gone DOWN — `actor_adjust_level`'s
+     * `* 1.2` per floor, without limit (`:28`, `DelveSpec.depthScale`).
+     *
+     * A gradient about what the MAP promises cannot contain a place whose
+     * difficulty axis is not on the map. Excluded by the spec's own endlessness
+     * rather than by its id, and the count of exclusions is asserted, so a
+     * second endless place has to be a deliberate act.
+     */
+    const sites = walkedSites().filter((site) => !site.hidden && !site.endless);
     expect(sites.length, 'every site on the map is hidden — the filter is wrong').toBeGreaterThan(
       4,
     );
+    // EXACTLY ONE, so the exemption cannot quietly widen.
+    expect(
+      walkedSites()
+        .filter((site) => site.endless)
+        .map((site) => site.id),
+    ).toEqual(['site:infinity_tower']);
 
     const faults: string[] = [];
     for (const near of sites) {

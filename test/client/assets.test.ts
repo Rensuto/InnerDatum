@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { loadManifest } from '../../src/client/render/assets.ts';
 import { LOCAL_TILE_SPRITES, localDoorSpriteId } from '../../src/client/render/canvas.ts';
 import { ENCOUNTER_SITE, RealmKind, SITES, floorsOfSite } from '../../src/server/world/realms.ts';
+import { floorsToWalk, specFor } from '../../src/server/content/delve.ts';
 import { Ground } from '../../src/shared/level.ts';
 import type { AuthoredMap } from '../../src/shared/level.ts';
 import { ID_GRID_SETS } from '../../src/shared/mapgen/gridsets.ts';
@@ -869,7 +870,13 @@ function emittedLocalCodes(): ReadonlySet<TileCode> {
   };
   for (const [id, site] of SITES) {
     if (site.kind === RealmKind.Overworld) continue;
-    for (let floor = 1; floor <= floorsOfSite(id); floor += 1) {
+    // BOUNDED, BECAUSE ONE PLACE HAS NO BOTTOM. `floorsOfSite` is upstream's
+    // `max_level` and the Infinity Tower's is a billion — see `floorsToWalk`.
+    // The Tower's own codes are swept in full below, from `ID_GRID_SETS`, so
+    // walking a prefix of its floors costs this census nothing.
+    const spec = specFor(id);
+    const floors = spec === undefined ? floorsOfSite(id) : floorsToWalk(spec);
+    for (let floor = 1; floor <= floors; floor += 1) {
       addMap(site.map(`assets-test:${id}:${String(floor)}`, undefined, floor));
     }
   }
@@ -877,7 +884,9 @@ function emittedLocalCodes(): ReadonlySet<TileCode> {
     addMap(ENCOUNTER_SITE.map(`assets-test:encounter:${ground}`, ground));
   }
   // THE TOWER'S SETS (shared/mapgen/infinite.ts writes a level's floor, wall
-  // and door from one), which no site places yet.
+  // and door from one). The Tower places them now, but a walk down its first
+  // few floors reaches only some of the seventeen — the chain needs sixty
+  // floors to touch them all — so the sweep stays, and it is the complete one.
   for (const set of ID_GRID_SETS) {
     codes.add(set.floor);
     for (const wall of [set.wall].flat()) codes.add(wall);

@@ -696,9 +696,27 @@
  * cannot attack is one client's own pixels. Not one of those changes a frame
  * either end sends, which is the test this file applies.
  *
+ * ALSO RIDING 29 AND ALSO NOT BUMPING IT: the Infinity Tower
+ * (`shared/mapgen/tower.ts`). It adds a nineteenth site glyph to the overworld,
+ * a realm name that carries the floor number, and a stair marker named after
+ * the terrain it opens onto instead of *"Next level"*. NOT ONE OF THOSE IS A
+ * FRAME SHAPE. `RealmMsg.name` and `SiteView.name` have been free prose since
+ * they shipped; the new glyph resolves to `SNOWFIELD`, which is the code the
+ * cell already carried and which the northern moor has been drawn in for
+ * several versions; and every terrain code a Tower floor is built from already
+ * shipped — the older families and the themed ones 24 -> 25 added, all
+ * seventeen grid sets of them swept by `test/client/assets.test.ts` since they
+ * were ported, with no site placing them. A v28 client shown *"The
+ * Infinity Tower, floor 7"* draws the string it was sent, which is what it does
+ * with every other realm name — nothing it holds becomes false, which is the
+ * test this file applies.
+ *
  * `SCHEMA_VERSION` STAYS 1. Nothing about a brief is persisted and nothing ever
  * has been — one optional field on a `Realm` that dies with the floor is the
- * whole of where it lives (`server/world/brief.ts`).
+ * whole of where it lives (`server/world/brief.ts`). Nothing about the Tower is
+ * persisted either, and that is a DECISION rather than an omission: a character
+ * does not remember a floor of anything, so the next entry starts at floor 1.
+ * A Tower you re-enter at floor 40 is a save-format change.
  *
  * ═══════════════════════════════════════════════════════════════════════════
  *

@@ -5124,6 +5124,18 @@ function awardExperience(run: Run, killerId: string, victim: EngineActor): void 
   const victimLevel = victim.level;
 
   /**
+   * AND WHICH OF UPSTREAM'S TWO LADDERS IT IS PAID ON — Actor.lua:6519.
+   *
+   * `if not game.zone.infinite_dungeon then` is a branch over the whole rank
+   * table, not a modifier on it (`shared/progression.ts` `RANK_WORTH_INFINITE`).
+   * Read off the CORPSE for the same reason its level is: `payParty` is handed
+   * a body and a list of people and has no zone to ask. See
+   * `MonsterActor.infiniteDungeon` for why born-here and died-here cannot
+   * disagree.
+   */
+  const infiniteDungeon = victim.kind === ActorKind.Monster ? victim.infiniteDungeon : undefined;
+
+  /**
    * 2. AND IT MAY BE A MONSTER — BEFORE ANY party.ts CALL, WHICH IS THE WHOLE
    *    POINT OF THE ORDER. Monster-kills-monster is representable (a stray orb,
    *    a future charm) and `partyOf` MUTATES: it mints a party on demand and says
@@ -5208,6 +5220,7 @@ function awardExperience(run: Run, killerId: string, victim: EngineActor): void 
     victimLevel,
     victim.rank,
     run.world.turn.clock.gameTurn,
+    infiniteDungeon,
   );
 }
 
@@ -5256,6 +5269,12 @@ export function payParty(
   victimLevel: number,
   rank: ActorRank,
   killTurn: number | null,
+  /**
+   * `game.zone.infinite_dungeon` (Actor.lua:6519) — which rank ladder this
+   * body is worth. Absent everywhere but the Infinity Tower, and absent is
+   * upstream's ordinary ladder, so no existing caller moves a number.
+   */
+  infiniteDungeon?: true,
 ): void {
   for (const recipientId of recipients) {
     // 5. Ids, not bodies (see the party.ts note above), so each is resolved and
@@ -5269,8 +5288,9 @@ export function payParty(
      * ═════════════════════════════════════════════════════════════════════════
      *
      * `worthExp` is `victimLevel × rankWorth(rank) × XP_WORTH_MULT`, which is
-     * Actor.lua:6513-6531 as written — and it takes the RECIPIENT'S level too,
-     * for the anti-farming floor at :6514.
+     * Actor.lua:6513-6544 as written — and it takes the RECIPIENT'S level too,
+     * for the anti-farming floor at :6514, and the zone's flag for the choice
+     * of ladder at :6519.
      *
      * ═══ IT USED TO BE THE RECIPIENT'S LEVEL, AND THAT WAS A STATED DEVIATION ═══
      * src/shared/progression.ts carried the substitution and its own expiry
@@ -5299,7 +5319,7 @@ export function payParty(
      * with, and the only one the old claim was true for — sees byte-identical
      * numbers, because every recipient's level IS the killer's.
      */
-    const award = worthExp(victimLevel, rank, member.level);
+    const award = worthExp(victimLevel, rank, member.level, infiniteDungeon === true);
 
     /**
      * `gainExp` IS PURE AND RETURNS A NEW PAIR — it does not mutate, so the

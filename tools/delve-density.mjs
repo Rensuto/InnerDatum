@@ -37,6 +37,9 @@
 //                                                  body, to show what the probe
 //                                                  fix was worth
 //   node tools/delve-density.mjs 4 --only=undermost,drowned_chapel
+//   node tools/delve-density.mjs 4 --only=infinity_tower --floors --depth=20
+//                                                  how deep to walk a site that
+//                                                  has no bottom (default 4)
 //
 // ═══ A BEFORE AND AN AFTER MUST BE THE SAME INVOCATION, FLAGS INCLUDED ═══
 // `delve-run.mjs#run` is deterministic per invocation and NOT hermetic across
@@ -60,6 +63,7 @@ import {
   delveHeadroom,
   delveLevel,
   nbNpcFor,
+  floorsToWalk,
   specFor,
 } from '../src/server/content/delve.ts';
 import { run } from './delve-run.mjs';
@@ -69,6 +73,9 @@ const RUNS = Number(args.find((a) => !a.startsWith('-')) ?? 4);
 const ALL_FLOORS = args.includes('--floors');
 const BLIND = args.includes('--blind');
 const ONLY = (args.find((a) => a.startsWith('--only=')) ?? '').replace('--only=', '');
+// HOW DEEP A SITE WITH NO BOTTOM IS WALKED under `--floors`. See the identical
+// flag in `delve-climb.mjs` for why the default cap of four is a hole here.
+const DEPTH = Number((args.find((a) => a.startsWith('--depth=')) ?? '').replace('--depth=', ''));
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════
@@ -158,7 +165,12 @@ console.log(
 );
 
 for (const site of sites) {
-  const floors = ALL_FLOORS ? floorsOfSite(site.id) : 1;
+  // BOUNDED for the same reason `delve-climb.mjs` is: one site has no
+  // bottom. See `floorsToWalk` in content/delve.ts.
+  const spec = specFor(site.id);
+  const deep = Number.isFinite(DEPTH) && DEPTH > 0;
+  const floors =
+    ALL_FLOORS && spec !== undefined ? (deep ? floorsToWalk(spec, DEPTH) : floorsToWalk(spec)) : 1;
   for (let floor = 1; floor <= floors; floor += 1) {
     for (const cls of CLASSES) {
       const r = rowFor(site, cls, floor);

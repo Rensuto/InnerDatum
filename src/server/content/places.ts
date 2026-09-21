@@ -97,6 +97,29 @@ export const PLACE_BLURBS: ReadonlyMap<string, string> = new Map<string, string>
 
   /**
    * ═══════════════════════════════════════════════════════════════════════════
+   * AND THE ONE WITH NOTHING UNDER IT BUT MORE OF ITSELF.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * A marker with no line arrives in silence, which this table's own note calls
+   * out as the thing that was wrong with the three hidden sites, so a new door
+   * gets a sentence the day it is drawn rather than the day somebody notices.
+   *
+   * WHAT IT SAYS IS THE ONE FACT THAT MATTERS AND IS TRUE AT EVERY DEPTH: the
+   * floors are not the same place further in, they are somewhere else each
+   * time, and there is no last one. No numbers — `nameFor` puts the floor in
+   * the realm's name and the stair says what it opens onto, so the blurb does
+   * not have to be a readout.
+   */
+  [
+    // The literal, like every other row here: this table imports nothing, and a
+    // single import for one id would make it the only row that can break at
+    // module-eval time.
+    'site:infinity_tower',
+    'It was driven down rather than built up, and whoever drove it did not stop. Each floor is somewhere else entirely, and there is one under it.',
+  ],
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
    * THE THREE NOBODY IS TOLD ABOUT — AND THEY WERE THE ONLY SITES WITH NO LINE.
    * ═══════════════════════════════════════════════════════════════════════════
    *

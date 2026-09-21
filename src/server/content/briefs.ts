@@ -19,7 +19,7 @@
  * Every roll is a floor whose difficulty nobody measured, and `content/delve.ts`
  * records that *"every number in `DELVES` was authored and measured"*. Upstream
  * brackets the rate it would take — the Infinite Dungeon's challenge is
- * `20 + ceil(9 * ln(lev))` percent from floor 3 (`GameState.lua:2561-2562`) and
+ * `20 + ceil(9 * ln(lev))` percent from floor 3 (`GameState.lua:2561-2564`) and
  * the escort is nine floors drawn without replacement from twenty
  * (`Player.lua:117-138`) — so the number is known and the lane is not this one.
  * When it lands it belongs at realm BUILD and off `world.rng.fork('brief')`: a
@@ -33,7 +33,9 @@
  * the first objective a player meets that is not the tutorial's — and floor 2 of
  * 3 rather than floor 1, because the first floor of anything is where a party
  * learns the room. Upstream draws the same line in one clause: `if lev < 3 ...
- * return` (`GameState.lua:2562`).
+ * return` (`GameState.lua:2564`). THE LINE NUMBER WAS 2562 AND 2562 IS THE
+ * function's `id_challenge` initialiser — a citation one clause early, of the
+ * kind `check:citations` cannot catch because the line exists.
  *
  * ═══ AND NEVER IN A TOWN ═══
  * `world/realms.ts` refuses a `Common` site that carries any of these, beside
@@ -41,6 +43,41 @@
  * a delve floor holds ONE party of at most four, so an objective is offered to
  * people who chose to play together. A town is shared by everybody standing in
  * it and has no party for an objective to belong to.
+ *
+ * ═══════════════════════════════════════════════════════════════════════════
+ * ═══ AND NOT IN THE INFINITY TOWER EITHER, WHICH IS A DECISION AND NOT AN
+ *     OMISSION — BECAUSE THE TOWER IS WHERE UPSTREAM PUTS ITS OWN.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Stated here rather than only in the site, because this is the file a reader
+ * would check, and because the Tower is precisely the place the paragraph above
+ * describes: ToME rolls its challenges in the Infinite Dungeon and nowhere else
+ * (`tome/class/GameState.lua:2561-2589`, eight of them on a rarity table). Now
+ * that the Tower exists here, the absence has to be argued rather than assumed.
+ *
+ * ═══ THE MACHINERY WOULD WORK TODAY, UNCHANGED ═══
+ * Checked rather than guessed. `BriefSpec.floors` is an inclusive `[lo, hi]`
+ * and `armBrief` takes the first match, so `floors: [3, 1000000000]` would arm
+ * from floor 3 up — which is upstream's own `if lev < 3 then return`
+ * (`GameState.lua:2564`) — and `Realm.granted` is per instance, so no floor
+ * could mint twice. Nothing in `world/brief.ts` needs a line for this.
+ *
+ * ═══ WHAT IS MISSING IS THE MEASUREMENT, AND THAT IS THE WHOLE REASON ═══
+ * `content/delve.ts` records that *"every number in `DELVES` was authored and
+ * measured"*, and every brief above is written against a floor whose population
+ * and clear time somebody watched. NO TOWER FLOOR HAS BEEN MEASURED: its floors
+ * are 60 to 90 a side against the moor's 34x30, its bodies grow at 1.2 levels
+ * per floor without limit (`DelveSpec.depthScale`), and its count is a function
+ * of an area that is itself rolled. An objective with a timer, a body count or
+ * a survival clause on a floor nobody has timed is not an objective, it is a
+ * number somebody typed.
+ *
+ * SO THE TOWER SHIPS WITH NONE, AND THEREFORE WITH NO TEMPORARY COMPANION
+ * EITHER — a companion arrives with a brief (`world/brief.ts`), so this one
+ * decision answers both. The first Tower brief should be authored the day
+ * somebody has run the staged-fight probe on a Tower floor, and it should use
+ * the roll that is already quoted above rather than an authored floor number,
+ * because a place with no bottom has no floor 2 to put a set piece on.
  */
 
 import { ActorRank } from '../../shared/protocol.ts';

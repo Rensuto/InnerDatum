@@ -1202,6 +1202,28 @@ export type MonsterActor = ActorCommon & {
   level: number;
   /**
    * ═══════════════════════════════════════════════════════════════════════════
+   * AND WHETHER IT CAME OUT OF AN INFINITE DUNGEON — Actor.lua:6519's branch.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `worthExp` has two rank ladders and `if not game.zone.infinite_dungeon`
+   * chooses between them (`shared/progression.ts` `RANK_WORTH_INFINITE`). The
+   * Infinity Tower is the one place in this game that takes the second, and its
+   * bodies pay 2.5× what an ordinary normal pays.
+   *
+   * ═══ ON THE BODY, WHERE UPSTREAM READS THE ZONE — AND WHY THAT IS THE SAME ═══
+   * Upstream asks `game.zone` at the moment of the KILL; this asks the corpse
+   * where it was BORN. For a monster the two cannot disagree: nothing in this
+   * game moves a body between realms, and a floor's population is built by that
+   * floor's `populate` from that floor's spec. It is on the body for the same
+   * reason `level` is one line up — `payParty` is handed a corpse and a list of
+   * people, and has no realm to ask.
+   *
+   * ABSENT RATHER THAN FALSE, so every body in every other place is the
+   * byte-identical body it was, and `worthExp`'s own default does the rest.
+   */
+  infiniteDungeon?: true;
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
    *   WHAT THIS CREATURE CAN DO BESIDES WALK AT YOU. Talent ids, or absent.
    * ═══════════════════════════════════════════════════════════════════════════
    *
@@ -1890,6 +1912,11 @@ export type MonsterInit = {
    */
   readonly level?: number;
   /**
+   * `game.zone.infinite_dungeon` (Actor.lua:6519), carried from the spec that
+   * built this floor. See `MonsterActor.infiniteDungeon`.
+   */
+  readonly infiniteDungeon?: true;
+  /**
    * WHAT IT KNOWS. Talent ids, absent for a creature that can only swing.
    *
    * ═══ DECLARED HERE *AND* CONSTRUCTED BELOW, AND BOTH ARE LOAD-BEARING ═══
@@ -2144,6 +2171,10 @@ export function createMonsterActor(id: string, init: MonsterInit): MonsterActor 
     // DEFAULT 1, matching `monsterInit`'s own default: a caller that never had
     // a level to give gets the body it has always had. See `MonsterActor.level`.
     level: init.level ?? 1,
+    // AND WHICH xp LADDER THE CORPSE IS PAID ON. Spread, so absent stays
+    // absent: the house rule two fields up, and the one that keeps every body
+    // outside the Tower byte-identical. See `MonsterActor.infiniteDungeon`.
+    ...(init.infiniteDungeon === undefined ? {} : { infiniteDungeon: init.infiniteDungeon }),
     x: init.x,
     y: init.y,
     speedFactor: init.speedFactor ?? 1,

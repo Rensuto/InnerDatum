@@ -65,10 +65,15 @@ import type { Ground } from '../../shared/level.ts';
 import { TileCode } from '../../shared/protocol.ts';
 import {
   BIRTHPLACE_SITE_ID,
+  INFINITY_TOWER_SITE_ID,
   REDACTION_SITE_ID,
   makeOverworld,
   parseMap,
 } from '../../shared/level.ts';
+// THE TOWER'S FLOORS. `shared/mapgen/tower.ts` walks `alter_level_data`'s chain
+// and builds one link of it; this file is the door onto it, as it is for a zone.
+import { towerFloorAt, towerLevel } from '../../shared/mapgen/tower.ts';
+import { towerEnemyCountPerArea } from '../../shared/mapgen/infinite.ts';
 import type { Glyph } from '../../shared/level.ts';
 import { UNDERMOST_LAST_FLOOR, populateUndermostHall } from '../content/undermost.ts';
 import { makeRedaction } from '../../shared/redaction.ts';
@@ -79,6 +84,7 @@ import { ActorKind } from '../../shared/protocol.ts';
 // import disappearing is the proof there is no reader left asking the narrower
 // question.
 import {
+  DEEPER_FLOORS,
   PopulationScope,
   delveLevel,
   floorsOf,
@@ -201,7 +207,7 @@ export const OVERWORLD_ID = 'realm:overworld';
  * `content/briefs.ts` for a site's authored objectives — see that file's header
  * for the cycle, and for what an ES module cycle does instead of failing.
  */
-export { STAIRS_DOWN_SITE_ID, stairsDownOf } from './stairs.ts';
+export { STAIRS_DOWN_SITE_ID, stairDownName, stairsDownOf } from './stairs.ts';
 
 /**
  * A way out of a whole zone, to the map the party came in from. Upstream's
@@ -224,6 +230,15 @@ export const EXIT_SITE_ID = 'exit:out';
  */
 export const UNDERMOST_SITE_ID = BIRTHPLACE_SITE_ID;
 
+/**
+ * The Infinity Tower's mouth, and a cell in the northern snow — see
+ * `TOWER_SITE`. Re-exported from `shared/level.ts` for the reason
+ * `UNDERMOST_SITE_ID` above is: the spelling has to live in `src/shared/`
+ * because the overworld legend and `shared/redaction.ts` both need it, and this
+ * is where the server looks.
+ */
+export { INFINITY_TOWER_SITE_ID };
+
 /** How many floors a site has: a delve's own depth, and one for anything else. */
 export function floorsOfSite(siteId: string): number {
   const spec = specFor(siteId);
@@ -245,13 +260,66 @@ function withStairsDown(map: AuthoredMap): AuthoredMap {
 }
 
 /**
- * A delve floor and every other floor its party has open at the same site:
+ * ═══════════════════════════════════════════════════════════════════════════
+ * HOW MANY FLOORS THE PARTY HOLDS AT ONCE IN A PLACE WITH NO BOTTOM.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `DEEPER_FLOORS` and not a number of its own: it is the depth of the deepest
+ * zone in this game that HAS a bottom, which is the size of zone the hold below
+ * was written for. An endless site therefore holds exactly as much as the
+ * biggest place that could ever have exercised the rule, and no more.
+ */
+const ZONE_FLOORS_HELD = DEEPER_FLOORS;
+
+/**
+ * A delve floor and every other floor its party holds open at the same site:
  * upstream's zone, whose levels are kept together while the party is in it
  * (engine/Zone.lua:855-858).
  *
  * ONLY A SITE WITH FLOORS. Anything else is a zone of one, and that matters for
  * the ambush: a party can hold two breaches at once, and a breach left empty must
  * close whether or not the other one is occupied.
+ *
+ * ═══════════════════════════════════════════════════════════════════════════
+ * AND IT IS A WINDOW, NOT THE WHOLE SITE, ONCE THE SITE HAS NO BOTTOM.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Both callers are the reap (`reapIfEmpty` arms every floor of the zone, and
+ * the fire-time check refuses to close one while anybody of the party is on
+ * another), so what this function returns IS how much is kept in memory.
+ *
+ * "Keep every floor while the party is in the zone" is upstream's
+ * `persistent = "zone"` and it is right for a place three or four floors deep.
+ * The Infinity Tower is a billion, and the rule read literally means KEEP
+ * EVERYTHING, FOREVER — measured over a socket: 30 floors descended, 30 realms
+ * live, 138,295 tiles held, nothing reaped, and the count rises for as long as
+ * the party keeps going down. Every floor's five-minute linger was also pushed
+ * out to five minutes after the LAST descent, so nothing would have closed even
+ * on its own deadline.
+ *
+ * Past the window a floor keeps the ordinary linger it started when it emptied,
+ * so it closes on its own five minutes rather than being held by a party forty
+ * floors below. What that costs is the thing `TOWER_SITE`'s decision 2 already
+ * states and accepts: climbing back up past the window rebuilds the floor —
+ * the same KIND of place, a different room. Inside the window (a party split
+ * across floors, a step back up for something dropped) nothing changes at all.
+ *
+ * EVERY SITE WITH A BOTTOM IS UNAFFECTED, and that falls out rather than being
+ * granted: the deepest is `DEEPER_FLOORS` floors, so its whole zone is inside
+ * a window of `DEEPER_FLOORS`.
+ *
+ * ═══ THE DEPTH GUARD IS A BELT AND IT SURVIVES MUTATION, DELIBERATELY ═══
+ * Deleting `floorsOfSite(siteId) <= ZONE_FLOORS_HELD` changes no test, and it
+ * is an EQUIVALENT mutant rather than a hole — measured over the whole input
+ * space rather than argued: 28 Inner sites have a bottom, their depths are 3
+ * and 4 and nothing else, so the widest gap between two floors of one is 3
+ * against a window of 4. It is kept because it makes a bounded delve correct
+ * INDEPENDENTLY of how wide the window is: narrow `ZONE_FLOORS_HELD` to 2 and
+ * this line is the only thing standing between a four-floor delve and a party
+ * on floor 4 losing floor 1 while they are still in it. The invariant it
+ * protects is pinned by behaviour instead — `test/server/tower.test.ts` opens
+ * every floor of the deepest delve that has a bottom and asserts the whole zone
+ * comes back.
  */
 export function zoneOf(realms: Realms, realm: Realm): readonly Realm[] {
   const { siteId, partyId } = realm;
@@ -259,9 +327,12 @@ export function zoneOf(realms: Realms, realm: Realm): readonly Realm[] {
     return [realm];
   }
   if (floorsOfSite(siteId) <= 1) return [realm];
-  return realms
+  const zone = realms
     .all()
     .filter((r) => r.kind === RealmKind.Inner && r.partyId === partyId && r.siteId === siteId);
+  if (floorsOfSite(siteId) <= ZONE_FLOORS_HELD) return zone;
+  const here = realm.floor ?? 1;
+  return zone.filter((r) => Math.abs((r.floor ?? 1) - here) <= ZONE_FLOORS_HELD);
 }
 
 /**
@@ -764,6 +835,25 @@ export type SiteDef = {
    * is a fight that happens where you were — so it is the one that reads this.
    */
   readonly map: (seed: string, ground?: Ground, floor?: number) => AuthoredMap;
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * WHAT THIS FLOOR IS CALLED, when the site's own name is not enough.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `Realm.name` is `site.name` on every floor of every site, so a party four
+   * floors into the Underworks is told *"The Underworks"* exactly as they were
+   * on the first — and the stair marker's label is the hard-coded string
+   * *"Next level"*. NOTHING IN THE GAME HAS EVER SAID HOW DEEP YOU ARE.
+   *
+   * That is survivable in a place with three floors and it is not survivable in
+   * one with a billion: depth IS the Tower's only progress, and a party that
+   * cannot say how far down they are has no way to agree to stop.
+   *
+   * ABSENT ON EVERY SITE THAT SHIPPED BEFORE, so nothing a player has been
+   * reading changes. `RealmMsg.name` and `SiteView.name` are prose on the wire
+   * already, so this costs no protocol change and no `PROTOCOL_VERSION` bump.
+   */
+  readonly nameFor?: (floor: number) => string;
   /**
    * THE FIRST FLOOR'S THRESHOLD IS NOT A WAY OUT. Upstream's first level of the
    * Escape from Reknor replaces its up stair with floor
@@ -1291,7 +1381,9 @@ export function createRealms(opts: RealmsOptions): Realms {
     // A LEVEL THAT SAYS HOW IT IS LIT IS LIT THAT WAY, whatever its site says:
     // upstream's light is per level (`AuthoredMap.lighting`).
     const lighting = drawn.lighting ?? site.lighting;
-    const realm = build(id, RealmKind.Inner, site.name, builtMap, {
+    // AND WHAT THIS FLOOR IS CALLED. See `SiteDef.nameFor`: a site that does not
+    // answer is the site's own name, which is every site but one.
+    const realm = build(id, RealmKind.Inner, site.nameFor?.(floor) ?? site.name, builtMap, {
       partyId,
       siteId: site.id,
       floor,
@@ -2165,11 +2257,217 @@ const UNDERMOST_SITE: SiteDef = {
   },
 };
 
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE INFINITY TOWER — the one door on this map with nothing behind it but more
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * ToME's Infinite Dungeon (`data/zones/infinite-dungeon/zone.lua`), as a place
+ * you walk to from the moor. `shared/mapgen/tower.ts` is the floors and the
+ * chain between them and carries the argument for how they are derived; this is
+ * the door, and the decisions a door has to make.
+ *
+ * ═══ WHY IT IS HAND-WRITTEN HERE AND NOT A ROW IN `AUTHORED_SITES` ═══
+ * The same reason `UNDERMOST_SITE` is. That table's `.map` closure builds one
+ * shape in one palette, and `zoneSite` refuses any site whose row's
+ * `{floor, wall}` is not its zone's `palette` — the Tower's palette is a
+ * different one of seventeen on every floor. It is also the reason
+ * `shared/redaction.ts` skips its glyph: a twin would look this id up in
+ * `AUTHORED_SITES` and find nothing.
+ *
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE SIX DECISIONS, EACH WHERE ITS RULE LIVES
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * ─── 1. WHERE IT IS ENTERED FROM ───
+ * One authored cell in the northern snowfield, glyph `Y` at (57,4), NOT hidden.
+ * The measurement and the argument are in `ALDERBROOK_LEGEND`.
+ *
+ * ─── 2. WHETHER A FLOOR PERSISTS ───
+ * ITS KIND DOES, ITS GROUND DOES NOT, and that is a sharper answer than any
+ * other delve can give. Floor 7 is a sylvan cavern for everybody forever
+ * (`shared/mapgen/tower.ts` argues why the chain is derived rather than
+ * rolled); the cavern itself is built from the realm's instance seed, so it
+ * lives while the instance lives — `lingerMs` is the ordinary five minutes, and
+ * `INSTANCE_LINGER_MS`'s own note is the argument — and is a different cavern
+ * after that. Climbing back up from floor 40 therefore walks up through the
+ * floors you came down, re-rolled: the same species of place, not the same
+ * room, and nothing was ever left on the floor of one that survived the reap.
+ * THIS IS NOT NEW BEHAVIOUR. It is what every delve here has always done; it is
+ * merely the first one deep enough for anybody to notice.
+ *
+ * ─── 3. WHAT HAPPENS TO PROGRESS WHEN THEY LEAVE ───
+ * NOTHING IS KEPT, AND THE NEXT ENTRY IS FLOOR 1. No character remembers a
+ * floor of anything (`SavedPosition` is a stub), so this is the behaviour the
+ * game already has rather than a rule invented for the Tower — but it is worth
+ * stating, because a Tower you re-enter at floor 40 is a different game and
+ * would be a save-format change rather than a content one. What a party keeps
+ * is what a party always keeps: their levels, their bag and what they learnt.
+ *
+ * ─── 4. HOW DEEP THE SCALING STAYS SANE ───
+ * `base_level` is pinned at 1 (`zone.lua:25-26`, and `DelveSpec` for why
+ * `level_scheme = "player"` is inert on this zone), so every level of danger
+ * comes from the floor number through `DelveSpec.depthScale` — upstream's
+ * `math.floor((base_level + level.level-1) * 1.2)` (`:28`). Nothing clamps it
+ * and nothing needs to: `actorAdjustLevel` floors at 1 and the life curve is
+ * monotonic. The ceiling in this game is `MAX_CHARACTER_LEVEL`, which bounds
+ * the PLAYER; a floor has no ceiling, which is the point of the place.
+ *
+ * ─── 5. WHETHER BRIEFS ARM HERE ───
+ * NO, DELIBERATELY, AND THE MACHINERY WOULD WORK UNCHANGED. `content/briefs.ts`
+ * carries the argument at the only place it can be read beside the briefs
+ * themselves. In one line: every brief in this game is authored against a floor
+ * somebody measured, and no Tower floor has been measured. No briefs also means
+ * no temporary companion, since a companion arrives with one.
+ *
+ * ─── 6. WHAT THE PLAYER IS TOLD ABOUT HOW DEEP THEY ARE ───
+ * `nameFor` puts the floor in the realm's name, so the arrival line and the
+ * frame's title both carry it, and `markersFor` names the stair after the
+ * terrain it leads into rather than *"Next level"* — upstream's own
+ * *"Encroaching terrain: …"* tooltip (`zone.lua:312`), which is the whole
+ * reason the exits carry a `desc`.
+ *
+ * ═══════════════════════════════════════════════════════════════════════════
+ * WHAT OF `post_process` IS NOT HERE — so the next reader of the Lua does not
+ * have to rediscover it by diffing.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * The zone's `post_process` (`zone.lua:280-360`) does five things. Two of them
+ * are argued at length where their machinery lives — the second way on and its
+ * stair guard (`shared/mapgen/tower.ts`, `DELVES`) and the challenge roll
+ * (`content/briefs.ts`). These three are not, and silence is what makes a
+ * dropped clause look like one nobody noticed:
+ *
+ *   `special_level_faction = "enemies"` (`:35`, applied `:334` — *"Everything
+ *   hates you in the infinite dungeon!"*, which rewrites the faction of every
+ *   entity on the level). INERT TODAY and not for long: nothing friendly can be
+ *   placed on a Tower floor, because briefs are off so no companion arrives and
+ *   townsfolk are `Common`. It becomes wrong in silence the day the first Tower
+ *   brief lands, which is a deferral this site already proposes.
+ *
+ *   `ID_HISTORY` lore (`:337-347`, `objects.lua:23-33`) — five notes, on floors
+ *   1, 10, 20, 30 and 40, placed on a free tile adjacent to the UP stair.
+ *   `content/lore.ts` and `populateDelve`'s note placement both exist, so this
+ *   is content rather than machinery: five pieces of writing and a floor test.
+ *
+ *   `events_by_level = true` (`:34`) and `events.lua`'s twenty event types.
+ *   There is no event system in this game at all, so this one is out of scope
+ *   rather than deferred, and it is named here only because this row claims to
+ *   be ported line for line and a reader counting fields would come up short.
+ *
+ * ═══════════════════════════════════════════════════════════════════════════
+ * AND THE SEVENTH DECISION, A DELIBERATE DIVERGENCE: THE KNOT WORKS IN HERE.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `no_worldport = true` (`data/zones/infinite-dungeon/zone.lua:32`), and
+ * `SiteDef.noRecall` exists because of this zone — its own note says so. It is
+ * still absent here, and that is argued rather than forgotten.
+ *
+ * UPSTREAM'S INFINITE DUNGEON HAS NO WAY OUT AT ALL. `no_worldport` refuses the
+ * Rod of Recall (`Actor.lua:6918`, read at `quest-artifacts.lua:335`) and
+ * `data.generator.map.up = vgrid.floor` (`:244`) draws the up grid as plain
+ * floor, so no stair up is ever placed either. That is coherent because it is a
+ * separate GAME MODE in ToME, played until the character dies.
+ *
+ * It is not coherent here. This is one door on a moor that four friends walk
+ * into on a Tuesday evening and one of them has to go at nine. With recall
+ * refused, the only way out of floor 40 is thirty-nine thresholds, each of
+ * which rebuilds a floor that was reaped while they were below it — an hour of
+ * walking through rooms nobody wanted, to leave.
+ *
+ * THE PRECEDENT IS ALREADY RULED. The Undermost diverges from the identical
+ * upstream flag on reknor-escape (`SiteDef.noRecall`, the author on
+ * 2026-09-17), on the grounds that *"you won, then died walking ten tiles"* is
+ * not a game. The Tower's version is worse, because there is no "won".
+ *
+ * THE FAITHFUL VERSION, IF IT IS EVER WANTED, IS WRITTEN DOWN RATHER THAN
+ * ARGUED AGAINST: `noRecall: true` AND a change to `leaveRealm`'s `above`
+ * branch so that a Tower threshold returns to the moor from any floor. Then the
+ * way out is the door you came in by rather than a magic word, the cost is the
+ * walk back to the arrival tile, and nobody is stranded. That is closer to
+ * upstream's Reknor exit than to a stair chain, and it is a gateway change
+ * rather than a one-line flag, which is why it is not the first ship.
+ */
+const TOWER_SITE: SiteDef = {
+  id: INFINITY_TOWER_SITE_ID,
+  name: 'The Infinity Tower',
+  kind: RealmKind.Inner,
+  // THE `stair` FAMILY, as the Undermost and Cairnfoot use. A way down drawn as
+  // a way down. Its own 32x32 is commissioned (ASSETS-REQUIRED.md) and until it
+  // lands the family marker is what the client draws — see `landmarkIdFor`.
+  marker: 'stair',
+  lingerMs: INSTANCE_LINGER_MS,
+  // See decision 6. The floor is the only progress this place has.
+  nameFor: (floor: number): string => `The Infinity Tower, floor ${String(floor)}`,
+  /**
+   * NO `lighting` ON THE SITE, and that is not an omission: an absent
+   * `SiteLighting` means LIT EVERYWHERE (`shared/light.ts`), which would be
+   * wrong for most of the Tower. Every floor `towerLevel` builds carries its
+   * own — the layout's `lite_room_chance`, which is 50 for the hewn rooms, 100
+   * for a forest or a town, the building's own roll for a building, and nothing
+   * at all for a maze, an octopus or a hexacle — and `open` reads the map's
+   * before the site's.
+   */
+  map: (seed: string, _ground?: Ground, floor = 1): AuthoredMap => towerLevel(floor, seed),
+  populate: (
+    world: World,
+    built: AuthoredMap,
+    party: PartyStrength,
+    _lead?: MonsterTemplate,
+    floor = 1,
+    scope?: PopulationScope,
+  ): void => {
+    const spec = specFor(INFINITY_TOWER_SITE_ID);
+    if (spec === undefined) return;
+    /**
+     * ═════════════════════════════════════════════════════════════════════════
+     * THE COUNT IS THE FLOOR'S LAYOUT'S, NOT THE ZONE'S — `zone.lua:255`.
+     * ═════════════════════════════════════════════════════════════════════════
+     *
+     * `enemy_count = layout.enemy_count or math.ceil(vx * vy * 34/4900)`, and
+     * two of the eight layouts state their own numerator: the forest at 40
+     * (`:129`) and the building at 60 (`:161`). `nbNpcFor` multiplies the
+     * floor's area by `nbNpcPerArea` and takes ±5 (`:256`), so handing it this
+     * floor's own numerator reproduces `enemy_count` exactly — the area it
+     * reads IS `vx * vy`, after the maze's rounding and the hexacle's squaring,
+     * because the map was built at the table's own width and height.
+     *
+     * THE FOLD IS CHEAP AND THE MAP IS NOT. `towerFloorAt` re-walks the chain
+     * rather than being handed the table `map()` rolled: it is a few dozen
+     * draws per floor with no map in it, it is the same pure function `map()`
+     * called, and the alternative is a field on `AuthoredMap` that exists for
+     * one site.
+     */
+    const table = towerFloorAt(floor);
+    /**
+     * AND `forArea` IS NOT APPLIED, WHICH IS THE ONE PLACE THIS SITE DIFFERS
+     * FROM EVERY OTHER `populate` IN THIS FILE.
+     *
+     * `forArea` scales a spec's LITTER and TRAPS off a 34x30 baseline, because
+     * every band in `DELVES` was measured on a site of that size. This row's
+     * bands are not ours and were not measured here: `nb_object = {6, 9}`
+     * (`:93`) is upstream's own, stated flat over a level whose size this zone
+     * ROLLS per floor (60 to 90 a side). Scaling it would multiply upstream's
+     * six-to-nine by five and bury every floor in loot. The traps are absent
+     * because `nb_trap = {0, 0}` (`:97`): this place lays none.
+     */
+    populateDelve(
+      world,
+      built,
+      { ...spec, nbNpcPerArea: towerEnemyCountPerArea(table.layoutName) },
+      party,
+      floor,
+      scope,
+    );
+  },
+};
+
 export const SITES: ReadonlyMap<string, SiteDef> = new Map([
   ...AUTHORED_SITES,
   [REDACTION_SITE_ID, REDACTION] as const,
   ...REDACTED_SITES,
   [UNDERMOST_SITE_ID, UNDERMOST_SITE] as const,
+  [INFINITY_TOWER_SITE_ID, TOWER_SITE] as const,
 ]);
 
 /**

@@ -9,11 +9,17 @@ import {
   delveHeadroom,
   delveLevel,
   floorsOf,
+  floorsToWalk,
   nbNpcFor,
   specFor,
 } from '../../src/server/content/delve.ts';
 import type { DelveSpec } from '../../src/server/content/delve.ts';
-import { SITES, RealmKind, createRealms } from '../../src/server/world/realms.ts';
+import {
+  INFINITY_TOWER_SITE_ID,
+  SITES,
+  RealmKind,
+  createRealms,
+} from '../../src/server/world/realms.ts';
 import { createTurnEngine } from '../../src/server/turn-engine.ts';
 import { computeRarities, rarityShare } from '../../src/server/content/rarity.ts';
 import type { MonsterTemplate } from '../../src/server/content/monsters.ts';
@@ -113,15 +119,58 @@ import type { Rng } from '../../src/shared/rng.ts';
  * range for every party size.
  */
 
-/** Every delve on the moor and its twin through the Redaction. */
+/**
+ * Every delve on the moor and its twin through the Redaction.
+ *
+ * ═══════════════════════════════════════════════════════════════════════════
+ * EXCEPT A PLACE WITH NO BOTTOM, AND NOT AS AN EXEMPTION — THE QUESTION DOES
+ * NOT APPLY TO IT.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Every case in this file is built on "a delve pays two character levels on the
+ * floors BEFORE ITS BOSS". The Infinity Tower has no boss and no last floor, so
+ * there is no "before" — and it does not merely fail to apply, it passes for
+ * the wrong reason. `floorsToWalk` bounds the walk at four, so the case summed
+ * floors 1 to 3 of an endless place and asserted the three SHALLOWEST floors in
+ * the game's deepest dungeon pay two levels. They do, comfortably; and they
+ * would keep doing so however badly the floor-40 economy behaved. A guard that
+ * had stopped guarding, on the one test in the repo that asks whether a dungeon
+ * pays for itself.
+ *
+ * Two more things make the model wrong here rather than just uninformative:
+ * `experienceBeforeTheBoss` computes a body's level as `level + floor - 1`,
+ * which is every zone's line EXCEPT this one (`DelveSpec.depthScale`, the ×1.2
+ * at `infinite-dungeon/zone.lua:28`), and `averageWorth` pays on `RANK_WORTH`,
+ * where this zone pays on `RANK_WORTH_INFINITE` (`Actor.lua:6519`). Both halves
+ * of upstream's bargain are invisible to this file.
+ *
+ * THE QUESTION IS ASKED WHERE BOTH HALVES ARE IN PLAY — `test/server/tower.test.ts`,
+ * as a RATE ("what does one floor pay, against what one level costs at the
+ * level that floor demands") rather than as a total, because a rate is the only
+ * form the question has when there is no total.
+ */
 const delves: readonly { readonly site: { readonly id: string }; readonly spec: DelveSpec }[] = [
   ...SITES.values(),
 ]
   .filter((s) => s.kind === RealmKind.Inner)
   .flatMap((site) => {
     const spec = specFor(site.id);
-    return spec === undefined ? [] : [{ site, spec }];
+    if (spec === undefined) return [];
+    // BY THE SPEC'S OWN ENDLESSNESS, not by its id — see above. A second
+    // bottomless place must be a deliberate act, and the count below is what
+    // makes it one.
+    if (spec.maxFloors !== undefined) return [];
+    return [{ site, spec }];
   });
+
+/**
+ * AND THE EXCLUSION IS COUNTED, for the reason `CANNOT_PAY_TWO` is pinned from
+ * every side below: an exclusion nobody counts is a hole that widens quietly.
+ * One row in `DELVES` states its own depth; a second would have to say so here.
+ */
+const ENDLESS_DELVES = [...SITES.values()].filter(
+  (s) => s.kind === RealmKind.Inner && specFor(s.id)?.maxFloors !== undefined,
+).length;
 
 /**
  * THE FLOOR'S CELL COUNT, FOR THE ONE ZONE THAT READS IT.
@@ -226,7 +275,7 @@ function averageWorth(spec: DelveSpec, roomLevel: number, level: number): number
 function experienceBeforeTheBoss(siteId: string, spec: DelveSpec): number {
   const level = delveLevel(spec);
   let paid = 0;
-  for (let floor = 1; floor < floorsOf(spec); floor += 1) {
+  for (let floor = 1; floor < floorsToWalk(spec); floor += 1) {
     const area = spec.nbNpcPerArea === undefined ? undefined : areaOf(siteId, floor);
     const band = nbNpcFor(spec, floor, area);
     paid += ((band[0] + band[1]) / 2) * averageWorth(spec, level + floor - 1, level);
@@ -311,7 +360,7 @@ describe('a delve pays two levels before its boss', () => {
     for (const { site, spec } of delves) {
       if (spec.nbNpcPerArea !== undefined) continue;
       flat += 1;
-      for (let floor = 1; floor <= floorsOf(spec); floor += 1) {
+      for (let floor = 1; floor <= floorsToWalk(spec); floor += 1) {
         expect(
           nbNpcFor(spec, floor, 40 * 40),
           `${site.id} floor ${String(floor)} moved with the floor's area`,
@@ -346,7 +395,7 @@ describe('a delve pays two levels before its boss', () => {
      */
     for (const { site, spec } of delves) {
       expect(floorsOf(spec), `${site.id} has no floor before its boss`).toBeGreaterThan(1);
-      for (let floor = 1; floor < floorsOf(spec); floor += 1) {
+      for (let floor = 1; floor < floorsToWalk(spec); floor += 1) {
         const area = spec.nbNpcPerArea === undefined ? undefined : areaOf(site.id, floor);
         expect(
           nbNpcFor(spec, floor, area)[0],
@@ -375,6 +424,12 @@ describe('a delve pays two levels before its boss', () => {
    *     has no excuse to offer, so excusing it fails here and the fix has to be
    *     made in `content/delve.ts` under a test that reads the Lua.
    */
+  it('leaves out exactly one bottomless place, and it is still bottomless', () => {
+    expect(ENDLESS_DELVES).toBe(1);
+    expect(delves.some(({ site }) => site.id === INFINITY_TOWER_SITE_ID)).toBe(false);
+    expect(delves.length, 'the sweep excluded more than the one').toBeGreaterThan(20);
+  });
+
   it('excepts only delves that are still delves', () => {
     const live = new Set(delves.map(({ site }) => site.id));
     for (const id of CANNOT_PAY_TWO)

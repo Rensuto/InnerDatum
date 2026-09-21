@@ -401,9 +401,17 @@ export const EXP_LEVEL_FLOOR = 7;
 
 /**
  * The rank ladder — Actor.lua:6520-6528. (NOT :6519-6527: :6519 is the
- * `if not game.zone.infinite_dungeon then` guard, which is not part of the
+ * `if not game.zone.infinite_dungeon then` guard, which is not part of THIS
  * ladder, and the quoted block's own closing `end` is :6528. Copying the old
  * range picks up the guard and drops the terminator.)
+ *
+ * ═══ AND :6519 IS A BRANCH, NOT A FORMALITY — SEE `RANK_WORTH_INFINITE` ═══
+ * This note used to say the guard "is not part of the ladder" and stop there,
+ * which was true and complete on the day it was written, because there was no
+ * infinite dungeon in this game. There is one now, and the `else` at :6531-6542
+ * is a WHOLE SECOND LADDER that the guard selects. The correction is below;
+ * this paragraph stays because the line range above is still right and somebody
+ * will re-derive it.
  *
  *     local mult = 0.6
  *     if self.rank == 1 then mult = 0.6          -- critter
@@ -434,13 +442,60 @@ export const RANK_WORTH = {
 } as const satisfies Record<ActorRank, number>;
 
 /**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE OTHER LADDER — Actor.lua:6532-6540, the one the Infinite Dungeon uses.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `worthExp` is ONE function with TWO ladders and a zone flag choosing between
+ * them (`:6518`, the author's own `-- HHHHAACKKK !`):
+ *
+ *     else
+ *         local mult = 2 + (self.exp_kill_multiplier or 0)
+ *         if self.rank == 1 then mult = 2          -- critter
+ *         elseif self.rank == 2 then mult = 2      -- normal
+ *         elseif self.rank == 3 then mult = 3.5    -- elite
+ *         elseif self.rank == 3.2 then mult = 3.5  -- rare
+ *         elseif self.rank == 3.5 then mult = 5    -- unique
+ *         elseif self.rank == 4 then mult = 6      -- boss
+ *         elseif self.rank >= 5 then mult = 6.5    -- elite boss
+ *         end
+ *
+ * `data/zones/infinite-dungeon/zone.lua:33` is `infinite_dungeon = true`, and
+ * it is the only zone in the game that sets it.
+ *
+ * ═══ WHY IT IS FLATTER, AND WHY IT IS THE HALF WE WERE MISSING ═══
+ * Read against `RANK_WORTH` the shape is obvious: an ordinary body pays 2.5×
+ * MORE (2 against 0.8) and a boss pays four times LESS (6 against 25). Upstream
+ * is paying for a place with no set pieces, where every floor is rank and file
+ * and the only way to be paid is to keep going down.
+ *
+ * AND IT IS THE OTHER HALF OF A BARGAIN THIS PORT TOOK ONE SIDE OF. The Tower
+ * ships `zone.lua:28`'s `* 1.2` on the body levels (`DelveSpec.depthScale`) —
+ * the difficulty half — while paying the ordinary ladder. Measured over the
+ * built floors: a floor's own level rises 1.2 per floor, and clearing one paid
+ * 0.57 to 1.15 character levels from floor 10 down, so a descending party fell
+ * behind by about 0.2 levels a floor, forever. With this ladder the same floors
+ * pay 1.1 to 2.3, and the descent keeps up — which is what upstream's two
+ * halves do together and neither does alone.
+ *
+ * THREE ROWS, FOR `RANK_WORTH`'S REASON. The other four ranks do not exist
+ * here (`ActorRank` has three members); they are quoted above, ready to copy
+ * down the day one lands.
+ */
+export const RANK_WORTH_INFINITE = {
+  [ActorRank.Normal]: 2,
+  [ActorRank.Elite]: 3.5,
+  [ActorRank.Boss]: 6,
+} as const satisfies Record<ActorRank, number>;
+
+/**
  * The rank multiplier for one body. `satisfies Record<ActorRank, number>` above
  * is what makes this total: add a member to `ActorRank` and the table fails to
  * compile rather than this function returning `undefined` at runtime and paying
  * out `NaN` xp.
  */
-export function rankWorth(rank: ActorRank): number {
-  return RANK_WORTH[rank];
+export function rankWorth(rank: ActorRank, infiniteDungeon = false): number {
+  return infiniteDungeon ? RANK_WORTH_INFINITE[rank] : RANK_WORTH[rank];
 }
 
 /**
@@ -508,15 +563,28 @@ export function rankWorth(rank: ActorRank): number {
  * different levels standing over one body are now paid the same number, because
  * the number is a fact about the body.
  *
+ * ═══════════════════════════════════════════════════════════════════════════
+ * AND WHICH OF UPSTREAM'S TWO LADDERS — Actor.lua:6519's branch.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `if not game.zone.infinite_dungeon then` picks `RANK_WORTH`; the `else` at
+ * :6531 picks `RANK_WORTH_INFINITE`. DEFAULTED FALSE, because every zone in
+ * upstream but one is the first branch and every place in this game but one is
+ * too — so no existing caller and no existing number moves, which is what makes
+ * this safe to land without re-tuning `exp_chart` or `XP_WORTH_MULT`.
+ *
  * @param victimLevel the level of the body that died — Actor.lua:6530's `self`.
  * @param victimRank the rank of that same body.
  * @param recipientLevel the level of the actor being PAID. Read ONLY by the
  *   anti-farming floor; it does not scale the award.
+ * @param infiniteDungeon `game.zone.infinite_dungeon` (:6519) — the Infinity
+ *   Tower and nowhere else.
  */
 export function worthExp(
   victimLevel: number,
   victimRank: ActorRank,
   recipientLevel: number,
+  infiniteDungeon = false,
 ): number {
   /**
    * Actor.lua:6514 — `if not target.level or self.level < target.level - 7 then
@@ -532,7 +600,9 @@ export function worthExp(
    */
 
   if (victimLevel < recipientLevel - EXP_LEVEL_FLOOR) return 0;
-  return victimLevel * rankWorth(victimRank) * XP_WORTH_MULT;
+  // THE FLOOR AT :6514 IS ABOVE THE BRANCH AND APPLIES TO BOTH LADDERS —
+  // upstream returns 0 before it ever reaches :6519.
+  return victimLevel * rankWorth(victimRank, infiniteDungeon) * XP_WORTH_MULT;
 }
 
 /** What `gainExp` returns: the new level, the new PER-LEVEL xp, and the delta. */

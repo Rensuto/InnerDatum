@@ -15,6 +15,7 @@ import {
   stairsDownOf,
 } from '../../src/server/world/realms.ts';
 import type { Realm } from '../../src/server/world/realms.ts';
+import { floorsToWalk, specFor } from '../../src/server/content/delve.ts';
 import type { TileXY } from '../../src/shared/coords.ts';
 import type { Ground } from '../../src/shared/level.ts';
 import { REDACTION_SITE_ID } from '../../src/shared/level.ts';
@@ -22,6 +23,7 @@ import type { LevelView } from '../../src/shared/protocol.ts';
 import { DOOR_CLEARANCE } from '../../src/shared/sitemap.ts';
 import { zoneLevel } from '../../src/shared/mapgen/zones.ts';
 import { ActorKind, TileCode, isWalkable } from '../../src/shared/protocol.ts';
+import { isClosedDoorCode } from '../../src/shared/terrain.ts';
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════
@@ -82,7 +84,17 @@ function reach(level: LevelView, from: TileXY): Uint8Array {
         if (nx < 0 || ny < 0 || nx >= level.w || ny >= level.h) continue;
         if (seen[ny * level.w + nx] === 1) continue;
         const code = level.tiles[ny * level.w + nx] ?? TileCode.WALL;
-        if (code !== TileCode.DOOR && !isWalkable(code)) continue;
+        // THROUGH ANY CLOSED DOOR, NOT ONLY THROUGH `DOOR`. This read
+        // `code !== TileCode.DOOR`, which was true of every shipped zone
+        // because `DOOR` was the only closed door any of them drew — and it is
+        // not the engine's rule. `canRoute` (`shared/level.ts`) passes a
+        // `ROCK_DOOR` exactly as it passes a `DOOR`, `openDoor` opens either
+        // (`world.ts`), and `passable` in `shared/mapgen/connectivity.ts` — the
+        // rule `sealUnreachable` seals by — is `isClosedDoorCode || isWalkable`.
+        // Twelve of the Infinity Tower's seventeen grid sets shut their rooms
+        // with a rock door, so with the narrow rule this file called every one
+        // of those rooms unreachable and their occupants misplaced.
+        if (!isClosedDoorCode(code) && !isWalkable(code)) continue;
         seen[ny * level.w + nx] = 1;
         queue.push(ny * level.w + nx);
       }
@@ -106,13 +118,23 @@ describe('every floor of every delve', () => {
       const downed = createDownedState();
       const parties = createPartyState();
       const floors = floorsOfSite(site.id);
+      /**
+       * HOW MANY OF THEM TO WALK, WHICH IS NOT THE SAME NUMBER. `floorsOfSite`
+       * is upstream's `max_level` and the Infinity Tower's is a billion
+       * (`data/zones/infinite-dungeon/zone.lua:27`), so walking `floors` here
+       * is not a slow test, it is a hang — see `floorsToWalk`. `floors` is
+       * still what the stair rule below asks, because "is there a floor under
+       * this one" is a question about the PLACE and not about this walk.
+       */
+      const spec = specFor(site.id);
+      const walk = spec === undefined ? floors : floorsToWalk(spec);
       const sizes = SIZES[originalOf(site.id)];
       for (let s = 0; s < SEEDS; s += 1) {
         const realms = createRealms({
           seed: `zone-floors:${String(s)}`,
           engineFor: (world) => createTurnEngine({ world, downed, parties }),
         });
-        for (let floor = 1; floor <= floors; floor += 1) {
+        for (let floor = 1; floor <= walk; floor += 1) {
           const at = `${site.id} floor ${String(floor)} seed ${String(s)}`;
           const realm: Realm = realms.open(site, 'party', undefined, undefined, undefined, floor);
           const level = realm.world.level;

@@ -323,6 +323,7 @@ import {
  */
 import {
   ENCOUNTER_SITE,
+  INFINITY_TOWER_SITE_ID,
   OVERWORLD_ID,
   RealmKind,
   SITES,
@@ -332,6 +333,7 @@ import {
   UNDERMOST_SITE_ID,
   floorsOfSite,
   isShared,
+  stairDownName,
   stairsDownOf,
   zoneOf,
 } from '../world/realms.ts';
@@ -4236,6 +4238,22 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       brief.reward.level,
       brief.reward.rank,
       null,
+      /**
+       * AND ON THE LADDER THE PLACE PAYS ON — Actor.lua:6519.
+       *
+       * A `BriefReward` is a notional corpse, so it is worth what a corpse of
+       * that level and rank is worth WHERE IT FELL. A kill reads the flag off
+       * the body (`MonsterActor.infiniteDungeon`); a brief has no body, so it
+       * reads the realm — which is upstream's own `game.zone`, and is if
+       * anything the more faithful of the two.
+       *
+       * IT IS UNREACHABLE TODAY AND DELIBERATELY NOT LEFT AS `undefined`. No
+       * brief arms in the Tower (`content/briefs.ts` argues why), so this is
+       * always false as it stands. Hard-coding that would be a line that
+       * silently became wrong the day the first Tower brief lands — which is
+       * the deferral this feature already proposes.
+       */
+      realm.siteId === INFINITY_TOWER_SITE_ID ? true : undefined,
     );
     const item = brief.reward.item;
     const at = item === undefined ? undefined : rewardCell(realm, brief);
@@ -9246,7 +9264,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
         const [sx, sy] = cell.split(',');
         // ONLY WHERE THIS CHARACTER KNOWS IT — see the header of this function.
         if (!known(Number(sx), Number(sy))) return [];
-        return [{ x: Number(sx), y: Number(sy), marker: 'stair', name: 'Next level' }];
+        return [{ x: Number(sx), y: Number(sy), marker: 'stair', name: stairDownName(realm) }];
       }
       // AND THE WAY OUT OF THE ZONE, where upstream puts the exit of its last level.
       if (siteId === EXIT_SITE_ID) {
@@ -11353,7 +11371,45 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
 
     // The step itself comes back out of the pump as a `moved` to EVERYONE, the
     // mover included. See the header note: there is no optimistic path.
+    //
+    // WHERE THEY WERE BEFORE IT, because the pump can move them somewhere else
+    // entirely — see the guard below.
+    const startedIn = session.realmId;
     pumpAndBroadcast(realmFor(session));
+
+    /**
+     * ═════════════════════════════════════════════════════════════════════════
+     * IF THE PUMP CROSSED THEM, THIS STEP IS OVER.
+     * ═════════════════════════════════════════════════════════════════════════
+     *
+     * `pumpAndBroadcast` drains the recall wind-ups (`drainWindUps`), so a step
+     * taken on the twentieth turn after the Knot was pulled is the step that
+     * fires `yankOut` — and `yankOut` puts the body back on `session.enteredFrom`,
+     * which is BY CONSTRUCTION the site's own door glyph on the overworld
+     * (`crossIntoRealm` writes the tile the body was standing on when it
+     * crossed, and you cross by stepping ONTO the door).
+     *
+     * Everything below this line is about the tile the body reached BY THIS
+     * STEP. After a crossing it is not that tile any more, and the two calls
+     * read it against the wrong map: `crossIntoSite` looks the new overworld
+     * cell up in `overworld.sites`, finds the very door the party just escaped,
+     * and walks them straight back in at floor 1.
+     *
+     * MEASURED, over a socket, before this guard existed: pull the Knot on
+     * Infinity Tower floor 12, burn the wind-up with ordinary moves, and the
+     * frame after the yank is `realm:site:infinity_tower:1`. Reproduced in the
+     * Underworks from floor 2, so it is every delve and not a Tower bug — but
+     * the Tower is where it matters, because the Knot is the reason
+     * `TOWER_SITE` argues against upstream's `no_worldport`, and a way out that
+     * returns you to floor 1 of the thing you are escaping is not a way out.
+     *
+     * WHY NO SUITE CAUGHT IT: every wind-up in `test/server/elsewhere.test.ts`
+     * is burnt with `rest`, and `handleRest` is not this function — `:11393`
+     * was the ONLY caller of `crossIntoSite`. The one path nobody tested is the
+     * realistic one, because you cannot rest at depth with hostiles standing
+     * and you are running when you pull the Knot.
+     */
+    if (session.realmId !== startedIn) return;
 
     // ═══ AND WAS THAT STEP ONTO A DOOR? ═══
     // AFTER the pump, never before it: the tile the body is standing on is only

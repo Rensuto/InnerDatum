@@ -958,8 +958,16 @@ export function zoneTable(
  */
 export const MAX_SEALED_SHARE = 0.5;
 
-/** `LevelOptions.refuse` for a zone: see `MAX_SEALED_SHARE`. */
-function refuseMostlySealed(map: AuthoredMap): string | null {
+/**
+ * `LevelOptions.refuse` for a zone: see `MAX_SEALED_SHARE`.
+ *
+ * EXPORTED FOR THE ONE GENERATED PLACE THAT IS NOT A `ZoneDef` — the Infinity
+ * Tower, whose palette changes every floor so it cannot be a row in `ZONES`
+ * (`mapgen/tower.ts`). It builds with `keepTrying` exactly as `zoneLevel` does
+ * and must be refused by the same rule and told so in the same words; a second
+ * copy of the threshold would be a second answer to "how sealed is too sealed".
+ */
+export function refuseMostlySealed(map: AuthoredMap): string | null {
   const share = sealedShare(map);
   return share > MAX_SEALED_SHARE
     ? `the up stair reaches ${String(Math.round(100 * (1 - share)))}% of the ground`

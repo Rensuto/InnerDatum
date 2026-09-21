@@ -10,6 +10,7 @@ import {
   delveHeadroom,
   delveLevel,
   floorsOf,
+  floorsToWalk,
   nbNpcFor,
   populateDelve,
   specFor,
@@ -28,6 +29,7 @@ import { ActorKind, ActorRank, TileCode } from '../../src/shared/protocol.ts';
 import { createWorld } from '../../src/server/world/world.ts';
 import { createRng } from '../../src/shared/rng.ts';
 import { SITES, RealmKind, createRealms, floorsOfSite } from '../../src/server/world/realms.ts';
+import { TOWER_ENEMY_COUNT_AREA } from '../../src/shared/mapgen/infinite.ts';
 import { createTurnEngine } from '../../src/server/turn-engine.ts';
 import type { AuthoredMap } from '../../src/shared/level.ts';
 
@@ -659,7 +661,7 @@ describe('the gaps the mutation audit found', () => {
       if (site.kind !== RealmKind.Inner) continue;
       const spec = specFor(site.id);
       if (spec === undefined) continue;
-      for (let floor = 1; floor <= floorsOf(spec); floor += 1) {
+      for (let floor = 1; floor <= floorsToWalk(spec); floor += 1) {
         const band = nbNpcFor(spec, floor, 2500);
         expect(
           band[1],
@@ -700,7 +702,7 @@ describe('the gaps the mutation audit found', () => {
       if (spec === undefined) continue;
       for (let size = 1; size <= 5; size += 1) {
         const party = { level: delveLevel(spec), size };
-        for (let floor = 1; floor <= floorsOf(spec); floor += 1) {
+        for (let floor = 1; floor <= floorsToWalk(spec); floor += 1) {
           const each = (nbNpcFor(spec, floor, 2500)[1] * delveHeadroom(party)) / size;
           expect(
             each,
@@ -838,7 +840,7 @@ describe('the gaps the mutation audit found', () => {
       return { hits, all };
     };
 
-    for (let floor = 1; floor <= floorsOf(spec); floor += 1) {
+    for (let floor = 1; floor <= floorsToWalk(spec); floor += 1) {
       const on = elitesOn(spec, floor, 'on');
       expect(on.all, `floor ${String(floor)} placed nothing`).toBeGreaterThan(300);
       expect(on.hits, `floor ${String(floor)} let a body out of its depth past max_ood`).toBe(0);
@@ -851,7 +853,7 @@ describe('the gaps the mutation audit found', () => {
      */
     const { maxOod: _off, ...unfiltered } = spec;
     let without = 0;
-    for (let floor = 1; floor <= floorsOf(spec); floor += 1) {
+    for (let floor = 1; floor <= floorsToWalk(spec); floor += 1) {
       without += elitesOn(unfiltered, floor, 'off').hits;
     }
     expect(without, 'precondition: without the filter the elite is drawn at all').toBeGreaterThan(
@@ -1008,7 +1010,7 @@ describe('the band the placer uses is the band the delve states', () => {
       if (site.kind !== RealmKind.Inner) continue;
       const spec = specFor(site.id);
       if (spec === undefined) continue;
-      for (let floor = 1; floor <= floorsOf(spec); floor += 1) {
+      for (let floor = 1; floor <= floorsToWalk(spec); floor += 1) {
         if (spec.nbNpcPerArea === undefined) {
           flat += 1;
           const stated = spec.nbNpcByFloor?.get(floor) ?? spec.nbNpc;
@@ -1018,7 +1020,10 @@ describe('the band the placer uses is the band the delve states', () => {
           ).toEqual(stated);
         } else {
           scaled += 1;
-          const each = Math.ceil((2500 * spec.nbNpcPerArea) / 4900);
+          // THE DENOMINATOR IS ASKED FOR, NOT SPELLED. `zone.lua:255`'s 4900
+          // was written out here, in `nbNpcFor`, and on two rows of `DELVES` —
+          // four copies of one number, one of which could move alone.
+          const each = Math.ceil((2500 * spec.nbNpcPerArea) / TOWER_ENEMY_COUNT_AREA);
           expect(
             nbNpcFor(spec, floor, 2500),
             `${site.id} floor ${String(floor)}: the area band is not upstream's +/-5`,
@@ -1054,7 +1059,7 @@ describe('the band the placer uses is the band the delve states', () => {
       if (site.kind !== RealmKind.Inner) continue;
       const spec = specFor(site.id);
       if (spec === undefined) continue;
-      for (let floor = 1; floor <= floorsOf(spec); floor += 1) {
+      for (let floor = 1; floor <= floorsToWalk(spec); floor += 1) {
         const stated = spec.nbNpcByFloor?.get(floor) ?? spec.nbNpc;
         if (stated[1] === 0) continue;
         checked += 1;

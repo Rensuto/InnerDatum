@@ -4371,7 +4371,12 @@ export function monsterById(id: string): MonsterTemplate | undefined {
  * order for — `spreadStatPoints` is deterministic and the life curve has no
  * dice in it for a fixed rating.
  */
-export function monsterInit(template: MonsterTemplate, at: TileXY, level: number = 1): MonsterInit {
+export function monsterInit(
+  template: MonsterTemplate,
+  at: TileXY,
+  level: number = 1,
+  infiniteDungeon?: true,
+): MonsterInit {
   const rank = RANK_VALUE[template.rank];
   const grown = Math.max(1, Math.floor(level));
   /**
@@ -4459,6 +4464,10 @@ export function monsterInit(template: MonsterTemplate, at: TileXY, level: number
     // could ask how deep a corpse came from. `worthExp` is the reader that
     // needed it. See `MonsterActor.level`.
     level: grown,
+    // ═══ AND WHICH xp LADDER ITS CORPSE IS PAID ON — Actor.lua:6519 ═══
+    // A fact about the ZONE, not about the template, so it arrives as an
+    // argument exactly as `level` does. See `MonsterActor.infiniteDungeon`.
+    ...(infiniteDungeon === undefined ? {} : { infiniteDungeon }),
     // ABSENT RATHER THAN EMPTY for a creature that knows nothing, so a template
     // authored before this field produces the byte-identical body it always did.
     ...(talents === undefined ? {} : { talents }),

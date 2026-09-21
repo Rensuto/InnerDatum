@@ -1,7 +1,14 @@
 import { describe, expect, it } from 'vitest';
 
 import { fileableCount, isFileable, knownFiled } from '../../src/server/world/casefile.ts';
-import { ENCOUNTER_SITE, RealmKind, SITES } from '../../src/server/world/realms.ts';
+import {
+  ENCOUNTER_SITE,
+  INFINITY_TOWER_SITE_ID,
+  RealmKind,
+  SITES,
+  floorsOfSite,
+} from '../../src/server/world/realms.ts';
+import { TOWER_MAX_FLOOR } from '../../src/shared/mapgen/tower.ts';
 import { createCharacterFile, parseCharacterFile } from '../../src/server/persist/saves.ts';
 import { REDACTION_SITE_ID } from '../../src/shared/level.ts';
 
@@ -32,10 +39,22 @@ describe('what can be filed', () => {
     for (const [id, def] of fileable) {
       expect(def.kind, id).toBe(RealmKind.Inner);
     }
-    // AND NOTHING ELSE IS: the towns, the crossing, and the birthplace, which is
-    // a place a party can be hurt in but not one anybody walks back into.
+    // AND NOTHING ELSE IS: the towns, the crossing, the birthplace — a place a
+    // party can be hurt in but not one anybody walks back into — and the one
+    // place with no last floor to clear.
+    //
+    // THE TOWER IS `Inner` AND UNFILEABLE, and that is the second exemption
+    // this list has ever had. A case closes on the last floor and the Infinity
+    // Tower's is upstream's `max_level = 1000000000`
+    // (`data/zones/infinite-dungeon/zone.lua:27`), so its entry could never be
+    // closed by anybody — see `hasALastFloor`. Skipped by the same shape as the
+    // birthplace's line above, and asserted positively below so that the
+    // exemption cannot quietly widen.
+    const endless = [...SITES].filter(([, def]) => floorsOfSite(def.id) >= TOWER_MAX_FLOOR);
+    expect(endless.map(([id]) => id)).toEqual([INFINITY_TOWER_SITE_ID]);
     for (const [id, def] of rest) {
       if (def.birthplace === true) continue;
+      if (id === INFINITY_TOWER_SITE_ID) continue;
       expect(def.kind, id).not.toBe(RealmKind.Inner);
     }
   });
