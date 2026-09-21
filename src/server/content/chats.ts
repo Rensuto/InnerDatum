@@ -62,6 +62,7 @@
 import { DialogueScope, TOPIC_LABEL, TopicId } from '../../shared/protocol.ts';
 import { answerFor, isShopkeeperSpec } from './townsfolk.ts';
 import { regionNamedIn } from '../../shared/level.ts';
+import type { BriefSnapshot } from '../world/brief.ts';
 import type { TownsfolkSpec } from './townsfolk.ts';
 
 /**
@@ -119,6 +120,45 @@ export type ChatCtx = {
   readonly revealToParty: (x: number, y: number) => number;
   /** Expose the realm's shop shelf to the listener — today's `sendShopIfAny`. */
   readonly openShop: () => void;
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE FLOOR'S OBJECTIVE, AS THIS SPEAKER OFFERS IT — OR NOTHING.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * A READ-ONLY SNAPSHOT and never the live `Brief`. An action here could
+   * otherwise write to the realm's own object from inside a `text` closure,
+   * which runs on EVERY frame of every window — and the rule this file exists
+   * to keep is that the gateway hands a conversation exactly the operations it
+   * is allowed to perform, rather than a handle it can do anything with.
+   *
+   * `undefined` FOR EVERY OTHER PERSON IN THE GAME, which is what keeps the
+   * three rows below out of sixteen shopkeepers' conversations without a
+   * second registry of who offers what: the chat graph is projected from a
+   * person's spec, the rows are conditional on this answer, and the gateway
+   * answers only for the body the brief was armed around.
+   *
+   * It is also computed PER ASKER — see `BriefSnapshot`, whose `band` and
+   * `bearing` are facts about where the listener is standing.
+   */
+  readonly brief: () => BriefSnapshot | undefined;
+  /**
+   * Take it, for the party. `false` when there was nothing to take — two frames
+   * crossed, or somebody else already answered.
+   *
+   * THE LEAD GATE IS UPSTREAM OF HERE and is not this seam's to enforce:
+   * `handleDialogueChoose` refuses a `story` option from a non-lead before any
+   * action runs. See `revealToParty` directly above for why the row's SCOPE is
+   * the thing that has to be right.
+   */
+  readonly acceptBrief: () => boolean;
+  /**
+   * Refuse it, AND DELETE THE CONTENT — `tome/class/GameState.lua:2974-2976`,
+   * `for _, m in ipairs(mlist) do m:disappear() m:removed() end`. Refusing
+   * removes the encounter rather than leaving it standing to be asked again,
+   * which is what stops a declined offer being a thing a party farms for
+   * sentences.
+   */
+  readonly declineBrief: () => boolean;
 };
 
 /**
@@ -196,6 +236,20 @@ export function scopeOf(option: ChatOption): DialogueScope {
   return option.scope ?? DialogueScope.Story;
 }
 
+/**
+ * `BriefState.Offered` as a string, and the import that is deliberately not
+ * here.
+ *
+ * `content/` already reaches `world/brief.ts` for the `BriefSnapshot` TYPE, and
+ * a type import erases; a VALUE import would make a chat graph depend on the
+ * realm registry's module at run time, which is the direction this file's header
+ * spends its length keeping shut. `BriefSnapshot.state` is the union's member
+ * verbatim — the same way `ActorView.faction` carries its own union on the wire
+ * — so one literal is the whole of the coupling, and `chats.test.ts` pins it
+ * against the real value.
+ */
+const BRIEF_OFFERED = 'offered';
+
 /** Stable ids, exported so a test names the same string the content does. */
 export const ChatNodeId = {
   Greet: 'greet',
@@ -203,6 +257,10 @@ export const ChatNodeId = {
   RouteSelf: 'route:self',
   /** ...and on the party's. */
   RouteParty: 'route:party',
+  /** What the objective is, and what it pays. The question anybody may ask. */
+  BriefAsk: 'brief:ask',
+  /** How far, and which way. Computed for whoever asked. */
+  BriefWhere: 'brief:where',
 } as const;
 
 export const ChatOptionId = {
@@ -211,6 +269,14 @@ export const ChatOptionId = {
   Shop: 'shop',
   RouteSelf: 'route:self',
   RouteParty: 'route:party',
+  /** Tell me about it. Anybody, any number of times. */
+  BriefAsk: 'brief:ask',
+  /** How far is it? Anybody, and free — see `BriefSnapshot`. */
+  BriefWhere: 'brief:where',
+  /** Take it. THE LEAD ALONE. */
+  BriefTake: 'brief:take',
+  /** Not this time. THE LEAD ALONE, and it deletes the content. */
+  BriefDecline: 'brief:decline',
 } as const;
 
 /** The node a topic's answer lives on, and the option that reaches it. */
@@ -355,11 +421,142 @@ export function chatFor(spec: TownsfolkSpec): Chat {
     },
   };
 
+  /**
+   * ═════════════════════════════════════════════════════════════════════════
+   * AND THE OBJECTIVE, WHICH IS THE OTHER STORY ANSWER THIS BUILD HAS.
+   * ═════════════════════════════════════════════════════════════════════════
+   *
+   * FOUR ROWS ON EVERY PERSON'S GRAPH AND VISIBLE ON EXACTLY ONE, because
+   * `ctx.brief()` answers `undefined` for anybody who is not offering one. That
+   * is the same shape `shopOption` already uses (`cond: () => isShopkeeperSpec`)
+   * and it is why this file needs no registry of who offers what: the gateway
+   * knows which body the floor's objective was armed around, and the condition
+   * asks it.
+   *
+   * ═══ WHY `take` AND `decline` ARE `story` AND THE OTHER TWO ARE NOT ═══
+   * The author's ruling: *"story driving conversations should only be
+   * applicable to the host to protect their playthrough"*. Taking an objective
+   * commits four people's floor and pays four people's experience; declining
+   * DELETES THE CONTENT for all of them. Asking what it is, and how far away it
+   * is, commits nobody to anything, is computed for the asker's own body and
+   * goes only to the asker's log — which is the only thing stopping a party
+   * that asks every third step from burying the Case Log.
+   *
+   * ═══ AND `decline` IS NOT THE SAME ROW AS `leave` ═══
+   * `LEAVE` is the unconditional personal exit every node carries. If declining
+   * were the only way to end this conversation, A JOINING PLAYER WHO WALKED
+   * AWAY WOULD HAVE DECLINED ON BEHALF OF THE PARTY — precisely the bug the
+   * scope rule exists to prevent. Two rows, and they say two different things.
+   *
+   * ═══ NEITHER STORY ROW CARRIES A `jump`, AND NEITHER ACTION RETURNS ONE ═══
+   * `engine/dialogs/Chat.lua:104-110`: an answer with no jump ENDS the
+   * conversation, and `handleDialogueChoose` implements exactly that — it
+   * records the exchange and closes WITHOUT re-standing the window. Both of
+   * these change the world under the window: the accept names a body on the
+   * floor, the decline takes the speaker off it. Re-sending a window against a
+   * floor that has moved is how a player ends up being told there is nobody
+   * there to talk to about somebody standing in front of them.
+   *
+   * IT IS ALSO A GUARD ON THE LANE THAT COMES NEXT. The day accepting flips the
+   * offerer's faction, a `jump` here would make `dialogueStanding` fail on the
+   * very next frame; the socket test that asserts the window is closed after an
+   * accept is what fails the moment somebody adds one.
+   *
+   * The two ASK rows return to their own node instead, which is legal for
+   * exactly the reason `shop` is: personal, and idempotent.
+   */
+  const briefAsk: ChatOption = {
+    id: ChatOptionId.BriefAsk,
+    label: 'What is down there?',
+    scope: DialogueScope.Personal,
+    cond: (ctx) => ctx.brief() !== undefined,
+    jump: ChatNodeId.BriefAsk,
+  };
+
+  const briefWhere: ChatOption = {
+    id: ChatOptionId.BriefWhere,
+    label: 'How far?',
+    scope: DialogueScope.Personal,
+    // ONLY ONCE THERE IS SOMEWHERE TO POINT AT. A quarry has no tile until the
+    // accept names a body, which is what makes finding it a search — so before
+    // the accept this row is not offered at all, rather than being offered and
+    // then answering nothing.
+    cond: (ctx) => ctx.brief()?.bearing !== undefined,
+    jump: ChatNodeId.BriefWhere,
+  };
+
+  const briefTake: ChatOption = {
+    id: ChatOptionId.BriefTake,
+    label: 'We will take it.',
+    scope: DialogueScope.Story,
+    cond: (ctx) => ctx.brief()?.state === BRIEF_OFFERED,
+    action: (ctx) => {
+      ctx.acceptBrief();
+      return undefined;
+    },
+  };
+
+  const briefDecline: ChatOption = {
+    id: ChatOptionId.BriefDecline,
+    label: 'Not this time.',
+    scope: DialogueScope.Story,
+    cond: (ctx) => ctx.brief()?.state === BRIEF_OFFERED,
+    action: (ctx) => {
+      ctx.declineBrief();
+      return undefined;
+    },
+  };
+
+  const briefOptions: readonly ChatOption[] = [briefTake, briefAsk, briefWhere, briefDecline];
+
+  /**
+   * WHAT IT PAYS, INSIDE THE QUESTION. `tome/class/GameState.lua:2928` puts the
+   * reward in the offer, and refusing must be a PRICED decision: four people in
+   * a voice channel cannot weigh a thing whose payout is a surprise.
+   *
+   * IN THE OFFERER'S OWN REGISTER and never in numbers. The strip, the Journal
+   * and the Case Log all carry the objective's own words; a line reading
+   * "Elite, level 3" would be the character sheet talking, and the sheet is on
+   * the card.
+   */
+  const briefAskText = (ctx: ChatCtx): string => {
+    const said = ctx.brief();
+    if (said === undefined) return ctx.greeting;
+    const paid =
+      said.reward.item === undefined
+        ? 'I have nothing to give you but the quiet.'
+        : 'It is carrying something of mine. Keep it.';
+    return `${said.detail} ${paid}`;
+  };
+
   const nodes: ChatNode[] = [
     {
       id: ChatNodeId.Greet,
       text: (ctx) => ctx.greeting,
-      options: [...topicOptions, shopOption, LEAVE],
+      options: [...briefOptions, ...topicOptions, shopOption, LEAVE],
+    },
+    {
+      id: ChatNodeId.BriefAsk,
+      text: briefAskText,
+      options: [...briefOptions, BACK, LEAVE],
+    },
+    {
+      id: ChatNodeId.BriefWhere,
+      /**
+       * `tome/class/Party.lua:410-418` — the escortee answers IN WORDS, a band
+       * and a compass direction, and it is never drawn on the map. Four people
+       * standing in four places get four different answers and all four are
+       * true; asking is free (`TalkSchema` spends no turn and pumps nothing),
+       * so this is a warm-and-cold game a party may play as often as it likes.
+       */
+      text: (ctx) => {
+        const said = ctx.brief();
+        if (said?.bearing === undefined || said.band === undefined) {
+          return 'I could not tell you. Not any more.';
+        }
+        return `${said.name ?? 'It'} is ${said.band}, to the ${said.bearing}.`;
+      },
+      options: [...briefOptions, BACK, LEAVE],
     },
     ...topics.map((topic): ChatNode => ({
       id: topicNodeId(topic),

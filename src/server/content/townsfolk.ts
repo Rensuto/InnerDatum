@@ -48,6 +48,7 @@ import { canWalk } from '../../shared/level.ts';
 import { TileCode, TopicId, isWalkable } from '../../shared/protocol.ts';
 import { townResidentAt } from './towns.ts';
 import type { AuthoredMap } from '../../shared/level.ts';
+import type { TileXY } from '../../shared/coords.ts';
 import type { World } from '../world/world.ts';
 
 /**
@@ -806,6 +807,65 @@ export const TOWNSFOLK: ReadonlyMap<string, readonly TownsfolkSpec[]> = new Map<
 ]);
 
 /**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * AND THE PEOPLE WHO ARE NOT IN A TOWN. A SECOND TABLE, DELIBERATELY.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `TOWNSFOLK` is keyed by SITE and `placeTownsfolk` stands up everybody it finds
+ * under a realm's site id, once, when the realm is built. That is exactly right
+ * for a resident and exactly wrong for the person who offers a brief: they
+ * belong to ONE FLOOR of one instance, they are stood up when a party walks
+ * onto that floor and they are taken away at its edge (`world/brief.ts`). A row
+ * added to `TOWNSFOLK` under `site:underworks` would put them on every floor of
+ * every copy of that delve, at build, whether or not anything offered anything.
+ *
+ * ═══ ONE TABLE WOULD HAVE MEANT ONE FLAG, AND A FLAG IS NOT A HOME ═══
+ * The other shape is a `field?: true` on the spec that `townsfolkFor` filters
+ * out. It is the same size and it makes the `TOWNSFOLK` table mean two things:
+ * "who lives in this place" and "who might one day be put somewhere by
+ * something else". A reader of either table then has to check the flag before
+ * believing what the table says it is.
+ *
+ * KEYED BY SPEC ID rather than by site, because who places them is not a site —
+ * it is a `BriefSpec`, which names its own person (`BriefSpec.offerer`).
+ *
+ * `specForActorId` READS BOTH, and that is the join that matters: the dialogue
+ * window's second gate is that a spec exists behind the body's id, and a person
+ * this table holds must pass it exactly as a resident does.
+ */
+export const FIELD_FOLK: ReadonlyMap<string, TownsfolkSpec> = new Map<string, TownsfolkSpec>([
+  [
+    'pell',
+    {
+      id: 'pell',
+      name: 'Pell Oxbow',
+      /**
+       * THE FACE THE COMMISSION ALREADY DREW FOR SOMEBODY WHO GOT OUT — *"a
+       * miner who got out: lamp helmet, pick, dust-grey face, a shaking hand"*.
+       * Its entry leaves `content/art-requests.ts` in this change, which is that
+       * file's own rule: an id leaves the catalogue when its art has landed and
+       * the code that draws it names it.
+       */
+      sprite: 'chr_npc_miner_s',
+      greetFirst: 'Pell Oxbow. I came down with eleven. Do not count.',
+      greetAgain: 'Still here. Still counting wrong.',
+      greetFiled: 'You are the one who finishes things. I had heard.',
+      deflect: [
+        'I have been shoved by worse than you.',
+        'Push all you like. I am not moving twice.',
+        'There is a wall behind me. I chose it.',
+      ],
+      topics: {
+        [TopicId.Where]: 'Deeper, if you must. The galleries do not branch kindly.',
+        [TopicId.Party]: 'Do not come down here alone. Eleven was not enough.',
+        [TopicId.Roads]: 'There is no road under here. Only what we cut.',
+        [TopicId.Rumour]: 'The deep galleries answer to a name. Not mine.',
+      },
+    },
+  ],
+]);
+
+/**
  * Refuse a line that cannot be read.
  *
  * AT MODULE LOAD, not in a test only. A test catches it before a deploy; this
@@ -814,7 +874,11 @@ export const TOWNSFOLK: ReadonlyMap<string, readonly TownsfolkSpec[]> = new Map<
  * screenshot of anything but that exact moment.
  */
 function assertLinesFit(): void {
-  for (const specs of TOWNSFOLK.values()) {
+  // BOTH TABLES. A person is measured against the lane they will be READ in,
+  // and the Margin lane is the same one wherever they are standing — so a
+  // second table that this loop did not walk would be exactly the hole the
+  // `later` essay below describes, in a new place.
+  for (const specs of [...TOWNSFOLK.values(), [...FIELD_FOLK.values()]]) {
     for (const spec of specs) {
       const lines = [
         spec.greetFirst,
@@ -974,7 +1038,10 @@ export function specForActorId(actorId: string): TownsfolkSpec | undefined {
   for (const specs of TOWNSFOLK.values()) {
     for (const spec of specs) if (spec.id === specId) return spec;
   }
-  return undefined;
+  // AND THE PEOPLE WHO ARE NOT IN A TOWN. See `FIELD_FOLK`: the dialogue
+  // window's second gate is this function, so a brief's offerer must be
+  // findable here or the conversation closes on its first frame.
+  return FIELD_FOLK.get(specId);
 }
 
 /** Is this actor id one of ours? Used by the bump intercept and the verb menu. */
@@ -1044,33 +1111,53 @@ export function placeTownsfolk(
     if (at === undefined) continue;
     taken.add(`${String(at.x)},${String(at.y)}`);
 
-    world.addMonster(`${world.id}${TOWNSFOLK_ID_MARK}${spec.id}`, {
-      name: spec.name,
-      sprite: spec.sprite,
-      x: at.x,
-      y: at.y,
-      // STATIONARY IS NOT A PROFILE YET, so she takes the melee profile and is
-      // rendered harmless by the faction instead. `areEnemies` is what the AI's
-      // target search reads, and it answers false for her in both directions —
-      // so she has nobody to chase and nobody chases her. A dedicated profile
-      // would be a second place for that rule to live.
-      profile: AiProfile.MeleeChaser,
-      // ENOUGH THAT NOTHING KILLS HER BY ACCIDENT. She cannot be attacked, so
-      // this is a floor under bugs rather than a stat: a status that ticks or an
-      // area effect that forgets to ask about factions gets a very long time to
-      // be noticed before anybody dies of it.
-      maxHp: 500,
-      hpRegen: 0,
-      faction: Faction.Townsfolk,
-      // She does not fight, so a combat sheet would be a sheet nothing reads.
-      // `createMonsterActor` fills its own defaults.
-      aggroRange: 0,
-      attackRange: 0,
-    });
+    standFolk(world, spec, at);
     placed += 1;
   }
 
   return placed;
+}
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * STAND ONE PERSON UP, ON A TILE THE CALLER HAS ALREADY CHOSEN.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * THE BODY, AND NOT THE PLACEMENT. `placeTownsfolk` decides where a resident
+ * stands from the town's map; `world/brief.ts` decides where an offerer stands
+ * from the floor's arrival cluster. Those are two different questions and they
+ * are answered in two places — but a body is a body, and the moment there were
+ * two of these there would be two answers to "what is a townsfolk made of",
+ * which drift the first time one of them is edited.
+ *
+ * @returns the actor id, which is the id shape `specForActorId` reads back.
+ */
+export function standFolk(world: World, spec: TownsfolkSpec, at: TileXY): string {
+  const id = `${world.id}${TOWNSFOLK_ID_MARK}${spec.id}`;
+  world.addMonster(id, {
+    name: spec.name,
+    sprite: spec.sprite,
+    x: at.x,
+    y: at.y,
+    // STATIONARY IS NOT A PROFILE YET, so she takes the melee profile and is
+    // rendered harmless by the faction instead. `areEnemies` is what the AI's
+    // target search reads, and it answers false for her in both directions —
+    // so she has nobody to chase and nobody chases her. A dedicated profile
+    // would be a second place for that rule to live.
+    profile: AiProfile.MeleeChaser,
+    // ENOUGH THAT NOTHING KILLS HER BY ACCIDENT. She cannot be attacked, so
+    // this is a floor under bugs rather than a stat: a status that ticks or an
+    // area effect that forgets to ask about factions gets a very long time to
+    // be noticed before anybody dies of it.
+    maxHp: 500,
+    hpRegen: 0,
+    faction: Faction.Townsfolk,
+    // She does not fight, so a combat sheet would be a sheet nothing reads.
+    // `createMonsterActor` fills its own defaults.
+    aggroRange: 0,
+    attackRange: 0,
+  });
+  return id;
 }
 
 /**

@@ -883,18 +883,22 @@ export type EscapeMenuView = {
    * WHAT THIS CHARACTER HAS AGREED TO DO. The Journal's other half.
    * ═══════════════════════════════════════════════════════════════════════════
    *
-   * ═══ REAL, AND EMPTY UNTIL SOMETHING PRODUCES ONE ═══
-   * No frame carries a quest today and no code in this client fills this field,
-   * so the QUESTS section renders its empty state for every player. It is a
-   * FIELD rather than a hard-coded `[]` because the section has to be provably
-   * able to draw a quest before anything ships one — a section that could only
-   * ever be empty is a heading, not a section, and the test for it would be
-   * testing the fixture (memory `tests-true-of-the-fixture`).
+   * ═══ IT HAS A PRODUCER NOW, AND IT IS THE `brief` FRAME ═══
+   * This said *"no frame carries a quest today and no code in this client fills
+   * this field"*, and that the section existed ahead of one so that it was
+   * provably able to draw a quest before anything shipped one. `BriefMsg` is
+   * that frame: main.ts maps the objective this party took on into one row.
+   *
+   * AT MOST ONE ROW TODAY AND THE TYPE IS STILL A LIST, because the list is the
+   * shape the section was written against and one optional objective per floor
+   * is a constraint of the SERVER (`Realm.brief`) rather than of this screen.
    *
    * Optional and absent means "none", which is the same picture as `[]` here:
    * unlike `notes`, there is no launcher to grey and therefore no third state to
-   * distinguish. When a producer lands it will want the notes rule instead
-   * (absent = no frame yet), and this comment is the note to change it then.
+   * distinguish. A brief is not a thing that is "not loaded yet" — the frame
+   * arrives with the welcome and on every crossing, carrying `null` for a floor
+   * with nothing on it, so "no frame yet" and "nothing on hand" are the same
+   * picture and the screen is honest in both.
    */
   readonly quests?: readonly JournalQuestView[];
   /**
@@ -1225,13 +1229,12 @@ function rootRows(view: EscapeMenuView): readonly MenuRow[] {
      * THE JOURNAL. It was `CASE NOTES`, and it is no longer greyed when empty.
      * ═══════════════════════════════════════════════════════════════════════
      *
-     * ═══ THE COUNT SUFFIX SURVIVED THE RENAME, AND IT COUNTS NOTES ═══
+     * ═══ THE COUNT SUFFIX SURVIVED THE RENAME, AND IT IS A TOTAL NOW ═══
      * `JOURNAL (3)` on the same rule every counted row here follows (see
-     * `talentsLabel`): the number only while there is one. It is the NOTES
-     * count and not a total, because the quests half has no producer yet — a
-     * total would be the notes count wearing a name that promises more.
-     * WHOEVER SHIPS BRIEFS OWNS THIS LINE: `journalCount` is the one place that
-     * decides, so adding quests to it is one edit and not a hunt.
+     * `talentsLabel`): the number only while there is one. It counted NOTES
+     * alone while the quests half had no producer and said, in as many words,
+     * that whoever shipped briefs owned the line. They shipped; `journalCount`
+     * is still the one place that decides, and it now adds both.
      *
      * ═══ IT USED TO BE GREYED WITH `nothing found yet`, AND THE KEY IS WHY
      *     THAT HAD TO STOP ═══
@@ -1582,14 +1585,19 @@ function journalRows(view: EscapeMenuView): readonly MenuRow[] {
 /**
  * WHAT THE LAUNCHER'S SUFFIX COUNTS. The ONE place that decides.
  *
- * NOTES ONLY, and that is a statement about this build rather than about the
- * word "journal": a quest cannot exist yet, so a total and this number are the
- * same number, and the one that will still be right the day they differ is the
- * one whose name says what it counted. Whoever ships briefs adds the term HERE
- * and the row, the tests and any future reader all move together.
+ * ═══ IT SAID "NOTES ONLY", AND IT SAID WHO WOULD CHANGE IT ═══
+ * *"A quest cannot exist yet, so a total and this number are the same number...
+ * Whoever ships briefs adds the term HERE and the row, the tests and any future
+ * reader all move together."* Briefs shipped. This is that edit, and it is the
+ * whole of it.
+ *
+ * WHAT THE PLAYER IS DOING COUNTS FIRST, and it counts at all: a row reading
+ * `JOURNAL (1)` with nothing new in the archive is the screen telling somebody
+ * mid-fight that there is something on their plate, which is the question this
+ * panel exists to answer.
  */
 function journalCount(view: EscapeMenuView): number {
-  return (view.notes ?? []).length;
+  return (view.quests ?? []).length + (view.notes ?? []).length;
 }
 
 /**

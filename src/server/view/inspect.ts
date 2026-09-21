@@ -1061,11 +1061,23 @@ export function inspectActor(
    */
   const originName = self ? originNameOf(target) : undefined;
 
+  /**
+   * WHAT THIS BODY IS FOR, if it is for anything — `MonsterActor.mark`.
+   *
+   * READ OFF THE BODY AND NOT LOOKED UP. Upstream sets it on the actor at grant
+   * time (`tome/class/GameState.lua:2698-2702`) precisely so that nothing spawned
+   * afterwards can wear it, and reading it here rather than asking a registry
+   * keeps that property: two husks from one template are two bodies, and only
+   * the one that was named carries the line.
+   */
+  const mark = target.kind === ActorKind.Monster ? target.mark : undefined;
+
   return {
     id: target.id,
     name: target.name,
     ...(className === undefined ? {} : { className }),
     ...(originName === undefined ? {} : { originName }),
+    ...(mark === undefined ? {} : { mark }),
     kind: target.kind,
     hp: target.hp,
     maxHp: target.maxHp,

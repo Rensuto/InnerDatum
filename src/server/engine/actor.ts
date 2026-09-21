@@ -1296,6 +1296,36 @@ export type MonsterActor = ActorCommon & {
    * here (`ai.targetId`, `srcId`, `killerId`) is an id for the same reason.
    */
   readonly summonerId?: string;
+  /**
+   * ═════════════════════════════════════════════════════════════════════════
+   * WHAT THIS BODY IS FOR — one line, prepended to its inspect card, and
+   * ABSENT ON EVERY BODY THAT IS ONLY ITSELF.
+   * ═════════════════════════════════════════════════════════════════════════
+   *
+   * Upstream writes the objective onto the body rather than into a side table:
+   *
+   * ```lua
+   * e.desc = "#LIGHT_RED#EXTERMINATE THIS FOE#LAST#\n"..e.desc
+   * ```
+   *
+   * (`tome/class/GameState.lua:2702`), and it does it AT GRANT TIME on purpose
+   * — `:2698` says *"to prevent summons and any newly spawned npcs from
+   * preventing completion"*.
+   *
+   * ═══ ON THE BODY, WHICH IS WHAT MAKES IT FOG-HONEST FOR FREE ═══
+   * A mark held anywhere else would need its own rule about who may read it. On
+   * the body it inherits the one this engine already has: `view/inspect.ts`
+   * refuses a card for a body outside the viewer's seen set and
+   * `view/projector.ts` filters the actor list the same way, so a mark reaches
+   * exactly as far as the body does. `BeaconView`'s header forbids the other
+   * shape outright — an objective's position is *"the intelligence the fog
+   * exists to withhold"*.
+   *
+   * MUTABLE, because the body is chosen after it was placed: a floor's roster
+   * is rolled when the realm is built and the one that keeps its name is named
+   * when a party agrees to hunt it (`world/brief.ts#markQuarry`).
+   */
+  mark?: string;
   readonly ai: MonsterAi;
 };
 

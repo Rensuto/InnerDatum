@@ -255,12 +255,6 @@ export const TOWNSFOLK_ART_COMMISSION: readonly ArtRequest[] = [
     'A ferryman in oilskins leaning on a boathook.',
   ),
   actor(
-    { id: 'chr_npc_miner_s' },
-    'The Hollow Mine',
-    '',
-    'A miner who got out: lamp helmet, pick, dust-grey face, a shaking hand.',
-  ),
-  actor(
     { id: 'chr_npc_chapel_warden_s' },
     'The Drowned Chapel',
     '',

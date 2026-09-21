@@ -2556,13 +2556,35 @@ describe('the Journal screen', () => {
   it('reads JOURNAL on its row, with the count only while there is one', () => {
     const rowAt = (over: Partial<EscapeMenuView>) =>
       entryRows(escapeMenuRows(view(over)))[ROW_JOURNAL];
-    // THE SUFFIX RULE IS `TALENTS (2)`'S, and it counts NOTES — the quests half
-    // has no producer, and a "total" would be this number wearing a name that
-    // promised more. `journalCount` is the one place that decides.
+    // THE SUFFIX RULE IS `TALENTS (2)`'S: the number only while there is one.
     expect(rowAt({ notes: NOTES })?.label).toBe('JOURNAL (3)');
     expect(rowAt({ notes: [] })?.label).toBe('JOURNAL');
     expect(rowAt({})?.label).toBe('JOURNAL');
     expect(rowAt({ notes: NOTES.slice(0, 1) })?.label).toBe('JOURNAL (1)');
+  });
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * AND IT IS A TOTAL NOW, WHICH IS THE EDIT THIS ROW SAID IT WAS WAITING FOR.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * The count was NOTES alone while the quests half had no producer, and
+   * `journalCount`'s own note named whoever shipped briefs as the one who would
+   * change it. A row reading `JOURNAL (1)` with an empty archive is the screen
+   * telling somebody mid-fight that there is something on their plate, which is
+   * the question this panel exists to answer.
+   *
+   * MUTANT: leave `journalCount` counting notes. A party that has just taken
+   * work on reads a bare `JOURNAL`, and the one number on the menu that could
+   * have said so says nothing.
+   */
+  it('counts what the player is doing as well as what they have read', () => {
+    const rowAt = (over: Partial<EscapeMenuView>) =>
+      entryRows(escapeMenuRows(view(over)))[ROW_JOURNAL];
+    const quest = { id: 'brief', name: 'It kept its name', status: 'active' };
+    expect(rowAt({ quests: [quest] })?.label).toBe('JOURNAL (1)');
+    expect(rowAt({ quests: [quest], notes: NOTES })?.label).toBe('JOURNAL (4)');
+    expect(rowAt({ quests: [] })?.label).toBe('JOURNAL');
   });
 
   it('is never greyed, because a key opens the same screen and a key cannot be', () => {

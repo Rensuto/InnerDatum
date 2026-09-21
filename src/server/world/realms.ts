@@ -91,6 +91,10 @@ import {
 import type { MonsterTemplate } from '../content/monsters.ts';
 import { seedAmbush } from '../content/encounter.ts';
 import { createWorld } from './world.ts';
+import { briefsForSite } from '../content/briefs.ts';
+// A LEAF, AND DELIBERATELY SO — `world/stairs.ts` states the cycle it breaks.
+// Re-exported below, so no caller of this module had to change.
+import { STAIRS_DOWN_SITE_ID } from './stairs.ts';
 import { placeTownsfolk, townsfolkFor } from '../content/townsfolk.ts';
 import { makeSettlementMap, placeTownProps } from '../content/towns.ts';
 import type { TileXY } from '../../shared/coords.ts';
@@ -98,6 +102,9 @@ import type { AuthoredMap, Region } from '../../shared/level.ts';
 import type { ReapingTurnEngine } from '../turn-engine.ts';
 import type { World } from './world.ts';
 import type { PartyStrength } from './strength.ts';
+// TYPE-ONLY, AND THAT IS WHAT KEEPS THE TWO FILES ACYCLIC: `world/brief.ts`
+// imports `stairsDownOf` from here at runtime, and this import erases.
+import type { Brief, BriefSpec } from './brief.ts';
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════
@@ -186,11 +193,15 @@ export const TIDE_MS = 2000;
 export const OVERWORLD_ID = 'realm:overworld';
 
 /**
- * THE SITE ID A STAIR DOWN IS FILED UNDER in a floor's `sites`. Not a site in
- * `SITES`: walking onto it takes the party's next floor of the site they are in.
- * Upstream's DOWN grid (data/general/grids/basic.lua:44-52).
+ * THE SITE ID A STAIR DOWN IS FILED UNDER, and the reader that finds it.
+ *
+ * DECLARED IN `world/stairs.ts` and re-exported here, so that every caller in
+ * the tree keeps the import it has always had. The two of them moved out
+ * because `world/brief.ts` needs the reader and this module reaches
+ * `content/briefs.ts` for a site's authored objectives — see that file's header
+ * for the cycle, and for what an ES module cycle does instead of failing.
  */
-export const STAIRS_DOWN_SITE_ID = 'stairs:down';
+export { STAIRS_DOWN_SITE_ID, stairsDownOf } from './stairs.ts';
 
 /**
  * A way out of a whole zone, to the map the party came in from. Upstream's
@@ -231,16 +242,6 @@ function withStairsDown(map: AuthoredMap): AuthoredMap {
     ...map,
     sites: new Map([...map.sites, [`${String(at.x)},${String(at.y)}`, STAIRS_DOWN_SITE_ID]]),
   };
-}
-
-/** Where a floor's stair down is, or null on a floor with none. */
-export function stairsDownOf(realm: Realm): TileXY | null {
-  for (const [cell, siteId] of realm.sites) {
-    if (siteId !== STAIRS_DOWN_SITE_ID) continue;
-    const [x, y] = cell.split(',');
-    return { x: Number(x), y: Number(y) };
-  }
-  return null;
 }
 
 /**
@@ -605,6 +606,40 @@ export type Realm = {
   baseLevel?: number;
   /** Which floor of its site this is, from 1: upstream's `level.level`. */
   readonly floor: number;
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE FLOOR'S OBJECTIVE, AND UNDEFINED ON EVERY FLOOR THAT HAS NONE.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Mutable behind a `readonly` binding, the same shape as `roamers` and `shop`
+   * above and for the same stated reason: the realm's identity never changes and
+   * its contents do.
+   *
+   * ═══ AND `shop`'s HEADER MAKES THIS FIELD'S ARGUMENT FOR IT ═══
+   * A shop may not live on an Inner realm because `realms.delete` would destroy
+   * its shelves the moment the last body left. A brief MUST live on an Inner
+   * realm for exactly that reason: it is SUPPOSED to die there — upstream's
+   * `check_level = nil` (tome/class/GameState.lua:2634) is the same statement
+   * about the same moment. `partyId` below then makes it party-scoped by
+   * construction, with no access control to write.
+   *
+   * ONE OPTIONAL FIELD, AND THAT IS THE MECHANISM RATHER THAN THE NOTATION. A
+   * second concurrent objective on one floor is a quest log wearing a different
+   * word, and a single optional field cannot represent one.
+   */
+  brief?: Brief;
+  /**
+   * WHAT THIS FLOOR COULD BE ASKED TO DO — copied from the site at `open`, and
+   * empty everywhere else.
+   *
+   * COPIED, FOR `noRecall`'s REASON VERBATIM: this is asked of a realm the
+   * gateway is already holding, and *"a field copied at `open` makes [it] a
+   * property of the instance, which is what a caller has, what a test can build,
+   * and what an instance created from a site definition the global table does
+   * not hold can still answer honestly"*. `armBrief` takes a realm and nothing
+   * else because of this line.
+   */
+  readonly briefs: readonly BriefSpec[];
 };
 
 /**
@@ -790,6 +825,18 @@ export type SiteDef = {
    * the feature, and the whole point is to add somewhere to find.
    */
   readonly hidden?: boolean;
+  /**
+   * THE OBJECTIVES THIS PLACE MAY OFFER, and absent on every site that offers
+   * none — which is every site today. Beside `populate` because it is the same
+   * kind of thing: what this floor has on it beyond its tiles.
+   *
+   * MUST BE ABSENT ON A `Common` SITE, enforced beside the same rule for
+   * `populate` and for a sharper version of its reason: a delve floor holds one
+   * party (`Realm.partyId`, `MAX_PARTY_SIZE`), so a brief is offered to people
+   * who chose to play together. A town is shared by every party in it, and an
+   * objective offered into a room of six strangers has no party to belong to.
+   */
+  readonly briefs?: readonly BriefSpec[];
 };
 
 export type Realms = {
@@ -905,6 +952,17 @@ function assertNoCombatInSharedSpace(site: SiteDef): void {
         `the population.`,
     );
   }
+  // ═══ AND FOR THE SAME REASON, IN THE SAME PLACE, WITH THE SAME LOUDNESS ═══
+  // A brief belongs to the party that took it, and a Common realm has no party
+  // (`Realm.partyId` is undefined there). An objective offered in a town would
+  // be offered to whoever happened to be standing in it.
+  if (site.kind === RealmKind.Common && site.briefs !== undefined) {
+    throw new Error(
+      `realms: site '${site.id}' is Common but carries briefs — an objective ` +
+        `belongs to the party that took it, and a shared space has no party. ` +
+        `Make it Inner, or drop the briefs.`,
+    );
+  }
 }
 
 /**
@@ -966,6 +1024,8 @@ export function createRealms(opts: RealmsOptions): Realms {
       readonly floor?: number;
       /** How the floor is put back after a party wipe. See `World.reseedFloor`. */
       readonly reseedFloor?: (world: World) => void;
+      /** What this floor may be asked to do. See `Realm.briefs`. */
+      readonly briefs?: readonly BriefSpec[];
     },
   ): Realm => {
     // THE REALM'S OWN ID, THREADED IN. Everything minted inside this world
@@ -1010,6 +1070,15 @@ export function createRealms(opts: RealmsOptions): Realms {
       sealed: false,
       floor: extra.floor ?? 1,
       ...extra,
+      // ═══ AFTER THE SPREAD, DELIBERATELY, AND IT IS NOT STYLE ═══
+      // `open` passes `site.briefs` straight through, and that is `undefined`
+      // on every site that offers none — a spread copies a key whose VALUE is
+      // undefined over a default just as happily as it copies a real one. The
+      // same three words written ABOVE `...extra` would be `undefined` at
+      // runtime on every floor in the game, with the type still claiming an
+      // array and `armBrief` reading a field that cannot be there. The list is
+      // always a list, so nothing downstream has to ask twice.
+      briefs: extra.briefs ?? [],
     };
     /**
      * ═══════════════════════════════════════════════════════════════════════
@@ -1203,6 +1272,16 @@ export function createRealms(opts: RealmsOptions): Realms {
       // See `SiteDef.noRecall`. Carried onto the instance for the reason
       // `Realm.noRecall` gives.
       noRecall: site.noRecall === true,
+      // AND WHAT THIS FLOOR MAY BE ASKED TO DO, copied for that same reason.
+      // The whole site's list: `armBrief` asks which of them this FLOOR carries,
+      // because that question has an answer only once the floor is built.
+      //
+      // PASSED PLAINLY, `undefined` AND ALL, rather than through the conditional
+      // spread the `lighting` line above uses. Two defences against the same
+      // mistake is one defence and one line nothing can test: `build` defaults
+      // this AFTER its spread, so an absent list becomes `[]` there, and hiding
+      // the undefined here would make that the unreachable half instead.
+      briefs: site.briefs,
       ...(lighting === undefined ? {} : { lighting }),
       // THE SAME CALL AS THE LINE BELOW, SCOPED TO HOSTILES: the same site, map,
       // party, lead and floor, so a wipe puts back this floor's own population
@@ -1247,6 +1326,17 @@ export function createRealms(opts: RealmsOptions): Realms {
     // map the server no longer holds, and every subsequent frame about it would
     // be silently dropped. Refuse, and let the caller notice.
     if (realm.world.allActors().some((a) => a.kind === ActorKind.Player)) return false;
+    /**
+     * ═══ AND THE FLOOR'S OBJECTIVE GOES WITH THE FLOOR ═══
+     * Upstream's `check_level = nil` (tome/class/GameState.lua:2614, :2618,
+     * :2624, :2634), and the registry drop below is not a substitute for it.
+     * A caller holding the realm object — the gateway, mid-crossing, or a test —
+     * still holds every field on it after the registry has forgotten the id, and
+     * a brief reachable through one of those is a brief that outlived the floor
+     * it was true of. `closeFloorBriefs` is the ordinary path and this is the
+     * backstop for the realm that is reaped without anybody walking out of it.
+     */
+    realm.brief = undefined;
     realms.delete(realmId);
     return true;
   };
@@ -1718,6 +1808,21 @@ const AUTHORED_SITES: readonly (readonly [string, SiteDef])[] = (
           },
         }
       : {}),
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * AND WHAT THIS PLACE MAY ASK OF A PARTY THAT WALKS INTO IT.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * A LOOKUP, LIKE `populate` ABOVE AND `SHOP_SITES` BESIDE IT, so the rule
+     * is expressed as data: `content/briefs.ts` has no entry for a town, so the
+     * lookup returns an empty list, the conditional spread leaves the field
+     * absent, and `assertNoCombatInSharedSpace`'s refusal never has to fire.
+     *
+     * ABSENT RATHER THAN EMPTY on a site that offers none, because `SiteDef`'s
+     * field is optional and `build` defaults it after its own spread — writing
+     * `briefs: []` here would make that default the unreachable half.
+     */
+    ...(briefsForSite(id).length > 0 ? { briefs: briefsForSite(id) } : {}),
     // AND IF THE SITE IS A TOME ZONE, THE ZONE BUILDS AND LIGHTS IT. See `zoneSite`.
     ...zoneSite(id, { floor, wall }),
   },
@@ -1820,6 +1925,24 @@ const REDACTED_SITES: readonly (readonly [string, SiteDef])[] = [
          */
         kind: RealmKind.Inner,
         lingerMs: INSTANCE_LINGER_MS,
+        /**
+         * ═════════════════════════════════════════════════════════════════════
+         * AND NOBODY IS STANDING IN IT TO ASK YOU FOR ANYTHING.
+         * ═════════════════════════════════════════════════════════════════════
+         *
+         * The spread would have carried the original's `briefs`, and it must
+         * not, for exactly the reason the note above gives about the shop and
+         * the townsfolk: *"Nothing sells you anything in the Redaction and
+         * nobody lives there, which is not an omission — it is what the place
+         * is."* A brief is offered by a PERSON, in words, and there are no
+         * people over there.
+         *
+         * WRITTEN OUT rather than left to the id lookup, because the twin
+         * spreads a `SiteDef` that already resolved it. A lookup by twin id
+         * would answer "none" today and would silently start answering
+         * otherwise the moment somebody authored a brief against a twin.
+         */
+        briefs: undefined,
         /**
          * AND ITS OWN CONTENTS — the one thing deliberately not inherited.
          *

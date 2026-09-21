@@ -1186,6 +1186,30 @@ export type InspectView = {
   readonly effects: readonly string[];
   readonly rows: readonly InspectRow[];
   /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * WHAT THIS BODY IS FOR — one line, above everything else on the card.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Upstream writes the objective onto the body itself and prepends it to the
+   * description (`tome/class/GameState.lua:2702`). Ours is a FIELD rather than a
+   * row, under exactly `className`'s stated rule: `rows` is an ordered,
+   * DROPPABLE list that a narrow viewport may cut, and the one line that says
+   * *"this is the one you agreed to unmake"* must not be the line a small window
+   * drops.
+   *
+   * ═══ IT CONFIRMS; IT NEVER REVEALS ═══
+   * A card exists only for a body already inside the viewer's own seen set —
+   * `view/inspect.ts` returns null otherwise — so this answers *"is this the
+   * one?"* and can never answer *"where is it?"*. That distinction is the whole
+   * of why an objective needs no beacon: `BeaconView`'s header forbids one
+   * carrying a hostile because a position is *"the intelligence the fog exists
+   * to withhold"*.
+   *
+   * ABSENT ON EVERY BODY THAT IS ONLY ITSELF, which is every body in the game
+   * but one per floor at most.
+   */
+  readonly mark?: string;
+  /**
    * Why an attack would be refused right now, in the words the player should
    * read — "too close: needs 3 tiles", not `too_close`.
    *
@@ -7565,6 +7589,58 @@ export type SitesMsg = {
   beacons?: readonly BeaconView[];
 };
 
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * WHAT THIS PARTY TOOK ON, ON THE FLOOR THEY ARE STANDING ON.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Upstream's equivalent is two lines in the player display
+ * (`tome/data/gfx/ui/ClassicPlayerDisplay.lua` draws the active quest); ours is
+ * one strip, and it carries its information IN TEXT — never in a colour or a
+ * motion alone, which is `ui/combatbanner.ts`'s standing rule for every
+ * persistent cue on this HUD.
+ *
+ * ═══ NO POSITION ON THIS FRAME, EVER, AND IT IS A RULE NOT AN OVERSIGHT ═══
+ * `BeaconView`'s header forbids a beacon carrying a hostile: a position is
+ * *"the intelligence the fog exists to withhold"*. A `mark: {x, y}` here would
+ * be a beacon under another name and one field away from pointing at something
+ * the party is supposed to go and FIND. The objective's location reaches a
+ * player out of a person's mouth, off terrain they have already seen, or off the
+ * body's own card once it is in sight — and off nothing else.
+ */
+export type BriefView = {
+  /**
+   * `BriefState` verbatim, the way `ActorView.faction` carries its own union as
+   * a string. The client draws the strip for an OPEN brief and for nothing else:
+   * work that has ended is not work in progress, and its outcome is a Case Log
+   * line rather than a band that lingers.
+   */
+  readonly state: string;
+  /** The brief's own words. The player never reads the word "brief". */
+  readonly title: string;
+  /** "1 / 3". Absent when the objective has no count — both shipped kinds. */
+  readonly progress?: string;
+};
+
+/**
+ * THE STRIP, OR ITS WITHDRAWAL.
+ *
+ * `null` IS THE WITHDRAWAL and is sent, rather than the frame being suppressed —
+ * the same shape as `PropsMsg`'s empty array and for the identical reason. A
+ * frame that is merely absent cannot take a strip away, so a party that walks
+ * off a floor with the objective still on screen would be reading a fact about
+ * a room they have left.
+ *
+ * A `ViewerMsg`, because whether there is an objective at all depends on
+ * whether YOUR party took it. Membership of that union is what makes handing
+ * this frame to the room a compile error rather than a rule to remember.
+ */
+export type BriefMsg = {
+  v: typeof PROTOCOL_VERSION;
+  t: 'brief';
+  brief: BriefView | null;
+};
+
 export type ServerMsg =
   | WelcomeMsg
   | RealmMsg
@@ -7602,6 +7678,7 @@ export type ServerMsg =
   | PropsMsg
   | LoreMsg
   | ShopMsg
+  | BriefMsg
   | InventoryMsg
   | HotbarMsg
   | KeybindsMsg
@@ -7893,6 +7970,13 @@ export type ViewerMsg =
   // Broadcasting this frame would hand the room every trap the moment one
   // player found the first. See `TrapsMsg`.
   | TrapsMsg
+  // ═══ AND THE FLOOR'S OBJECTIVE, WHICH IS TRUE FOR ONE PARTY ═══
+  // Two parties never share an inner realm, but the frame is per viewer for the
+  // reason `dialogue` is: whether there IS one depends on whether the person
+  // reading it took it. A brief nobody in this party accepted is not on this
+  // party's strip, and membership here makes `broadcast(briefMsg)` a build
+  // failure rather than a rule somebody has to remember. See `BriefMsg`.
+  | BriefMsg
   | LoreMsg
   | CooldownsMsg
   | ResourceMsg

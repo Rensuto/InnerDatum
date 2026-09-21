@@ -15,7 +15,9 @@ import {
   answerFor,
   portraitKeyFor,
 } from '../../src/server/content/townsfolk.ts';
-import { DialogueScope, TOPIC_LABEL, TopicId } from '../../src/shared/protocol.ts';
+import { BriefState } from '../../src/server/world/brief.ts';
+import { ActorRank, DialogueScope, TOPIC_LABEL, TopicId } from '../../src/shared/protocol.ts';
+import type { BriefSnapshot } from '../../src/server/world/brief.ts';
 import type { ChatCtx, ChatOption } from '../../src/server/content/chats.ts';
 import type { TownsfolkSpec } from '../../src/server/content/townsfolk.ts';
 
@@ -51,9 +53,35 @@ function ctxFor(overrides: Partial<ChatCtx> = {}): ChatCtx {
     revealToSelf: () => false,
     revealToParty: () => 0,
     openShop: () => undefined,
+    // NOBODY IS OFFERING ANYTHING, which is the answer for every person in
+    // `TOWNSFOLK` and therefore the right default here: the four brief rows are
+    // conditional on this, so the derived graph under this context is exactly
+    // the graph a shopkeeper in a town has.
+    brief: () => undefined,
+    acceptBrief: () => false,
+    declineBrief: () => false,
     ...overrides,
   };
 }
+
+/**
+ * The objective as the offerer describes it, with every field filled, so that
+ * every one of the four rows passes its condition at once.
+ *
+ * `state` IS THE LITERAL THE CHAT GRAPH COMPARES AGAINST, and pinning it
+ * against `BriefState.Offered` is the whole of what stops `content/chats.ts`'s
+ * one string drifting from the server's union — see the note on `BRIEF_OFFERED`
+ * there for why the value is not imported.
+ */
+const OFFERED_BRIEF: BriefSnapshot = {
+  title: 'It kept its name',
+  detail: 'Something down there still answers to what it was called.',
+  state: BriefState.Offered,
+  reward: { level: 3, rank: ActorRank.Elite, item: 'item_alchemists_lamp' },
+  name: 'Sallow Cordage',
+  band: 'close',
+  bearing: 'north-east',
+};
 
 const EVERYBODY: readonly TownsfolkSpec[] = [...TOWNSFOLK.values()].flat();
 
@@ -290,11 +318,27 @@ describe('who an answer belongs to', () => {
       for (const node of chatFor(spec).nodes) {
         for (const option of node.options) {
           let reachedParty = false;
+          const mark = (): void => {
+            reachedParty = true;
+          };
           const ctx = ctxFor({
             askerLevel: STANDING_LEVEL,
+            // EVERY PARTY-WIDE SEAM, not only the reveal. `ChatCtx` grew two
+            // more — taking an objective on for four people and deleting the
+            // content they were offered — and a guard that named only the
+            // oldest one would have let either of them ship `personal`.
             revealToParty: () => {
-              reachedParty = true;
+              mark();
               return 0;
+            },
+            brief: () => OFFERED_BRIEF,
+            acceptBrief: () => {
+              mark();
+              return true;
+            },
+            declineBrief: () => {
+              mark();
+              return true;
             },
           });
           if (option.cond?.(ctx) === false) continue;
@@ -307,6 +351,153 @@ describe('who an answer belongs to', () => {
         }
       }
     }
+  });
+});
+
+describe('the objective, as four rows on every graph and none of them free', () => {
+  /** The greeting node, as somebody with an objective to offer would show it. */
+  function offering(overrides: Partial<ChatCtx> = {}): ChatCtx {
+    return ctxFor({ brief: () => OFFERED_BRIEF, ...overrides });
+  }
+
+  /**
+   * NOBODY OFFERING ANYTHING SEES ANY OF THEM. Sixteen shopkeepers carry the
+   * same four rows on their graphs, and `ctx.brief()` is the whole of what keeps
+   * them out of sixteen conversations.
+   *
+   * MUTANT: drop the `cond` from any of the four. Every townsperson in the game
+   * offers work that does not exist.
+   */
+  it('shows none of them to somebody who is offering nothing', () => {
+    const ctx = ctxFor();
+    for (const spec of EVERYBODY) {
+      for (const node of chatFor(spec).nodes) {
+        const ids = visibleOptions(node, ctx).map((o) => o.id);
+        expect(ids, `${spec.id}/${node.id} offers work with no objective behind it`).not.toContain(
+          ChatOptionId.BriefTake,
+        );
+        expect(ids).not.toContain(ChatOptionId.BriefAsk);
+        expect(ids).not.toContain(ChatOptionId.BriefDecline);
+      }
+    }
+  });
+
+  /**
+   * ═══ THE TWO THAT COMMIT THE RUN ARE `story`; THE TWO THAT ASK ARE NOT ═══
+   * The author's ruling. Taking an objective commits four people's floor and
+   * pays four people's experience; declining deletes the content for all of
+   * them. Asking what it is and how far away it is commits nobody.
+   *
+   * MUTANT: scope `brief:take` or `brief:decline` `personal`. A joining player
+   * then answers for the party, which is the whole of what the scope rule is
+   * for — and `scopeOf`'s fail-closed default cannot catch a WRONG scope, only
+   * a missing one.
+   */
+  it('reserves taking it and refusing it to the host, and no other row', () => {
+    const chat = chatFor(EVERYBODY[0] ?? ({ id: 'none' } as TownsfolkSpec));
+    const greet = nodeOf(chat, ChatNodeId.Greet);
+    expect(greet, 'no greeting node').toBeDefined();
+    if (greet === undefined) return;
+    const byId = new Map(visibleOptions(greet, offering()).map((o) => [o.id, o]));
+    expect(byId.get(ChatOptionId.BriefTake)?.scope).toBe(DialogueScope.Story);
+    expect(byId.get(ChatOptionId.BriefDecline)?.scope).toBe(DialogueScope.Story);
+    expect(byId.get(ChatOptionId.BriefAsk)?.scope).toBe(DialogueScope.Personal);
+    expect(byId.get(ChatOptionId.Leave)?.scope).toBe(DialogueScope.Personal);
+  });
+
+  /**
+   * ═══ REFUSING AND LEAVING ARE TWO ROWS, AND THEY MUST STAY TWO ═══
+   * If declining were the only way to end this conversation, a joining player
+   * who walked away would have declined on behalf of the party.
+   *
+   * MUTANT: collapse them. `leave` is the unconditional exit every node carries,
+   * so the collapse either makes the exit a story row — trapping a non-lead in a
+   * window — or makes refusing personal, which hands the content's deletion to
+   * anybody who stands next to the offerer.
+   */
+  it('keeps the exit and the refusal apart, and only the exit is unconditional', () => {
+    const chat = chatFor(EVERYBODY[0] ?? ({ id: 'none' } as TownsfolkSpec));
+    const greet = nodeOf(chat, ChatNodeId.Greet);
+    if (greet === undefined) throw new Error('no greeting node');
+    expect(ChatOptionId.BriefDecline).not.toBe(ChatOptionId.Leave);
+    const decline = greet.options.find((o) => o.id === ChatOptionId.BriefDecline);
+    const leave = greet.options.find((o) => o.id === ChatOptionId.Leave);
+    expect(decline?.cond, 'refusing is offered with no objective to refuse').toBeDefined();
+    expect(leave?.cond, 'the way out of a conversation grew a condition').toBeUndefined();
+    // AND NEITHER GOES ANYWHERE: `engine/dialogs/Chat.lua:104-110`, no jump ends
+    // the conversation. An accept that jumped would re-stand a window against a
+    // floor that has just changed under it.
+    expect(leave?.jump).toBeUndefined();
+    expect(decline?.jump).toBeUndefined();
+    expect(greet.options.find((o) => o.id === ChatOptionId.BriefTake)?.jump).toBeUndefined();
+    expect(
+      greet.options.find((o) => o.id === ChatOptionId.BriefTake)?.action?.(offering()),
+      'the accept returned a node id, which is a jump by another name',
+    ).toBeUndefined();
+  });
+
+  /**
+   * THE BEARING IS NOT FOR SALE UNTIL SOMEBODY HAS AGREED TO HUNT IT, which is
+   * what makes finding it a search on a fifty-by-fifty floor.
+   *
+   * MUTANT: drop `brief:where`'s condition. The row is then offered on an
+   * objective with nowhere to point, and answers *"I could not tell you"* —
+   * a button that appears to do nothing, which is the failure this repo keeps
+   * finding.
+   */
+  it('offers the direction only once there is somewhere to point', () => {
+    const chat = chatFor(EVERYBODY[0] ?? ({ id: 'none' } as TownsfolkSpec));
+    const greet = nodeOf(chat, ChatNodeId.Greet);
+    if (greet === undefined) throw new Error('no greeting node');
+    const withoutBearing = { ...OFFERED_BRIEF, band: undefined, bearing: undefined };
+    const ids = (ctx: ChatCtx): string[] => visibleOptions(greet, ctx).map((o) => o.id);
+    expect(ids(offering())).toContain(ChatOptionId.BriefWhere);
+    expect(ids(ctxFor({ brief: () => withoutBearing }))).not.toContain(ChatOptionId.BriefWhere);
+  });
+
+  /**
+   * AND THE OFFER STATES WHAT IT PAYS — `tome/class/GameState.lua:2928` puts the
+   * reward inside the question. Refusing must be a PRICED decision.
+   *
+   * MUTANT: drop the reward clause. Four people in a voice channel are asked to
+   * weigh a thing whose payout is a surprise.
+   */
+  it('says what the work is and that it pays, in the offerer`s own words', () => {
+    const chat = chatFor(EVERYBODY[0] ?? ({ id: 'none' } as TownsfolkSpec));
+    const ask = nodeOf(chat, ChatNodeId.BriefAsk);
+    expect(ask, 'nothing answers "what is down there?"').toBeDefined();
+    const said = ask?.text(offering()) ?? '';
+    expect(said).toContain(OFFERED_BRIEF.detail);
+    expect(said).toContain('Keep it');
+    const unpaid = { ...OFFERED_BRIEF, reward: { level: 3, rank: ActorRank.Elite } };
+    expect(ask?.text(ctxFor({ brief: () => unpaid }))).not.toContain('Keep it');
+  });
+
+  /**
+   * ═══ AND THE ONE STRING THAT COUPLES THIS FILE TO THE SERVER'S UNION ═══
+   * `content/chats.ts` compares `BriefSnapshot.state` against a literal rather
+   * than importing `BriefState`, because a value import would put the realm
+   * registry's module on a chat graph's runtime path. The literal is pinned
+   * here, from the consumer's side.
+   *
+   * MUTANT: change either spelling. Both story rows stop passing their
+   * condition and the objective can never be taken on at all — silently, with
+   * the window open and three rows in it.
+   */
+  it('pins the one state word the graph spells out', () => {
+    expect(BriefState.Offered).toBe('offered');
+    const chat = chatFor(EVERYBODY[0] ?? ({ id: 'none' } as TownsfolkSpec));
+    const greet = nodeOf(chat, ChatNodeId.Greet);
+    if (greet === undefined) throw new Error('no greeting node');
+    const taken = { ...OFFERED_BRIEF, state: BriefState.Open };
+    const ids = visibleOptions(greet, ctxFor({ brief: () => taken })).map((o) => o.id);
+    expect(ids, 'an objective already taken can be taken again').not.toContain(
+      ChatOptionId.BriefTake,
+    );
+    expect(ids).not.toContain(ChatOptionId.BriefDecline);
+    // AND THE QUESTIONS SURVIVE IT, which is what a party reads after the fact.
+    expect(ids).toContain(ChatOptionId.BriefAsk);
+    expect(ids).toContain(ChatOptionId.BriefWhere);
   });
 });
 

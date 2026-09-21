@@ -328,6 +328,19 @@ import {
   stairsDownOf,
   zoneOf,
 } from '../world/realms.ts';
+import {
+  acceptBrief,
+  armBrief,
+  briefSnapshotFor,
+  briefViewFor,
+  closeFloorBriefs,
+  declineBrief,
+  noteBriefProgress,
+  rearmBrief,
+  rewardCell,
+} from '../world/brief.ts';
+import { payParty } from '../engine/scheduler.ts';
+import type { Brief } from '../world/brief.ts';
 import { UNDERMOST_WAKING } from '../content/undermost.ts';
 import { regionNamedIn } from '../../shared/level.ts';
 import { roamerAt, tickRoamers } from '../world/roamers.ts';
@@ -3782,6 +3795,334 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     if (msg !== null) send(session.socket, msg);
   };
 
+  /**
+   * ════════════════════════════════════════════════════════════════════════════
+   * WHAT THIS PARTY IS IN THE MIDDLE OF, TO ONE SOCKET — OR THAT IT IS NOTHING.
+   * ════════════════════════════════════════════════════════════════════════════
+   *
+   * NOT `…IfAny`, AND THE DIFFERENCE FROM THE SHELVES ABOVE IS THE POINT. A shop
+   * frame withheld leaves a client with the last shop it was sent; a brief frame
+   * withheld would leave a party reading an objective off a floor they have
+   * walked out of. `null` is the withdrawal and it is always sent — the same
+   * shape `PropsMsg`'s empty array has, for the same reason.
+   *
+   * VIEWER BY VIEWER, because the answer is not a fact about the room: the frame
+   * carries what the READER'S party took on. `briefViewFor` holds that rule,
+   * once, and this function is the delivery.
+   */
+  const sendBrief = (session: Session): void => {
+    const actorId = session.actorId;
+    if (actorId === null) return;
+    const full = opts.realms?.get(realmFor(session).id);
+    send(session.socket, {
+      v: PROTOCOL_VERSION,
+      t: 'brief',
+      brief: briefViewFor(full?.brief, actorId, partyMembersOf(actorId)),
+    });
+  };
+
+  /**
+   * ════════════════════════════════════════════════════════════════════════════
+   * THE OBJECTIVE ENDS WHEN THE LAST OF THEM STEPS OFF THE FLOOR.
+   * ════════════════════════════════════════════════════════════════════════════
+   *
+   * Called from both crossing seams, and there are exactly two — `crossOut`
+   * (the exit, the threshold, the stair up, and the Knot) and `crossIntoRealm`
+   * (the stair down, a door, and following a friend).
+   *
+   * ═══ BEFORE `removePlayer`, WHICH IS WHY IT IS A LINE AND NOT A HOOK ═══
+   * After that call the question can no longer be asked: the member who was
+   * standing beside the destination is gone from the world being left, so an
+   * objective that was MET at the moment of leaving would read as unmet. That
+   * mirrors upstream exactly — tome/class/Player.lua:228-239 fails the escort in
+   * `onLeaveLevel` and tome/class/Party.lua:123-139 deletes the level's
+   * temporary members, both driven from one place, tome/class/Game.lua:1024.
+   *
+   * ═══ THE LAST ONE OUT, NOT THE FIRST, AND THAT IS A DIVERGENCE ═══
+   * Upstream has one player and cannot ask the question. Ours asks the same
+   * emptiness question `reapIfEmpty` already asks: one member stepping
+   * downstairs while three keep fighting is a party that has split up, which
+   * the barrier already tolerates, and taking their objective away for it would
+   * make walking through a door a way to lose somebody else's work.
+   *
+   * ═══ AND THE PATH THAT IS NOT A CROSSING IS NOT THIS FUNCTION'S ═══
+   * `recallBody` and the character swap take a body OUT of a world without
+   * putting it into another one, so neither is a leaver and neither calls this.
+   * The last occupant of a floor dropping their socket leaves the objective
+   * standing until `reapIfEmpty` closes the realm, and `realms.close` clears it
+   * there. That is the right division: this function answers "somebody walked
+   * off the floor", and a realm being torn down is a different question with a
+   * different answer already written.
+   */
+  const endFloorBrief = (from: Realm, actorId: string): void => {
+    if (from.brief === undefined) return;
+    const others = from.world
+      .allActors()
+      .some((a) => a.kind === ActorKind.Player && a.id !== actorId);
+    if (others) return;
+    const ended = closeFloorBriefs(from);
+    // UNDEFINED IS THE SILENCE, AND IT IS MOST OF THE CASES. An objective
+    // nobody accepted is reaped without a word — nobody agreed to anything, so
+    // there is no line anybody earned — and one that already closed said its
+    // piece in the pump it closed in.
+    if (ended === undefined) return;
+    recordLineToParty(ended, `Left behind: ${ended.title}.`);
+    sendBriefToParty(ended);
+  };
+
+  /**
+   * ════════════════════════════════════════════════════════════════════════════
+   * THE STRIP, TO EVERY SOCKET IN THE PARTY THAT TOOK IT.
+   * ════════════════════════════════════════════════════════════════════════════
+   *
+   * THROUGH `sendBrief` AND NOT AROUND IT, so the rule about what a reader may
+   * see stays in one function: a member two realms away is in this audience and
+   * is handed `null`, because `sendBrief` resolves the realm from the SESSION.
+   * That is correct and it is the reason this loop does not build a frame of its
+   * own — a party member standing in a town must not read a strip about a floor
+   * they are not on.
+   *
+   * THE PARTY IS READ AT SEND TIME rather than recorded at the accept, so
+   * somebody who joined afterwards reads the strip — exactly as they are paid by
+   * the close.
+   */
+  const sendBriefToParty = (brief: Brief): void => {
+    const taker = brief.acceptedBy;
+    if (taker === null) return;
+    for (const to of sessionsOf(partyMembersOf(taker))) sendBrief(to);
+  };
+
+  /**
+   * ════════════════════════════════════════════════════════════════════════════
+   * AND THE SAME FRAME TO WHOEVER IS STANDING ON THE FLOOR, PARTY OR NOT.
+   * ════════════════════════════════════════════════════════════════════════════
+   *
+   * THE BODIES IN THE ROOM RATHER THAN THE PARTY TABLE, and there is exactly one
+   * caller: a wipe, where the objective the party took has been UNDONE and there
+   * is no longer an `acceptedBy` to ask for. `sendBriefToParty` reads that field
+   * and would send nothing at all, which is how a strip comes to advertise work
+   * a reset has already deleted.
+   *
+   * An Inner realm holds one party (`Realm.partyId`), so the two audiences are
+   * the same people; this one can be built from a floor with no objective on it,
+   * which is the state it exists to report.
+   */
+  const sendBriefToFloor = (realm: PumpTarget): void => {
+    const standing = realm.world
+      .allActors()
+      .filter((a) => a.kind === ActorKind.Player)
+      .map((a) => a.id);
+    for (const to of sessionsOf(standing)) sendBrief(to);
+  };
+
+  /**
+   * ════════════════════════════════════════════════════════════════════════════
+   * ONE RECORD LINE, TO THE PARTY THAT TOOK IT, WHEREVER THEY ARE STANDING.
+   * ════════════════════════════════════════════════════════════════════════════
+   *
+   * RECORD AND NOT MARGIN, because Record is WHAT HAPPENED and Margin is advice
+   * and speech (`client/ui/caselog.ts`). Taking an objective on, finishing it
+   * and walking out on it are all things that happened.
+   *
+   * PARTY-SCOPED AND NOT REALM-SCOPED, which is the gap this fills:
+   * `broadcastRecordLine` reaches the audience of a realm, and the party this
+   * line is about may be split across two of them — the whole point of the
+   * emptiness question at the floor's edge is that they can be.
+   *
+   * EACH RECIPIENT'S OWN CLOCK, for `recordDialogue`'s stated reason: `gameTurn`
+   * is what draws the turn separators in THEIR log, and stamping a delve's clock
+   * onto a line arriving in a town would file it under a turn they are nowhere
+   * near.
+   */
+  const recordLineToParty = (brief: Brief, text: string): void => {
+    const taker = brief.acceptedBy;
+    if (taker === null) return;
+    const audience = sessionsOf(partyMembersOf(taker));
+    // NOBODY LEFT TO TELL. The line is not queued and not held: a brief is a
+    // fact about a floor, and a floor with no sockets on it has no reader.
+    if (audience.length === 0) return;
+    for (const to of audience) {
+      logSeq += 1;
+      const home = realmFor(to);
+      send(to.socket, {
+        v: PROTOCOL_VERSION,
+        t: 'log',
+        lines: [
+          {
+            seq: logSeq,
+            lane: LogLane.Record,
+            gameTurn: home.world.turn.clock.gameTurn,
+            text,
+            depth: 0,
+          },
+        ],
+      });
+    }
+  };
+
+  /**
+   * ════════════════════════════════════════════════════════════════════════════
+   * TAKE IT — the `story` answer, already proved to be the lead's.
+   * ════════════════════════════════════════════════════════════════════════════
+   *
+   * `handleDialogueChoose` refuses a `story` option from a non-lead BEFORE any
+   * action runs, so by the time this is reached the author's ruling has been
+   * applied: *"story driving conversations should only be applicable to the host
+   * to protect their playthrough"*.
+   *
+   * ═══ AND EVERY OTHER WINDOW ON THIS BODY IS REBUILT ═══
+   * Three people can be talking to the same person at once — `dialogue.test.ts`
+   * pins that they may. Their screens still offer `We will take it.` on an
+   * objective that has just been taken, and the refusal they would get is
+   * `that is not something you can say`, which is true and useless. Re-sending
+   * rebuilds their option list against the floor as it now is.
+   *
+   * NOT THIS SOCKET'S WINDOW: the option carries no `jump`, so
+   * `handleDialogueChoose` is about to record the exchange and close it. Sending
+   * a frame a caller is two lines from withdrawing is how a client ends up
+   * drawing a window that the server has already forgotten.
+   */
+  const takeBrief = (session: Session, me: PlayerActor): boolean => {
+    const realm = opts.realms?.get(realmFor(session).id);
+    if (realm === undefined) return false;
+    const brief = acceptBrief(realm, me.id);
+    if (brief === undefined) return false;
+    restandDialoguesWith(brief.offererId, session.connId);
+    recordLineToParty(brief, `Taken on: ${brief.title}.`);
+    sendBriefToParty(brief);
+    return true;
+  };
+
+  /**
+   * NOT THIS TIME — and the person goes with it.
+   *
+   * `tome/class/GameState.lua:2974-2976` removes the encounter on a refusal
+   * rather than leaving it standing, and the same call takes the body off the
+   * floor here. Every other window open on that body then closes on its next
+   * frame, because `dialogueStanding` cannot find the speaker — which is what
+   * `restandDialoguesWith` is doing below, and it is the honest outcome rather
+   * than an error somebody has to read.
+   *
+   * ONE MARGIN LINE, TO THE LEAD ALONE. Refusing is a normal answer with no
+   * reproach; the party has already read the exchange itself through
+   * `recordDialogue` at `story` scope, and a second, louder sentence about it
+   * would be the game making a moral event of a decision the lead took for
+   * good reasons.
+   */
+  const refuseBrief = (session: Session): boolean => {
+    const realm = opts.realms?.get(realmFor(session).id);
+    if (realm === undefined) return false;
+    // READ BEFORE THE CALL, because the call is what nulls it.
+    const offererId = realm.brief?.offererId ?? null;
+    const brief = declineBrief(realm);
+    if (brief === undefined || offererId === null) return false;
+    // THE BODY IS GONE FROM THE BOARD, SAID EXPLICITLY. `client/main.ts` forbids
+    // inferring an actor's removal from its absence — that would make a body
+    // walking out of view indistinguishable from one that is no longer there —
+    // so the `left` frame is how the room learns, exactly as the reap window
+    // announces a corpse.
+    announceLeft(offererId, undefined, audienceFor(realm.id));
+    restandDialoguesWith(offererId, session.connId);
+    sendMargin(session, realmFor(session), { text: 'They stop expecting anything from you.' });
+    return true;
+  };
+
+  /**
+   * Rebuild every OTHER open window on this body, against the world as it is.
+   *
+   * `resendDialogues` already does this for every socket in the process when the
+   * party lead changes, and its own note says why that blunt shape is right
+   * there: at most one window per socket, and a keypress-rate event. This is the
+   * narrow twin, because the event is narrower — one body changed, and the
+   * socket that changed it is about to have its own window taken away.
+   */
+  const restandDialoguesWith = (speakerId: string | null, exceptConnId: string): void => {
+    if (speakerId === null) return;
+    for (const [connId, open] of [...dialogues]) {
+      if (connId === exceptConnId || open.speakerId !== speakerId) continue;
+      const other = sessions.get(connId);
+      if (other === undefined) {
+        dialogues.delete(connId);
+        continue;
+      }
+      sendDialogue(other, open);
+    }
+  };
+
+  /**
+   * ════════════════════════════════════════════════════════════════════════════
+   * WHAT IT PAYS, AND WHERE THE THING IT PAYS WITH LANDS.
+   * ════════════════════════════════════════════════════════════════════════════
+   *
+   * ═══ EXPERIENCE, THROUGH THE LOOP THAT ALREADY PAYS EVERY KILL ═══
+   * `payParty` is `awardExperience`'s own recipient loop, extracted rather than
+   * copied: the whole party at each member's OWN level, no division by headcount,
+   * no proximity check and no radius (DECISIONS.md D12). `BriefReward` is a
+   * NOTIONAL CORPSE — a level and a rank fed to `worthExp` exactly as a kill is
+   * — which is what makes the payout rescale with the floor without a second
+   * table to tune, and what gives it upstream's anti-farming floor
+   * (`tome/class/Actor.lua:6514`) for nothing.
+   *
+   * `killTurn` IS NULL. Closing an objective is not a kill and must not shut the
+   * stairs behind the party that just finished what the floor asked of them. See
+   * `payParty`.
+   *
+   * ═══ AND THE ITEM GOES ON THE FLOOR ═══
+   * Upstream asks the party who wants it through a dialog
+   * (`tome/class/Party.lua:456-463`); we have no such window and should not
+   * build one for a single case. This game's rule for material things is already
+   * first-come off the ground — `spillLoot` puts a corpse's carry on its tile —
+   * so the reward lands where the objective was, the close becomes a moment with
+   * a thing lying in it, and the party sorts it out in the voice channel.
+   */
+  const payBrief = (realm: Realm, brief: Brief): void => {
+    const taker = brief.acceptedBy;
+    if (taker === null) return;
+    payParty(realm.world, partyMembersOf(taker), brief.reward.level, brief.reward.rank, null);
+    const item = brief.reward.item;
+    const at = item === undefined ? undefined : rewardCell(realm, brief);
+    // NOWHERE TO PUT IT is a real state and not an error: a quarry can be reaped
+    // by a floor reset in the same breath it dies. The experience is still paid
+    // and the line still reads true, which is the half that cannot be replaced.
+    if (item === undefined || at === undefined) return;
+    realm.world.addGroundItem(at, item);
+    recordLineToParty(brief, 'Something is lying where it fell.');
+  };
+
+  /**
+   * ════════════════════════════════════════════════════════════════════════════
+   * WHAT THE PUMP JUST DID TO THE FLOOR'S OBJECTIVE.
+   * ════════════════════════════════════════════════════════════════════════════
+   *
+   * BESIDE `announceCleared` AND BEFORE THE REAP WINDOW, and both halves of that
+   * position are load-bearing. Before the reap, because the reward lands on the
+   * QUARRY'S OWN TILE and the body is read for it — after the reap there is no
+   * body and no tile. Beside the cleared check, because this is the other thing
+   * a body going down on this floor can mean.
+   *
+   * ═══ IT READS THE WORLD RATHER THAN `result`, AND THAT IS DELIBERATE ═══
+   * `noteBriefProgress` asks whether the marked body is still standing, because
+   * the pump's death list cannot answer *"whoever or whatever killed it"*: the
+   * floor's own damage emits no `death` event at all (`turn-engine.ts#hitToWire`
+   * takes the heal's exit on `ambient`). See that function's header. It is one
+   * map lookup, and only while an objective is open.
+   *
+   * ═══ BETWEEN PUMPS AND NEVER INSIDE ONE ═══
+   * `engine/scheduler.ts` states the rule: the pump walks one frozen actor
+   * snapshot and every RNG draw in it is labelled and ordered, so anything that
+   * can change a formula's answer moves the stream and breaks replay-from-seed.
+   * Paying experience and dropping an item are both that.
+   */
+  const noteBrief = (realm: PumpTarget): void => {
+    const full = opts.realms?.get(realm.id);
+    if (full === undefined) return;
+    const closed = noteBriefProgress(full);
+    if (closed === undefined) return;
+    recordLineToParty(closed, `Done: ${closed.title}.`);
+    payBrief(full, closed);
+    sendBriefToParty(closed);
+  };
+
   /** The physical person who accepts this transaction, within speaking reach. */
   const shopkeeperAtHand = (realm: PumpTarget, body: EngineActor): boolean =>
     realm.world
@@ -6913,6 +7254,12 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
      */
     announceCleared(realm, result);
 
+    // ═══ AND WHAT THE SAME DEATHS DID TO THE FLOOR'S OBJECTIVE ═══
+    // Beside the cleared check and BEFORE the reap window below, because the
+    // reward lands on the body's own tile and the reap is what takes it away.
+    // See `noteBrief`.
+    noteBrief(realm);
+
     // ═════════════════════════════════════════════════════════════════════
     // THE REAP WINDOW. DEAD MONSTERS LEAVE THE MAP, AND THIS IS THE ONE
     // PLACE THEY MAY — AFTER THE NARRATION, BEFORE THE RESYNC.
@@ -6990,6 +7337,40 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     if (needsFullResync(result)) {
       if (isPartyWipe(result)) {
         app.log.warn({ gameTurn: result.turn.gameTurn }, 'party wipe — the floor resets');
+
+        /**
+         * ═══════════════════════════════════════════════════════════════════
+         * AND THE FLOOR'S OBJECTIVE IS PUT BACK, NOT FAILED.
+         * ═══════════════════════════════════════════════════════════════════
+         *
+         * `resetFloor` has already reaped the offerer and whatever kept its
+         * name, along with everything else on the floor, because it is a TOTAL
+         * undo — *"A RESET MEANS THE FIGHT DID NOT HAPPEN"*. So the objective
+         * is re-armed from scratch rather than exempted from the reap, and the
+         * party may take it a second time. See `rearmBrief`.
+         *
+         * ═══ NO LINE, AND A FRAME THAT SAYS NOTHING IS ON HAND ═══
+         * No LINE, because the party is being handed the floor as it was before
+         * they walked it and being told that the thing they never finished is
+         * available again would be the game narrating its own bookkeeping over
+         * a defeat.
+         *
+         * But the FRAME is not optional, and it was missed once: a re-armed
+         * brief is `Offered`, which is on nobody's strip by construction — so
+         * without a send, every client keeps drawing the band it was last told
+         * about and a party reads an objective they no longer hold for the rest
+         * of the floor. `null` is the withdrawal and it has to be sent; that is
+         * `BriefMsg`'s whole shape. Measured over a socket: `state: 'open'` on
+         * the strip against `Offered` on the realm.
+         *
+         * TO THE FLOOR AND NOT TO THE PARTY, because the party is read off
+         * `acceptedBy` and the re-arm has just cleared it.
+         */
+        const floor = opts.realms?.get(realm.id);
+        if (floor !== undefined) {
+          rearmBrief(floor);
+          sendBriefToFloor(realm);
+        }
 
         /**
          * ═══════════════════════════════════════════════════════════════════
@@ -10533,6 +10914,10 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     // AND THE SHELVES, if this room has any. Silent everywhere else, which is
     // how a client knows not to offer the tab: no `shop` frame, no shop.
     sendShopIfAny(session);
+    // AND WHAT THIS PARTY IS IN THE MIDDLE OF, if anything. Unconditional, for
+    // `BriefMsg`'s reason: a resume must be able to say "nothing", because a
+    // client that reconnects holds whatever it was drawing when the socket died.
+    sendBrief(session);
     // AND THE ROOM NAMES ITSELF. Last of the join frames on purpose: it is the
     // first thing the player will READ, and it should be sitting under a board
     // that is already drawn rather than above one that is not.
@@ -11333,6 +11718,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     // somebody who walked out under their own power mid-count.
     cancelWindUpOnCrossing(session, actorId);
 
+    endFloorBrief(from, actorId);
     from.world.removePlayer(actorId);
     announceLeft(actorId, session.connId, audienceFor(from.id));
 
@@ -11354,6 +11740,12 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     carryAcross(body, placed);
     // AND WHATEVER THIS PLACE LAYS ON A BODY (tome/class/Actor.lua:7263-7267).
     applyZoneEffectsIn(to.world, to.zoneEffects, opts.effects);
+    // ═══ AND THE FLOOR IS ARMED ═══ The twin of the call in `crossIntoRealm`,
+    // which carries the argument. It is here for the half of it this function
+    // owns: CLIMBING IS ARRIVING. A party that goes back up a stair, or is
+    // yanked out by the Knot, lands on a floor that must offer them whatever it
+    // offers anybody walking in through its door.
+    armBrief(to);
     /**
      * ═══════════════════════════════════════════════════════════════════════
      * BACK WHERE THEY WENT IN — OR AS CLOSE TO IT AS THERE IS ROOM FOR.
@@ -11460,6 +11852,11 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     // so this resolves to the room they arrived in — and silent when that room
     // has no shelves, which is what takes the tab away again.
     sendShopIfAny(session);
+    // AND WALKING OUT OF A FLOOR IS ALSO AN OBJECTIVE EVENT — the twin of the
+    // call in `crossIntoRealm`. NEVER SILENT, unlike the shelves above it: the
+    // common case on this path is a party with nothing in front of them any
+    // more, and `brief: null` is the only thing that takes the strip down.
+    sendBrief(session);
     /**
      * ═══════════════════════════════════════════════════════════════════════
      * AND WHAT IS LYING ON THE FLOOR OF THE ROOM THEY WALKED INTO.
@@ -12359,6 +12756,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     // the moment of firing that upstream also keeps (`:3346`).
     cancelWindUpOnCrossing(session, actorId);
 
+    endFloorBrief(from, actorId);
     from.world.removePlayer(actorId);
     // EXCEPT THE PERSON LEAVING. Their own client is about to be handed a whole
     // new board by the `realm` frame below, and `case 'left'` deletes an actor
@@ -12386,6 +12784,17 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     // one, which is how a shared realm's townsfolk come to wear them
     // (tome/class/Game.lua:1329-1335, tome/class/Actor.lua:7263-7267).
     applyZoneEffectsIn(to.world, to.zoneEffects, opts.effects);
+    // ═══ AND THE FLOOR IS ARMED ═══ tome/class/Player.lua:140-171
+    // `onEnterLevel`, which reaches `grantQuest("escort-duty")` at :170. Here
+    // rather than in `realms.open` because arming is a thing that happens when
+    // somebody WALKS IN: an instance lingers for five minutes behind a party
+    // that stepped out, and a floor nobody is standing on has nobody to offer
+    // anything to. Idempotent, so a party of four arriving one at a time arms
+    // one objective and not four.
+    // BEFORE THE ARRIVAL FRAMES BELOW, so that anything the arming puts on the
+    // floor is on the board this client is about to be handed rather than added
+    // to it a frame later.
+    armBrief(to);
 
     // THE NEW FLOOR'S SCHEDULER LEARNS ABOUT THEM. `join` clears any stale
     // Standing By in that realm's barrier and `setConnected` puts them in its
@@ -12437,6 +12846,12 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     // A town is the common destination, so this is the frame that makes the
     // shop tab appear at the moment somebody steps through the door.
     sendShopIfAny(session);
+    // AND THE OBJECTIVE OF THE ROOM THEY WALKED INTO, or its withdrawal. Beside
+    // the shelves and for the same reason, with one difference that matters:
+    // this one is never silent. A `brief: null` is what takes the strip away,
+    // and a floor left behind with its objective still drawn is a fact about a
+    // room the player is no longer in. See `BriefMsg`.
+    sendBrief(session);
     /**
      * ═══════════════════════════════════════════════════════════════════════
      * AND WHAT IS LYING ON THE FLOOR OF THE ROOM THEY WALKED INTO.
@@ -15168,6 +15583,32 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     openShop: () => {
       sendShopIfAny(session);
     },
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * THE FLOOR'S OBJECTIVE, IF THIS IS THE BODY THAT IS OFFERING IT.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * `briefSnapshotFor` answers undefined unless `them.id` is the offerer the
+     * floor was armed around, which is what keeps the four brief rows out of
+     * sixteen shopkeepers' conversations with no second registry of who offers
+     * what. It is re-read on EVERY frame and on the pick, like every other
+     * condition here, because the answer genuinely moves under a conversation:
+     * somebody else in the party can accept while this window is open.
+     *
+     * `me` IS THE ASKER'S OWN BODY, and that is the whole of the direction
+     * answer: the band and the bearing are computed from where THIS person is
+     * standing, so four people get four answers and all four are true.
+     */
+    brief: () => {
+      const full = opts.realms?.get(realmFor(session).id);
+      return full === undefined ? undefined : briefSnapshotFor(full, them.id, me);
+    },
+    // ═══ TAKE IT, FOR THE PARTY. THE LEAD GATE IS IN `handleDialogueChoose` ═══
+    // A `story` option from a non-lead is refused before any action runs, so
+    // this seam never sees one — which is why it takes no actor and asks no
+    // question about who is calling it.
+    acceptBrief: () => takeBrief(session, me),
+    declineBrief: () => refuseBrief(session),
   });
 
   /**

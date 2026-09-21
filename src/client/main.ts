@@ -270,6 +270,7 @@ import {
 } from './ui/dialogue.ts';
 import type { DialogueAnswer } from './ui/dialogue.ts';
 import { createCombatBanner, PLAYFIELD_FRAME_MAX_PX } from './ui/combatbanner.ts';
+import { briefQuestRows, drawBriefStrip } from './ui/brief.ts';
 // `isSlotDisabled` is deliberately NOT imported. Whether a slot looks dead is
 // the hotbar's business; whether a press is legal is the server's. Reading it
 // here would be the first step towards refusing to send, which is exactly the
@@ -452,6 +453,7 @@ import type {
   InspectView,
   InventoryMsg,
   ShopMsg,
+  BriefView,
   DialogueView,
   ItemTier,
   LevelView,
@@ -3002,6 +3004,16 @@ let inventory: InventoryMsg | null = null;
 let shop: ShopMsg | null = null;
 
 /**
+ * WHAT THIS PARTY TOOK ON, ON THE FLOOR THEY ARE STANDING ON — or null.
+ *
+ * NULL IS SENT, IT IS NOT AN ABSENCE, and that is the difference from `shop`
+ * directly above. A `brief` frame arrives on every crossing and on every change,
+ * carrying `null` for a floor with nothing on it, because a strip can only be
+ * taken away by a frame that says so. See `BriefMsg`.
+ */
+let briefView: BriefView | null = null;
+
+/**
  * ═══════════════════════════════════════════════════════════════════════════
  * THE CONVERSATION THIS PLAYER IS IN, OR `null`. THE SERVER'S COPY, HELD.
  * ═══════════════════════════════════════════════════════════════════════════
@@ -4113,6 +4125,14 @@ function escapeMenuView(uiScale: number, uiScalePercent: number): EscapeMenuView
     // screen's rows are read from one place and cannot disagree.
     notes: knownNotes,
     openNote: openNoteId,
+    /**
+     * AND WHAT THIS PARTY AGREED TO DO, off the SAME frame the strip is drawn
+     * from — `briefView`, not a second copy. The Journal's QUESTS section was
+     * shipped empty waiting for exactly this, and filling it here rather than
+     * growing a panel of its own is what keeps "what am I doing?" a question
+     * with one answer in one place. See `briefQuestRows`.
+     */
+    quests: briefQuestRows(briefView),
     keymap: gameKeymap.current,
     persisted: keybindsPersisted,
     inParty: inParty(),
@@ -6608,6 +6628,17 @@ const paintHud: HudPainter = (ctx, width, height) => {
     ctx.textAlign = 'left';
     ctx.textBaseline = 'alphabetic';
   }
+
+  // ═══ WHAT THIS PARTY TOOK ON, UNDER THE TURN BAR ═══
+  //
+  // AFTER the panels, so a window dragged to the top cannot bury the one line
+  // that says what the party is doing — the same precedence the notice and the
+  // targeting hint are given, and for the same stated reason.
+  //
+  // BEFORE the banner, so the two-and-a-half seconds of "the fight is on" wins
+  // the space outright. The banner is the loudest moment in the game and it is
+  // allowed to be; the strip is still there when it fades.
+  drawBriefStrip(ctx, briefView, width, hudTop);
 
   combatBanner?.draw({ ctx, width, top: hudTop });
 
@@ -15664,6 +15695,11 @@ function forgetTheWorld(): void {
   beacons = [];
   inventory = null;
   shop = null;
+  // AND THE OBJECTIVE, on the same argument the props line above makes: a strip
+  // naming work taken on a map that has been replaced is a fact about somewhere
+  // else. The server restates it — `sendBrief` runs unconditionally on the
+  // welcome path and on both crossings — so this is the two halves agreeing.
+  briefView = null;
   // AND THE CONVERSATION, for the reason directly above it: a window naming a
   // body on a map that has been replaced is a window offering answers to
   // somebody who is not there. The server closes its own copy on the same
@@ -16693,6 +16729,13 @@ function applyServerMessage(msg: ServerMsg): void {
       // dropped a frame is corrected by the next one rather than showing a coat
       // somebody else bought twenty minutes ago.
       shop = msg;
+      break;
+    case 'brief':
+      // WHOLE-VALUE REPLACEMENT, `null` INCLUDED. The server decides whether
+      // this reader's party has an objective at all, so there is nothing to
+      // merge and nothing here to decide — a client that inferred "still the
+      // old one" from a null would draw a floor it has left.
+      briefView = msg.brief;
       break;
     case 'party':
       // COMPLETE, and low-frequency by construction — it changes when somebody

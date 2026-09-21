@@ -125,7 +125,7 @@ import { DAMAGE_TYPES } from '../../shared/damagetype.ts';
 import { DEFAULT_PROJECTILE_DAMAGE_TYPE, stepProjectile } from './projectile.ts';
 import type { Dir, TileXY } from '../../shared/coords.ts';
 import type { EnergyActor } from '../../shared/energy.ts';
-import type { TalentShape } from '../../shared/protocol.ts';
+import type { ActorRank, TalentShape } from '../../shared/protocol.ts';
 import type { AiCtx } from '../ai/npc.ts';
 import { MoveBlock } from '../world/world.ts';
 import type { World } from '../world/world.ts';
@@ -5037,11 +5037,56 @@ function awardExperience(run: Run, killerId: string, victim: EngineActor): void 
   const recipients =
     run.ctx.parties === undefined ? [killerId] : membersOf(run.ctx.parties, killerId);
 
+  /**
+   * 4. AND THE PAYOUT ITSELF, WHICH IS NOW SHARED.
+   *
+   * Everything above this line is about a KILL — the killer may not exist, the
+   * killer may be a monster, and `partyOf` mutates so the table must not be
+   * touched before both of those are answered. Everything below it is about
+   * PAYING A LIST OF PEOPLE for a body of a level and a rank, which is also
+   * what closing an objective is (`world/brief.ts`, `BriefReward`).
+   *
+   * EXTRACTED AND NOT COPIED. The half worth protecting is the essay inside
+   * `payParty` about the award being computed per recipient from the
+   * RECIPIENT'S own level: a second copy of that loop would agree with this one
+   * on the day it was written and disagree the first time either moved.
+   */
+  payParty(run.world, recipients, victimLevel, victim.rank, run.world.turn.clock.gameTurn);
+}
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * PAY A LIST OF PEOPLE FOR ONE NOTIONAL CORPSE. THE LOOP, AND NOTHING ELSE.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `awardExperience` above keeps its three guards, its killer resolution and its
+ * party lookup; this is the part that hands out the experience, and it is
+ * exported so that closing an objective pays through the SAME loop a kill does
+ * rather than through a second one that agrees with it today.
+ *
+ * ═══ `killTurn` IS `null` FOR A PAYOUT THAT IS NOT A KILL ═══
+ * `lastKillTurn` is the anti-stairscum lock (`Game.lua:880` `last_kill_turn`):
+ * walk in, kill the first thing, walk straight back out to a freshly generated
+ * floor. It rides this loop for a kill because this file has already decided a
+ * kill is the PARTY'S event — charge only the killer and one player kills while
+ * another opens the door. An OBJECTIVE closing is not a kill and must not shut
+ * the stairs: a party that has just finished what a floor asked of them is
+ * exactly the party that should be able to leave it.
+ *
+ * NO DIVISION BY HEADCOUNT, NO PROXIMITY CHECK, NO RADIUS, and no
+ * `alive`/`connected` filter — DECISIONS.md D12, unchanged.
+ */
+export function payParty(
+  world: World,
+  recipients: readonly string[],
+  victimLevel: number,
+  rank: ActorRank,
+  killTurn: number | null,
+): void {
   for (const recipientId of recipients) {
     // 5. Ids, not bodies (see the party.ts note above), so each is resolved and
-    //    anything that is not a player is skipped. NO DIVISION BY HEADCOUNT, NO
-    //    PROXIMITY CHECK, NO RADIUS, and no `alive`/`connected` filter.
-    const member = run.world.getActor(recipientId);
+    //    anything that is not a player is skipped.
+    const member = world.getActor(recipientId);
     if (member === undefined || member.kind !== ActorKind.Player) continue;
 
     /**
@@ -5080,7 +5125,7 @@ function awardExperience(run: Run, killerId: string, victim: EngineActor): void 
      * with, and the only one the old claim was true for — sees byte-identical
      * numbers, because every recipient's level IS the killer's.
      */
-    const award = worthExp(victimLevel, victim.rank, member.level);
+    const award = worthExp(victimLevel, rank, member.level);
 
     /**
      * `gainExp` IS PURE AND RETURNS A NEW PAIR — it does not mutate, so the
@@ -5114,7 +5159,7 @@ function awardExperience(run: Run, killerId: string, victim: EngineActor): void 
      * the existing loop is also what stops the two answers to "whose kill was
      * that" from drifting apart.
      */
-    member.lastKillTurn = run.world.turn.clock.gameTurn;
+    if (killTurn !== null) member.lastKillTurn = killTurn;
   }
 }
 

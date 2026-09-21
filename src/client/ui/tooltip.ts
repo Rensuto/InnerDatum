@@ -206,15 +206,17 @@ export function tooltipRect(
 ): PanelRect {
   const lines = tipLines(view);
   const blocked = view.blockedReason;
+  const mark = view.mark;
 
   let widest = view.name.length;
   for (const line of lines) {
     widest = Math.max(widest, line.label.length + GAP_CHARS + line.value.length);
   }
   if (blocked !== undefined) widest = Math.max(widest, blocked.length);
+  if (mark !== undefined) widest = Math.max(widest, mark.length);
 
   const w = clamp(widest * CHAR_W + INSET * 2, MIN_W, MAX_W);
-  const rows = lines.length + (blocked === undefined ? 0 : 1);
+  const rows = lines.length + (blocked === undefined ? 0 : 1) + (mark === undefined ? 0 : 1);
   const h = HEADER_H + INSET * 2 + rows * ROW_H;
 
   // Opens DOWN AND RIGHT of the pointer, and FLIPS rather than slides when that
@@ -543,6 +545,31 @@ export function drawTooltip(opts: TooltipDrawOptions): void {
 
   const right = inner.x + inner.w;
   let y = inner.y + ROW_H / 2;
+
+  const mark = view.mark;
+  if (mark !== undefined) {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * WHAT THIS BODY IS FOR, FIRST, BECAUSE IT IS WHY THE CARD WAS OPENED.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * Upstream PREPENDS it to the description for the same reason
+     * (`tome/class/GameState.lua:2702`): a player hovering a floor of identical
+     * husks is asking one question, and the answer belongs above the arithmetic
+     * rather than under it.
+     *
+     * PARCHMENT, which is this HUD's word for *something written down* and is
+     * the colour the objective's own strip is drawn in. Gold is spent on "the
+     * game is waiting on you" and crimson on "the fight is on"; borrowing
+     * either would cost the one that owns it, and ORANGE below already means
+     * "this attack would be refused".
+     */
+    ctx.font = FONT_BOLD;
+    ctx.textAlign = 'left';
+    ctx.fillStyle = PALETTE.PARCHMENT;
+    ctx.fillText(fitText(ctx, mark, inner.w), inner.x, y);
+    y += ROW_H;
+  }
 
   for (const line of tipLines(view)) {
     // `fitText` measures, so the font has to be live BEFORE it is called — it
