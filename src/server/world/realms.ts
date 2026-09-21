@@ -640,6 +640,29 @@ export type Realm = {
    * else because of this line.
    */
   readonly briefs: readonly BriefSpec[];
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * WHICH OBJECTIVE IDS THIS INSTANCE HAS ALREADY HANDED OUT — `hasQuest`.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `engine/interface/ActorQuest.lua:50` is `if self:hasQuest(quest.id) then
+   * return end`, and `Brief.id` carries the floor precisely so that check is a
+   * string lookup. Ours had the id and not the ledger, so `armBrief`'s guard
+   * held only while the brief was still ON the realm — and the floor's edge
+   * clears that field. Walking out of the delve mouth and back in through the
+   * same door therefore minted the same id again, with a second quarry, a
+   * second payout and a second reward item on one floor.
+   *
+   * ON THE INSTANCE, WHICH IS THE WHOLE LIFETIME IT SHOULD HAVE. `realms.close`
+   * takes the instance and this ledger with it, so a party who let the linger
+   * run out and came back to a fresh floor is asked again — which is the same
+   * lifetime upstream's `check_level` has, and the reason the field is here
+   * rather than on a character.
+   *
+   * A WIPE TAKES AN ID BACK OUT (`rearmBrief`), because a reset means the fight
+   * did not happen.
+   */
+  readonly granted: Set<string>;
 };
 
 /**
@@ -1079,6 +1102,10 @@ export function createRealms(opts: RealmsOptions): Realms {
       // array and `armBrief` reading a field that cannot be there. The list is
       // always a list, so nothing downstream has to ask twice.
       briefs: extra.briefs ?? [],
+      // AFTER THE SPREAD FOR THE SAME REASON, and a fresh Set per instance: it
+      // is the instance's memory of what it has already offered. See
+      // `Realm.granted`.
+      granted: new Set<string>(),
     };
     /**
      * ═══════════════════════════════════════════════════════════════════════

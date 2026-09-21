@@ -11,10 +11,13 @@ import { stubCanvas } from './canvasstub.ts';
 import {
   BRIEF_STRIP_H,
   briefOnScreen,
+  briefPillMaxW,
   briefQuestRows,
   briefStripText,
   drawBriefStrip,
 } from '../../src/client/ui/brief.ts';
+import { PLAYFIELD_FRAME_MAX_PX } from '../../src/client/ui/combatbanner.ts';
+import { PARTY_PANE_MARGIN, PARTY_PANE_W } from '../../src/client/ui/partypanel.ts';
 import type { StubCtx } from './canvasstub.ts';
 import type { BriefView } from '../../src/shared/protocol.ts';
 
@@ -195,20 +198,85 @@ describe('when the strip is on screen at all', () => {
    * that is up for the length of a floor: at the top of the map it would sit
    * across the minimap's first rows the whole time.
    */
-  it('draws one pill, sized to its words and centred, with its top edge where it was put', () => {
+  it('draws one pill, sized to its words and centred, inside the playfield frame', () => {
     const ctx = ctxFor();
     const width = 800;
     const top = 14;
     paint(ctx, OPEN, width, top);
     expect(ctx.rects).toHaveLength(1);
     const pill = ctx.rects[0];
-    expect(pill?.y).toBe(top);
     expect(pill?.h).toBe(BRIEF_STRIP_H);
     expect(pill?.w, 'the pill reaches the edges of the playfield').toBeLessThan(width / 2);
     // CENTRED: the same margin on both sides, within the rounding.
     const left = pill?.x ?? 0;
     const right = width - left - (pill?.w ?? 0);
     expect(Math.abs(left - right)).toBeLessThanOrEqual(1);
+  });
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * AND IT DOES NOT CUT THE PLAYFIELD FRAME IN HALF.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `drawPlayfieldFrame` draws from the first row below the turn bar: gold at
+   * `top..top+1` out of combat, and in a fight crimson at `top..top+2` with gold
+   * inside it at `top+3..top+4`. The pill was painted AT `top`, so it punched a
+   * hole in whichever ring was there — measured at 1262x428, a 102-pixel gap in
+   * the gold run, and in combat a gap in both rings at once.
+   *
+   * Those rings are "the game is waiting on you" and "the fight is on". A
+   * permanent band severing one does not read as a band; it reads as a
+   * rendering fault.
+   *
+   * MUTANT: pass `top` straight through to `fillRect`. The pill lands on row
+   * 14 and the frame is cut for the length of the floor.
+   */
+  it('clears the playfield frame rather than painting across it', () => {
+    const ctx = ctxFor();
+    const top = 14;
+    paint(ctx, OPEN, 800, top);
+    const pill = ctx.rects[0];
+    expect(pill?.y, 'the pill sits on the frame`s own rows').toBeGreaterThanOrEqual(
+      top + PLAYFIELD_FRAME_MAX_PX,
+    );
+  });
+});
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * HOW WIDE IT IS ALLOWED TO GROW, WHICH THE STUB CANNOT MEASURE FOR US.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `canvasstub.ts` measures every string as zero wide, so no painting test here
+ * can make a claim about a long title. The budget is a function of the viewport
+ * alone, so it is asserted directly instead.
+ */
+describe('how far the pill may spread', () => {
+  /**
+   * MEASURED at 640x320 with a 75-character title: the pill ran x=161..477 and
+   * the party pane's top border ran x=5..160 and stopped dead. `width / 2` held
+   * at 1262 by a hundred pixels and failed at `HUD_MIN_W`, and the shipped title
+   * cleared the pane by seven — which is luck, not a rule.
+   *
+   * MUTANT: go back to `width / 2`. At the smallest window the pill eats the
+   * docked pane's border.
+   */
+  it('stops short of the docked panes at the smallest window', () => {
+    const clear = 640 - (PARTY_PANE_W + PARTY_PANE_MARGIN) * 2;
+    expect(briefPillMaxW(640)).toBeLessThanOrEqual(Math.max(64, clear));
+    expect(briefPillMaxW(640), 'a pill with no width is a strip that vanished').toBeGreaterThan(0);
+  });
+
+  /**
+   * AND THE HALF-SCREEN RULE STILL BINDS AT A WIDE ONE, where the docks leave
+   * far more room than the pill should take: a title stretched across two
+   * thirds of the map is the beginning of a quest log.
+   *
+   * MUTANT: drop the `width / 2` term. A long title spreads across a 1920 map.
+   */
+  it('never grows past half the screen, however much room the docks leave', () => {
+    expect(briefPillMaxW(1920)).toBeLessThanOrEqual(1920 / 2);
+    expect(briefPillMaxW(1920)).toBe(1920 / 2);
   });
 });
 

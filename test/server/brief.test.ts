@@ -29,6 +29,7 @@ import {
   rewardCell,
 } from '../../src/server/world/brief.ts';
 import { SITES, createRealms, floorsOfSite, stairsDownOf } from '../../src/server/world/realms.ts';
+import { AiProfile } from '../../src/server/engine/actor.ts';
 import { FIELD_FOLK } from '../../src/server/content/townsfolk.ts';
 import { canWalk } from '../../src/shared/level.ts';
 import { ActorKind, ActorRank } from '../../src/shared/protocol.ts';
@@ -245,6 +246,73 @@ describe('arming a floor', () => {
     expect(realm.brief).toBe(first);
   });
 
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * ONE PER ID, EVER, ON THIS INSTANCE — `hasQuest`, WHICH WAS CITED AND NOT BUILT.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * The guard above only refuses a second arrival while the first brief is
+   * still ON the realm, and the floor's edge clears that field. So walking out
+   * of the delve and back in through the same door minted the SAME id on the
+   * SAME instance a second time — a second quarry, a second payout, a second
+   * reward item on one floor. Measured over a socket: xp 0 -> 36 -> 72 for both
+   * members, two `Done:` lines and two lamps.
+   *
+   * `engine/interface/ActorQuest.lua:50` is `if self:hasQuest(quest.id) then
+   * return end`, and `Brief.id` carries the floor precisely so that check can be
+   * a string lookup. `Realm.granted` is that ledger.
+   *
+   * MUTANT: delete the `realm.granted.has(id)` guard, or stop writing the id.
+   * The floor re-offers its work every time somebody walks back in.
+   */
+  it('refuses to hand out the same id twice on one instance', () => {
+    const realms = makeRealms();
+    const realm = floorWith(realms, [QUARRY], 2);
+    const first = armBrief(realm);
+    expect(first).toBeDefined();
+    // THE FLOOR'S EDGE: the last body out, which clears `realm.brief`.
+    closeFloorBriefs(realm);
+    expect(realm.brief, 'the edge left a reference behind').toBeUndefined();
+    // AND THEY WALK BACK IN THROUGH THE SAME DOOR, onto the same instance.
+    expect(armBrief(realm), 'the floor offered its work a second time').toBeUndefined();
+    expect(realm.brief).toBeUndefined();
+  });
+
+  /**
+   * AND A DECLINE IS ALSO AN ANSWER. `declineBrief` deletes the content —
+   * upstream removes the encounter rather than leaving it standing to be farmed
+   * — and an offer you may refuse and then walk back to is an offer with no
+   * weight.
+   *
+   * MUTANT: record the grant at the accept rather than at the arm. A declined
+   * objective comes back through the door.
+   */
+  it('does not offer again what the lead has already refused', () => {
+    const realms = makeRealms();
+    const realm = floorWith(realms, [QUARRY], 2);
+    armBrief(realm);
+    expect(declineBrief(realm)).toBeDefined();
+    expect(armBrief(realm), 'a refusal was undone by walking out and back').toBeUndefined();
+  });
+
+  /**
+   * A WIPE TAKES THE GRANT BACK OUT, because *"a reset means the fight did not
+   * happen"* and the floor is handed back exactly as it was on arrival.
+   *
+   * MUTANT: leave the id in `granted` in `rearmBrief`. A party that wipes on a
+   * floor loses its objective permanently, which is the one thing a reset is
+   * not allowed to do.
+   */
+  it('gives the floor back its objective after a wipe', () => {
+    const realms = makeRealms();
+    const realm = floorWith(realms, [QUARRY], 2);
+    armBrief(realm);
+    acceptBrief(realm, 'dalt');
+    const again = rearmBrief(realm);
+    expect(again, 'the wipe left the floor with nothing on it').toBeDefined();
+    expect(again?.state).toBe(BriefState.Offered);
+  });
+
   it('arms nothing on a floor the spec does not name', () => {
     const realms = makeRealms();
     const realm = floorWith(realms, [QUARRY], 1);
@@ -278,6 +346,7 @@ describe('arming a floor', () => {
     expect(brief?.target).toEqual({
       k: BriefKind.Quarry,
       actorId: null,
+      body: null,
       name: 'Maundy',
       mark: 'UNMAKE THIS ONE',
     });
@@ -490,6 +559,89 @@ describe('the floor`s edge', () => {
 });
 
 // ===========================================================================
+// 4d. WHICH BODY IS NAMED, AND THE THREE-PART ORDER THAT DECIDES IT
+// ===========================================================================
+
+describe('which body kept its name', () => {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * HIGHEST RANK, THEN FURTHEST FROM THE WAY IN, THEN THE LOWEST ID.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `markQuarry` argues all three at length and NOTHING TESTED ANY OF THEM: the
+   * socket fixture deletes every hostile but one, so the comparison never runs
+   * there, and the unit cases asserted only that one body was marked and that it
+   * was not the offerer. Both survivors were found by mutation.
+   *
+   * MUTANT: `away > bestAway` -> `away < bestAway`. The nearest body is named,
+   * so the objective is a monster standing at the door rather than *"the far end
+   * of a floor that has to be crossed"*.
+   *
+   * MUTANT: `rank > bestRank` -> `rank < bestRank`. The weakest body is named,
+   * and a quarry drawn as trash reads as trash.
+   */
+  it('names the highest rank, and the furthest of that rank from the arrival', () => {
+    const realms = makeRealms();
+    const { realm } = bareFloor(realms);
+    const cells = freeCells(realm);
+    const near = cells[0];
+    const far = cells.at(-1);
+    const alsoFar = cells.at(-2);
+    if (near === undefined || far === undefined || alsoFar === undefined) {
+      throw new Error('the floor had nowhere to stand three bodies');
+    }
+    // AN ELITE AT THE DOOR, A NORMAL AT THE FAR END, AN ELITE AT THE FAR END.
+    // Rank decides first, so the far Normal loses to both Elites; distance
+    // decides between the two Elites.
+    putHostile(realm, 'm_near_elite', near, ActorRank.Elite);
+    putHostile(realm, 'm_far_normal', far, ActorRank.Normal);
+    putHostile(realm, 'm_far_elite', alsoFar, ActorRank.Elite);
+
+    const brief = acceptBrief(realm, 'dalt');
+    const target = brief?.target;
+    const named = target?.k === BriefKind.Quarry ? target.actorId : null;
+    expect(named, 'rank did not decide, or distance did not').toBe('m_far_elite');
+    expect(realm.world.getActor('m_far_elite')?.name).toBe(QUARRY.quarry?.name);
+    expect(realm.world.getActor('m_near_elite')?.name).not.toBe(QUARRY.quarry?.name);
+  });
+
+  /**
+   * AND A TIE HAS ONE ANSWER ON EVERY MACHINE. `allActors` is an insertion-order
+   * walk, so without the id term the winner would be whichever body the floor
+   * happened to create first — a quarry that moves when an unrelated spawn is
+   * reordered.
+   *
+   * MUTANT: drop the `body.id < best.id` clause. This passes or fails depending
+   * on insertion order, which is the definition of a test of the fixture.
+   */
+  it('breaks a tie on the id, so every machine names the same body', () => {
+    const realms = makeRealms();
+    const { realm } = bareFloor(realms);
+    const from = realm.spawns[0] ?? { x: 0, y: 0 };
+    const away = (t: TileXY): number => Math.max(Math.abs(t.x - from.x), Math.abs(t.y - from.y));
+    // TWO CELLS THE SAME DISTANCE OUT, so only the id term can separate them.
+    const cells = freeCells(realm);
+    const furthest = away(cells.at(-1) ?? from);
+    const tied = cells.filter((c) => away(c) === furthest);
+    if (tied.length < 2) throw new Error('the floor has no two cells equally far out');
+    const [first, second] = tied;
+    if (first === undefined || second === undefined) throw new Error('unreachable');
+    // `m_b` IS CREATED FIRST, so without the id clause insertion order wins.
+    putHostile(realm, 'm_b', first, ActorRank.Elite);
+    putHostile(realm, 'm_a', second, ActorRank.Elite);
+    const a = realm.world.getActor('m_a');
+    const b = realm.world.getActor('m_b');
+    if (a === undefined || b === undefined) throw new Error('a body did not go down');
+    expect(away(a), 'the fixture never made the two distances equal').toBe(away(b));
+
+    const brief = acceptBrief(realm, 'dalt');
+    const target = brief?.target;
+    const named = target?.k === BriefKind.Quarry ? target.actorId : null;
+    expect(named, 'the tie was broken by insertion order').toBe('m_a');
+  });
+});
+
+// ===========================================================================
 // 5. WHAT GOES ON THE WIRE, AND TO WHOM
 // ===========================================================================
 
@@ -651,6 +803,57 @@ describe('taking an objective on', () => {
   });
 });
 
+/**
+ * Walkable, unoccupied cells on this floor, nearest first by Chebyshev from the
+ * arrival — everything the placement tests below need to stand a body somewhere
+ * they chose rather than somewhere the generator did.
+ */
+function freeCells(realm: Realm): TileXY[] {
+  const from = realm.spawns[0] ?? { x: 1, y: 1 };
+  const taken = new Set(realm.world.allActors().map((a) => `${String(a.x)},${String(a.y)}`));
+  const out: TileXY[] = [];
+  for (let y = 0; y < realm.world.level.h; y += 1) {
+    for (let x = 0; x < realm.world.level.w; x += 1) {
+      const key = `${String(x)},${String(y)}`;
+      if (taken.has(key) || realm.sites.has(key)) continue;
+      if (realm.spawns.some((t) => t.x === x && t.y === y)) continue;
+      if (!canWalk(realm.world.level, x, y)) continue;
+      out.push({ x, y });
+    }
+  }
+  out.sort(
+    (a, b) =>
+      Math.max(Math.abs(a.x - from.x), Math.abs(a.y - from.y)) -
+      Math.max(Math.abs(b.x - from.x), Math.abs(b.y - from.y)),
+  );
+  return out;
+}
+
+/** An armed floor with NOTHING on it but the offerer — the placement fixtures. */
+function bareFloor(realms: Realms): { realm: Realm; offererId: string } {
+  const realm = floorWith(realms, [QUARRY], 2);
+  const brief = armBrief(realm);
+  const offererId = brief?.offererId ?? '';
+  for (const body of realm.world.allActors()) {
+    if (body.kind === ActorKind.Monster && body.id !== offererId) realm.world.removeActor(body.id);
+  }
+  return { realm, offererId };
+}
+
+/** One hostile, at a chosen cell, with a chosen rank and id. */
+function putHostile(realm: Realm, id: string, at: TileXY, rank: ActorRank): void {
+  const body = realm.world.addMonster(id, {
+    name: id,
+    sprite: 'mon_index_husk',
+    x: at.x,
+    y: at.y,
+    profile: AiProfile.MeleeChaser,
+    rank,
+  });
+  body.x = at.x;
+  body.y = at.y;
+}
+
 // ===========================================================================
 // 4c. WHAT THE PUMP DOES TO IT
 // ===========================================================================
@@ -689,11 +892,61 @@ describe('unmaking the one that kept its name', () => {
     expect(realm.brief?.state).toBe(BriefState.Closed);
   });
 
-  it('closes when the body is gone from the world entirely', () => {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * A BODY THAT IS GONE IS VOID, NOT DONE — IDENTITY, NOT PRESENCE.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * THIS TEST USED TO ASSERT THE OPPOSITE AND IT WAS THE BUG, WRITTEN DOWN. It
+   * was true of its fixture — a body removed by hand, which only ever happens
+   * here — and false of the rule: in the game the thing that deletes a marked
+   * monster is `resetFloor`, which runs INSIDE the pump when the party wipes,
+   * and the sweep reads the floor on the far side of it. So a party that died
+   * on a floor whose quarry the reset happened not to re-mint was told *"Done:"*
+   * and paid for it. Measured over a socket, +36 experience each.
+   *
+   * MUTANT: read `getActor(id) === undefined` as unmade again. A wipe pays.
+   */
+  it('does not close when the body is gone from the world entirely', () => {
     const { realm, quarryId } = taken();
     realm.world.removeActor(quarryId);
-    expect(noteBriefProgress(realm)).toBeDefined();
-    expect(realm.brief?.state).toBe(BriefState.Closed);
+    expect(noteBriefProgress(realm), 'an absent body was read as an unmade one').toBeUndefined();
+    expect(realm.brief?.state).toBe(BriefState.Open);
+  });
+
+  /**
+   * AND A DIFFERENT BODY UNDER THE SAME NAME IS ALSO VOID, which is the half a
+   * removal alone cannot show. `reseedFloor` re-mints a delve's roster with
+   * INDEX ids, so after a wipe `delve_7` is a brand-new, full-health monster
+   * that answers to the string somebody agreed to unmake.
+   *
+   * `turn-engine.ts` states the rule this checks: *"`world.getActor(id) ===
+   * body` is the whole test, and it has to be the OBJECT and not merely 'is
+   * something there', because the re-seeded body answers to the same string."*
+   *
+   * MUTANT: compare the id rather than the object, and kill the impostor. The
+   * objective closes on a body nobody ever agreed to hunt.
+   */
+  it('does not close on a different body wearing the same id', () => {
+    const { realm, quarryId } = taken();
+    realm.world.removeActor(quarryId);
+    // THE SAME STRING, A NEW OBJECT — and dead, so only identity can refuse it.
+    const at = realm.spawns[0] ?? { x: 2, y: 2 };
+    const impostor = realm.world.addMonster(quarryId, {
+      name: 'Maundy',
+      sprite: 'mon_index_husk',
+      x: at.x,
+      y: at.y,
+      profile: AiProfile.MeleeChaser,
+    });
+    impostor.hp = 0;
+    impostor.alive = false;
+    expect(realm.world.getActor(quarryId), 'the fixture never re-minted the id').toBeDefined();
+    expect(
+      noteBriefProgress(realm),
+      'a re-seeded body closed somebody else`s work',
+    ).toBeUndefined();
+    expect(realm.brief?.state).toBe(BriefState.Open);
   });
 
   it('is unmoved by every other body on the floor going down', () => {
@@ -721,7 +974,10 @@ describe('unmaking the one that kept its name', () => {
    */
   it('reports the close exactly once', () => {
     const { realm, quarryId } = taken();
-    realm.world.removeActor(quarryId);
+    const body = realm.world.getActor(quarryId);
+    if (body === undefined) throw new Error('nothing was named');
+    body.hp = 0;
+    body.alive = false;
     expect(noteBriefProgress(realm)).toBeDefined();
     expect(noteBriefProgress(realm)).toBeUndefined();
   });
@@ -827,6 +1083,40 @@ describe('the direction answer', () => {
     expect(beside?.bearing).toBe('east');
     expect(beside?.band).toBe('very close');
     expect(west?.name).toBe('Maundy');
+  });
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE BAND IS EUCLIDEAN, AND ONLY A DIAGONAL CAN SHOW IT.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `Party.lua:411` is `core.fov.distance`, a straight-line radius, and the
+   * three bands were chosen against it. Every fixture that exercised the bands
+   * was AXIS-ALIGNED (dx=20/dy=0, dx=-1/dy=0), where Euclidean and Chebyshev
+   * agree exactly — so swapping one for the other changed no test at all.
+   *
+   * dx=dy=7 is 9.9 Euclidean ("close") and 7 Chebyshev ("very close"), which is
+   * the whole difference in one case.
+   *
+   * MUTANT: `Math.hypot` -> `Math.max(Math.abs(dx), Math.abs(dy))`. The offerer
+   * calls a body ten tiles away "very close", and a party walks the wrong way.
+   */
+  it('measures the distance in a straight line and not in king moves', () => {
+    const realms = makeRealms();
+    const realm = floorWith(realms, [QUARRY], 2);
+    armBrief(realm);
+    const brief = acceptBrief(realm, 'dalt');
+    const target = brief?.target;
+    const body = realm.world.getActor(target?.k === BriefKind.Quarry ? (target.actorId ?? '') : '');
+    const speaker = realm.brief?.offererId ?? '';
+    if (body === undefined) throw new Error('nothing was named');
+    const said = briefSnapshotFor(realm, speaker, { x: body.x - 7, y: body.y - 7 });
+    expect(said?.band, 'the diagonal was measured in king moves').toBe('close');
+    expect(said?.bearing).toBe('south-east');
+    // AND THE TWO BANDS STILL MEET WHERE THEY MEET, read off the function
+    // directly: 7.99 is inside the first band and 8 is not.
+    expect(distanceBand(Math.hypot(7, 7))).toBe('close');
+    expect(distanceBand(Math.hypot(5, 5))).toBe('very close');
   });
 
   /**
@@ -957,8 +1247,24 @@ describe('who the strip is sent to', () => {
       state: BriefState.Open,
       title: QUARRY.title,
     });
-    // AND A BODY ON THE SAME FLOOR WHO IS IN NOBODY'S PARTY READS NOTHING.
-    expect(briefViewFor(taken, 'stranger', ['stranger'])).toBeNull();
+    // AND A BODY ON THE SAME FLOOR WHO IS NOT IN THAT PARTY READS NOTHING.
+    expect(briefViewFor(taken, 'stranger', ['dalt', 'wren'])).toBeNull();
+  });
+
+  /**
+   * ═══ INCLUDING THE PERSON WHO ANSWERED, ONCE THEY ARE NOT IN IT ═══
+   * The third argument is the party that HOLDS THE FLOOR, not the reader's own.
+   * The old rule short-circuited on `acceptedBy === viewer`, which made the
+   * taker an unconditional reader — so a lead who walked out of the party kept
+   * the band on screen for the rest of the floor.
+   *
+   * MUTANT: restore the `taker === viewer` shortcut. A deserter reads an
+   * objective they are no longer part of.
+   */
+  it('says nothing to the person who took it once they have left that party', () => {
+    const taken = brief(BriefState.Open, 'dalt');
+    expect(briefViewFor(taken, 'dalt', ['wren'])).toBeNull();
+    expect(briefViewFor(taken, 'wren', ['wren'])).not.toBeNull();
   });
 
   /**
@@ -1016,8 +1322,24 @@ describe('a brief is not persisted, and nothing may start', () => {
       'utf8',
     );
     const file = saves.slice(saves.indexOf('export type CharacterFile'));
-    const body = file.slice(0, file.indexOf('};'));
+    /**
+     * ═══ THE TYPE'S OWN CLOSE, AT COLUMN ZERO, AND NOT THE FIRST `};` ═══
+     * It was `indexOf('};')`, which stops at the close of the first NESTED
+     * object literal in the type — `lastLearnt?: { … };`. MEASURED: 6,414 of
+     * 26,484 characters, 24% of the declaration. Everything after it —
+     * `carried`, `kitGranted`, `money`, `resources`, `position`, `updatedAt` —
+     * went unread, which is exactly where a new field is appended.
+     *
+     * MUTANT: add `readonly brief?: string;` beside `updatedAt`, where a new
+     * field naturally goes. The old slice never saw it.
+     */
+    // THE CLOSE AT COLUMN ZERO, found by shape rather than by counting: a
+    // nested literal's `};` is indented and the type's own is not.
+    const body = file.slice(0, /^};/m.exec(file)?.index ?? file.length);
     expect(body.length, 'CharacterFile moved or was renamed').toBeGreaterThan(0);
+    // THE LAST FIELD OF THE TYPE, SO A RE-TRUNCATION IS LOUD RATHER THAN
+    // SILENT. A slice that stops early passes this file by reading less of it.
+    expect(body, 'the scrape stopped before the end of CharacterFile').toContain('updatedAt');
     expect(body.toLowerCase()).not.toContain('brief');
   });
 });

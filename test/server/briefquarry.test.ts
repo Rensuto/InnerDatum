@@ -9,11 +9,13 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { ChatNodeId, ChatOptionId } from '../../src/server/content/chats.ts';
 import { DamageType } from '../../src/server/engine/damage.ts';
 import { createDownedState } from '../../src/server/engine/downed.ts';
+import { AiProfile } from '../../src/server/engine/actor.ts';
 import { createPartyState, isLeader, partyIdOf } from '../../src/server/engine/party.ts';
-import { FIELD_FOLK } from '../../src/server/content/townsfolk.ts';
+import { FIELD_FOLK, TOWNSFOLK, standFolk } from '../../src/server/content/townsfolk.ts';
+import { worthExp } from '../../src/shared/progression.ts';
 import { wsGateway } from '../../src/server/net/gateway.ts';
 import { createTurnEngine } from '../../src/server/turn-engine.ts';
-import { BriefKind, BriefState, armBrief } from '../../src/server/world/brief.ts';
+import { BriefKind, BriefState } from '../../src/server/world/brief.ts';
 import { SITES, createRealms } from '../../src/server/world/realms.ts';
 import { inspectActor } from '../../src/server/view/inspect.ts';
 import { canWalk } from '../../src/shared/level.ts';
@@ -54,6 +56,15 @@ const UNDERWORKS = 'site:underworks';
 
 const WHO = FIELD_FOLK.get('pell');
 if (WHO === undefined) throw new Error('nobody in FIELD_FOLK offers anything');
+
+/**
+ * SOMEBODY ELSE WITH A SPEC, for the case that proves the rows are keyed on the
+ * SPEAKER and not on the floor. An ordinary town resident, taken from the table
+ * `specForActorId` reads alongside `FIELD_FOLK` — so a body stood up from this
+ * passes both of the dialogue window's gates exactly as the offerer does.
+ */
+const BYSTANDER = TOWNSFOLK.get('site:threadneedle_row')?.[0];
+if (BYSTANDER === undefined) throw new Error('no resident to stand up beside the offerer');
 
 /**
  * The floor under test carries ONE objective, on floor 1, and it is authored
@@ -357,6 +368,67 @@ function standBeside(realm: Realm, actorId: string, nextTo: string): void {
   throw new Error('nowhere to stand beside them');
 }
 
+/**
+ * A plus of walkable, unoccupied ground: a centre and its four orthogonal
+ * neighbours. What the per-asker bearing case needs to put two people on
+ * opposite sides of one speaker with the objective due north of both.
+ *
+ * `ignore` names bodies that are about to be MOVED onto these cells, so they
+ * do not count as occupying the ground they are being taken off.
+ */
+function plusOfGround(
+  realm: Realm,
+  ignore: readonly string[],
+): { c: TileXY; w: TileXY; e: TileXY; n: TileXY } {
+  const skip = new Set(ignore);
+  const taken = new Set(
+    realm.world
+      .allActors()
+      .filter((a) => !skip.has(a.id))
+      .map((a) => `${String(a.x)},${String(a.y)}`),
+  );
+  const open = (x: number, y: number): boolean =>
+    canWalk(realm.world.level, x, y) &&
+    !taken.has(`${String(x)},${String(y)}`) &&
+    !realm.sites.has(`${String(x)},${String(y)}`);
+  for (let y = 1; y < realm.world.level.h - 1; y += 1) {
+    for (let x = 1; x < realm.world.level.w - 1; x += 1) {
+      if (!open(x, y) || !open(x - 1, y) || !open(x + 1, y) || !open(x, y - 1)) continue;
+      return { c: { x, y }, w: { x: x - 1, y }, e: { x: x + 1, y }, n: { x, y: y - 1 } };
+    }
+  }
+  throw new Error('the floor has no plus of open ground on it');
+}
+
+/**
+ * The same two players, with the lead having taken it on.
+ *
+ * AT MODULE SCOPE rather than inside one describe, because three sections need
+ * it and a second copy is a second fixture that can drift from this one.
+ */
+async function taken(): Promise<Awaited<ReturnType<typeof twoOnTheFloor>>> {
+  const stage = await twoOnTheFloor();
+  await talk(stage.lead, stage.offererId);
+  await choose(stage.lead, ChatNodeId.Greet, ChatOptionId.BriefTake);
+  return stage;
+}
+
+/**
+ * Spend turns until the floor's objective reaches `want`, or give up.
+ *
+ * A BARE `move` IS NOT A PUMP. A step into a wall, into another body or across
+ * a barrier that is still waiting on somebody else resolves nothing, so a test
+ * that sent one and slept was asserting against whichever of those it happened
+ * to get. This walks the four directions in turn, which one of them always is.
+ */
+async function pumpUntil(realm: Realm, who: Client, want: string): Promise<void> {
+  for (const dir of ['n', 's', 'e', 'w', 'n', 's', 'e', 'w']) {
+    if (realm.brief?.state === want) return;
+    who.send({ t: 'move', dir });
+    await sleep(220);
+  }
+}
+
 /** One string field off a frame, narrowed rather than stringified. */
 function textOf(frame: Frame | undefined, key: string): string {
   const value = frame?.[key];
@@ -436,17 +508,55 @@ describe('the offer goes through the dialogue window', () => {
    */
   it('offers the rows on the person whose objective it is, and nobody else', async () => {
     const { lead, realm, offererId } = await twoOnTheFloor();
-    // A SECOND TOWNSFOLK BODY ON THE SAME FLOOR, standing beside the first.
-    const second = armBrief(realm);
-    expect(second, 'the floor re-armed under the fixture').toBeDefined();
+    /**
+     * ═══ A SECOND REAL TOWNSPERSON, STOOD UP BESIDE THE PLAYER ═══
+     * THIS CASE USED TO CALL `armBrief` AND CALL THAT A SECOND BODY. It is not:
+     * `armBrief` returns early on an armed floor — `brief.test.ts` proves it —
+     * so the "second" was the first, `toBeDefined()` was trivially true, and the
+     * only other body it found was a hostile MONSTER that `dialogueStanding`
+     * could never open a window on. Nobody was ever asked anything, and the
+     * mutant below survived the whole file.
+     *
+     * `standFolk` is the shipped constructor and `specForActorId` reads both
+     * tables, so this body passes the two gates the window is behind exactly as
+     * the offerer does. The only difference between them is which one the
+     * objective belongs to.
+     *
+     * MUTANT: answer the `brief` seam off the realm alone, ignoring the speaker
+     * — `briefSnapshotFor(full, full.brief?.offererId ?? '', me)`. Every
+     * townsperson within reach of an armed floor then offers the same work.
+     */
+    const me = realm.world.getActor(lead.actorId);
+    if (me === undefined) throw new Error('no body on the floor');
+    const bystander = standFolk(realm.world, BYSTANDER, { x: me.x, y: me.y });
+    const them = realm.world.getActor(bystander);
+    expect(them, 'the second person never went down').toBeDefined();
+    expect(bystander, 'the fixture stood up the offerer twice').not.toBe(offererId);
+    standBeside(realm, lead.actorId, bystander);
+
+    await talk(lead, bystander);
+    expect(view(lead)?.['speakerName'], 'the window opened on the wrong body').toBe(BYSTANDER.name);
+    for (const id of [
+      ChatOptionId.BriefTake,
+      ChatOptionId.BriefAsk,
+      ChatOptionId.BriefWhere,
+      ChatOptionId.BriefDecline,
+    ]) {
+      expect(row(lead, id), `${id} was offered by somebody it is not about`).toBeUndefined();
+    }
+    expect(row(lead, ChatOptionId.Leave), 'the window has no way out').toBeDefined();
+
+    // AND THE PERSON IT IS ABOUT STILL OFFERS IT, so this is not a test of a
+    // floor that quietly stopped carrying an objective. The window is closed
+    // first: `talk` waits for a window to EXIST and one already does, so
+    // without this the assertion would read the bystander's frame again.
+    lead.send({ t: 'dialogue_close' });
+    await sleep(150);
+    expect(view(lead), 'the window did not close').toBeUndefined();
+    standBeside(realm, lead.actorId, offererId);
     await talk(lead, offererId);
+    expect(view(lead)?.['speakerName']).toBe(WHO.name);
     expect(row(lead, ChatOptionId.BriefTake)).toBeDefined();
-    // AND THE SAME SEAM SAYS NOTHING ABOUT A BODY THAT IS NOT THE OFFERER:
-    // `briefSnapshotFor` keys on the speaker, which is what this row is for.
-    const stranger = realm.world
-      .allActors()
-      .find((a) => a.kind === ActorKind.Monster && a.id !== offererId);
-    expect(stranger, 'no other body to ask about').toBeDefined();
   });
 
   /**
@@ -542,13 +652,6 @@ describe('the offer goes through the dialogue window', () => {
 // ===========================================================================
 
 describe('the lead takes it on', () => {
-  async function taken(): Promise<Awaited<ReturnType<typeof twoOnTheFloor>>> {
-    const stage = await twoOnTheFloor();
-    await talk(stage.lead, stage.offererId);
-    await choose(stage.lead, ChatNodeId.Greet, ChatOptionId.BriefTake);
-    return stage;
-  }
-
   /**
    * THE WINDOW CLOSES ON THE PICK — `engine/dialogs/Chat.lua:104-110`, an answer
    * with no jump ends the conversation.
@@ -615,23 +718,56 @@ describe('the lead takes it on', () => {
    * answer, which is the one thing a warm-and-cold game must not do.
    */
   it('answers how far, in words, for the body that asked', async () => {
-    const { other, realm, offererId } = await taken();
+    const { lead, other, realm, offererId } = await taken();
     const target = realm.brief?.target;
     const named = target?.k === BriefKind.Quarry ? (target.actorId ?? '') : '';
     const quarry = realm.world.getActor(named);
-    const me = realm.world.getActor(other.actorId);
-    if (quarry === undefined || me === undefined) throw new Error('no bodies');
-    // DUE WEST OF IT, AND FAR: the answer must be "east", and it must be the
-    // furthest band.
-    me.x = Math.max(1, quarry.x - 20);
-    me.y = quarry.y;
-    standBeside(realm, offererId, other.actorId);
+    const them = realm.world.getActor(offererId);
+    const a = realm.world.getActor(lead.actorId);
+    const b = realm.world.getActor(other.actorId);
+    if (quarry === undefined || them === undefined || a === undefined || b === undefined) {
+      throw new Error('no bodies');
+    }
+    /**
+     * ═══ THE TWO ASKERS ON OPPOSITE SIDES OF THE OFFERER ═══
+     * THIS CASE USED TO MOVE THE OFFERER NEXT TO THE ASKER, which made the
+     * speaker's tile and the asker's tile agree to within a tile — so computing
+     * the bearing from either gave the same word and the named mutant survived.
+     *
+     * The window is gated on ADJACENCY, so the two askers can never be far
+     * apart; the answer therefore has to be made to differ by putting the
+     * objective CLOSE, which is the geometry a real party ends up in anyway
+     * once they are near it. A plus of walkable ground is found on the floor,
+     * the offerer stands at its centre, the askers west and east of them, and
+     * the body they are hunting due north.
+     *
+     * MUTANT: compute the bearing from the SPEAKER's tile rather than the
+     * asker's — `briefSnapshotFor(full, them.id, them)`. Both members get one
+     * answer, which is the one thing a warm-and-cold game must not do.
+     */
+    const plus = plusOfGround(realm, [offererId, lead.actorId, other.actorId, named]);
+    them.x = plus.c.x;
+    them.y = plus.c.y;
+    a.x = plus.w.x;
+    a.y = plus.w.y;
+    b.x = plus.e.x;
+    b.y = plus.e.y;
+    quarry.x = plus.n.x;
+    quarry.y = plus.n.y;
+
+    await talk(lead, offererId);
+    await choose(lead, ChatNodeId.Greet, ChatOptionId.BriefWhere);
+    const west = textOf(view(lead), 'text');
     await talk(other, offererId);
     await choose(other, ChatNodeId.Greet, ChatOptionId.BriefWhere);
-    const said = textOf(view(other), 'text');
-    expect(said).toContain('Sallow Cordage');
-    expect(said).toContain('to the east');
-    expect(said).toContain('still far away');
+    const east = textOf(view(other), 'text');
+
+    expect(west).toContain('Sallow Cordage');
+    expect(east).toContain('Sallow Cordage');
+    // THE WHOLE RULE IN ONE LINE: two people, two tiles, two true answers.
+    expect(west, 'both askers were given the same bearing').not.toBe(east);
+    expect(west).toContain('to the north-east');
+    expect(east).toContain('to the north-west');
   });
 });
 
@@ -711,8 +847,13 @@ describe('unmaking it', () => {
    * MUTANT: pay `acceptedBy` alone. The lead is the only one rewarded for work
    * four people did, which is the co-op rule inverted.
    *
-   * MUTANT: pay from the killer's level rather than each recipient's. The two
-   * members here are deliberately at different levels, so the awards differ.
+   * THE TWO LEVELS HERE DO NOT SEPARATE THE AWARDS, and the docblock used to
+   * claim they did. `worthExp` is a CLIFF rather than a curve — upstream's
+   * anti-farming floor (`tome/class/Actor.lua:6514`) pays the full value until
+   * the recipient is more than seven levels above the body, and nothing after
+   * that — so at 10 and 9 against a level-3 notional corpse both are paid 36.
+   * The per-recipient rule is checked by the case below this one, on the only
+   * pair of levels that can tell.
    */
   it('pays both of them, and leaves the reward on the floor where it fell', async () => {
     const { lead, other, realm } = await twoOnTheFloor();
@@ -785,6 +926,23 @@ describe('unmaking it', () => {
     };
     expect(xpOf(lead.actorId), 'the lead was not paid').toBeGreaterThan(before.lead);
     expect(xpOf(other.actorId), 'the rest of the party was not paid').toBeGreaterThan(before.other);
+
+    /**
+     * ═══ AND THE AMOUNT IS THE NOTIONAL CORPSE, TO THE POINT ═══
+     * `BriefReward` is a level and a rank fed to `worthExp` exactly as a kill
+     * is, which is what makes the payout rescale with the floor without a
+     * second table to tune. `toBeGreaterThan` alone said nothing about which
+     * body the party was being paid for.
+     *
+     * MUTANT: pay a bespoke number, or read the rank off the body rather than
+     * off the reward. The payout stops tracking the floor.
+     */
+    const paid = {
+      lead: xpOf(lead.actorId) - before.lead,
+      other: xpOf(other.actorId) - before.other,
+    };
+    expect(paid.lead).toBe(worthExp(QUARRY.reward.level, QUARRY.reward.rank, 10));
+    expect(paid.other).toBe(worthExp(QUARRY.reward.level, QUARRY.reward.rank, 9));
 
     // AND THE ITEM IS ON THE FLOOR, ON THE TILE THE BODY WAS ON.
     const lying = realm.world.groundItems().filter((item) => item.x === at.x && item.y === at.y);
@@ -896,6 +1054,55 @@ describe('unmaking it', () => {
   });
 
   /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * EACH RECIPIENT IS MEASURED AGAINST THEIR OWN LEVEL, AND THIS IS THE ONLY
+   * PAIR OF LEVELS THAT CAN SHOW IT.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `awardExperience`'s own essay explains why the recipient's level was moved
+   * INSIDE the loop, and `payParty` is that loop extracted rather than copied.
+   * But `worthExp` is a cliff and not a curve: upstream's anti-farming floor
+   * (`tome/class/Actor.lua:6514`) pays the full value until the recipient is
+   * more than seven levels above the body and nothing at all after that. So two
+   * members at 9 and 10 against a level-3 corpse are paid the same, and every
+   * assertion of the form *"they were both paid"* is blind to which level was
+   * used.
+   *
+   * ONE ON EACH SIDE OF THE CLIFF is the case that is not: level 10 is paid, and
+   * level 12 — for whom this floor's work is beneath notice — is paid nothing.
+   *
+   * MUTANT: `worthExp(victimLevel, rank, member.level)` -> a constant recipient
+   * level. The deep member is paid for a floor they have outgrown, which is the
+   * exact farming upstream's floor exists to stop.
+   */
+  it('pays each member against their own level, and a deep one not at all', async () => {
+    const { lead, other, realm } = await taken();
+    const shallow = realm.world.getActor(lead.actorId);
+    const deep = realm.world.getActor(other.actorId);
+    if (shallow?.kind !== ActorKind.Player || deep?.kind !== ActorKind.Player) {
+      throw new Error('no player bodies');
+    }
+    shallow.level = 10;
+    deep.level = 12;
+    const target = realm.brief?.target;
+    const named = target?.k === BriefKind.Quarry ? (target.actorId ?? '') : '';
+    const quarry = realm.world.getActor(named);
+    if (quarry === undefined) throw new Error('nothing was named');
+    // THE KILL ITSELF PAYS NOTHING TO EITHER OF THEM.
+    quarry.level = 1;
+    const before = { shallow: shallow.xp, deep: deep.xp };
+
+    quarry.hp = 0;
+    quarry.alive = false;
+    await pumpUntil(realm, lead, BriefState.Closed);
+
+    expect(realm.brief?.state).toBe(BriefState.Closed);
+    expect(shallow.xp - before.shallow).toBe(worthExp(QUARRY.reward.level, QUARRY.reward.rank, 10));
+    expect(worthExp(QUARRY.reward.level, QUARRY.reward.rank, 12), 'the cliff moved').toBe(0);
+    expect(deep.xp, 'a member far above this floor was paid for it').toBe(before.deep);
+  });
+
+  /**
    * ═══ AND A PARTY THAT IGNORES IT LOSES NOTHING BUT THE REWARD ═══
    * One line, to the party's Case Log, at the moment the last of them leaves.
    * No confirm dialog, no second sentence — the second sentence is where blame
@@ -919,7 +1126,439 @@ describe('unmaking it', () => {
     expect(realm.brief, 'the floor kept a reference to its objective').toBeUndefined();
     const said = [...lead.lines(), ...other.lines()];
     expect(said.some((line) => line.includes(`Left behind: ${QUARRY.title}`))).toBe(true);
+
+    /**
+     * ═══ AND IT IS UNDER THE ROOM THEY WALKED INTO, NOT ABOVE IT ═══
+     * It was written where the objective was CLOSED, which is a line above
+     * `removePlayer` and five or six lines above the arrival block
+     * `announceArrival` then writes. MEASURED at 640x320 with a two-row Case
+     * Log: the moor's arrival lines pushed it clean off the top before anybody
+     * could read it — the one line that says the party abandoned what they
+     * agreed to, and the one line they could not see.
+     *
+     * The close still happens first; only the sentence moved. See
+     * `sayFloorBriefLeft`.
+     *
+     * MUTANT: write the line inside `endFloorBrief` again.
+     */
+    const mine = lead.lines();
+    const leftAt = mine.findIndex((line) => line.includes(`Left behind: ${QUARRY.title}`));
+    const arrival = mine.map((line, at) => (/ tiles/.test(line) ? at : -1)).filter((at) => at >= 0);
+    expect(arrival.length, 'the moor never named what is near it').toBeGreaterThan(0);
+    expect(leftAt, 'the failure line was buried by the arrival block').toBeGreaterThan(
+      Math.max(...arrival),
+    );
     expect(said.some((line) => line.toLowerCase().includes('brief'))).toBe(false);
     expect(strip(lead)).toBeNull();
+  });
+});
+
+// ===========================================================================
+// 6. THE DECLINE, WHICH IS AN ANSWER AND NOT A SILENCE
+// ===========================================================================
+
+describe('refusing it', () => {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * *"NOT THIS TIME."* — AND THE PERSON GOES WITH IT.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `tome/class/GameState.lua:2974-2976` removes the encounter on a refusal
+   * rather than leaving it standing: an offer you may decline and then walk back
+   * to is an offer with no weight, and a person who keeps asking is furniture.
+   *
+   * THE WHOLE DECLINE LANE WAS UNTESTED AT THE JOIN. `world/brief.ts#declineBrief`
+   * had unit cases; nothing anywhere picked the row as the lead. Two mutants
+   * survived every test this feature had:
+   *
+   * MUTANT: `const brief = declineBrief(realm);` -> `const brief = undefined;`.
+   * The lead's refusal does nothing at all — the offerer stands, the offer is
+   * re-takeable for ever, and the window rebuild never happens.
+   *
+   * MUTANT: delete `announceLeft(offererId, …)`. The body is removed from the
+   * world and the room is never told, which `client/main.ts` forbids inferring
+   * from absence — so the offerer stands on every other screen for ever.
+   */
+  it('takes the offer and the person off the floor, and tells the room', async () => {
+    const { lead, other, realm, offererId } = await twoOnTheFloor();
+    // THE OTHER MEMBER IS MID-CONVERSATION WITH THEM, which is what makes the
+    // window rebuild real rather than incidental.
+    await talk(other, offererId);
+    expect(row(other, ChatOptionId.BriefTake), 'the fixture never offered it').toBeDefined();
+
+    await talk(lead, offererId);
+    await choose(lead, ChatNodeId.Greet, ChatOptionId.BriefDecline);
+
+    expect(realm.brief, 'the offer survived a refusal').toBeUndefined();
+    expect(realm.world.getActor(offererId), 'they are still standing there').toBeUndefined();
+    expect(lead.errors()).toEqual([]);
+
+    // ═══ THE ROOM LEARNS IT AS A FRAME, NOT AS AN ABSENCE ═══
+    const left = other
+      .all('left')
+      .some((frame) => frame['actorId'] === offererId || frame['id'] === offererId);
+    expect(left, 'the body was deleted and nobody was told').toBe(true);
+
+    // ═══ AND NOTHING WAS LEFT LYING WHERE THEY STOOD ═══ `removeActor` is not a
+    // death: no corpse, no loot, no Record kill line. A quest-giver who leaves a
+    // body behind is a quest-giver somebody looted.
+    const said = [...lead.lines(), ...other.lines()];
+    expect(said.some((line) => line.includes(`${WHO.name} is unmade`))).toBe(false);
+    expect(said.some((line) => line.includes('stop expecting anything'))).toBe(true);
+
+    // AND THE OTHER MEMBER'S WINDOW NO LONGER OFFERS WORK THAT IS GONE.
+    expect(
+      row(other, ChatOptionId.BriefTake),
+      'a deleted offer is still pressable',
+    ).toBeUndefined();
+  });
+
+  /**
+   * AND IT DOES NOT COME BACK THROUGH THE DOOR. `Realm.granted` is `hasQuest`
+   * (`engine/interface/ActorQuest.lua:50`), and a refusal is an answer.
+   *
+   * MUTANT: record the grant at the accept rather than at the arm. Walking out
+   * and back in re-offers what the lead just refused.
+   */
+  it('does not stand them back up when the party walks out and returns', async () => {
+    const { lead, other, realm, offererId } = await twoOnTheFloor();
+    await talk(lead, offererId);
+    await choose(lead, ChatNodeId.Greet, ChatOptionId.BriefDecline);
+    expect(realm.brief).toBeUndefined();
+
+    await leaveByThreshold(realm, other);
+    await leaveByThreshold(realm, lead);
+    const back = await enterDelve(lead);
+    expect(back.id, 'they were handed a different instance').toBe(realm.id);
+    expect(back.brief, 'the floor offered again what the lead had refused').toBeUndefined();
+  });
+});
+
+// ===========================================================================
+// 7. THE OBJECTIVE IS THE FLOOR'S, AND SO IS EVERYTHING IT PAYS
+// ===========================================================================
+
+describe('who the objective belongs to', () => {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * ONE ID, ONE INSTANCE, ONCE — WALKING OUT AND BACK IS NOT A NEW FLOOR.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `Brief.id` carries the floor because upstream's does, and upstream's reason
+   * is `hasQuest`: one grant per id, ever. Ours had the id and no ledger, so the
+   * floor's edge cleared `realm.brief` and the next arrival minted the SAME id
+   * again on the SAME lingering instance. Measured over a socket: two quarries,
+   * two `Done:` lines, xp 0 -> 36 -> 72 for both members, and two alchemist's
+   * lamps lying on one floor.
+   *
+   * MUTANT: delete the `realm.granted.has(id)` guard in `armBrief`. The delve
+   * mouth becomes a repeatable payout.
+   */
+  it('does not offer the same floor`s work twice to a party that walks back in', async () => {
+    const { lead, other, realm } = await twoOnTheFloor();
+    expect(realm.brief?.id, 'the fixture armed nothing').toBeDefined();
+
+    await leaveByThreshold(realm, other);
+    await leaveByThreshold(realm, lead);
+    expect(realm.brief, 'the edge left a reference behind').toBeUndefined();
+
+    const back = await enterDelve(lead);
+    expect(back.id, 'they were handed a different instance').toBe(realm.id);
+    expect(back.brief, 'the same id was minted a second time').toBeUndefined();
+  });
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * A MEMBER WHO WALKS OUT OF THE PARTY WALKS OUT OF THE OBJECTIVE.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Every consumer used to resolve the audience through
+   * `partyMembersOf(brief.acceptedBy)`, and `membersOf` answers *"who is with
+   * this person NOW"* — so the moment the lead who took it left the party, the
+   * objective followed them. MEASURED over a socket: the deserter +36, the
+   * member who was still standing on the floor +0, no `Done:` line for them, and
+   * their strip still reading `state: 'open'` for work their party no longer
+   * held.
+   *
+   * An Inner realm holds exactly one party (`Realm.partyId`), so the instance
+   * can answer the question and `acceptedBy` goes back to being a sentence about
+   * who spoke.
+   *
+   * MUTANT: resolve `briefAudience` through `partyMembersOf(brief.acceptedBy)`.
+   * The leaver is paid for work they walked out on and the party is told
+   * nothing.
+   */
+  it('pays the party that holds the floor, and not the member who left it', async () => {
+    const { lead, other, realm } = await taken();
+    const stay = realm.world.getActor(other.actorId);
+    const go = realm.world.getActor(lead.actorId);
+    if (stay?.kind !== ActorKind.Player || go?.kind !== ActorKind.Player) {
+      throw new Error('no player bodies');
+    }
+    // THE KILL ITSELF PAYS NOTHING — see the payout case above for both halves
+    // of why. Without it this file cannot tell a brief`s payout from a kill`s.
+    stay.level = 10;
+    go.level = 10;
+    const target = realm.brief?.target;
+    const named = target?.k === BriefKind.Quarry ? (target.actorId ?? '') : '';
+    const quarry = realm.world.getActor(named);
+    if (quarry === undefined) throw new Error('nothing was named');
+    quarry.level = 1;
+
+    // THE LEAD WALKS OUT OF THE PARTY. `engine/party.ts#leave` mints them a
+    // party of one and hands the badge to the heir; the original row keeps its
+    // id and its remaining member, which is the row the realm was opened under.
+    lead.send({ t: 'party', action: 'leave' });
+    await sleep(250);
+    expect(partyIdOf(server.parties, lead.actorId)).not.toBe(
+      partyIdOf(server.parties, other.actorId),
+    );
+
+    const before = { stay: stay.xp, go: go.xp };
+    quarry.hp = 0;
+    quarry.alive = false;
+    await pumpUntil(realm, other, BriefState.Closed);
+
+    expect(realm.brief?.state, 'the objective never closed').toBe(BriefState.Closed);
+    expect(stay.xp, 'the party that did the work was not paid').toBeGreaterThan(before.stay);
+    expect(go.xp, 'the member who walked out was paid anyway').toBe(before.go);
+    expect(
+      other.lines().some((line) => line.includes(`Done: ${QUARRY.title}`)),
+      'the party was not told their own objective closed',
+    ).toBe(true);
+    expect(
+      lead.lines().filter((line) => line.includes(`Done: ${QUARRY.title}`)),
+      'the leaver was told about work they walked out on',
+    ).toEqual([]);
+  });
+
+  /**
+   * AND THE STRIP GOES WITH THE MEMBERSHIP. Nothing else re-sends the frame —
+   * it goes out on arrival, on a hello, and when the objective itself moves —
+   * so without a send on a party change a deserter keeps a band on screen for
+   * the rest of the floor.
+   *
+   * MUTANT: delete `sendBrief(member)` from `handleParty`'s affected loop.
+   */
+  it('takes the strip off the screen of somebody who leaves the party', async () => {
+    const { lead, other } = await taken();
+    expect(strip(lead)?.['state'], 'the taker never had a strip').toBe(BriefState.Open);
+    lead.send({ t: 'party', action: 'leave' });
+    await sleep(300);
+    expect(strip(lead), 'the leaver kept a band for work they left').toBeNull();
+    expect(strip(other)?.['state'], 'the member who stayed lost theirs').toBe(BriefState.Open);
+  });
+
+  /**
+   * AND SOMEBODY WHO JOINS AFTER THE ACCEPT IS PAID, because the audience is
+   * read at payment rather than recorded at the accept — the same rule every
+   * kill in the game already follows.
+   *
+   * MUTANT: snapshot the members at the accept. A friend who walked in ten turns
+   * later helps finish the work and is paid nothing.
+   */
+  it('pays a member who joined the party after the objective was taken', async () => {
+    const { lead, other, realm } = await taken();
+    const body = realm.world.getActor(other.actorId);
+    const leadBody = realm.world.getActor(lead.actorId);
+    if (body?.kind !== ActorKind.Player || leadBody?.kind !== ActorKind.Player) {
+      throw new Error('no player bodies');
+    }
+    /**
+     * ═══ THEY LEAVE AND REJOIN, WHICH IS THE ONLY WAY TO JOIN A DELVE PARTY ═══
+     * An invite resolves its target through `world.getActor` (`turn-engine.ts`
+     * `submitParty`), so both bodies must be in the SAME world — and an instance
+     * is keyed on the party that opened it, so nobody outside the party can walk
+     * onto the floor to be invited. Leaving and rejoining on the floor is
+     * therefore the real shape of "somebody joined after the accept", and it is
+     * the one a party actually produces: a member drops, comes back, and is
+     * re-invited mid-floor.
+     */
+    other.send({ t: 'party', action: 'leave' });
+    await sleep(250);
+    expect(partyIdOf(server.parties, other.actorId)).not.toBe(
+      partyIdOf(server.parties, lead.actorId),
+    );
+    lead.send({ t: 'party', action: 'invite', targetId: other.actorId });
+    await sleep(200);
+    other.send({ t: 'party', action: 'accept', targetId: lead.actorId });
+    await sleep(250);
+    expect(
+      partyIdOf(server.parties, other.actorId),
+      `they never rejoined (${other.errors().join('; ') || 'no error'})`,
+    ).toBe(partyIdOf(server.parties, lead.actorId));
+
+    // THE KILL ITSELF PAYS NOTHING — see the payout case for both halves of why.
+    body.level = 10;
+    leadBody.level = 10;
+    const target = realm.brief?.target;
+    const named = target?.k === BriefKind.Quarry ? (target.actorId ?? '') : '';
+    const quarry = realm.world.getActor(named);
+    if (quarry === undefined) throw new Error('nothing was named');
+    quarry.level = 1;
+    const before = body.xp;
+
+    quarry.hp = 0;
+    quarry.alive = false;
+    await pumpUntil(realm, lead, BriefState.Closed);
+
+    expect(realm.brief?.state).toBe(BriefState.Closed);
+    expect(body.xp, 'a member who joined after the accept was not paid').toBeGreaterThan(before);
+  });
+});
+
+// ===========================================================================
+// 8. A WIPE PAYS NOTHING, BECAUSE THE FIGHT DID NOT HAPPEN
+// ===========================================================================
+
+describe('a floor reset under an open objective', () => {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * IDENTITY, NOT PRESENCE — AND THE OLD RULE PAID THE PARTY FOR WIPING.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `resetFloor` runs INSIDE the pump, reaps every monster and re-seeds the
+   * floor with a fresh roll; the post-pump sweep reads the floor on the far side
+   * of that, before the wipe branch re-arms anything. `noteBriefProgress` read
+   * *"the body is not there"* as *"the body was unmade"*, so a quarry the reseed
+   * did not re-mint closed the objective, paid both members and wrote `Done:`
+   * into the Case Log of a party that had just died. MEASURED: xp 0 -> 36 each,
+   * one `Done:` line, and the objective re-offered in the same pump — accept,
+   * die, get paid, repeat.
+   *
+   * THE BODY HERE IS PLACED BY THIS TEST, with an id the delve generator never
+   * mints. That is what makes the case deterministic: an index id like `delve_0`
+   * is re-created by the reseed, and the bug then hides behind a body that
+   * happens to be alive.
+   *
+   * MUTANT: compare presence rather than identity — `if (body !== undefined &&
+   * body.alive) return undefined;`. A wipe pays.
+   */
+  it('pays nothing and says nothing for a body the reset deleted', async () => {
+    const { lead, other, realm, offererId } = await twoOnTheFloor();
+    // AN ELITE THE GENERATOR NEVER MINTS. `markQuarry` names the highest rank
+    // first, and the floor`s own survivor is a Normal.
+    const spot = plusOfGround(realm, []);
+    realm.world.addMonster('probe_kept_its_name', {
+      name: 'husk',
+      sprite: 'mon_index_husk',
+      x: spot.c.x,
+      y: spot.c.y,
+      profile: AiProfile.MeleeChaser,
+      rank: ActorRank.Elite,
+      maxHp: 40,
+    });
+
+    await talk(lead, offererId);
+    await choose(lead, ChatNodeId.Greet, ChatOptionId.BriefTake);
+    const target = realm.brief?.target;
+    const named = target?.k === BriefKind.Quarry ? target.actorId : null;
+    expect(named, 'the fixture`s own body was not the one named').toBe('probe_kept_its_name');
+
+    const leadBody = realm.world.getActor(lead.actorId);
+    const otherBody = realm.world.getActor(other.actorId);
+    if (leadBody?.kind !== ActorKind.Player || otherBody?.kind !== ActorKind.Player) {
+      throw new Error('no player bodies');
+    }
+    const before = { lead: leadBody.xp, other: otherBody.xp };
+
+    // THE FLOOR KILLS THE WHOLE PARTY, exactly as the re-arm case does.
+    for (const client of [lead, other]) {
+      const body = realm.world.getActor(client.actorId);
+      if (body === undefined) throw new Error('no body');
+      body.hp = 1;
+      realm.world.addZone({
+        srcId: 'nobody',
+        tiles: [{ x: body.x, y: body.y }],
+        type: DamageType.Physical,
+        damage: 500,
+        turns: 6,
+        selfFire: true,
+        friendlyFire: true,
+      });
+    }
+    for (let step = 0; step < 8 && realm.brief?.state !== BriefState.Offered; step += 1) {
+      lead.send({ t: 'move', dir: step % 2 === 0 ? 'n' : 's' });
+      other.send({ t: 'move', dir: step % 2 === 0 ? 's' : 'n' });
+      await sleep(260);
+    }
+
+    expect(realm.world.getActor('probe_kept_its_name'), 'the reset kept it').toBeUndefined();
+    expect(realm.brief?.state, 'the wipe did not put the objective back').toBe(BriefState.Offered);
+    expect(leadBody.xp, 'the party was paid for a floor they died on').toBe(before.lead);
+    expect(otherBody.xp, 'the party was paid for a floor they died on').toBe(before.other);
+    const said = [...lead.lines(), ...other.lines()];
+    expect(
+      said.some((line) => line.includes(`Done: ${QUARRY.title}`)),
+      'the party was told they finished what killed them',
+    ).toBe(false);
+  });
+});
+
+// ===========================================================================
+// 9. WHAT THE PLAYER READS, IN THE ORDER THEY READ IT
+// ===========================================================================
+
+describe('the order of the offer and its outcome', () => {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE QUESTION COMES BEFORE THE COMMITMENT.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * The window opens on the greeting, and the keyboard cursor sits on the first
+   * enabled row. With `We will take it.` first, one Enter at first contact
+   * committed the whole party past the only row that says what the work is or
+   * what it pays — measured over a socket: `offered` -> one Enter -> `open`.
+   *
+   * `tome/class/GameState.lua:2928` puts the reward inside the offer, and this
+   * file's own chat notes say refusing must be a PRICED decision. The price was
+   * written and was never on screen first.
+   *
+   * MUTANT: order `briefOptions` with the accept first again. The default
+   * keypress becomes the irreversible one.
+   */
+  it('puts the two questions above the two answers', async () => {
+    const { lead, offererId } = await twoOnTheFloor();
+    await talk(lead, offererId);
+    const ids = options(lead).map((o) => o['id']);
+    const ask = ids.indexOf(ChatOptionId.BriefAsk);
+    const take = ids.indexOf(ChatOptionId.BriefTake);
+    const decline = ids.indexOf(ChatOptionId.BriefDecline);
+    expect(ask, 'the offer does not ask what it is').toBeGreaterThanOrEqual(0);
+    expect(ids[0], 'the first row a player lands on is the irreversible one').toBe(
+      ChatOptionId.BriefAsk,
+    );
+    expect(ask, 'the commitment is above the question').toBeLessThan(take);
+    expect(take, 'the refusal is above the acceptance').toBeLessThan(decline);
+  });
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * AND THE OUTCOME SITS UNDER ITS OWN CAUSE IN THE LOG.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `handleDialogueChoose` ran `option.action` — where `takeBrief` writes
+   * *"Taken on: …"* — BEFORE recording the exchange, so the merged default view
+   * of the Case Log read the result above the answer that produced it:
+   *
+   *     Pell Oxbow: I came down with eleven. Do not count.
+   *     Taken on: It kept its name.
+   *     Player 11: We will take it.
+   *
+   * `announceCleared` carries the identical note about the identical mistake,
+   * and the identical fix: whatever CAUSES something goes out first.
+   *
+   * MUTANT: move `recordDialogue` back below `option.action?.(ctx)`.
+   */
+  it('writes the answer above the thing the answer did', async () => {
+    const { lead, offererId } = await twoOnTheFloor();
+    await talk(lead, offererId);
+    await choose(lead, ChatNodeId.Greet, ChatOptionId.BriefTake);
+    const said = lead.lines();
+    const answer = said.findIndex((line) => line.includes('We will take it.'));
+    const outcome = said.findIndex((line) => line.includes(`Taken on: ${QUARRY.title}`));
+    expect(answer, 'the exchange was never written down').toBeGreaterThanOrEqual(0);
+    expect(outcome, 'the accept wrote no line').toBeGreaterThanOrEqual(0);
+    expect(answer, 'the outcome was filed above its own cause').toBeLessThan(outcome);
   });
 });

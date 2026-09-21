@@ -1460,15 +1460,19 @@ function keysRows(view: EscapeMenuView): readonly MenuRow[] {
  * ═══════════════════════════════════════════════════════════════════════════
  *
  * AN EMPTY SECTION SAYS WHAT BELONGS IN IT, IN THE PRESENT TENSE, AND PROMISES
- * NOTHING. `QUESTS` has no producer in this build — nothing in this client can
- * put a row in it — so the temptation is a line like "coming soon" or "once
- * briefs ship". Both are dated the moment they are written and neither is a
- * thing a player can act on; memory `deferral-notes-rot` is what happens to that
- * sentence six weeks later, on a screen, where a player reads it.
+ * NOTHING. `QUESTS` was shipped with no producer at all — nothing in the client
+ * could put a row in it — so the temptation was a line like "coming soon" or
+ * "once briefs ship". Both are dated the moment they are written and neither is
+ * a thing a player can act on; memory `deferral-notes-rot` is what happens to
+ * that sentence six weeks later, on a screen, where a player reads it.
  *
  * So it describes the SECTION, which is true today: this is where what you agree
- * to is listed. It names no feature, no version and no date. When the first
- * brief lands, nothing here has to change for it to have been honest.
+ * to is listed. It names no feature, no version and no date.
+ *
+ * THE PRODUCER HAS SINCE LANDED — `ui/brief.ts#briefQuestRows`, wired at
+ * `escapeMenuView`'s `quests:` — AND NOT ONE WORD OF THIS HAD TO CHANGE, which
+ * is the argument above collecting on itself. The empty state is still reached,
+ * on every floor that has no objective on it, and still reads true.
  *
  * ONE ROW, NOT TWO, AND THE REASON IS PIXELS RATHER THAN PROSE. It was two
  * lines; this surface has no scroll and a twelve-pixel row is a note body line

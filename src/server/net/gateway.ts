@@ -258,7 +258,14 @@ import { applyZoneEffectsIn } from '../world/zone-effects.ts';
  * stated reason: `partyIdOf` is a two-line lookup over a table this process
  * already owns, it returns a string, it draws no RNG and it queues nothing.
  */
-import { isLeader, membersOf, partyIdOf, partyOf, sameParty } from '../engine/party.ts';
+import {
+  isLeader,
+  membersOf,
+  membersOfParty,
+  partyIdOf,
+  partyOf,
+  sameParty,
+} from '../engine/party.ts';
 import { loreById, loreIdOfNote } from '../content/lore.ts';
 // The sentinel a character file carries before it has ever been told what class
 // it is. Imported rather than re-typed as a literal — see `classFor`, where the
@@ -3817,8 +3824,50 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     send(session.socket, {
       v: PROTOCOL_VERSION,
       t: 'brief',
-      brief: briefViewFor(full?.brief, actorId, partyMembersOf(actorId)),
+      brief: briefViewFor(
+        full?.brief,
+        actorId,
+        full === undefined ? partyMembersOf(actorId) : briefAudience(full),
+      ),
     });
+  };
+
+  /**
+   * ════════════════════════════════════════════════════════════════════════════
+   * WHOSE OBJECTIVE IT IS — THE PARTY THAT HOLDS THE FLOOR, NOT THE PERSON WHO
+   * ANSWERED FOR THEM.
+   * ════════════════════════════════════════════════════════════════════════════
+   *
+   * Every consumer used to resolve this through `partyMembersOf(brief.acceptedBy)`,
+   * and `membersOf` answers *"who is with this person now"*. So the moment the
+   * lead who took it left the party, the objective followed THEM: the deserter
+   * was paid alone for work their old party then finished, the party that did it
+   * was told nothing, and the member still standing on the floor kept a strip up
+   * for an objective their party no longer held. Measured over a socket: the
+   * leaver +36, the remaining member +0, their last strip still `state: 'open'`.
+   *
+   * ═══ AN INNER REALM HOLDS EXACTLY ONE PARTY, SO THE INSTANCE CAN ANSWER ═══
+   * `Realms.open` is keyed on `(partyId, siteId, floor)` and `Realm.partyId` is
+   * the row it was opened under, which is the party that walked in and is still
+   * the party that walked in after any of its members leaves it. `acceptedBy`
+   * keeps its one job — the sentence about who answered — and stops being an
+   * access-control key it was never shaped to be.
+   *
+   * ═══ AND THE FALLBACK IS THE BODIES, NOT AN EMPTY LIST ═══
+   * A build with no party table and every pre-parties fixture has no row to
+   * read, and a Common realm has no `partyId` at all. There the floor's own
+   * occupants are the answer, which is what `partyId` MEANS in those builds.
+   */
+  const briefAudience = (realm: Realm): readonly string[] => {
+    const partyId = realm.partyId;
+    if (opts.parties !== undefined && partyId !== undefined) {
+      const members = membersOfParty(opts.parties, partyId);
+      if (members.length > 0) return members;
+    }
+    return realm.world
+      .allActors()
+      .filter((a) => a.kind === ActorKind.Player)
+      .map((a) => a.id);
   };
 
   /**
@@ -3853,66 +3902,89 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    * there. That is the right division: this function answers "somebody walked
    * off the floor", and a realm being torn down is a different question with a
    * different answer already written.
+   *
+   * ═══ AND IT COUNTS BODIES, NOT SOCKETS, WHICH IS `reapIfEmpty`'s BLINDNESS ═══
+   * A player inside their reconnect grace is still a body on this floor, and so
+   * is a downed one. So the Knot can take every LIVE player out of a delve —
+   * `yankOut` skips a member with no session — while one disconnected body keeps
+   * the floor occupied: no line is written and the objective stands until the
+   * grace expires and the realm is reaped.
+   *
+   * THAT IS DELIBERATE AND IT IS THE SAME ANSWER `reapIfEmpty` GIVES. A dropped
+   * connection is somebody who may be back in fifteen seconds, and taking the
+   * party's objective away for it would make a flaky router a way to lose work.
+   * The cost is one missing Case Log line in a case nobody has hit; the cost of
+   * the other rule is a brief ended under somebody who is still playing.
    */
-  const endFloorBrief = (from: Realm, actorId: string): void => {
-    if (from.brief === undefined) return;
+  const endFloorBrief = (from: Realm, actorId: string): Brief | undefined => {
+    if (from.brief === undefined) return undefined;
     const others = from.world
       .allActors()
       .some((a) => a.kind === ActorKind.Player && a.id !== actorId);
-    if (others) return;
+    if (others) return undefined;
     const ended = closeFloorBriefs(from);
     // UNDEFINED IS THE SILENCE, AND IT IS MOST OF THE CASES. An objective
     // nobody accepted is reaped without a word — nobody agreed to anything, so
     // there is no line anybody earned — and one that already closed said its
     // piece in the pump it closed in.
-    if (ended === undefined) return;
-    recordLineToParty(ended, `Left behind: ${ended.title}.`);
-    sendBriefToParty(ended);
+    if (ended === undefined) return undefined;
+    sendBriefFor(from);
+    return ended;
   };
 
   /**
    * ════════════════════════════════════════════════════════════════════════════
-   * THE STRIP, TO EVERY SOCKET IN THE PARTY THAT TOOK IT.
+   * AND THE ONE LINE ABOUT IT, AFTER THE ROOM THEY HAVE WALKED INTO.
    * ════════════════════════════════════════════════════════════════════════════
+   *
+   * SEPARATED FROM `endFloorBrief` ON PURPOSE, and the two halves cannot swap:
+   * the CLOSE has to happen before `removePlayer`, because after it the
+   * condition can no longer be evaluated. The LINE has to happen after the
+   * arrival, because `announceArrival` writes five or six lines of its own
+   * immediately afterwards.
+   *
+   * MEASURED, at 640x320 with a two-row Case Log: written where it was closed,
+   * *"Left behind: …"* arrived first and the moor's arrival block pushed it
+   * clean off the top before the player could read it. It is the one line that
+   * says the party abandoned what they agreed to, and it was the one line they
+   * could not see.
+   *
+   * THE AUDIENCE IS STILL THE FLOOR'S PARTY. A crossing does not touch the
+   * party table, so `from.partyId` names the same people it named a line ago —
+   * and each of them is stamped with their OWN clock by `recordLineToParty`.
+   */
+  const sayFloorBriefLeft = (from: Realm, ended: Brief | undefined): void => {
+    if (ended === undefined) return;
+    recordLineToParty(from, `Left behind: ${ended.title}.`);
+  };
+
+  /**
+   * ════════════════════════════════════════════════════════════════════════════
+   * THE STRIP, TO EVERYBODY THIS FLOOR'S OBJECTIVE COULD BE ABOUT.
+   * ════════════════════════════════════════════════════════════════════════════
+   *
+   * TWO AUDIENCES UNIONED, AND EACH ONE IS A CASE THE OTHER MISSES:
+   *
+   *   THE PARTY THAT HOLDS THE FLOOR (`briefAudience`), wherever they are
+   *     standing. A member who stepped into town is in it and is handed `null`,
+   *     because `sendBrief` resolves the realm from the SESSION — a strip about
+   *     a floor you are not on is the frame this whole lane exists to withdraw.
+   *   EVERY BODY STANDING ON THE FLOOR. A wipe has just taken the objective
+   *     away, so there is no `acceptedBy` left to ask for and reading the party
+   *     alone sent nothing at all — that is how a strip comes to advertise work
+   *     a reset already deleted. It is also the only thing that reaches somebody
+   *     who has just walked OUT of the party while standing on the floor, whose
+   *     strip must go with their membership.
    *
    * THROUGH `sendBrief` AND NOT AROUND IT, so the rule about what a reader may
-   * see stays in one function: a member two realms away is in this audience and
-   * is handed `null`, because `sendBrief` resolves the realm from the SESSION.
-   * That is correct and it is the reason this loop does not build a frame of its
-   * own — a party member standing in a town must not read a strip about a floor
-   * they are not on.
-   *
-   * THE PARTY IS READ AT SEND TIME rather than recorded at the accept, so
-   * somebody who joined afterwards reads the strip — exactly as they are paid by
-   * the close.
+   * see stays in one function and this one is only the delivery. The audience is
+   * read at SEND time rather than recorded at the accept, so somebody who joined
+   * afterwards reads the strip — exactly as they are paid by the close.
    */
-  const sendBriefToParty = (brief: Brief): void => {
-    const taker = brief.acceptedBy;
-    if (taker === null) return;
-    for (const to of sessionsOf(partyMembersOf(taker))) sendBrief(to);
-  };
-
-  /**
-   * ════════════════════════════════════════════════════════════════════════════
-   * AND THE SAME FRAME TO WHOEVER IS STANDING ON THE FLOOR, PARTY OR NOT.
-   * ════════════════════════════════════════════════════════════════════════════
-   *
-   * THE BODIES IN THE ROOM RATHER THAN THE PARTY TABLE, and there is exactly one
-   * caller: a wipe, where the objective the party took has been UNDONE and there
-   * is no longer an `acceptedBy` to ask for. `sendBriefToParty` reads that field
-   * and would send nothing at all, which is how a strip comes to advertise work
-   * a reset has already deleted.
-   *
-   * An Inner realm holds one party (`Realm.partyId`), so the two audiences are
-   * the same people; this one can be built from a floor with no objective on it,
-   * which is the state it exists to report.
-   */
-  const sendBriefToFloor = (realm: PumpTarget): void => {
-    const standing = realm.world
-      .allActors()
-      .filter((a) => a.kind === ActorKind.Player)
-      .map((a) => a.id);
-    for (const to of sessionsOf(standing)) sendBrief(to);
+  const sendBriefFor = (realm: Realm): void => {
+    const wanted = new Set(briefAudience(realm));
+    for (const a of realm.world.allActors()) if (a.kind === ActorKind.Player) wanted.add(a.id);
+    for (const to of sessionsOf([...wanted])) sendBrief(to);
   };
 
   /**
@@ -3929,15 +4001,17 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    * line is about may be split across two of them — the whole point of the
    * emptiness question at the floor's edge is that they can be.
    *
+   * THE PARTY IS THE FLOOR'S, RESOLVED THROUGH `briefAudience` rather than
+   * through whoever answered for them. See that function: `acceptedBy` is a
+   * sentence about a person and was never an access-control key.
+   *
    * EACH RECIPIENT'S OWN CLOCK, for `recordDialogue`'s stated reason: `gameTurn`
    * is what draws the turn separators in THEIR log, and stamping a delve's clock
    * onto a line arriving in a town would file it under a turn they are nowhere
    * near.
    */
-  const recordLineToParty = (brief: Brief, text: string): void => {
-    const taker = brief.acceptedBy;
-    if (taker === null) return;
-    const audience = sessionsOf(partyMembersOf(taker));
+  const recordLineToParty = (realm: Realm, text: string): void => {
+    const audience = sessionsOf(briefAudience(realm));
     // NOBODY LEFT TO TELL. The line is not queued and not held: a brief is a
     // fact about a floor, and a floor with no sockets on it has no reader.
     if (audience.length === 0) return;
@@ -3988,8 +4062,8 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     const brief = acceptBrief(realm, me.id);
     if (brief === undefined) return false;
     restandDialoguesWith(brief.offererId, session.connId);
-    recordLineToParty(brief, `Taken on: ${brief.title}.`);
-    sendBriefToParty(brief);
+    recordLineToParty(realm, `Taken on: ${brief.title}.`);
+    sendBriefFor(realm);
     return true;
   };
 
@@ -4076,9 +4150,10 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    * a thing lying in it, and the party sorts it out in the voice channel.
    */
   const payBrief = (realm: Realm, brief: Brief): void => {
-    const taker = brief.acceptedBy;
-    if (taker === null) return;
-    payParty(realm.world, partyMembersOf(taker), brief.reward.level, brief.reward.rank, null);
+    // THE PARTY THAT HOLDS THE FLOOR, NOT WHOEVER ANSWERED. See `briefAudience`:
+    // reading `membersOf(acceptedBy)` paid a member who had left the party and
+    // paid the party that finished the work nothing at all.
+    payParty(realm.world, briefAudience(realm), brief.reward.level, brief.reward.rank, null);
     const item = brief.reward.item;
     const at = item === undefined ? undefined : rewardCell(realm, brief);
     // NOWHERE TO PUT IT is a real state and not an error: a quarry can be reaped
@@ -4086,7 +4161,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     // and the line still reads true, which is the half that cannot be replaced.
     if (item === undefined || at === undefined) return;
     realm.world.addGroundItem(at, item);
-    recordLineToParty(brief, 'Something is lying where it fell.');
+    recordLineToParty(realm, 'Something is lying where it fell.');
   };
 
   /**
@@ -4118,9 +4193,9 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     if (full === undefined) return;
     const closed = noteBriefProgress(full);
     if (closed === undefined) return;
-    recordLineToParty(closed, `Done: ${closed.title}.`);
+    recordLineToParty(full, `Done: ${closed.title}.`);
     payBrief(full, closed);
-    sendBriefToParty(closed);
+    sendBriefFor(full);
   };
 
   /** The physical person who accepts this transaction, within speaking reach. */
@@ -7363,13 +7438,16 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
          * `BriefMsg`'s whole shape. Measured over a socket: `state: 'open'` on
          * the strip against `Offered` on the realm.
          *
-         * TO THE FLOOR AND NOT TO THE PARTY, because the party is read off
-         * `acceptedBy` and the re-arm has just cleared it.
+         * TO EVERYBODY IT COULD BE ABOUT, which `sendBriefFor` unions: the
+         * party that holds the floor reads the withdrawal wherever they are
+         * standing, and so does every body in the room — because the re-arm has
+         * just cleared `acceptedBy` and a frame built from that field alone
+         * would have gone to nobody at all.
          */
         const floor = opts.realms?.get(realm.id);
         if (floor !== undefined) {
           rearmBrief(floor);
-          sendBriefToFloor(realm);
+          sendBriefFor(floor);
         }
 
         /**
@@ -10479,8 +10557,29 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
           } catch (err) {
             app.log.error({ err, actorId }, 'engine.leave threw during a character swap');
           }
+          // ═══ RESOLVED WHILE THE BODY IS STILL STANDING IN IT ═══
+          // `recallBody` does exactly this two lines above its own removal, and
+          // for the same stated reason: after `removePlayer` there is no body
+          // left to resolve a realm from.
+          const homeRealm = opts.realms?.get(home.id);
           home.world.removePlayer(actorId);
           announceLeft(actorId, undefined, audienceFor(home.id));
+          /**
+           * ═══════════════════════════════════════════════════════════════════
+           * AND THE FLOOR THEY WERE STANDING ON MAY NOW BE EMPTY.
+           * ═══════════════════════════════════════════════════════════════════
+           *
+           * A SWAP IS NOT A CROSSING, so neither crossing seam runs — and
+           * `reapIfEmpty`'s own header already CLAIMED this path reached it
+           * (*"a delve emptied by a dropped socket or a character swap is
+           * stamped too"*). It did not. The instance was never stamped
+           * `leftAtMs`, no reap was ever armed, and the realm, its world, its
+           * monsters, its six memo rows and its open objective lived for the
+           * lifetime of the process — which `forgetRealmMemos` calls *"small,
+           * unbounded, and exactly the kind of leak nobody finds because
+           * nothing ever breaks"*.
+           */
+          if (homeRealm !== undefined) reapIfEmpty(homeRealm);
           app.log.info(
             { actorId, from: bound, to: msg.characterId ?? 'a new character' },
             'retired a body for a character swap',
@@ -10542,8 +10641,12 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
         } catch (err) {
           app.log.error({ err, actorId }, 'engine.leave threw retiring an unbound body');
         }
+        // BEFORE THE REMOVAL, for `recallBody`'s reason — see the swap above.
+        const homeRealm = opts.realms?.get(home.id);
         home.world.removePlayer(actorId);
         announceLeft(actorId, undefined, audienceFor(home.id));
+        // AND THE SAME EMPTY-FLOOR QUESTION. This body was standing somewhere.
+        if (homeRealm !== undefined) reapIfEmpty(homeRealm);
         app.log.info(
           { actorId },
           'retired an unbound body rather than resume it into a saved character',
@@ -11507,10 +11610,18 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
      * for free by being single-player.
      *
      * IT ALSO CATCHES THE DOORS NOBODY WALKS THROUGH. This function is reached
-     * from the crossing paths AND from the reconnect-grace recall (`recallBody`),
-     * so a delve emptied by a dropped socket or a character swap is stamped too —
-     * where a stamp at the threshold would have missed both, and walking back in
-     * after ten minutes offline would have healed nothing.
+     * from the crossing paths, from the reconnect-grace recall (`recallBody`)
+     * and from BOTH body-retiring paths in `handleHello` — the character swap
+     * and the unbound-body retire — so a delve emptied by a dropped socket or by
+     * somebody changing character is stamped too, where a stamp at the threshold
+     * would have missed all of them and walking back in after ten minutes
+     * offline would have healed nothing.
+     *
+     * THE TWO RETIRE PATHS WERE MISSING AND THIS NOTE ALREADY CLAIMED THEM.
+     * They called `removePlayer` and nothing else, so an instance emptied by a
+     * character swap was never stamped, never armed a reap, and kept its world,
+     * its monsters, its memo rows and its open objective for the lifetime of the
+     * process.
      */
     realm.leftAtMs = Date.now();
 
@@ -11718,7 +11829,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     // somebody who walked out under their own power mid-count.
     cancelWindUpOnCrossing(session, actorId);
 
-    endFloorBrief(from, actorId);
+    const leftBehind = endFloorBrief(from, actorId);
     from.world.removePlayer(actorId);
     announceLeft(actorId, session.connId, audienceFor(from.id));
 
@@ -11902,6 +12013,10 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     sendZonesIfAny(realmFor(session), session);
     sendTerrainIfAny(realmFor(session), session.socket);
     announceArrival(session, to, to.name);
+    // AND WHAT THEY WALKED OUT ON, AFTER the room they walked into. See
+    // `sayFloorBriefLeft`: the close is a line above `removePlayer` and the
+    // sentence about it belongs under the arrival, or nobody reads it.
+    sayFloorBriefLeft(from, leftBehind);
     announceJoined(to.world.getActor(actorId) ?? placed, session.connId, audienceFor(to.id));
 
     app.log.info(
@@ -12756,7 +12871,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     // the moment of firing that upstream also keeps (`:3346`).
     cancelWindUpOnCrossing(session, actorId);
 
-    endFloorBrief(from, actorId);
+    const leftBehind = endFloorBrief(from, actorId);
     from.world.removePlayer(actorId);
     // EXCEPT THE PERSON LEAVING. Their own client is about to be handed a whole
     // new board by the `realm` frame below, and `case 'left'` deletes an actor
@@ -12892,6 +13007,8 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     // AND THE ROOM SAYS WHAT IT IS. The one movement worth narrating — see
     // `announceArrival`, and `recordFor`'s `move` case for why a step is not.
     announceArrival(session, to, to.name);
+    // AND WHAT THEY WALKED OUT ON, UNDER IT. See `sayFloorBriefLeft`.
+    sayFloorBriefLeft(from, leftBehind);
 
     // AND THE TOKEN, TO EVERYONE ALREADY IN THERE. `joined` is how a body
     // appears on a client that has a board already; the crosser's own copy came
@@ -15887,18 +16004,42 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     }
 
     const spoken = node.text(ctx);
+
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * THE EXCHANGE IS WRITTEN DOWN BEFORE THE ACTION RUNS, NOT AFTER IT.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * An action writes Case Log lines of its own — `takeBrief` writes
+     * *"Taken on: …"* — and those lines are the CONSEQUENCE of the two below.
+     * Recorded afterwards, the log's default ALL tab read them in the wrong
+     * order and the outcome sat above its own cause:
+     *
+     *     Pell Oxbow: I came down with eleven. Do not count.
+     *     Taken on: It kept its name.          <- the outcome...
+     *     Pell Oxbow: I came down with eleven. Do not count.
+     *     Player 11: We will take it.          <- ...above the answer that caused it
+     *
+     * `announceCleared` has the identical note about the identical mistake a
+     * few thousand lines up, and the same fix: the line that CAUSES something
+     * goes out first. The merged view is the default one, so this is what a
+     * player actually reads.
+     *
+     * The text of both lines is read off `ctx` while it is still true of the
+     * world the player answered in, which is the other half of the ordering —
+     * `node.text(ctx)` above and `option.label` here.
+     */
+    recordDialogue(session, option.scope, [
+      { text: spoken, speaker: them.name },
+      { text: option.label, speaker: me.name },
+    ]);
+
     // `engine/dialogs/Chat.lua:96-103` — a returned id overrides `jump`; `:104-110` —
     // no jump at all ends the conversation.
     const returned = option.action?.(ctx);
     const next = returned ?? option.jump;
 
-    const lines: { text: string; speaker?: string }[] = [
-      { text: spoken, speaker: them.name },
-      { text: option.label, speaker: me.name },
-    ];
-
     if (next === undefined) {
-      recordDialogue(session, option.scope, lines);
       closeDialogue(session);
       return;
     }
@@ -15908,15 +16049,18 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     // THE OUTCOME, READ OFF THE NODE THEY LANDED ON rather than written twice.
     // `sendDialogue` may have closed the window — the speaker stepped away while
     // the action ran — and then there is no outcome line to give.
+    //
+    // ITS OWN CALL, because the exchange above has already gone out. It is the
+    // node they LANDED on, so it belongs under whatever the action said, not
+    // stapled to the two lines that preceded it.
     const after = dialogues.get(session.connId);
-    if (after !== undefined) {
-      const arrived = nodeOf(chat, after.nodeId);
-      const restanding = dialogueStanding(session, after);
-      if (arrived !== undefined && restanding !== undefined) {
-        lines.push({ text: arrived.text(restanding.ctx), speaker: them.name });
-      }
-    }
-    recordDialogue(session, option.scope, lines);
+    if (after === undefined) return;
+    const arrived = nodeOf(chat, after.nodeId);
+    const restanding = dialogueStanding(session, after);
+    if (arrived === undefined || restanding === undefined) return;
+    recordDialogue(session, option.scope, [
+      { text: arrived.text(restanding.ctx), speaker: them.name },
+    ]);
   };
 
   /**
@@ -18840,7 +18984,22 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     for (const memberId of result.affected) {
       const conn = connByActor.get(memberId);
       const member = conn === undefined ? undefined : sessions.get(conn);
-      if (member !== undefined && member.helloDone) sendPartyStateIfChanged(member);
+      if (member === undefined || !member.helloDone) continue;
+      sendPartyStateIfChanged(member);
+      /**
+       * ═══ AND WHAT THEY ARE STILL PART OF, WHICH THIS JUST CHANGED ═══
+       * A floor's objective belongs to the party that holds the instance
+       * (`briefAudience`), so joining or leaving one changes whether this
+       * person is reading a strip at all. Nothing else re-sends it: the frame
+       * goes out on arrival, on a hello and when the objective itself moves,
+       * and none of those is a membership change. Without this line somebody
+       * who walked out of the party kept a band on screen for work they had
+       * just stopped being part of, for the rest of the floor.
+       *
+       * BESIDE THE PANE, for `resendDialogues`' reason above: the lead badge and
+       * the membership are what both surfaces are computed from.
+       */
+      sendBrief(member);
     }
 
     // THE QUORUM JUST CHANGED SHAPE. Somebody may have been waiting on a person

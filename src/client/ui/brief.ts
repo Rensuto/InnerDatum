@@ -38,7 +38,9 @@
  */
 
 import { PALETTE } from '../render/canvas.ts';
+import { PLAYFIELD_FRAME_MAX_PX } from './combatbanner.ts';
 import { fitText } from './panel.ts';
+import { PARTY_PANE_MARGIN, PARTY_PANE_W } from './partypanel.ts';
 import type { JournalQuestView } from './escapemenu.ts';
 import type { BriefView } from '../../shared/protocol.ts';
 
@@ -47,6 +49,61 @@ export const BRIEF_STRIP_H = 14;
 
 /** Ink either side of the words, so the pill is not a box drawn on the letters. */
 const PAD_PX = 7;
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * HOW FAR BELOW THE TOP OF THE PLAYFIELD THE PILL SITS — INSIDE THE FRAME.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `drawPlayfieldFrame` draws BOTH rings from the first row below the turn bar:
+ * gold at `top..top+1` out of combat, crimson at `top..top+2` with gold inside
+ * it at `top+3..top+4` during a fight. The pill was painted AT `top`, so it cut
+ * a hole in whichever ring was there.
+ *
+ * MEASURED at 1262x428: with no objective the gold rows were one run
+ * `(0,1152)`; with one open they were `(0,579) (682,1152)` — a 102-pixel gap
+ * exactly where the pill was. In combat both rings broke in the same span.
+ *
+ * Those two rings are "the game is waiting on you" and "the fight is on", the
+ * two signals `ui/combatbanner.ts` exists to own and the two a player catches
+ * out of the corner of their eye. A permanent band severing one reads as a
+ * rendering fault. `main.ts#drawLine` already insets past the frame for the
+ * identical reason and off the identical constant, which is why the constant is
+ * exported rather than hand-tuned here.
+ */
+const FRAME_CLEARANCE_PX = PLAYFIELD_FRAME_MAX_PX;
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE WIDEST THE PILL MAY GROW — THE GAP BETWEEN THE TWO DOCKED PANELS.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Was `width / 2`, which is a fraction rather than a boundary: it held at 1262
+ * by 100-odd pixels and failed at `HUD_MIN_W`. MEASURED at 640x320 with a
+ * 75-character title, the pill ran x=161..477 and the party pane's violet top
+ * border ran x=5..160 and stopped dead. The shipped title cleared the pane by
+ * seven pixels, which is luck: `PARTY_PANE_W` is fixed and the pill's width is
+ * whatever somebody typed into `BriefSpec.title`.
+ *
+ * SO IT IS MEASURED OFF THE PANES THEMSELVES. They are draggable, so no
+ * arithmetic here is true of every frame — this is a BOUND, taken at the widest
+ * form either dock takes, which is the form the pane snaps back to. A player who
+ * drags a pane wider gets a pill that reaches under it, and the pill is drawn
+ * after the panels so it is the strip that survives that; a player who drags one
+ * narrower gets a pill that is smaller than it had to be, which costs an
+ * ellipsis and nothing else.
+ *
+ * NEVER BELOW `MIN_PILL_W`. At a narrow enough viewport the honest answer is
+ * that there is no clear span at all, and a pill of zero width is a strip that
+ * silently stops existing — worse than a truncated one, because the objective
+ * then has no surface but the Journal.
+ */
+const MIN_PILL_W = 64;
+
+export function briefPillMaxW(width: number): number {
+  const docked = (PARTY_PANE_W + PARTY_PANE_MARGIN) * 2;
+  return Math.max(MIN_PILL_W, Math.min(width / 2, width - docked));
+}
 
 /**
  * THE ONE STATE THAT IS DRAWN, and it is a string comparison rather than an
@@ -131,8 +188,13 @@ export function briefStripText(brief: BriefView): string {
 }
 
 /**
- * Draw it, centred on `width`, with its top edge at `top`. Nothing at all when
- * there is no open objective — which is most of the game.
+ * Draw it, centred on `width`, inside the playfield whose top edge is `top`.
+ * Nothing at all when there is no open objective — which is most of the game.
+ *
+ * `top` IS THE PLAYFIELD'S TOP AND NOT THE PILL'S. The caller passes `hudTop`,
+ * the one number the whole top HUD is measured from, and this function insets
+ * past the frame itself — see `FRAME_CLEARANCE_PX`. A caller that had to know
+ * the ring's thickness would be a second copy of it.
  */
 export function drawBriefStrip(
   ctx: CanvasRenderingContext2D,
@@ -145,23 +207,24 @@ export function drawBriefStrip(
   ctx.font = 'bold 10px ui-monospace, Consolas, monospace';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  // HALF THE SCREEN AT MOST. A long title truncates with an ellipsis rather
-  // than growing a pill that reaches the minimap on one side and the party
-  // pane on the other.
-  const text = fitText(ctx, briefStripText(brief), Math.max(0, width / 2 - PAD_PX * 2));
+  // CLAMPED TO THE CLEAR SPAN BETWEEN THE DOCKS. A long title truncates with an
+  // ellipsis rather than growing a pill that reaches the minimap on one side and
+  // the party pane on the other. See `briefPillMaxW`.
+  const text = fitText(ctx, briefStripText(brief), Math.max(0, briefPillMaxW(width) - PAD_PX * 2));
   if (text === '') {
     ctx.restore();
     return;
   }
+  const y = top + FRAME_CLEARANCE_PX;
   const w = Math.ceil(ctx.measureText(text).width) + PAD_PX * 2;
   const x = Math.floor((width - w) / 2);
   ctx.fillStyle = PALETTE.INK;
-  ctx.fillRect(x, top, w, BRIEF_STRIP_H);
+  ctx.fillRect(x, y, w, BRIEF_STRIP_H);
   // PARCHMENT, WHICH IS THIS HUD'S WORD FOR "SOMETHING WRITTEN DOWN". Gold is
   // spent on "the game is waiting on you" and crimson on "the fight is on";
   // an objective is neither, and borrowing either colour would cost the one
   // that owns it.
   ctx.fillStyle = PALETTE.PARCHMENT;
-  ctx.fillText(text, Math.floor(width / 2), top + BRIEF_STRIP_H / 2);
+  ctx.fillText(text, Math.floor(width / 2), y + BRIEF_STRIP_H / 2);
   ctx.restore();
 }

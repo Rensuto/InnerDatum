@@ -300,6 +300,27 @@ export function membersOf(state: PartyState, actorId: string): readonly string[]
 }
 
 /**
+ * Everyone in the party with THIS id, and an empty list when no such party is
+ * left.
+ *
+ * ═══ BY THE PARTY, NOT BY A MEMBER, AND THAT IS THE WHOLE POINT ═══
+ * `membersOf` above answers *"who is with this person NOW"*, which is the right
+ * question for a barrier and the wrong one for anything a party owns jointly:
+ * the moment that person walks out of the party (`leave` mints them a party of
+ * one and hands the badge to the heir), `membersOf` silently retargets to their
+ * new party of one. A delve instance is held by a party rather than by a person
+ * (`Realm.partyId`), so it asks this instead — and a member who leaves stops
+ * being one of its readers rather than becoming its only one.
+ *
+ * EMPTY IS A REAL ANSWER and not an error: a party is deleted the instant it
+ * empties, so an id whose row has gone names nobody, and the caller decides
+ * what that means for it.
+ */
+export function membersOfParty(state: PartyState, partyId: string): readonly string[] {
+  return state.byId.get(partyId)?.members ?? [];
+}
+
+/**
  * DO THESE TWO BLOCK EACH OTHER? The one question the barrier actually asks.
  *
  * True for `a === b`, which is not a special case: you are in your own party,

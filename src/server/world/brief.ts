@@ -135,6 +135,29 @@ export type BriefTarget =
        * summons and any newly spawned npcs from preventing completion"*.
        */
       actorId: string | null;
+      /**
+       * ═══════════════════════════════════════════════════════════════════════
+       * THE BODY ITSELF, BESIDE ITS ID — IDENTITY, NOT PRESENCE.
+       * ═══════════════════════════════════════════════════════════════════════
+       *
+       * `turn-engine.ts` already solved this exact shape once and wrote the rule
+       * out: *"`world.getActor(id) === body` is the whole test, and it has to be
+       * the OBJECT and not merely 'is something there', because the re-seeded
+       * body answers to the same string."*
+       *
+       * A delve's roster is minted with INDEX ids (`delve_<i>`, `content/delve.ts`).
+       * A party wipe reaps every monster inside the pump and re-seeds the floor
+       * with a fresh roll, so `delve_7` after a wipe is a brand-new, full-health
+       * body that has nothing to do with the one somebody agreed to unmake —
+       * and when the new roll is SHORTER than the old one, the id resolves to
+       * nothing at all. Both were read as *"it is not standing there any more,
+       * so it must be done"*, and both paid the party for a floor they died on.
+       *
+       * So the id names it on the floor and this names it in memory. An id that
+       * resolves to a DIFFERENT object, or to nothing, is a floor that deleted
+       * the body — which is VOID, and never done.
+       */
+      body: MonsterActor | null;
       /** The name it kept. What the offerer says, and what the card reads. */
       readonly name: string;
       /**
@@ -348,6 +371,19 @@ export function briefSpecFor(
  * player already holds. Upstream's arrivals are once per level; ours are not —
  * a party walks back up a stair and down it again — so the guard is written out.
  *
+ * ═══ AND `hasQuest` IS THE OTHER HALF OF IT, WHICH WAS CITED AND NOT BUILT ═══
+ * A live-field guard alone only refuses a second arrival while the first brief
+ * is still ON the realm — and the floor's edge clears that field. So walking
+ * out of the delve mouth and straight back in through the same door minted the
+ * SAME id on the SAME instance a second time, with a second quarry, a second
+ * payout and a second lamp on the floor. Measured over a socket: `xp 0 -> 36 ->
+ * 72` for both members, two `Done:` lines, two lamps.
+ *
+ * `Realm.granted` is `hasQuest`, and it is what makes `Brief.id` load-bearing
+ * rather than decorative. It lives on the INSTANCE, so a genuinely new instance
+ * — one opened after the last one's linger ran out — offers the floor's work
+ * again, which is the same lifetime `check_level` has upstream.
+ *
  * @returns the brief now on the realm, or undefined when this floor carries none.
  */
 export function armBrief(realm: Realm): Brief | undefined {
@@ -356,6 +392,10 @@ export function armBrief(realm: Realm): Brief | undefined {
   if (realm.brief !== undefined) return realm.brief;
   const spec = briefSpecFor(realm.briefs, realm.floor);
   if (spec === undefined) return undefined;
+  // ONE PER ID, EVER, ON THIS INSTANCE — `engine/interface/ActorQuest.lua:50`,
+  // `if self:hasQuest(quest.id) then return end`. See the header.
+  const id = floorBriefId(realm);
+  if (realm.granted.has(id)) return undefined;
   const target = targetFor(spec, realm);
   // THE CONTENT DECLINES TO PLACE ITSELF AND IS SIMPLY ABSENT — upstream's own
   // first answer when a piece of content will not go down:
@@ -377,7 +417,7 @@ export function armBrief(realm: Realm): Brief | undefined {
   const at = offererCell(realm);
   if (at === undefined) return undefined;
   const brief: Brief = {
-    id: briefIdFor(realm.siteId ?? realm.id, realm.floor),
+    id,
     kind: spec.kind,
     realmId: realm.id,
     title: spec.title,
@@ -390,8 +430,24 @@ export function armBrief(realm: Realm): Brief | undefined {
     progress: null,
     reward: spec.reward,
   };
+  // WRITTEN WHERE THE BRIEF IS, AND NOT AT THE FLOOR'S EDGE. Every path that
+  // ends one — the accept, the decline, the close, the failure, the last body
+  // out — then needs no line of its own, and a brief that was armed and never
+  // answered is as spent as one that was finished.
+  realm.granted.add(id);
   realm.brief = brief;
   return brief;
+}
+
+/**
+ * The id the objective on THIS floor of THIS instance would carry.
+ *
+ * SPELLED ONCE, because `armBrief` writes it into `Realm.granted` and
+ * `rearmBrief` has to take the same string back out — and an id built two ways
+ * is an id that is only equal by luck.
+ */
+function floorBriefId(realm: Realm): string {
+  return briefIdFor(realm.siteId ?? realm.id, realm.floor);
 }
 
 /**
@@ -433,6 +489,13 @@ export function rearmBrief(realm: Realm): Brief | undefined {
   // party of four arriving one at a time arm one objective rather than four;
   // here it would make a wipe change nothing at all.
   realm.brief = undefined;
+  // AND THE GRANT GOES WITH IT, FOR THE SAME REASON. `Realm.granted` is
+  // `hasQuest` and it is what stops a floor's work being re-minted by walking
+  // out and back in; a wipe is not walking out. *"A RESET MEANS THE FIGHT DID
+  // NOT HAPPEN"* — so the floor is handed back exactly as it was on arrival,
+  // which includes being offerable. Nothing is farmed by it: the reward is paid
+  // only on a close, and wipe churn already prices a repeat attempt.
+  realm.granted.delete(floorBriefId(realm));
   return armBrief(realm);
 }
 
@@ -497,7 +560,13 @@ function targetFor(spec: BriefSpec, realm: Realm): BriefTarget | undefined {
   if (spec.kind === BriefKind.Quarry) {
     const quarry = spec.quarry;
     if (quarry === undefined) return undefined;
-    return { k: BriefKind.Quarry, actorId: null, name: quarry.name, mark: quarry.mark };
+    return {
+      k: BriefKind.Quarry,
+      actorId: null,
+      body: null,
+      name: quarry.name,
+      mark: quarry.mark,
+    };
   }
   const after = spec.escort?.after;
   // ═══ 'stays' HAS NO DESTINATION RULE YET, AND IT ARMS NOTHING RATHER THAN
@@ -557,6 +626,10 @@ export function acceptBrief(realm: Realm, leadId: string): Brief | undefined {
     const body = markQuarry(realm, brief.target.name, brief.target.mark);
     if (body === undefined) return undefined;
     brief.target.actorId = body.id;
+    // AND THE BODY, NOT ONLY ITS NAME ON THE FLOOR. See `BriefTarget.body`: a
+    // wipe re-mints this id onto a different monster, and the close asks which
+    // OBJECT it is looking at.
+    brief.target.body = body;
   }
   brief.state = BriefState.Open;
   brief.acceptedBy = leadId;
@@ -696,11 +769,28 @@ const RANK_ORDER: readonly ActorRank[] = [ActorRank.Normal, ActorRank.Elite, Act
  * killer that is not a who at all. Measured over a socket: the body at 0 hp and
  * not alive, the objective still open.
  *
- * ASKING THE BODY also covers the case the list cannot represent — a body that
- * is GONE. A floor reset reaps every monster, so `getActor` answering undefined
- * is the honest end of a quarry that no longer exists; a wipe then re-arms the
- * whole objective from scratch (`rearmBrief`) and this never fires for it,
- * because the reset clears `Open` before the next pump reads it.
+ * ═══ AND IT ASKS FOR THE OBJECT, NOT FOR THE ID — IDENTITY, NOT PRESENCE ═══
+ * The first version read *"gone from the world"* as *"unmade"*, and its own
+ * header argued for it. IT PAID THE PARTY FOR WIPING. `resetFloor` runs INSIDE
+ * the pump, reaps every monster and re-seeds the floor with a fresh roll, and
+ * this sweep runs on the far side of that in the same breath — so a quarry at
+ * `delve_21` on a floor whose new roll holds twenty-one bodies resolved to
+ * nothing, read as unmade, paid both members and wrote *"Done:"* into the Case
+ * Log of a party that had just died. Measured over a socket: xp 0 -> 36 each,
+ * on a floor they never cleared, re-offerable in the same pump.
+ *
+ * `turn-engine.ts` had already written the rule down for the identical bug —
+ * *"`world.getActor(id) === body` is the whole test, and it has to be the
+ * OBJECT and not merely 'is something there', because the re-seeded body
+ * answers to the same string"*. So:
+ *
+ *   THE SAME OBJECT, DEAD          the objective is met. The reap window has
+ *                                  not run yet, so the corpse is still there to
+ *                                  read a tile off for the reward.
+ *   A DIFFERENT OBJECT, OR NONE    the floor deleted it. That is VOID, not
+ *                                  done: nothing is paid, nothing is said, and
+ *                                  the wipe branch re-arms the whole objective
+ *                                  from scratch a few lines later.
  *
  * @returns the brief IF it changed state in this pump, and undefined otherwise.
  */
@@ -709,9 +799,13 @@ export function noteBriefProgress(realm: Realm): Brief | undefined {
   if (brief === undefined || brief.state !== BriefState.Open) return undefined;
   if (brief.target.k !== BriefKind.Quarry) return undefined;
   const wanted = brief.target.actorId;
-  if (wanted === null) return undefined;
-  const body = realm.world.getActor(wanted);
-  if (body !== undefined && body.alive) return undefined;
+  const marked = brief.target.body;
+  if (wanted === null || marked === null) return undefined;
+  // IDENTITY, NOT PRESENCE. An id that now names a different body — or nothing
+  // at all — is a floor that unmade its own monster, and a floor doing that is
+  // a floor being reset under a party that just died.
+  if (realm.world.getActor(wanted) !== marked) return undefined;
+  if (marked.alive) return undefined;
   brief.state = BriefState.Closed;
   return brief;
 }
@@ -901,15 +995,14 @@ export function closeFloorBriefs(realm: Realm): Brief | undefined {
  * WHAT GOES ON THE WIRE, AND WHO IT GOES TO. ONE RULE, NOT THREE.
  * ═══════════════════════════════════════════════════════════════════════════
  *
- * The strip shows WHAT YOUR PARTY TOOK ON. Everything else falls out of that
- * single sentence rather than needing a case of its own:
+ * The strip shows WHAT THE PARTY HOLDING THIS FLOOR TOOK ON. Everything else
+ * falls out of that single sentence rather than needing a case of its own:
  *
- *   OFFERED     `acceptedBy` is null, nobody is in a null party, so nobody gets
- *               a frame. An offer you have not accepted is not an objective; it
- *               is a person standing on the floor, and the Case Log announces
- *               them once.
- *   OPEN        the accepting party, and only them.
- *   CLOSED/FAILED the accepting party, with the true state — the client stops
+ *   OFFERED     `acceptedBy` is null, so nobody gets a frame. An offer you have
+ *               not accepted is not an objective; it is a person standing on
+ *               the floor, and the Case Log announces them once.
+ *   OPEN        the party that holds the floor, and only them.
+ *   CLOSED/FAILED the same party, with the true state — the client stops
  *               drawing a brief that has ended, and the Case Log carries the
  *               outcome. Nothing on this frame is a secret; `state` is verbatim
  *               on the wire the way `ActorView.faction` is.
@@ -924,15 +1017,24 @@ export function closeFloorBriefs(realm: Realm): Brief | undefined {
 export function briefViewFor(
   brief: Brief | undefined,
   viewer: string,
-  party: readonly string[],
+  holders: readonly string[],
 ): BriefView | null {
   if (brief === undefined) return null;
-  const taker = brief.acceptedBy;
-  if (taker === null) return null;
-  // THE VIEWER'S OWN PARTY, asked at send time rather than recorded at accept
-  // time — somebody who joined after the accept reads the strip, exactly as
-  // they are paid by the close.
-  if (taker !== viewer && !party.includes(taker)) return null;
+  if (brief.acceptedBy === null) return null;
+  /**
+   * ═══ THE PARTY THAT HOLDS THE FLOOR, AND THE READER IS IN IT OR THEY ARE NOT ═══
+   * `holders` is the membership of `Realm.partyId` — the party the instance was
+   * opened under — read at SEND time rather than recorded at the accept, so
+   * somebody who joined afterwards reads the strip exactly as they are paid by
+   * the close.
+   *
+   * IT WAS `taker !== viewer && !party.includes(taker)`, WHICH IS A DIFFERENT
+   * QUESTION: *"is the person who answered in the reader's party"*. That made
+   * the taker themselves an unconditional reader, so a lead who walked out of
+   * the party kept the band on screen for the rest of the floor — measured over
+   * a socket, `state: 'open'` for an objective their party no longer held.
+   */
+  if (!holders.includes(viewer)) return null;
   const progress = progressText(brief.progress);
   return {
     state: brief.state,

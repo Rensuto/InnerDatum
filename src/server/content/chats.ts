@@ -507,7 +507,29 @@ export function chatFor(spec: TownsfolkSpec): Chat {
     },
   };
 
-  const briefOptions: readonly ChatOption[] = [briefTake, briefAsk, briefWhere, briefDecline];
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE QUESTION COMES BEFORE THE COMMITMENT, AND THE ORDER IS THE WHOLE RULE.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `tome/class/GameState.lua:2928` puts the reward inside the offer, and the
+   * argument above `briefAskText` is that refusing must be a PRICED decision.
+   * The price IS written — it is what `What is down there?` answers — and with
+   * `We will take it.` first it was never on screen when the party answered.
+   *
+   * MEASURED, over a socket, at first contact: the window opened on the
+   * greeting, the keyboard cursor sat on `[1] We will take it.`, and one Enter
+   * committed the whole party — past the only row that says what the work is or
+   * what it pays. The lead is answering for three other people; the default
+   * keypress must not be the irreversible one.
+   *
+   * `How far?` sits between them rather than beside the accept because it is
+   * the same conversation — what it is, then where it is, then the answer — and
+   * because before the accept it is not offered at all (`briefWhere.cond`), so
+   * the commitment is row two at first contact and row three afterwards. The
+   * decline stays last: it is the other answer, not the other question.
+   */
+  const briefOptions: readonly ChatOption[] = [briefAsk, briefWhere, briefTake, briefDecline];
 
   /**
    * WHAT IT PAYS, INSIDE THE QUESTION. `tome/class/GameState.lua:2928` puts the

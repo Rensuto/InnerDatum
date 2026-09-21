@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Dalton Barraclough
 
+import { readFileSync } from 'node:fs';
+
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -584,5 +586,70 @@ describe('changing character', () => {
     );
     // AND THE OTHER ONE IS STILL THERE, unharmed by being walked away from.
     expect(after.map((row) => row.classId).sort()).toEqual([firstClass, secondClass].sort());
+  });
+});
+
+describe('the floor a swapped-away body was standing on', () => {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * A SWAP EMPTIES AN INSTANCE, AND THE INSTANCE HAS TO BE TOLD.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `reapIfEmpty` is what stamps a floor `leftAtMs` and arms its reap, and it
+   * was reached from the two crossing seams and from the reconnect-grace recall
+   * and from nowhere else. The two body-retiring paths in `handleHello` — a
+   * character swap, and the unbound-body retire beside it — called
+   * `removePlayer` and stopped. An instance emptied by somebody changing
+   * character was therefore never stamped, never armed a reap, and kept its
+   * world, its monsters, its six memo rows and anything standing on it for the
+   * lifetime of the process. `forgetRealmMemos` calls that shape *"small,
+   * unbounded, and exactly the kind of leak nobody finds because nothing ever
+   * breaks"*.
+   *
+   * ═══ WHY THIS IS A SCRAPE, WHICH IS THE WEAKER KIND OF TEST ═══
+   * The stamp is written and then legitimately CONSUMED before any test can
+   * read it. Every character this harness can make wakes in the Undermost, and
+   * the swapped-TO character crosses into the same lingering instance a
+   * millisecond later — `restoreRealm` clears `leftAtMs` on the way in,
+   * deliberately, *"once per absence"*. MEASURED with the branch instrumented:
+   * `reapIfEmpty` runs with zero players on `realm:site:undermost:1` and sets
+   * the stamp, and the arrival takes it straight back off. Reaching a floor the
+   * new character does NOT land on means walking a body out of the tutorial and
+   * into a delve, which is a different file's fixture entirely.
+   *
+   * So this asserts the WIRING, in the shape `fov.test.ts` and
+   * `briefstrip.test.ts` both use for a join no test can hold: the source says
+   * the two retire paths reach the reap, and it is read rather than trusted.
+   *
+   * MUTANT: delete `reapIfEmpty(homeRealm)` from either branch.
+   */
+  it('reaches the reap from both of the hello`s retire paths', () => {
+    const source = readFileSync(
+      new URL('../../src/server/net/gateway.ts', import.meta.url),
+      'utf8',
+    );
+    const hello = source.slice(source.indexOf('const handleHello ='));
+    expect(hello.length, 'handleHello was renamed').toBeGreaterThan(0);
+    const retires = [...hello.matchAll(/home\.world\.removePlayer\(actorId\);/g)];
+    expect(retires.length, 'the retire paths moved or multiplied').toBe(2);
+    for (const at of retires) {
+      // THE SAME BLOCK, not the whole file: a `reapIfEmpty` a thousand lines
+      // away would satisfy an `includes` and nothing else. The window ends at
+      // the log line each branch closes with.
+      const rest = hello.slice(at.index);
+      const after = rest.slice(0, rest.indexOf('app.log.info'));
+      expect(after, 'a body was retired without arming the floor`s reap').toContain(
+        'reapIfEmpty(homeRealm)',
+      );
+    }
+    // AND THE REALM IS RESOLVED WHILE THE BODY IS STILL STANDING IN IT, which is
+    // `recallBody`'s own rule: after `removePlayer` there is nothing to resolve
+    // a realm from.
+    for (const at of retires) {
+      const before = hello.slice(Math.max(0, at.index - 400), at.index);
+      expect(before, 'the realm was resolved after the body left it').toContain(
+        'opts.realms?.get(home.id)',
+      );
+    }
   });
 });
