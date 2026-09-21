@@ -73,10 +73,11 @@ import {
 } from '../../shared/progression.ts';
 import { ActorKind } from '../../shared/protocol.ts';
 import { raiseAlarm } from '../ai/alarm.ts';
-import { decideNpcAction } from '../ai/npc.ts';
+import { decideNpcAction, decideSquadAction, followStep } from '../ai/npc.ts';
 import type { MonsterCast } from '../ai/npc.ts';
 import { hasLineOfSight } from '../../shared/sight.ts';
 import {
+  Faction,
   HOLD_INTENT,
   IntentKind,
   actBase,
@@ -1577,6 +1578,35 @@ type Run = {
    * one place that holds both the run and the thing that happened.
    */
   readonly records: string[];
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * COMPANIONS THAT HAVE ALREADY WALKED IN THIS PUMP — ONE STEP EACH, AND THE
+   * BOUND IS WHAT KEEPS THE IDLE FIXED POINT FINITE.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `actMonster`'s idle gate lets one faction move while `engagement <= 0`
+   * (see `FOLLOW_LEASH`). Without this set that exception is unbounded WITHIN A
+   * SINGLE PUMP, and the reason is `energy.ts#tickLevel`'s own loop rather than
+   * anything about companions: a body that spent energy is below the threshold,
+   * so `anyCanGainEnergy` answers true, so the sweep grants again — and it goes
+   * on granting until nobody spends. A companion eight tiles back would
+   * therefore walk all eight in the pump that one player's single step opened,
+   * ageing the world eight game turns for one keypress. Out of combat that is
+   * eight turns of regeneration, of effect durations and of cooldowns, bought
+   * by walking away from your own companion and back.
+   *
+   * ONE STEP PER PUMP INSTEAD, which is the rate the design assumed all along:
+   * *"the companion catches up while you walk and stands still while you stand
+   * still"*. The player's own step already paid for the turn the companion
+   * walks in, so a party plus a companion costs exactly the clock the party
+   * costs.
+   *
+   * PER PUMP AND NOT PER GAME TURN, because a pump can advance several turns
+   * and a per-turn bound would allow one step in each of them. `Run` is built
+   * once per `pump` call, which is what makes this set the right home: it is
+   * not state about a body, it is state about a call.
+   */
+  readonly followed: Set<string>;
 };
 
 export type PumpResult = {
@@ -1819,6 +1849,8 @@ export function pump(world: World, ctx: PumpCtx): PumpResult {
     reaped,
     displaced,
     records,
+    // EMPTY EVERY PUMP, and that is the whole mechanism. See `Run.followed`.
+    followed: new Set<string>(),
   };
 
   // Anything the caller applied BETWEEN pumps — a GM command, a status handed
@@ -2367,6 +2399,47 @@ function autoHold(actor: PlayerActor, reason: HoldReason, sink: EventSink): ActR
 }
 
 /**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * WHAT THIS BODY IS ABOUT TO DO, OR THAT IT IS DOING NOTHING.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `undefined` IS THE IDLE FIXED POINT, and it is the answer for every monster
+ * in the game on every turn outside a fight. `actMonster`'s own essay says what
+ * that buys and what it costs; this function is where the ONE exception to it
+ * lives, so that the gate stays a single line and the exception is not spelled
+ * out inside it.
+ *
+ * ═══ THE EXCEPTION, AND BOTH HALVES OF ITS BOUND ═══
+ * A `Faction.Squad` companion beyond `FOLLOW_LEASH` of its person takes one
+ * step toward them. `followStep` refuses everything else — no anchor, already
+ * beside them, no route, or a route whose first tile is a swing — and
+ * `Run.followed` refuses a second step in the same pump. Neither bound is
+ * decoration: the first keeps a stationary party at the fixed point, and the
+ * second keeps a walking one from ageing the world at the companion's pace
+ * rather than its own.
+ *
+ * ═══ AND IN A FIGHT IT IS ONE LINE, NOT A SECOND AI ═══
+ * `decideSquadAction` wraps `decideNpcAction` rather than replacing it — a
+ * companion fights with the same targeting, the same cadence and the same
+ * labelled draws as anything else on the floor, because it is one of the
+ * bodies on the floor.
+ */
+function decideMonsterAction(actor: MonsterActor, run: Run): Intent | undefined {
+  const { world, aiCtx } = run;
+  if (world.turn.engagement <= 0) {
+    if (actor.faction !== Faction.Squad || run.followed.has(actor.id)) return undefined;
+    const step = followStep(actor, aiCtxFor(actor, aiCtx, world));
+    if (step === undefined) return undefined;
+    run.followed.add(actor.id);
+    return step;
+  }
+  const ctx = aiCtxFor(actor, aiCtx, world);
+  return actor.faction === Faction.Squad
+    ? decideSquadAction(actor, ctx)
+    : decideNpcAction(actor, ctx);
+}
+
+/**
  * A monster's turn. Everything it does lands in the batched sweep.
  *
  * The AI decides an intent and it is resolved through the SAME `resolveIntent`
@@ -2376,7 +2449,7 @@ function autoHold(actor: PlayerActor, reason: HoldReason, sink: EventSink): ActR
  * gets refunded and re-prompted, a monster does not get to think again.
  */
 function actMonster(actor: MonsterActor, run: Run): ActResult {
-  const { world, ctx, aiCtx, sink } = run;
+  const { world, ctx, sink } = run;
   // NOTHING TO DO COSTS NOTHING. This is the other half of the fixed point: a
   // monster that spent its turn bracing at an empty room would re-accrue and
   // brace again forever, and `pump` would never return idle.
@@ -2390,10 +2463,17 @@ function actMonster(actor: MonsterActor, run: Run): ActResult {
   // ticking, and then the server has a game loop and a home PC has a fan. When
   // wandering lands it needs its own budget — a wander pump the caller drives on
   // a slow timer, not this one.
-  if (world.turn.engagement <= 0) return ActResult.Done;
+  //
+  // ═══ AND ONE FACTION IS LET OUT OF IT, BOUNDED TWICE ═══
+  // See `decideMonsterAction`: a companion beyond `FOLLOW_LEASH` of its person
+  // takes ONE step per pump toward them, and everything else — including a
+  // companion already beside its person — still returns here having spent
+  // nothing.
+  const intent = decideMonsterAction(actor, run);
+  if (intent === undefined) return ActResult.Done;
 
   const gameTurn = world.turn.clock.gameTurn;
-  const outcome = resolveIntent(actor, decideNpcAction(actor, aiCtxFor(actor, aiCtx, world)), run);
+  const outcome = resolveIntent(actor, intent, run);
 
   if (!outcome.ok) {
     sink.sweep(gameTurn, { t: 'blocked', id: actor.id, reason: outcome.reason });
@@ -3050,28 +3130,55 @@ function resolveIntent(actor: EngineActor, intent: Intent, run: Run): Resolution
 
       const wouldUndo = occupant !== undefined && actor.shovedBy === occupant.id;
       /**
-       * A FRIENDLY SUMMON — see the block above.
+       * A BODY THE PARTY BROUGHT — see the block above.
        *
-       * `summonerId` is set by `shadowInitAt` and by nothing else in the game,
-       * and reaching this line at all means the occupant is NOT hostile (the
-       * bump-attack branch has already returned). Those two together are
-       * upstream's party test: a summon whose root is a player is a party
-       * member (`shadows.lua:431-434`) and every party member may be moved
-       * through (`Party.lua:271-272`).
+       * TWO WAYS TO BE ONE, AND THEY ARE THE SAME TEST ASKED TWICE. `summonerId`
+       * is set by `shadowInitAt` and by nothing else in the game;
+       * `Faction.Squad` is a temporary companion, which has no summoner and is
+       * the floor's rather than anybody's. Reaching this line at all means the
+       * occupant is NOT hostile (the bump-attack branch has already returned),
+       * so either fact plus that one is upstream's party test: a summon whose
+       * root is a player is a party member (`shadows.lua:431-434`), an escortee
+       * is one by `addMember` (`Party.lua:46-88`), and every party member may be
+       * moved through (`Party.lua:271-272`). Norgan says it on his own template
+       * — `data/zones/reknor-escape/npcs.lua:91` is `move_others=true`.
        *
        * NOT `summonerId === actor.id`, WHICH WAS THE FIRST VERSION. That let a
        * Redactor past her own shadow and left it an absolute wall to her
        * TEAMMATES, which upstream has no equivalent of — a party member is a
        * party member whoever called it up. A summon whose root were a monster
        * would be hostile and would never reach this line.
+       *
+       * AND A COMPANION IS THE CASE WITH NO WORKAROUND. A shadow lives ten
+       * turns and its summoner can stop making them; a companion stands on this
+       * floor for as long as the objective does, and an objective that asks you
+       * to walk somebody somewhere is an objective whose body is in the doorway
+       * by construction.
+       *
+       * ═══ `actor.kind === ActorKind.Player` IS UNREACHABLE TODAY, MEASURED ═══
+       * Deleting that clause and running the whole suite leaves 7153 tests
+       * green, which is the same answer the Downed guard below gives and for
+       * the same kind of reason: nothing proposes the case. Every producer of
+       * an `IntentKind.Move` in `ai/npc.ts` refuses an occupied destination
+       * first (`intentForStep`, `canRetreat`, `aiFindSafeGrid` and the
+       * passability closure `advance` paths with), and a standing order is a
+       * player's. So a monster never arrives here with an occupant at all.
+       *
+       * IT STAYS, AND THE MUTANT IS RECORDED RATHER THAN THE TEST FAKED: the
+       * "two monsters" argument above is the rule this clause states, a fixture
+       * that hand-built a monster Move into an occupied tile would be testing
+       * the fixture, and the day the AI learns to shove is the day this line is
+       * the only thing between a pack and the front rank it is queuing behind.
        */
-      const friendlySummon =
-        occupant !== undefined && isMonster(occupant) && occupant.summonerId !== undefined;
+      const friendlyBody =
+        occupant !== undefined &&
+        isMonster(occupant) &&
+        (occupant.summonerId !== undefined || occupant.faction === Faction.Squad);
       if (
         occupant !== undefined &&
         !wouldUndo &&
         actor.kind === ActorKind.Player &&
-        (occupant.kind === ActorKind.Player || friendlySummon) &&
+        (occupant.kind === ActorKind.Player || friendlyBody) &&
         !(run.ctx.downed !== undefined && isDowned(run.ctx.downed, occupant.id))
       ) {
         const theirs: TileXY = { x: occupant.x, y: occupant.y };
@@ -5025,17 +5132,61 @@ function awardExperience(run: Run, killerId: string, victim: EngineActor): void 
    *    husk's id therefore leaves a party row for a body that only `forgetActor`
    *    ever clears — a leak with no symptom, which is why the test for it asserts
    *    on `state.byId.size` rather than on anything a player could see.
+   *
+   *    ═══ AND THE GUARD STAYS. ONE MONSTER IS CREDITED THROUGH SOMEBODY ═══
+   *    ELSE'S ID, WHICH IS NOT THE SAME THING AS RELAXING IT.
+   *
+   *    A `Faction.Squad` companion is a body the party brought, and upstream
+   *    pays the owner for what a body it lent you kills: `Actor.lua:2984-2987`
+   *    awards `src:resolveSource()`, and `resolveSource` (`:2911-2917`) is
+   *    `if self.summoner_gain_exp and self.summoner then return
+   *    self.summoner:resolveSource() end` — the chain is walked to a root and
+   *    the ROOT is paid.
+   *
+   *    So the branch resolves an owner and hands party.ts a PLAYER's id, which
+   *    is the property this guard exists for; it never hands it the
+   *    companion's. An `anchorId` that resolves to nothing, or to a body that
+   *    is not a player, pays nobody — a companion whose anchor has taken the
+   *    stair is a companion with no owner on this floor, and inventing one
+   *    would be inventing a party row.
+   *
+   *    ═══ WHY IT IS WORTH A BRANCH AT ALL ═══
+   *    Without it a companion that lands the last blow on a floor pays the
+   *    people who walked it NOTHING, which makes the one thing the companion is
+   *    for — fighting beside you — a reason to keep it out of the fight. Same
+   *    argument the Quarry makes when it refuses to care who killed it.
+   *
+   *    ═══ AND `Faction.Bound` IS DELIBERATELY NOT IN THIS BRANCH ═══
+   *    A shadow's kill still pays nobody. That is not an omission this fixes by
+   *    accident: `talents/call_shadows.ts` states it as a divergence with a
+   *    measured price (`summoner_gain_exp` and `summoner_hate_per_kill` "did
+   *    not cross" — thirteen Ink down against having swung herself) and argues
+   *    it as the reason to press the button to HOLD a line rather than to farm
+   *    one. Reversing somebody's argued decision is not a side effect of adding
+   *    a faction. If it is ever revisited, it is one clause here and both
+   *    bodies go through the same lines.
    */
-  if (killer.kind !== ActorKind.Player) return;
+  let creditedId = killerId;
+  if (killer.kind !== ActorKind.Player) {
+    const owner = killer.faction === Faction.Squad ? killer.anchorId : undefined;
+    if (owner === undefined) return;
+    const ownerBody = run.world.getActor(owner);
+    if (ownerBody === undefined || ownerBody.kind !== ActorKind.Player) return;
+    creditedId = owner;
+  }
 
   /**
    * 3. WHO IS PAID. `PumpCtx.parties` is already in scope through `run.ctx`, so
    *    there is no new plumbing: with no party table wired in this is the
    *    pre-party game exactly, one recipient, and with one it is the killer's
    *    whole party INCLUDING the killer (`membersOf` returns them).
+   *
+   *    `creditedId` AND NOT `killerId`, WHICH IS THE WHOLE OF THE BRANCH ABOVE:
+   *    for everything that has ever killed anything here the two are the same
+   *    id, and for a companion the second one is a monster's.
    */
   const recipients =
-    run.ctx.parties === undefined ? [killerId] : membersOf(run.ctx.parties, killerId);
+    run.ctx.parties === undefined ? [creditedId] : membersOf(run.ctx.parties, creditedId);
 
   /**
    * 4. AND THE PAYOUT ITSELF, WHICH IS NOW SHARED.
@@ -5051,7 +5202,13 @@ function awardExperience(run: Run, killerId: string, victim: EngineActor): void 
    * RECIPIENT'S own level: a second copy of that loop would agree with this one
    * on the day it was written and disagree the first time either moved.
    */
-  payParty(run.world, recipients, victimLevel, victim.rank, run.world.turn.clock.gameTurn);
+  payParty(
+    (id) => run.world.getActor(id),
+    recipients,
+    victimLevel,
+    victim.rank,
+    run.world.turn.clock.gameTurn,
+  );
 }
 
 /**
@@ -5075,9 +5232,26 @@ function awardExperience(run: Run, killerId: string, victim: EngineActor): void 
  *
  * NO DIVISION BY HEADCOUNT, NO PROXIMITY CHECK, NO RADIUS, and no
  * `alive`/`connected` filter — DECISIONS.md D12, unchanged.
+ *
+ * ═══ IT TAKES A LOOKUP AND NOT A `World`, AND THAT IS THE WHOLE OF ONE BUG ═══
+ * It took `world` and resolved every recipient through it, which is right for a
+ * KILL — a kill is an event on one floor, and a party member who is somewhere
+ * else did not stand in that fight. It is WRONG FOR A BRIEF, which is a party
+ * contract rather than a floor event (the design's F.1), and the difference was
+ * player-visible in the shipped configuration: an escort whose destination is
+ * the way out is finished AT THE DOOR, which is exactly where a party files out
+ * one at a time. Driven over two sockets — both accept, the lead steps out
+ * first, the mate walks her the last few tiles — the mate levelled, THE LEAD'S
+ * `xp` DID NOT MOVE, and the lead's Case Log read *"Done: The way back, with
+ * her."* The person who agreed to it was told it was finished and paid nothing.
+ *
+ * So the RESOLUTION is the caller's and the LOOP is still only here: the kill
+ * passes its own world's lookup and `net/gateway.ts#payBrief` passes one that
+ * asks `realms.realmOf` first. One loop, two questions about where somebody is,
+ * and neither of them copied.
  */
 export function payParty(
-  world: World,
+  bodyOf: (id: string) => EngineActor | undefined,
   recipients: readonly string[],
   victimLevel: number,
   rank: ActorRank,
@@ -5086,7 +5260,7 @@ export function payParty(
   for (const recipientId of recipients) {
     // 5. Ids, not bodies (see the party.ts note above), so each is resolved and
     //    anything that is not a player is skipped.
-    const member = world.getActor(recipientId);
+    const member = bodyOf(recipientId);
     if (member === undefined || member.kind !== ActorKind.Player) continue;
 
     /**
@@ -5844,6 +6018,27 @@ function makeAiCtx(
     ...(talents?.castable === undefined
       ? {}
       : { castable: (self, target) => talents.castable?.(self, target) ?? [] }),
+    /**
+     * ═══ WHERE A COMPANION'S PERSON IS STANDING — see `AiCtx.anchorAt` ═══
+     *
+     * RESOLVED AT THE MOMENT OF ASKING, like `terrainAt` and `actorAt` above,
+     * so a person who crossed a stair earlier in this pump is gone rather than
+     * a stale pair of numbers the companion is still walking toward.
+     *
+     * THREE REFUSALS AND EACH IS A REAL STATE: no anchor (every body in the
+     * game but a companion), an anchor who is not in this world any more, and
+     * an anchor who is not a LIVE PLAYER. The last covers a downed person —
+     * `alive` is false while a body is on the floor — and the answer it
+     * produces is the right one: the companion keeps fighting over them
+     * instead of walking back to a body that is not going anywhere.
+     */
+    anchorAt: (self) => {
+      const id = self.anchorId;
+      if (id === undefined) return undefined;
+      const body = world.getActor(id);
+      if (body === undefined || body.kind !== ActorKind.Player || !body.alive) return undefined;
+      return { x: body.x, y: body.y };
+    },
   };
 }
 

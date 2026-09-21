@@ -1,5 +1,8 @@
 /// <reference lib="dom" />
 
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+
 import { describe, expect, it } from 'vitest';
 
 import { MapVerb } from '../../src/client/ui/contextmenu.ts';
@@ -300,6 +303,91 @@ describe('a person offers three rows, and the questions are in the window', () =
         expect(Object.prototype.hasOwnProperty.call(item, 'topic')).toBe(false);
       }
     }
+  });
+});
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * AND A BODY ON YOUR OWN SIDE GETS NO `Attack` ROW EITHER, AND NOTHING TO SAY.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Two bodies reach the map arm that are neither hostile nor people: a
+ * Redactor's own shadow (`Faction.Bound`) and a temporary companion an
+ * objective lent the party (`Faction.Squad`). The townsfolk argument applies to
+ * both word for word — `areEnemies` refuses the swing at three separate sites,
+ * so a row that can never become enabled is a lie with a tooltip — and the
+ * `Talk to` half applies to neither: a shadow has nothing to say, and a
+ * companion is not a conversation.
+ *
+ * MEASURED, and it is why this block exists: before it, a companion and a
+ * shadow were both offered `Attack`, greyed out of reach and enabled next to
+ * you, on a swing the server refuses in silence.
+ *
+ * ASSERTED AS AN EXACT LIST, never `toContain`, for the reason the person block
+ * above gives: the failure being guarded is a row ADDED.
+ */
+describe('a body on your own side offers two rows, and neither of them is a swing', () => {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * AND THE ROWS ABOVE WERE UNREACHABLE FROM THE MAP — A SCRAPE, BECAUSE THE
+   * CALLER IS A CLOSURE.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Every case in this file hands `verbsFor` a `VerbTarget` directly, which is
+   * the half that was always right. The half that was wrong is the one line
+   * that BUILDS one: `targetAt` in main.ts asked `isHostileBody(occupant)` and
+   * sent everything answering false — a townsfolk, a shadow, a companion — into
+   * the `player` arm, which ends in *"Invite to party"*. So the `Talk to` row
+   * the block above this one tests, and the whole branch that argues for it,
+   * could not be reached by right-clicking anybody in the game.
+   *
+   * SCRAPED RATHER THAN DRIVEN, for `passives-wired.test.ts`'s reason:
+   * `targetAt` is built inside `boot()` and only a running client reaches it.
+   * A scrape of the ONE line is worth more than nothing, which is what this had.
+   *
+   * MUTANT: put `isHostileBody(occupant) ? ... : ...` back.
+   */
+  it('is reachable from the map at all — `targetAt` routes on kind, not on hostility', () => {
+    const source = readFileSync(
+      join(import.meta.dirname, '..', '..', 'src', 'client', 'main.ts'),
+      'utf8',
+    );
+    const after = source.split('function targetAt(')[1] ?? '';
+    // THE FUNCTION'S OWN OPENING, AND NOT THE FILE. Cut at the next top-level
+    // close so a later closure in the same file cannot answer for this one.
+    const body = after.split('\n  }')[0] ?? '';
+    expect(after, 'targetAt is gone; this guard has to move with it').not.toBe('');
+    expect(body).toContain('occupant.kind === ActorKind.Player');
+    // THE RETURN AND NOT THE NAME: the docblock beside that line quotes the old
+    // predicate on purpose — it is what the note is about — so a scrape for the
+    // bare symbol would be a scrape of the comment that records the fix.
+    expect(body, 'a monster is being sent to the party menu again').not.toContain(
+      'return isHostileBody(',
+    );
+  });
+
+  const KEEL: ActorView = {
+    ...actor('npc:callow', 'Maud Callow', ActorKind.Monster),
+    faction: 'squad',
+  };
+  const SHADOW: ActorView = {
+    ...actor('shadow:p1:0', 'Bound Shadow', ActorKind.Monster),
+    faction: 'bound',
+  };
+
+  it('offers exactly walk up to and inspect, adjacent or not', () => {
+    for (const body of [KEEL, SHADOW]) {
+      for (const adjacent of [true, false]) {
+        const items = verbsFor(ctxFor({ kind: 'hostile', actor: body }, { adjacent })).items;
+        expect(actionsOf(items)).toEqual([MapVerb.Travel, MapVerb.Inspect]);
+      }
+    }
+  });
+
+  it('still offers Attack on something Redacted, so the rule has not eaten the game', () => {
+    const husk = actor('m1', 'Index Husk', ActorKind.Monster);
+    const items = verbsFor(ctxFor({ kind: 'hostile', actor: husk }, { adjacent: true })).items;
+    expect(actionsOf(items)).toEqual([MapVerb.Attack, MapVerb.Travel, MapVerb.Inspect]);
   });
 });
 

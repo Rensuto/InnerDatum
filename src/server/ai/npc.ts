@@ -91,13 +91,19 @@
  * and the bans on `Date.now`/`Math.random`.
  */
 
-import { DIR_ORDER, DIR_VECTORS } from '../../shared/coords.ts';
+import { DIR_ORDER, DIR_VECTORS, chebyshev } from '../../shared/coords.ts';
 import { circleGrids, fovDistance } from '../../shared/mapgen/geom.ts';
 import { percent } from '../../shared/mapgen/lua.ts';
 import { findPath, findPathAvoiding } from '../../shared/path.ts';
 import { isWalkable } from '../../shared/protocol.ts';
 import { airOf, breathes, isHazardFor } from '../../shared/terrain.ts';
-import { AiProfile, HOLD_INTENT, IntentKind, countAdjacentKin } from '../engine/actor.ts';
+import {
+  AiProfile,
+  HOLD_INTENT,
+  IntentKind,
+  countAdjacentKin,
+  isHostile,
+} from '../engine/actor.ts';
 import { combatDistance, rangeRefusal } from '../engine/combat.ts';
 import type { Dir, TileXY } from '../../shared/coords.ts';
 import type { PassableFn } from '../../shared/path.ts';
@@ -203,6 +209,37 @@ export type AiCtx = {
    * always supplies it from `World.burnRange`.
    */
   readonly gridDamage?: (self: MonsterActor, x: number, y: number) => number;
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   *   WHERE THIS BODY'S PERSON IS — `Faction.Squad` ONLY, and nothing else.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `MonsterActor.anchorId` names the player a temporary companion is with;
+   * this answers where that player is STANDING, which is the only thing the AI
+   * needs and the only thing it may be trusted with. Upstream keeps the body
+   * itself — `tome/class/Party.lua:68` sets `ai_state.tactic_leash_anchor` to
+   * `game.player` — and ours keeps an id on the actor and resolves it here, for
+   * `summonerId`'s stated reason: a held reference is a way to keep a dead
+   * object alive.
+   *
+   * ═══ A TILE AND NOT A BODY, WHICH IS `approach`'s OWN LESSON ═══
+   * That function was widened from `EngineActor` to `TileXY` when pursuit
+   * arrived, because it only ever read `x`/`y`. The follow step wants the same
+   * two numbers, and handing this module a live `PlayerActor` would put hp,
+   * inventory and party membership inside a file whose whole value is that it
+   * can be tested against two object literals and a five-tile map.
+   *
+   * ═══ UNDEFINED IS "NOBODY TO FOLLOW", AND IT HAS THREE CAUSES ═══
+   * No anchor at all (every body in the game but a companion), an anchor who
+   * has taken the stair, and an anchor who is DOWN. The third is deliberate:
+   * a companion whose person is on the floor keeps swinging instead of walking
+   * back to stand over them, which is the only useful thing it can do.
+   *
+   * OPTIONAL, like `castable`, so every hand-built fixture keeps compiling and
+   * reads as a body with nobody to follow — which is what every monster in the
+   * game is.
+   */
+  readonly anchorAt?: (self: MonsterActor) => TileXY | undefined;
 };
 
 /**
@@ -353,6 +390,152 @@ export function decideNpcAction(self: MonsterActor, ctx: AiCtx): Intent {
     case AiProfile.RangedKiter:
       return kite(self, target, ctx);
   }
+}
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * HOW FAR A COMPANION MAY BE FROM ITS PERSON BEFORE IT WALKS — AND WHY IT IS
+ * THE SMALLEST NUMBER THAT IS NOT ZERO.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Two is "beside you, or one body over": a companion at 1 or 2 is standing in
+ * the same doorway you are, and one at 3 has been left behind. It is the only
+ * number in this pair that is OURS — `tome/class/Party.lua:69` states the
+ * other one — and it is chosen against the thing it costs rather than against
+ * a feeling.
+ *
+ * ═══ WHAT IT COSTS IS THE IDLE FIXED POINT, WHICH IS WHY IT IS BOUNDED ═══
+ * `engine/scheduler.ts#actMonster` refuses every monster a turn while
+ * `engagement <= 0`, and its own essay says what that buys: *"something has to
+ * spend energy for the level to keep ticking, and then the server has a game
+ * loop and a home PC has a fan."* A companion is the one body that has to move
+ * out of a fight, or every escort is unwinnable — the party walks away and it
+ * stands at the door where it was recruited.
+ *
+ * So the exception is bounded on BOTH sides, and both bounds are load-bearing:
+ *
+ *   WITHIN 2 IT SPENDS NOTHING. A party standing still with a companion beside
+ *     it is a pump that returns `idle` — the fixed point, unchanged, with the
+ *     companion inside it rather than exempted from it.
+ *   BEYOND 2 IT TAKES ONE STEP PER PUMP. Not one per sweep: see `Run.followed`
+ *     in the scheduler. The pump runs only when somebody acted, so a companion
+ *     catches up while you walk and stands while you stand, and it cannot cost
+ *     a tick a player did not already pay for.
+ */
+export const FOLLOW_LEASH = 2;
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * AND HOW FAR IT MAY BE DRAGGED BY A FIGHT — TEN, WHICH IS UPSTREAM'S.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `tome/class/Party.lua:69` is `actor.ai_state.tactic_leash = actor.ai_state.tactic_leash or 10`,
+ * the default every summoned party member gets, and `shadows.lua:249` is the
+ * same ten for a shadow's `summoner_range`. ToME's escort start overrides it to
+ * 100 on acceptance; **we take the summon default and not the escort override**,
+ * because a hundred-tile radius on a fifty-by-fifty floor is a companion in
+ * another room, and the whole objective is that it is with you.
+ *
+ * WHAT IT DOES: a companion dragged past it by something it is chasing breaks
+ * off and walks back. Without it a kiter can lead your companion across the
+ * floor and the party arrives at the stair alone — the failure that reads as
+ * the AI being stupid when it is the AI having no leash at all.
+ */
+export const COMPANION_LEASH = 10;
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * A COMPANION'S TURN — the ordinary AI with two clauses around it.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `decideNpcAction` is not replaced and must not be: a companion fights with
+ * the same target acquisition, the same talent cadence, the same profile and
+ * the same seeded draws as anything else on the floor, because it IS one of
+ * the bodies on the floor. Upstream's escortee is an ordinary NPC with an
+ * `ai_state` on it, not a second AI (`tome/class/Party.lua:46-88`).
+ *
+ * The two clauses are both about the person it is with, and they are in this
+ * order for one reason: THE LEASH OUTRANKS THE FIGHT. A body already ten tiles
+ * past its person does not get to take one more swing first.
+ *
+ *   1. BEYOND THE LEASH → GO BACK, AND DO NOT STAY IN THE FIGHT IT IS IN. It
+ *      breaks off whatever it was chasing and heads for its person; it does not
+ *      walk THROUGH somebody. `approach` answers ATTACK for a hostile standing
+ *      on the first node of the route home, and that is kept deliberately —
+ *      MEASURED: filtering it to a move only makes the fall-through re-decide,
+ *      and `decideNpcAction` swings at the same adjacent body anyway or, when
+ *      it cannot see it, HOLDS. The filter buys nothing and costs a turn. The
+ *      thing standing between a companion and its person is the route home, and
+ *      hitting it is walking back.
+ *
+ *      `followStep` DOES filter, and the asymmetry is the whole reason both
+ *      exist: that one runs OUT of combat, where a swing would open a fight
+ *      nobody chose and spend a clock no player paid for. This one is only ever
+ *      reached with `engagement > 0` — the fight is already running.
+ *   2. NOTHING TO FIGHT (the AI only held) → close the distance instead of
+ *      standing. Out of combat this function is not even reached — the idle
+ *      gate calls `followStep` directly — so this is the IN-combat case: the
+ *      party is fighting something the companion cannot see or cannot reach,
+ *      and standing in the last room is not an answer.
+ */
+export function decideSquadAction(self: MonsterActor, ctx: AiCtx): Intent {
+  const anchor = ctx.anchorAt?.(self);
+  if (anchor !== undefined && combatDistance(self, anchor) > COMPANION_LEASH) {
+    // `keepAway: 0` for `pursueLastSeen`'s reason: there is nothing here to
+    // keep away from, and a kiter that refused to close on its own person
+    // would never come back at all.
+    const back = approach(self, anchor, ctx, { keepAway: 0 });
+    if (back !== undefined) return back;
+  }
+  const intent = decideNpcAction(self, ctx);
+  // HELD, WHICH IS THIS AI'S WORD FOR "NOTHING USEFUL". Asked as a kind rather
+  // than by identity with `HOLD_INTENT`: `forget`, `advance` and `shoulder` all
+  // return that one frozen object today, and a future hold built fresh would
+  // silently stop matching.
+  if (intent.kind !== IntentKind.Hold) return intent;
+  return followStep(self, ctx) ?? intent;
+}
+
+/**
+ * ONE STEP TOWARD THE PERSON THIS BODY IS WITH, or undefined when there is
+ * nothing to do — which is most turns.
+ *
+ * ═══ UNDEFINED IS THE FIXED POINT AND IT HAS THREE CAUSES ═══
+ * Nobody to follow, already within `FOLLOW_LEASH`, and no route. The third is
+ * not a failure to report: a companion cut off by a closed door or a pack in a
+ * corridor stands where it is, exactly as an ordinary monster that cannot
+ * advance does, and `advance`'s own note applies — *"a monster that cannot
+ * advance this turn is a chokepoint working as intended"*.
+ *
+ * ═══ A STEP, AND NEVER A SWING ═══
+ * `approach` turns its first path node into `intentForStep`, which answers
+ * ATTACK for a hostile standing on it. That is right in a fight and wrong here:
+ * the idle caller's whole claim is that the level stays at its fixed point, and
+ * a companion that opens a fight with something nobody had noticed spends the
+ * floor's clock on a decision no player made. So anything but a move is
+ * refused, and the body stands until somebody walks into an aggro radius the
+ * ordinary way.
+ */
+export function followStep(self: MonsterActor, ctx: AiCtx): Intent | undefined {
+  const anchor = ctx.anchorAt?.(self);
+  if (anchor === undefined) return undefined;
+  /**
+   * ═══ CHEBYSHEV HERE AND EUCLIDEAN FOR THE COMBAT LEASH, DELIBERATELY ═══
+   * Movement is eight-way, so chebyshev IS the number of steps between two
+   * tiles — and this number's whole meaning is *how many steps behind you are
+   * they*. `COMPANION_LEASH` is upstream's `tactic_leash`, which upstream
+   * measures with `core.fov.distance` (`combatDistance`), so that one keeps the
+   * metric it was chosen against. The same chebyshev is what `world/brief.ts`
+   * asks at the destination — AT `FOLLOW_LEASH + 1`, and the extra tile is not
+   * slack: the destination of a `leaves` escort is the way out, standing on it
+   * IS leaving, so the closest a living party can hold is one tile off it and
+   * this rule then holds the body one further. Read `arrivedEscort`'s header
+   * before changing either number; they are one rule written in two places
+   * because one of them is a position and the other is a decision.
+   */
+  if (chebyshev(self, anchor) <= FOLLOW_LEASH) return undefined;
+  const step = approach(self, anchor, ctx, { keepAway: 0 });
+  return step?.kind === IntentKind.Move ? step : undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -1255,9 +1438,35 @@ function intentForStep(
 
   const occupant = ctx.actorAt(to.x, to.y);
   if (occupant !== undefined) {
-    // Terrain-only pathing walked us into somebody. If they are on the other
-    // side, that is a bump-attack; if they are on ours, they are in the way.
-    if (occupant.kind !== self.kind) {
+    /**
+     * Terrain-only pathing walked us into somebody. If they are on the other
+     * side, that is a bump-attack; if they are on ours, they are in the way.
+     *
+     * ═══ AND "THE OTHER SIDE" IS A RELATION, WHICH THIS ASKED AS A KIND ═══
+     * `occupant.kind !== self.kind` is `areEnemies` with the factions taken
+     * out, and the two disagree on exactly the bodies this game has added
+     * since: a Redactor's own shadow and a `Faction.Squad` companion are both
+     * Monsters and both enemies of every husk on the floor, and this read them
+     * as ONE OF OURS IN THE WAY.
+     *
+     * ═══ IT IS BELT AND BRACES TODAY, AND IT IS WORTH THE LINE ANYWAY ═══
+     * `acquireTarget` reaches such a body FIRST — an adjacent enemy is inside
+     * `aggroRange` and has line of sight, so it is what `visibleEnemies`
+     * returns nearest-first, and `chase` attacks it before any step is
+     * proposed. TRACED rather than assumed, and it is the reason there is no
+     * test here for a stall: this branch cannot currently be reached with a
+     * hostile occupant that is not already the target.
+     *
+     * It stays stated correctly for the reason the Downed guard in
+     * `scheduler.ts`'s swap block stays: the rule is one relation, written in
+     * one predicate, and the day anything narrows what a monster can see —
+     * a smaller `aggroRange`, a blindness that filters `visibleEnemies`, a
+     * pursuit that steps past a body it never looked at — a `kind` comparison
+     * here would silently become the bug `areEnemies` exists to have deleted.
+     * A companion in a corridor is a body the party PUTS there, so it is the
+     * case most likely to find it.
+     */
+    if (isHostile(self, occupant)) {
       return { kind: IntentKind.Attack, targetId: occupant.id };
     }
     return undefined;

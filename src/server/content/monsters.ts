@@ -3992,6 +3992,223 @@ export const BOUND_SHADOW: MonsterTemplate = Object.freeze({
   },
 });
 
+// ---------------------------------------------------------------------------
+// stranded_hand — SOMEBODY WHO IS STILL ALIVE DOWN THERE, on Norgan's sheet
+// ---------------------------------------------------------------------------
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE BODY A BRIEF LENDS YOU. Ported from ToME's Norgan, who is the only fully
+ * specified friendly companion in this checkout.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `data/zones/reknor-escape/npcs.lua:81-115` — *"Your ally"*, the dwarf you
+ * walk out of Reknor with. Every number below is his or is a named departure
+ * from his, and the departures are all the same departure: HIS SCALE IS NOT
+ * OURS. Upstream's level-1 player has a hundred and twenty hit points and so
+ * does he; ours has a fraction of that, and porting the digits would put a
+ * body on the floor that the floor cannot hurt.
+ *
+ * ═══ WHO IT IS IS NOT ON THIS TEMPLATE, AND THAT IS THE DESIGN ═══
+ * `world/brief.ts#companionSheet` builds a body from this through
+ * `standFolk`, which overwrites `name`, `sprite` and `faction` with the
+ * PERSON'S — a `TownsfolkSpec` names them, gives them a face and gives them
+ * things to say. So this is a sheet, the way `BOUND_SHADOW` is a sheet, and the
+ * `displayName` here is what a body would be called if somebody stood one up
+ * with no person attached. It never reaches a hover card in the shipped game.
+ *
+ * ═══ NO `rarity`, NO `levelRange`, NO `drops` — SAME THREE, SAME REASONS ═══
+ * `Zone.lua:214` skips an entity missing either of the first two and
+ * `crystal.lua:73` writes `rarity = false` out loud on a body *"that exists
+ * only to be summoned"*; this one exists only to be recruited, which is the
+ * same statement. `drops` is absent because a companion that dropped loot would
+ * be a coat printer wearing a person's face — and because nothing the party can
+ * do is allowed to kill one.
+ *
+ * ═══ IT IS WORTH EXACTLY ONE OF THIS FLOOR'S ELITES, AND THAT IS MEASURED ═══
+ * `maxHp` is `INDEX_HUSK_ELITE`'s 95 rather than Norgan's 120 (`npcs.lua:88`),
+ * and `world/brief.ts#companionLevel` then births it one level over the deepest
+ * body the floor actually put down. So the sentence this creature is tuned to
+ * is *"the party gains one more elite, on their side"* — a thing a playtest can
+ * check by counting, rather than a number somebody felt was about right.
+ */
+export const STRANDED_HAND: MonsterTemplate = Object.freeze({
+  id: 'stranded_hand',
+  displayName: 'Stranded Hand',
+  description:
+    'Somebody who went down with a crew and is the part of it still walking. They have been ' +
+    'down here long enough to have stopped shouting, and they will hold a line if you give them ' +
+    'one to hold.',
+  // THE PERSON'S FACE WINS — see the header. This is the fallback, and it is a
+  // deployed id rather than a new commission: a template that named art nobody
+  // has drawn would put a violet missing-asset box on the one body the party
+  // is supposed to protect.
+  sprite: 'chr_npc_miner_s',
+  /**
+   * `rank = 3` (`npcs.lua:89`) is upstream's unique, which sits between our
+   * Normal and our Elite. ELITE IS THE ONE THAT CARRIES THE FACT: `ActorView.rank`
+   * exists for the under-token ring and nothing else, and a body the party is
+   * being asked to keep alive drawn as trash reads as trash.
+   */
+  rank: ActorRank.Elite,
+  /**
+   * NORGAN IS `max_life = 120` (`npcs.lua:88`) AND THIS IS 95, WHICH IS THE
+   * OVERWRITTEN HUSK'S. Upstream's number is right for upstream's scale — his
+   * 120 stands beside a player's 120 in a fight against level-1 orcs. Ours
+   * would stand beside a level-3 detective on a floor whose hardest body has
+   * 95, and a companion nothing on the floor can hurt is not a companion, it is
+   * a wall the party walks behind.
+   *
+   * ONE ELITE'S WORTH, WHICH IS A SENTENCE A PLAYTEST CAN CHECK.
+   */
+  maxHp: 95,
+  /**
+   * `life_rating = 12, fixed_rating = true` (`npcs.lua:88`), VERBATIM — and it
+   * is scale-free in a way the pool above is not: a rating is life per level,
+   * so twelve against the engine's ten says *"this one keeps up as the floors
+   * get deeper"*, which is exactly what `fixed_rating` is doing on his line.
+   */
+  lifeRating: 12,
+  /**
+   * `resolvers.inscriptions(1, {"regeneration infusion"})` (`npcs.lua:110`) DID
+   * NOT CROSS — this game has no monster inscription path, and building one for
+   * one body would be a talent system for NPCs arriving through a companion.
+   *
+   * HALF A POINT A TURN IS WHAT THE INFUSION CARRIES: a person mends between
+   * fights and a husk does not. It is `DEFAULT_PLAYER_HP_REGEN` — the rate a
+   * detective's own body puts life back at — rather than a number of its own,
+   * and it is the first non-zero regeneration on anything that is not a troll.
+   */
+  hpRegen: 0.5,
+
+  // npcs.lua declares no `global_speed_base`, so 1.0 — VERBATIM.
+  globalSpeed: 1,
+  speedFactor: 1,
+
+  /**
+   * `ai_tactic = resolvers.tactic"melee"` (`npcs.lua:115`) with a greatmaul in
+   * both hands. `MeleeChaser` is that, and the profile is what `decideSquadAction`
+   * then wraps rather than replaces.
+   */
+  profile: AiProfile.MeleeChaser,
+  // `validateTemplate` refuses a chaser below `DEFAULT_SIGHT_RADIUS` in as many
+  // words — one that stands still while you walk toward it in plain view.
+  aggroRange: DEFAULT_SIGHT_RADIUS,
+  preferredRange: 1,
+  minRange: 0,
+  attackRange: 1,
+  /**
+   * FALSE, AND IT IS THE ONE FIELD WHERE BEING ON YOUR SIDE CHANGES THE ANSWER.
+   * `huntsIsolated` is how an elite picks off whoever is standing on their own;
+   * a body walking with the party wants the thing in front of the party, and
+   * one that went hunting the loneliest husk on the floor would be a companion
+   * walking away from the people it is with.
+   */
+  huntsIsolated: false,
+  /**
+   * `ai_move = "move_astar"` (`npcs.lua:114`) routes him around bodies
+   * permanently. Ours arms the same actor-aware escalation after five blocked
+   * turns (`ai/simple.lua:224-227`), which is `INDEX_HUSK_ELITE`'s number — and
+   * a companion is the body most likely to need it, because the thing in its
+   * way is usually the party.
+   */
+  shoulderAfter: 5,
+  /**
+   * `Player.lua:62` gives the player `open_door = true` at birth and Norgan is
+   * a party member walking through the same doors. A companion that stood at a
+   * closed door while the party walked on is an objective that fails on
+   * furniture.
+   */
+  opensDoors: true,
+  /**
+   * `[Talents.T_STUNNING_BLOW]=2` (`npcs.lua:107`), and `talent:bear_down` is
+   * this game's port of upstream's melee Stun (`misc/npcs.lua:191-217`). It is
+   * the most valuable thing in Norgan's kit for our roster: a stun landing on
+   * the thing chasing a ranged class is worth more than any damage this body
+   * does, and it is already proven to reach the AI's `castable` path — two
+   * shipped creatures cast it.
+   *
+   * THE OTHER FOUR DO NOT CROSS AND ARE NOT LOSSES: `T_DWARF_RESILIENCE` is a
+   * racial this game has no races for, and `T_ARMOUR_TRAINING`,
+   * `T_WEAPON_COMBAT` and `T_WEAPONS_MASTERY` are passives whose whole effect
+   * is the armour and accuracy numbers below — which are authored directly on
+   * a monster sheet here rather than derived from equipment.
+   */
+  talents: ['talent:bear_down'],
+  // `autolevel = "zerker"` (`npcs.lua:113`) is upstream's strength-and-
+  // constitution scheme, which is what this pair is.
+  autoStats: ['str', 'con'],
+
+  combat: {
+    // `stats = { str=19, dex=10, cun=12, mag=8, con=16, wil=13 }` (`npcs.lua:90`),
+    // VERBATIM. It is a stat line and stat lines port: it says strong, tough,
+    // and not quick, which is the body this is.
+    stats: { str: 19, dex: 10, cun: 12, mag: 8, con: 16, wil: 13 },
+    /**
+     * IRON MAIL AND NO SHIELD — `{type="armor", subtype="heavy", name="iron mail
+     * armour"}` (`npcs.lua:100`), which `T_ARMOUR_TRAINING` (`:106`) is what
+     * lets him wear. Armour four against dodge one is the opposite trade from
+     * `INDEX_HUSK_ELITE`'s `armour: 2, def: 4`: this body TAKES blows, which is
+     * the whole of what it is for.
+     */
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * `lite: 2` IS THE BRASS LANTERN, AND WITHOUT IT SHE IS NEVER DRAWN.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * `body = { ..., LITE=1 }` and `{type="lite", subtype="lite", name="brass
+     * lantern"}` (`npcs.lua:97`, `:101`) — Norgan carries one, and ours is
+     * `item_brass_lantern`'s own `lite: 2` (`content/items.ts`,
+     * `general/objects/lites.lua:30-70`) written onto the sheet rather than
+     * into a LITE slot no monster has.
+     *
+     * ═══ MEASURED, AND IT IS THE DIFFERENCE BETWEEN A COMPANION AND A RUMOUR ═══
+     * `ai/npc.ts#FOLLOW_LEASH` is 2 CHEBYSHEV and a detective's own lantern is
+     * 2 EUCLIDEAN, so a companion holding station diagonally behind you sits at
+     * 2.24 to 2.83 — outside the light on every turn of an eight-turn walk
+     * through a dark delve. Rendered through the real client: her tile stayed
+     * black, the board dropped and re-acquired her six times on one floor, and
+     * her fight narrated as *"Something hits Index Husk."*
+     *
+     * ═══ WHY THIS AND NOT AN UN-FOG EXEMPTION ═══
+     * `view/projector.ts` exempts party PLAYERS from fog and nothing else, and
+     * widening that to a faction would make a companion the one body in the
+     * game visible through a wall. A light is the mechanism this engine already
+     * has: `shared/vision.ts` pass 3 (`Map.lua:663`, `Player.lua:656-663`)
+     * lights a carrier's own tile for any eye that already holds it in FOV, so
+     * she is visible at sight range WITH line of sight and hidden around the
+     * corner, exactly as a husk with a torch would be.
+     */
+    mods: { armour: 4, def: 1, lite: 2 },
+    weapon: {
+      /**
+       * `{type="weapon", subtype="greatmaul", name="iron greatmaul"}`
+       * (`npcs.lua:99`), whose own line is `dam = resolvers.rngavg(15,21)`,
+       * `apr = 1`, `dammod = {str=1.2}` (`general/objects/2hmaces.lua:46-49`).
+       *
+       * 18 IS THE MEAN OF THAT ROLL, FROZEN, for the reason INDEX_HUSK's 25 is
+       * frozen: this file is RNG-free by contract and a body whose damage
+       * depended on a draw would move the seeded stream every time one was
+       * recruited.
+       *
+       * `apr: 1` IS UPSTREAM'S AND IT IS A REAL TRADE, not an oversight — a
+       * maul is a blunt instrument and the rest of the roster carries seven or
+       * eight. It hits hard and it is blunted by armour.
+       */
+      dam: 18,
+      // No weapon in ToME carries `atk`; it comes off the wielder. `T_WEAPON_COMBAT`
+      // and `T_WEAPONS_MASTERY` (`npcs.lua:108-109`) are exactly that, and this
+      // is `INDEX_HUSK_ELITE`'s accuracy — the floor's own trained line.
+      atk: 18,
+      apr: 1,
+      damMod: { str: 1.2 },
+    },
+    range: 1.5,
+    minRange: 0,
+    damageType: DamageType.Physical,
+  },
+});
+
 export const MONSTER_TEMPLATES: readonly MonsterTemplate[] = Object.freeze([
   INDEX_HUSK,
   INDEX_WRAITH,
@@ -4037,7 +4254,20 @@ export const MONSTER_TEMPLATES: readonly MonsterTemplate[] = Object.freeze([
  * `validateTemplate`'s sweep and the orphan guard read, so a summon is still
  * validated, still greppable and still cannot be written and forgotten.
  */
-export const SUMMON_TEMPLATES: readonly MonsterTemplate[] = Object.freeze([BOUND_SHADOW]);
+/**
+ * ═══ AND THE SECOND MEMBER IS NOT SUMMONED, WHICH IS WORTH THE PARAGRAPH ═══
+ * `STRANDED_HAND` is recruited, not called up: no talent builds it, an
+ * objective does (`world/brief.ts`). The property this list is actually keyed
+ * on is the one every line above argues — A BODY ON YOUR OWN SIDE THAT NO FLOOR
+ * CAN EVER ROLL — and both members have it. The name stayed because renaming an
+ * export to widen a category is a diff across three test files that says
+ * nothing about whether anything works; the sentence above is what the list
+ * means.
+ */
+export const SUMMON_TEMPLATES: readonly MonsterTemplate[] = Object.freeze([
+  BOUND_SHADOW,
+  STRANDED_HAND,
+]);
 
 /**
  * Every template this build knows, whoever puts it on the map.

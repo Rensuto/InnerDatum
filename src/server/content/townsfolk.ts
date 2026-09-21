@@ -48,6 +48,7 @@ import { canWalk } from '../../shared/level.ts';
 import { TileCode, TopicId, isWalkable } from '../../shared/protocol.ts';
 import { townResidentAt } from './towns.ts';
 import type { AuthoredMap } from '../../shared/level.ts';
+import type { MonsterInit } from '../engine/actor.ts';
 import type { TileXY } from '../../shared/coords.ts';
 import type { World } from '../world/world.ts';
 
@@ -863,6 +864,41 @@ export const FIELD_FOLK: ReadonlyMap<string, TownsfolkSpec> = new Map<string, To
       },
     },
   ],
+  [
+    'callow',
+    {
+      id: 'callow',
+      name: 'Maud Callow',
+      /**
+       * PELL'S FACE, AND THAT IS THE FICTION RATHER THAN A SHORTCUT. She is
+       * one of the eleven he came down with — same crew, same kit, same dust —
+       * and the commission for `chr_npc_miner_s` is *"a miner who got out: lamp
+       * helmet, pick, dust-grey face, a shaking hand"*, which is a description
+       * of both of them.
+       *
+       * A SECOND COMMISSION IS THE RIGHT ANSWER EVENTUALLY and it is not the
+       * right answer today: a new id would draw the violet missing-asset box on
+       * the one body in the game the party is asked to keep alive, and
+       * `ASSETS-REQUIRED.md` is explicit that the backlog is measured off the
+       * code rather than off a list somebody typed.
+       */
+      sprite: 'chr_npc_miner_s',
+      greetFirst: 'Pell counted eleven. I am one still walking.',
+      greetAgain: 'Still upright. Ask again in an hour.',
+      greetFiled: 'You finish what you start. I could use that.',
+      deflect: [
+        'I have been shoved into worse than you.',
+        'Push again and I sit down on principle.',
+        'The wall behind me holds. So do I.',
+      ],
+      topics: {
+        [TopicId.Where]: 'Back the way you came. There is no other way up.',
+        [TopicId.Party]: 'Eleven came down. Bring more than four.',
+        [TopicId.Roads]: 'No roads down here. Only what the crew cut.',
+        [TopicId.Rumour]: 'Something below still answers to a name.',
+      },
+    },
+  ],
 ]);
 
 /**
@@ -1130,35 +1166,84 @@ export function placeTownsfolk(
  * two of these there would be two answers to "what is a townsfolk made of",
  * which drift the first time one of them is edited.
  *
+ * ═══════════════════════════════════════════════════════════════════════════
+ * AND ONE OF THEM CAN FIGHT, WHICH IS WHAT `sheet` IS FOR.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Absent is the harmless body below and is every resident in the game: nothing
+ * may touch her, so she needs no life worth counting and no weapon at all.
+ *
+ * A COMPANION IS THE ONE EXCEPTION AND IT IS NOT AN EXCEPTION TO THE FACTION.
+ * `world/brief.ts` stands the person offering an escort up through this same
+ * function, as the same `Faction.Townsfolk`, with the same id shape and the
+ * same two gates into the dialogue window — and hands over a real sheet,
+ * because accepting turns that body into a `Faction.Squad` companion that has
+ * to walk through the fight the party is walking it through. Five hundred hit
+ * points and no weapon is the right body for somebody standing behind a
+ * counter and a useless one for somebody about to be shot at.
+ *
+ * WHAT THE SPEC ALWAYS WINS: the name, the face and the faction. A sheet
+ * decides what a body can take and what it can swing; WHO IT IS is the
+ * person's, and a template's own `displayName` reaching the hover card would
+ * be the commission's working title turning up in the game.
+ *
  * @returns the actor id, which is the id shape `specForActorId` reads back.
  */
-export function standFolk(world: World, spec: TownsfolkSpec, at: TileXY): string {
+export function standFolk(
+  world: World,
+  spec: TownsfolkSpec,
+  at: TileXY,
+  sheet?: MonsterInit,
+): string {
   const id = `${world.id}${TOWNSFOLK_ID_MARK}${spec.id}`;
   world.addMonster(id, {
+    ...HARMLESS,
+    // A REAL SHEET OVERRIDES EVERY ONE OF THEM, and the order is the whole of
+    // it: the harmless body is the DEFAULT, not a floor a companion is then
+    // clamped to. Spread the other way round and a companion would be stood up
+    // with five hundred hit points and no way to swing.
+    ...sheet,
     name: spec.name,
     sprite: spec.sprite,
     x: at.x,
     y: at.y,
-    // STATIONARY IS NOT A PROFILE YET, so she takes the melee profile and is
-    // rendered harmless by the faction instead. `areEnemies` is what the AI's
-    // target search reads, and it answers false for her in both directions —
-    // so she has nobody to chase and nobody chases her. A dedicated profile
-    // would be a second place for that rule to live.
-    profile: AiProfile.MeleeChaser,
-    // ENOUGH THAT NOTHING KILLS HER BY ACCIDENT. She cannot be attacked, so
-    // this is a floor under bugs rather than a stat: a status that ticks or an
-    // area effect that forgets to ask about factions gets a very long time to
-    // be noticed before anybody dies of it.
-    maxHp: 500,
-    hpRegen: 0,
+    // ═══ AND THE FACTION IS NEVER THE SHEET'S, WHICH IS THE ONE LINE THAT
+    //     KEEPS BOTH GATES INTO THE DIALOGUE WINDOW SHUT ═══
+    // `dialogueStanding` refuses anybody who is not `Townsfolk`, re-checked on
+    // every frame of a conversation. A companion's sheet is built from an
+    // ordinary monster template, which carries the bestiary's own `Redacted` —
+    // and a body stood up with that would be a person the floor attacks and
+    // nobody can talk to, which is both halves of this feature at once.
     faction: Faction.Townsfolk,
-    // She does not fight, so a combat sheet would be a sheet nothing reads.
-    // `createMonsterActor` fills its own defaults.
-    aggroRange: 0,
-    attackRange: 0,
   });
   return id;
 }
+
+/**
+ * WHAT SOMEBODY STANDING BEHIND A COUNTER IS MADE OF, and it is deliberately
+ * almost nothing.
+ *
+ * STATIONARY IS NOT A PROFILE YET, so she takes the melee profile and is
+ * rendered harmless by the faction instead. `areEnemies` is what the AI's
+ * target search reads, and it answers false for her in both directions — so
+ * she has nobody to chase and nobody chases her. A dedicated profile would be a
+ * second place for that rule to live.
+ *
+ * FIVE HUNDRED IS ENOUGH THAT NOTHING KILLS HER BY ACCIDENT. She cannot be
+ * attacked, so this is a floor under bugs rather than a stat: a status that
+ * ticks or an area effect that forgets to ask about factions gets a very long
+ * time to be noticed before anybody dies of it.
+ *
+ * And she does not fight, so a combat sheet would be a sheet nothing reads —
+ * `createMonsterActor` fills its own defaults.
+ */
+const HARMLESS = {
+  profile: AiProfile.MeleeChaser,
+  maxHp: 500,
+  hpRegen: 0,
+  aggroRange: 0,
+  attackRange: 0,
+} as const;
 
 /**
  * The first walkable tile with its back to a wall, far enough from the door.

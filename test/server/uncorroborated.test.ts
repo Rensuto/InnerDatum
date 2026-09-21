@@ -18,7 +18,7 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { countAdjacentKin } from '../../src/server/engine/actor.ts';
+import { Faction, countAdjacentKin } from '../../src/server/engine/actor.ts';
 import { createWorld } from '../../src/server/world/world.ts';
 import {
   isolationMultFor,
@@ -65,6 +65,52 @@ describe('counting who is standing next to you', () => {
       profile: 'melee_chaser',
     });
     expect(countAdjacentKin(player, (x, y) => world.actorAt(x, y))).toBe(0);
+  });
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * AND A BODY ON YOUR OWN SIDE IS COMPANY, WHATEVER `kind` IT IS.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * THIS WAS THE SIXTH LIVE COPY OF THE SAME-SIDE RULE, hiding behind a name
+   * that does not contain the word — `neighbour.kind === actor.kind`, with a
+   * docblock stating it as a rule. `sameSide` (engine/actor.ts) is the one
+   * answer, and it reads the faction: a `Faction.Squad` companion and a
+   * `Faction.Bound` shadow are both on the party's side.
+   *
+   * BOTH DIRECTIONS, because the bug was symmetrical and the second half is
+   * the worse one: the husk counted the party's own companion as ITS support,
+   * so the Disgraced Inspector read that husk as backed up and walked past it
+   * to hunt somebody "more alone" — while reading the detective standing beside
+   * their companion as isolated, and hitting them at the full multiplier with
+   * the bleed that `support > 0` is supposed to suppress.
+   *
+   * MUTANT: `neighbour.kind === actor.kind`. Two shipped readers change their
+   * numbers — `ai/npc.ts#supportOf` (targeting) and `uncorroborated`'s
+   * multiplier and bleed gate — and nothing else in the suite moves.
+   */
+  it('counts a companion as company, and not as the husk`s', () => {
+    const world = createWorld('companion-company');
+    const player = world.addPlayer('p1', 'Ren');
+    world.addMonster('walking', {
+      name: 'Maud Callow',
+      sprite: 'chr_npc_miner_s',
+      x: player.x + 1,
+      y: player.y,
+      profile: 'melee_chaser',
+      faction: Faction.Squad,
+    });
+    const husk = world.addMonster('m1', {
+      name: 'Index Husk',
+      sprite: 'sprite_husk',
+      x: player.x + 2,
+      y: player.y,
+      profile: 'melee_chaser',
+    });
+
+    const at = (x: number, y: number) => world.actorAt(x, y);
+    expect(countAdjacentKin(player, at), 'your own companion is not company').toBe(1);
+    expect(countAdjacentKin(husk, at), 'your companion is the husk`s support').toBe(0);
   });
 });
 

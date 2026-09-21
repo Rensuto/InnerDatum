@@ -1274,8 +1274,29 @@ export type MonsterActor = ActorCommon & {
    * with no hands stays where it is put.
    */
   readonly opensDoors?: boolean;
-  /** Which side. `Redacted` for the whole bestiary; see `Faction`. */
-  readonly faction: Faction;
+  /**
+   * Which side. `Redacted` for the whole bestiary; see `Faction`.
+   *
+   * ═══════════════════════════════════════════════════════════════════════════
+   * MUTABLE, AND EXACTLY ONE THING IN THE GAME WRITES IT AFTER BIRTH.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `world/brief.ts#acceptBrief` turns the person offering an escort from a
+   * `Townsfolk` — standing on a floor that has not noticed them, whom nothing
+   * may attack and who raises no engagement — into a `Squad` companion in the
+   * party's fight. THAT FLIP IS WHAT ACCEPTING MEANS, and it has to happen to
+   * the body that is already standing there: removing it and adding a second
+   * one would lose the hit points it is carrying, announce a body leaving and
+   * another arriving on the tile in front of the party, and break every window
+   * open on the first one.
+   *
+   * Upstream does the same thing to the same body from the same answer —
+   * `tome/class/Party.lua:46-88` `addMember` mutates the actor it is handed —
+   * and it is why the field was `readonly` for a reason that has now expired
+   * rather than for one that never applied: until an objective could change
+   * whose side somebody was on, nothing needed to.
+   */
+  faction: Faction;
   /**
    * ═════════════════════════════════════════════════════════════════════════
    * WHO CALLED THIS BODY UP — `summoner`, Actor.lua:1666. ABSENT FOR EVERY
@@ -1296,6 +1317,46 @@ export type MonsterActor = ActorCommon & {
    * here (`ai.targetId`, `srcId`, `killerId`) is an id for the same reason.
    */
   readonly summonerId?: string;
+  /**
+   * ═════════════════════════════════════════════════════════════════════════
+   * WHO THIS BODY IS WITH — `Faction.Squad` ONLY, and undefined on everything
+   * else in the game.
+   * ═════════════════════════════════════════════════════════════════════════
+   *
+   * `Party.lua:68`, set by `addMember` the moment an escortee joins:
+   *
+   * ```lua
+   * actor.ai_state.tactic_leash_anchor = actor.ai_state.tactic_leash_anchor or game.player
+   * ```
+   *
+   * ═══ WHAT READS IT TODAY, AND IT IS ONE THING ═══
+   * `awardExperience`. A companion's kill is paid to the party of the player
+   * named here, because a body the party brought swinging for them is the party
+   * swinging — and with nothing here a companion that lands the last blow on a
+   * floor would pay the people who walked it NOTHING, which is a standing
+   * reason not to let the thing fight.
+   *
+   * The follow step and the leash read it next; they are a separate change and
+   * this field is deliberately not waiting on them, because the credit rule is
+   * unshippable without an owner and inventing a second link later is how one
+   * rule becomes two.
+   *
+   * ═══ AN ID, MUTABLE, AND NOT `readonly` LIKE `summonerId` ═══
+   * An id for this codebase's usual reason (`summonerId`'s docblock has it in
+   * full: a realm-crossing body, a save file and a reaped corpse all make a
+   * held reference a way to keep a dead object alive). MUTABLE because upstream
+   * re-points it rather than dropping it — `Game.lua:1282-1284`, on re-adding
+   * actors after a level change, is
+   * `if act.ai_state and act.ai_state.tactic_leash_anchor then act.ai_state.tactic_leash_anchor = self.player end`
+   * — and the party member this body was following can take the stair while
+   * three others keep fighting.
+   *
+   * ═══ AND IT IS NOT `summonerId` REUSED ═══
+   * That field means SOMETHING CALLED THIS UP and is walked by the shadow
+   * leash; see `Faction.Squad`. Two links, two meanings, and exactly one
+   * faction each — a body carrying both would be a body two systems own.
+   */
+  anchorId?: string;
   /**
    * ═════════════════════════════════════════════════════════════════════════
    * WHAT THIS BODY IS FOR — one line, prepended to its inspect card, and
@@ -1519,6 +1580,45 @@ export const Faction = {
    * this faction, which is the day this shortcut has to become the real walk.
    */
   Bound: 'bound',
+  /**
+   * ═════════════════════════════════════════════════════════════════════════
+   * SOMEBODY THE FLOOR LENT YOU — on the party's side, and only until the stair.
+   * ═════════════════════════════════════════════════════════════════════════
+   *
+   * A temporary companion: a body that fights beside the party, belongs to the
+   * FLOOR rather than to a player, and is gone by the time anybody takes the
+   * way out. Upstream's escortee is the same thing built out of two facts
+   * rather than one:
+   *
+   *   A FRIENDLY FACTION. Norgan is `faction = "iron-throne"`
+   *     (`data/zones/reknor-escape/npcs.lua:85`), and `data/factions.lua:28`
+   *     gives Iron Throne `-1` against Enemies and Undead and `+0.2` toward
+   *     the three columns the player's own faction sits in
+   *     (`:22` is the header row). So the bestiary attacks him and the party
+   *     does not, by table lookup, before anything about parties is involved.
+   *
+   *   AND PARTY MEMBERSHIP. `Party.lua:46-88` `addMember` is what then gives
+   *     him a leash anchor (`:68`) and a follow radius (`:69`).
+   *
+   * ═══ WHY IT IS THE FACTION HALF WE PORT AND NOT THE MEMBERSHIP HALF ═══
+   * `engine/party.ts:80-92` is explicit that our party table holds RUN rows and
+   * has no `PartyActor`: a party row is a fact about a run, and this body dies
+   * at the stair. `Faction.Bound` already made the same call for a summon and
+   * for the same reason. So "on the party's side" is a fact about the BODY, the
+   * way it is for a shadow, and the two answer identically through `reactsAs`.
+   *
+   * ═══ AND IT IS NOT `Bound` REUSED, WHICH WAS THE OTHER OPTION ═══
+   * `Bound`'s own docblock says what it means: A PLAYER CALLED THIS UP, and the
+   * link it stands for is `summonerId` — which `shadowsOf` keys on and
+   * `shadowPass` walks every base turn to ask whether that player is alive, on
+   * this floor and still sustaining. A companion has no summoner and no
+   * sustain, so reusing the faction leaves exactly two options and both are
+   * wrong: give it a summoner and the shadow count and the leash both act on a
+   * body they did not make, or give it none and ship a `Bound` body that
+   * contradicts the sentence above. Same side, different body, and `reactsAs`
+   * is the one place the two have to agree.
+   */
+  Squad: 'squad',
 } as const;
 export type Faction = (typeof Faction)[keyof typeof Faction];
 
@@ -1558,6 +1658,10 @@ export type Sided = {
  * THE RULE: a Townsfolk is nobody's enemy and has none. It is stated once, as
  * two lines, in a predicate both modules can reach — `Sided` is structural, so
  * `engine/talents.ts` uses it without importing anything it must not.
+ *
+ * AND THE OTHER HALF IS `sameSide`, BELOW, NOT `!areEnemies`. A Townsfolk is
+ * neither, so the two predicates disagree on her on purpose and a caller that
+ * wants allies must ask the one that says so.
  */
 export function areEnemies(a: Sided, b: Sided): boolean {
   if (a.faction === Faction.Townsfolk || b.faction === Faction.Townsfolk) return false;
@@ -1579,7 +1683,37 @@ export function areEnemies(a: Sided, b: Sided): boolean {
  * engine has ever had, and it needed no second predicate.
  */
 function reactsAs(s: Sided): ActorKind {
-  return s.faction === Faction.Bound ? ActorKind.Player : s.kind;
+  return s.faction === Faction.Bound || s.faction === Faction.Squad ? ActorKind.Player : s.kind;
+}
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * ARE THESE TWO ON THE SAME SIDE? THE OTHER HALF, AND IT HAD TWO COPIES TOO.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `areEnemies` is not the negation of this and never was: a Townsfolk is
+ * NEITHER, which is the whole of `isFriend`'s essay in engine/talents.ts. So
+ * the same-side question needs its own statement — and it had two, written out
+ * as `a.kind === b.kind` in two places that a grep for one does not find:
+ *
+ *   `engine/talents.ts#isFriend`       — the Ally affinity's predicate, which
+ *                                        Iron Curtain guards by
+ *   `engine/talents.ts#actorsInShape`  — the Ally arm of the affinity filter,
+ *                                        inline, which Mend Wounds heals by
+ *
+ * Both were exactly as wrong as the hostility copies were, in the same
+ * direction and for the same reason. Read against `Faction.Bound`, which has
+ * shipped: a Redactor's own shadow is a Monster, so `a.kind === b.kind` made it
+ * the ALLY OF EVERY HUSK ON THE FLOOR and no ally of the woman who called it
+ * up — Iron Curtain would not guard it and Mend Wounds would not bind it —
+ * while Merrow Stitch, standing behind a counter, WAS in the heal.
+ *
+ * ONE ANSWER, HERE, beside the one it is not the negation of. `Sided` is
+ * structural, so talents.ts reaches it without importing a module graph.
+ */
+export function sameSide(a: Sided, b: Sided): boolean {
+  if (a.faction === Faction.Townsfolk || b.faction === Faction.Townsfolk) return false;
+  return reactsAs(a) === reactsAs(b);
 }
 
 export type EngineActor = PlayerActor | MonsterActor;
@@ -1956,21 +2090,39 @@ export function incMoney(actor: PlayerActor, delta: number): number {
  *   - LIVING BODIES ONLY. `actorAt` skips corpses, so a friend who just went
  *     down is not support. That is correct, and grim, and exactly what this
  *     creature should think.
- *   - THE SAME `kind`. A monster adjacent to you is not company.
+ *   - THE SAME SIDE, WHICH IS `sameSide` AND NOT `kind`. IT WAS `kind`, AND
+ *     THAT WAS THE SIXTH LIVE COPY OF THE SAME-SIDE RULE — the five the
+ *     `Faction.Squad` lane found are listed in `sameSide`'s own header, and
+ *     this one hid behind a name that does not contain the word.
+ *
+ *     Driven, before the fix: a detective at (5,5) with their own companion at
+ *     (6,5) and a husk at (7,5) counted ZERO support for the detective and ONE
+ *     for the husk. So the Disgraced Inspector read a detective flanked by the
+ *     body they are escorting as ALONE — full `uncorroboratedMult` plus the
+ *     bleed that `support > 0` suppresses — and read the husk standing beside
+ *     that companion as supported, and walked past it to hunt somebody "more
+ *     alone". That is precisely the two-layers-disagreeing failure the
+ *     paragraph above this list was written about, inside the function written
+ *     to prevent it.
+ *
+ *     Already false for `Faction.Bound` — a Redactor's own shadow was never
+ *     company either — so this is pre-existing and not the companion's doing.
+ *     A companion makes it CONSTANT rather than occasional, because it follows
+ *     at a two-tile leash by design.
  *
  * TAKES THE LOOKUP RATHER THAN A CONTEXT, so the AI can pass `ctx.actorAt` and
  * a talent can pass `world.actorAt` without either layer learning about the
  * other's context type.
  */
 export function countAdjacentKin(
-  actor: { readonly x: number; readonly y: number; readonly kind: string },
-  at: (x: number, y: number) => { readonly kind: string } | undefined,
+  actor: Sided & { readonly x: number; readonly y: number },
+  at: (x: number, y: number) => Sided | undefined,
 ): number {
   let count = 0;
   for (const dir of DIR_ORDER) {
     const vector = DIR_VECTORS[dir];
     const neighbour = at(actor.x + vector.dx, actor.y + vector.dy);
-    if (neighbour !== undefined && neighbour.kind === actor.kind) count += 1;
+    if (neighbour !== undefined && sameSide(actor, neighbour)) count += 1;
   }
   return count;
 }

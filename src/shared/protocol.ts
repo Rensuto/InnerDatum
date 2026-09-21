@@ -1016,12 +1016,22 @@ export type ActorView = {
    * this behaves exactly as it always has — which is why adding it forces no
    * version bump.
    *
-   * TWO VALUES A CLIENT BRANCHES ON, and this said one. `'townsfolk'` was the
-   * only one there was; `'bound'` is what `talents/call_shadows.ts` puts on a
-   * body a player called up, and it answers as its summoner does
-   * (`Actor.lua:1666-1667`). Both arrive as a `Monster` for the same deliberate
-   * reason — same painter, same FOV, only who may hit them differs — so `kind`
-   * cannot tell a client either of them apart from a husk.
+   * THREE VALUES A CLIENT BRANCHES ON, and this said one, then two.
+   * `'townsfolk'` was the only one there was; `'bound'` is what
+   * `talents/call_shadows.ts` puts on a body a player called up, and it answers
+   * as its summoner does (`Actor.lua:1666-1667`); `'squad'` is a temporary
+   * companion, somebody an objective on this floor lent the party
+   * (`server/world/brief.ts`). All three arrive as a `Monster` for the same
+   * deliberate reason — same painter, same FOV, only who may hit them differs —
+   * so `kind` cannot tell a client any of them apart from a husk.
+   *
+   * ═══ AND THE THIRD ONE IS WHY `PROTOCOL_VERSION` IS 29 ═══
+   * The first two were additive: a client that had never heard of them drew a
+   * hostile ring under a shopkeeper, which was wrong and was also the game as
+   * it had always been. A companion is the one body of the three the party is
+   * asked to KEEP ALIVE, and an old client draws a hostile ring under it,
+   * offers `Attack` on right-click and lets a travel path end in a swing the
+   * server then refuses. See `shared/version.ts`.
    *
    * The string is the server's `Faction` value verbatim so there is nothing to
    * translate; `input/travel.ts` writes both out once, beside each other.

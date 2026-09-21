@@ -31,6 +31,7 @@ import {
 import { SITES, createRealms, floorsOfSite, stairsDownOf } from '../../src/server/world/realms.ts';
 import { AiProfile } from '../../src/server/engine/actor.ts';
 import { FIELD_FOLK } from '../../src/server/content/townsfolk.ts';
+import { STRANDED_HAND } from '../../src/server/content/monsters.ts';
 import { canWalk } from '../../src/shared/level.ts';
 import { ActorKind, ActorRank } from '../../src/shared/protocol.ts';
 import { PROTOCOL_VERSION } from '../../src/shared/version.ts';
@@ -84,6 +85,15 @@ const QUARRY: BriefSpec = {
   quarry: { name: 'Maundy', mark: 'UNMAKE THIS ONE' },
 };
 
+/**
+ * THE SHEET THE PERSON IS STOOD UP WITH. `content/monsters.ts#STRANDED_HAND` is
+ * the shipped one and this file uses it rather than a hand-built body, for the
+ * reason `armBrief` builds one at all: a companion has to be able to walk
+ * through the fight, and a fixture that was harmless would prove the lifecycle
+ * against a body the shipped game does not place.
+ */
+const ESCORT_BODY = { body: STRANDED_HAND } as const;
+
 const ESCORT: BriefSpec = {
   id: 'test:the-way-up',
   kind: BriefKind.Escort,
@@ -92,7 +102,7 @@ const ESCORT: BriefSpec = {
   detail: 'Somebody down here wants to leave with the party.',
   reward: { level: 3, rank: ActorRank.Elite },
   offerer: WHO,
-  escort: { after: 'leaves' },
+  escort: { ...ESCORT_BODY, after: 'leaves' },
 };
 
 function makeRealms(seed = 'briefs'): Realms {
@@ -194,10 +204,43 @@ describe('which floor of a site carries an objective', () => {
       undefined,
       2,
     );
-    expect(floor.briefs.map((spec) => spec.id)).toEqual(['underworks:kept-its-name']);
-    // AND IT IS THE ONE THIS FLOOR CARRIES, not merely one the site knows about.
+    expect(floor.briefs.map((spec) => spec.id)).toEqual([
+      'underworks:kept-its-name',
+      'underworks:one-still-walking',
+    ]);
+    // AND IT IS THE ONE **THIS FLOOR** CARRIES, not merely one the site knows
+    // about — which is the whole of what `briefSpecFor` is for now that the
+    // site carries two. One per FLOOR, and floor 1 carries neither.
     expect(briefSpecFor(floor.briefs, 2)?.kind).toBe(BriefKind.Quarry);
+    expect(briefSpecFor(floor.briefs, 3)?.kind).toBe(BriefKind.Escort);
     expect(briefSpecFor(floor.briefs, 1)).toBeUndefined();
+
+    /**
+     * ═══ AND THE ESCORT'S OWN FIELDS, BECAUSE NOTHING ELSE DRIVES THEM ═══
+     * `briefshipped.test.ts` walks the QUARRY end to end on the real floor 2
+     * and there is no counterpart for the escort — both `escort.test.ts` and
+     * `briefescort.test.ts` author their own `BriefSpec` so the shipped row is
+     * exercised by nothing. Measured: `offerer('callow')` -> `offerer('pell')`
+     * and `after: 'leaves'` -> `'stays'` each survived the ENTIRE suite.
+     *
+     * Pinned the way `briefshipped.test.ts` pins the quarry's `name`/`mark`:
+     * the fields, directly, in one place.
+     *
+     *   `after: 'leaves'`   the destination is the way out. `'stays'` is the
+     *                       Errand, which is built and driven and NOT authored
+     *                       onto any floor.
+     *   `offerer.id`        the person; `armBrief` stands up THIS body, and
+     *                       swapping it changes who the party meets and what
+     *                       the conversation says.
+     *   `escort.body`       the sheet under her, which is what makes her able
+     *                       to fight at all.
+     */
+    const walk = briefSpecFor(floor.briefs, 3);
+    expect(walk?.id).toBe('underworks:one-still-walking');
+    expect(walk?.floors).toEqual([3, 3]);
+    expect(walk?.escort?.after).toBe('leaves');
+    expect(walk?.offerer?.id).toBe('callow');
+    expect(walk?.escort?.body.id).toBe(STRANDED_HAND.id);
   });
 
   /**
@@ -217,8 +260,8 @@ describe('which floor of a site carries an objective', () => {
     );
     expect(twin, 'no redacted twin of the Underworks').toBeDefined();
     expect(twin?.briefs).toBeUndefined();
-    // NOT VACUOUS: the original beside it does carry one.
-    expect(site(UNDERWORKS).briefs).toHaveLength(1);
+    // NOT VACUOUS: the original beside it does carry them.
+    expect(site(UNDERWORKS).briefs).toHaveLength(2);
   });
 });
 
@@ -423,15 +466,29 @@ describe('arming a floor', () => {
   });
 
   /**
-   * MUTANT: give `stays` the stair as its destination. The Errand then becomes
-   * the Walk Out wearing the wrong words, and the bug is content-shaped rather
-   * than code-shaped — nothing crashes and the wrong thing ships.
+   * `stays` RESOLVES SOMEWHERE ELSE ENTIRELY, and the whole point of the
+   * configuration is that it is not the door.
+   *
+   * THIS TEST USED TO ASSERT THAT IT ARMED NOTHING, which was true while the
+   * destination rule did not exist. It exists now (`errandCell`), and the
+   * property worth pinning is the one the old test was protecting: the two
+   * configurations must not resolve to the same tile, or the Errand is the Walk
+   * Out wearing the wrong words and the bug is content-shaped — nothing
+   * crashes and the wrong thing ships.
+   *
+   * MUTANT: return `stairsDownOf(realm) ?? realm.spawns[0]` for both arms.
    */
-  it('arms nothing for a destination rule that does not exist yet', () => {
+  it('resolves `stays` to somewhere that is not the way out', () => {
     const realms = makeRealms();
-    const realm = floorWith(realms, [{ ...ESCORT, escort: { after: 'stays' } }], 1);
-    expect(armBrief(realm)).toBeUndefined();
-    expect(realm.brief).toBeUndefined();
+    const realm = floorWith(realms, [{ ...ESCORT, escort: { ...ESCORT_BODY, after: 'stays' } }], 1);
+    const brief = armBrief(realm);
+    const target = brief?.target;
+    expect(target?.k).toBe(BriefKind.Escort);
+    const at = target?.k === BriefKind.Escort ? target.at : undefined;
+    if (at === undefined) throw new Error('no destination');
+    expect(at).not.toEqual(stairsDownOf(realm));
+    expect(realm.spawns).not.toContainEqual(at);
+    expect(canWalk(realm.world.level, at.x, at.y), 'somewhere a body can stand').toBe(true);
   });
 });
 

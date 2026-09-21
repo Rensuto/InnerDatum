@@ -83,7 +83,7 @@ import type { BoundHooks, PassiveView } from './engine/hooks.ts';
 import { createTurnEngine } from './turn-engine.ts';
 import { createRealms } from './world/realms.ts';
 import { createWorld } from './world/world.ts';
-import { isPlayer } from './engine/actor.ts';
+import { areEnemies, isPlayer, sameSide } from './engine/actor.ts';
 import type { EngineActor } from './engine/actor.ts';
 import { breakDamageSensitive } from './engine/effects.ts';
 import {
@@ -1430,12 +1430,38 @@ export function buildServer() {
 
     const view: PassiveView = {
       /**
-       * TWO SIDES ONLY. `ActorKind` is Player or Monster and there is no third,
-       * so "hostile to me" is "not my kind" — which is also true for a monster,
-       * and monsters carry passives too.
+       * ═════════════════════════════════════════════════════════════════════
+       * WHO IS STANDING NEXT TO ME, AND ON WHICH SIDE — a RELATION, asked of
+       * the two predicates that state it, not of `kind`.
+       * ═════════════════════════════════════════════════════════════════════
+       *
+       * This said *"TWO SIDES ONLY. `ActorKind` is Player or Monster and there
+       * is no third, so 'hostile to me' is 'not my kind'"*, which was true when
+       * it was written and has been false since `Faction.Townsfolk` shipped.
+       * Both lines were wrong in both directions at once, and every one of the
+       * consumers is a talent somebody has raised:
+       *
+       *   A SHOPKEEPER counted as an ADJACENT ENEMY. Standing at Merrow's
+       *     counter satisfied `adjacentEnemies() >= OUTNUMBERED` alongside one
+       *     husk, and `one_at_a_time.ts` (`adjacentEnemies() !== 1`) switched
+       *     itself off in a town.
+       *   A REDACTOR'S OWN SHADOW did the same, adjacent by design, and did NOT
+       *     count for `adjacentAllies` — so `riot_line.ts` and
+       *     `known_face.ts` saw nothing beside her while `composure.ts` saw
+       *     somebody closing in.
+       *
+       * A companion (`Faction.Squad`) makes it constant rather than occasional:
+       * it follows, so it is adjacent most turns of a floor, and a passive that
+       * is on or off depending on where your own ally is standing is a passive
+       * nobody can reason about.
+       *
+       * `areEnemies` and `sameSide` are the two answers (engine/actor.ts), and
+       * they are deliberately not each other's negation: a Townsfolk is neither,
+       * so she is counted in neither number, which is the right answer for
+       * somebody who is not in the fight.
        */
-      adjacentEnemies: () => neighbours().filter((o) => o.kind !== actor.kind).length,
-      adjacentAllies: () => neighbours().filter((o) => o.kind === actor.kind).length,
+      adjacentEnemies: () => neighbours().filter((o) => areEnemies(actor, o)).length,
+      adjacentAllies: () => neighbours().filter((o) => sameSide(actor, o)).length,
       /**
        * GUARDED AGAINST A ZERO CEILING. A body mid-construction can have
        * `maxHp` of 0, and a passive reading NaN would poison the whole composed
@@ -1454,7 +1480,10 @@ export function buildServer() {
       nearestEnemyDistance: () => {
         let best = Number.POSITIVE_INFINITY;
         for (const other of holder.allActors()) {
-          if (other.id === actor.id || !other.alive || other.kind === actor.kind) continue;
+          // THE SAME RELATION AS `adjacentEnemies` ABOVE, and it was the same
+          // line: `cold_case.ts` folds at `nearestEnemyDistance() < FAR`, so a
+          // companion walking beside you switched it off for the whole floor.
+          if (other.id === actor.id || !other.alive || !areEnemies(actor, other)) continue;
           const d = Math.max(Math.abs(other.x - actor.x), Math.abs(other.y - actor.y));
           if (d < best) best = d;
         }

@@ -336,6 +336,7 @@ import {
   zoneOf,
 } from '../world/realms.ts';
 import {
+  BriefState,
   acceptBrief,
   armBrief,
   briefSnapshotFor,
@@ -3928,6 +3929,37 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     // there is no line anybody earned — and one that already closed said its
     // piece in the pump it closed in.
     if (ended === undefined) return undefined;
+    /**
+     * ═══ AND IT MAY HAVE BEEN MET AT THE DOOR, WHICH WOULD BE PAID HERE ═══
+     * `closeFloorBriefs` asks its condition one last time before the body is
+     * taken away — upstream's `on_exit_check` (`GameState.lua:2630-2632`).
+     *
+     * THIS ARM IS A GUARD AND NOT THE MAIN PATH, AND THAT IS MEASURED. The
+     * header used to claim the opposite, and the claim was true only while
+     * `arrivedEscort` was one tile short of what the follow rule can produce
+     * (see its own header). It is not any more, and the reason is structural:
+     * the post-pump sweep asks the SAME predicate this does, and the move
+     * handler pumps — `noteBrief` inside it — BEFORE `leaveRealm` runs. So any
+     * state this could close on, the sweep closed a few lines earlier, and
+     * nothing moves in between. Driven end to end over two sockets: the
+     * objective closes while the party is standing at the threshold and the
+     * crossing has nothing left to do.
+     *
+     * SO TWO MUTANTS SURVIVE HERE — `if (false) payBrief(…)`, and the line
+     * below always reading *"Left behind:"* — and they survive because the arm
+     * is unreachable, not for want of a test. IT STAYS: it is upstream's, it
+     * costs one comparison, and the day a close condition is something other
+     * than a position (a body carried out, a door left open) it is the only
+     * thing that asks at the moment of leaving. Do not "simplify" it away, and
+     * do not write a test that fakes the state to kill those two.
+     *
+     * PAID HERE AND NOT WITH THE LINE, and the two halves cannot swap. This
+     * runs before `removePlayer`, so `payParty` still finds the bodies it is
+     * paying and the reward still has a floor to land on; the LINE waits until
+     * the party has arrived somewhere, because the room they walk into writes
+     * five lines of its own immediately afterwards.
+     */
+    if (ended.state === BriefState.Closed) payBrief(from, ended);
     sendBriefFor(from);
     return ended;
   };
@@ -3955,7 +3987,14 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    */
   const sayFloorBriefLeft = (from: Realm, ended: Brief | undefined): void => {
     if (ended === undefined) return;
-    recordLineToParty(from, `Left behind: ${ended.title}.`);
+    // THE SAME TWO OUTCOMES THE POST-PUMP SWEEP HAS, in the same words, because
+    // finishing an objective as you step through the door is finishing it. The
+    // payment already happened at the seam (see `endFloorBrief`); this is the
+    // sentence about it, and it arrives after the new room's own lines.
+    recordLineToParty(
+      from,
+      ended.state === BriefState.Closed ? `Done: ${ended.title}.` : `Left behind: ${ended.title}.`,
+    );
   };
 
   /**
@@ -4061,6 +4100,34 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     if (realm === undefined) return false;
     const brief = acceptBrief(realm, me.id);
     if (brief === undefined) return false;
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * AND THE BODY THAT JUST CHANGED SIDES IS RE-ANNOUNCED.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * An escort's accept FLIPS THE PERSON'S FACTION on a body every client in
+     * the realm is already holding — `Townsfolk` to `Squad` — and nothing else
+     * on the wire says so. `ActorView.faction` travels on the actor view and on
+     * nothing else: a `moved` event carries an id, a sweep carries steps, and
+     * `resyncBoard`'s own note lists the four things that resend a board
+     * (realm change, rename, level-up, respawn). A faction flip is the fifth
+     * and it was not one of them.
+     *
+     * WITHOUT THIS every client goes on drawing the companion as somebody who
+     * lives here: the verb menu keeps offering `Talk to`, a left-click keeps
+     * opening a conversation, and the server answers *"there is nobody there
+     * to talk to"* about the person walking beside them — which is the exact
+     * complaint `restandDialoguesWith` below exists to prevent for the windows
+     * that are ALREADY open.
+     *
+     * `announceJoined` AND NOT `resyncBoard`, because one body changed. It
+     * re-sends that one `ActorView` to every session whose own eyes can see it
+     * (the client upserts by id), and it costs one fog test per socket instead
+     * of a whole board each.
+     */
+    const walking =
+      brief.companionId === null ? undefined : realm.world.getActor(brief.companionId);
+    if (walking !== undefined) announceJoined(walking, undefined, realm.id);
     restandDialoguesWith(brief.offererId, session.connId);
     recordLineToParty(realm, `Taken on: ${brief.title}.`);
     sendBriefFor(realm);
@@ -4153,7 +4220,23 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     // THE PARTY THAT HOLDS THE FLOOR, NOT WHOEVER ANSWERED. See `briefAudience`:
     // reading `membersOf(acceptedBy)` paid a member who had left the party and
     // paid the party that finished the work nothing at all.
-    payParty(realm.world, briefAudience(realm), brief.reward.level, brief.reward.rank, null);
+    //
+    // ═══ AND EACH ONE IS RESOLVED THROUGH THEIR OWN REALM, NOT THIS FLOOR ═══
+    // `payParty` used to take the world and look everybody up in it, which is
+    // the right rule for a KILL and the wrong one for a brief: a kill is an
+    // event on a floor, a brief is a party contract (the design's F.1). The
+    // audience was already right and the RESOLUTION threw most of it away —
+    // `payParty`'s own header has the measurement. It bit hardest at the seam,
+    // where `endFloorBrief` only runs when the crosser is the LAST body on the
+    // floor, so a close met at the door paid exactly one player and announced
+    // *"Done:"* to four.
+    payParty(
+      (id) => opts.realms?.realmOf(id)?.world.getActor(id) ?? realm.world.getActor(id),
+      briefAudience(realm),
+      brief.reward.level,
+      brief.reward.rank,
+      null,
+    );
     const item = brief.reward.item;
     const at = item === undefined ? undefined : rewardCell(realm, brief);
     // NOWHERE TO PUT IT is a real state and not an error: a quarry can be reaped
@@ -4191,10 +4274,51 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
   const noteBrief = (realm: PumpTarget): void => {
     const full = opts.realms?.get(realm.id);
     if (full === undefined) return;
-    const closed = noteBriefProgress(full);
-    if (closed === undefined) return;
-    recordLineToParty(full, `Done: ${closed.title}.`);
-    payBrief(full, closed);
+    // READ BEFORE THE CALL, BECAUSE THE CALL IS WHAT NULLS IT — `refuseBrief`'s
+    // own pattern, and for the same reason: the body may be gone from the world
+    // by the time this function is asked about it.
+    const walking = full.brief?.companionId ?? null;
+    const ended = noteBriefProgress(full);
+    if (ended === undefined) return;
+    /**
+     * ═══ TWO OUTCOMES, AND ONLY ONE OF THEM PAYS ═══
+     * A brief that closed in this pump is work the party finished. One that
+     * FAILED in this pump is the companion they were walking somewhere going
+     * down on the floor, and the line for it is one line: the failure never
+     * blames the party and never gets a second sentence, because the second
+     * sentence is where blame lives.
+     */
+    if (ended.state === BriefState.Closed) {
+      recordLineToParty(full, `Done: ${ended.title}.`);
+      payBrief(full, ended);
+    } else {
+      recordLineToParty(full, `Lost: ${ended.title}.`);
+    }
+    /**
+     * ═══ AND A BODY THAT WALKED OUT IS SAID TO HAVE GONE ═══
+     * An escort whose destination is the way out ends with the companion
+     * REMOVED rather than killed — no `died` event, so nothing else on the wire
+     * says anything about it. `client/main.ts` forbids inferring an actor's
+     * removal from its absence, because that would make a body walking out of
+     * view indistinguishable from one that is no longer there, so the room is
+     * told explicitly — exactly as the decline path tells it about an offerer.
+     *
+     * ASKED OF THE WORLD RATHER THAN OF THE CONFIGURATION: "the id no longer
+     * resolves" is the true statement, and it stays true if a later kind ends
+     * some other way.
+     */
+    if (walking !== null) {
+      const body = full.world.getActor(walking);
+      if (body === undefined) announceLeft(walking, undefined, audienceFor(full.id));
+      /**
+       * ═══ OR IT IS STILL STANDING THERE AND HAS STOPPED BEING YOURS ═══
+       * An Errand's companion stays where the party walked it to and goes back
+       * to `Townsfolk` — see `landCompanion`. That is the same stale-view
+       * problem the accept has in reverse, and the same one-body answer: every
+       * client is holding an `ActorView` that says `squad`, and nothing else on
+       * the wire carries a faction.
+       */ else if (ended.state === BriefState.Closed) announceJoined(body, undefined, full.id);
+    }
     sendBriefFor(full);
   };
 

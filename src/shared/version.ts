@@ -660,6 +660,49 @@
  * ═══════════════════════════════════════════════════════════════════════════
 
 
+ * 28 -> 29 (SOMEBODY IS WALKING WITH YOU). `ActorView.faction` gains a third
+ * value, `'squad'` — a temporary companion, somebody an objective on this floor
+ * lent the party (`server/world/brief.ts`, `server/engine/actor.ts#Faction`).
+ *
+ * ═══ THE FIELD IS OLD, THE VALUE IS NEW, AND THAT IS THE WHOLE ARGUMENT ═══
+ * `faction` shipped at v18 and has carried `'townsfolk'` since, `'bound'` since
+ * the Redactor's shadow. NEITHER of those forced a bump, and the reason they
+ * did not is the reason this one does. The rule this file has applied since v5
+ * is *would an old client ignoring this draw a lie, and does the lie matter*:
+ *
+ *   A v28 CLIENT DOES NOT IGNORE THE FIELD. It reads it, matches neither of the
+ *   two strings it knows, and falls through to `isHostileBody` answering TRUE.
+ *   So it draws the hostile ring under the body, offers `Attack` on right-click
+ *   and lets a left-click or a travel path end in a swing.
+ *
+ *   AND THE SERVER REFUSES THAT SWING. `areEnemies` is the one statement of the
+ *   hostility rule and a `Squad` body is on the party's side of it, so the
+ *   click does nothing, with no message that explains why. The client is
+ *   drawing a picture the server has stopped believing in — `18 -> 19`'s rule
+ *   verbatim, and the same shape as `25 -> 26`, where a v25 client kept
+ *   furniture the server had withdrawn.
+ *
+ * ═══ WHY IT IS WORSE HERE THAN IT WAS FOR THE SHOPKEEPER ═══
+ * A hostile ring under Merrow Stitch was a lie about somebody nothing would
+ * ever happen to. A companion is the one body of the three the party is ASKED
+ * TO KEEP ALIVE — the objective fails if it dies — and the picture a v28 client
+ * paints of it is the picture it paints of the thing killing it.
+ *
+ * ═══ CONSIDERED AND NOT BUMPED FOR, though they ride the same number ═══
+ * The `brief` frame and everything else this objective is made of. `BriefMsg`
+ * shipped inside 28 and is unchanged; the escort's arrival, failure and payment
+ * are server-side and reach a client as the `brief` frame and Case Log lines it
+ * already reads. The right-click menu no longer offering `Attack` on a body you
+ * cannot attack is one client's own pixels. Not one of those changes a frame
+ * either end sends, which is the test this file applies.
+ *
+ * `SCHEMA_VERSION` STAYS 1. Nothing about a brief is persisted and nothing ever
+ * has been — one optional field on a `Realm` that dies with the floor is the
+ * whole of where it lives (`server/world/brief.ts`).
+ *
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ *
  * 27 -> 28 (THE ZOOM IS GONE). `ClientMsg` LOSES `set_zoom` and `SettingsMsg`
  * LOSES its required `zoom`. Asked for in three words: *"remove the (zoom)
  * option"*.
@@ -1222,7 +1265,7 @@
  * path rather than read from disk. When that changes it will be an OPTIONAL
  * field and docs/data-schemas.md:48-49 applies unchanged.
  */
-export const PROTOCOL_VERSION = 28;
+export const PROTOCOL_VERSION = 29;
 
 /**
  * Bumped whenever a persisted save file's shape changes. Every bump needs a

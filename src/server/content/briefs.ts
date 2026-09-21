@@ -46,6 +46,7 @@
 import { ActorRank } from '../../shared/protocol.ts';
 import { BriefKind } from '../world/brief.ts';
 import { FIELD_FOLK } from './townsfolk.ts';
+import { STRANDED_HAND } from './monsters.ts';
 
 import type { BriefSpec } from '../world/brief.ts';
 import type { TownsfolkSpec } from './townsfolk.ts';
@@ -126,6 +127,43 @@ const UNDERWORKS_BRIEFS: readonly BriefSpec[] = [
       name: 'Sallow Cordage',
       mark: 'THIS ONE KEPT ITS NAME',
     },
+  },
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * AND ONE FLOOR DOWN, SOMEBODY WHO WANTS TO LEAVE WITH YOU.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * ═══ FLOOR 3, WHICH IS THE LAST ONE, AND THAT IS WHAT MAKES IT THE WAY OUT ═══
+   * `world/brief.ts#targetFor` resolves a `leaves` escort to the stair down
+   * where there is one and otherwise to the tile the party came in on — and
+   * `world/realms.ts` already establishes that on a last floor that tile IS
+   * *"the door you leave by"*. So the objective is literally *walk this person
+   * back to the surface*, and the destination needs no new terrain, no new
+   * glyph and nothing authored: the floor already knows where its own door is.
+   *
+   * ═══ THE SAME DELVE AS THE QUARRY, AND ONE FLOOR APART ═══
+   * A party meeting its first objective on floor 2 and its second on floor 3
+   * meets both configurations of this feature inside one delve, on a roster
+   * that has been measured, before anything deeper. `world/brief.ts` allows one
+   * objective per FLOOR, so the two never overlap and neither is a second
+   * concurrent thing to track.
+   *
+   * ═══ IT PAYS EXPERIENCE AND NOTHING ELSE, AND THE OFFER SAYS SO ═══
+   * `reward.item` is absent, which `content/chats.ts` already has a line for —
+   * *"I have nothing to give you but the quiet."* — and it is the honest one
+   * here: she came down with a crew and is walking out with what is left of
+   * her own kit. The Quarry one floor above pays the lamp; two lamps in one
+   * delve would be the payout that stopped meaning anything.
+   */
+  {
+    id: 'underworks:one-still-walking',
+    kind: BriefKind.Escort,
+    floors: [3, 3],
+    title: 'The way back, with her',
+    detail: 'One of the crew that came down here is still on her feet, and wants the surface.',
+    reward: { level: 3, rank: ActorRank.Elite },
+    offerer: offerer('callow'),
+    escort: { after: 'leaves', body: STRANDED_HAND },
   },
 ];
 

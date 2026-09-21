@@ -52,10 +52,13 @@
  * `engine/scheduler.ts` states for anything that can move a labelled RNG draw.
  */
 
-import { ActorKind, ActorRank } from '../../shared/protocol.ts';
-import { areEnemies } from '../engine/actor.ts';
-import { bearingWord } from '../../shared/coords.ts';
-import { canWalk } from '../../shared/level.ts';
+import { ActorKind, ActorRank, TileCode } from '../../shared/protocol.ts';
+import { DEFAULT_SIGHT_RADIUS } from '../../shared/sight.ts';
+import { FOLLOW_LEASH } from '../ai/npc.ts';
+import { Faction, areEnemies } from '../engine/actor.ts';
+import { DIR_ORDER, DIR_VECTORS, bearingWord, chebyshev } from '../../shared/coords.ts';
+import { canWalk, tileAt } from '../../shared/level.ts';
+import { monsterInit } from '../content/monsters.ts';
 import { standFolk } from '../content/townsfolk.ts';
 // FROM THE LEAF AND NOT FROM THE REGISTRY, which is the one line that keeps
 // this module out of an import cycle: the registry reaches `content/briefs.ts`
@@ -63,11 +66,12 @@ import { standFolk } from '../content/townsfolk.ts';
 // `BriefKind`. See `world/stairs.ts`.
 import { stairsDownOf } from './stairs.ts';
 
-import type { MonsterActor, Sided } from '../engine/actor.ts';
+import type { EngineActor, MonsterActor, MonsterInit, Sided } from '../engine/actor.ts';
+import type { MonsterTemplate } from '../content/monsters.ts';
 import type { Realm } from './realms.ts';
 import type { TileXY } from '../../shared/coords.ts';
 import type { TownsfolkSpec } from '../content/townsfolk.ts';
-import type { BriefView } from '../../shared/protocol.ts';
+import type { BriefView, LevelView } from '../../shared/protocol.ts';
 
 /**
  * WHAT KIND OF OBJECTIVE IT IS. Two, and the second carries two shapes.
@@ -223,8 +227,29 @@ export type Brief = {
    * paid and their party is who the strip is sent to.
    */
   acceptedBy: string | null;
-  /** The body, while one exists. Escort only. */
+  /**
+   * THE BODY WALKING WITH THE PARTY, while one is. Escort only, and null both
+   * before the accept and after the close.
+   *
+   * IT IS THE SAME BODY AS `offererId`, WHICH IS THE WHOLE SHAPE OF THE KIND.
+   * The person standing on the floor offering to be taken out IS the person
+   * you then take out; accepting flips their faction rather than spawning a
+   * second body (`acceptBrief`). So this field is not a second placement — it
+   * is the record that the body standing there is now in the fight, and the
+   * floor's edge removes it through `clearOfferer` exactly once.
+   */
   companionId: string | null;
+  /**
+   * THE BODY ITSELF, BESIDE ITS ID — IDENTITY, NOT PRESENCE.
+   *
+   * `BriefTarget.body` states this rule in full for the quarry and it is the
+   * same rule for the same reason: a party wipe reaps every monster on the
+   * floor and re-seeds it, so "the id no longer resolves" means THE FLOOR
+   * DELETED IT and never "they died". A dead companion is a corpse still
+   * standing on the tile it fell on — `alive` false, the same object — and
+   * that is the only thing that fails this brief.
+   */
+  companion: MonsterActor | null;
   /**
    * THE PERSON WHO IS OFFERING IT, while they are standing on the floor.
    *
@@ -284,8 +309,23 @@ export type BriefSpec = {
   readonly offerer: TownsfolkSpec;
   /** Quarry only: the name the body kept, and the line its card opens with. */
   readonly quarry?: { readonly name: string; readonly mark: string };
-  /** Escort only. */
-  readonly escort?: { readonly after: 'leaves' | 'stays' };
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * ESCORT ONLY — WHERE THEY ARE GOING, AND WHAT THEY ARE MADE OF.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `body` IS A SHEET AND NOT A SECOND PERSON. `offerer` above is who they are
+   * — the name, the face, the things they say — and this is what they can take
+   * and what they can swing, because the body that offers an escort has to be
+   * able to walk through the fight it is asking you to walk it through. A
+   * Townsfolk stood up by `standFolk` alone cannot: five hundred hit points, no
+   * weapon, no aggro range, harmless by construction, which is exactly right
+   * for a shopkeeper and useless for somebody who has to survive a floor.
+   *
+   * A TEMPLATE RATHER THAN NUMBERS HERE, so the sheet lives beside every other
+   * creature's in `content/monsters.ts` and is validated by the same rules.
+   */
+  readonly escort?: { readonly after: 'leaves' | 'stays'; readonly body: MonsterTemplate };
 };
 
 /**
@@ -425,7 +465,8 @@ export function armBrief(realm: Realm): Brief | undefined {
     state: BriefState.Offered,
     acceptedBy: null,
     companionId: null,
-    offererId: standFolk(realm.world, spec.offerer, at),
+    companion: null,
+    offererId: standFolk(realm.world, spec.offerer, at, companionSheet(realm, spec, at)),
     target,
     progress: null,
     reward: spec.reward,
@@ -549,6 +590,90 @@ const OFFERER_MIN_FROM_ARRIVAL = 4;
 const OFFERER_MAX_FROM_ARRIVAL = 12;
 
 /**
+ * HOW MUCH ROOM AN ERRAND'S DESTINATION HAS TO HAVE — five of eight neighbours
+ * walkable. See `errandCell`: a party and a companion have to be able to stand
+ * there together, which is exactly what the close condition asks for.
+ */
+const ERRAND_MIN_OPEN = 5;
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * WHAT THE PERSON OFFERING AN ESCORT IS MADE OF — AND A QUARRY'S OFFERER IS
+ * MADE OF NOTHING, WHICH IS `standFolk`'s DEFAULT.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `undefined` for every kind but the Escort, and `standFolk` then stands up the
+ * harmless body it always has: five hundred hit points nothing may touch, no
+ * weapon, no aggro range. That is exactly right for somebody who will never be
+ * in the fight, and it is the wrong body entirely for somebody the party is
+ * about to walk through one.
+ *
+ * ═══ THE SHEET IS BUILT AT ARM TIME, WHICH IS WHEN THE FLOOR IS WHOLE ═══
+ * `monsterInit` is the same function every body on this floor was born
+ * through, so a companion grows its life, its stats and its talent ranks by the
+ * rules the roster grew by rather than by a table of its own.
+ */
+function companionSheet(realm: Realm, spec: BriefSpec, at: TileXY): MonsterInit | undefined {
+  const escort = spec.escort;
+  if (escort === undefined) return undefined;
+  return monsterInit(escort.body, at, companionLevel(realm, spec));
+}
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * HOW DEEP A COMPANION IS — READ OFF THE FLOOR, NEVER AUTHORED.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Upstream levels its escortee off the zone's own ordinary roll —
+ * `reknor-escape/zone.lua:26` is
+ * `zone.base_level + e:getRankLevelAdjust() + level.level-1 + rng.range(-1,2)`,
+ * the identical line every body on that floor is born through. Ours cannot call
+ * that expression: it takes a labelled RNG draw, and `content/delve.ts` states
+ * what a new draw on a live world costs — *"it would consume a position in the
+ * world's labelled stream and shift every draw after it"*. A body stood up on
+ * arrival must move no draw at all.
+ *
+ * SO IT READS THE ANSWER INSTEAD OF RE-DERIVING IT. The deepest body the floor
+ * actually put down is that expression already evaluated, jitter and rank term
+ * and all, and it rescales with every future change to the delve curve with no
+ * second table to keep in step. A hand-authored level is a number that goes
+ * stale silently.
+ *
+ * AT ARM TIME, so it is the floor as the party found it. Reading it at the
+ * accept would make a companion recruited after a good fight weaker than one
+ * recruited before it, which is an objective punishing the party for playing.
+ *
+ * AND AN EMPTY FLOOR FALLS BACK TO WHAT THE BRIEF PAYS, because `BriefReward`
+ * is already denominated as a notional corpse of this floor — the one number in
+ * the spec that is a statement about this floor's depth.
+ */
+function companionLevel(realm: Realm, spec: BriefSpec): number {
+  const party: Sided = { kind: ActorKind.Player };
+  let deepest = 0;
+  for (const body of realm.world.allActors()) {
+    if (body.kind !== ActorKind.Monster || !body.alive) continue;
+    // THROUGH THE ONE PREDICATE, so the offerer already standing on a re-armed
+    // floor and a companion from a brief before this one are both excluded
+    // without a second copy of the rule.
+    if (!areEnemies(body, party)) continue;
+    deepest = Math.max(deepest, body.level);
+  }
+  return (deepest === 0 ? spec.reward.level : deepest) + COMPANION_LEVEL_BONUS;
+}
+
+/**
+ * ONE LEVEL OVER THE DEEPEST THING ON THE FLOOR.
+ *
+ * Upstream's escortee takes the zone's ordinary roll with no bonus at all, and
+ * ours takes one because ours is doing a different job: ToME's Norgan walks
+ * beside ONE player through a corridor, and a companion here walks in front of
+ * up to four through a room sized for four. One level is the smallest step that
+ * is not zero, it is inside the jitter upstream's own roll already spans
+ * (`rng.range(-1,2)`), and it is a single number to move when the probe says so.
+ */
+const COMPANION_LEVEL_BONUS = 1;
+
+/**
  * Where the objective is, at the moment the floor is armed.
  *
  * A QUARRY HAS NO TILE YET — the body is spawned by the accept, so only its name
@@ -569,19 +694,145 @@ function targetFor(spec: BriefSpec, realm: Realm): BriefTarget | undefined {
     };
   }
   const after = spec.escort?.after;
-  // ═══ 'stays' HAS NO DESTINATION RULE YET, AND IT ARMS NOTHING RATHER THAN
-  //     PICKING A WRONG TILE ═══
-  // The Errand's destination is a predicate over cells — a lit room on a dark
-  // floor, a cell behind a door, the far side of water — and until that
-  // predicate exists the only tile this function could offer is the stair,
-  // which is the OTHER configuration wearing the wrong words.
-  if (after !== 'leaves') return undefined;
+  if (after === undefined) return undefined;
   // THE WAY OUT: the stair down where there is one, and otherwise the tile you
   // came in on, which `world/realms.ts` already establishes is *"the door you
   // leave by"* on a last floor.
-  const at = stairsDownOf(realm) ?? realm.spawns[0];
+  //
+  // ═══ OR A PLACE ON THIS FLOOR, WHICH IS THE ENTIRE DIFFERENCE ═══
+  // `errandCell` picks it, and the two configurations share every other line in
+  // the feature: one walks somebody to the door and the other walks them to
+  // somewhere they wanted to be.
+  const at = after === 'leaves' ? (stairsDownOf(realm) ?? realm.spawns[0]) : errandCell(realm);
   if (at === undefined) return undefined;
   return { k: BriefKind.Escort, at: { x: at.x, y: at.y }, after };
+}
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE ERRAND'S DESTINATION — A PREDICATE OVER CELLS, NOT AN AUTHORED PLACE.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * That is what makes the Errand the cheapest variety in this design and why it
+ * is different on every seed: nobody writes down where it is, the floor
+ * answers. Three preferences, best first, and the first one any cell satisfies
+ * wins its whole rank:
+ *
+ *   A LAMP IN THE DARK. A lit cell on a floor whose own arrival is unlit. Our
+ *     caves are dark (`SHAPE_LIGHTING`, `world/realms.ts`) and what light
+ *     there is was put there by the generator, so a lit cell in a dark mine is
+ *     somewhere somebody made — which is a reason to want to be taken to it.
+ *   A ROOM BEHIND A DOOR. A cell beside a closed door: the party has to open
+ *     something to finish, and a door is the one piece of terrain this game
+ *     draws that reads as a threshold.
+ *   ANYWHERE FAR FROM BOTH ENDS. The fallback, and the reason this function
+ *     cannot fail on a floor that has any ground at all.
+ *
+ * ═══ AND TWO THINGS A CELL MUST BE BEFORE ANY OF THAT — BOTH MEASURED ═══
+ * The three preferences above answer *"which of these is interesting"*. They do
+ * not answer *"is this a place at all"*, and the tie-break below actively works
+ * against it: maximising the distance from both ends of the floor pushes the
+ * answer into the corners. MEASURED over 24 seeds of the Underworks before
+ * these two lines: EIGHTEEN put the destination on the map's outer ring —
+ * (0,16), (1,0), (49,44) — and rendered through the real client that is a place
+ * with nothing drawn around it, no beacon and no marker, which the party is
+ * told to walk somebody to.
+ *
+ *   NOT THE OUTER RING. A tile with the edge of the world on one side is the
+ *     end of the map, not a room. ~5% of a floor's walkable cells are on it and
+ *     the tie-break preferred almost all of them.
+ *   ROOM AROUND IT. `ERRAND_MIN_OPEN` of the eight neighbours walkable — enough
+ *     that a party and a companion can stand there together, which is what the
+ *     close condition asks for. A dead end in the rock is somewhere you can
+ *     reach and not somewhere anybody wanted to be taken. Measured on the same
+ *     floors: roughly half of all walkable cells pass, so this narrows the
+ *     choice without ever emptying it.
+ *
+ * ═══ FAR FROM BOTH, WHICH IS NOT "FURTHEST" ═══
+ * The tie-break is `min(distance from the arrival, distance from the stair)`,
+ * maximised. Ranking on the arrival alone would put the errand in the same
+ * corner the stair is in on most floors, and the Errand would become the Walk
+ * Out with extra steps — the exact collapse this configuration exists to avoid.
+ *
+ * ═══ A SWEEP AND NOT A DRAW, AND ROW-MAJOR SO IT IS TOTAL ═══
+ * `offererCell`'s rule verbatim: a draw here would shift the seeded stream for
+ * everything that draws after it, which is every fight in the realm. Ties break
+ * on row then column, so two machines answer identically.
+ *
+ * ═══ WHAT IS NOT BUILT, SAID PLAINLY ═══
+ * *"The far side of water"* is in the design's list and is not here. It is a
+ * reachability question — far side OF WHAT, from WHERE — and answering it
+ * honestly needs a flood fill this function has no reason to own. The two
+ * preferences that ARE here are single-cell predicates, which is why they cost
+ * one sweep.
+ */
+function errandCell(realm: Realm): TileXY | undefined {
+  const from = realm.spawns[0];
+  if (from === undefined) return undefined;
+  const { level, lit } = realm.world;
+  // NULL IS "THIS FLOOR HAS NO STAIR DOWN" — a last floor — and the tie-break
+  // below then has one end to measure from instead of two.
+  const stair = stairsDownOf(realm) ?? undefined;
+  // A DARK FLOOR IS ONE WHOSE OWN ARRIVAL IS UNLIT. Asked once, off the tile
+  // every party starts on, rather than counted over the whole map: a lit works
+  // has a lit doorstep and a cave does not, which is the distinction the
+  // preference is about.
+  const dark = lit[from.y * level.w + from.x] === 0;
+  let best: TileXY | undefined;
+  let bestRank = -1;
+  let bestAway = -1;
+  for (let y = 0; y < level.h; y += 1) {
+    for (let x = 0; x < level.w; x += 1) {
+      if (!canWalk(level, x, y)) continue;
+      // A PLACE BEFORE A PREFERENCE — see the header. Both of these are about
+      // whether the cell is somewhere at all, so they sit above the ranks
+      // rather than inside them.
+      if (x === 0 || y === 0 || x === level.w - 1 || y === level.h - 1) continue;
+      if (openAround(level, x, y) < ERRAND_MIN_OPEN) continue;
+      const key = `${String(x)},${String(y)}`;
+      // NEVER A WAY IN OR OUT — `canEventGrid` (`tome/class/GameState.lua:2296-2298`)
+      // refuses a `change_level` grid, and walking somebody onto the stair is
+      // the OTHER configuration.
+      if (realm.sites.has(key)) continue;
+      if (realm.spawns.some((t) => t.x === x && t.y === y)) continue;
+      const awayFromDoor = chebyshev({ x, y }, from);
+      // FURTHER THAN THE PERSON WHO ASKS, so the errand is always a walk from
+      // where the party met them. Derived rather than a second literal.
+      if (awayFromDoor < OFFERER_MAX_FROM_ARRIVAL) continue;
+      const away =
+        stair === undefined ? awayFromDoor : Math.min(awayFromDoor, chebyshev({ x, y }, stair));
+      const rank = dark && lit[y * level.w + x] !== 0 ? 2 : behindDoor(realm, x, y) ? 1 : 0;
+      if (rank < bestRank || (rank === bestRank && away <= bestAway)) continue;
+      best = { x, y };
+      bestRank = rank;
+      bestAway = away;
+    }
+  }
+  return best;
+}
+
+/**
+ * HOW MANY OF THE EIGHT NEIGHBOURS A BODY COULD STAND ON. Eight-way, because
+ * movement is eight-way and the question is how much room there is here.
+ */
+function openAround(level: LevelView, x: number, y: number): number {
+  let open = 0;
+  for (const dir of DIR_ORDER) {
+    const vector = DIR_VECTORS[dir];
+    if (canWalk(level, x + vector.dx, y + vector.dy)) open += 1;
+  }
+  return open;
+}
+
+/** A cell with a closed door beside it — four ways, the way a door opens. */
+function behindDoor(realm: Realm, x: number, y: number): boolean {
+  const { level } = realm.world;
+  return (
+    tileAt(level, x + 1, y) === TileCode.DOOR ||
+    tileAt(level, x - 1, y) === TileCode.DOOR ||
+    tileAt(level, x, y + 1) === TileCode.DOOR ||
+    tileAt(level, x, y - 1) === TileCode.DOOR
+  );
 }
 
 /**
@@ -630,6 +881,50 @@ export function acceptBrief(realm: Realm, leadId: string): Brief | undefined {
     // wipe re-mints this id onto a different monster, and the close asks which
     // OBJECT it is looking at.
     brief.target.body = body;
+  }
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * AND AN ESCORT'S BODY CHANGES SIDES — THE SAME BODY, IN THIS ORDER.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Nothing is spawned. The person who has been standing there offering to be
+   * taken out IS the companion, and accepting is what puts them in the fight:
+   * before it `areEnemies` short-circuits on `Townsfolk`, so nothing on the
+   * floor may touch them and they raise no engagement; after it they are on the
+   * party's side of the one predicate and every husk on the floor can see them.
+   *
+   * ═══ THE ORDER IS UPSTREAM'S OWN LESSON, IN A DIFFERENT PLACE ═══
+   * ToME sets `ai_state.tactic_leash` BEFORE calling `addMember` precisely so
+   * that `tome/class/Party.lua:69`'s `or 10` default cannot overwrite it. Ours
+   * is the same lesson: the anchor is written before the faction, because a
+   * `Squad` body with nothing to follow is what one pump between those two
+   * lines would produce — and `actMonster`'s idle gate reads the faction.
+   *
+   * ═══ AND THE RANK IS NOT TOUCHED, WHICH THE DESIGN SAID IT WOULD BE ═══
+   * The plan for this step was to promote the body to `ActorRank.Elite` here,
+   * on the argument that *"the under-token ring is the only thing on the wire
+   * that says this one matters"*. THAT ARGUMENT DOES NOT SURVIVE
+   * `client/render/canvas.ts#ringIdFor`: its faction branch answers
+   * `ui_token_ring_neutral` for a Townsfolk, a Bound shadow and a Squad
+   * companion alike, and RETURNS — the rank is read only on the line below it,
+   * which a body on your own side never reaches. An Elite companion and a
+   * Normal one are drawn identically.
+   *
+   * SO THE RANK LIVES WHERE IT BUYS SOMETHING: on the template, where
+   * `monsterInit` spends it through `rankLifeAdjust` at arm time. A write here
+   * would have been a line that changed one number nothing reads.
+   */
+  if (brief.target.k === BriefKind.Escort) {
+    const body = brief.offererId === null ? undefined : realm.world.getActor(brief.offererId);
+    // NOBODY LEFT TO WALK ANYWHERE. The offer refuses rather than opening an
+    // objective with no body in it — the same guard, and the same reason, as
+    // the quarry's above.
+    if (body === undefined || body.kind !== ActorKind.Monster || !body.alive) return undefined;
+    body.anchorId = leadId;
+    body.faction = Faction.Squad;
+    brief.companionId = body.id;
+    // AND THE OBJECT, NOT ONLY THE ID. See `Brief.companion`.
+    brief.companion = body;
   }
   brief.state = BriefState.Open;
   brief.acceptedBy = leadId;
@@ -797,7 +1092,7 @@ const RANK_ORDER: readonly ActorRank[] = [ActorRank.Normal, ActorRank.Elite, Act
 export function noteBriefProgress(realm: Realm): Brief | undefined {
   const brief = realm.brief;
   if (brief === undefined || brief.state !== BriefState.Open) return undefined;
-  if (brief.target.k !== BriefKind.Quarry) return undefined;
+  if (brief.target.k === BriefKind.Escort) return noteEscort(realm, brief, brief.target);
   const wanted = brief.target.actorId;
   const marked = brief.target.body;
   if (wanted === null || marked === null) return undefined;
@@ -808,6 +1103,226 @@ export function noteBriefProgress(realm: Realm): Brief | undefined {
   if (marked.alive) return undefined;
   brief.state = BriefState.Closed;
   return brief;
+}
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * AN ESCORT ASKS TWO QUESTIONS OF ONE BODY: IS IT STILL STANDING, AND IS IT
+ * THERE YET.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * IN THAT ORDER, AND THE ORDER IS THE RULE. A companion that fell on the
+ * destination tile has not arrived; upstream's escort is `disappear()` at the
+ * portal and a corpse cannot walk through one. Asking "arrived?" first would
+ * pay the party for a body they failed to keep alive, on the tile it died on.
+ *
+ * ═══ IDENTITY, NOT PRESENCE — THE QUARRY'S OWN LESSON, AND IT IS SHARPER HERE ═══
+ * `resetFloor` reaps every monster on the floor inside the pump and this sweep
+ * runs on the far side of that in the same breath. So "the id no longer
+ * resolves" is what a WIPE looks like from here, not what a death looks like: a
+ * body that died is a corpse still standing where it fell, `alive` false and
+ * the same object. Reading absence as death would fail the brief for a party
+ * that is about to have the whole floor handed back to them by `rearmBrief`,
+ * and the failure line would be the last thing they read before it.
+ */
+function noteEscort(
+  realm: Realm,
+  brief: Brief,
+  target: Extract<BriefTarget, { k: typeof BriefKind.Escort }>,
+): Brief | undefined {
+  const walking = brief.companion;
+  if (brief.companionId === null || walking === null) return undefined;
+  if (realm.world.getActor(brief.companionId) !== walking) return undefined;
+  if (!walking.alive) {
+    brief.state = BriefState.Failed;
+    // THE BODY IS NOT TAKEN AWAY. A corpse on the floor is what the party can
+    // see, and the reap window buries it with everything else that died this
+    // pump — a companion deleted by its own objective would vanish out of the
+    // room mid-fight with no frame that says why.
+    brief.companionId = null;
+    brief.companion = null;
+    return brief;
+  }
+  // BEFORE THE ARRIVAL QUESTION AND AFTER THE DEATH ONE: a body that is about
+  // to be paid for does not need an owner, and a corpse cannot follow anybody.
+  keepAnchor(realm, walking);
+  if (!arrivedEscort(realm, walking, target)) return undefined;
+  brief.state = BriefState.Closed;
+  landCompanion(realm, brief, target);
+  return brief;
+}
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE PERSON THEY ARE WITH LEFT THE FLOOR — SO THEY ARE WITH SOMEBODY ELSE.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `tome/class/Game.lua:1282-1283`, on re-adding actors after a level change:
+ *
+ *     if act.ai_state and act.ai_state.tactic_leash_anchor then
+ *       act.ai_state.tactic_leash_anchor = self.player
+ *     end
+ *
+ * The anchor is re-pointed at whoever the player currently IS. Upstream has one
+ * player and does it on arrival; ours has a party and does it on the floor the
+ * companion is standing on, which is the same sentence with more than one
+ * person in it.
+ *
+ * ═══ WITHOUT IT THE SHIPPED OBJECTIVE IS UNWINNABLE FOR HALF A PARTY ═══
+ * `anchorId` was written once, at the accept, and cleared once, at the close.
+ * Driven over two sockets: lead and mate accept, the lead takes the threshold,
+ * and `walking.anchorId` is STILL the departed lead's id — so
+ * `scheduler.ts#makeAiCtx`'s `anchorAt` refuses it, the companion never takes
+ * another step for the rest of the floor, and her kills pay nobody because
+ * `awardExperience`'s owner branch cannot resolve the anchor either. The mate
+ * walks to the way out alone and `endOpenBrief` fails it. Splitting at a stair
+ * is an ordinary co-op move, not an edge.
+ *
+ * ═══ ANY PLAYER ON THE FLOOR IS THE ACCEPTING PARTY ═══
+ * `arrivedEscort`'s argument, verbatim: an Inner realm holds exactly one party,
+ * so the bodies standing on it ARE that party, and asking a party table would
+ * mean threading one through `world/` to answer a question the floor already
+ * answers.
+ *
+ * ═══ THREE RULES, EACH A DECISION ═══
+ *   ONLY WHEN THE HELD ONE IS GONE. A DOWNED anchor keeps the anchor: `anchorAt`
+ *     refuses them deliberately so the companion fights over the body instead
+ *     of walking off, and re-pointing on `alive` would undo that.
+ *   ONLY TO SOMEBODY ON THEIR FEET. Handing the leash to the nearest body when
+ *     that body is face down is the same mistake from the other side.
+ *   NOBODY LEFT IS NOT A RE-POINT. That leaver was the last one and
+ *     `closeFloorBriefs` is already running; inventing an owner would be
+ *     inventing a party row.
+ *
+ * NEAREST, TIES BY ID. The tie-break is not cosmetic — two members equidistant
+ * from a body is the commonest board state there is, and without a total order
+ * the answer would depend on iteration order and two machines would diverge.
+ */
+function keepAnchor(realm: Realm, walking: MonsterActor): void {
+  const held = walking.anchorId;
+  if (held !== undefined && realm.world.getActor(held)?.kind === ActorKind.Player) return;
+  let nearest: EngineActor | undefined;
+  for (const body of realm.world.allActors()) {
+    if (body.kind !== ActorKind.Player || !body.alive) continue;
+    if (nearest === undefined) {
+      nearest = body;
+      continue;
+    }
+    const theirs = chebyshev(walking, body);
+    const best = chebyshev(walking, nearest);
+    if (theirs < best || (theirs === best && body.id < nearest.id)) nearest = body;
+  }
+  if (nearest !== undefined) walking.anchorId = nearest.id;
+}
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * HAVE THEY GOT THERE — AND HAS ANYBODY WHO AGREED TO TAKE THEM GOT THERE TOO.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * ═══ `FOLLOW_LEASH + 1` AND NOT THE TILE ITSELF, BECAUSE THE LEASH IS WHAT
+ *     "WITH YOU" MEANS IN THIS GAME ═══
+ * A companion follows to within `FOLLOW_LEASH` of its person and then stops —
+ * that is the whole of `ai/npc.ts#followStep` and it is what keeps a stationary
+ * party at the idle fixed point. So a party standing ON the destination leaves
+ * its companion standing up to that far from it, and a close condition reading
+ * the destination tile exactly would be a condition the follow rule can never
+ * satisfy: the objective would hang until somebody happened to walk a route
+ * that pushed the body onto one cell.
+ *
+ * ═══ AND THE `+ 1` IS THE TILE THE PARTY CANNOT STAND ON ═══
+ * `FOLLOW_LEASH` ALONE WAS STILL ONE TILE SHORT, and it was short in the
+ * configuration that ships. For `after: 'leaves'` the destination IS the way
+ * out, and standing on it is LEAVING (`net/gateway.ts#leaveRealm` fires on the
+ * step that lands there) — so the nearest a living party can hold is ONE TILE
+ * OFF IT, which holds the companion at `FOLLOW_LEASH + 1`. Rendered through
+ * the real client: lead at (34,29), destination (33,28), the companion at
+ * (36,29) — chebyshev 3 — and EIGHT TURNS OF WAITING changed nothing, with
+ * nothing on screen to say why. The objective then closed only at the seam,
+ * where `closeFloorBriefs` re-asks it with the body already half gone.
+ *
+ * DERIVED AND NOT A SECOND LITERAL: one constant, two uses, and the second is
+ * the first plus the tile the rule itself forbids anybody to occupy. Widening
+ * it wins nothing — a party may not run ahead, because of the clause below.
+ *
+ * ═══ AND SOMEBODY WHO TOOK IT ON HAS TO BE IN SIGHT OF IT ═══
+ * Otherwise a party accepts, runs ahead, and wins by standing at the stair
+ * while the body walks the floor alone behind them. ONE member and never the
+ * whole party: a fifty-by-fifty floor with four bodies on it is a floor where
+ * the party is usually in two places, and an objective must not become a second
+ * reason to stand and wait for somebody.
+ *
+ * `DEFAULT_SIGHT_RADIUS`, EUCLIDEAN, because that is what this game means by
+ * being able to see something (`shared/vision.ts`, `distanceBand` above), and
+ * the sentence the rule is written from is *"you were there when they got
+ * there"*.
+ *
+ * ═══ ANY PLAYER ON THE FLOOR IS THE ACCEPTING PARTY ═══
+ * An Inner realm holds exactly one party — `Realms.open` is keyed on
+ * `(partyId, siteId, floor)` — so the bodies standing on it are that party,
+ * which is the same answer `net/gateway.ts#briefAudience` falls back to. It
+ * also keeps this file pure: a party table would have to be threaded through
+ * `world/` to ask a question the floor already answers.
+ */
+function arrivedEscort(
+  realm: Realm,
+  walking: MonsterActor,
+  target: Extract<BriefTarget, { k: typeof BriefKind.Escort }>,
+): boolean {
+  if (chebyshev(walking, target.at) > FOLLOW_LEASH + 1) return false;
+  return realm.world
+    .allActors()
+    .some(
+      (a) =>
+        a.kind === ActorKind.Player &&
+        a.alive &&
+        Math.hypot(a.x - target.at.x, a.y - target.at.y) <= DEFAULT_SIGHT_RADIUS,
+    );
+}
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * WHAT HAPPENS TO THE BODY AT THE CLOSE — THE ENTIRE DIFFERENCE BETWEEN THE
+ * TWO CONFIGURATIONS, IN FOUR LINES.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ *   'leaves'  THEY GO. The destination is the way out and they take it, so the
+ *             body is REMOVED and never killed — no `died` event, no corpse, no
+ *             loot and no Record kill line. Upstream is `disappear()` +
+ *             `removed()`, and `tome/class/Party.lua:136-139` is the half of it
+ *             that is in this checkout. A quest-giver who leaves a body behind
+ *             is a quest-giver somebody looted.
+ *   'stays'   THEY STOP BEING YOURS. They are where they asked to be, so the
+ *             anchor goes and the faction goes back to `Townsfolk` — which is
+ *             not a flourish: leave them `Squad` with an anchor and the follow
+ *             rule walks them out of the place you just walked them to, and
+ *             every husk on the floor still wants them dead. Townsfolk is the
+ *             state they were in before you took them on, and it is the honest
+ *             description of somebody the floor has stopped noticing.
+ *
+ * THE BODY IS NOT REMOVED FOR 'stays' AND THAT IS THE POINT OF THE
+ * CONFIGURATION: the party walks back to the stair unescorted, which is what
+ * stops the second half of an Errand being the most tedious minute this design
+ * could produce. The floor's edge takes them away with everything else.
+ */
+function landCompanion(
+  realm: Realm,
+  brief: Brief,
+  target: Extract<BriefTarget, { k: typeof BriefKind.Escort }>,
+): void {
+  const body = brief.companion;
+  if (body === null) return;
+  brief.companionId = null;
+  brief.companion = null;
+  if (target.after === 'leaves') {
+    realm.world.removeActor(body.id);
+    // THE SAME BODY AS THE OFFERER, so the floor's edge has nothing left to
+    // clear and must not be left holding an id that resolves to nothing.
+    brief.offererId = null;
+    return;
+  }
+  body.anchorId = undefined;
+  body.faction = Faction.Townsfolk;
 }
 
 /**
@@ -956,7 +1471,33 @@ export function closeFloorBriefs(realm: Realm): Brief | undefined {
    * nobody left to offer anything to. The QUARRY is not touched — it is a
    * monster on a floor now, and the floor is behind you.
    */
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE LAST CHANCE, AND IT IS ASKED BEFORE THE BODY IS TAKEN AWAY.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `tome/class/GameState.lua:2630-2632` runs `on_exit_check` at the moment of
+   * leaving and only then forces the failure. FOR AN ESCORT WHOSE DESTINATION
+   * IS THE WAY OUT THAT IS THE MAIN SUCCESS PATH RATHER THAN AN EDGE CASE: the
+   * companion is standing on the tile you are stepping off, and the pump that
+   * would have noticed it is the one that never runs because the party crossed
+   * instead of acting.
+   *
+   * ═══ ABOVE `clearOfferer`, AND THE TWO CANNOT SWAP ═══
+   * An escort's offerer IS its companion, so clearing first would delete the
+   * body the condition is about and turn every success at the door into a
+   * failure. That is the same ordering rule the gateway applies one layer out
+   * — the close runs before `removePlayer`, because after it the member who was
+   * standing beside the destination is gone.
+   */
+  const ended = brief.state === BriefState.Open ? endOpenBrief(realm, brief) : undefined;
   clearOfferer(realm, brief);
+  // NOTHING IS WALKING WITH ANYBODY ANY MORE. The body is off the floor a line
+  // above; this is the record of it, and it is what stops a torn-down realm
+  // holding a live reference to a body nobody can reach.
+  brief.companionId = null;
+  brief.companion = null;
+  if (ended !== undefined) return ended;
   /**
    * ═══ ONE GUARD, AND IT CARRIES BOTH HALVES OF THE RULE ═══
    * There is something to report only about an objective that was OPEN at the
@@ -975,17 +1516,41 @@ export function closeFloorBriefs(realm: Realm): Brief | undefined {
    * read well and was unreachable: deleting it changed no behaviour and no test,
    * which is the definition of a line that is not carrying its own rule.
    */
-  if (brief.state !== BriefState.Open) return undefined;
-  /**
-   * ═══ THE LAST CHANCE BELONGS HERE, AND THERE IS NOTHING YET TO CHECK ═══
-   * `tome/class/GameState.lua:2630-2632` runs `on_exit_check` at the moment of
-   * leaving and only then forces the failure. For an escort whose destination
-   * IS the way out that is the main success path rather than an edge case — the
-   * companion is standing on the tile you are stepping off. No kind carries a
-   * close condition until one has a body on the floor, so today every open
-   * brief fails here, and the check goes in above this line when the first one
-   * does.
-   */
+  return undefined;
+}
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * AN OPEN OBJECTIVE, AT THE MOMENT THE LAST OF THEM STEPS OFF THE FLOOR.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `tome/class/GameState.lua:2624`, `:2631` — the condition is asked one last
+ * time and only then forced to a failure. A QUARRY HAS NOTHING TO ASK HERE and
+ * takes the failure directly: its condition is a body coming apart, which the
+ * post-pump sweep sees in the pump it happens in, so an open quarry at the
+ * floor's edge is a quarry still standing. An ESCORT's condition is a position,
+ * and positions are exactly what stops being readable one line later.
+ *
+ * NOT A SECOND COPY OF THE RULE: `arrivedEscort` is the same predicate the
+ * sweep asks, called from the second of its two callers.
+ */
+function endOpenBrief(realm: Realm, brief: Brief): Brief {
+  const walking = brief.companion;
+  if (
+    brief.target.k === BriefKind.Escort &&
+    walking !== null &&
+    brief.companionId !== null &&
+    realm.world.getActor(brief.companionId) === walking &&
+    walking.alive &&
+    arrivedEscort(realm, walking, brief.target)
+  ) {
+    brief.state = BriefState.Closed;
+    return brief;
+  }
+  // OTHERWISE IT FAILS, which is the user's ruling sitting in upstream's own
+  // source: the quest id contains the floor number
+  // (`tome/class/Player.lua:234`), so walking off the floor is DEFINITIONALLY
+  // the failure — `tome/class/GameState.lua:2632-2635`.
   brief.state = BriefState.Failed;
   return brief;
 }

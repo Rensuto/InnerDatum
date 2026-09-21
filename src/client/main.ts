@@ -10063,16 +10063,36 @@ async function boot(): Promise<void> {
       liveActorAt(all, tile) ?? all.find((actor) => actor.x === tile.x && actor.y === tile.y);
     if (occupant !== undefined) {
       if (!occupant.alive) return { kind: 'body', actor: occupant };
-      // THE OBJECT LAYER, BESIDE THE ACTOR LAYER RATHER THAN BEHIND IT. See
-      // `VerbTarget`'s `loot` for why a tile must not be collapsed to one kind,
-      // and why this is read for the viewer's own body alone.
-      return isHostileBody(occupant)
-        ? { kind: 'hostile', actor: occupant }
-        : {
+      /**
+       * ═══════════════════════════════════════════════════════════════════════
+       * A PLAYER GETS THE PARTY MENU. EVERY OTHER LIVING BODY GETS THE MAP ONE.
+       * ═══════════════════════════════════════════════════════════════════════
+       *
+       * THIS READ `isHostileBody(occupant)`, AND IT WAS A MEASURED BUG rather
+       * than a tidy-up. That predicate answers *is this something to kill*, and
+       * a townsfolk, a shadow and a companion all answer NO — so all three fell
+       * into the `player` arm, which ends in *"Invite to party"*. Right-clicking
+       * Merrow Stitch offered to invite her to the party; the `Talk to` row that
+       * `ui/verbs.ts` builds for a person, and the whole branch that argues for
+       * it, was unreachable from the map. The menu's own test drove the target
+       * shape directly and so could not see it (memory: test the join).
+       *
+       * THE QUESTION THIS MENU ASKS IS `kind`, NOT THE FACTION: the `player` arm
+       * is party verbs — invite, kick, leave, give — and every one of them needs
+       * a socket behind the body. What may be DONE to a monster is the other
+       * arm's business, and it already reads the faction for itself.
+       *
+       * THE OBJECT LAYER, BESIDE THE ACTOR LAYER RATHER THAN BEHIND IT. See
+       * `VerbTarget`'s `loot` for why a tile must not be collapsed to one kind,
+       * and why this is read for the viewer's own body alone.
+       */
+      return occupant.kind === ActorKind.Player
+        ? {
             kind: 'player',
             actor: occupant,
             ...(occupant.id === selfId ? { loot: lootAt(tile), pile: pileAt(tile) } : {}),
-          };
+          }
+        : { kind: 'hostile', actor: occupant };
     }
     // `walkable` is exactly `travelTargetAllowed` and nothing else — the ONE
     // named predicate the future "has this tile been seen" clause lands behind.

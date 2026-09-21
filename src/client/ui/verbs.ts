@@ -53,7 +53,7 @@
  */
 
 import { MapVerb } from './contextmenu.ts';
-import { isTownsfolkBody } from '../input/travel.ts';
+import { isHostileBody, isTownsfolkBody } from '../input/travel.ts';
 import { PartyAction } from '../../shared/protocol.ts';
 import type { MenuItem } from './contextmenu.ts';
 import type { TileXY } from '../../shared/coords.ts';
@@ -633,6 +633,36 @@ export function verbsFor(ctx: VerbContext): VerbMenu {
           title: target.actor.name,
           items: [
             { action: MapVerb.Talk, label: TALK_TO, enabled: ctx.adjacent },
+            { action: MapVerb.Travel, label: WALK_UP_TO, enabled: true },
+            { action: MapVerb.Inspect, label: INSPECT, enabled: true },
+          ],
+        };
+      }
+
+      /**
+       * ═══════════════════════════════════════════════════════════════════════
+       * AND A BODY ON YOUR OWN SIDE GETS NO `Attack` ROW EITHER — AND NOTHING
+       * TO SAY, WHICH IS WHY IT IS NOT THE BRANCH ABOVE.
+       * ═══════════════════════════════════════════════════════════════════════
+       *
+       * Two bodies reach here that are not hostile and are not people: a
+       * Redactor's own shadow (`Faction.Bound`) and a temporary companion
+       * (`Faction.Squad`). The townsfolk argument applies to both of them
+       * word for word — `areEnemies` refuses the swing at three separate
+       * sites, so a row that can never become enabled is a lie with a tooltip
+       * — and the `Talk to` half of it applies to neither: a shadow has
+       * nothing to say and a companion is not a conversation, they are
+       * somebody already walking with you.
+       *
+       * THROUGH `isHostileBody`, which is the client's ONE answer to *is this
+       * something to kill* (`input/travel.ts`). Listing the two factions here
+       * would be the fourth copy of a comparison this client has already had
+       * three of.
+       */
+      if (!isHostileBody(target.actor)) {
+        return {
+          title: target.actor.name,
+          items: [
             { action: MapVerb.Travel, label: WALK_UP_TO, enabled: true },
             { action: MapVerb.Inspect, label: INSPECT, enabled: true },
           ],

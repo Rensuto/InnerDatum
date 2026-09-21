@@ -125,8 +125,8 @@ import { DIR_ORDER, DIR_VECTORS, chebyshev } from '../../shared/coords.ts';
 import { ENERGY_TO_ACT } from '../../shared/version.ts';
 import { bound, combatTalentScale, rescaleDamage } from '../../shared/scale.ts';
 import { hasLineOfSight } from '../../shared/sight.ts';
-import { Faction, areEnemies, cooldownOf, setCooldown } from './actor.ts';
-import type { Sided } from './actor.ts';
+import { areEnemies, cooldownOf, sameSide, setCooldown } from './actor.ts';
+import type { Faction, Sided } from './actor.ts';
 import { attackTarget, combatDistance } from './combat.ts';
 import { DamageType, applyDamage } from './damage.ts';
 import { combatCrit, combatCritPower, combatDamage } from './derived.ts';
@@ -2802,9 +2802,14 @@ function regenResource(
   switch (pool.kind) {
     case ResourceKind.Resolve: {
       // "builds when struck and when adjacent to an ally" — the second half.
+      //
+      // AN ALLY IS `sameSide`, NOT THE SAME KIND. This read `other.kind !==
+      // actor.kind`, which paid a Watchman for standing next to a SHOPKEEPER
+      // and paid nothing for standing next to a body his own party brought.
+      // Both halves are the same line; see `isFriend`.
       let allies = 0;
       for (const other of world.allActors()) {
-        if (other.id === actor.id || !other.alive || other.kind !== actor.kind) continue;
+        if (other.id === actor.id || !other.alive || !sameSide(actor, other)) continue;
         if (chebyshev(actor, other) <= 1) allies += 1;
       }
       if (allies > 0) gainResource(pool, allies * RESOLVE_PER_ADJACENT_ALLY);
@@ -2831,7 +2836,11 @@ function regenResource(
       // "builds by holding LOS on a marked target and by not moving".
       if (!sheet.movedThisTurn) gainResource(pool, FOCUS_ON_HELD_GROUND);
       for (const other of world.allActors()) {
-        if (!other.alive || other.kind === actor.kind) continue;
+        // A MARKED TARGET IS AN ENEMY. `other.kind === actor.kind` was the same
+        // substitution as the two above; the mark check below made it harmless
+        // rather than right, and "harmless because of the next line" is how a
+        // fourth copy survives a rewrite of the third.
+        if (!other.alive || !areEnemies(actor, other)) continue;
         const mark = engine.effectOn(other.id, TalentEffect.Marked);
         if (mark === undefined || mark.otherId !== actor.id) continue;
         if (hasLineOfSight(world.level, actor, other)) {
@@ -3340,9 +3349,16 @@ export function isFriend(a: Sided, b: Sided): boolean {
    * SHE IS NEITHER. Not an enemy, not an ally, simply not a participant — which
    * is the honest shape of a person standing behind a counter while a fight goes
    * on somewhere else.
+   *
+   * ═══ AND IT NO LONGER SAYS `a.kind === b.kind`, WHICH WAS THE SAME BUG ═══
+   * It was one of TWO copies of the same-side rule (the other is the Ally arm
+   * of `actorsInShape`, thirty lines from here and invisible to a grep for this
+   * function), and `Faction.Bound` had already falsified both: a Redactor's own
+   * shadow is a Monster, so this made it an ally of every husk on the floor and
+   * no ally of hers. `sameSide` is the one answer, beside `areEnemies`, which
+   * it is deliberately not the negation of. See its header.
    */
-  if (a.faction === Faction.Townsfolk || b.faction === Faction.Townsfolk) return false;
-  return a.kind === b.kind;
+  return sameSide(a, b);
 }
 
 /**
@@ -3646,7 +3662,10 @@ export function actorsInShape(
     if (actor === undefined || !actor.alive) continue;
     if (found.some((seen) => seen.id === actor.id)) continue;
     if (affinity === Affinity.Hostile && !isEnemy(self, actor)) continue;
-    if (affinity === Affinity.Ally && actor.kind !== self.kind) continue;
+    // THE SECOND COPY OF THE SAME-SIDE RULE, now delegating. It read
+    // `actor.kind !== self.kind`, which put Merrow Stitch inside Mend Wounds
+    // and left a Redactor's own shadow out of it. See `isFriend`.
+    if (affinity === Affinity.Ally && !isFriend(self, actor)) continue;
     found.push(actor);
   }
   return found;

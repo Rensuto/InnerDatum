@@ -3195,7 +3195,16 @@ export function ringIdFor(actor: ActorView, selfId: string | null): string {
        * minimap and we have two rings; neutral means "not a threat", which is
        * the entire question a ring answers and is true of it.
        */
-      if (actor.faction === 'townsfolk' || actor.faction === 'bound') {
+      /**
+       * ═══ AND NEITHER IS SOMEBODY THE FLOOR LENT YOU — `Faction.Squad` ═══
+       * A temporary companion (`server/world/brief.ts`) arrives as a `Monster`
+       * for the third time and for the same reason as the other two. It is the
+       * one of the three the party is asked to keep ALIVE, so a hostile ring
+       * under it would be the most expensive version of this lie: the elite
+       * ring the rank would otherwise earn says *this one matters*, in the
+       * colour that means *kill it*.
+       */
+      if (actor.faction === 'townsfolk' || actor.faction === 'bound' || actor.faction === 'squad') {
         return 'ui_token_ring_neutral';
       }
       // THE ELITE RING. `rank` is on the wire for exactly this and nothing else

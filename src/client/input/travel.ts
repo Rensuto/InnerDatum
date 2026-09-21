@@ -407,7 +407,11 @@ export type HostileSense = {
  */
 export function isHostileBody(actor: ActorView): boolean {
   if (actor.kind === ActorKind.Player) return false;
-  return actor.faction !== TOWNSFOLK_FACTION && actor.faction !== BOUND_FACTION;
+  return (
+    actor.faction !== TOWNSFOLK_FACTION &&
+    actor.faction !== BOUND_FACTION &&
+    actor.faction !== SQUAD_FACTION
+  );
 }
 
 /**
@@ -451,6 +455,22 @@ export const TOWNSFOLK_FACTION = 'townsfolk';
  * kept beside it, so the two strings a client must know are in one place.
  */
 export const BOUND_FACTION = 'bound';
+
+/**
+ * `Faction.Squad` as it arrives — a temporary companion, somebody an objective
+ * on this floor lent the party (`server/world/brief.ts`). Written out here for
+ * `TOWNSFOLK_FACTION`'s reason and kept beside the other two, so the strings a
+ * client must know are in one place and a fourth cannot be added anywhere else.
+ *
+ * ═══ IT IS THE THIRD AND THE LIST IS NOT OPEN-ENDED ═══
+ * A client branches on a faction for exactly one question — *is this something
+ * to kill* — and the three values that are not `Redacted` all answer no. That
+ * is why `isHostileBody` lists them rather than testing for the absence of
+ * `'redacted'`: the field is OMITTED for the whole bestiary (see
+ * `ActorView.faction`), so "not redacted" would read `undefined` as friendly
+ * and draw a neutral ring under every husk on the floor.
+ */
+export const SQUAD_FACTION = 'squad';
 
 /**
  * The LIVING body on a tile, if any.

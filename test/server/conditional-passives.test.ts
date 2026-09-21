@@ -153,3 +153,54 @@ describe('the per-turn recompute is wired', () => {
     ).toBe(false);
   });
 });
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ *   AND THE VIEW ASKS THE RIGHT QUESTION ABOUT WHO IS STANDING THERE.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Every test above builds its own `PassiveView` by hand, which is the only way
+ * to test a passive's SHAPE — and it means the production view, the one in
+ * `main.ts` that the folder actually hands these talents, has never been under
+ * a test in this file or any other. Memory `test-the-join-not-the-halves`: the
+ * halves were right and the join said this.
+ *
+ *     adjacentEnemies: () => neighbours().filter((o) => o.kind !== actor.kind)
+ *     adjacentAllies:  () => neighbours().filter((o) => o.kind === actor.kind)
+ *
+ * `kind` is not a side. Both lines counted a SHOPKEEPER as an adjacent enemy
+ * (`one_at_a_time.ts` refuses at `adjacentEnemies() !== 1`, so it switched
+ * itself off at a counter) and a Redactor's own Bound shadow as one too, while
+ * `riot_line.ts` and `known_face.ts` saw nobody beside her. `Faction.Squad`
+ * makes it permanent rather than occasional: a companion follows, so it is
+ * adjacent most turns of a floor.
+ *
+ * ═══ READ OFF THE SOURCE, AND THAT IS A STATED LIMIT ═══
+ * The view is built inside `refreshPassives`, inside `buildServer`'s closure,
+ * and the only way to drive it is to spawn a server
+ * (`passives-wired.test.ts` does, over a real socket, for one number). A scrape
+ * is what this file already does for the fold's wiring three tests up, it fails
+ * the moment either line goes back to `kind`, and it is honest about being a
+ * scrape. The RELATION itself is driven, exhaustively, in `faction.test.ts`.
+ */
+describe('the production PassiveView counts sides, not kinds', () => {
+  it('asks `areEnemies` for the enemies and `sameSide` for the allies', () => {
+    expect(
+      MAIN.includes(
+        'adjacentEnemies: () => neighbours().filter((o) => areEnemies(actor, o)).length',
+      ),
+      'adjacentEnemies is not asking areEnemies — a townsfolk or a companion counts as a foe',
+    ).toBe(true);
+    expect(
+      MAIN.includes('adjacentAllies: () => neighbours().filter((o) => sameSide(actor, o)).length'),
+      'adjacentAllies is not asking sameSide — a body your own party brought is not counted',
+    ).toBe(true);
+  });
+
+  it('asks it for the nearest one too, which is a third copy of the same line', () => {
+    expect(
+      MAIN.includes('!areEnemies(actor, other)) continue;'),
+      'nearestEnemyDistance is back to a kind comparison — cold_case.ts folds beside a friend',
+    ).toBe(true);
+  });
+});

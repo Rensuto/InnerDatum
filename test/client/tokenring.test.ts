@@ -127,3 +127,52 @@ describe('a body you called up is on your side, on every surface', () => {
     expect(seenHostiles(LEVEL, bodies).map((a) => a.id)).toEqual(['m1']);
   });
 });
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * AND THE THIRD, WHICH IS THE ONE THE PARTY IS ASKED TO KEEP ALIVE.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `Faction.Squad` is a temporary companion — somebody an objective on the floor
+ * lent the party (`server/world/brief.ts`). It reaches the wire exactly as the
+ * other two do, and the consequence of a client that does not know the string
+ * is worse than it was for either of them: a hostile ring under the body the
+ * objective FAILS IF YOU KILL, `Attack` on its right-click menu, and a travel
+ * path that ends in a swing `areEnemies` refuses with nothing on screen to
+ * explain why. That is the whole argument for `PROTOCOL_VERSION` 29 — see
+ * `shared/version.ts` — and these are the branches it is about.
+ *
+ * MUTANT for each: drop `|| actor.faction === 'squad'` from `ringIdFor`, and
+ * `&& actor.faction !== SQUAD_FACTION` from `isHostileBody`.
+ */
+describe('a body the floor lent you is on your side, on every surface', () => {
+  const KEEL: ActorView = { ...BODY, id: 'npc:callow', name: 'Maud Callow', faction: 'squad' };
+  const LEVEL: LevelView = { w: 8, h: 8, tiles: new Array<number>(64).fill(TileCode.FLOOR) };
+
+  it('gets the neutral ring, not the hostile one', () => {
+    expect(ringIdFor(KEEL, 'p1')).toBe('ui_token_ring_neutral');
+    // AND NOT THE ELITE ONE EITHER, which is worth pinning rather than
+    // assuming: the faction branch RETURNS before the rank is read, so a
+    // companion built from an Elite sheet is drawn exactly as a Normal one.
+    // The design asked for `rank = Elite` on the accept on the grounds that the
+    // ring says "this one matters"; this is the line that says it does not.
+    expect(ringIdFor({ ...KEEL, rank: ActorRank.Elite }, 'p1')).toBe('ui_token_ring_neutral');
+    expect(ringIdFor(BODY, 'p1'), 'every monster stopped being hostile').toBe(
+      'ui_token_ring_hostile',
+    );
+  });
+
+  it('is not a hostile body, so a click on it is not a swing', () => {
+    expect(isHostileBody(KEEL)).toBe(false);
+    expect(isHostileBody(BODY), 'every monster stopped being hostile').toBe(true);
+    // AND NOT A PERSON WITH A DOOR. A companion is not a conversation — they
+    // are already walking with you — and the server refuses a `talk` at one,
+    // because `dialogueStanding` wants `Faction.Townsfolk`.
+    expect(isTownsfolkBody(KEEL)).toBe(false);
+  });
+
+  it('is left out of the list travel hunts through', () => {
+    const bodies: ActorView[] = [KEEL, BODY];
+    expect(seenHostiles(LEVEL, bodies).map((a) => a.id)).toEqual(['m1']);
+  });
+});

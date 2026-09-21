@@ -216,10 +216,27 @@ describe('shared constants', () => {
     // v20 IS THE PRECEDENT AND THIS IS THE SAME SHAPE: it removed three `desc`
     // fields and bumped, because a v19 client renders `undefined` where it
     // expects a sentence. Nothing about a removal is ever quietly ignorable.
-    expect(PROTOCOL_VERSION).toBe(28);
+    //
+    // ════════════════════════════════════════════════════════════════════════
+    // v29 IS A NEW VALUE IN AN OLD FIELD, WHICH IS THE ONE SHAPE THIS CHAIN HAD
+    // NOT MET.
+    // ════════════════════════════════════════════════════════════════════════
+    //
+    // `ActorView.faction` gains `'squad'`: a temporary companion, somebody an
+    // objective on the floor lent the party. The field is four versions old and
+    // gained `'bound'` without a bump, so the reflex answer is that this is
+    // additive — and it is exactly the case where "an old client ignores it" is
+    // false. A v28 client READS the field, matches neither string it knows, and
+    // falls through to treating the body as something to kill: a hostile ring
+    // under your own companion, `Attack` on its right-click menu, and a travel
+    // path that ends in a swing `areEnemies` refuses with no message to explain
+    // it. That is `18 -> 19`'s rule — a client drawing a picture the server has
+    // stopped believing in — and the body it draws it of is the ONE the party
+    // is asked to keep alive.
+    expect(PROTOCOL_VERSION).toBe(29);
   });
 
-  it('keeps the 27 -> 28 changelog entry beside the constant, and non-empty', () => {
+  it('keeps the 28 -> 29 changelog entry beside the constant, and non-empty', () => {
     // THE PROSE IS THE DELIVERABLE HERE, NOT DECORATION. Every bump in this file
     // is argued above the constant, and the argument is the only thing that
     // tells the next person whether their change forces a bump or is an addition
@@ -247,11 +264,11 @@ describe('shared constants', () => {
     // touched — a guard that proves the discipline held LAST TIME is not a
     // guard. It moves with the constant now, and the assertions below name this
     // entry's own frame.
-    const afterHeading = source.split('27 -> 28 (THE ZOOM IS GONE)')[1] ?? '';
+    const afterHeading = source.split('28 -> 29 (SOMEBODY IS WALKING WITH YOU)')[1] ?? '';
     // The entry ends where the one before it begins. Entries are written newest
     // first ABOVE the constant, so cutting at the constant would read every
     // older entry too, and an assertion could pass on somebody else's prose.
-    const entry = afterHeading.split('26 -> 27 (THE CONVERSATION)')[0] ?? '';
+    const entry = afterHeading.split('27 -> 28 (THE ZOOM IS GONE)')[0] ?? '';
 
     expect(afterHeading).not.toBe('');
     expect(entry.length, 'the entry runs on into the constant').toBeLessThan(afterHeading.length);
@@ -262,18 +279,19 @@ describe('shared constants', () => {
     // under it, and the server-side state an older client cannot see; the half
     // that rides the same number without forcing it has to be argued for too, or
     // the next reader cannot tell which half did the work.
-    expect(entry).toContain('`set_zoom`');
-    expect(entry).toContain('`SettingsMsg`');
-    // THE FORCING FACT, NAMED. This entry's hazard is the opposite of every one
-    // above it: nothing was added for an old client to ignore, something was
-    // TAKEN, and an entry that only said what was deleted would read as a
-    // tidy-up rather than as a bump.
-    expect(entry).toContain('WAS REQUIRED');
+    expect(entry).toContain('`ActorView.faction`');
+    expect(entry).toContain("'squad'");
+    // THE FORCING FACT, NAMED. This entry's hazard is that the change LOOKS
+    // additive: the field is four versions old and gained a value once already
+    // without a bump. An entry that only said "a third value" would be an entry
+    // arguing against its own bump, so it has to say what the old client DOES
+    // with a string it does not know.
+    expect(entry).toContain('DOES NOT IGNORE THE FIELD');
     expect(entry).toContain('CONSIDERED AND NOT BUMPED FOR');
-    // AND WHAT HAPPENS TO THE VALUE REAL PLAYERS ALREADY HAVE ON DISK. A
-    // removal with no word about the saves is the half that turns into a
-    // support question on a Friday night.
-    expect(entry).toContain('ALREADY ON DISK');
+    // AND WHY THIS VALUE IS WORSE THAN THE LAST ONE THE SAME FIELD GAINED,
+    // because "we did not bump for `'bound'`" is the first thing the next
+    // reader will reach for.
+    expect(entry).toContain('WORSE HERE THAN IT WAS');
     // And it must say what it deliberately did NOT do to the save file, because
     // the reflex when a protocol moves is to move both numbers.
     expect(entry).toContain('SCHEMA_VERSION');
