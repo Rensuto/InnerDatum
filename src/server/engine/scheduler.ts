@@ -56,7 +56,8 @@
  * seeded PCG32 with a label; nothing here reads a clock.
  */
 
-import { chebyshev, dirFromVector, step } from '../../shared/coords.ts';
+import { dirFromVector, step } from '../../shared/coords.ts';
+import { tileDistance } from '../../shared/distance.ts';
 import { ActResult, tickLevel } from '../../shared/energy.ts';
 import { canRoute, canWalk, tileAt } from '../../shared/level.ts';
 // THE ONLY NEW IMPORT PROGRESSION NEEDS, AND IT IS FROM src/shared/ (CLAUDE.md
@@ -75,7 +76,7 @@ import { ActorKind } from '../../shared/protocol.ts';
 import { raiseAlarm } from '../ai/alarm.ts';
 import { decideNpcAction, decideSquadAction, followStep } from '../ai/npc.ts';
 import type { MonsterCast } from '../ai/npc.ts';
-import { hasLineOfSight } from '../../shared/sight.ts';
+import { fieldOfView } from '../../shared/sight.ts';
 import {
   Faction,
   HOLD_INTENT,
@@ -5953,15 +5954,30 @@ function stillHunting(actors: readonly EngineActor[]): boolean {
   return false;
 }
 
-function anyContact(world: World, actors: readonly EngineActor[]): boolean {
+/**
+ * Does any monster SEE a player it is hostile to? The engagement clock's only
+ * way in (`updateEngagement`).
+ *
+ * THE SAME SIGHT AS `visibleEnemies`, ASKED OF PLAYERS ONLY: a monster's
+ * `fieldOfView` (shared/sight.ts) out to its `aggroRange`. So this is true
+ * exactly when some monster's `visibleEnemies` holds a player, and a monster
+ * that can see you always arms the clock it will act under. It was a Chebyshev
+ * square plus a Bresenham line, in step with `visibleEnemies` then too; the
+ * two moved together and a test holds them together.
+ *
+ * Exported for that test. The pump is its only production caller.
+ */
+export function anyContact(world: World, actors: readonly EngineActor[]): boolean {
   for (const monster of actors) {
     if (monster.kind !== ActorKind.Monster || !monster.alive) continue;
+    // One circle per monster, and none for a monster with no player in its disc.
+    let sees: ((to: TileXY) => boolean) | undefined;
     for (const player of actors) {
       if (player.kind !== ActorKind.Player || !player.alive) continue;
       // FACTION, NOT KIND. See the header.
       if (!areEnemies(monster, player)) continue;
-      if (chebyshev(monster, player) > monster.ai.aggroRange) continue;
-      if (hasLineOfSight(world.level, monster, player)) return true;
+      sees ??= fieldOfView(world.level, monster, monster.ai.aggroRange);
+      if (sees(player)) return true;
     }
   }
   return false;
@@ -6034,6 +6050,19 @@ function makeAiCtx(
     isPassable: (x, y) => canWalk(world.level, x, y),
     actorAt: (x, y) => world.actorAt(x, y),
     visibleEnemies: (self) => visibleEnemies(self, world, actors),
+    // THE LINE `canAttack` WILL ASK OF THE SAME SHOT (`world.lineClearFor`, as
+    // `resolveIntent` hands it the world), so the AI cannot propose a shot the
+    // resolution refuses for its line. See `AiCtx.lineClear`. With `from`, the
+    // same body asked from that tile: the kite guard's sidestep. A monster's
+    // line reads only its kind and its tile, so that is all the stand-in has.
+    lineClear: (self, target, from) =>
+      world.lineClearFor(
+        from === undefined ? self : { id: self.id, kind: self.kind, x: from.x, y: from.y },
+        target,
+      ),
+    // THE SAME SHADOWCAST `visibleEnemies` ASKS, from another tile — the kite
+    // guard's sidestep must not step out of sight (`AiCtx.seesFrom`).
+    seesFrom: (self, target, from) => fieldOfView(world.level, from, self.ai.aggroRange)(target),
     // RESOLVED AT THE MOMENT OF ASKING, like `anchorAt` below: a body that took
     // the stair earlier in this pump is off the level, which is upstream's
     // `hasEntity` test (see `AiCtx.actorById`).
@@ -6090,28 +6119,46 @@ function makeAiCtx(
 /**
  * Hostiles a monster can see, NEAREST FIRST with ties broken by id.
  *
- * The id tie-break is not cosmetic: two players equidistant from a monster is
- * the commonest possible board state, and without a total order the target
- * would depend on iteration order and a replay could diverge into a different
- * fight.
+ * ═══ SEEN IS ToME's FIELD OF VIEW — `tome/class/NPC.lua:99-105` ═══
+ * A monster sees the bodies on the cells its field of view reaches from its
+ * tile with `block_sight` as the wall. `doFOV` passes `cache = true`, so that
+ * is `core.fov.calc_default_fov` (`engine/interface/ActorFOV.lua:65-94`), the
+ * same `fov_circle` geometry as `core.fov.calc_circle` over the map's
+ * `block_sight` cache (the note on `fieldOfView`). Ours is `fieldOfView`
+ * (shared/sight.ts), out to its `aggroRange`, which is this game's
+ * `self.sight` (the note on `MonsterTemplate.aggroRange`). It WAS a Chebyshev
+ * square of `aggroRange` plus one Bresenham line from centre to centre (the M2
+ * stand-in this note promised would become a shadowcast). Nothing else about
+ * seeing changed:
+ * `alive` and `isHostile` are the whole of the rest, as they were.
  *
- * FOV SEAM (M3): this becomes a shadowcast lookup. Aggro range plus a Bresenham
- * sight line is the M2 stand-in, and it lives here rather than in ai/npc.ts so
- * that upgrading it touches one function.
+ * ═══ NEAREST IS `tileDistance`, ToME's KEY ═══
+ * `engine/interface/ActorFOV.lua:86` sorts `fov.actors_dist` on `__sqdist`,
+ * and the C stores there the ROUNDED distance squared (`map_default_seen` in
+ * src/fov.c, git only): `core.fov.distance`, which is `tileDistance`. So
+ * bodies at (4,0) and (3,3) are equally near, both 4. The key was Chebyshev,
+ * which put (3,3) first.
+ *
+ * The id tie-break is ours and it is not cosmetic: two players equidistant from
+ * a monster is the commonest possible board state, and without a total order
+ * the target would depend on iteration order and a replay could diverge into a
+ * different fight. Rounding makes ties commoner, not rarer.
+ *
+ * Exported for the lockstep test with `anyContact`. The AI context is its only
+ * production caller.
  */
-function visibleEnemies(
+export function visibleEnemies(
   self: MonsterActor,
   world: World,
   actors: readonly EngineActor[],
 ): readonly EngineActor[] {
   const seen: { readonly actor: EngineActor; readonly distance: number }[] = [];
+  const sees = fieldOfView(world.level, self, self.ai.aggroRange);
 
   for (const other of actors) {
     if (!other.alive || !isHostile(self, other)) continue;
-    const distance = chebyshev(self, other);
-    if (distance > self.ai.aggroRange) continue;
-    if (!hasLineOfSight(world.level, self, other)) continue;
-    seen.push({ actor: other, distance });
+    if (!sees(other)) continue;
+    seen.push({ actor: other, distance: tileDistance(self, other) });
   }
 
   seen.sort((a, b) => {

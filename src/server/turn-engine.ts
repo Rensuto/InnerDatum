@@ -1838,11 +1838,12 @@ function buildRestView(
      * ONE SIGHT RULE, and this call site no longer spells its own.
      *
      * It used to measure with `chebyshev` and then test `hasLineOfSight`
-     * separately — the pair `visibleEnemies` uses for monster AGGRO, which is a
-     * different question. Upstream asks this one with `core.fov.calc_circle`
-     * (Player.lua:854), a CIRCLE, so a husk at a diagonal 10 was interrupting
-     * rests here at a true distance of 14. The seen set is that circle, the wall
-     * test and the light, and every player-facing frame reads the same one.
+     * separately — the pair `visibleEnemies` then used for monster AGGRO (it is
+     * a shadowcast now), which is a different question. Upstream asks this one
+     * with `core.fov.calc_circle` (Player.lua:854), a CIRCLE, so a husk at a
+     * diagonal 10 was interrupting rests here at a true distance of 14. The
+     * seen set is that circle, the wall test and the light, and every
+     * player-facing frame reads the same one.
      */
     const dist = sightDistance(self, other);
     if (dist >= best || !fogHas(seenNow, world.level.w, other.x, other.y)) continue;

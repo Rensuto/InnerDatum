@@ -210,9 +210,10 @@
  * line rounded half-up (`combatDistance`; see the header of engine/combat.ts).
  * This port keeps both, so every template declares both:
  *
- *   `attackRange`  CHEBYSHEV. The orb's flight limit (engine/projectile.ts),
- *                  the guard counter's reach, and `canAttack`'s fallback when a
- *                  sheet names no `combat.range`. NOTHING IN ai/ READS IT: the
+ *   `attackRange`  CHEBYSHEV for the orb's flight limit (engine/projectile.ts)
+ *                  and the guard counter's reach (`resolveGuardCounter`); the
+ *                  ROUNDED length when `canAttack` falls back on it for a
+ *                  sheet that names no `combat.range`. NOTHING IN ai/ READS IT: the
  *                  AI's band is `kite`'s, asked of `combatDistance` and
  *                  `rangeRefusal`. For melee it is 1, which IS the Moore
  *                  neighbourhood and is what makes bump-attack work.
@@ -432,14 +433,17 @@ export type MonsterTemplate = {
   readonly profile: AiProfile;
   /**
    * ═══════════════════════════════════════════════════════════════════════════
-   * CHEBYSHEV. AND IT IS NOT A LEASH — IT IS THE CREATURE'S SIGHT.
+   * A RADIUS. AND IT IS NOT A LEASH — IT IS THE CREATURE'S SIGHT.
    * ═══════════════════════════════════════════════════════════════════════════
    *
-   * `visibleEnemies` (engine/scheduler.ts) filters on THIS and `hasLineOfSight`
-   * and nothing else. Grep the AI for `sightRadiusOf` or `DEFAULT_SIGHT_RADIUS`
-   * and you get no hits: a monster has no other eyes. So a template that authors
-   * 8 here has not given a creature a short temper, it has made it short-sighted
-   * — it cannot see a body two tiles inside the radius the ENGINE says it sees.
+   * `visibleEnemies` (engine/scheduler.ts) sees what `fieldOfView` reaches out
+   * to THIS — ToME's shadowcast, the rounded disc less what walls hide — and
+   * nothing else. It was a Chebyshev square plus `hasLineOfSight`, and this
+   * heading said CHEBYSHEV. Grep the AI for `sightRadiusOf` or
+   * `DEFAULT_SIGHT_RADIUS` and you get no hits: a monster has no other eyes.
+   * So a template that authors 8 here has not given a creature a short temper,
+   * it has made it short-sighted — it cannot see a body two tiles inside the
+   * radius the ENGINE says it sees.
    *
    * ═══ UPSTREAM HAS NO AGGRO RANGE AT ALL ═══
    * `target_simple` (engine/ai/simple.lua:251-268) walks `self.fov.actors_dist`
@@ -466,7 +470,14 @@ export type MonsterTemplate = {
   readonly preferredRange: number;
   /** The dead zone. Closer than this and a kiter gives ground. 0 for melee. */
   readonly minRange: number;
-  /** CHEBYSHEV reach — the scheduler's check and the AI's chase band. */
+  /**
+   * A reach in tiles, READ ON TWO METRICS: `rangeRefusal` (engine/combat.ts)
+   * takes it on ToME's rounded length (`combatDistance`), and only for a sheet
+   * that names no `combat.range`; `resolveGuardCounter` (engine/talents.ts) and
+   * the orb's flight limit take it as Chebyshev. Nothing in ai/ reads it: the
+   * AI's band is `rangeRefusal`'s. The two-metrics note at the top of this file
+   * has why, and `EngineActor.attackRange` names the readers.
+   */
   readonly attackRange: number;
   /** ELITE: hunt the most isolated hostile rather than the nearest. */
   readonly huntsIsolated: boolean;
@@ -3962,12 +3973,12 @@ export const BOUND_SHADOW: MonsterTemplate = Object.freeze({
    * it is allowed to go. Upstream's eight is written down here rather than
    * exported as a constant nothing reads.
    *
-   * NOT EXACTLY, FOR NOW: the leash is ToME's rounded circle
-   * (`call_shadows.ts`), while monster sight is still a Chebyshev square
-   * (`visibleEnemies`, scheduler.ts) until the sight increment of the distance
-   * port. So a shadow can notice a husk at (9,9) and be reaped chasing it at
-   * (8,8), which rounds to 11. It was kept all the way to (10,10) while both
-   * were squares.
+   * BOTH ARE ToME's ROUNDED CIRCLE NOW: the leash (`call_shadows.ts`) and
+   * monster sight (`visibleEnemies`, scheduler.ts, a shadowcast out to this
+   * radius). Between the two ports sight was still a Chebyshev square, so a
+   * shadow could notice a husk at (9,9) and be reaped chasing it at (8,8),
+   * which rounds to 11; and while both were squares it was kept all the way to
+   * (10,10). They are one circle again, less whatever a wall hides from it.
    */
   aggroRange: DEFAULT_SIGHT_RADIUS,
   preferredRange: 1,

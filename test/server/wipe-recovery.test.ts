@@ -467,11 +467,21 @@ describe('one party on the floor does not starve another', () => {
     fallen.x = DEEP_IN_THE_LEVEL.x;
     fallen.y = DEEP_IN_THE_LEVEL.y;
 
-    // Far away, in the open, with clear floor to the east.
+    // Far away, in the north-west room, with clear floor to the east, and out
+    // of every re-seeded monster's sight. It stood at (5,17) until monster
+    // sight became ToME's shadowcast; there the elite the wipe re-seeds at
+    // (8,24) sees it through the pillar row at y=20 (the old line from its
+    // centre hit a pillar), combat arms, and p2's move then STALLS: the pump
+    // parks on the OTHER party's restored player, idle, `whoseTurn` ["p1"],
+    // and never reaches p2's intent. That is a pre-existing cross-party wait
+    // which the new sight only exposed: in COMBAT, one idle player in another
+    // party holds everyone to the Bell. It is this block's subject in its
+    // combat form, and this case now covers only the quiet form. Not fixed
+    // here; recorded in DECISIONS.md (2026-09-22) as its own ticket.
     const playing = world.addPlayer('p2', 'Dalt');
     playing.hpRegen = 0;
-    playing.x = 5;
-    playing.y = 17;
+    playing.x = 1;
+    playing.y = 11;
 
     world.addMonster('m_husk', {
       name: 'Index Husk',

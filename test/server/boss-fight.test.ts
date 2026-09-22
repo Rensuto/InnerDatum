@@ -14,7 +14,8 @@ import { createTurnEngine } from '../../src/server/turn-engine.ts';
 import { createRealms, floorsOfSite, stairsDownOf } from '../../src/server/world/realms.ts';
 import { canWalk } from '../../src/shared/level.ts';
 import { findPath } from '../../src/shared/path.ts';
-import { hasLineOfSight } from '../../src/shared/sight.ts';
+import { fieldOfView, hasLineOfSight } from '../../src/shared/sight.ts';
+import { tileDistance } from '../../src/shared/distance.ts';
 import type { TileXY } from '../../src/shared/coords.ts';
 import { ActorKind, ActorRank } from '../../src/shared/protocol.ts';
 import { PROTOCOL_VERSION } from '../../src/shared/version.ts';
@@ -244,17 +245,30 @@ async function walkToTheAltar(realms: Realms, client: Client): Promise<void> {
  * level now — rooms and tunnels (`shared/mapgen/zones.ts`) — and nine tiles
  * west is as likely rock as not. The scenario still wants the same thing, so it
  * asks the room for it instead of assuming the room is empty.
+ *
+ * ═══ "THE BOSS CAN SEE" IS ITS FIELD OF VIEW, AND "SHOT AT" IS ITS LINE ═══
+ * Monster sight is ToME's shadowcast out to `aggroRange` (`fieldOfView`, as
+ * `visibleEnemies` asks it), not a line of sight: the two part company beside a
+ * pillar. So the tile must be in the boss's field of view, and the boss's shot,
+ * one Bresenham line from its tile, must clear too, or it sidesteps for a line
+ * instead of shooting. Both are asked FROM the boss, the way the game asks
+ * them; this asked one line from the tile. The band is the rounded length the
+ * kite band reads (`tileDistance`), not a Chebyshev square.
  */
-function vantage(realm: NonNullable<ReturnType<Realms['realmOf']>>, boss: TileXY): TileXY {
+function vantage(
+  realm: NonNullable<ReturnType<Realms['realmOf']>>,
+  boss: TileXY & { readonly ai: { readonly aggroRange: number } },
+): TileXY {
   const level = realm.world.level;
+  const sees = fieldOfView(level, boss, boss.ai.aggroRange);
   let best: TileXY | undefined;
   let bestAway = 0;
   for (let y = 0; y < level.h; y += 1) {
     for (let x = 0; x < level.w; x += 1) {
-      const away = Math.max(Math.abs(x - boss.x), Math.abs(y - boss.y));
+      const away = tileDistance(boss, { x, y });
       if (away <= 3 || away > 9 || away <= bestAway) continue;
       if (!canWalk(level, x, y) || realm.world.actorAt(x, y) !== undefined) continue;
-      if (!hasLineOfSight(level, { x, y }, boss)) continue;
+      if (!sees({ x, y }) || !hasLineOfSight(level, boss, { x, y })) continue;
       best = { x, y };
       bestAway = away;
     }

@@ -154,8 +154,9 @@ describe('MELEE_REACH — the reach that equals the Moore neighbourhood', () => 
     // THE BUG THIS CONSTANT EXISTS TO PREVENT, PINNED FROM BOTH SIDES.
     // ═══════════════════════════════════════════════════════════════════════
     //
-    // `attackRange` is CHEBYSHEV (engine/actor.ts:299-309): 1 means the eight
-    // neighbours, which is what makes bump-attack work on a diagonal. Fed into
+    // `attackRange` 1 means the eight neighbours on either metric (the note on
+    // `EngineActor.attackRange`, engine/actor.ts, names which reader takes
+    // which), and that is what makes bump-attack work on a diagonal. Fed into
     // `canAttack` RAW while it measured the UNROUNDED length, that 1 refused
     // every diagonal swing in the game as `OutOfRange` — while the scheduler's
     // own Chebyshev check happily accepted it. That is the exact failure the

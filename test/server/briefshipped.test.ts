@@ -454,7 +454,19 @@ describe('the objective content/briefs.ts actually ships', () => {
 
     // ── 13. and walking back in does not re-offer it ────────────────────────
     const back = server.realms.realmOf(lead.actorId);
-    const downAgain = stairsDownOf(back ?? one);
+    // THE ROOM OFF THIS FLOOR TOO, for step 9's reason: the walk back down is
+    // the question here, not a fight. It passed without this until monster
+    // sight became ToME's shadowcast, and on this seed the one thing that
+    // changed by the stair (14,3) is `delve_27`: under the shadowcast it walks
+    // to (14,4), through the diagonal gap, and under the square-and-line rule
+    // it did not. `delve_5` stepping onto the stair tile happens under BOTH
+    // rules, so it is not what this re-pin answers.
+    const floorOne = back ?? one;
+    for (const body of floorOne.world.allActors()) {
+      if (body.kind === ActorKind.Monster) floorOne.world.removeActor(body.id);
+    }
+    floorOne.world.turn.engagement = 0;
+    const downAgain = stairsDownOf(floorOne);
     if (downAgain === null) throw new Error('no stair down');
     for (let attempt = 0; attempt < 8; attempt += 1) {
       await stepOnto(back ?? one, lead, downAgain);

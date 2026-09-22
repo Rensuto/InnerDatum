@@ -76,7 +76,7 @@
 import { PURSUIT_TURNS } from './npc.ts';
 import { chebyshev } from '../../shared/coords.ts';
 import { isHostile, isMonster } from '../engine/actor.ts';
-import { hasLineOfSight } from '../../shared/sight.ts';
+import { fieldOfView } from '../../shared/sight.ts';
 import type { TileXY } from '../../shared/coords.ts';
 import type { EngineActor, MonsterActor } from '../engine/actor.ts';
 import type { World } from '../world/world.ts';
@@ -146,9 +146,22 @@ export function raiseAlarm(
      * Bounded by the WATCHER's `aggroRange`, because that is this game's answer
      * to "how far does this creature notice things" and a second radius would be
      * a second answer to it.
+     *
+     * SEEN IS THE WATCHER'S OWN `fieldOfView`, the one `visibleEnemies`
+     * (engine/scheduler.ts) looks through: ToME's shadowcast out to
+     * `aggroRange`. It was a Chebyshev square plus a Bresenham line, the pair
+     * `visibleEnemies` used then, and the two moved together so that a body
+     * rouses exactly the friends that could have picked it out of a crowd.
+     *
+     * THE WATCHER'S IS THE ONE ASKED, and for the radius that matters: it is
+     * the watcher's `aggroRange`, not the victim's. For the walls it does not.
+     * Upstream runs `large_ass` with an actor vision size of 1
+     * (engine/Module.lua:915-917), which it documents as symmetric, "I can see
+     * you if and only if you can see me" (engine/utils.lua:2300-2311). Asked
+     * both ways over generated floors in review, 531,002 pairs, no pair
+     * disagreed.
      */
-    if (chebyshev(other, victim) > other.ai.aggroRange) continue;
-    if (!hasLineOfSight(world.level, other, victim)) continue;
+    if (!fieldOfView(world.level, other, other.ai.aggroRange)(victim)) continue;
     if (pointAt(other, attacker)) roused.push(other.id);
   }
 
@@ -168,8 +181,10 @@ export function raiseAlarm(
  *     elseif who:reactionToward(actor) < 0 then actor:setTarget(who) end
  * ```
  *
- * A SQUARE BOX, not a circle — `x-20..x+20` on both axes is Chebyshev distance,
- * which is the same metric `combatDistance` uses here.
+ * A SQUARE BOX, not a circle — `x-20..x+20` on both axes is Chebyshev distance.
+ * This said it was "the same metric `combatDistance` uses here". It was once;
+ * `combatDistance` is ToME's rounded circle now (`tileDistance`), and the box
+ * stays a box because upstream's loop is one.
  *
  * ═══ NO LINE OF SIGHT, AND NO `aggroRange`. BOTH ARE THE POINT ═══
  * `raiseAlarm` above is careful about both: it asks whether the watcher could
@@ -204,8 +219,12 @@ export function soundAlarm(
     // FRIEND the victim's own target, and nothing on this floor is friendly to
     // a detective, so that arm has nothing to act on and is not ported.
     if (!isHostile(other, who)) continue;
-    // `chebyshev`, because `x-20..x+20` on both axes IS Chebyshev distance and
-    // this codebase has exactly one distance vocabulary.
+    // `chebyshev`, because `x-20..x+20` on both axes IS Chebyshev distance. It
+    // is not the metric sight or a talent's range use (the rounded circle,
+    // `tileDistance`; `attackRange` itself is still read as Chebyshev by the
+    // guard counter and the orb's flight limit); this line said "this codebase
+    // has exactly one distance vocabulary", which was never so. The box is the
+    // trap's own shape.
     if (chebyshev(other, at) > radius) continue;
 
     other.ai.targetId = who.id;

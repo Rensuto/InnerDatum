@@ -79,10 +79,10 @@
  *
  *   - `findPath` is deterministic by construction (see its header: a total
  *     order on the open set, and no Map or Set is ever iterated).
- *   - `visibleEnemies` is ordered by distance and then by ID, so a tie between
- *     two equidistant players resolves the same way every time rather than by
- *     whoever happens to sit earlier in a hash table. The elite's isolation
- *     scan re-sorts that list without ever consulting the stream.
+ *   - `visibleEnemies` is ordered by `tileDistance` and then by ID, so a tie
+ *     between two equidistant players resolves the same way every time rather
+ *     than by whoever happens to sit earlier in a hash table. The elite's
+ *     isolation scan re-sorts that list without ever consulting the stream.
  *   - Every random draw goes through the world's seeded PCG32 with a LABEL.
  *     Four are ported from upstream's AI files: the 90% target-keep (the
  *     module's `target_simple`, which replaces engine/ai/simple.lua:253 — see
@@ -156,11 +156,14 @@ export type AiCtx = {
   readonly actorAt: (x: number, y: number) => EngineActor | undefined;
   /**
    * Hostiles this monster can see, NEAREST FIRST, ties broken by id. Visibility
-   * (aggro range plus line of sight) is the caller's to define, because it
-   * becomes real FOV at M3 and nothing in this file should change when it does.
+   * is the caller's to define: the scheduler's is ToME's shadowcast field of
+   * view out to `aggroRange` (`visibleEnemies`, engine/scheduler.ts).
    *
-   * A visible target is therefore also a target with a clear sight line, which
-   * is why `kite` never re-checks LOS before shooting.
+   * A VISIBLE TARGET IS NOT A SHOOTABLE ONE. This said it was, "which is why
+   * `kite` never re-checks LOS before shooting", and it was true while sight
+   * was a Chebyshev square plus the same Bresenham line `canAttack` walks. The
+   * shadowcast sees from the whole tile, so it reaches cells that line cannot.
+   * `lineClear` below is the other half, asked separately.
    */
   readonly visibleEnemies: (self: MonsterActor) => readonly EngineActor[];
   /**
@@ -181,6 +184,50 @@ export type AiCtx = {
    * draw a different number of times from the game it stands in for.
    */
   readonly actorById: (id: string) => EngineActor | undefined;
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   *   IS THE LINE TO THAT BODY CLEAR FOR A SHOT? `World.lineClearFor`.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * The sight half of `canAttack` (engine/combat.ts), which refuses anything past
+   * arm's length whose line is blocked. `rangeRefusal` is the band half. The AI
+   * asks both, because a refused monster intent costs the turn and shows a
+   * `blocked` step: from outside, a monster that stands there.
+   *
+   * ═══ WHY IT EXISTS: SIGHT STOPPED IMPLYING IT ═══
+   * Monster sight is ToME's shadowcast (`visibleEnemies`, engine/scheduler.ts).
+   * It sees from the whole tile, so a kiter standing beside a pillar sees a body
+   * past it that its shot, one Bresenham line from its centre, cannot reach.
+   * MEASURED on the delves, three players standing still for 120 turns on each
+   * of three seeds: 433 kiter shots refused `no_los`, beside 10,191 blows struck
+   * by everything on those floors. None while sight walked the shot's line.
+   * Upstream's shape is the same: `dumb_talented` takes a talent only when
+   * `canProject` says the shot gets there (`engine/ai/talented.lua:46-52`), and
+   * otherwise the creature moves (`dumb_talented_simple`, :126-127).
+   *
+   * REQUIRED, for `actorById`'s reason: a fixture without it would shoot where
+   * the game it stands in for steps.
+   *
+   * ═══ `from`: THE SAME LINE, ASKED FROM A TILE ONE STEP AWAY ═══
+   * Omitted, the line runs from where `self` stands, which is the shot
+   * `canAttack` will judge. Given, it runs from `from` as though `self` stood
+   * there: the kite guard's sidestep asks it of each neighbouring tile before it
+   * moves (`sidestep`). Nothing else about `self` changes the answer for a
+   * monster, whose line is plain line of sight (`lineOfSightFor`,
+   * server/view/eyesight.ts).
+   */
+  readonly lineClear: (self: MonsterActor, target: EngineActor, from?: TileXY) => boolean;
+  /**
+   * WOULD THIS MONSTER STILL SEE THAT BODY FROM `from`? The scheduler's own
+   * shadowcast (`fieldOfView` out to `aggroRange`) asked from the tile.
+   *
+   * The sidestep's other question. A clear LINE from a neighbouring tile is not
+   * enough: the review found a room where the only in-band tile with a clear
+   * line put the target out of the kiter's sight, so it stepped there, lost the
+   * target, walked back to `lastSeen` — the tile it had left — and did that
+   * forever without firing. REQUIRED, for `actorById`'s reason.
+   */
+  readonly seesFrom: (self: MonsterActor, target: EngineActor, from: TileXY) => boolean;
   /** The world's seeded generator. Every draw takes a label. */
   readonly rng: Rng;
   /**
@@ -753,6 +800,23 @@ function chase(self: MonsterActor, target: EngineActor, ctx: AiCtx): Intent {
 }
 
 /**
+ * WOULD `canAttack` REFUSE THIS SHOT FOR ITS LINE? Its own clause, asked here:
+ * past `combatDistance` 1 the line must be clear (`AiCtx.lineClear`), and at
+ * arm's length it is never asked.
+ *
+ * `from` asks it of the shot `self` would have from that tile instead of from
+ * where it stands (`AiCtx.lineClear`'s `from`); `sidestep` is its one user.
+ *
+ * `kite` asks it and `chase` does not, because every chaser in the roster has
+ * reach 1: a chaser whose `rangeRefusal` passes is at arm's length, where
+ * `canAttack` asks no line, so the question would always answer false there.
+ * A chaser authored with a longer reach needs this in `chase` too.
+ */
+function lineRefused(self: MonsterActor, target: EngineActor, ctx: AiCtx, from?: TileXY): boolean {
+  return combatDistance(from ?? self, target) > 1 && !ctx.lineClear(self, target, from);
+}
+
+/**
  * Close the distance by one step, or say why not.
  *
  * SHARED BY BOTH PROFILES — the chaser passes `keepAway` 0 and the kiter passes
@@ -964,6 +1028,7 @@ function aroundKin(ctx: AiCtx, target: EngineActor): PassableFn {
  *   inside minRange       -> RETREAT (`flee_simple`), and never a point-blank shot
  *   beyond preferredRange -> approach, the same A* as the chaser but floored
  *   in the band           -> shoot, subject to `talentIn` (ai/talented.lua:122)
+ *                            and then to a clear line; a blocked one sidesteps
  *
  * The `talentIn` gate on that last line is what stops a kiter being a metronome:
  * a creature that declares one fires on a 1-in-N and otherwise holds its aim.
@@ -987,6 +1052,7 @@ function aroundKin(ctx: AiCtx, target: EngineActor): PassableFn {
  *    with `keepAway`, so a routed step that would land it inside `minRange` is
  *    rejected. That also suppresses bump-attack for free: a tile with the target
  *    standing on it is at distance 0, which is inside every non-zero dead zone.
+ *    The sidestep off a blocked line (`sidestep`) refuses the same tiles.
  *
  * 3. IT NEVER SIDESTEPS TOWARD ITS TARGET WHILE FLEEING. See `backAway`.
  *
@@ -1073,6 +1139,42 @@ function kite(self: MonsterActor, target: EngineActor, ctx: AiCtx): Intent {
       return HOLD_INTENT;
     }
 
+    // ═══════════════════════════════════════════════════════════════════════
+    // SEEN IS NOT SHOOTABLE: SIDESTEP TO A CLEAR LINE, ELSE ADVANCE, ELSE HOLD
+    // ═══════════════════════════════════════════════════════════════════════
+    //
+    // `AiCtx.lineClear` has why a target in sight can have a blocked line.
+    // Without this guard the kiter fired a shot the scheduler refused `no_los`
+    // and spent its turn on the refusal.
+    //
+    // AFTER THE ROLL, IN UPSTREAM'S ORDER. `dumb_talented_simple` rolls
+    // `talent_in` first (engine/ai/talented.lua:122). Only on a hit does
+    // `dumb_talented` ask `canProject` of each talent (:46-52), and when none
+    // can project, `energy.used` is still false and the creature runs its
+    // `ai_move` (:126-127). So the `ai.fire.chance` draw above is taken
+    // whether or not the line is clear, and a kiter that lost the roll held
+    // before it ever asked.
+    //
+    // WHAT UPSTREAM'S MOVE IS: the losgoroth the wraith ports sets `ai_move`
+    // to `move_complex` (tome/data/general/npcs/losgoroth.lua:43), which moves
+    // it TOWARD the target — by A* when hurt, a wander after ten unseen turns,
+    // otherwise the dmap or a plain step (engine/ai/simple.lua:199-247). None of
+    // it keeps a dead zone, because the losgoroth has none.
+    //
+    // THE SIDESTEP IS OURS. A kiter standing at exactly `minRange` has no step
+    // toward its target that keeps the dead zone, so `advance` alone HELD
+    // there, every turn the target stood still: 231 of 247 guard fires over 8
+    // delves x 3 seeds, measured in review with the party standing still. A
+    // census of placements (every kiter on 8 delves x 3 seeds, a player on up
+    // to four in-band tiles it saw past something) held on 90 of 628 first guard
+    // fires with `advance` alone and on 6 with the sidestep, and none of the
+    // moves either way ended inside `minRange`. `sidestep` has the rule and
+    // what it borrows from upstream. Only when it finds no tile does `advance`
+    // run, dead zone kept, and that HOLDs in turn when it cannot step.
+    if (lineRefused(self, target, ctx)) {
+      return sidestep(self, target, ctx) ?? advance(self, target, ctx, self.ai.minRange);
+    }
+
     return { kind: IntentKind.Attack, targetId: target.id };
   }
 
@@ -1080,6 +1182,72 @@ function kite(self: MonsterActor, target: EngineActor, ctx: AiCtx): Intent {
   // `validateTemplate` rejects. Kept because content is data and data can be
   // wrong, and "it stood still" is a far better failure than "it charged".
   return HOLD_INTENT;
+}
+
+/**
+ * `util.adjacentDirs()` (engine/utils.lua:1912-1914) on a square grid,
+ * `{1, 2, 3, 4, 6, 7, 8, 9}`, each read through `dir_to_coord`
+ * (engine/utils.lua:1592-1602): south-west, south, south-east, west, east,
+ * north-west, north, north-east. Upstream's neighbour scans walk this order.
+ */
+const ADJACENT_DIRS: readonly Dir[] = ['sw', 's', 'se', 'w', 'e', 'nw', 'n', 'ne'];
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * ONE STEP TO A TILE THE SHOT CLEARS FROM, STILL IN THE BAND. OURS.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * A kiter that sees its target but whose line is blocked (`kite`'s guard)
+ * looks at its eight neighbouring tiles, in `ADJACENT_DIRS` order, and keeps
+ * those that
+ *
+ *   - it can walk onto and nobody stands on (`canRetreat`'s test), and that is
+ *     not a hazard to it (`hazardsFor`, the set `approach` routes around);
+ *   - keeps the target inside the band, `minRange <= combatDistance <=
+ *     preferredRange`, so the step never lands in the dead zone and the shot
+ *     from there passes `rangeRefusal` (`validateTemplate` holds
+ *     `preferredRange <= attackRange`);
+ *   - has a clear line to the target from there (`lineRefused` with `from`).
+ *
+ * Of those it prefers the tile whose distance is nearest `preferredRange`, the
+ * largest in the band, and a tie goes to the earlier direction. NO DRAW: the
+ * choice is a total order on eight fixed tiles, so a sidestep leaves the
+ * seeded stream exactly as it found it.
+ *
+ * ═══ WHAT IS UPSTREAM'S AND WHAT IS NOT ═══
+ * Upstream has no such step for this creature: `dumb_talented_simple` hands a
+ * turn with nothing to project to `ai_move` (engine/ai/talented.lua:126-127),
+ * a step toward the target. The shape of the scan is upstream's all the same.
+ * `aiCanFleeDmapKeepLos` (tome/class/interface/ActorAI.lua:806-833) picks the
+ * tile for `flee_dmap_keep_los` (tome/ai/special_movements.lua lines 83-97),
+ * which the tactical AI runs when a `safe_range` creature has lost its line
+ * (tome/ai/tactical.lua lines 489-490). Both are in git but not in the sparse
+ * checkout: `git -C reference/t-engine4 show HEAD:game/modules/tome/ai/<file>`.
+ * `aiCanFleeDmapKeepLos` walks the eight neighbours in `util.adjacentDirs`
+ * order, keeps only those with a line to the target (`hasLOS(ax, ay, nil, nil,
+ * sx, sy)`, tome/class/interface/ActorAI.lua:820) and draws nothing. It
+ * ranks what is left on the target's distance map, which a fleeing body wants;
+ * the band rank here is ours, because this body wants to stay where it can
+ * shoot. So are the band and hazard filters, and the call site: upstream's
+ * `dumb_talented_simple` never runs that scan.
+ *
+ * @returns undefined when no neighbour qualifies, and the caller advances.
+ */
+function sidestep(self: MonsterActor, target: EngineActor, ctx: AiCtx): Intent | undefined {
+  const avoid = hazardsFor(self, ctx);
+  let best: { readonly dir: Dir; readonly distance: number } | undefined;
+  for (const dir of ADJACENT_DIRS) {
+    const to = stepTile(self, dir);
+    if (!ctx.isPassable(to.x, to.y) || ctx.actorAt(to.x, to.y) !== undefined) continue;
+    if (avoid?.(to.x, to.y) === true) continue;
+    const distance = combatDistance(to, target);
+    if (distance < self.ai.minRange || distance > self.ai.preferredRange) continue;
+    if (lineRefused(self, target, ctx, to)) continue;
+    // AND STILL IN SIGHT FROM THERE, or the next turn walks it back (`seesFrom`).
+    if (!ctx.seesFrom(self, target, to)) continue;
+    if (best === undefined || distance > best.distance) best = { dir, distance };
+  }
+  return best === undefined ? undefined : { kind: IntentKind.Move, dir: best.dir };
 }
 
 /**
@@ -1560,10 +1728,11 @@ function intentForStep(
      *
      * ═══ IT IS BELT AND BRACES TODAY, AND IT IS WORTH THE LINE ANYWAY ═══
      * `acquireTarget` reaches such a body FIRST — an adjacent enemy is inside
-     * `aggroRange` and has line of sight, so it is what `visibleEnemies`
-     * returns nearest-first, and `chase` attacks it before any step is
-     * proposed. That USED to make this branch unreachable with a hostile
-     * occupant that was not already the target. It is reachable now: a target
+     * `aggroRange`, and a field of view of radius 1 or more always holds the
+     * whole 3x3, so it is what `visibleEnemies` returns nearest-first, and
+     * `chase` attacks it before any step is proposed. That USED to make this
+     * branch unreachable with a hostile occupant that was not already the
+     * target. It is reachable now: a target
      * kept out of sight (`acquireTarget`, upstream's 90% keep) sends the
      * monster toward `lastSeen`, and that route can run into a visible hostile
      * that is not the target — which it then bump-attacks, close to ToME's own

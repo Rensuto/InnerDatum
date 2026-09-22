@@ -75,8 +75,13 @@ function passableIn(rows: readonly string[]): (x: number, y: number) => boolean 
  * `visibleEnemies` mirrors the scheduler's real one — NEAREST FIRST, ties broken
  * by id — because that total order is what stops a monster standing between two
  * players from re-picking a different target every turn depending on iteration
- * order. It is aggro-range only here; line of sight is the caller's to define
- * and becomes a real FOV lookup at M3, which is exactly why this seam exists.
+ * order. It is aggro-range only here, a Chebyshev square with no walls; the
+ * scheduler's is ToME's shadowcast out to `aggroRange`, measured and sorted by
+ * `tileDistance`, which is exactly why this seam exists.
+ *
+ * `lineClear` is always true for the same reason: a fixture whose sight has no
+ * walls has none in its line of fire, and that is the contract the AI had before
+ * the seam existed.
  */
 function aiCtx(rows: readonly string[], actors: readonly EngineActor[], rng: Rng): AiCtx {
   const isPassable = passableIn(rows);
@@ -95,6 +100,8 @@ function aiCtx(rows: readonly string[], actors: readonly EngineActor[], rng: Rng
       return seen.map((entry) => entry.actor);
     },
     actorById: (id) => actors.find((actor) => actor.id === id),
+    lineClear: () => true,
+    seesFrom: () => true,
     rng,
   };
 }

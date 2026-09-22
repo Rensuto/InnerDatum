@@ -2,6 +2,8 @@
 // Copyright (C) 2026 Dalton Barraclough
 // Ported from t-engine4 game/modules/tome/class/Actor.lua:178 (`t.sight = t.sight or 10`)
 //                       game/engines/default/engine/Actor.lua:520 (canSee: distance AND line)
+//                       game/engines/default/engine/interface/ActorFOV.lua:49-130 (computeFOV)
+//                       game/modules/tome/class/NPC.lua:99-105 (doFOV: `block_sight`)
 // T-Engine4 (C) 2009-2018 Nicolas Casalini "DarkGod" -- https://te4.org/license
 
 /**
@@ -51,7 +53,9 @@
  */
 import { blocksSightAt } from './level.ts';
 import { bresenham } from './coords.ts';
+import { tileDistance } from './distance.ts';
 import { fogHas } from './fog.ts';
+import { calcCircle } from './mapgen/fovcircle.ts';
 import type { LevelView } from './protocol.ts';
 import type { TileXY } from './coords.ts';
 
@@ -316,6 +320,84 @@ export function tilesInSight(
     }
   }
   return out;
+}
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * WHAT AN EYE AT `eye` SEES OUT TO `radius` — ToME's field of view, shadowcast.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `tome/class/NPC.lua:99-105` is a monster's whole sense of sight:
+ *
+ * ```lua
+ * self:computeFOV(self.sight or 10, "block_sight", nil, nil, nil, true)
+ * ```
+ *
+ * The last argument is `cache = true`, so for a creature with no
+ * `special_vision` (none here has one) `computeFOV` takes its CACHED branch,
+ * `core.fov.calc_default_fov` (`engine/interface/ActorFOV.lua:65-94`), not
+ * the `core.fov.calc_circle` of its uncached one (:95-129). The geometry is
+ * the same: in the C core both run `fov_circle` with the default settings from
+ * the body's tile (`lua_fov_calc_default_fov` and `lua_fov_calc_circle`,
+ * src/fov.c, git only), and the cached branch's wall is the map's
+ * `block_sight` cache, which `engine/Map.lua:545-546` fills from
+ * `checkAllEntities(x, y, "block_sight")`, the property the uncached branch
+ * asks directly. Every body standing on a cell it reaches goes into
+ * `fov.actors_dist`. So a body is SEEN exactly when its tile is in
+ * `calcCircle`'s output (`mapgen/fovcircle.ts`): the rounded disc
+ * (`tileDistance <= radius`), less whatever a wall shadows.
+ *
+ * THE WALL IS `blocksSightAt`, the predicate `hasLineOfSight` walks, so only
+ * the geometry differs from that test: a large-actor shadowcast from the whole
+ * tile instead of one Bresenham line from its centre. The two disagree both
+ * ways. A cell just past a pillar beside the eye is seen here and not by the
+ * line; a cell the line threads between two walls can be shadowed here.
+ *
+ * ═══ LAZY, AND THE DISC IS ASKED FIRST ═══
+ * The shadowcast runs on the first question whose tile is inside the disc, and
+ * once. A question outside it is answered on arithmetic, because `calcCircle`
+ * applies nothing past `tileDistance > radius` (`circleHeight`). A monster with
+ * nobody near it pays for no circle at all, which is `canSee`'s range-first
+ * shape above, and why this is cheap enough to run per monster per turn.
+ *
+ * IT IS ALSO WHAT KEEPS THE GRID INDEX HONEST, so it is not only a shortcut.
+ * The grid is the `(2r+1)`-square round the eye, flattened row by row, and an
+ * offset off that square does not fall off the array, it WRAPS: `(r+1, 0)`
+ * computes the index of `(-r, +1)`, a real cell on the next row that the
+ * circle may well have reached. Every tile inside the disc is inside the
+ * square, so the pre-check is the bounds check too. Take it out and an eye
+ * "sees" a body one tile past its radius whenever it can see the cell the
+ * index wraps onto.
+ *
+ * PURE. The returned test holds a snapshot: a door opened after the first
+ * question is not seen through by this one. Ask again for a fresh view.
+ */
+export function fieldOfView(
+  level: LevelView,
+  eye: TileXY,
+  radius: number,
+): (to: TileXY) => boolean {
+  const r = Math.max(Math.trunc(radius), 0);
+  const side = 2 * r + 1;
+  let seen: Uint8Array | undefined;
+  return (to) => {
+    if (tileDistance(eye, to) > r) return false;
+    if (seen === undefined) {
+      const grid = new Uint8Array(side * side);
+      calcCircle(
+        level,
+        eye.x,
+        eye.y,
+        r,
+        (x, y) => blocksSightAt(level, x, y),
+        (_x, _y, dx, dy) => {
+          grid[(dy + r) * side + (dx + r)] = 1;
+        },
+      );
+      seen = grid;
+    }
+    return seen[(to.y - eye.y + r) * side + (to.x - eye.x + r)] === 1;
+  };
 }
 
 /**

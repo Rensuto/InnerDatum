@@ -156,6 +156,9 @@ function aiCtx(
       return seen.map((entry) => entry.actor);
     },
     actorById: (id) => actors.find((actor) => actor.id === id),
+    // No walls in this fixture's sight, so none in its line either.
+    lineClear: () => true,
+    seesFrom: () => true,
     rng,
   };
 }

@@ -359,13 +359,16 @@ const DEFAULT_SHEET: CombatSheet = {};
  * test/server/monsters.test.ts pins that it is accepted and swings at (1,1).
  *
  * ═══ WHY A CONSTANT AND NOT A LITERAL, AND WHY `Math.max` BELOW ═══
- * `EngineActor.attackRange` is CHEBYSHEV (engine/actor.ts:299-309): 1 means the
- * eight-neighbourhood, which is what makes bump-attack work on a diagonal. On
- * the rounded metric a raw 1 would now reach the same eight tiles; it was the
- * UNROUNDED metric under which feeding that 1 into `canAttack` refused every
- * diagonal melee attack in the game — the swing passed the scheduler and then
- * quietly did nothing, which is the failure the wiring note at the top of this
- * file warns about. `Math.max(attackRange, MELEE_REACH)` is kept for the actor
+ * `EngineActor.attackRange` 1 means the eight-neighbourhood, which is what
+ * makes bump-attack work on a diagonal. It is read on two metrics (its note in
+ * engine/actor.ts names the readers): `rangeRefusal` takes it on the rounded
+ * length when a sheet names no range, and the guard counter and the orb take
+ * it as Chebyshev. On the rounded metric a raw 1 reaches the same eight tiles
+ * as on Chebyshev; it was the UNROUNDED metric under which feeding that 1 into
+ * `canAttack` refused every diagonal melee attack in the game — the swing
+ * passed the scheduler and then quietly did nothing, which is the failure the
+ * wiring note at the top of this file warns about.
+ * `Math.max(attackRange, MELEE_REACH)` is kept for the actor
  * with no sheet at all, and it still leaves a ranged fixture that sets only
  * `attackRange: 5` with the reach it asked for.
  *
@@ -542,8 +545,10 @@ export function canAttack(
  * sweep step. From outside it reads as an AI freeze rather than as a range bug,
  * forever, with nothing failing anywhere.
  *
- * The AI is safe to skip the sight clause because `visibleEnemies` (the
- * scheduler's) only ever hands it targets it already has a clear line to.
+ * The sight clause is asked separately, as `AiCtx.lineClear` (ai/npc.ts). It
+ * used to be skipped because `visibleEnemies` (the scheduler's) only handed
+ * the AI targets it had a clear line to; since monster sight is ToME's
+ * shadowcast it hands over bodies past a pillar that this line cannot reach.
  *
  * @param target anything with a position. It does NOT have to be an actor: the
  * dead-zone half is also how a kiter tests a tile it is considering stepping on.
@@ -553,12 +558,16 @@ export function rangeRefusal(
   target: { readonly x: number; readonly y: number },
 ): AttackRefusal | null {
   const sheet = sheetOf(attacker);
-  // `attackRange` IS CHEBYSHEV (engine/actor.ts:299-309) and this is a
-  // `core.fov.distance` radius. They agree at 1 now — a diagonal rounds to 1 —
-  // and the floor at `MELEE_REACH` is what made them agree back when this was
-  // the unrounded length, under which a raw 1 refused all four diagonals. Read
-  // that constant's note. `Math.max` and not a blanket 1.5: a ranged fixture
-  // that sets only `attackRange: 5` keeps the five tiles it asked for.
+  // `attackRange` IS READ HERE ON THE ROUNDED LENGTH, as the
+  // `core.fov.distance` radius below, and only when the sheet names no
+  // `range`. Its other readers take it as Chebyshev: `resolveGuardCounter`
+  // and the orb's flight limit (the note on `EngineActor.attackRange`,
+  // engine/actor.ts, names all three). The two metrics agree at 1 — a diagonal
+  // rounds to 1 — and the floor at `MELEE_REACH` is what made this agree back
+  // when it was the unrounded length, under which a raw 1 refused all four
+  // diagonals. Read that constant's note. `Math.max` and not a blanket 1.5: a
+  // ranged fixture that sets only `attackRange: 5` keeps the five tiles it
+  // asked for.
   const reach = sheet.range ?? Math.max(attacker.attackRange ?? 1, MELEE_REACH);
   const minRange = sheet.minRange ?? 0;
   const distance = combatDistance(attacker, target);

@@ -6,11 +6,18 @@
 import { describe, expect, it } from 'vitest';
 
 import { WATCHMAN } from '../../src/server/content/classes.ts';
+import { DELVES } from '../../src/server/content/delve.ts';
 import { PURSUIT_TURNS, raiseAlarm } from '../../src/server/ai/alarm.ts';
-import { AiProfile, isMonster } from '../../src/server/engine/actor.ts';
+import { AiProfile, isHostile, isMonster } from '../../src/server/engine/actor.ts';
+import { createTurnEngine } from '../../src/server/turn-engine.ts';
+import { SITES, createRealms } from '../../src/server/world/realms.ts';
 import { createWorld } from '../../src/server/world/world.ts';
+import { chebyshev } from '../../src/shared/coords.ts';
+import { blocksSightAt, canWalk } from '../../src/shared/level.ts';
+import { circleCells } from '../../src/shared/mapgen/fovcircle.ts';
 import { TileCode } from '../../src/shared/protocol.ts';
-import type { MonsterActor } from '../../src/server/engine/actor.ts';
+import { hasLineOfSight } from '../../src/shared/sight.ts';
+import type { EngineActor, MonsterActor } from '../../src/server/engine/actor.ts';
 import type { World } from '../../src/server/world/world.ts';
 
 /**
@@ -25,9 +32,10 @@ import type { World } from '../../src/server/world/world.ts';
  * exactly the monster that used to stand still while its friend burned.
  *
  * ═══ A REAL WORLD, NOT A HAND-BUILT CTX ═══
- * `raiseAlarm` reads `world.allActors()` and `hasLineOfSight` against real
- * tiles. A fixture that stubbed either would be testing the stub — and line of
- * sight is half the rule, so it is the half that must be real.
+ * `raiseAlarm` reads `world.allActors()` and each watcher's `fieldOfView`
+ * against real tiles (it was `hasLineOfSight` and a Chebyshev square). A fixture
+ * that stubbed either would be testing the stub — and sight is half the rule,
+ * so it is the half that must be real.
  */
 
 /** A room with a wall down the middle at x = 5, and a doorway at y = 1. */
@@ -228,5 +236,131 @@ describe('a wounded monster tells whoever watched it happen', () => {
     raiseAlarm(world, victim, shooter);
     expect(victim.ai.unseenTurns).toBe(0);
     expect(PURSUIT_TURNS).toBeGreaterThan(0);
+  });
+});
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * WHO SAW IT IS WHOSE SHADOWCAST REACHES THE VICTIM — exactly those friends.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * The watcher's own field of view, the `fov_circle` shadowcast with
+ * `block_sight` out to its `aggroRange` (`calc_default_fov`, the geometry of
+ * `calc_circle`): the same eyes `visibleEnemies` looks through. The oracle here
+ * is `circleCells` with `blocksSightAt`, asked directly, and the old rule (a
+ * Chebyshev square and a Bresenham line) is asked beside it so each fixture is
+ * shown to tell the two apart.
+ */
+describe('the friends an alarm rouses are the ones whose shadowcast reaches the victim', () => {
+  function oldRuleSees(world: World, watcher: MonsterActor, at: EngineActor): boolean {
+    return (
+      chebyshev(watcher, at) <= watcher.ai.aggroRange && hasLineOfSight(world.level, watcher, at)
+    );
+  }
+
+  function shadowReaches(world: World, watcher: MonsterActor, at: EngineActor): boolean {
+    const level = world.level;
+    return circleCells(level, watcher.x, watcher.y, watcher.ai.aggroRange, (x, y) =>
+      blocksSightAt(level, x, y),
+    ).some((cell) => cell.x === at.x && cell.y === at.y);
+  }
+
+  it('rouses the one past a pillar and not the corner or the threaded gap', () => {
+    const world = createWorld('alarm-shadowcast');
+    const level = world.level;
+    level.tiles.fill(TileCode.FLOOR);
+    // A pillar beside the first watcher; two walls either side of the second
+    // watcher's diagonal step.
+    for (const [x, y] of [
+      [13, 16],
+      [13, 17],
+      [13, 19],
+    ] as const) {
+      level.tiles[y * level.w + x] = TileCode.WALL;
+    }
+    const victim = husk(world, 'm_v', 15, 15);
+    const pillar = husk(world, 'm_pillar', 12, 16); // victim at (3,-1), pillar at (1,0)
+    const gap = husk(world, 'm_gap', 12, 19); // victim at (3,-4), walls at (1,-2) and (1,0)
+    const corner = husk(world, 'm_corner', 7, 7); // victim at (8,8): Chebyshev 8, rounds to 11
+    const near = husk(world, 'm_near', 17, 15);
+    const shooter = detective(world, 'actor_p', 25, 25);
+
+    expect(oldRuleSees(world, pillar, victim), 'fixture: the old rule saw past the pillar').toBe(
+      false,
+    );
+    expect(oldRuleSees(world, gap, victim), 'fixture: the old rule missed the gap').toBe(true);
+    expect(oldRuleSees(world, corner, victim), 'fixture: the old rule missed the corner').toBe(
+      true,
+    );
+    expect(oldRuleSees(world, near, victim)).toBe(true);
+
+    const roused = raiseAlarm(world, victim, shooter).filter((id) => id !== victim.id);
+
+    expect([...roused].sort()).toEqual(['m_near', 'm_pillar']);
+    expect(gap.ai.targetId).toBeNull();
+    expect(corner.ai.targetId).toBeNull();
+  });
+
+  it('matches the oracle for every friend of every victim on generated floors', () => {
+    const sites = [...DELVES.keys()].filter((id) => SITES.get(id) !== undefined).slice(0, 4);
+    expect(sites.length, 'fixture: fewer than four delves').toBe(4);
+    let asked = 0;
+    let roused = 0;
+    let parted = 0;
+
+    for (const id of sites) {
+      const site = SITES.get(id);
+      if (site === undefined) continue;
+      const seed = `alarm-shadowcast:${id}`;
+      const realms = createRealms({ seed, engineFor: (world) => createTurnEngine({ world }) });
+      const world = realms.open(site, 'party').world;
+      const level = world.level;
+      const monsters = world.allActors().filter(isMonster);
+      // The shooter's tile never matters to who saw the victim; it only has to
+      // be a body the whole floor is hostile to. The first free floor tile.
+      let at = { x: 0, y: 0 };
+      for (let i = 0; i < level.w * level.h; i += 1) {
+        const x = i % level.w;
+        const y = Math.floor(i / level.w);
+        if (canWalk(level, x, y) && world.actorAt(x, y) === undefined) {
+          at = { x, y };
+          break;
+        }
+      }
+      const shooter = detective(world, 'actor_p', at.x, at.y);
+
+      for (const victim of monsters.slice(0, 12)) {
+        for (const m of monsters) {
+          m.ai.targetId = null;
+          m.ai.lastSeen = null;
+        }
+        const expected = monsters
+          .filter(
+            (o) =>
+              o.alive &&
+              o.id !== victim.id &&
+              !isHostile(o, victim) &&
+              isHostile(o, shooter) &&
+              shadowReaches(world, o, victim),
+          )
+          .map((o) => o.id)
+          .sort();
+        for (const o of monsters) {
+          if (o.id === victim.id || !o.alive) continue;
+          asked += 1;
+          if (oldRuleSees(world, o, victim) !== shadowReaches(world, o, victim)) parted += 1;
+        }
+
+        const got = raiseAlarm(world, victim, shooter)
+          .filter((rid) => rid !== victim.id)
+          .sort();
+        expect(got, `${id}: victim ${victim.id}`).toEqual(expected);
+        roused += got.length;
+      }
+    }
+
+    expect(asked, 'fixture: nobody was asked').toBeGreaterThan(100);
+    expect(roused, 'fixture: nobody was ever roused').toBeGreaterThan(0);
+    expect(parted, 'fixture: the old and new rules never disagreed').toBeGreaterThan(0);
   });
 });

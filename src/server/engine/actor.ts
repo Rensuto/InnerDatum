@@ -207,7 +207,11 @@ export type MonsterAi = {
    * standing between two players and oscillating instead of committing.
    */
   targetId: string | null;
-  /** How far it notices a player, in chebyshev tiles. Line of sight is also required. */
+  /**
+   * How far it sees: the radius of its shadowcast field of view (`fieldOfView`,
+   * shared/sight.ts), ToME's rounded distance. It was chebyshev tiles plus a
+   * separate line-of-sight test.
+   */
   aggroRange: number;
   /** Stand-off distance. A melee profile leaves this at 1. */
   preferredRange: number;
@@ -387,14 +391,23 @@ type ActorCommon = {
 
   // --- combat ---------------------------------------------------------------
   /**
-   * CHEBYSHEV reach — what the scheduler's legality check and the AI's chase
-   * band read. 1 is melee, and 1 is the Moore neighbourhood, which is what makes
-   * bump-attack work on the diagonals.
+   * A REACH IN TILES, READ ON TWO METRICS. Its game readers:
    *
-   * Its `core.fov.distance` twin is `combat.range`, which is what `canAttack`
-   * refuses on. A melee creature carries `attackRange: 1` AND `combat.range:
-   * 1.5` — the same eight tiles on both metrics now that the range one rounds;
-   * see the two-metrics note in content/monsters.ts.
+   *   - `rangeRefusal` (engine/combat.ts), the band half of `canAttack`, reads
+   *     it on ToME's ROUNDED length (`combatDistance`), and only as the
+   *     fallback for a sheet that names no `combat.range`;
+   *   - `resolveGuardCounter` (engine/talents.ts) reads it as CHEBYSHEV;
+   *   - so does the orb's flight limit (`fire`, engine/scheduler.ts, and
+   *     `blockPath` in engine/projectile.ts).
+   *
+   * Also `attackBlockedReason` (view/inspect.ts), which asks `rangeRefusal`,
+   * and `validateTemplate` (content/monsters.ts), which holds it against
+   * `combat.range`. Nothing in ai/ reads it; the AI asks `rangeRefusal`. 1 is melee, and 1 is
+   * the eight neighbours on both metrics, which is what makes bump-attack work
+   * on the diagonals. `combat.range` is what `canAttack` refuses on when the
+   * sheet has one: a melee creature carries `attackRange: 1` AND `combat.range:
+   * 1.5`, the same eight tiles now that the range metric rounds. See the
+   * two-metrics note in content/monsters.ts.
    */
   attackRange: number;
   /**

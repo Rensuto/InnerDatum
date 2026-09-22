@@ -18,7 +18,7 @@ import { createTurnEngine } from '../../src/server/turn-engine.ts';
 import { createRealms } from '../../src/server/world/realms.ts';
 import { AiProfile } from '../../src/server/engine/actor.ts';
 import { canWalk } from '../../src/shared/level.ts';
-import { hasLineOfSight } from '../../src/shared/sight.ts';
+import { fieldOfView } from '../../src/shared/sight.ts';
 import { PROTOCOL_VERSION } from '../../src/shared/version.ts';
 import type { TurnEvent } from '../../src/shared/protocol.ts';
 import type { Realms } from '../../src/server/world/realms.ts';
@@ -404,17 +404,24 @@ function darkButReachable(world: World, from: TileXY): TileXY {
       /**
        * AND IT MUST BE ABLE TO SEE THE PARTY, or it never wakes up.
        *
-       * `anyContact` and `visibleEnemies` both require `hasLineOfSight`, and
+       * `anyContact` and `visibleEnemies` both ask the monster's own field of
+       * view, ToME's shadowcast out to its `aggroRange` (`fieldOfView`), and
        * neither is bounded by OUR sight radius — real monsters carry
        * `aggroRange` 0-14 so the two can never disagree in the shipped game,
        * but a fixture with a long leash can sit in clear view at 22 and simply
        * idle. That is what the first two versions of this fixture did.
        *
+       * Asked from the monster's tile, as the game asks it. This used to ask
+       * one Bresenham line from the tile to the party, the old sight rule's
+       * half, and the shadowcast parts company with that line beside a pillar.
+       *
        * The tile this leaves is the interesting one anyway: it can see you and
        * you cannot see it. It hunts you out of the dark.
        */
-      if (!hasLineOfSight(level, { x, y }, from)) continue;
-      if (best === undefined || d < best.d) best = { x, y, d };
+      // The nearest first, so a tile that could not win costs no shadowcast.
+      if (best !== undefined && d >= best.d) continue;
+      if (!fieldOfView(level, { x, y }, AGGRO)(from)) continue;
+      best = { x, y, d };
     }
   }
   expect(

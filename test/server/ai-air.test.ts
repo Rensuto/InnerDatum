@@ -106,6 +106,9 @@ function ctxFor(
         .sort((a, b) => a.distance - b.distance || (a.actor.id < b.actor.id ? -1 : 1))
         .map((entry) => entry.actor),
     actorById: (id) => actors.find((actor) => actor.id === id),
+    // No walls in this fixture's sight, so none in its line either.
+    lineClear: () => true,
+    seesFrom: () => true,
     rng,
     ...(opts.terrain === false ? {} : { terrainAt: codeAt }),
     ...(opts.gridDamage === undefined ? {} : { gridDamage: opts.gridDamage }),
@@ -442,6 +445,8 @@ describe('aiFindSafeGrid — tome/class/interface/ActorAI.lua:726-801', () => {
       actorAt: () => undefined,
       visibleEnemies: () => [],
       actorById: () => undefined,
+      lineClear: () => true,
+      seesFrom: () => true,
       rng: scriptedRng([99]),
       terrainAt: code,
     };

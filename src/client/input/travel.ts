@@ -503,8 +503,9 @@ export function liveActorAt(actors: readonly ActorView[], tile: TileXY): ActorVi
  * its own, not as a rider. The two observations it uses:
  *
  *   1. `inCombat` crossing false -> true. The server arms the engagement clock
- *      from `anyContact` (scheduler.ts:1533-1544) the moment a monster has both
- *      line of sight to a player and chebyshev <= its `aggroRange`.
+ *      from `anyContact` (engine/scheduler.ts) the moment a player stands in a
+ *      monster's field of view: ToME's shadowcast out to its `aggroRange`. It
+ *      was a line of sight plus chebyshev <= `aggroRange` when this was written.
  *   2. A live hostile inside `radius` that was not inside it last time.
  *
  * ═══ EACH SET IS MEASURED FROM THE TILE THE VIEWER STOOD ON AT THE TIME ═══

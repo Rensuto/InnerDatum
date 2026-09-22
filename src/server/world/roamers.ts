@@ -518,6 +518,14 @@ function goHome(roamer: Roamer): boolean {
  * ONLY LIVING PLAYERS. A downed body is `alive === false` (engine/downed.ts) and
  * is not something to walk towards; upstream's `target_simple` skips `act.dead`
  * for the same reason.
+ *
+ * ═══ STILL ON THE BRESENHAM LINE, AND THAT IS ON PURPOSE FOR NOW ═══
+ * Monster sight on a level is ToME's shadowcast (`fieldOfView`, shared/sight.ts,
+ * asked by `visibleEnemies` in engine/scheduler.ts). This is not a monster on a
+ * level: it is an overworld marker, and it asks what `projectActors` asks, so
+ * increment 7, which moved monster sight, left it out on purpose. It moves to
+ * the shadowcast with player sight in increment 8, when `projectActors` does,
+ * so the two stay one answer.
  */
 function nearestSeen(
   realm: Realm,
