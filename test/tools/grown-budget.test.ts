@@ -48,7 +48,9 @@ import type { TalentEngine, TalentSheet } from '../../src/server/engine/talents.
  *
  * Both are joins between the probe and the spend path, so the oracle here is
  * never the probe's own code. The stat ceiling is asked of `canRaiseStat` over
- * `boughtSheet`, the two reads `handleSpendStat` makes. The tier gate is asked
+ * `boughtSheet`, the two reads `handleSpendStat` makes for a body with no
+ * origin, which every probe body is (the gateway asks `capBaseOf`, which also
+ * takes an origin's modifiers off, and Cityborn has none). The tier gate is asked
  * of the TALENT BOOK — `loadoutOf`'s `locked`, which `content/classes.ts#gateFor`
  * computes from its own context — at the moment of every write, so a rank the
  * panel would have greyed cannot be bought quietly. The purses are held against
@@ -324,8 +326,9 @@ describe('spendPointsTo spends the class purse and never buys a rank the ladder 
 describe('levelOnTheFloor spends each level the way a player at that level could', () => {
   it('asks the ceiling of what was BOUGHT, not of what the gear adds', () => {
     /**
-     * `handleSpendStat` caps `boughtSheet(body, baseCombat)` — the class sheet
-     * plus the ledger, with no gear — so a ring's Strength never blocks buying
+     * `handleSpendStat` caps `capBaseOf(body)` — the class sheet plus the
+     * ledger, with no origin and no gear, which for this origin-less body is
+     * `boughtSheet(body, baseCombat)` — so a ring's Strength never blocks buying
      * Strength. A probe that asked the worn sheet instead refused the point and
      * put it somewhere else, and every dressed row measured a different build.
      */

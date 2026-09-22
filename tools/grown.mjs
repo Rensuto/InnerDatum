@@ -42,7 +42,7 @@
 // held a tier-3 rank the server opens at level 8. Now every point is one the
 // server would have seeded (`totalStatPointsAtLevel`, `totalPointsAtLevel` —
 // `seedFreshPurses` in net/gateway.ts) and every spend asks the question the
-// server asks (`canRaiseStat` over `boughtSheet`, `checkTier` over the composed
+// server asks (`canRaiseStat` over `capBaseOf`, `checkTier` over the composed
 // sheet). A point the server would refuse stays in the purse, as it would for a
 // player, and `levelOnTheFloor` tries it again at the next level.
 //
@@ -61,7 +61,7 @@ import {
 } from '../src/shared/progression.ts';
 import { checkTier } from '../src/shared/tiers.ts';
 import { registerAllTalents, spendByPurse } from '../src/server/content/classes.ts';
-import { classPointBonus, originOf } from '../src/server/content/origins.ts';
+import { capBaseOf, classPointBonus, originOf } from '../src/server/content/origins.ts';
 import { rollLoot, bandFor } from '../src/server/content/loot.ts';
 import { ITEMS, birthKitFor } from '../src/server/content/items.ts';
 import { resolveItem } from '../src/server/content/resolve.ts';
@@ -748,10 +748,19 @@ export function foldPassives(body, sheet, effects, ctx = undefined) {
  * `spentStats` is the ledger a player writes with the `+` button and the one
  * `boughtSheet` folds at stage one and a half — so this is the same arithmetic
  * `handleSpendStat` performs, minus the wire. The ceiling question is the
- * gateway's line verbatim — `canRaiseStat` of `stat(boughtSheet(body,
- * body.baseCombat ?? body.combat))` — because `statCeilingForLevel` is a real
- * cap and a probe that walked past it would be measuring a character the
- * server refuses to create.
+ * gateway's line verbatim — `canRaiseStat` of `stat(capBaseOf(body))` —
+ * because `statCeilingForLevel` is a real cap and a probe that walked past it
+ * would be measuring a character the server refuses to create.
+ *
+ * `capBaseOf` IS `boughtSheet` WITH THE ORIGIN TAKEN OFF. This line was
+ * `boughtSheet(body, body.baseCombat ?? body.combat)`, the gateway's old
+ * expression, which counted an origin's modifiers against the cap (see
+ * `combatWithOrigin` in content/origins.ts). For a probe body the two agree:
+ * `growTo` sets `baseCombat` to the bare class sheet and no probe sets
+ * `origin`, so `originOf(undefined)` is Cityborn and nothing is taken off. A
+ * probe that ever sets `origin` must also build `baseCombat` with
+ * `combatWithOrigin`, as `overlayFor` does, or this will take off modifiers
+ * that were never added.
  *
  * `growTo` spends a whole career through here and the floor spends each level
  * through here, so there is one loop and one ceiling.
@@ -776,7 +785,7 @@ function spendBankedStats(body, cls) {
       const key = order[(i + step) % order.length];
       if (key === undefined) continue;
       // net/gateway.ts#handleSpendStat, the two lines that decide it.
-      const base = statValue(boughtSheet(body, body.baseCombat ?? body.combat) ?? {}, key);
+      const base = statValue(capBaseOf(body) ?? {}, key);
       if (!canRaiseStat(base, body.level)) continue;
       body.spentStats = { ...body.spentStats, [key]: (body.spentStats?.[key] ?? 0) + 1 };
       body.unspentStatPoints -= 1;

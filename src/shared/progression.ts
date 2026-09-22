@@ -1252,9 +1252,13 @@ export function statCeilingForLevel(level: number): number {
  *
  * ═══ `base`, NOT THE COMPOSED VALUE, AND UPSTREAM IS EXPLICIT ═══
  * Every one of these comparisons is `getStat(sid, nil, nil, true)` — the fourth
- * argument is `no_inc`, which drops `inc_stats`: gear, effects, everything worn.
- * So the ceiling is on what the player has BOUGHT, and wearing a good coat can
- * never cost you the ability to spend a point you own.
+ * argument is `no_inc`, which drops `inc_stats`: gear, effects, everything worn,
+ * and a race's own stats, which the birther files there
+ * (`engine/Birther.lua:392-396`). So the ceiling is on what the player has
+ * BOUGHT: wearing a good coat can never cost you the ability to spend a point
+ * you own, and an origin's modifiers neither use up the cap nor add to it. The
+ * server's `base` leaves the origin out as well (`capBaseOf`,
+ * server/content/origins.ts); it was the class sheet with the origin in.
  *
  * This function used to take the composed value and argue for it — *"a cap on
  * the delta would let a character in good armour pass a limit a naked one could

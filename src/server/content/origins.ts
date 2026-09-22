@@ -65,6 +65,7 @@
 export const BASELINE_LIFE_RATING = 10;
 
 import { STAT_BASE } from '../engine/derived.ts';
+import { boughtSheet } from '../engine/effects.ts';
 import { higherHeal } from '../talents/higher_heal.ts';
 import { highbornsBloom } from '../talents/highborns_bloom.ts';
 import { resilienceOfTheArchived } from '../talents/resilience_of_the_archived.ts';
@@ -440,20 +441,116 @@ export function originLifeDelta(origin: OriginDef): number {
  * applied WHOLESALE, never blended' assertable with `toBe`". Cityborn declares
  * no modifiers at all, so that assertion goes on holding for the origin every
  * existing character has.
+ *
+ * ═══ THE SUM IS `baseCombat`, AND THE ATTRIBUTE CAP USED TO READ ALL OF IT ═══
+ * `overlayFor` (net/gateway.ts) stores what this returns as the body's
+ * `baseCombat`, and all five readers of the per-level attribute cap asked
+ * `boughtSheet(x, x.baseCombat ?? x.combat)`. So an origin's modifiers WERE
+ * inside the cap: an Archived Watchman's +4 Strength counted against
+ * `statCeilingForLevel` as though he had bought it, and his −2 Dexterity gave
+ * him two points of headroom he had not bought.
+ *
+ * Upstream's birther files a race's stats as `inc_stats`
+ * (`engine/Birther.lua:392-396`, applied at `:430-432`), and every cap
+ * comparison is `getStat(sid, nil, nil, true)`, whose `no_inc` leaves them out
+ * (`tome/dialogs/LevelupDialog.lua:255`, `:259`;
+ * `engine/interface/ActorStats.lua:120-133`). The cap readers now ask
+ * `capBaseOf`, which takes the origin back off with `withoutOriginStats`.
+ *
+ * ═══ THE ORIGIN STAYS IN `baseCombat`, AND TWO RULES MUST STILL SEE IT ═══
+ *   LIFE — `maxLifeOf` (engine/pools.ts) pays four hit points per point of
+ *     Constitution over the class's own, and upstream pays the same for an
+ *     `inc_stats` Constitution (`tome/class/Actor.lua:3884-3886`).
+ *   TIER GATES — `checkTier` reads the whole stat, as upstream's does
+ *     (`engine/interface/ActorTalents.lua:698-701`, no `no_inc`).
+ * This said a layer of its own "would have hidden it from both", and it would
+ * not have: both read the COMPOSED sheet (`body.combat`), and a layer that
+ * `recomposeCombat` folded in would reach that sheet as gear does. The reason
+ * it is not a layer is where the fold lives. `recomposeCombat` is in engine/,
+ * which may not import content/'s origin table, so a layer would be a new
+ * field cached on every body, the way `expMod` is (engine/actor.ts), kept for
+ * the one kind of reader that wants the origin apart. One subtraction in
+ * `capBaseOf` serves that reader, and `swapBaselineFor`'s body without its
+ * gear keeps its origin with no change at all.
  */
 export function combatWithOrigin(base: CombatSheet, origin: OriginDef): CombatSheet {
-  const mods = Object.entries(origin.statMods).filter(([, value]) => value !== 0);
-  if (mods.length === 0) return base;
+  return shiftedByOrigin(base, origin, 1);
+}
 
-  const stats: Record<string, number> = { ...(base.stats ?? {}) };
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE SAME SHEET WITH THE ORIGIN'S `inc_stats` TAKEN BACK OFF.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * The exact inverse of `combatWithOrigin`: for every class and every origin,
+ * `withoutOriginStats(combatWithOrigin(sheet, o), o)` has the class's six back.
+ * `test/server/origin-cap.test.ts` asserts it for the whole matrix.
+ *
+ * NEGATIVE MODIFIERS COME OFF TOO, which means they are ADDED back. An Archived
+ * body's Dexterity is the class's minus two, and its cap base is the class's
+ * own: the penalty does not raise the cap, just as the bonus no longer lowers it.
+ *
+ * BY IDENTITY FOR CITYBORN, for `combatWithOrigin`'s reason, so a body of the
+ * default origin gets back the very sheet it was given.
+ */
+export function withoutOriginStats(sheet: CombatSheet, origin: OriginDef): CombatSheet {
+  return shiftedByOrigin(sheet, origin, -1);
+}
+
+/**
+ * ONE LOOP FOR BOTH DIRECTIONS. With two copies, one could change how it treats
+ * a missing stat and the other not, and they would stop being inverses.
+ */
+function shiftedByOrigin(sheet: CombatSheet, origin: OriginDef, sign: 1 | -1): CombatSheet {
+  const mods = Object.entries(origin.statMods).filter(([, value]) => value !== 0);
+  if (mods.length === 0) return sheet;
+
+  const stats: Record<string, number> = { ...(sheet.stats ?? {}) };
   for (const [key, value] of mods) {
     // STAT_BASE IS TEN, NOT ZERO, and `composeWielders` states what forgetting
     // it costs: "the naive version hands a Watchman a ring and takes seven
     // points of Strength off him". A class that authored no table starts every
     // stat at the base rather than at nothing.
-    stats[key] = (stats[key] ?? STAT_BASE) + value;
+    stats[key] = (stats[key] ?? STAT_BASE) + sign * value;
   }
-  return { ...base, stats };
+  return { ...sheet, stats };
+}
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * WHAT THE PER-LEVEL ATTRIBUTE CAP IS ASKED OF — ToME's `getStat(sid, nil, nil, true)`.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * The class's sheet plus the points spent, with no origin and nothing worn.
+ * `boughtSheet` adds the points and leaves gear out. This takes the origin off
+ * first, because `baseCombat` carries it (see `combatWithOrigin`).
+ *
+ * THE ONE EXPRESSION FOR EVERY CAP READER: the spend refusal
+ * (`handleSpendStat`), the `statBase` the talent panel greys its `+` from and
+ * its memo key (`sendProgress`, `progressKeyFor`), the bracketed figure on your
+ * own character sheet (`view/inspect.ts`), and the probes' spend loop
+ * (`tools/grown.mjs`). Five copies of the old expression each had to be
+ * changed for this ruling, and a sixth that disagreed would grey a `+` the
+ * server accepts, or light one it refuses.
+ *
+ * NOT FOR THE GEAR COMPARISON. `swapBaselineFor` (view/projector.ts) also calls
+ * `boughtSheet` over `baseCombat`, but it is asking what this body is without
+ * its gear, and that body has its origin. It is not a cap reader.
+ *
+ * HERE AND NOT IN `engine/effects.ts` beside `boughtSheet`, because it reads
+ * the origin table. `engine/` keeps out of `content/` for rules like this one:
+ * `expMod` is cached on the body as a bare number for that reason
+ * (engine/actor.ts).
+ */
+export function capBaseOf(actor: {
+  readonly origin?: string;
+  readonly spentStats?: PrimaryStats;
+  readonly baseCombat?: CombatSheet;
+  readonly combat?: CombatSheet;
+}): CombatSheet | undefined {
+  const sheet = actor.baseCombat ?? actor.combat;
+  if (sheet === undefined) return undefined;
+  return boughtSheet(actor, withoutOriginStats(sheet, originOf(actor.origin)));
 }
 
 /**

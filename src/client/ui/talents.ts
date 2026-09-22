@@ -4439,7 +4439,9 @@ export type TalentPanelDrawOptions = {
   readonly stats?: Readonly<Record<string, number>> | null;
   /**
    * THE SIX AS BOUGHT, from `ProgressMsg.statBase` — class sheet plus points
-   * spent, nothing worn. Two things read it and neither can use `stats`:
+   * spent, without the origin's modifiers and with nothing worn (the server's
+   * `capBaseOf`; the origin used to be in it). Two things read it and neither
+   * can use `stats`:
    *
    *   the CEILING, which upstream binds on the bought value (`no_inc`) so that a
    *     good coat never costs you a point you already own;

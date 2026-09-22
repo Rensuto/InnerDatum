@@ -116,6 +116,7 @@ import {
 import {
   DEFAULT_ORIGIN,
   birthCategoryPoints,
+  capBaseOf,
   classPointBonus,
   combatWithOrigin,
   genericPointBonus,
@@ -232,7 +233,6 @@ import {
 import { combatArmor, stat as statValue } from '../engine/derived.ts';
 import {
   SetEffectOutcome,
-  boughtSheet,
   recomposeCombat,
   removeEffect,
   restoreOnReentry,
@@ -6041,9 +6041,11 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     unspentCategories: number;
     unspentStatPoints?: number;
     combat?: Combatant;
-    // The two `boughtSheet` needs — see the base clause in the key below.
+    // What `capBaseOf` reads, with `combat` above as its fallback when there is
+    // no `baseCombat` — see the base clause in the key below.
     baseCombat?: Combatant;
     spentStats?: PrimaryStats;
+    origin?: string;
   }): string =>
     // EVERY FIELD ON THE FRAME BELONGS IN THE KEY — the rule this key's own note
     // states, and the reason the attribute pair is here. Spending a point moves
@@ -6055,7 +6057,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     )}|${String(viewer.unspentStatPoints ?? 0)}|${STAT_ORDER.map((which) =>
       String(statValue(viewer.combat ?? {}, which)),
     ).join(',')}|${STAT_ORDER.map((which) =>
-      String(statValue(boughtSheet(viewer, viewer.baseCombat ?? viewer.combat) ?? {}, which)),
+      String(statValue(capBaseOf(viewer) ?? {}, which)),
     ).join(',')}`;
   // ═══ THE BASE IS IN THE KEY TOO, AND IT IS NOT REDUNDANT ═══
   // Spending a point moves both numbers, so most of the time either would do.
@@ -6064,6 +6066,14 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
   // and the base is what the `+` greys on, so a key without it would leave a
   // greyed control that should be live. This key's own note states the rule:
   // every field on the frame belongs in it.`;
+  //
+  // IT IS `capBaseOf`, THE SAME CALL AS THE FRAME'S `statBase`. This clause
+  // was `boughtSheet(viewer, viewer.baseCombat ?? viewer.combat)`, which
+  // counted the origin's modifiers. That differed from the new figure by a
+  // fixed amount while a body keeps its origin, and choosing an origin with
+  // modifiers moves the composed six earlier in this same key, so the swap
+  // changes no frame that is sent. It is swapped so that the key and the
+  // frame are one expression and cannot drift apart later.
 
   /**
    * The two things a tier gate reads. See `Session.gateKey`.
@@ -6220,7 +6230,10 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       // AND THE SAME SIX AS BOUGHT — see `ProgressMsg.statBase`. It is what the
       // level ceiling binds on, so a client that greyed a `+` off the COMPOSED
       // number would grey the wrong ones the moment anybody put a coat on.
-      statBase: statSix(boughtSheet(viewer, viewer.baseCombat ?? viewer.combat) ?? {}),
+      // `capBaseOf`, so the origin's modifiers are left out as well as the gear
+      // (see `combatWithOrigin`). It was `boughtSheet` over `baseCombat`, which
+      // still had them in.
+      statBase: statSix(capBaseOf(viewer) ?? {}),
       /**
        * AND WHAT EACH ONE IS BUYING, measured off the COMPOSED sheet — see
        * `ProgressMsg.statGains`. The composed one and not the bought one: a
@@ -17117,11 +17130,25 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
      * matters in the direction that would hurt: a coat that costs you a point you
      * already own is a coat you would take off to level up.
      *
-     * `boughtSheet` IS THE SAME COMPUTATION `recomposeCombat` FOLDS — one answer
-     * to "what has this body bought", not a second one assembled here from
-     * `classById` and `spentStats`.
+     * ═══ AND THE ORIGIN IS LEFT OUT, WHICH IT WAS NOT ═══
+     * This line was `boughtSheet(body, body.baseCombat ?? body.combat)`, and
+     * `baseCombat` carries the origin's modifiers (`combatWithOrigin`). So an
+     * Archived Watchman's +4 Strength counted against his ceiling as if he had
+     * bought it, and Strength closed to him four points before it closed to a
+     * Cityborn Watchman. Upstream files a race's stats as
+     * `inc_stats` (`engine/Birther.lua:392-396`), and `no_inc` leaves them out
+     * of all three comparisons (`tome/dialogs/LevelupDialog.lua:255`, `:259`;
+     * `tome/class/Actor.lua:755-756`). The same rule works the other way for a
+     * penalty: an Archived body's −2 Dexterity no longer gives it two more
+     * points of Dexterity to buy.
+     *
+     * `capBaseOf` (content/origins.ts) IS `boughtSheet`, the computation
+     * `recomposeCombat` folds, over the class sheet with the origin taken off.
+     * It is one answer to "what has this body bought", not a second one
+     * assembled here from `classById` and `spentStats`, and the `statBase` the
+     * panel greys its `+` from is the same call.
      */
-    const base = statValue(boughtSheet(body, body.baseCombat ?? body.combat) ?? {}, msg.stat);
+    const base = statValue(capBaseOf(body) ?? {}, msg.stat);
     if (!canRaiseStat(base, body.level)) {
       /**
        * TWO SENTENCES, BECAUSE UPSTREAM SAYS TWO AND THEY MEAN OPPOSITE THINGS

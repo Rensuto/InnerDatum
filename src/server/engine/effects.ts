@@ -2470,22 +2470,38 @@ export type EquippedActor = EffectActor & {
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════
- * WHAT THIS BODY HAS BOUGHT — the class sheet plus the attribute points spent,
- * and NOTHING WORN.
+ * THE SHEET IT IS HANDED PLUS THE ATTRIBUTE POINTS SPENT, and NOTHING WORN.
  * ═══════════════════════════════════════════════════════════════════════════
  *
- * ToME's `getStat(sid, nil, nil, true)`: the fourth argument is `no_inc` and it
- * drops `inc_stats` — every increment from gear, effects and temporary sources.
- * Upstream asks for exactly this in three places and they are all the same
- * question: how high has the PLAYER pushed this attribute, as opposed to how
- * high are they standing today.
+ * Handed `baseCombat`, which is the class sheet with the origin's modifiers,
+ * it returns the body before anything is put on it.
+ *
+ * ═══ THIS SAID IT WAS ToME's `getStat(sid, nil, nil, true)`, AND IT WAS NOT ═══
+ * The note read: *"the fourth argument is `no_inc` and it drops `inc_stats` —
+ * every increment from gear, effects and temporary sources."* Upstream's
+ * `inc_stats` also holds a race's stats. The birther files a race
+ * descriptor's `inc_stats` there (`engine/Birther.lua:392-396`, applied at
+ * `:430-432`), and `no_inc` leaves the whole table out
+ * (`engine/interface/ActorStats.lua:120-133`). Our `baseCombat` carries the
+ * origin (`combatWithOrigin`, content/origins.ts), so this function over
+ * `baseCombat` counted the origin, and every reader of the per-level attribute
+ * cap asked it exactly that way. The origin's modifiers were inside the cap.
+ *
+ * The `no_inc` read is now `capBaseOf` (content/origins.ts): this function
+ * over the class sheet with the origin taken off. It lives there, beside the
+ * origin table it reads, and not here. The question it answers is how high
+ * the PLAYER has pushed an attribute, as opposed to how high they are
+ * standing today.
  *
  * ═══ EXPORTED, BECAUSE THE ANSWER IS NEEDED OUTSIDE THE FOLD ═══
- * `recomposeCombat` uses it as stage one and a half. The gateway uses it for
- * `statCeilingForLevel` — a ceiling asked of the COMPOSED value would let a good
- * coat cost you the ability to spend a point you own — and to send the base to
- * the client, which draws `25 (20)` the way upstream's dialog does
- * (LevelupDialog.lua:624-627).
+ * `recomposeCombat` uses it as stage one and a half, over the whole
+ * `baseCombat`, origin included, because hit points and tier gates read the
+ * body that exists. `capBaseOf` uses it for `statCeilingForLevel` (a ceiling
+ * asked of the COMPOSED value would let a good coat cost you the ability to
+ * spend a point you own) and for the base the client draws as `25 (20)`, the
+ * way upstream's dialog does (`tome/dialogs/LevelupDialog.lua:596-598`; this
+ * cited :624-627, which is the class-point help text). `swapBaselineFor`
+ * (view/projector.ts) uses it for the body without its gear.
  *
  * ONE COMPUTATION AND NOT THREE. The gateway could reach `classById(...)` and
  * add `spentStats` itself; that would be a second opinion about what a base is,

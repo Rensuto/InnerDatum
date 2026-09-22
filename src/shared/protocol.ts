@@ -6768,12 +6768,14 @@ export type ProgressMsg = {
   };
   /**
    * ═══════════════════════════════════════════════════════════════════════════
-   * THE SIX AS **BOUGHT** — class sheet plus points spent, nothing worn.
+   * THE SIX AS **BOUGHT** — class sheet plus points spent, no origin, nothing
+   * worn.
    * ═══════════════════════════════════════════════════════════════════════════
    *
-   * ToME's `getStat(sid, nil, nil, true)`, whose fourth argument drops every
-   * increment from gear and effects. It answers a different question from
-   * `stats` above and the screen needs both:
+   * ToME's `getStat(sid, nil, nil, true)`, whose fourth argument drops the
+   * whole `inc_stats` table: gear, effects, AND the race's own stats, which the
+   * birther files there (`engine/Birther.lua:392-396`). It answers a different
+   * question from `stats` above and the screen needs both:
    *
    *   WHAT THE CEILING IS ASKED OF. `statCeilingForLevel` binds on what the
    *     player has bought, not on what they are standing in — otherwise a good
@@ -6781,9 +6783,17 @@ export type ProgressMsg = {
    *     a way to level up.
    *
    *   AND WHAT THE ROW SAYS. Upstream draws `25 (20)`, composed with the base in
-   *     brackets (LevelupDialog.lua:624-627), which is the only way to tell "I
-   *     bought this" from "my armour is doing this" — and the second number is
-   *     the one that decides whether the `+` works.
+   *     brackets (`tome/dialogs/LevelupDialog.lua:596-598`), which is the only
+   *     way to tell "I bought this" from "my armour is doing this" — and the
+   *     second number is the one that decides whether the `+` works.
+   *
+   * ═══ THE ORIGIN WAS IN IT, AND IS NOT NOW ═══
+   * The server built this from `boughtSheet` over `baseCombat`, and `baseCombat`
+   * carries the origin's modifiers, so an Archived body's +4 Strength was
+   * counted as bought and closed Strength four points early. It is `capBaseOf`
+   * (content/origins.ts) now, which takes the origin off first. A −2 origin
+   * penalty therefore no longer raises the cap either. Same field, same shape,
+   * so no version bump; the numbers move for a body whose origin has modifiers.
    *
    * NOT DERIVABLE CLIENT-SIDE, for the same reason `stats` is not: the fold is
    * `recomposeCombat`'s and lives entirely on the server.
