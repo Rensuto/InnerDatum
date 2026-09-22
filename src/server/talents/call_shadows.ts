@@ -626,9 +626,10 @@ function shadowPass(
    *     `flags` key, so the whole block went every base turn. Driven: a shadow
    *     pinned by a real `setEffect` reported `flags.pinned = true`, and one
    *     base turn later reported `flags: undefined` — still carrying a live
-   *     `effect:pinned` and no longer pinned. `recomputeAttributes` only runs
-   *     when an effect LANDS or EXPIRES, so the flags stayed gone until the
-   *     next effect event. The shadow's four immunities cover stun, confusion,
+   *     `effect:pinned` and no longer pinned. `recomputeAttributes` then ran
+   *     only when an effect LANDED or EXPIRED, so the flags stayed gone until
+   *     the next effect event. (A shadow is recomposed after its base pass
+   *     every base turn now; see `summonPass` in server/main.ts.) The shadow's four immunities cover stun, confusion,
    *     blind and teleport, which makes `pinned` the live case, and `dazed`,
    *     `scoured` and `breached` are equally unprotected.
    *   IT LEFT `baseCombat` FROZEN at the summon-time sheet
@@ -640,6 +641,16 @@ function shadowPass(
    * `removeTemporaryValue` PAIR on two keys (shadows.lua:300-311) — it touches
    * `combat_atk` and `inc_damage` and leaves the rest of the actor alone. This
    * is that, in the vocabulary of a codebase that recomposes from a baseline.
+   *
+   * ═══ AND IT WAS STILL A WRITER THAT SKIPPED A STAGE ═══
+   * Carrying the flags kept stage three. But what a timed effect's `wielder`
+   * folds in sits BETWEEN the base and the flags, and this line wrote over it
+   * every base turn, after the shadow's own fold had already run: a shadow under
+   * Off-balance read `numbed` 0 for as long as the effect lasted. This file
+   * cannot rebuild a sheet, because it holds neither the status table nor the
+   * item catalogue. So `summonPass` in server/main.ts recomposes a shadow that
+   * stays as soon as this returns, and what this line writes is only the sheet
+   * for the moment in between.
    */
   const derived = shadowCombatAt(shadow.level, talentLevelOf(sheet, shadowWarriors));
   const flags = shadow.combat?.flags;

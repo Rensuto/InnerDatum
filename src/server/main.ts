@@ -83,7 +83,7 @@ import type { BoundHooks, PassiveView } from './engine/hooks.ts';
 import { createTurnEngine } from './turn-engine.ts';
 import { createRealms } from './world/realms.ts';
 import { createWorld } from './world/world.ts';
-import { areEnemies, isPlayer, sameSide } from './engine/actor.ts';
+import { areEnemies, isMonster, isPlayer, sameSide } from './engine/actor.ts';
 import type { EngineActor } from './engine/actor.ts';
 import { breakDamageSensitive } from './engine/effects.ts';
 import {
@@ -627,8 +627,30 @@ export function talentRuntimeFor(
      * `shadowsBasePass` is both arms of it and needs four world methods, which
      * is why `SummonWorld` is structural: `World` satisfies it and a fixture
      * can satisfy it with an object literal.
+     *
+     * ═══ AND A SHADOW THAT STAYS IS RECOMPOSED AFTER IT, BECAUSE THIS RUNS LAST ═══
+     * The scheduler calls this straight after `actBase` above, so the shadow's
+     * base-turn fold has already run when `shadowPass` writes
+     * `combat = shadowCombatAt(...)` plus the carried flags. That write is the
+     * birth sheet and the flags and nothing between them, so it threw away
+     * whatever a timed effect's `wielder` had folded in. Measured through
+     * production's `engineFor`: a bound shadow under Off-balance read `numbed`
+     * 0 on every turn the effect was on it. Running the same fold again, on the
+     * `baseCombat` the pass has just refreshed, is what puts the effect back.
+     * The summoner's arm writes no sheet, and a shadow being reaped is not
+     * worth a rebuild.
      */
-    summonPass: (actor: EngineActor): SummonPassResult => shadowsBasePass(world, talents, actor),
+    summonPass: (actor: EngineActor): SummonPassResult => {
+      const result = shadowsBasePass(world, talents, actor);
+      if (
+        isMonster(actor) &&
+        actor.summonerId !== undefined &&
+        result.reap?.includes(actor.id) !== true
+      ) {
+        onActBase?.(actor.id);
+      }
+      return result;
+    },
     guardCounter: (attackerId: string, victimId: string): GuardCounter | null =>
       resolveGuardCounter({ engine: talents, world, rng: world.rng }, attackerId, victimId),
     forget: (actorId: string): void => {
@@ -1247,7 +1269,8 @@ export function buildServer() {
          * — ToME refreshes on learn, unlearn and mastery change only, and six of
          * its talents work around that with callbacks — so this is a deliberate
          * divergence, affordable here because the fold is a handful of talents
-         * over a handful of players, resolving synchronously.
+         * over a handful of players — and a plain recompose for every other
+         * body with a base sheet — resolving synchronously.
          *
          * WRAPPED IN A CLOSURE, NOT PASSED BY NAME. `refreshPassives` is a `const`
          * declared a hundred lines below this call, and `engineFor` runs during
@@ -1400,8 +1423,49 @@ export function buildServer() {
      * in the standalone world is exactly what those mean.
      */
     const actor = realms.realmOf(actorId)?.world.getActor(actorId) ?? world.getActor(actorId);
+    if (actor === undefined) return;
     const sheet = talentEngine.sheetOf(actorId);
-    if (actor === undefined || sheet === undefined) return;
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * NO SHEET STILL MEANS A BODY, AND ITS LIVE EFFECTS STILL HAVE TO FOLD.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * This was `if (actor === undefined || sheet === undefined) return;`, and
+     * it made this function answer a question nobody asked it: "does this body
+     * have talents?" This function is what `EffectCtx.sheetDirty` is bound to
+     * (`onSheetDirty` above) AND the base-turn fold (`onActBase`), so it is how
+     * a timed effect's `EffectDef.wielder` reaches `actor.combat` (a zone aura
+     * recomposes for itself, in world/zone-effects.ts). A monster with no
+     * `talents` list never gets a sheet (`ensureMonsterSheet` returns undefined
+     * for it, by design), so for seven of the sixteen templates a wielder effect
+     * sat in the table and never reached the composed sheet. An Off-balance husk
+     * carried `effect:off_balance` and still hit for full damage, and a
+     * Spellshocked one kept its whole resist-all. A talented monster had the
+     * same hole until its AI first asked `castable`. A summoned shadow needed
+     * one more thing on top of this; see `summonPass` in `talentRuntimeFor`.
+     *
+     * RECOMPOSED, AND NOTHING ELSE. Everything else below reads the sheet (the
+     * passive fold, the hooks, the proc latch, `maxMp`) or is the damage-shield
+     * closure, and the only shield in the game is the
+     * Shielding Rune a caster puts on itself. So a body with no sheet has none
+     * of it to contribute. No sheet is minted here to get past the guard: a
+     * creature's talents are its template's.
+     * `recomposeCombat` with the status table and the catalogue is the call
+     * `applyZoneEffectsIn` makes for the same reason (world/zone-effects.ts).
+     */
+    if (sheet === undefined) {
+      /**
+       * ONLY A BODY WITH A BASE TO FOLD FROM. `recomposeCombat` builds on
+       * `baseCombat ?? combat` (engine/effects.ts), so a body with no
+       * `baseCombat` — the harmless townsfolk body, which has no combat sheet
+       * at all — would fold its wielder grants onto LAST turn's composed sheet,
+       * every base turn: measured under the underwater aura, cold +10, +20, +30.
+       * Nothing reaches such a body today but a zone aura, which recomposes it
+       * itself on landing, once; so it is left exactly as it was.
+       */
+      if (actor.baseCombat !== undefined) recomposeCombat(actor, effects, resolveItem);
+      return;
+    }
 
     /**
      * ═══════════════════════════════════════════════════════════════════════

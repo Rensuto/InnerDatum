@@ -776,10 +776,20 @@ export type EffectCtx = {
    * rebuild or it does not go anywhere.
    *
    * ═══ ABSENT MEANS ONE TURN OF LATENCY, NOT A WRONG NUMBER ═══
-   * `refreshPassives` rebuilds every sheet once per base turn anyway, so a
-   * fixture with no hook still converges — it is simply a turn late, which for a
-   * four-turn buff is a quarter of it missing at one end and a quarter overstayed
-   * at the other.
+   * `refreshPassives` rebuilds every body's sheet once per base turn anyway, so
+   * a caller with no hook still converges — it is simply a turn late, which for
+   * a four-turn buff is a quarter of it missing at one end and a quarter
+   * overstayed at the other. Production's own talent and cure doors are such
+   * callers: `statusFor`, `cureFor` and `breakDamageSensitive` in server/main.ts
+   * build theirs with no ctx. A body with no `baseCombat` at all (the harmless
+   * townsfolk body) is not recomposed on the base turn, because folding it
+   * would build on its own composed sheet.
+   *
+   * "EVERY SHEET" WAS NOT TRUE, and for some bodies "a turn late" was "never".
+   * `refreshPassives` returned before recomposing any body without a talent
+   * sheet, which was seven of the sixteen monster templates, and a summoned
+   * shadow's fold was overwritten by its own base pass straight after. Both
+   * are recomposed now; see `refreshPassives` and `summonPass` in server/main.ts.
    */
   sheetDirty?: (actorId: string) => void;
 
