@@ -36,8 +36,9 @@
  * silence.
  *
  * "CANNOT SEE" IS THE BOARD'S RULE, NOT A SECOND ONE. A hostile is visible when
- * `canSee` admits it at the viewer's own `sightRadiusOf` — range and a clear
- * line, exactly what `visibleActorIds` puts on the board — and a player is
+ * the viewer's own seen set holds its tile (`visionOf`: ToME's shadowcast at the
+ * viewer's `sightRadiusOf`, by the light there is), exactly what
+ * `visibleActorIds` puts on the board — and a player is
  * always visible, because the board never hides a teammate. This gate used to
  * be the line alone, with no range, so a monster thirty tiles down a clear
  * corridor answered with a full card while the board did not show it at all.

@@ -1253,11 +1253,13 @@ function keepAnchor(realm: Realm, walking: MonsterActor): void {
  * the party is usually in two places, and an objective must not become a second
  * reason to stand and wait for somebody.
  *
- * `DEFAULT_SIGHT_RADIUS`, EUCLIDEAN, because that is what this game means by
- * being able to see something (`shared/vision.ts`), and the sentence the rule
- * is written from is *"you were there when they got there"*. `distanceBand`
- * below was measured the same way once and now rounds, as ToME's does; this
- * test stays exact until sight itself moves to ToME's circle.
+ * `DEFAULT_SIGHT_RADIUS` by `tileDistance`, ToME's rounded circle, because
+ * that is the disc this game sees in (`shared/sight.ts` `tilesInSight`), and
+ * the sentence the rule is written from is *"you were there when they got
+ * there"*. It WAS the exact length, kept so while sight was; `distanceBand`
+ * below already rounded, and sight moving to ToME's circle moved this with it.
+ * A radius and not the seen set: the walls and the light are not asked, as
+ * they were not before.
  *
  * ═══ ANY PLAYER ON THE FLOOR IS THE ACCEPTING PARTY ═══
  * An Inner realm holds exactly one party — `Realms.open` is keyed on
@@ -1278,7 +1280,7 @@ function arrivedEscort(
       (a) =>
         a.kind === ActorKind.Player &&
         a.alive &&
-        Math.hypot(a.x - target.at.x, a.y - target.at.y) <= DEFAULT_SIGHT_RADIUS,
+        tileDistance(a, target.at) <= DEFAULT_SIGHT_RADIUS,
     );
 }
 

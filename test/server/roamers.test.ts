@@ -27,8 +27,11 @@ import {
 } from '../../src/server/world/roamers.ts';
 import { INDEX_HUSK } from '../../src/server/content/monsters.ts';
 import { canWalk, tileAt } from '../../src/shared/level.ts';
-import { sightDistance } from '../../src/shared/sight.ts';
+import { euclidDistance, tileDistance } from '../../src/shared/distance.ts';
 import { ActorKind, TileCode, isHaunt, isWalkable } from '../../src/shared/protocol.ts';
+import { DEFAULT_SIGHT_RADIUS, hasLineOfSight } from '../../src/shared/sight.ts';
+import type { TileXY } from '../../src/shared/coords.ts';
+import type { LevelView } from '../../src/shared/protocol.ts';
 import type { Realm, Realms, Roamer } from '../../src/server/world/realms.ts';
 
 function makeRealms(seed = 'roam-seed'): Realms {
@@ -430,8 +433,12 @@ function stage(realms: Realms, at: { readonly x: number; readonly y: number }): 
   return mine;
 }
 
-/** How far a roamer has strayed from the tile it appeared on. */
-const fromHome = (r: Roamer): number => sightDistance(r, { x: r.homeX, y: r.homeY });
+/**
+ * How far a roamer has strayed from the tile it appeared on, in the leash's
+ * own measure: `tileDistance`, as `stepRoamer` and upstream's `party_member`
+ * leash (tome/ai/party.lua, git only) both ask. It was the exact length.
+ */
+const fromHome = (r: Roamer): number => tileDistance(r, { x: r.homeX, y: r.homeY });
 
 /**
  * One step of the moor's clock, past the `MOVE_EVERY_TURNS` gate every time.
@@ -472,10 +479,12 @@ describe('it notices you, and that is all a roamer is allowed to do about it', (
     body.x = spot.x + 5;
     body.y = spot.y;
 
-    const before = sightDistance(mine, body);
+    // "Closer" is a monotone test, so it is the exact length: a rounded one
+    // is flat across some real steps (shared/distance.ts).
+    const before = euclidDistance(mine, body);
     beater(realms.overworld)();
 
-    expect(sightDistance(mine, body), 'it did not move towards the body').toBeLessThan(before);
+    expect(euclidDistance(mine, body), 'it did not move towards the body').toBeLessThan(before);
     expect(mine.targetId, 'it moved, but it did not TARGET anybody').toBe(body.id);
   });
 
@@ -545,7 +554,17 @@ describe('it notices you, and that is all a roamer is allowed to do about it', (
     // roamer that never moved at all, which is the shape this whole file's
     // history says the mistake takes.
     expect(furthest, 'it never followed anybody anywhere').toBeGreaterThan(6);
-    expect(furthest, 'the leash did not hold').toBeLessThanOrEqual(10);
+    /**
+     * ONE STEP PAST, THEN HOME. Upstream's `party_member` (tome/ai/party.lua,
+     * git only) leashes when `tactic_leash < core.fov.distance(self, anchor)`:
+     * STRICTLY past, so a chaser standing AT 10 still acts and its step lands
+     * on 11 — in THIS fixture, which chases along a row; a diagonal step from a
+     * rounded 10 can land on 12 — and the next beat snaps it. This was `<= 10` while the chase
+     * snapped at `>= 10` on the exact length, a tile short of where the drift
+     * was allowed to stand (the pair `stepRoamer` now asks one way).
+     */
+    expect(furthest, 'the leash did not hold').toBeLessThanOrEqual(11);
+    expect(furthest, 'it snapped AT the leash, where a drift may stand').toBe(11);
     expect(mine.targetId, 'it is still hunting somebody past its leash').toBeUndefined();
 
     // AND IT GOES BACK. Park the body out of the way so the return leg is not
@@ -605,6 +624,155 @@ describe('it notices you, and that is all a roamer is allowed to do about it', (
       'it is still hunting a body it has not seen for a minute',
     ).toBeUndefined();
     expect(closest, 'it gave up and then stood there').toBeLessThanOrEqual(1);
+  });
+});
+
+describe('it sees the way ToME`s monsters do, and measures the way they do', () => {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * `nearestSeen` IS THE CREATURE'S OWN SHADOWCAST, NEAREST BY ToME's DISTANCE.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `target_simple` picks out of `fov.actors_dist` (`ai/simple.lua:251-266`),
+   * which the creature's `computeFOV` fills: `fieldOfView` out to `AGGRO`
+   * (the sight radius, 10), sorted on the ROUNDED distance with the id as the
+   * tie-break (the note on `visibleEnemies`). It was the exact radius plus one
+   * Bresenham line, and the first player scanned won a tie. Each case asks the
+   * old rule alongside, so the fixture is shown to tell the two apart.
+   */
+  const oldNotices = (level: LevelView, from: TileXY, to: TileXY): boolean =>
+    euclidDistance(from, to) <= DEFAULT_SIGHT_RADIUS && hasLineOfSight(level, from, to);
+
+  function standPlayer(realms: Realms, id: string, at: TileXY): void {
+    const body = realms.overworld.world.addPlayer(id, 'Detective');
+    body.x = at.x;
+    body.y = at.y;
+  }
+
+  function wall(realms: Realms, at: TileXY): void {
+    const level = realms.overworld.world.level;
+    level.tiles[at.y * level.w + at.x] = TileCode.WALL;
+  }
+
+  it('notices a player past a pillar beside it, which its old line could not', () => {
+    const realms = makeRealms('roam-sight-pillar');
+    const spot = openGround(realms, 12);
+    const mine = stage(realms, spot);
+    wall(realms, { x: spot.x + 1, y: spot.y });
+    const past = { x: spot.x + 3, y: spot.y - 1 };
+    standPlayer(realms, 'p1', past);
+
+    expect(oldNotices(realms.overworld.world.level, mine, past), 'fixture').toBe(false);
+    beater(realms.overworld)();
+    expect(mine.targetId).toBe('p1');
+  });
+
+  it('does not notice one through a diagonal gap its old line threaded', () => {
+    const realms = makeRealms('roam-sight-gap');
+    const spot = openGround(realms, 12);
+    const mine = stage(realms, spot);
+    wall(realms, { x: spot.x + 1, y: spot.y - 2 });
+    wall(realms, { x: spot.x + 1, y: spot.y });
+    const threaded = { x: spot.x + 3, y: spot.y - 4 };
+    standPlayer(realms, 'p1', threaded);
+
+    expect(oldNotices(realms.overworld.world.level, mine, threaded), 'fixture').toBe(true);
+    beater(realms.overworld)();
+    expect(mine.targetId).toBeUndefined();
+  });
+
+  it('notices at the rim of ToME`s circle: (10,3) rounds to 10, (10,4) to 11', () => {
+    const realms = makeRealms('roam-sight-rim');
+    const spot = openGround(realms, 12);
+    const mine = stage(realms, spot);
+    const rim = { x: spot.x + 10, y: spot.y + 3 };
+    standPlayer(realms, 'p1', rim);
+    expect(oldNotices(realms.overworld.world.level, mine, rim), 'fixture').toBe(false);
+    beater(realms.overworld)();
+    expect(mine.targetId).toBe('p1');
+
+    const again = makeRealms('roam-sight-rim');
+    const there = openGround(again, 12);
+    const other = stage(again, there);
+    standPlayer(again, 'p1', { x: there.x + 10, y: there.y + 4 });
+    beater(again.overworld)();
+    expect(other.targetId).toBeUndefined();
+  });
+
+  it('breaks a tie of ToME`s distance by id, not by the exact length', () => {
+    // (2,0) and (2,1) both round to 2. The exact length puts p_b (2.0) before
+    // p_a (2.24), and so does the scan order: p_b is added first.
+    const realms = makeRealms('roam-sight-tie');
+    const spot = openGround(realms, 12);
+    const mine = stage(realms, spot);
+    standPlayer(realms, 'p_b', { x: spot.x + 2, y: spot.y });
+    standPlayer(realms, 'p_a', { x: spot.x + 2, y: spot.y + 1 });
+    beater(realms.overworld)();
+    expect(mine.targetId).toBe('p_a');
+  });
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE LEASH PAIR (L6): THE CHASE AND THE DRIFT ASK ONE DISTANCE ONE WAY.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `tileDistance(..., home) > LEASH` for both. They were the exact length with
+   * `>=` in the chase and `>` in the drift, so the drift could stand a roamer on
+   * a tile the chase would snap it home from.
+   */
+  it('keeps hunting from (10,2), which rounds to 10, and goes home from (11,0)', () => {
+    const realms = makeRealms('roam-leash-rim');
+    const spot = openGround(realms, 12);
+    const mine = stage(realms, spot);
+    mine.x = spot.x + 10;
+    mine.y = spot.y + 2;
+    standPlayer(realms, 'p1', { x: mine.x + 2, y: mine.y });
+    expect(euclidDistance(mine, spot), 'fixture: the exact length was past 10').toBeGreaterThan(10);
+    beater(realms.overworld)();
+    expect(mine.goingHome, 'snapped home from inside the leash').toBe(false);
+    expect(mine.targetId).toBe('p1');
+
+    const again = makeRealms('roam-leash-rim');
+    const there = openGround(again, 12);
+    const other = stage(again, there);
+    other.x = there.x + 11;
+    other.y = there.y;
+    standPlayer(again, 'p1', { x: other.x + 1, y: other.y + 1 });
+    beater(again.overworld)();
+    expect(other.goingHome, 'hunted on past the leash').toBe(true);
+  });
+
+  it('drifts onto (10,2), where the chase would keep it', () => {
+    // Every neighbour of (9,2) but (10,2) is walled, so a drift step either
+    // lands there or goes nowhere. Nobody is about, so every beat drifts.
+    const realms = makeRealms('roam-drift-rim');
+    const spot = openGround(realms, 12);
+    const mine = stage(realms, spot);
+    mine.x = spot.x + 9;
+    mine.y = spot.y + 2;
+    const rim = { x: spot.x + 10, y: spot.y + 2 };
+    const around: readonly (readonly [number, number])[] = [
+      [1, 0],
+      [-1, 0],
+      [0, 1],
+      [0, -1],
+      [1, 1],
+      [1, -1],
+      [-1, 1],
+      [-1, -1],
+    ];
+    for (const [dx, dy] of around) {
+      const at = { x: mine.x + dx, y: mine.y + dy };
+      if (at.x !== rim.x || at.y !== rim.y) wall(realms, at);
+    }
+    const beat = beater(realms.overworld);
+    let reached = false;
+    for (let i = 0; i < 60 && !reached; i += 1) {
+      beat();
+      reached = mine.x === rim.x && mine.y === rim.y;
+    }
+    expect(reached, 'the drift refused a tile inside the leash').toBe(true);
+    expect(fromHome(mine)).toBe(10);
   });
 });
 

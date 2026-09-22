@@ -22,20 +22,30 @@
  * `computeSeen` is `tilesInSight` written into a bitset. It does not decide what
  * is visible itself: a viewer whose memory used a different test than the one
  * that filters actors would be shown a monster standing on ground it had never
- * seen. `canSee` remains the rule; this only changes the shape of its answer.
+ * seen. `forEachInSight` (shared/sight.ts) remains the rule; this only changes
+ * the shape of its answer.
  *
  * ═══ AND WITH LIGHT: `computeVision` ═══
  * Upstream's sight sees a grid only where the level lights it. A carried light
  * sees its own radius whether lit or not, and another body's light shows grids
  * already in the eye's field of view (class/Player.lua:646-663). A seen grid is
  * remembered when it is lit or its terrain is `alwaysRemembered`. So light
- * narrows both what is seen and what is kept. `computeSeen` is the all-lit case,
- * and stays the server's rule until the server switches to `computeVision`.
+ * narrows both what is seen and what is kept. `computeSeen` is the all-lit case;
+ * the server asks `computeVision`.
+ *
+ * ═══ EVERY PASS IS A SHADOWCAST AT ITS OWN RADIUS ═══
+ * Each pass upstream is its own `computeFOV` (tome/class/Player.lua:636-663),
+ * and `computeFOV` is libfov's `calc_circle` (engine/interface/ActorFOV.lua:49-130):
+ * the rounded disc, less what `block_sight` shadows, from the pass's own
+ * centre. So each is `forEachInSight` at that pass's radius from that pass's
+ * centre, and none is cut out of another. They WERE the exact disc and a
+ * Bresenham line per tile (`tilesInSight` said how); which tiles a pass counts
+ * as lit, kept or in view did not move with the geometry.
  */
 
 import { createFog, fogHas, fogSet } from './fog.ts';
 import { TileCode, alwaysRemembered } from './protocol.ts';
-import { tilesInSight } from './sight.ts';
+import { forEachInSight, tilesInSight } from './sight.ts';
 import type { TileXY } from './coords.ts';
 import type { LevelView } from './protocol.ts';
 
@@ -185,7 +195,7 @@ export function computeVision(
    * sight."* (cunning/survival.lua:43-44.) So:
    *
    *   IT IS BLOCKED BY WALLS. `block_sight` is the same blocker the ordinary
-   *   sight pass uses, which is `tilesInSight` here. A note in
+   *   sight pass uses, which is `forEachInSight` here. A note in
    *   `talents/overseer_of_nations.ts` used to call a second kind of sight "a
    *   system rather than a number" and deferred it on that basis; it is neither,
    *   it is this clause, and the note is corrected in that file.
@@ -210,22 +220,21 @@ export function computeVision(
    */
   const senses = radii.senses ?? 0;
   if (senses > 0 && occupied !== undefined) {
-    for (const tile of tilesInSight(level, eye, senses)) {
-      if (!occupied(tile.x, tile.y)) continue;
-      see(tile.x, tile.y, kept(tile.x, tile.y));
-    }
+    forEachInSight(level, eye, senses, (x, y) => {
+      if (occupied(x, y)) see(x, y, kept(x, y));
+    });
     const rad2 = Math.max(1, Math.floor(senses / 4));
-    for (const near of tilesInSight(level, eye, rad2)) {
-      see(near.x, near.y, kept(near.x, near.y));
-    }
+    forEachInSight(level, eye, rad2, (x, y) => {
+      see(x, y, kept(x, y));
+    });
   }
 
   // 1. SIGHT. Every grid in view is in the field of view, but sight alone sees
   // and keeps only a lit one (engine/Map.lua:649).
-  for (const tile of tilesInSight(level, eye, radii.sight)) {
-    fogSet(inFov, level.w, tile.x, tile.y);
-    if (litAt(tile.x, tile.y)) see(tile.x, tile.y, true);
-  }
+  forEachInSight(level, eye, radii.sight, (x, y) => {
+    fogSet(inFov, level.w, x, y);
+    if (litAt(x, y)) see(x, y, true);
+  });
 
   // 2. THE EYE'S OWN LIGHT, lit or not, kept when lit or always remembered
   // (engine/Map.lua:677). Its radius is not capped by sight. No light at all
@@ -234,19 +243,21 @@ export function computeVision(
   if (radii.lite <= 0) {
     see(eye.x, eye.y, kept(eye.x, eye.y));
   } else {
-    for (const mine of tilesInSight(level, eye, radii.lite)) {
-      see(mine.x, mine.y, kept(mine.x, mine.y));
-    }
+    forEachInSight(level, eye, radii.lite, (x, y) => {
+      see(x, y, kept(x, y));
+    });
   }
 
   // 3. EVERY OTHER LIGHT, and only on grids the eye already has in view
   // (engine/Map.lua:663, class/Player.lua:656-663).
+  // The shadowcast is the LIGHT's own, from its tile: upstream runs
+  // `e:computeFOV` (class/Player.lua:660), so a lantern round a corner lights
+  // what IT reaches, and the eye's view decides only which of those it shows.
   for (const light of lights) {
     if (light.lite <= 0) continue;
-    for (const theirs of tilesInSight(level, light, light.lite)) {
-      if (!fogHas(inFov, level.w, theirs.x, theirs.y)) continue;
-      see(theirs.x, theirs.y, kept(theirs.x, theirs.y));
-    }
+    forEachInSight(level, light, light.lite, (x, y) => {
+      if (fogHas(inFov, level.w, x, y)) see(x, y, kept(x, y));
+    });
   }
   return { seen, remember };
 }

@@ -274,7 +274,8 @@ import { loreById, loreIdOfNote } from '../content/lore.ts';
 // saves.ts's only reference back to this file is `import type`, so this arrow
 // adds no runtime cycle.
 import { UNASSIGNED_CLASS } from '../persist/saves.ts';
-import { MINIMAP_REVEAL_RADIUS, knownTile, sightDistance } from '../../shared/sight.ts';
+import { tileDistance } from '../../shared/distance.ts';
+import { MINIMAP_REVEAL_RADIUS, knownTile } from '../../shared/sight.ts';
 import { cutWindow, rememberSeen } from '../../shared/vision.ts';
 import { visionOf } from '../view/eyesight.ts';
 import { attackBlockedReason, inspectActor } from '../view/inspect.ts';
@@ -9697,8 +9698,16 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     const body = world.getActor(actorId);
     if (body === undefined) return [];
 
+    /**
+     * ROUNDED, `tileDistance`: the reveal radius is twice the sight radius, and
+     * sight is ToME's rounded disc now, so "twice as far as you can see" is
+     * measured the way seeing is. It was the exact length, ruled on as an open
+     * decision when sight moved (distance plan, increment 8): the rule is ours,
+     * so no upstream line decides it, and a radius is what `tileDistance`
+     * answers (shared/distance.ts). The rim gains the 20.0-20.5 band.
+     */
     const near = (x: number, y: number): boolean =>
-      sightDistance(body, { x, y }) <= MINIMAP_REVEAL_RADIUS;
+      tileDistance(body, { x, y }) <= MINIMAP_REVEAL_RADIUS;
     /**
      * THE SAME MEMORY THE FLOOR LOOT IS DRAWN BY — `knownTile`, seen now OR
      * remembered. Built from the BODY rather than from a session, because a

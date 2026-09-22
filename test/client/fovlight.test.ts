@@ -8,7 +8,9 @@ import {
   FOV_BRIGHTNESS_FLOOR,
   MAP_OBSCURE_BRIGHTNESS,
   fovBrightness,
+  sightBrightness,
 } from '../../src/shared/sight.ts';
+import { euclidDistance } from '../../src/shared/distance.ts';
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════
@@ -93,6 +95,49 @@ describe('fovBrightness — the sight curve', () => {
   });
 });
 
+describe('sightBrightness — the curve at ToME`s ROUNDED distance', () => {
+  /**
+   * `playerFOV`'s sight pass is `map:apply(x, y, fovdist[sqdist])`
+   * (tome/class/Player.lua:648-649), and the `sqdist` the C hands that callback
+   * is `core.fov.distance` SQUARED (`map_default_seen`, src/fov.c, git only):
+   * the rounded distance. So brightness steps a whole tile at a time. The
+   * painter used the exact length, which is between two steps on nearly every
+   * tile.
+   *
+   * MUTANT: measure with the exact length again. (3,2) goes to 0.964.
+   */
+  const eye = { x: 0, y: 0 };
+
+  it('dims (3,2) by its rounded 4, not its exact 3.61', () => {
+    const at = { x: 3, y: 2 };
+    expect(euclidDistance(eye, at), 'fixture: the exact length is between steps').toBeCloseTo(
+      3.606,
+      3,
+    );
+    // THE FIXTURE TELLS THE TWO APART: the exact length would give 0.964.
+    expect(fovBrightness(euclidDistance(eye, at))).not.toBeCloseTo(16 / 17, 3);
+    expect(sightBrightness(eye, at)).toBe(fovBrightness(4));
+    expect(sightBrightness(eye, at)).toBeCloseTo(16 / 17, 10);
+  });
+
+  it('draws the sight rim at the floor: (10,3) rounds to 10', () => {
+    /**
+     * (10,3) is 10.44 long, and exact sight never showed it at all. ToME's
+     * circle holds it (10.44 rounds to 10), and it draws at the floor, the
+     * dimmest a SEEN tile ever is.
+     */
+    const rim = { x: 10, y: 3 };
+    expect(euclidDistance(eye, rim)).toBeGreaterThan(DEFAULT_SIGHT_RADIUS);
+    expect(sightBrightness(eye, rim)).toBe(FOV_BRIGHTNESS_FLOOR);
+  });
+
+  it('is full brightness at (2,2), which rounds to 3', () => {
+    // 2.83 and 3 both give 1 after the clamp, so this pins the clamp's side of
+    // the step, not the rounding.
+    expect(sightBrightness(eye, { x: 2, y: 2 })).toBe(1);
+  });
+});
+
 describe('MAP_OBSCURE_BRIGHTNESS — what a tile out of sight drops to', () => {
   it('is BOTH multiplications, not the 0.6 that appears four times', () => {
     /**
@@ -133,7 +178,10 @@ describe('paintLight — the painter, as source', () => {
     const body = paintLightBody();
     expect(body, 'the painter works its own sight out again').not.toContain('canSee(');
     expect(body).toContain('vision.seen(');
-    expect(body).toContain('fovBrightness(');
+    // AND THE CURVE AT THE ROUNDED DISTANCE: `sightBrightness`, tested above.
+    // The painter measuring for itself is how the exact length got in.
+    expect(body).toContain('sightBrightness(eye, at)');
+    expect(body, 'the painter measures its own distance again').not.toContain('Distance(');
     expect(body, 'the out-of-sight arm stopped using the ported constant').toContain(
       'OBSCURE_WASH_ALPHA',
     );

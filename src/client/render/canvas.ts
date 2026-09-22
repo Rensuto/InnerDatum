@@ -80,7 +80,7 @@
 
 import { DIR_VECTORS, inBounds } from '../../shared/coords.ts';
 import { tileAt } from '../../shared/level.ts';
-import { MAP_OBSCURE_BRIGHTNESS, fovBrightness, sightDistance } from '../../shared/sight.ts';
+import { MAP_OBSCURE_BRIGHTNESS, sightBrightness } from '../../shared/sight.ts';
 import type { VisionView } from '../vision.ts';
 import { ActorRank, TileCode, isWalkable } from '../../shared/protocol.ts';
 import type { ZoneTileView } from '../../shared/protocol.ts';
@@ -4056,13 +4056,10 @@ export function createRenderer(options: RendererOptions): Renderer {
          * that is the netcode half — see `Scene.vision`.
          */
         const unseen = !lit && !vision.remembered(tx, ty);
-        const alpha = unseen
-          ? 1
-          : lit
-            ? 1 - fovBrightness(sightDistance(eye, at))
-            : OBSCURE_WASH_ALPHA;
-        // `fovBrightness` IS 1 WITHIN THREE TILES, so the tiles a player is
-        // actually standing among cost nothing at all.
+        const alpha = unseen ? 1 : lit ? 1 - sightBrightness(eye, at) : OBSCURE_WASH_ALPHA;
+        // STEPPED BY THE ROUNDED DISTANCE, ToME's `fovdist[sqdist]`: it was the
+        // exact length (`sightBrightness`). And it IS 1 WITHIN THREE TILES, so
+        // the tiles a player is actually standing among cost nothing at all.
         if (alpha <= 0) continue;
         backCtx.globalAlpha = alpha;
         backCtx.fillRect(tx * TILE_PX - camX, ty * TILE_PX - camY, TILE_PX, TILE_PX);

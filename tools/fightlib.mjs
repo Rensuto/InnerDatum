@@ -38,11 +38,12 @@
 //   driver a whole iteration.
 //
 //   The fix took `sightDistance` and said it was "`core.fov.distance` itself".
-//   It was not: `sightDistance` (shared/sight.ts) is the UNROUNDED length, and
-//   `core.fov.distance` rounds half-up. It matched the engine only because the
-//   engine's `combatDistance` was unrounded too, and the day the engine took
-//   ToME's rounding this copy would have refused the Inspector every foe two
-//   diagonal steps away while the server let her shoot it. So the band now asks
+//   It was not: `sightDistance` (shared/sight.ts, since deleted) was the
+//   UNROUNDED length, and `core.fov.distance` rounds half-up. It matched the
+//   engine only because the engine's `combatDistance` was unrounded too, and
+//   the day the engine took ToME's rounding this copy would have refused the
+//   Inspector every foe two diagonal steps away while the server let her
+//   shoot it. So the band now asks
 //   `tileDistance` (shared/distance.ts) — the function `combatDistance` IS —
 //   by import, and test/tools/fightlib-band.test.ts holds `reachable` to the
 //   engine's own answer for Revolver Shot over every offset.

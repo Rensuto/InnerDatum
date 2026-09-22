@@ -10,7 +10,8 @@ import Fastify from 'fastify';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { actorsNamedBy, fogEvent } from '../../src/server/view/projector.ts';
-import { DEFAULT_SIGHT_RADIUS, sightDistance } from '../../src/shared/sight.ts';
+import { DEFAULT_SIGHT_RADIUS } from '../../src/shared/sight.ts';
+import { tileDistance } from '../../src/shared/distance.ts';
 import { createDownedState } from '../../src/server/engine/downed.ts';
 import { createPartyState } from '../../src/server/engine/party.ts';
 import { wsGateway } from '../../src/server/net/gateway.ts';
@@ -397,7 +398,7 @@ function darkButReachable(world: World, from: TileXY): TileXY {
     for (let x = 1; x < level.w - 1; x += 1) {
       if (!canWalk(level, x, y)) continue;
       if (world.actorAt(x, y) !== undefined) continue;
-      const d = sightDistance(from, { x, y });
+      const d = tileDistance(from, { x, y });
       // Beyond sight with a margin, and close enough to hunt. The NEAREST such
       // tile, so the walk is short and several of its steps fall in the dark.
       if (d <= DEFAULT_SIGHT_RADIUS + 2 || d > AGGRO * 0.5) continue;
@@ -457,7 +458,7 @@ describe('the sweep a viewer is sent', () => {
     // is the only position worth asserting on.
     const startedAt = { x: chaser.x, y: chaser.y };
     expect(
-      sightDistance(body, startedAt),
+      tileDistance(body, startedAt),
       'the hunter was placed inside sight — there is no dark walk to test',
     ).toBeGreaterThan(DEFAULT_SIGHT_RADIUS);
 
@@ -523,7 +524,7 @@ describe('the sweep a viewer is sent', () => {
       aggroRange: AGGRO,
     });
     const startedAt = { x: chaser.x, y: chaser.y };
-    expect(sightDistance(body, startedAt)).toBeGreaterThan(DEFAULT_SIGHT_RADIUS);
+    expect(tileDistance(body, startedAt)).toBeGreaterThan(DEFAULT_SIGHT_RADIUS);
 
     // Two turns only — long enough to act, short enough that it is still out
     // of sight when we look.
@@ -538,7 +539,7 @@ describe('the sweep a viewer is sent', () => {
       'the hunter never moved — nothing was withheld because nothing happened',
     ).toBeGreaterThan(0);
     expect(
-      now === undefined ? 0 : sightDistance(body, now),
+      now === undefined ? 0 : tileDistance(body, now),
       'it arrived already — shorten the walk or this proves nothing',
     ).toBeGreaterThan(DEFAULT_SIGHT_RADIUS);
 

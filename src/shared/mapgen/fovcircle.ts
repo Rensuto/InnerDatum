@@ -18,8 +18,10 @@
  * with nothing in the way, and that is arithmetic. Give `calc_circle` a block
  * function and it shadowcasts instead: libfov's "large actor recursive
  * shadowcasting", `FOV_ALGO_LARGE_ASS`, one octant at a time. ToME's balls,
- * lingering clouds and monster sight all come through it. Nothing called this
- * when it landed; `shared/ball.ts` lays every ball in the game through it now.
+ * lingering clouds and every field of view come through it. Nothing called
+ * this when it landed; `shared/ball.ts` lays every ball in the game through it
+ * now, and `shared/sight.ts` (`forEachInSight`) every monster's and player's
+ * sight and every light.
  *
  * ═══ THE CONFIGURATION: ToME's, AND ONLY ToME's ═══
  * `engine/Module.lua:915-918` sets these before any module code runs:

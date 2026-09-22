@@ -64,8 +64,9 @@ describe('tilesInSight — the torch, not the map', () => {
       // rather than a fact about a far-away tile.
       expect(x - at.x).toBeLessThanOrEqual(REVEAL_RADIUS);
     }
-    // The wall ITSELF is seen — you are looking straight at it. `hasLineOfSight`
-    // excludes endpoints precisely so a body cannot be blinded by what it faces.
+    // The wall ITSELF is seen — you are looking straight at it. The shadowcast
+    // applies a wall face it reaches (`calcCircle`), so a body is not blinded
+    // by what it faces.
     expect(seen.has('2,2'), 'the wall being looked at was not seen').toBe(true);
   });
 
@@ -75,10 +76,10 @@ describe('tilesInSight — the torch, not the map', () => {
     const seen = new Set(tilesInSight(level, at).map(key));
 
     expect(seen.has('15,15'), 'a body cannot see the tile it stands on').toBe(true);
-    // EUCLIDEAN, so the diagonal corner of the square is OUT while the cardinal
-    // edge at the same radius is IN. A chebyshev sweep passes the second and
-    // fails the first, which is the shape of the mistake `canSee` exists to
-    // prevent — see `sightDistance`.
+    // A CIRCLE (`calc_circle`, the rounded disc), so the diagonal corner of the
+    // square is OUT while the cardinal edge at the same radius is IN. A
+    // chebyshev sweep passes the second and fails the first, which is the shape
+    // of the mistake the circle exists to prevent — see `tilesInSight`.
     expect(seen.has(`${String(15 + DEFAULT_SIGHT_RADIUS)},15`)).toBe(true);
     expect(
       seen.has(`${String(15 + DEFAULT_SIGHT_RADIUS)},${String(15 + DEFAULT_SIGHT_RADIUS)}`),

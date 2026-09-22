@@ -20,7 +20,8 @@ import {
   projectWorld,
 } from '../../src/server/view/projector.ts';
 import { visibleActorIds } from '../../src/server/view/projector.ts';
-import { DEFAULT_SIGHT_RADIUS, knownTile, sightDistance } from '../../src/shared/sight.ts';
+import { DEFAULT_SIGHT_RADIUS, knownTile } from '../../src/shared/sight.ts';
+import { tileDistance } from '../../src/shared/distance.ts';
 import { computeSeen } from '../../src/shared/vision.ts';
 import { createDownedState } from '../../src/server/engine/downed.ts';
 import { createPartyState } from '../../src/server/engine/party.ts';
@@ -640,7 +641,7 @@ describe('a remembered floor, over the wire', () => {
     // memory can put the pile in the frame.
     body.x = Math.min(world.level.w - 2, walked.x + DEFAULT_SIGHT_RADIUS + 6);
     world.addGroundItem(walked, 'item_watchmans_cap');
-    expect(sightDistance(body, walked)).toBeGreaterThan(DEFAULT_SIGHT_RADIUS);
+    expect(tileDistance(body, walked)).toBeGreaterThan(DEFAULT_SIGHT_RADIUS);
 
     frames.length = 0;
     socket.send(JSON.stringify({ v: PROTOCOL_VERSION, t: 'hold' }));

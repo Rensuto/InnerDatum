@@ -106,7 +106,7 @@ import type {
 } from './net/gateway.ts';
 import { toDisplayName } from './view/projector.ts';
 import type { TurnState } from './view/projector.ts';
-import { sightDistance } from '../shared/sight.ts';
+import { euclidDistance } from '../shared/distance.ts';
 import { fogHas } from '../shared/fog.ts';
 import { visionOf } from './view/eyesight.ts';
 import { currentTile, orbOnMyLine } from './engine/projectile.ts';
@@ -1854,8 +1854,15 @@ function buildRestView(
      * diagonal 10 was interrupting rests here at a true distance of 14. The
      * seen set is that circle, the wall test and the light, and every
      * player-facing frame reads the same one.
+     *
+     * ═══ NEAREST IS A SORT, SO IT STAYS EXACT ═══
+     * The seen set decides WHETHER; this only ranks what is in it, and a rank
+     * is `euclidDistance`'s job (shared/distance.ts): under the rounded
+     * distance a husk at (2,1) and one at (2,0) tie at 2, and the scan order
+     * would name one. It was `sightDistance`, the same exact length under a
+     * name that stopped being true when sight moved to ToME's circle.
      */
-    const dist = sightDistance(self, other);
+    const dist = euclidDistance(self, other);
     if (dist >= best || !fogHas(seenNow, world.level.w, other.x, other.y)) continue;
     best = dist;
     threat = { name: toDisplayName(other.name), dx: other.x - self.x, dy: other.y - self.y };
@@ -1882,7 +1889,7 @@ function buildRestView(
     if (!orbOnMyLine(proj, self)) continue;
     // NEAREST WINS, shared with the actor pass above, so the sentence names
     // whichever thing is closest rather than whichever was scanned last.
-    const dist = sightDistance(self, at);
+    const dist = euclidDistance(self, at);
     if (dist >= best) continue;
     best = dist;
     // Upstream names the projectile (`proj:getName() or proj.name`); ours have

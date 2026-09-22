@@ -1138,8 +1138,9 @@ export function ignoreDirectCrits(c: Combatant): number {
  * ═══════════════════════════════════════════════════════════════════════════
  *
  * CLAMPED AT ONE, not at zero. A body that could see nothing at all would not
- * see the tile it is standing on, and `canSee` answers TRUE for distance 0 on
- * purpose — "a rule that hid you from yourself would be very confusing". A
+ * see the tile it is standing on, and sight always holds the eye's own tile on
+ * purpose (`calc_circle` applies its origin whatever blocks, and `canSee` says
+ * why) — "a rule that hid you from yourself would be very confusing". A
  * blinding effect that drove this negative should leave you groping at your own
  * feet, not erase the floor.
  *
@@ -1156,7 +1157,9 @@ export function sightRadiusOf(body: {
   // `Actor.lua:6772` is a flat `if self:attr("blind") then return false, 0`,
   // above the concealment and invisibility arms. The floor rather than 0 is the
   // deviation this function's own note argued for in advance, and it is one tile
-  // wide: at radius 1 the Euclidean test admits the four orthogonal neighbours.
+  // wide: at radius 1 the shadowcast is the whole in-bounds 3x3, whatever blocks
+  // (shared/mapgen/fovcircle.ts). Under the exact Euclidean test sight was, it
+  // admitted only the four orthogonal neighbours.
   if (body.combat?.flags?.blind === true) return 1;
   return Math.max(1, DEFAULT_SIGHT_RADIUS + (body.combat?.mods?.sight ?? 0));
 }

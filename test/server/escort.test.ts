@@ -39,6 +39,8 @@ import { Faction, HOLD_INTENT } from '../../src/server/engine/actor.ts';
 import { ActorKind } from '../../src/shared/protocol.ts';
 import { COMPANION_LEASH, FOLLOW_LEASH } from '../../src/server/ai/npc.ts';
 import { chebyshev } from '../../src/shared/coords.ts';
+import { tileDistance } from '../../src/shared/distance.ts';
+import { DEFAULT_SIGHT_RADIUS } from '../../src/shared/sight.ts';
 import { liteRadiusOf } from '../../src/server/engine/derived.ts';
 import { visibleActorIds } from '../../src/server/view/projector.ts';
 import { TileCode } from '../../src/shared/protocol.ts';
@@ -335,11 +337,17 @@ describe('the body an escort stands up', () => {
    * `item_brass_lantern`) written onto the sheet.
    *
    * IT IS NOT DECORATION AND THE MEASUREMENT IS THE POINT: `FOLLOW_LEASH` is
-   * chebyshev and a detective's lantern is EUCLIDEAN, so a companion holding
-   * station diagonally behind you sits at 2.24 — outside the light, on every
-   * turn, in a dark delve. Rendered through the real client before this line
-   * existed, her tile was black for an entire eight-turn walk and the board
-   * dropped and re-acquired her six times on one floor.
+   * chebyshev and a detective's lantern is ToME's radius-2 circle, so a
+   * companion holding station on the diagonal behind you, (2,2), rounds to 3:
+   * outside the light, in a dark delve. Rendered through the real client
+   * before this line existed, her tile was black for an entire eight-turn walk
+   * and the board dropped and re-acquired her six times on one floor.
+   *
+   * ═══ AND THE CASE THIS PINNED MOVED WITH SIGHT ═══
+   * It stood her at (2,1), 2.24 long, outside the lantern when the lantern was
+   * the exact disc. ToME's circle rounds that to 2 and holds it: the lantern's
+   * shadowcast (shared/vision.ts, pass 2) lights her tile with no help from
+   * hers. So the case is (2,2) now, and (2,1) is pinned as the eye's own.
    *
    * MUTANT: drop `lite` from the sheet's `mods`. Nothing fails but the party
    * cannot see the one body they were asked to keep alive.
@@ -351,20 +359,30 @@ describe('the body an escort stands up', () => {
 
     // ═══ AND THE DRIVE, BECAUSE THE NUMBER ALONE PROVES NOTHING ═══
     // A dark floor, a detective carrying the ordinary brass lantern, and the
-    // companion holding station at exactly the distance `followStep` stops at:
-    // two back and one across. That is `FOLLOW_LEASH` by the rule she follows
-    // and 2.24 by the rule light is measured in, and the gap between those two
-    // metrics is the whole bug.
+    // companion holding station at the far corner of what `followStep` allows:
+    // two back and two across. That is `FOLLOW_LEASH` by the rule she follows
+    // and 3 by the rule light is measured in (`tileDistance`, 2.83 rounded),
+    // and the gap between those two metrics is the whole bug.
     const dark = createWorld('escort-lantern-dark', undefined, '', { litRoomChance: 0 });
     dark.level.tiles.fill(TileCode.FLOOR);
     const eye = { x: 8, y: 8, combat: { mods: { lite: 2 } } };
-    const at = { x: eye.x + FOLLOW_LEASH, y: eye.y + 1 };
-    expect(Math.hypot(at.x - eye.x, at.y - eye.y), 'not the diagonal case').toBeGreaterThan(2);
+    const at = { x: eye.x + FOLLOW_LEASH, y: eye.y + FOLLOW_LEASH };
+    expect(chebyshev(eye, at), 'not where she may stand').toBe(FOLLOW_LEASH);
+    expect(tileDistance(eye, at), 'inside the lantern after all').toBeGreaterThan(2);
 
     const held = companionAt(dark, 'companion', at, 'p1');
     expect(visibleActorIds(dark, [eye]).has('companion'), 'no light of her own').toBe(false);
     held.combat = { ...held.combat, mods: { ...held.combat?.mods, lite: liteRadiusOf(walker) } };
     expect(visibleActorIds(dark, [eye]).has('companion'), 'her own lantern').toBe(true);
+
+    // (2,1), the case this used to pin: the detective's circle holds it, so
+    // she is seen there without a light of her own.
+    const knight = createWorld('escort-lantern-knight', undefined, '', { litRoomChance: 0 });
+    knight.level.tiles.fill(TileCode.FLOOR);
+    const beside = { x: eye.x + FOLLOW_LEASH, y: eye.y + 1 };
+    expect(Math.hypot(beside.x - eye.x, beside.y - eye.y), 'not the old case').toBeGreaterThan(2);
+    companionAt(knight, 'companion', beside, 'p1');
+    expect(visibleActorIds(knight, [eye]).has('companion'), 'the lantern`s own circle').toBe(true);
   });
 
   /**
@@ -847,6 +865,39 @@ describe('walking somebody to where they asked to go', () => {
     watcher.alive = true;
     expect(noteBriefProgress(realm)).toBe(brief);
     expect(brief.state).toBe(BriefState.Closed);
+  });
+
+  /**
+   * "IN SIGHT OF IT" IS THE SIGHT RADIUS BY ToME's DISTANCE: `tileDistance <=
+   * DEFAULT_SIGHT_RADIUS`, the rounded disc sight is. (10,2) from the door is
+   * 10.2 long and rounds to 10, so a party member there saw her arrive; it was
+   * the exact length, which refused it. (11,0) is 11 either way.
+   *
+   * MUTANT: measure with `Math.hypot` again. The (10,2) case stays open.
+   */
+  it('closes with somebody at (10,2) from the door, and not at (11,0)', () => {
+    for (const [dx, dy, closes] of [
+      [10, 2, true],
+      [11, 0, false],
+    ] as const) {
+      const { realm, brief } = taken([WALK_OUT], `escort-rim-${String(dx)}`);
+      if (brief.target.k !== BriefKind.Escort) throw new Error('not an escort');
+      const at = brief.target.at;
+      stand(bodyOf(realm, brief.companionId), at);
+      // Whichever side of the door the floor has room on; the rule reads a
+      // distance and nothing else, so the tile need not be open ground.
+      const sx = at.x + dx < realm.world.level.w ? 1 : -1;
+      const sy = at.y + dy < realm.world.level.h ? 1 : -1;
+      const watcher = { x: at.x + sx * dx, y: at.y + sy * dy };
+      stand(playerOf(realm.world, 'p1'), watcher);
+      expect(tileDistance(watcher, at)).toBe(dx === 10 ? 10 : 11);
+      expect(Math.hypot(watcher.x - at.x, watcher.y - at.y)).toBeGreaterThan(DEFAULT_SIGHT_RADIUS);
+
+      noteBriefProgress(realm);
+      expect(brief.state, `(${String(dx)},${String(dy)})`).toBe(
+        closes ? BriefState.Closed : BriefState.Open,
+      );
+    }
   });
 
   it('does not close with nobody in sight of it', () => {

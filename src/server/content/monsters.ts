@@ -4208,11 +4208,13 @@ export const STRANDED_HAND: MonsterTemplate = Object.freeze({
      *
      * ═══ MEASURED, AND IT IS THE DIFFERENCE BETWEEN A COMPANION AND A RUMOUR ═══
      * `ai/npc.ts#FOLLOW_LEASH` is 2 CHEBYSHEV and a detective's own lantern is
-     * 2 EUCLIDEAN, so a companion holding station diagonally behind you sits at
-     * 2.24 to 2.83 — outside the light on every turn of an eight-turn walk
-     * through a dark delve. Rendered through the real client: her tile stayed
-     * black, the board dropped and re-acquired her six times on one floor, and
-     * her fight narrated as *"Something hits Index Husk."*
+     * ToME's radius-2 circle, so a companion holding station on the diagonal
+     * behind you, (2,2), rounds to 3 — outside the light. When the lantern WAS
+     * the exact disc, (2,1) at 2.24 fell outside it too, on every turn of an
+     * eight-turn walk through a dark delve. Rendered through the real client
+     * then: her tile stayed black, the board dropped and re-acquired her six
+     * times on one floor, and her fight narrated as *"Something hits Index
+     * Husk."* The circle took (2,1) back; (2,2) still needs this.
      *
      * ═══ WHY THIS AND NOT AN UN-FOG EXEMPTION ═══
      * `view/projector.ts` exempts party PLAYERS from fog and nothing else, and

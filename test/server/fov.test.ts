@@ -11,12 +11,8 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import Fastify from 'fastify';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import {
-  DEFAULT_SIGHT_RADIUS,
-  MINIMAP_REVEAL_RADIUS,
-  canSee,
-  sightDistance,
-} from '../../src/shared/sight.ts';
+import { DEFAULT_SIGHT_RADIUS, MINIMAP_REVEAL_RADIUS, canSee } from '../../src/shared/sight.ts';
+import { euclidDistance, tileDistance } from '../../src/shared/distance.ts';
 import { REVEAL_RADIUS, fogBytes, fogFromBase64, fogHas } from '../../src/shared/fog.ts';
 import { projectActors, visibleActorIds } from '../../src/server/view/projector.ts';
 import { createWorld } from '../../src/server/world/world.ts';
@@ -121,14 +117,14 @@ describe('the sight rule', () => {
 
   it('measures a circle, not a king`s walk', () => {
     /**
-     * `core.fov.distance` is Euclidean. This codebase uses `chebyshev` for
-     * REACH, and using it here would make the diagonal corner of a square
-     * visible while the cardinal edge just past the radius was not — the wrong
-     * shape for a torch.
+     * Sight is `calc_circle`, the disc of `core.fov.distance`, the straight
+     * line rounded. `chebyshev` is the step count, and using it here would
+     * make the diagonal corner of a square visible while the cardinal edge
+     * just past the radius was not — the wrong shape for a torch.
      *
      * (9,9) is the discriminating tile at radius 10: its king-move distance from
-     * (1,1) is 8 and would be IN, its true distance is 11.3 and is OUT. A
-     * mutation to `chebyshev` fails here and nowhere else.
+     * (1,1) is 8 and would be IN, its distance is 11.3, rounded 11, and is OUT.
+     * A mutation to `chebyshev` fails here and nowhere else.
      */
     const world = field();
     expect(canSee(world.level, { x: 1, y: 1 }, { x: 9, y: 9 })).toBe(false);
@@ -484,8 +480,9 @@ function farPair(
  * `farPair` answers "far enough", which is the right question for a sight test
  * and the wrong one for a RADIUS test: a beacon case has to put one body inside
  * the reveal radius and one outside it, and "somewhere past 14" could land both
- * on the same side. This bands the distance to `[dist, dist + 1)` — the same
- * Euclidean `sightDistance` the server measures with, never a king's walk.
+ * on the same side. This bands the distance to `(dist - 1, dist]` — the same
+ * rounded `tileDistance` the server measures the reveal radius with, never a
+ * king's walk. It was the exact length while the server's was.
  *
  * THE BAND IS `(dist - 1, dist]`, WHICH IS THE HALF THAT MATTERS. A tile "at
  * least 20 away" can be 20.4 away, and a case built on one cannot tell `<= 20`
@@ -501,14 +498,16 @@ function ringTile(
   from: { x: number; y: number },
   dist: number,
   avoid: readonly { x: number; y: number }[] = [],
+  /** A further condition the tile must meet — a case that needs one side of the rim. */
+  accept: (tile: { x: number; y: number }) => boolean = () => true,
 ): { x: number; y: number } {
   const level = world.level;
   for (let y = 1; y < level.h - 1; y += 1) {
     for (let x = 1; x < level.w - 1; x += 1) {
       if (!canWalk(level, x, y) || world.actorAt(x, y) !== undefined) continue;
       if (avoid.some((t) => t.x === x && t.y === y)) continue;
-      const d = sightDistance(from, { x, y });
-      if (d > dist - 1 && d <= dist) return { x, y };
+      const d = tileDistance(from, { x, y });
+      if (d > dist - 1 && d <= dist && accept({ x, y })) return { x, y };
     }
   }
   throw new Error(`no free tile at distance ${String(dist)}`);
@@ -749,17 +748,26 @@ describe('a monster walking into and out of sight', () => {
     // `ringTile` lands AT OR JUST UNDER the distance asked for, so `edge` is
     // inside the radius and `beyond` is the first step outside it. A "far away"
     // body would pass whatever the comparison was; these two do not.
-    const edge = ringTile(world, body, MINIMAP_REVEAL_RADIUS, [near, alsoNear]);
+    // AND ON THE BAND THE ROUNDING ADDED: 20 by `tileDistance`, past 20 on the
+    // exact length the radius was measured in until sight moved to ToME's
+    // circle. A reveal radius put back on the exact length drops this mark.
+    const edge = ringTile(
+      world,
+      body,
+      MINIMAP_REVEAL_RADIUS,
+      [near, alsoNear],
+      (t) => euclidDistance(body, t) > MINIMAP_REVEAL_RADIUS,
+    );
     const beyond = ringTile(world, body, MINIMAP_REVEAL_RADIUS + 1, [near, alsoNear, edge]);
     // THE FIXTURE MUST BE ABLE TO FAIL: a mark inside sight would prove nothing,
     // and a "far" body inside the radius would prove the opposite of the rule.
     for (const tile of [near, alsoNear, edge, beyond]) {
       expect(canSee(world.level, body, tile), 'the fixture put a beacon inside sight').toBe(false);
     }
-    expect(sightDistance(body, edge), 'the edge tile is outside the radius').toBeLessThanOrEqual(
+    expect(tileDistance(body, edge), 'the edge tile is outside the radius').toBeLessThanOrEqual(
       MINIMAP_REVEAL_RADIUS,
     );
-    expect(sightDistance(body, beyond), 'the far tile is inside the radius').toBeGreaterThan(
+    expect(tileDistance(body, beyond), 'the far tile is inside the radius').toBeGreaterThan(
       MINIMAP_REVEAL_RADIUS,
     );
 
@@ -1535,7 +1543,7 @@ describe('a monster walking into and out of sight', () => {
     other.x = stand.x;
     other.y = stand.y;
     expect(canSee(world.level, me, stand), 'the fixture put the stranger in sight').toBe(false);
-    expect(sightDistance(me, stand)).toBeLessThanOrEqual(MINIMAP_REVEAL_RADIUS);
+    expect(tileDistance(me, stand)).toBeLessThanOrEqual(MINIMAP_REVEAL_RADIUS);
     const cell = `${String(stand.x)},${String(stand.y)}`;
 
     mine.send({ t: 'hold' });
@@ -1904,7 +1912,7 @@ describe('a monster walking into and out of sight', () => {
     for (let dy = -6; dy <= 6 && waiting === undefined; dy += 1) {
       for (let dx = -6; dx <= 6; dx += 1) {
         const at = { x: away.x + dx, y: away.y + dy };
-        const d = sightDistance(away, at);
+        const d = tileDistance(away, at);
         if (d < 3 || d > 6) continue;
         if (!canWalk(world.level, at.x, at.y) || world.actorAt(at.x, at.y) !== undefined) continue;
         if (!canSee(world.level, away, at)) continue;

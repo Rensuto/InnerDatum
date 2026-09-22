@@ -42,7 +42,8 @@
 
 import { chebyshev } from '../../shared/coords.ts';
 import { REDACTION_SITE_ID, canWalk } from '../../shared/level.ts';
-import { DEFAULT_SIGHT_RADIUS, hasLineOfSight, sightDistance } from '../../shared/sight.ts';
+import { tileDistance } from '../../shared/distance.ts';
+import { DEFAULT_SIGHT_RADIUS, fieldOfView } from '../../shared/sight.ts';
 import { ActorKind, isHaunt } from '../../shared/protocol.ts';
 import {
   INDEX_CAIRN,
@@ -479,7 +480,11 @@ function stepRoamer(realm: Realm, roamer: Roamer): boolean {
     // ─── GIVE UP. `ai/simple.lua:209-211`. ───
     if (roamer.unseen > GIVE_UP_STEPS) return goHome(roamer);
     // ─── THE LEASH. `Party.lua:69`, and it snaps rather than binds. ───
-    if (sightDistance(roamer, { x: roamer.homeX, y: roamer.homeY }) >= LEASH) {
+    // ROUNDED, AND `>` LIKE THE DRIFT BELOW, which is the pair's whole point:
+    // the two WERE the exact length with `>=` here and `>` there, so the drift
+    // could carry a roamer to exactly 10 and the next chase step snapped it
+    // home from where it was allowed to stand. One distance, one comparison.
+    if (tileDistance(roamer, { x: roamer.homeX, y: roamer.homeY }) > LEASH) {
       return goHome(roamer);
     }
     // ─── CHASE, to where it last SAW them (`ai/simple.lua:28-35`). ───
@@ -493,7 +498,7 @@ function stepRoamer(realm: Realm, roamer: Roamer): boolean {
   if (step === undefined) return false;
   const nx = roamer.x + step[0];
   const ny = roamer.y + step[1];
-  if (sightDistance({ x: nx, y: ny }, { x: roamer.homeX, y: roamer.homeY }) > LEASH) return false;
+  if (tileDistance({ x: nx, y: ny }, { x: roamer.homeX, y: roamer.homeY }) > LEASH) return false;
   return placeRoamer(realm, roamer, nx, ny);
 }
 
@@ -510,34 +515,44 @@ function goHome(roamer: Roamer): boolean {
 /**
  * The nearest player this roamer can actually see.
  *
- * BOTH TERMS, exactly as `projectActors` applies them (`engine/Actor.lua:520`): the
- * Euclidean radius AND line of sight. A creature that "noticed" you through a
- * mountain would be the overworld's version of the bug per-player FOV exists to
- * prevent, and the same two functions answer it here as answer it there.
+ * SEEN IS ToME's FIELD OF VIEW FROM THE ROAMER'S TILE, `fieldOfView` out to
+ * `AGGRO`: `target_simple` (`ai/simple.lua:251-266`) picks out of
+ * `self.fov.actors_dist`, which the creature's own `computeFOV` fills
+ * (tome/class/NPC.lua:99-105), the shadowcast every player's sight is too. It
+ * WAS the exact radius and one Bresenham line, what `projectActors` asked
+ * while a player's sight was that; increment 7 left this on it on purpose so
+ * the two moved together, and they have. A creature that "noticed" you through
+ * a mountain would be the overworld's version of the bug per-player FOV exists
+ * to prevent.
+ *
+ * NOT SYMMETRIC, AND UPSTREAM IS NOT EITHER. The shadowcast is from the
+ * roamer's tile and your view of it is from yours; at a wall's edge one can
+ * reach the other's tile and not the reverse. The Bresenham test was symmetric
+ * by construction. ToME's player and monster each compute their own.
+ *
+ * NEAREST IS `tileDistance`, THEN THE ID: `fov.actors_dist` is sorted on the
+ * ROUNDED distance squared (engine/interface/ActorFOV.lua:86, the note on
+ * `visibleEnemies` in engine/scheduler.ts), and the id is the same total order
+ * that note gives ties. It was the exact length with the first player scanned
+ * winning a tie.
  *
  * ONLY LIVING PLAYERS. A downed body is `alive === false` (engine/downed.ts) and
  * is not something to walk towards; upstream's `target_simple` skips `act.dead`
  * for the same reason.
- *
- * ═══ STILL ON THE BRESENHAM LINE, AND THAT IS ON PURPOSE FOR NOW ═══
- * Monster sight on a level is ToME's shadowcast (`fieldOfView`, shared/sight.ts,
- * asked by `visibleEnemies` in engine/scheduler.ts). This is not a monster on a
- * level: it is an overworld marker, and it asks what `projectActors` asks, so
- * increment 7, which moved monster sight, left it out on purpose. It moves to
- * the shadowcast with player sight in increment 8, when `projectActors` does,
- * so the two stay one answer.
  */
 function nearestSeen(
   realm: Realm,
   roamer: Roamer,
 ): { readonly id: string; readonly x: number; readonly y: number } | undefined {
+  // Lazy: a roamer with no player inside its disc pays for no circle.
+  const sees = fieldOfView(realm.world.level, roamer, AGGRO);
   let best: { id: string; x: number; y: number } | undefined;
   let bestAt = Infinity;
   for (const actor of realm.world.allActors()) {
     if (actor.kind !== ActorKind.Player || !actor.alive) continue;
-    const away = sightDistance(roamer, actor);
-    if (away > AGGRO || away >= bestAt) continue;
-    if (!hasLineOfSight(realm.world.level, roamer, actor)) continue;
+    const away = tileDistance(roamer, actor);
+    if (away > bestAt || (away === bestAt && best !== undefined && actor.id >= best.id)) continue;
+    if (!sees(actor)) continue;
     best = { id: actor.id, x: actor.x, y: actor.y };
     bestAt = away;
   }

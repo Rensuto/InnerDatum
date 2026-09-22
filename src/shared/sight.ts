@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Dalton Barraclough
 // Ported from t-engine4 game/modules/tome/class/Actor.lua:178 (`t.sight = t.sight or 10`)
-//                       game/engines/default/engine/Actor.lua:520 (canSee: distance AND line)
+//                       game/engines/default/engine/Actor.lua:520 (canSee; ours is the shadowcast)
 //                       game/engines/default/engine/interface/ActorFOV.lua:49-130 (computeFOV)
 //                       game/modules/tome/class/NPC.lua:99-105 (doFOV: `block_sight`)
+//                       game/modules/tome/class/Player.lua:646-663 (playerFOV's three passes)
+//                       game/modules/tome/class/Player.lua:709-714 (lineFOV: `distance <= self.sight`)
 // T-Engine4 (C) 2009-2018 Nicolas Casalini "DarkGod" -- https://te4.org/license
 
 /**
@@ -45,17 +47,28 @@
  * this file imports `hasLineOfSight` from there and the reverse would be a
  * cycle.
  *
- * ═══ EUCLIDEAN, BECAUSE `core.fov.distance` IS ═══
- * Not `chebyshev`, which this codebase uses for REACH — a weapon's range is a
- * king-move count and sight is a circle. Using the movement metric would make
- * the diagonal corners of a square visible at 20 while the cardinal edge at 21
- * was not, which is the wrong shape for a torch.
+ * ═══ A CIRCLE, BECAUSE `calc_circle` IS ═══
+ * Not `chebyshev`, the step count: using the movement metric would make the
+ * diagonal corners of a square visible at 20 while the cardinal edge at 21 was
+ * not, which is the wrong shape for a torch.
+ *
+ * AND NOT THE EXACT EUCLIDEAN DISC PLUS A LINE, WHICH IS WHAT PLAYER SIGHT WAS.
+ * Every one of `playerFOV`'s passes (tome/class/Player.lua:646-663) is a
+ * `computeFOV`, and `computeFOV` is `core.fov.calc_circle` or its cached twin
+ * (engine/interface/ActorFOV.lua:49-130): libfov's shadowcast over ToME's
+ * ROUNDED disc (`tileDistance <= r`, the r^2 + r disc), from the whole tile.
+ * Player sight measured `sqrt(dx^2 + dy^2) <= r` and then walked one Bresenham
+ * line per tile. The disc lost 32 rim tiles at r = 10, and the line and the
+ * shadowcast disagree both ways at a wall (`fieldOfView`). Monster sight moved
+ * first; `tilesInSight` below is the same machine now, so a player and a
+ * monster see by one geometry.
  */
 import { blocksSightAt } from './level.ts';
 import { bresenham } from './coords.ts';
 import { tileDistance } from './distance.ts';
 import { fogHas } from './fog.ts';
 import { calcCircle } from './mapgen/fovcircle.ts';
+import type { CircleApply } from './mapgen/fovcircle.ts';
 import type { LevelView } from './protocol.ts';
 import type { TileXY } from './coords.ts';
 
@@ -133,14 +146,17 @@ export const MINIMAP_REVEAL_RADIUS = DEFAULT_SIGHT_RADIUS * 2;
  * end
  * ```
  *
- * The table is indexed by SQUARED distance and immediately takes its square
- * root, so the rule is `max((20 - d) / 17, 0.6)` on the true Euclidean
- * distance — Euclidean for the reason this whole file is: `core.fov.distance`
- * is, and a torch is a circle.
+ * The table is indexed by a SQUARED distance and immediately takes its square
+ * root. `playerFOV` spends it at `game.level.map:apply(x, y, fovdist[sqdist])`
+ * (tome/class/Player.lua:648-649), the SIGHT pass, and the `sqdist` the C hands
+ * that callback is the ROUNDED distance squared (`map_default_seen` and
+ * `map_seen` in src/fov.c, git only: `dist` is `core.fov.distance`, then
+ * `sqdist = dist*dist`). So the square root gives back a whole number and the
+ * rule is `max((20 - d) / 17, 0.6)` on `tileDistance`, in steps. This said
+ * "the true Euclidean distance"; it never was (`sightBrightness`).
  *
- * `playerFOV` spends it at `game.level.map:apply(x, y, fovdist[sqdist])`, which
- * is the SIGHT pass: everything you can see right now is dimmed by how far away
- * it is. Full brightness holds out to three tiles, then falls linearly to the
+ * Everything you can see right now is dimmed by how far away it is. Full
+ * brightness holds out to three tiles, then falls a seventeenth a tile to the
  * 0.6 floor, which it reaches at ten — exactly `DEFAULT_SIGHT_RADIUS`. That
  * coincidence is not one: the curve was fitted to the sight radius, so the
  * dimmest thing you can see is always 0.6 and never darker.
@@ -158,6 +174,20 @@ export function fovBrightness(distance: number): number {
 
 /** `math.max(..., 0.6)` — the dimmest a tile you can SEE ever draws. */
 export const FOV_BRIGHTNESS_FLOOR = 0.6;
+
+/**
+ * HOW BRIGHT `at` DRAWS FOR AN EYE AT `eye`: `fovBrightness` at ToME's ROUNDED
+ * distance, `fovdist[sqdist]` with the C's `sqdist` (the note above).
+ *
+ * It was `fovBrightness` of the exact length, which is off by a fraction of a
+ * step on nearly every tile: (3,2) is 3.61, a 0.964 wash, where ToME rounds to
+ * 4 and draws 16/17. The painter asks this and nothing else
+ * (`client/render/canvas.ts` `paintLight`), so the curve and its key are one
+ * function a test can reach.
+ */
+export function sightBrightness(eye: TileXY, at: TileXY): number {
+  return fovBrightness(tileDistance(eye, at));
+}
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════
@@ -243,34 +273,29 @@ export function playerLineClear(
     const tile = line[i];
     if (tile === undefined) continue;
     if (!seen(tile.x, tile.y) && !remembered(tile.x, tile.y)) return false;
-    if (blocksSightAt(level, tile.x, tile.y) || sightDistance(from, tile) > sightRadius)
+    // "WITHIN SIGHT" IS `core.fov.distance(sx, sy, x, y) <= self.sight`
+    // (tome/class/Player.lua:709), the ROUNDED distance. It was the exact
+    // length, which refused a remembered tile on the rim ToME's circle holds.
+    if (blocksSightAt(level, tile.x, tile.y) || tileDistance(from, tile) > sightRadius)
       return false;
   }
   return true;
 }
 
 /**
- * The straight line between two tiles, in tiles, UNROUNDED. This said it was
- * `core.fov.distance`, and it is not: that rounds half-up (`tileDistance`,
- * shared/distance.ts), and every range and radius in the game now asks it.
- * Sight keeps this length until sight itself is ported onto ToME's circle.
- */
-export function sightDistance(from: TileXY, to: TileXY): number {
-  const dx = to.x - from.x;
-  const dy = to.y - from.y;
-  return Math.sqrt(dx * dx + dy * dy);
-}
-
-/**
- * CAN `from` SEE `to`? Range first, then the wall test.
+ * CAN `from` SEE `to` at `radius`? One question put to the field of view.
  *
- * RANGE FIRST BECAUSE IT IS CHEAP. `hasLineOfSight` walks a bresenham line and
- * is the expensive half; a body across the map fails on arithmetic and never
- * pays for it. `projectActors` runs this once per actor per viewer per frame.
+ * It WAS its own rule: the exact length against `radius`, then a Bresenham
+ * line. Sight is the shadowcast now (`tilesInSight`), and a point question
+ * answered by a second geometry is the second visibility rule this file exists
+ * to prevent, so this asks `fieldOfView`, whose disc pre-check keeps the old
+ * range-first shape: a tile past the rounded radius is refused on arithmetic.
  *
- * A BODY ON ITS OWN TILE SEES ITSELF — distance 0, and `hasLineOfSight` returns
- * true for a line of length one. Stated because the viewer is always in the set
- * this filters, and a rule that hid you from yourself would be very confusing.
+ * A BODY ON ITS OWN TILE SEES ITSELF: `calc_circle` applies its origin last,
+ * whatever blocks. Stated because the viewer is always in the set this
+ * filters, and a rule that hid you from yourself would be very confusing.
+ *
+ * No production caller asks one tile at a time any more; the tests do.
  */
 export function canSee(
   level: LevelView,
@@ -278,8 +303,39 @@ export function canSee(
   to: TileXY,
   radius: number = DEFAULT_SIGHT_RADIUS,
 ): boolean {
-  if (sightDistance(from, to) > radius) return false;
-  return hasLineOfSight(level, from, to);
+  return fieldOfView(level, from, radius)(to);
+}
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE CELLS AN EYE REACHES — `computeFOV(radius, "block_sight", apply)`.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `calc_circle` from `eye` with `blocksSightAt` as the wall: `visit` is called
+ * for every ON-MAP cell reached, the eye's own last (`calcCircle`). This is
+ * the one place player sight, monster sight and every light pass lay their
+ * cells, so none of them can disagree about a tile.
+ *
+ * `radius` truncates as the C's `int` does, and a radius at or below zero is
+ * the eye's own cell alone. `visit` gets the C's `(x, y, dx, dy, sqdist)`.
+ */
+export function forEachInSight(
+  level: LevelView,
+  eye: TileXY,
+  radius: number,
+  visit: CircleApply,
+): void {
+  calcCircle(level, eye.x, eye.y, radius, (x, y) => blocksSightAt(level, x, y), visit);
+}
+
+/** `forEachInSight` into the `(2r+1)`-square round the eye, row by row. */
+function sightGrid(level: LevelView, eye: TileXY, r: number): Uint8Array {
+  const side = 2 * r + 1;
+  const grid = new Uint8Array(side * side);
+  forEachInSight(level, eye, r, (_x, _y, dx, dy) => {
+    grid[(dy + r) * side + (dx + r)] = 1;
+  });
+  return grid;
 }
 
 /**
@@ -290,15 +346,23 @@ export function canSee(
  * Upstream's `self:computeFOV(self.sight or 10, "block_sight", ...)` calls back
  * once per visible grid and the callback writes `seens`. This returns the grids
  * instead, because the caller decides what to do with them and we have no
- * engine-owned map to write into.
+ * engine-owned map to write into. On-map only, each once, ROW-MAJOR (dy outer,
+ * dx inner), which is the order this always returned.
  *
- * ═══ A SQUARE LOOP AND A CIRCULAR TEST, WHICH IS `canSee`'S OWN SHAPE ═══
- * The loop walks a square and `canSee` rejects the corners on arithmetic before
- * it ever draws a line, so the cost is a bresenham per tile actually inside the
- * circle. There is no cheaper shape that keeps ONE visibility rule in the
- * codebase, and a second rule is what this function exists to avoid: a viewer
- * that remembered tiles by a different test than `projectActors` filters bodies
- * by would draw a monster the server sent standing on ground it had hidden.
+ * ═══ THE SHADOWCAST, WHERE IT WAS A SQUARE LOOP AND A LINE PER TILE ═══
+ * It walked the square, refused a tile past the EXACT radius on arithmetic and
+ * traced one Bresenham line to each of the rest. That was `canSee` in a loop.
+ * It is `calc_circle` now (`forEachInSight`), the geometry of every pass
+ * `playerFOV` makes (tome/class/Player.lua:646-663): the rounded disc, 32 more
+ * rim tiles at a radius of 10, less what the large-actor shadowcast hides,
+ * which differs from the line both ways at a wall (`fieldOfView`).
+ *
+ * ONE VISIBILITY RULE STILL: `forEachInSight` is the only geometry. Player
+ * sight reaches it through `computeVision` (shared/vision.ts), monster sight
+ * through `fieldOfView`; `tilesInSight` and `canSee` are the same machine kept
+ * for tests. A viewer that remembered tiles by a different test than
+ * `projectActors` filters bodies by would draw a monster the server sent
+ * standing on ground it had hidden.
  *
  * PURE, AND THE REASON IS A TEST. Kept here rather than in the client closure
  * that calls it because `main.ts` is unreachable from `test/` — a rule living
@@ -309,14 +373,13 @@ export function tilesInSight(
   at: TileXY,
   radius: number = DEFAULT_SIGHT_RADIUS,
 ): readonly TileXY[] {
+  const r = Math.max(Math.trunc(radius), 0);
+  const side = 2 * r + 1;
+  const grid = sightGrid(level, at, r);
   const out: TileXY[] = [];
-  for (let dy = -radius; dy <= radius; dy += 1) {
-    for (let dx = -radius; dx <= radius; dx += 1) {
-      const x = at.x + dx;
-      const y = at.y + dy;
-      if (x < 0 || y < 0 || x >= level.w || y >= level.h) continue;
-      if (!canSee(level, at, { x, y }, radius)) continue;
-      out.push({ x, y });
+  for (let dy = -r; dy <= r; dy += 1) {
+    for (let dx = -r; dx <= r; dx += 1) {
+      if (grid[(dy + r) * side + (dx + r)] === 1) out.push({ x: at.x + dx, y: at.y + dy });
     }
   }
   return out;
@@ -357,8 +420,9 @@ export function tilesInSight(
  * The shadowcast runs on the first question whose tile is inside the disc, and
  * once. A question outside it is answered on arithmetic, because `calcCircle`
  * applies nothing past `tileDistance > radius` (`circleHeight`). A monster with
- * nobody near it pays for no circle at all, which is `canSee`'s range-first
- * shape above, and why this is cheap enough to run per monster per turn.
+ * nobody near it pays for no circle at all, which is the range-first shape
+ * `canSee` had when it was a line, and why this is cheap enough to run per
+ * monster per turn.
  *
  * IT IS ALSO WHAT KEEPS THE GRID INDEX HONEST, so it is not only a shortcut.
  * The grid is the `(2r+1)`-square round the eye, flattened row by row, and an
@@ -368,6 +432,9 @@ export function tilesInSight(
  * square, so the pre-check is the bounds check too. Take it out and an eye
  * "sees" a body one tile past its radius whenever it can see the cell the
  * index wraps onto.
+ *
+ * A PLAYER'S SIGHT IS THE SAME CELLS. `tilesInSight` lays them through the
+ * same `forEachInSight`, and `canSee` is this function asked once.
  *
  * PURE. The returned test holds a snapshot: a door opened after the first
  * question is not seen through by this one. Ask again for a fresh view.
@@ -382,20 +449,7 @@ export function fieldOfView(
   let seen: Uint8Array | undefined;
   return (to) => {
     if (tileDistance(eye, to) > r) return false;
-    if (seen === undefined) {
-      const grid = new Uint8Array(side * side);
-      calcCircle(
-        level,
-        eye.x,
-        eye.y,
-        r,
-        (x, y) => blocksSightAt(level, x, y),
-        (_x, _y, dx, dy) => {
-          grid[(dy + r) * side + (dx + r)] = 1;
-        },
-      );
-      seen = grid;
-    }
+    seen ??= sightGrid(level, eye, r);
     return seen[(to.y - eye.y + r) * side + (to.x - eye.x + r)] === 1;
   };
 }

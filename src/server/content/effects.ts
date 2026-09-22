@@ -1284,9 +1284,11 @@ export const CONFUSED: EffectDef = Object.freeze({
  * ═══════════════════════════════════════════════════════════════════════════
  * OURS IS `mods.sight`, AND THE FLOOR IT LANDS ON WAS WRITTEN FOR THIS
  * ═══════════════════════════════════════════════════════════════════════════
- * We have no `attr` table and no `canSee` that takes an actor — ours is
- * `canSee(level, from, to, radius)` in `shared/sight.ts`, terrain-only and
- * shared by the projector, the AI and the renderer. The radius is where a body
+ * We have no `attr` table and no `canSee` that takes an actor — ours is the
+ * field of view in `shared/sight.ts` (`forEachInSight`, libfov's shadowcast),
+ * terrain-only: players read it through `visionOf` (the projector), monsters
+ * through `fieldOfView` (the scheduler, the alarm, roamers), and the client
+ * draws the server's frames. The radius is where a body
  * gets a say, and `derived.ts#sightRadiusOf` is `DEFAULT_SIGHT_RADIUS +
  * mods.sight` — the channel a talent (Overseer of Nations) and an ego
  * (Keen-Sighted) already move.
@@ -1304,8 +1306,9 @@ export const CONFUSED: EffectDef = Object.freeze({
  * everything including your own tile, and gets away with it because
  * `game.player` is drawn unconditionally. Ours has no such exemption, so the
  * floor is the deviation and it is one tile wide — literally, since at radius 1
- * the Euclidean test admits the four orthogonal neighbours and refuses the
- * diagonals at 1.414.
+ * ToME's shadowcast is the whole 3x3 round you, diagonals included (the
+ * rounded distance makes a diagonal 1). Under the exact Euclidean test sight
+ * WAS, it was the four orthogonal neighbours, the diagonals refused at 1.414.
  *
  * ═══ NO `blind_sight` ═══
  * `playerFOV` has an arm for it and nothing in this game grants it. When

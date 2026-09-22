@@ -26,13 +26,15 @@ import { fogHas } from '../../shared/fog.ts';
 import { ActorKind } from '../../shared/protocol.ts';
 import { hasLineOfSight, playerLineClear } from '../../shared/sight.ts';
 import { computeVision } from '../../shared/vision.ts';
-import type { CombatMods } from '../engine/derived.ts';
+import type { CombatMods, StatusFlags } from '../engine/derived.ts';
 import type { World } from '../world/world.ts';
 import type { TileXY } from '../../shared/coords.ts';
 import type { LightSource, Vision } from '../../shared/vision.ts';
 
 /** A tile that sees and, when it is a body, the sheet its sight and light come from. */
-export type Eye = TileXY & { readonly combat?: { readonly mods?: CombatMods } };
+export type Eye = TileXY & {
+  readonly combat?: { readonly mods?: CombatMods; readonly flags?: StatusFlags };
+};
 
 /** What `eye` sees in `world`, and how far from it any of that can be. */
 export function visionOf(
@@ -40,7 +42,16 @@ export function visionOf(
   eye: Eye,
 ): Vision & { readonly sight: number; readonly reach: number } {
   const sight = sightRadiusOf(eye);
-  const lite = liteRadiusOf(eye);
+  /**
+   * A BLIND EYE SEES BY NO LIGHT OF ITS OWN. Upstream's whole light pass sits
+   * inside `if not self:attr("blind") then` (tome/class/Player.lua:622-664), so a
+   * blind player carrying a lantern sees nothing by it; ours saw the lantern's
+   * 21 tiles while `sightRadiusOf` held its sight to the 3x3. Zero is the
+   * "own tile only" arm of `computeVision`. ONLY THE EYE'S OWN PASS: the
+   * lantern still lights the floor for everybody else — upstream's other-lights
+   * loop (:656-663) never asks whether the light's bearer can see.
+   */
+  const lite = eye.combat?.flags?.blind === true ? 0 : liteRadiusOf(eye);
   const senses = sensesRadiusOf(eye);
   const lights: LightSource[] = [];
   /**

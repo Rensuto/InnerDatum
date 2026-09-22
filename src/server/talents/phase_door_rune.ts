@@ -64,11 +64,12 @@ import { EffectId } from '../content/effects.ts';
  * further leaves you somewhere you cannot see. Ten is the edge — the furthest
  * you can go and still know what is around you when you arrive.
  *
- * ONE RING SHORT OF TRUE UNTIL SIGHT IS PORTED TOO. The blink's circle is
- * ToME's rounded one now (`teleportRandom`, `tileDistance`) and player sight is
- * still the exact disc, so a range-10 blink can land on 32 rim tiles (dx²+dy²
- * from 101 to 110) just outside what you can see. Both are 10 in ToME's own
- * measure; they agree again when sight takes the rounded circle.
+ * THE SAME CIRCLE AS SIGHT. The blink's is ToME's rounded one
+ * (`teleportRandom`, `tileDistance`), and player sight is too (`tilesInSight`,
+ * shared/sight.ts), so a range-10 blink lands inside your sight disc; a wall
+ * can still hide the landing tile, as it can in ToME. For the commits between
+ * the two ports it was one ring short: sight was the exact disc, and a blink
+ * could land on 32 rim tiles (dx²+dy² from 101 to 110) just outside it.
  */
 const RANGE = 10;
 
