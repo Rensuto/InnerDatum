@@ -329,13 +329,41 @@ export function createTargeting(options: TargetingOptions): Targeting {
     }
 
     const cells: TargetCell[] = [];
-    const reach = Math.max(0, Math.floor(active.range));
-    for (let dy = -reach; dy <= reach; dy += 1) {
-      for (let dx = -reach; dx <= reach; dx += 1) {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * THE LOOP BOUND IS FLOORED. THE REACH TEST IS NOT.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * A cell is in the ring when its distance is within the talent's range —
+     * `active.range` itself, the number `adviseTile` above compares against and
+     * the one `checkTargeting` (server/engine/talents.ts) refuses on. Upstream
+     * asks it the same way: `if dist > typ.range then return true` in
+     * `block_path` (engine/Target.lua:447-448), the real range and no floor.
+     *
+     * THE FLOOR IS ONLY HOW FAR THE SQUARE WALKS. A tile within range R has
+     * both |dx| and |dy| at most R, and they are integers, so at most
+     * floor(R): the box below always holds every cell the test can pass. That
+     * stays true when the metric becomes upstream's rounded
+     * `core.fov.distance`, because a rounded length is never shorter than the
+     * longer axis.
+     *
+     * THIS WAS ONE VALUE DOING BOTH JOBS. `reach` was `Math.floor(active.range)`
+     * and the test below was `> reach`, so a range of 1.5 was a ring of 1. That
+     * is `MELEE_REACH`, the range of the player `single`s that work at arm's
+     * length — Field Dressing, Move Along and Crude Blow among them, and Full
+     * Swing from a locked tree (the ring test finds them all through
+     * `allTalents()`) — and a diagonal is 1.41 away. The ring marked the
+     * four orthogonal neighbours and left the four diagonals blank, while the
+     * cursor on a diagonal said Ok (`adviseTile` never floored) and the server
+     * accepted the press. The picture was stricter than the rule it drew.
+     */
+    const bound = Math.max(0, Math.floor(active.range));
+    for (let dy = -bound; dy <= bound; dy += 1) {
+      for (let dx = -bound; dx <= bound; dx += 1) {
         const x = from.x + dx;
         const y = from.y + dy;
         if (!inBounds(x, y, lv.w, lv.h)) continue;
-        if (Math.sqrt(dx * dx + dy * dy) > reach) continue;
+        if (Math.sqrt(dx * dx + dy * dy) > active.range) continue;
 
         // The caster's own tile is part of the HOLE when there is one — "you
         // cannot shoot what is standing on you" is exactly the thing the
