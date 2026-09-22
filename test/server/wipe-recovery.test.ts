@@ -453,10 +453,12 @@ describe('a floor with nowhere safe to put anybody', () => {
 
 describe('one party on the floor does not starve another', () => {
   it('"if i am down, he is unable to take a turn, do anything" — the other party keeps resolving turns', () => {
-    // Parties scope the BARRIER; `pump` is LEVEL-WIDE, and deliberately so —
-    // per-party would fork the world clock, which world.ts argues against where
-    // it declares `TurnState`. So the two parties genuinely share every pump,
-    // and the property that has to hold is simply that the second one plays.
+    // Parties scope the WIPE, and nothing else in the pump. `pump`, the wait it
+    // parks on and the Bell are LEVEL-WIDE, and deliberately so: per-party would
+    // fork the world clock, which world.ts argues against where it declares `TurnState`.
+    // So the two parties genuinely share every pump, and the property that has
+    // to hold is that one party's wipe loop never churns it out from under the
+    // other: the second one plays.
     const world = createWorld('other-party-keeps-playing');
     const downed = createDownedState();
     const parties = createPartyState();
@@ -471,13 +473,15 @@ describe('one party on the floor does not starve another', () => {
     // of every re-seeded monster's sight. It stood at (5,17) until monster
     // sight became ToME's shadowcast; there the elite the wipe re-seeds at
     // (8,24) sees it through the pillar row at y=20 (the old line from its
-    // centre hit a pillar), combat arms, and p2's move then STALLS: the pump
-    // parks on the OTHER party's restored player, idle, `whoseTurn` ["p1"],
-    // and never reaches p2's intent. That is a pre-existing cross-party wait
-    // which the new sight only exposed: in COMBAT, one idle player in another
-    // party holds everyone to the Bell. It is this block's subject in its
-    // combat form, and this case now covers only the quiet form. Not fixed
-    // here; recorded in DECISIONS.md (2026-09-22) as its own ticket.
+    // centre hit a pillar), combat arms, and p2's move then WAITS: the pump
+    // parks on the OTHER party's restored player, idle, `whoseTurn` ["p1"].
+    // That wait is the ruled barrier and not this block's bug. In combat,
+    // everyone in one realm is phase-locked, party or not (D-A4; `PumpCtx.parties`
+    // in engine/scheduler.ts), and production keeps strangers out of one fight
+    // by instancing it per party. The report this block pins is the wipe loop
+    // starving the pump, so p2 stays out of sight; the combat form — the wait,
+    // the realm's Bell and the strip that names who holds you — is pinned over
+    // a socket in cross-party-wait.test.ts.
     const playing = world.addPlayer('p2', 'Dalt');
     playing.hpRegen = 0;
     playing.x = 1;
@@ -493,8 +497,8 @@ describe('one party on the floor does not starve another', () => {
 
     const engine = createTurnEngine({ world, downed, parties, log, now: () => 0 });
 
-    // Two parties of one, minted lazily. Neither ever agreed to share a barrier
-    // with the other, which is the premise of the whole complaint.
+    // Two parties of one, minted lazily. Neither agreed to play with the other;
+    // the complaint was that one party's wipe loop starved the other's turns.
     expect(partyIdOf(parties, 'p1')).not.toBe(partyIdOf(parties, 'p2'));
 
     world.turn.engagement = 3;

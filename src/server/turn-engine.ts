@@ -54,7 +54,7 @@ import {
   isPlayer,
 } from './engine/actor.ts';
 import type { Intent } from './engine/actor.ts';
-import type { Barrier, BarrierLevel, PartyScope } from './engine/barrier.ts';
+import type { Barrier, BarrierLevel } from './engine/barrier.ts';
 import { createBarrier } from './engine/barrier.ts';
 import { RespawnRefusal, forgetActor as forgetDowned, isErased, respawn } from './engine/downed.ts';
 import type { DownedState } from './engine/downed.ts';
@@ -83,12 +83,17 @@ import {
   kick as kickFromParty,
   leave as leaveParty,
   membersOf,
-  partyIdOf,
   partyOf,
 } from './engine/party.ts';
 import type { PartyResult, PartyState } from './engine/party.ts';
 import type { GameEvent, SweepStep, TalentResolution } from './engine/scheduler.ts';
-import { disconnectActor, pump, reconnectActor, submitIntent } from './engine/scheduler.ts';
+import {
+  disconnectActor,
+  nextRoundTail,
+  pump,
+  reconnectActor,
+  submitIntent,
+} from './engine/scheduler.ts';
 import type {
   IntentResult,
   LevelUpNote,
@@ -297,11 +302,16 @@ export type TurnEngineOptions = {
   /**
    * WHO IS PLAYING WITH WHOM (engine/party.ts).
    *
-   * PRESENT → THE BARRIER IS PER-PARTY. Every question the barrier answers —
-   * the quorum, the commit count, the blocking set, the Bell's countdown and
-   * the wipe — is scoped to the asking player's party rather than to the level,
-   * which is the whole point: a solo player must never wait on somebody they
-   * never agreed to play with. Engagement is untouched and stays level-wide.
+   * PRESENT → THE WIPE, THE PARTY VERBS AND THE PARTY PANE ARE PER-PARTY. THE
+   * BARRIER IS NOT. The pump parks the whole level on any player who owes a
+   * decision, so in combat everyone in one realm waits on everyone in it, party
+   * or not — ruled, not a leak: see `PumpCtx.parties` in engine/scheduler.ts.
+   * So the Bell's countdown and expiry (`bellExpired`), the round tails and the
+   * per-viewer turn state (`turnState(viewerId)`) all count the realm, and a
+   * player held by a stranger is shown who they are waiting on. Parties are
+   * kept apart by instancing every combat space per party (world/realms.ts),
+   * not by this table. Out of combat the table still decides one thing about
+   * the turn frame: whose cards the strip draws (`TurnState.party`).
    *
    * ABSENT → the level-wide barrier, byte for byte, exactly as it behaved
    * before parties existed. Optional for the same reason `downed` is: a test
@@ -2058,54 +2068,52 @@ export function createTurnEngine(opts: TurnEngineOptions): ReapingTurnEngine {
    * turn-based games.
    */
   /**
-   * WHICH BARRIER THIS PLAYER IS STANDING AT, or undefined for the level.
+   * ═══════════════════════════════════════════════════════════════════════════
+   * WHOSE CARDS THE STRIP DRAWS — THE REALM IN A FIGHT, YOUR PARTY OUT OF ONE.
+   * ═══════════════════════════════════════════════════════════════════════════
    *
-   * Undefined in exactly two cases and both mean "the pre-party game": no party
-   * table was wired in, or no actor id was named (the gateway's level-wide
-   * bookkeeping — see `turnState` below).
+   * `TurnState.party`, which the projector filters the strip's player cards on.
    *
-   * `partyOf` MINTS on demand, which is what makes "every player is always in a
-   * party" true without a join path that could forget to do it. It is
+   * IN COMBAT, EVERYBODY HERE (undefined). Everyone in an engaged realm waits on
+   * everyone in it, party or not (`PumpCtx.parties` in engine/scheduler.ts),
+   * so the strip has to be able to name a stranger: the held player's frame
+   * said `whoseTurn: []` under a running countdown, which is "the game is
+   * waiting on nobody" told to somebody who was waiting. In a realm holding one
+   * party the realm IS the party, so nothing changes there.
+   *
+   * OUT OF COMBAT, YOUR PARTY. Nobody blocks, so nobody is being waited on, and
+   * a shared realm — a town, the moor — holds people who are not playing
+   * together and must not be listed as if they were. Undefined as well with no
+   * party table or no viewer, which is what it has always meant.
+   *
+   * `membersOf` MINTS on demand, which is what makes "every player is always
+   * in a party" true without a join path that could forget to do it. It is
    * idempotent, so asking on every frame costs one Map lookup.
    */
-  const scopeFor = (actorId: string | undefined): PartyScope | undefined => {
+  const stripFor = (
+    viewerId: string | undefined,
+    level: BarrierLevel,
+  ): readonly string[] | undefined => {
     const parties = opts.parties;
-    if (parties === undefined || actorId === undefined) return undefined;
-    return { id: partyIdOf(parties, actorId), members: membersOf(parties, actorId) };
+    if (parties === undefined || viewerId === undefined) return undefined;
+    if (level.engagement > 0) return undefined;
+    return membersOf(parties, viewerId);
   };
 
   /**
-   * EVERY BARRIER ON THIS LEVEL, one per party, in a deterministic order.
+   * THE BARRIER, THE REALM'S — for every viewer and for the gateway alike.
    *
-   * Used by `bellExpired`, which is entered from ONE wall-clock timer in the
-   * gateway and therefore has to sweep them all: each `expire` reads its own
-   * party's deadline and returns nothing if that party still has time, so a
-   * single wake-up is safe for any number of countdowns.
-   */
-  const allScopes = (): readonly (PartyScope | undefined)[] => {
-    const parties = opts.parties;
-    if (parties === undefined) return [undefined];
-    const scopes: PartyScope[] = [];
-    const seen = new Set<string>();
-    for (const actor of playersOf(world)) {
-      const id = partyIdOf(parties, actor.id);
-      if (seen.has(id)) continue;
-      seen.add(id);
-      scopes.push({ id, members: membersOf(parties, actor.id) });
-    }
-    return scopes;
-  };
-
-  /**
-   * @param viewerId whose party this snapshot is about. OMITTED means the whole
-   *   level, which is what the gateway's "has the barrier changed?" key is
-   *   built from — the level-wide blocking set is the exact union of every
-   *   party's, so one cheap comparison cannot miss a per-party change.
+   * @param viewerId whose strip this snapshot is for (`stripFor`). The
+   *   blocking set, the Bell and the round tail are the REALM'S whoever asks,
+   *   so the snapshot with no viewer — the gateway's "has the barrier
+   *   changed?" key and the one its timer is armed from — and every viewer's
+   *   agree on who is being waited on and for how long. They were per party
+   *   until 2026-09-22; see `PumpCtx.parties` for what that broke.
    */
   const turnState = (viewerId?: string): TurnState => {
     const level = levelOf(world);
-    const scope = scopeFor(viewerId);
-    const snapshot = barrier.survey(playersOf(world), level, scope);
+    const players = playersOf(world);
+    const snapshot = barrier.survey(players, level);
     /**
      * The countdown, only when one is genuinely on somebody. See the note on
      * `bellDurationMs` below — this exists as a named function so the two facts
@@ -2113,9 +2121,12 @@ export function createTurnEngine(opts: TurnEngineOptions): ReapingTurnEngine {
      */
     const bellToArm = (): number | null => {
       if (snapshot.total === 0) return null;
-      const state = barrier.bell(playersOf(world), level, now(), scope);
+      const state = barrier.bell(players, level, now());
       return state.running ? state.durationMs : null;
     };
+    // THE SOONEST OPEN ROUND, as milliseconds from now on this engine's clock.
+    // See `TurnState.roundTailInMs` and `nextRoundTail`.
+    const tail = nextRoundTail(players);
 
     return {
       gameTurn: world.turn.clock.gameTurn,
@@ -2139,8 +2150,7 @@ export function createTurnEngine(opts: TurnEngineOptions): ReapingTurnEngine {
        * has to remember to.
        *
        * FILTERED TO THE BLOCKING SET, so this is always a subset of
-       * `whoseTurn`: a player whose round closed is not mid-round, and one in
-       * another party is not this snapshot's business.
+       * `whoseTurn`: a player whose round closed is not mid-round.
        */
       acting: snapshot.blocking.filter((id) => {
         const body = world.getActor(id);
@@ -2184,11 +2194,11 @@ export function createTurnEngine(opts: TurnEngineOptions): ReapingTurnEngine {
        * appears exactly when it always did.
        */
       bellDurationMs: bellToArm(),
-      // THE MEMBERSHIP THE THREE ARRAYS ABOVE WERE COMPUTED AGAINST. Absent for
-      // the level-wide snapshot, which is what it has always meant. The
-      // projector filters `actors` on it so that one actor's record can never
-      // be built from one party's blocking set over another party's roster.
-      party: scope?.members,
+      roundTailInMs: tail === null ? null : Math.max(0, tail - now()),
+      // WHOSE CARDS THE STRIP DRAWS. See `stripFor`: the arrays above are the
+      // realm's either way, so a card can never be built from one barrier's
+      // blocking set over another's roster.
+      party: stripFor(viewerId, level),
     };
   };
 
@@ -2831,7 +2841,9 @@ export function createTurnEngine(opts: TurnEngineOptions): ReapingTurnEngine {
      * the Bell time out a request for help.
      *
      * So it is applied SYNCHRONOUSLY between pumps, like `submitRespawn`, and
-     * the pump that follows simply sees a barrier with a different membership.
+     * the pump that follows simply sees a wipe check with a different
+     * membership. The barrier does not move: it is the realm's, not the
+     * party's (`PumpCtx.parties` in engine/scheduler.ts).
      *
      * ═══ A REFUSAL COSTS ZERO ═══
      * Nothing is half-applied: no partial membership, no invite half-sent, no
@@ -2853,6 +2865,14 @@ export function createTurnEngine(opts: TurnEngineOptions): ReapingTurnEngine {
       // for leave (you can only leave your own party), and optional for accept
       // and decline — where it names WHICH offer, and its absence means the
       // oldest one, which is what a bare command has to mean.
+      //
+      // A BARE ACCEPT THEREFORE CHECKS NOTHING ABOUT THE WORLD. A named inviter
+      // must be standing in this realm; an unnamed one may be anywhere, and a
+      // realm crossing does not clear invites. So somebody inside a delve can
+      // join a party on the overworld and stay on the floor, which puts two
+      // parties in one combat realm — as a `leave` or `kick` there does. They
+      // then share that floor's barrier (`PumpCtx.parties`). Left for the
+      // author: DECISIONS.md, 2026-09-22, "the cross-party wait in combat".
       let target: Actor | undefined;
       if (targetId !== undefined) {
         const named = world.getActor(targetId);
@@ -3244,27 +3264,22 @@ export function createTurnEngine(opts: TurnEngineOptions): ReapingTurnEngine {
     },
 
     bellExpired(): void {
-      const level = levelOf(world);
-      const nowMs = now();
-      // ONE TIMER, EVERY PARTY. The gateway holds a single wall-clock timer for
-      // the soonest deadline and re-enters here when it fires; each party's
-      // `expire` checks its own deadline and answers with nothing when that
-      // party still has time. So a party whose Bell has not run out is never
-      // rung early, and one whose Bell rang while another party's was still
-      // counting is not forgotten — the pump that follows reports the next
-      // deadline and the timer is re-armed for it.
-      for (const scope of allScopes()) {
-        const passes = barrier.expire(playersOf(world), level, nowMs, scope);
-        // The barrier decides WHO was too slow; installing the hold is the
-        // caller's job, because the barrier does not know what an intent is and
-        // deliberately must not learn.
-        //
-        // A forced pass is ALWAYS a hold — never a random attack. A stray attack
-        // on a timeout gets somebody killed and ends friendships.
-        for (const pass of passes) {
-          const actor = world.getActor(pass.id);
-          if (actor !== undefined && actor.alive) actor.pendingIntent = HOLD_INTENT;
-        }
+      // ONE COUNTDOWN, THE REALM'S — the same one `turnState()` reports and the
+      // gateway armed its timer from, so the timer and this can no longer
+      // disagree. It was one per party, and a stranger in a party of one was
+      // on the two-minute Solo Bell while the timer rang every twenty seconds
+      // and found nothing due. `expire` still checks its own deadline, so an
+      // early wake-up forces nothing.
+      const passes = barrier.expire(playersOf(world), levelOf(world), now());
+      // The barrier decides WHO was too slow; installing the hold is the
+      // caller's job, because the barrier does not know what an intent is and
+      // deliberately must not learn.
+      //
+      // A forced pass is ALWAYS a hold — never a random attack. A stray attack
+      // on a timeout gets somebody killed and ends friendships.
+      for (const pass of passes) {
+        const actor = world.getActor(pass.id);
+        if (actor !== undefined && actor.alive) actor.pendingIntent = HOLD_INTENT;
       }
     },
 
@@ -3369,8 +3384,9 @@ export function createTurnEngine(opts: TurnEngineOptions): ReapingTurnEngine {
         freeRuns: owedTurn,
         downed: opts.downed,
         // Threaded in for the same reason `downed` is: party membership lives
-        // across pumps, and it is what makes the barrier and the wipe per-party
-        // inside the tick loop rather than only at the frames around it.
+        // across pumps, and it is what makes the wipe per-party inside the tick
+        // loop rather than only at the frames around it. Only the wipe: the
+        // barrier is the realm's (see `PumpCtx.parties`).
         parties: opts.parties,
         // ...and the talent seam, for the third time and the same reason: the
         // sheets live across pumps. Absent switches every talent branch in the

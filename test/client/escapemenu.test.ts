@@ -1452,8 +1452,8 @@ describe('the two rows that end something ask first', () => {
    * BOTH FIRED ON ONE CLICK.
    * ═══════════════════════════════════════════════════════════════════════════
    *
-   * `SWITCH CHARACTER` takes the world away and `LEAVE PARTY` drops the party the
-   * barrier scopes to — from adjacent rows of the menu every player opens most,
+   * `SWITCH CHARACTER` takes the world away and `LEAVE PARTY` drops the party you
+   * are playing with — from adjacent rows of the menu every player opens most,
    * one row below `INVENTORY`. Upstream interposes a yes/no popup on the
    * equivalent (Game.lua:2561-2570, :2577-2587: "Save and go back to main
    * menu?").

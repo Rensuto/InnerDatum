@@ -77,10 +77,11 @@
  * ===========================================================================
  * This is the one surface that swallows the keyboard and both mouse buttons, and
  * it is safe to do so for a reason that is provable rather than hopeful: a player
- * seeing it has just connected and is a party of ONE (engine/party.ts:26-44), so
- * the barrier's quorum, commit count and Bell are all scoped to them alone. The
- * worst case is a solo Bell at 120 seconds followed by Standing By on their own
- * body. Nobody waits on them because there is nobody to wait.
+ * seeing it has just connected and is parked on a standing hold for the choice
+ * (the gateway's `parkForClassChoice`), and a body on a standing order never
+ * blocks the barrier. This used to say they were safe because the barrier's
+ * quorum and Bell were scoped to their party of one; the barrier is the
+ * REALM's (ruling D-A4), so the park is what keeps anyone from waiting on them.
  *
  * Geometry and hit-testing are PURE and share one function — see
  * ui/contextmenu.ts:24-34 for why a hit test may not hold a context, and

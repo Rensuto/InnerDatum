@@ -100,8 +100,10 @@
  *   `TurnMsg` STOPPED BEING ABOUT THE LEVEL AND STARTED BEING ABOUT YOUR PARTY.
  *   `whoseTurn`, `committed`, `standingBy` and `actors` used to hold every
  *   player on the floor, because the barrier was level-wide and that was the
- *   truth. From v6 the barrier is per-party (src/server/engine/party.ts): they
- *   hold the recipient's party and nobody else. A v5 client keeps rendering the
+ *   truth. From v6 the barrier was per-party (src/server/engine/party.ts): they
+ *   held the recipient's party and nobody else. (Later, by ruling D-A4, the
+ *   barrier became the realm's again: in combat they hold the realm's players,
+ *   out of combat the recipient's party.) A v5 client keeps rendering the
  *   strip with total confidence and is wrong in the one way that matters — it
  *   believes the strip is everyone it can see. Two people are visibly fighting
  *   ten tiles away, no card for either of them appears, no `left` was ever sent

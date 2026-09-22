@@ -8,19 +8,19 @@
  * The Warrant Clock (engine/barrier.ts) is LEVEL-WIDE. Above `engagement > 0`
  * every player on the level blocks every other player on the level, and
  * barrier.ts argues for that at length: *"otherwise somebody walks fifty free
- * tiles while a friend tanks"*. That argument is exactly right for people who
- * are playing TOGETHER and exactly wrong for two groups who are not — and real
- * multiplayer found the wrong half first. A solo player was made to wait on a
- * stranger's turn, and on a stranger who had walked away from the keyboard.
+ * tiles while a friend tanks"*. Real multiplayer found the cost of that for
+ * two groups who are not playing together: a solo player was made to wait on
+ * a stranger's turn, and on a stranger who had walked away from the keyboard.
+ * THAT IS NOT ANSWERED HERE. It is answered by WHERE people stand.
  *
- * A PARTY IS THE SET OF PEOPLE WHO AGREED TO PLAY TOGETHER, and it is the set
- * the barrier scopes to. Nothing else changes: the reason engagement is
- * level-wide survives untouched (a fight IS happening here, and the level is
- * what knows it), and the reason every member of a party blocks every other
- * member survives untouched too — somebody thirty tiles away still blocks their
- * OWN party, because the "get over here" pressure is the whole point of playing
- * together. What is removed is the one thing that was never argued for: a
- * barrier between two people who never agreed to share one.
+ * A PARTY IS THE SET OF PEOPLE WHO AGREED TO PLAY TOGETHER, and a combat space
+ * is instanced per party (world/realms.ts), so strangers are not in one fight
+ * to begin with. INSIDE one realm the barrier stays realm-wide, party or not
+ * (D-A4; `PumpCtx.parties` in engine/scheduler.ts): the Bell, the round tails
+ * and the turn strip count the realm. What this table scopes is everything a
+ * party owns jointly — the wipe (D10), the instance (`Realm.partyId`), the
+ * pane, the kill share, shared sight, the brief and the dialogue lead — and it
+ * no longer scopes any barrier question at all.
  *
  * ═══════════════════════════════════════════════════════════════════════════
  * EVERY PLAYER IS ALWAYS IN A PARTY. THERE IS NO "NO PARTY" STATE.
@@ -30,13 +30,13 @@
  * That is the single most load-bearing decision in this file and it is worth
  * being explicit about why, because "null means solo" looks cheaper and is not:
  *
- *   THE BARRIER ASKS "WHO IS IN THIS PLAYER'S PARTY?" IN FIVE PLACES — the
- *   quorum, the commit count, the blocking set, the Bell's countdown key and
- *   the wipe. A nullable answer means five `?? everyoneOnTheLevel` fallbacks,
- *   five chances to write the fallback wrong, and the failure mode of getting
- *   one wrong is that a solo player silently starts waiting on a stranger
- *   again — the exact bug this file exists to fix, reintroduced somewhere
- *   nobody is looking.
+ *   THE SERVER ASKS "WHO IS IN THIS PLAYER'S PARTY?" ALL OVER — the wipe,
+ *   the instance a delve door opens, who sees whom, who is paid for a kill,
+ *   who reads the brief. A nullable answer means a `?? somebody` fallback at
+ *   every one of them, each a chance to write it wrong, and the failure mode
+ *   of getting one wrong is a solo player silently counted into a stranger's
+ *   wipe or handed a stranger's instance — somewhere nobody is looking.
+ *   (The barrier stopped asking on 2026-09-22; it counts the realm.)
  *
  * So `partyOf` NEVER returns undefined for a player id. It mints on demand and
  * is idempotent, which makes it safe to call from a loop over the actor table.
@@ -46,9 +46,9 @@
  * ═══════════════════════════════════════════════════════════════════════════
  *
  * Same argument, one step further along: a player who is momentarily in no
- * party is a player the barrier cannot answer a question about, and the moment
+ * party is a player the wipe cannot answer a question about, and the moment
  * that state exists somebody will observe it — a kick lands mid-fight, the pump
- * runs on the next frame, and the quorum is computed for a body with no party.
+ * runs on the next frame, and the wipe is surveyed for a body with no party.
  * `leave` and `kick` therefore do the removal and the re-minting as ONE
  * synchronous step; there is no window between them.
  *
@@ -95,14 +95,14 @@
 // ---------------------------------------------------------------------------
 
 /**
- * How many people may share one barrier.
+ * How many people may share one party — and so one instance, one fight's clock.
  *
  * FOUR, from game-design.md § 4's own framing of the failure it is designed
  * around — *"player 1 deliberates 40 s, players 2–4 tab out"* — so four is the
- * size the Bell, the quorum arithmetic and the party pane's rows were all
- * written against. It is a cap on a SHARED CLOCK rather than on a friend group: a fifth
- * person is not refused entry to the game, they are simply in their own party,
- * which after this file is a perfectly good way to play on the same floor.
+ * size the Bell, the quorum arithmetic and the party pane's rows were written
+ * against. A fifth person is not refused entry to the game; they are in their
+ * own party, with their own instance. They do NOT get their own clock on a
+ * floor they share: inside one engaged realm everyone waits on everyone (D-A4).
  */
 export const MAX_PARTY_SIZE = 4;
 
@@ -289,12 +289,12 @@ export function partyOf(state: PartyState, actorId: string): Party {
   return mintParty(state, actorId);
 }
 
-/** This player's party id. The Bell keys its countdown on it. */
+/** This player's party id. The wipe and the instance key on it. */
 export function partyIdOf(state: PartyState, actorId: string): string {
   return partyOf(state, actorId).id;
 }
 
-/** Everyone who shares a barrier with this player, INCLUDING them. */
+/** Everyone in this player's party, INCLUDING them. */
 export function membersOf(state: PartyState, actorId: string): readonly string[] {
   return partyOf(state, actorId).members;
 }
@@ -305,7 +305,7 @@ export function membersOf(state: PartyState, actorId: string): readonly string[]
  *
  * ═══ BY THE PARTY, NOT BY A MEMBER, AND THAT IS THE WHOLE POINT ═══
  * `membersOf` above answers *"who is with this person NOW"*, which is the right
- * question for a barrier and the wrong one for anything a party owns jointly:
+ * question for a wipe and the wrong one for anything a party owns jointly:
  * the moment that person walks out of the party (`leave` mints them a party of
  * one and hands the badge to the heir), `membersOf` silently retargets to their
  * new party of one. A delve instance is held by a party rather than by a person
@@ -321,10 +321,10 @@ export function membersOfParty(state: PartyState, partyId: string): readonly str
 }
 
 /**
- * DO THESE TWO BLOCK EACH OTHER? The one question the barrier actually asks.
+ * ARE THESE TWO PLAYING TOGETHER? Shared sight and following into a room ask.
  *
- * True for `a === b`, which is not a special case: you are in your own party,
- * and a player always owes their own party a decision.
+ * True for `a === b`, which is not a special case: you are in your own party.
+ * NOT whether they block each other — in one engaged realm everybody does.
  */
 export function sameParty(state: PartyState, a: string, b: string): boolean {
   return partyIdOf(state, a) === partyIdOf(state, b);
@@ -602,8 +602,8 @@ export function leave(state: PartyState, actorId: string): PartyResult {
  * and a leader who typed the wrong one should be told, not quietly obeyed.
  *
  * The removed player lands in their own party of one and keeps playing on the
- * same floor. There is no ejection from the game here and there must not be:
- * this is a barrier boundary, not a ban.
+ * same floor — still on its clock while they stand there (D-A4). No ejection
+ * here, and there must not be: it is a party boundary, not a ban.
  */
 export function kick(state: PartyState, leaderId: string, targetId: string): PartyResult {
   if (leaderId === targetId) return { ok: false, reason: PartyRefusal.Self };

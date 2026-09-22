@@ -937,9 +937,11 @@ export function buildServer() {
    *
    * Created here for the same reason the world and the survival table are: it
    * is a lifetime the entry point owns, and party membership outlives every
-   * pump. It is also what makes the barrier PER-PARTY — the whole reason this
-   * exists. Real multiplayer reported the level-wide version: a solo player
-   * waited on a stranger, and then on a stranger who had closed the tab.
+   * pump. It was made to scope the barrier PER-PARTY, after real multiplayer
+   * reported a solo player waiting on a stranger who had closed the tab. The
+   * barrier is the REALM's now (ruling D-A4); the party scopes the wipe, the
+   * turn strip out of combat, experience and the dialogue lead. A closed tab
+   * stops blocking because a disconnected body leaves the quorum.
    *
    * NOTHING IS RESTORED INTO IT AT BOOT, and that is deliberate. A party is a
    * fact about who is at the table RIGHT NOW; restoring last night's from a

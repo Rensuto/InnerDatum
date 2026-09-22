@@ -248,9 +248,9 @@ import { applyZoneEffectsIn } from '../world/zone-effects.ts';
  * and that is the whole reason a party id has to be reachable from here: it is
  * what makes the second person through the door join the first rather than open
  * a private second copy of the floor beside them. Nothing else in this file
- * reads the party table — membership, invites and the barrier's scope are all
+ * reads the party table — membership, invites and the wipe's scope are all
  * `engine/party.ts`'s, reached through `TurnEngine.submitParty` exactly as
- * before.
+ * before. (The barrier has no party scope: it is the realm's.)
  *
  * A VALUE IMPORT INTO net/, AND IT IS ONE-WAY. eslint bans `engine/** ->
  * net/**` (the `NO_IO_LAYER_PATTERNS` group in eslint.config.js) and this arrow
@@ -1731,11 +1731,13 @@ export type TurnEngine = {
    * WHO YOU ARE PLAYING WITH — invite / accept / decline / leave / kick.
    * ═════════════════════════════════════════════════════════════════════════
    *
-   * THE FEATURE THIS METHOD IS: the barrier used to be LEVEL-WIDE, so every
-   * player on the floor blocked every other one. That is right for people
-   * playing together and wrong for two groups who are not, and real play found
-   * the wrong half — a solo player waited on a stranger, and then on a stranger
-   * who had closed the tab. An explicit party is the set the barrier scopes to.
+   * THE FEATURE THIS METHOD IS: the barrier is LEVEL-WIDE, so every player on
+   * the floor blocks every other one. That is right for people playing together
+   * and wrong for two groups who are not, and real play found the wrong half —
+   * a solo player waited on a stranger, and then on a stranger who had closed
+   * the tab. An explicit party is the set a combat space is instanced for
+   * (world/realms.ts), which keeps strangers out of one fight. Inside one realm
+   * the barrier stays realm-wide (`PumpCtx.parties` in engine/scheduler.ts).
    *
    * IT DOES NOT PUMP AND IT DOES NOT COST A TURN. Party commands are like `say`
    * rather than like `move`: no energy, no barrier check, and they work while
@@ -1766,10 +1768,10 @@ export type TurnEngine = {
    * someone killed and ends friendships. Called by this file's timer and by
    * nothing else.
    *
-   * ONE TIMER, EVERY PARTY. With per-party barriers there is one countdown per
-   * party and still one wall clock; the timer is armed for the SOONEST deadline
-   * and this method sweeps them all, each against its own. A party that still
-   * has time returns nothing, so a single wake-up is safe for any number.
+   * ONE COUNTDOWN PER REALM, the same one `turnState()` reports, so the timer
+   * armed from that snapshot and the expiry this applies can never disagree
+   * about who is on the Bell. It checks its own deadline, so an early wake-up
+   * forces nothing.
    */
   bellExpired(): void;
   /** Advance the world as far as it will go. SYNCHRONOUS. */
@@ -1777,11 +1779,10 @@ export type TurnEngine = {
   /**
    * The barrier right now, without advancing anything.
    *
-   * @param viewerId whose PARTY to describe. Omitted means the whole level,
-   *   which is what this file's "has the barrier changed?" key is built from —
-   *   the level-wide blocking set is the exact union of every party's, so one
-   *   cheap comparison cannot miss a per-party change, and the per-recipient
-   *   frames are then built from per-recipient snapshots.
+   * @param viewerId whose turn STRIP to describe (`TurnState.party`). The
+   *   blocking set, the Bell and the round tail are the realm's whoever asks,
+   *   so the viewerless snapshot this file keys its frames and arms its timer
+   *   from and every viewer's agree on who is being waited on.
    */
   turnState(viewerId?: string): TurnState;
 };
@@ -3204,14 +3205,46 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    *
    * `gameTurn` STAYS THE PARK IDENTITY WITHIN a realm. Two realms genuinely can
    * be on the same game turn; they are simply different rows.
+   *
+   * THIS ROW IS THE COUNTDOWN, NOT THE TIMER. What players see (`bellRemainingMs`)
+   * and whether one is armed (`turnKey`) read it; the wall-clock timer that
+   * makes it ring is the realm's one `Wake` below, because the Bell is not the
+   * only deadline a realm has.
    */
   type Bell = {
     readonly gameTurn: number;
     readonly durationMs: number;
     readonly deadline: number;
-    readonly timer: ReturnType<typeof setTimeout>;
   };
   const bells = new Map<string, Bell>();
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * ONE WAKE-UP PER REALM — FOR THE BELL, OR FOR AN OPEN ROUND'S TAIL.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * A realm has two deadlines that nobody's keypress will reach: the Bell
+   * (somebody absent) and the round tail (somebody present who has stopped
+   * mid-round — engine/scheduler.ts `applyRoundTails`). The engine only reads
+   * either at the head of a pump, so each needs a timer to come back for it.
+   * Until 2026-09-22 only the Bell had one, and an open round beside one idle
+   * player — two blockers, so no Bell — waited for a keypress, in one party or
+   * two.
+   *
+   * ONE TIMER, ARMED FOR THE SOONER OF THE TWO, because one suffices: when it
+   * fires the realm is pumped, the pump applies whatever is due, and the
+   * re-sync that follows arms it for whatever is next. `at` is kept so the
+   * wake can tell whether it is the Bell's (`onWake`) and so a re-sync for the
+   * same instant leaves it alone.
+   *
+   * KEYED PER REALM for the reason `bells` gives in full: a single variable
+   * lets one floor's re-arm cancel another floor's timer.
+   */
+  type Wake = {
+    readonly at: number;
+    readonly timer: ReturnType<typeof setTimeout>;
+  };
+  const wakes = new Map<string, Wake>();
 
   /**
    * Names ANONYMOUS players — the ones with no verified Discord identity behind
@@ -5379,15 +5412,22 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     return bell === undefined ? null : Math.max(0, bell.deadline - Date.now());
   };
 
+  /** Disarm one realm's wake-up timer. See `wakes`. */
+  const clearWake = (realmId: string): void => {
+    const wake = wakes.get(realmId);
+    if (wake === undefined) return;
+    clearTimeout(wake.timer);
+    wakes.delete(realmId);
+  };
+
   /**
-   * Disarm one realm's Bell. IT CANNOT REACH ANOTHER'S, which is the entire
-   * point of the Map — see the block on `bells`.
+   * Forget one realm's Bell AND its timer — for a realm that is going away, or
+   * a server shutting down. IT CANNOT REACH ANOTHER REALM'S, which is the
+   * entire point of the Maps — see the block on `bells`.
    */
   const clearBell = (realmId: string): void => {
-    const bell = bells.get(realmId);
-    if (bell === undefined) return;
-    clearTimeout(bell.timer);
     bells.delete(realmId);
+    clearWake(realmId);
   };
 
   /**
@@ -5398,7 +5438,8 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    * ═══ THE WORLD'S CLOCK WAS THE PLAYERS' KEYSTROKES ═══
    * `pumpAndBroadcast`'s own note states the rule this corrects: "a realm
    * advances when somebody standing in it acts. Liveness for a realm nobody is
-   * acting in ... comes from that realm's OWN Bell timer, and from the reap
+   * acting in ... comes from that realm's OWN wake timer (the Bell or a round's
+   * tail, whichever is sooner — `syncWake`), and from the reap
    * timers." A dungeon wants exactly that. A shared realm does not, and the
    * overworld had neither timer, so:
    *
@@ -5493,12 +5534,13 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
   };
 
   /**
-   * Bring the timer into line with what the scheduler is asking for.
+   * Bring the Bell into line with what the engine is asking for, then the
+   * realm's one timer (`syncWake`).
    *
    * Three cases, and the middle one is the whole reason this is not just
-   * "restart the timer every pump":
+   * "restart the countdown every pump":
    *
-   *   no Bell wanted        -> disarm.
+   *   no Bell wanted        -> drop it.
    *   a Bell for a NEW park -> arm it.
    *   a Bell already running for THIS park -> leave the deadline alone, so the
    *     countdown the stragglers can see keeps counting down.
@@ -5509,50 +5551,88 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    * become more generous while it runs; it may never become harsher, because
    * shortening a visible countdown out from under someone is indistinguishable
    * from the server cheating.
+   *
+   * `state` is the realm's snapshot (`turnState()`), and since 2026-09-22 so is
+   * the countdown the engine expires, so the two agree on who is on the Bell
+   * and for how long, whatever parties are standing in the realm.
    */
   const syncBell = (realm: PumpTarget, state: TurnState): void => {
     const wanted = state.bellDurationMs;
-    if (wanted === null) {
-      clearBell(realm.id);
-      return;
-    }
     const bell = bells.get(realm.id);
-    if (bell !== undefined && bell.gameTurn === state.gameTurn && wanted <= bell.durationMs) return;
-
-    clearBell(realm.id);
-    const timer = setTimeout(() => {
-      guard('bell timer threw', () => {
-        onBellExpired(realm);
+    if (wanted === null) {
+      bells.delete(realm.id);
+    } else if (bell === undefined || bell.gameTurn !== state.gameTurn || wanted > bell.durationMs) {
+      bells.set(realm.id, {
+        gameTurn: state.gameTurn,
+        durationMs: wanted,
+        deadline: Date.now() + wanted,
       });
-    }, wanted);
-    // Never let a pending Bell hold the process open at shutdown.
-    timer.unref();
-    bells.set(realm.id, {
-      gameTurn: state.gameTurn,
-      durationMs: wanted,
-      deadline: Date.now() + wanted,
-      timer,
-    });
-    app.log.info({ realmId: realm.id, gameTurn: state.gameTurn, ms: wanted }, 'bell armed');
+      app.log.info({ realmId: realm.id, gameTurn: state.gameTurn, ms: wanted }, 'bell armed');
+    }
+    syncWake(realm, state.roundTailInMs ?? null);
   };
 
   /**
-   * ONE REALM'S BELL RANG. Only that realm's stragglers hold.
+   * ARM THE REALM'S ONE TIMER FOR THE SOONER OF THE BELL AND THE ROUND TAIL,
+   * or disarm it when there is neither. See `wakes`.
+   *
+   * The tail arrives as a duration on the engine's clock, like the Bell's, and
+   * is made a deadline here on this one. It moves every pump by however long
+   * the pump took, so a tail-only wake is re-armed on most pumps; that costs a
+   * `clearTimeout` and never pushes the moment out, because the engine's
+   * deadline does not move.
+   */
+  const syncWake = (realm: PumpTarget, tailInMs: number | null): void => {
+    const bellAt = bells.get(realm.id)?.deadline ?? null;
+    const tailAt = tailInMs === null ? null : Date.now() + tailInMs;
+    const at = bellAt === null ? tailAt : tailAt === null ? bellAt : Math.min(bellAt, tailAt);
+    if (at === null) {
+      clearWake(realm.id);
+      return;
+    }
+    if (wakes.get(realm.id)?.at === at) return;
+
+    clearWake(realm.id);
+    const timer = setTimeout(
+      () => {
+        guard('bell timer threw', () => {
+          onWake(realm, at);
+        });
+      },
+      Math.max(0, at - Date.now()),
+    );
+    // Never let a pending wake-up hold the process open at shutdown.
+    timer.unref();
+    wakes.set(realm.id, { at, timer });
+  };
+
+  /**
+   * ONE REALM'S TIMER FIRED. If it was armed for the Bell, only that realm's
+   * stragglers hold; either way that realm is pumped, which is what closes a
+   * round whose tail is due (`applyRoundTails` runs at the head of the pump).
    *
    * The timer closes over the realm it was armed for, so this can never ring the
    * wrong floor's barrier — which matters because `bellExpired` is the one call
    * that FORCES a decision on somebody who has not made one, and forcing it on a
    * party three rooms away would be the server playing for them.
+   *
+   * THE BELL'S WHEN ITS DEADLINE IS NOT AFTER THIS WAKE'S, which is exactly
+   * "the timer was armed for it": `at` is the sooner of the two deadlines, so
+   * a Bell deadline at or before it is the one it was armed for, and a later
+   * one means the tail came first and the visible countdown carries on.
    */
-  const onBellExpired = (realm: PumpTarget): void => {
+  const onWake = (realm: PumpTarget, at: number): void => {
+    wakes.delete(realm.id);
     const rang = bells.get(realm.id);
-    bells.delete(realm.id);
-    app.log.info({ realmId: realm.id, gameTurn: rang?.gameTurn }, 'bell rang — stragglers hold');
-    try {
-      realm.engine.bellExpired();
-    } catch (err) {
-      app.log.error({ err }, 'engine.bellExpired threw');
-      return;
+    if (rang !== undefined && rang.deadline <= at) {
+      bells.delete(realm.id);
+      app.log.info({ realmId: realm.id, gameTurn: rang.gameTurn }, 'bell rang — stragglers hold');
+      try {
+        realm.engine.bellExpired();
+      } catch (err) {
+        app.log.error({ err }, 'engine.bellExpired threw');
+        return;
+      }
     }
     // ONE REALM'S BELL RANG, so one realm moves. The timer closed over the
     // realm it was armed for precisely so this cannot reach another floor's
@@ -5582,14 +5662,16 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     if (actorId === null) return;
     const viewer = world.getActor(actorId);
     if (viewer === undefined) return;
-    // ═══ THE BARRIER IS THIS VIEWER'S PARTY, NOT THE FLOOR (v6) ═══
-    // `state` is the LEVEL-WIDE snapshot: it is what the change key is built
-    // from and what the Bell timer is armed against, and it is deliberately not
-    // what anybody is shown. The frame is rebuilt against the recipient's own
-    // party so the strip answers "is the game waiting on ME?" without listing
-    // people this player never agreed to wait for. `turnState` falls back to
-    // the level-wide answer for an engine with no party system, so a build
-    // without one sends byte-for-byte what it always did.
+    // ═══ THE BARRIER IS THE REALM'S; THE STRIP IS REBUILT FOR THE VIEWER ═══
+    // `state` is the realm's snapshot: it is what the change key is built from
+    // and what the Bell timer is armed against. The frame is rebuilt from the
+    // recipient's own snapshot, which counts the same realm-wide blocking set
+    // — everyone in an engaged realm waits on everyone in it, party or not,
+    // so a player held by a stranger is shown the stranger — and differs only
+    // in whose cards the strip draws: the realm in a fight, the viewer's party
+    // out of one (`TurnState.party`). An engine with no party system answers
+    // the realm either way, so a build without one sends byte-for-byte what it
+    // always did.
     const scoped = engine.turnState(actorId);
     // `opts.downed` is the SAME survival table the engine mutates (main.ts
     // creates one and hands it to both), so the card's `downed` flag and the
@@ -7855,8 +7937,9 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    * WHY ONE REALM IS ENOUGH FOR AN ACTION. This is a turn-based game and a
    * realm advances when somebody standing in it acts. Liveness for a realm
    * nobody is acting in does not come from other people's keystrokes — it comes
-   * from that realm's OWN Bell timer, which closes over the realm it was armed
-   * for, and from the reap timers. Neither ever needed this loop.
+   * from that realm's OWN wake timer (the Bell or a round's tail, `syncWake`),
+   * which closes over the realm it was armed for, and from the reap timers.
+   * Neither ever needed this loop.
    *
    * THE OPTIONAL ARGUMENT DEGRADES SAFELY, which is why it is optional rather
    * than required: forgetting it pumps everything, which is what the code did
@@ -7865,9 +7948,10 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    *
    * THREE CALLERS STILL PASS NOTHING, ON PURPOSE — `handleParty`, `handleRevive`
    * / `handleRespawn`'s quorum changes, and the socket-close handler. A party
-   * can now span realms (see `follow`), so changing its shape changes a barrier
-   * in every realm holding a member, and none of the three is a per-keystroke
-   * verb.
+   * can span realms (see `follow`), and although a party change no longer moves
+   * any barrier (the barrier and its Bell are the REALM's, ruling D-A4), it
+   * still changes turn strips and wipe scopes in every realm holding a member,
+   * and none of the three is a per-keystroke verb.
    */
   const pumpAndBroadcast = (only?: PumpTarget): void => {
     if (only !== undefined) {
@@ -8946,11 +9030,10 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    * ═════════════════════════════════════════════════════════════════════════
    *
    * THE BUG THIS EXISTS TO PREVENT, IN FULL, BECAUSE IT IS NOT OBVIOUS AND IT IS
-   * NOT PARTY-LOCAL. Parties scope the BARRIER — `surveyQuorum`, `bell` and
-   * `expire` all take a `PartyScope` — so it is tempting to argue that a joiner
-   * is a party of one and therefore nobody is waiting on them. The quorum half
-   * of that is true. The conclusion is false, because parties do not scope the
-   * WORLD CLOCK:
+   * NOT PARTY-LOCAL. It is tempting to argue that a joiner is a party of one
+   * and therefore nobody is waiting on them. That is false, because parties do
+   * not scope the WORLD CLOCK — and since 2026-09-22 they do not scope the
+   * Bell's quorum either (`PumpCtx.parties` in engine/scheduler.ts):
    *
    *   `isBlocking` (engine/barrier.ts:293-306) needs only `inQuorum` + energy at
    *   the threshold + no pending intent + no standing order + `engagement > 0`,
@@ -8960,10 +9043,10 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    *   ("Nothing else gets to act after the first park … the world is just as
    *   frozen as ToME's", :527-529). The party mid-fight next door can still move
    *   and swing — `actsWhileBlocked` is true for players — so they spend the
-   *   whole of the joiner's Bell punching statues that never swing back. And the
-   *   party-of-one framing makes that WORSE rather than better: `bellDurationMs`
-   *   gives a lone straggler `BELL_MS.Solo` = two minutes, twice over before
-   *   Standing By finally lifts it.
+   *   whole of the joiner's Bell punching statues that never swing back. The
+   *   Bell is the realm's, so that is the twenty-second Normal one twice over
+   *   before Standing By lifts it; while it was counted per party it was the
+   *   two-minute Solo one, twice.
    *
    * SO THE BODY IS PARKED ON A STANDING HOLD INSTEAD. `standingOrder` is the
    * field the barrier already reads to mean "an order supplies this actor's
@@ -13841,7 +13924,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
      * than spending their whole budget — so the frequency went up at the same
      * moment the per-press cost mattered most.
      *
-     * A commit changes THIS party's quorum and nothing else. No other realm's
+     * A commit changes THIS realm's quorum and nothing else. No other realm's
      * barrier can move because somebody in a different world pressed a key.
      */
     pumpAndBroadcast(realmFor(session));
@@ -19054,7 +19137,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       return;
     }
     // THIS REALM. Same argument as `handleTurnVerb`: a player verb changes one
-    // party's quorum, and pumping the whole process on every keypress scales with
+    // realm's quorum, and pumping the whole process on every keypress scales with
     // players times realms.
     pumpAndBroadcast(realmFor(session));
   };
@@ -19137,14 +19220,14 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
 
     // The quorum just grew by one. The party may have been idling on nobody.
     // THIS REALM. Same argument as `handleTurnVerb`: a player verb changes one
-    // party's quorum, and pumping the whole process on every keypress scales with
+    // realm's quorum, and pumping the whole process on every keypress scales with
     // players times realms.
     pumpAndBroadcast(realmFor(session));
   };
 
   /**
    * ═════════════════════════════════════════════════════════════════════════
-   * `party` — WHO YOU ARE PLAYING WITH. The verb the barrier scopes to.
+   * `party` — WHO YOU ARE PLAYING WITH. The verb instances and wipes key on.
    * ═════════════════════════════════════════════════════════════════════════
    *
    * The gateway decides NOTHING here, exactly as with `talent` and `revive`.
@@ -19155,10 +19238,11 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    * ═══ IT DOES NOT PUMP FIRST, IT PUMPS LAST, AND IT ALWAYS PUMPS ═══
    * A party command is not a turn action — it costs no energy and works while
    * the sender is on the floor, exactly like `say`. But unlike `say` it CHANGES
-   * THE BARRIER: the quorum a player is standing at has just gained or lost
-   * people, and the party that was waiting on somebody who has now left may be
-   * able to move immediately. So the pump at the end is not bookkeeping, it is
-   * the thing that unblocks whoever was stuck.
+   * THE WIPE: a party has just gained or lost people, and one left with nobody
+   * standing is wiped by the next pump. It does NOT change the barrier, which is
+   * the realm's — somebody waiting on a person who has just left their party is
+   * still waiting on them while both stand in one engaged realm. So the pump at
+   * the end is not bookkeeping; it is what notices the wipe.
    *
    * ═══ `party_state` GOES TO THE AFFECTED MEMBERS ONLY ═══
    * And they are named by the ENGINE rather than worked out here: an accept
@@ -19273,8 +19357,12 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       sendBrief(member);
     }
 
-    // THE QUORUM JUST CHANGED SHAPE. Somebody may have been waiting on a person
-    // who is no longer in their party, and the pump is what lets them move.
+    // THE WIPE'S MEMBERSHIP JUST CHANGED, SO PUMP. The barrier did not change:
+    // it is the realm's, so somebody waiting on a person who has just left
+    // their party is still waiting on them while both stand in one engaged
+    // realm (`PumpCtx.parties` in engine/scheduler.ts). What a party change can
+    // move is the wipe — a party whose last standing member walked out is now
+    // a party of downed bodies — and the pump is what notices.
     pumpAndBroadcast();
   };
 
@@ -19943,9 +20031,11 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
   // disconnected body — so shutting the app down has to cancel them or a test
   // process hangs waiting on a ten-minute recall.
   app.addHook('onClose', (_instance, done) => {
-    // EVERY REALM'S BELL. One per floor now (see `bells`), and a timer left
-    // running is what makes a test process hang after the app is shut down.
-    for (const realmId of [...bells.keys()]) clearBell(realmId);
+    // EVERY REALM'S BELL AND WAKE-UP. One per floor now (see `bells` and
+    // `wakes`), and a timer left running is what makes a test process hang
+    // after the app is shut down. A wake can exist with no Bell (a round tail),
+    // so both tables are walked.
+    for (const realmId of new Set([...bells.keys(), ...wakes.keys()])) clearBell(realmId);
     // AND EVERY REALM'S TIDE — the fifth timer that outlives a socket. Unref'd,
     // like the reap timer, so it cannot hold the process open; cleared anyway,
     // because a tide that fires after shutdown would pump a realm the app has

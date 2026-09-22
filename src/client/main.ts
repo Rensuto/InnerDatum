@@ -77,8 +77,9 @@
  *
  *   v6: THE PARTY IS A THING YOU JOIN, AND IT IS ON THE LEFT. Real multiplayer
  *   reported a solo player being shown — and blocked by — somebody who had shut
- *   the tab. The server now scopes the barrier to an explicit party
- *   (`party_state`); this client draws that party in the LEFT-hand pane
+ *   the tab. The server scoped the barrier to an explicit party (`party_state`)
+ *   — the realm's again since ruling D-A4 — and this client draws that party
+ *   in the LEFT-hand pane
  *   (ui/partypanel.ts), takes invites there with two buttons rather than in a
  *   log line that scrolls away, and offers the same verbs three ways: a
  *   right-click menu on any detective's token (ui/contextmenu.ts), the same menu
@@ -11159,8 +11160,8 @@ async function boot(): Promise<void> {
    * THE TWO ROWS THAT END SOMETHING ASK FIRST.
    * ═══════════════════════════════════════════════════════════════════════════
    *
-   * `SWITCH CHARACTER` takes the world away; `LEAVE PARTY` drops the party the
-   * barrier scopes to. Both fired on ONE CLICK, from adjacent rows of the menu
+   * `SWITCH CHARACTER` takes the world away; `LEAVE PARTY` drops the party you
+   * are playing with. Both fired on ONE CLICK, from adjacent rows of the menu
    * every player opens most, one row below `INVENTORY`. Upstream interposes a
    * yes/no popup on the equivalent (Game.lua:2561-2570, :2577-2587).
    *

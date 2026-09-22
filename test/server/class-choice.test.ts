@@ -1320,9 +1320,9 @@ describe('a player reading the chooser', () => {
     // THE ONE FAILURE THE WHOLE TURN DESIGN EXISTS TO PREVENT.
     // ═══════════════════════════════════════════════════════════════════════
     //
-    // Parties scope the BARRIER — `surveyQuorum`, `bell` and `expire` all take a
-    // `PartyScope` — so a joiner being a party of one is TRUE and does NOT make
-    // this safe. Parties do not scope the WORLD CLOCK. `isBlocking`
+    // A joiner being a party of one is TRUE and does NOT make this safe.
+    // Parties scope neither the WORLD CLOCK nor, since 2026-09-22, the Bell
+    // (`PumpCtx.parties` in engine/scheduler.ts). `isBlocking`
     // (engine/barrier.ts) needs only quorum + energy + no pending intent + NO
     // STANDING ORDER + `engagement > 0`, engagement is a LEVEL scalar, and
     // shared/energy.ts:647 then makes every monster on the floor `continue`

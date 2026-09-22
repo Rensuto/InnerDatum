@@ -6,7 +6,7 @@ import {
   IntentKind,
   createPlayerActor,
 } from '../../src/server/engine/actor.ts';
-import { BELL_MS, createBarrier, surveyQuorum } from '../../src/server/engine/barrier.ts';
+import { BELL_MS, createBarrier, inQuorum, surveyQuorum } from '../../src/server/engine/barrier.ts';
 import { createDownedState, goDown } from '../../src/server/engine/downed.ts';
 import {
   INVITE_TTL_MS,
@@ -32,7 +32,7 @@ import { createTurnEngine } from '../../src/server/turn-engine.ts';
 import { createWorld } from '../../src/server/world/world.ts';
 import { chebyshev } from '../../src/shared/coords.ts';
 import { ENERGY_TO_ACT } from '../../src/shared/energy.ts';
-import { PartyAction, parseClientMsg } from '../../src/shared/protocol.ts';
+import { PartyAction, TileCode, parseClientMsg } from '../../src/shared/protocol.ts';
 import { PROTOCOL_VERSION } from '../../src/shared/version.ts';
 import type { Barrier } from '../../src/server/engine/barrier.ts';
 import type { DownedState } from '../../src/server/engine/downed.ts';
@@ -41,21 +41,29 @@ import type { Actor, World } from '../../src/server/world/world.ts';
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════
- * EXPLICIT PARTIES — WHO SHARES YOUR BARRIER
+ * EXPLICIT PARTIES — WHO YOU ARE PLAYING WITH, AND WHAT THAT DOES NOT CHANGE
  * ═══════════════════════════════════════════════════════════════════════════
  *
- * THE PROPERTY THIS FILE EXISTS TO DEFEND, in one sentence: A SOLO PLAYER MUST
- * NEVER WAIT ON SOMEBODY WHO IS NOT IN THEIR PARTY. That is the reported bug —
- * a friend's body stayed on the floor, engagement was above zero, and the
- * level-wide barrier held a stranger's turn hostage to it — and it is the one
- * thing every test below is ultimately about.
+ * THE TABLE: every player is always in a party, invites lapse, leaving and
+ * being kicked land you in a party of one, and a wipe resets only the party
+ * that fell. Those are what this file defends first.
  *
- * THE SECOND PROPERTY IS THE ONE THAT IS EASY TO BREAK WHILE FIXING THE FIRST:
- * within a party, NOTHING CHANGES. engine/barrier.ts argues at length that above
+ * WHAT A PARTY DOES NOT DO IS SCOPE THE BARRIER. This header used to say "a
+ * solo player must never wait on somebody who is not in their party", and that
+ * was never true in combat: `isBlocking` takes no scope and the tick loop parks
+ * on anybody who owes a decision, so above `engagement > 0` everyone in one
+ * realm waits on everyone in it, party or not. That is ruled (D-A4: "the turn
+ * barrier stay[s] realm-wide"); strangers are kept out of one fight by instancing
+ * every combat space per party (world/realms.ts). Since 2026-09-22 the Bell,
+ * the round tails and the turn strip count the realm too — `PumpCtx.parties` in
+ * engine/scheduler.ts has the account, and cross-party-wait.test.ts pins it
+ * over a socket. The cases below that put two parties on one engaged level say
+ * so with real moves.
+ *
+ * WITHIN A PARTY, NOTHING CHANGED. engine/barrier.ts argues at length that above
  * `engagement > 0` every player blocks, including one thirty tiles away, because
- * otherwise somebody walks fifty free tiles while a friend tanks. That argument
- * is untouched — it now applies to the party rather than to the level — and
- * `holds a party-mate's turn` below is the test that says so.
+ * otherwise somebody walks fifty free tiles while a friend tanks. `holds a
+ * party-mate's turn` below is the test that says so.
  */
 
 const NOW = 1_000_000;
@@ -358,10 +366,16 @@ describe('a body leaving the world', () => {
 });
 
 // ---------------------------------------------------------------------------
-// THE BARRIER. The reason any of the above exists.
+// THE BARRIER'S OPTIONAL PARTY FILTER — arithmetic the engine no longer asks for.
 // ---------------------------------------------------------------------------
 
-describe('the barrier is scoped to a party, not to the level', () => {
+/**
+ * `surveyQuorum`, `bell` and `expire` still take an optional `PartyScope`, and
+ * these three pin what it computes. NO ENGINE CALLER PASSES ONE: the engine
+ * counts the realm (barrier.ts's `PartyScope` note), so nothing here describes
+ * who waits on whom in a game. The cases further down, which pump, do.
+ */
+describe('the barrier`s optional party filter', () => {
   const LEVEL = { engagement: 3, bossFloor: false } as const;
 
   it('counts only the asking player`s party into the quorum', () => {
@@ -386,13 +400,13 @@ describe('the barrier is scoped to a party, not to the level', () => {
       id: partyIdOf(state, 'p3'),
       members: membersOf(state, 'p3'),
     });
-    // THE WHOLE FEATURE, IN ONE ASSERTION. The stranger's quorum is one, and
-    // the two people fighting next door are not in it.
+    // The filtered count is one. The ENGINE's count here would be three — the
+    // level's, above — because that is whom the tick loop waits on.
     expect(solo.total).toBe(1);
     expect(solo.blocking).toEqual(['p3']);
   });
 
-  it('gives each party its own countdown, from its own start', () => {
+  it('gives each filtered scope its own countdown, from its own start', () => {
     const state = table('p1', 'p2', 'p3');
     group(state, 'p1', 'p2');
     const mine = { id: partyIdOf(state, 'p1'), members: membersOf(state, 'p1') };
@@ -407,9 +421,9 @@ describe('the barrier is scoped to a party, not to the level', () => {
     const armed = barrier.bell(seats, LEVEL, NOW, mine);
     expect(armed.running).toBe(true);
 
-    // The solo player's Bell arms fifteen seconds later, and it is ITS OWN
-    // clock: inheriting the other party's start would hand a straggler a
-    // countdown that was already half spent before they were asked anything.
+    // The other scope's Bell arms fifteen seconds later on ITS OWN row. (This
+    // is exactly what made per-party Bells disagree with the realm-wide wait,
+    // and why the engine now keeps one row, the level's.)
     const theirBell = barrier.bell(seats, LEVEL, NOW + 15_000, theirs);
     expect(theirBell.running).toBe(true);
     expect(theirBell.quorum).toBe(1);
@@ -419,9 +433,9 @@ describe('the barrier is scoped to a party, not to the level', () => {
     expect(barrier.bell(seats, LEVEL, NOW + 15_000, mine).deadlineMs).toBe(armed.deadlineMs);
   });
 
-  it('is unchanged when no party scope is supplied', () => {
-    // A build with no party table is the pre-party game, byte for byte. Every
-    // test written against the level-wide barrier still describes the truth.
+  it('is the whole level when no party scope is supplied', () => {
+    // Which is what the engine always supplies now: nothing. Every test written
+    // against the level-wide barrier still describes the truth.
     const seats = [seat('p1'), seat('p2')];
     for (const actor of seats) actor.energy = ENERGY_TO_ACT;
     expect(surveyQuorum(seats, LEVEL).blocking).toEqual(['p1', 'p2']);
@@ -443,32 +457,51 @@ function twoPlayers(seed: string): { world: World; a: Actor; b: Actor } {
   return { world, a, b };
 }
 
-describe('the reported bug: a solo player waiting on a stranger', () => {
-  it('does not park a solo player on somebody outside their party', () => {
+describe('two parties on one engaged level share its barrier (D-A4)', () => {
+  it('holds a solo player`s SECOND move on a stranger, and rings the stranger at the Normal Bell', () => {
+    /**
+     * This case used to be "does not park a solo player on somebody outside
+     * their party". It submitted no move and asserted a party-scoped Solo Bell,
+     * so it passed while the stranger held A completely. The rule is the other
+     * way round (D-A4): in combat the level waits on everyone on it.
+     */
     const { world, a, b } = twoPlayers('party-solo');
+    world.level.tiles.fill(TileCode.FLOOR);
     const parties = createPartyState();
     // Two people who never agreed to play together. B has walked away — no
-    // intent, no commit — which under the level-wide barrier froze A completely.
+    // intent, no commit.
     partyOf(parties, a.id);
     partyOf(parties, b.id);
+    expect(partyIdOf(parties, a.id)).not.toBe(partyIdOf(parties, b.id));
+    expect(world.turn.engagement).toBeGreaterThan(0);
+    expect(inQuorum(a)).toBe(true);
+    expect(inQuorum(b)).toBe(true);
 
     const barrier = createBarrier();
-    const result = pump(world, { nowMs: NOW, barrier, parties });
+    const from = { x: a.x, y: a.y };
 
-    // Both still owe THEIR OWN party a decision, which is right: engagement is
-    // level-wide and a fight is happening. What changed is who waits for whom.
-    expect(result.parked).toContain(a.id);
+    // The first move spends energy A already had, so it resolves whatever B does.
+    expect(submitIntent(world, barrier, a.id, { kind: IntentKind.Move, dir: 's' })).toBe(true);
+    pump(world, { nowMs: NOW, barrier, parties });
+    expect({ x: a.x, y: a.y }).toEqual({ x: from.x, y: from.y + 1 });
 
-    // A's Bell is a SOLO bell — two minutes, never twenty seconds — because
-    // A's quorum is one. Under the level-wide barrier it was the 20-second
-    // Normal bell measured against a straggler A could not influence.
-    const mine = barrier.bell(world.allActors(), world.turn, NOW, {
-      id: partyIdOf(parties, a.id),
-      members: membersOf(parties, a.id),
-    });
-    expect(mine.quorum).toBe(1);
-    expect(mine.stragglers).toEqual([a.id]);
-    expect(mine.durationMs).toBe(120_000);
+    // THE RULE: the second one waits on B, who is in another party.
+    expect(submitIntent(world, barrier, a.id, { kind: IntentKind.Move, dir: 's' })).toBe(true);
+    const held = pump(world, { nowMs: NOW + 1, barrier, parties });
+    expect({ x: a.x, y: a.y }).toEqual({ x: from.x, y: from.y + 1 });
+    expect(held.parked).toEqual([b.id]);
+
+    // ON THE LEVEL'S BELL: a quorum of two with B the last straggler, so the
+    // Normal twenty seconds. Counted per party it was B's own two-minute Solo
+    // Bell, which the gateway's twenty-second timer never matched.
+    expect(held.bell.quorum).toBe(2);
+    expect(held.bell.stragglers).toEqual([b.id]);
+    expect(held.bell.durationMs).toBe(BELL_MS.Normal);
+
+    // And at twenty seconds B is held for it, and A's move goes through.
+    pump(world, { nowMs: NOW + BELL_MS.Normal, barrier, parties });
+    expect(barrier.autoPassesOf(b.id)).toBe(1);
+    expect({ x: a.x, y: a.y }).toEqual({ x: from.x, y: from.y + 2 });
   });
 
   it('still holds a party-mate`s turn — the essay in barrier.ts survives', () => {
@@ -491,36 +524,69 @@ describe('the reported bug: a solo player waiting on a stranger', () => {
 });
 
 // ---------------------------------------------------------------------------
-// THE REPORT, STATED AS A PROPERTY: NOTHING A STRANGER DOES REACHES YOU
+// A STRANGER HOLDS YOU EXACTLY WHEN THEY OWE THE REALM A DECISION
 // ---------------------------------------------------------------------------
 
 /**
- * One thing a player who is not in your party might be doing.
+ * One thing a player who is not in your party might be doing, OUT OF THE
+ * QUORUM — so they owe nobody a decision and hold nobody.
  *
- * A table rather than four copy-pasted tests, because the point is that the
- * barrier NEVER ASKS what state a stranger is in — so the list has to be walked
- * exhaustively, and adding the next state somebody finds (a standing order, a
- * body mid-recall) should be one line here rather than a new test to write.
+ * A table rather than three copy-pasted tests, because the point is that the
+ * barrier NEVER ASKS what party a stranger is in, only whether they are in the
+ * quorum — so the list has to be walked exhaustively, and adding the next state
+ * somebody finds should be one line here rather than a new test to write.
+ *
+ * The one state that IS in the quorum — present and deciding nothing — used to
+ * be the first row, asserting a party-scoped quorum of one and a single move
+ * that resolved on banked energy whatever the stranger did. It holds you, and
+ * has its own case below.
  */
 type StrangerState = {
   readonly name: string;
   readonly apply: (stranger: Actor, ctx: { barrier: Barrier; downed: DownedState }) => void;
+  /**
+   * Whether the realm's survey lists them as out of the quorum. A body that is
+   * not `alive` is not counted at all, so it is not listed either.
+   */
+  readonly listed: boolean;
 };
 
-describe('a solo player is a party of one, and nothing a stranger does reaches them', () => {
-  /** The four states from the report: *"him being AFK, not in game, etc"*. */
+describe('a stranger holds a solo player exactly when they owe the level a decision', () => {
+  it('IS held by a stranger who is connected, standing there and deciding nothing', () => {
+    // The plain case, and the one that actually stranded somebody. Two moves,
+    // because the first spends energy A already had and resolves regardless.
+    const { world, a, b } = twoPlayers('solo-held-by-deciding-stranger');
+    world.level.tiles.fill(TileCode.FLOOR);
+    const parties = createPartyState();
+    partyOf(parties, a.id);
+    partyOf(parties, b.id);
+    const engine = createTurnEngine({ world, parties, now: () => NOW });
+    expect(partyIdOf(parties, a.id)).not.toBe(partyIdOf(parties, b.id));
+    expect(world.turn.engagement).toBeGreaterThan(0);
+    expect(inQuorum(a)).toBe(true);
+    expect(inQuorum(b)).toBe(true);
+
+    const from = { x: a.x, y: a.y };
+    expect(engine.submitMove(a.id, 's').ok).toBe(true);
+    engine.pump();
+    expect({ x: a.x, y: a.y }).toEqual({ x: from.x, y: from.y + 1 });
+
+    // THE RULE (D-A4): the second waits on B...
+    expect(engine.submitMove(a.id, 's').ok).toBe(true);
+    engine.pump();
+    expect({ x: a.x, y: a.y }).toEqual({ x: from.x, y: from.y + 1 });
+    // ...and A's own turn snapshot says so. Counted per party it said nobody.
+    expect(engine.turnState(a.id).whoseTurn).toEqual([b.id]);
+  });
+
+  /** The three out-of-quorum states from the report: *"him being AFK, not in game, etc"*. */
   const STRANGER_STATES: readonly StrangerState[] = [
-    {
-      name: 'connected, standing there and deciding nothing',
-      // The plain case, and the one that actually stranded somebody: a stranger
-      // who is present, owes a decision, and simply has not made it.
-      apply: () => undefined,
-    },
     {
       name: 'AFK — Standing By after two auto-passes',
       apply: (stranger) => {
         stranger.standingBy = true;
       },
+      listed: true,
     },
     {
       name: 'gone — the activity closed and the socket dropped',
@@ -529,6 +595,7 @@ describe('a solo player is a party of one, and nothing a stranger does reaches t
       apply: (stranger, ctx) => {
         ctx.barrier.disconnect(stranger, NOW);
       },
+      listed: true,
     },
     {
       name: 'on the floor at 0 hp',
@@ -537,45 +604,39 @@ describe('a solo player is a party of one, and nothing a stranger does reaches t
         stranger.alive = false;
         goDown(ctx.downed, stranger, 0);
       },
+      listed: false,
     },
   ];
 
   for (const [index, state] of STRANGER_STATES.entries()) {
-    it(`is not touched while the stranger is ${state.name}`, () => {
+    it(`is not held while the stranger is ${state.name}`, () => {
       const { world, a, b } = twoPlayers(`solo-immunity-${String(index)}`);
       const parties = createPartyState();
       // Two people who never agreed to play together. Both are minted as parties
       // of one, which is what `partyOf` does for anybody it has not seen.
       partyOf(parties, a.id);
       partyOf(parties, b.id);
+      expect(partyIdOf(parties, a.id)).not.toBe(partyIdOf(parties, b.id));
 
       const barrier = createBarrier();
       const downed = createDownedState();
       state.apply(b, { barrier, downed });
 
-      const scope = { id: partyIdOf(parties, a.id), members: membersOf(parties, a.id) };
-      const quorum = surveyQuorum(world.allActors(), world.turn, scope);
-
-      // ═══ THE WHOLE FEATURE, IN THREE ASSERTIONS ═══
-      // A party of one has a quorum of one. The stranger is not in it, and is
-      // not even reported as EXCLUDED from it — they are not in this barrier at
-      // all, so there is nothing about them for the pane to explain.
-      expect(membersOf(parties, a.id)).toEqual([a.id]);
+      // THE LEVEL'S SURVEY — no scope, which is what the engine asks. The
+      // stranger is not in the quorum, so the quorum is A alone.
+      const quorum = surveyQuorum(world.allActors(), world.turn);
       expect(quorum.total).toBe(1);
       expect(quorum.blocking).toEqual([a.id]);
-      expect(quorum.standingBy).toEqual([]);
+      expect(quorum.standingBy).toEqual(state.listed ? [b.id] : []);
 
-      // ...and the countdown they are handed is the SOLO one. Two minutes, never
-      // the 20-second Normal bell: the Bell exists to stop three people waiting
-      // on one, and there is nobody here to wait.
-      const bell = barrier.bell(world.allActors(), world.turn, NOW, scope);
+      // ...and so the countdown is the SOLO one, because nobody is waiting on A.
+      const bell = barrier.bell(world.allActors(), world.turn, NOW);
       expect(bell.quorum).toBe(1);
       expect(bell.stragglers).toEqual([a.id]);
       expect(bell.durationMs).toBe(BELL_MS.Solo);
 
       // ...and their turn RESOLVES, with the stranger still owing whatever they
-      // owe. This is the sentence the report was written in: a solo player must
-      // be able to play while somebody else is AFK, gone, or on the floor.
+      // owe.
       const from = { x: a.x, y: a.y };
       expect(submitIntent(world, barrier, a.id, { kind: IntentKind.Move, dir: 's' })).toBe(true);
       pump(world, { nowMs: NOW, barrier, downed, parties });
@@ -584,7 +645,7 @@ describe('a solo player is a party of one, and nothing a stranger does reaches t
   }
 });
 
-describe('inside a party, distance is not a term in the barrier', () => {
+describe('distance is not a term in the barrier', () => {
   it('a party-mate on the FAR SIDE OF THE MAP still blocks — the essay survives', () => {
     // engine/barrier.ts argues that above `engagement > 0` every player blocks,
     // "including one thirty tiles away... otherwise somebody walks fifty free
@@ -617,21 +678,29 @@ describe('inside a party, distance is not a term in the barrier', () => {
     expect(bell.durationMs).toBe(BELL_MS.Normal);
   });
 
-  it('while a stranger on the very next tile does not', () => {
-    // The mirror image, and together the two say the whole rule: MEMBERSHIP is
-    // the predicate. Proximity is not a term in it either.
+  it('and neither is membership: a stranger on the very next tile blocks too', () => {
+    // This said the opposite — "MEMBERSHIP is the predicate" — reading a
+    // party-scoped survey the engine does not ask. The level is the scope
+    // (D-A4): a stranger standing in the fight owes it a decision like anyone.
     const { world, a, b } = twoPlayers('party-adjacent-stranger');
     const parties = createPartyState();
     partyOf(parties, a.id);
     partyOf(parties, b.id);
+    expect(partyIdOf(parties, a.id)).not.toBe(partyIdOf(parties, b.id));
     expect(chebyshev(a, b)).toBe(1);
 
     const barrier = createBarrier();
-    const scope = { id: partyIdOf(parties, a.id), members: membersOf(parties, a.id) };
-    const quorum = surveyQuorum(world.allActors(), world.turn, scope);
-    expect(quorum.total).toBe(1);
-    expect(quorum.blocking).toEqual([a.id]);
-    expect(barrier.bell(world.allActors(), world.turn, NOW, scope).durationMs).toBe(BELL_MS.Solo);
+    const quorum = surveyQuorum(world.allActors(), world.turn);
+    expect(quorum.total).toBe(2);
+    expect(quorum.blocking).toEqual([a.id, b.id]);
+
+    // a commits and the level's Bell rings for the stranger, at the Normal
+    // twenty seconds, exactly as it would for a party-mate.
+    expect(submitIntent(world, barrier, a.id, HOLD_INTENT)).toBe(true);
+    const bell = barrier.bell(world.allActors(), world.turn, NOW);
+    expect(bell.running).toBe(true);
+    expect(bell.stragglers).toEqual([b.id]);
+    expect(bell.durationMs).toBe(BELL_MS.Normal);
   });
 });
 
@@ -780,21 +849,27 @@ describe('submitParty', () => {
     expect(engine.partySnapshot?.(a.id)?.members).toEqual([a.id]);
   });
 
-  it('scopes the turn snapshot to the viewer`s party', () => {
+  it('counts the level in every turn snapshot, and draws the viewer`s party only out of combat', () => {
     const { engine, world, parties, a, b } = server('submit-turnstate');
     world.turn.engagement = 3;
     for (const actor of world.allActors()) actor.energy = ENERGY_TO_ACT;
 
-    // Strangers: each sees only themselves in their own barrier.
-    expect(engine.turnState(a.id).party).toEqual([a.id]);
-    expect(engine.turnState(a.id).whoseTurn).toEqual([a.id]);
-    // The un-scoped snapshot is the union, which is what the gateway's
-    // "has anything changed?" key is built from.
+    // Strangers in a fight: A's snapshot names B, because B holds A (D-A4). It
+    // named only A while it was counted per party, so the held player's strip
+    // said nobody was being waited on. The strip is everybody here (`party`
+    // absent), and the gateway's viewerless snapshot says the same.
+    expect(engine.turnState(a.id).whoseTurn).toEqual([a.id, b.id]);
+    expect(engine.turnState(a.id).party).toBeUndefined();
     expect(engine.turnState().whoseTurn).toEqual([a.id, b.id]);
     expect(engine.turnState().party).toBeUndefined();
 
+    // Out of combat nobody is waited on, and the strip is the viewer's party —
+    // a town full of strangers is not one table.
+    world.turn.engagement = 0;
+    expect(engine.turnState(a.id).whoseTurn).toEqual([]);
+    expect(engine.turnState(a.id).party).toEqual([a.id]);
     group(parties, a.id, b.id);
-    expect(engine.turnState(a.id).whoseTurn).toEqual([a.id, b.id]);
+    expect(engine.turnState(a.id).party).toEqual([a.id, b.id]);
   });
 
   it('hands the pane a snapshot with the clock already applied', () => {

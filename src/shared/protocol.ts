@@ -2508,8 +2508,9 @@ export type PingedMsg = {
  * union at v5), and `invites` is a list of decisions that belong to one player.
  *
  * A CLIENT MUST NOT DERIVE ONE FROM THE OTHER. "Everyone in `turn.actors`" is
- * not the party — from v6 the turn strip is already party-scoped, so deriving
- * membership from it is circular — and "everyone in `party`" is the floor.
+ * not the party — out of combat the turn strip is party-scoped and in combat it
+ * is the whole realm (ruling D-A4), so deriving membership from it is wrong
+ * both ways — and "everyone in `party`" is the floor.
  */
 
 /**
@@ -4162,10 +4163,11 @@ export type PartyAction = (typeof PartyAction)[keyof typeof PartyAction];
  * `party` — WHO YOU ARE PLAYING WITH. THE v6 VERB.
  * ═══════════════════════════════════════════════════════════════════════════
  *
- * The barrier is per-party from v6 (src/server/engine/party.ts): a solo player
- * must never wait on somebody who is not in their party, and this is the frame
- * that says who is. Real multiplayer found the bug first — a solo player was
- * blocked by a stranger, and then by a stranger who had closed the tab.
+ * The barrier WAS per-party from v6 (src/server/engine/party.ts), after real
+ * multiplayer found a solo player blocked by a stranger who had closed the tab.
+ * It is the realm's now (ruling D-A4: strangers in one engaged realm share one
+ * clock); this frame still says who you are PLAYING with — the wipe, the strip
+ * out of combat, experience and the dialogue lead.
  *
  * ═══ `targetId` IS THE FIRST FIELD IN THIS PROTOCOL THAT NAMES ANOTHER ACTOR,
  *     AND THE MISSING-FIELD RULE AT THE TOP OF THIS FILE IS UNBROKEN ═══

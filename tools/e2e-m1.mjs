@@ -255,9 +255,10 @@ console.log('\n--- disconnect: the body stays in the world (M2) ---');
  * ════════════════════════════════════════════════════════════════════════════
  * THEY HAVE TO BE IN A PARTY, OR THE ASSERTION BELOW IS NOT ABOUT ANYTHING.
  * ════════════════════════════════════════════════════════════════════════════
- * `surveyQuorum` filters on `inScope(actor.id, scope)` and a scope is a PARTY's
- * member list, so a stranger's disconnect is correctly none of your business and
- * never reaches your turn frame.
+ * Out of combat the turn frame is the recipient's PARTY (`surveyQuorum` with a
+ * party scope), so a stranger's disconnect never reaches it. In combat the
+ * barrier and the strip are the REALM's (ruling D-A4) — a probe that did not
+ * form a party would be asserting about strangers.
  *
  * This probe never formed a party, so the check below could not have passed on
  * any build — and it read as "Standing By is broken", about a rule

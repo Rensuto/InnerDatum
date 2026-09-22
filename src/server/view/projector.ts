@@ -311,20 +311,39 @@ export type TurnState = {
   /** How long a freshly-armed Bell should run, or null for no Bell at all. */
   readonly bellDurationMs: number | null;
   /**
-   * WHOSE BARRIER THIS SNAPSHOT DESCRIBES — the members of one party.
+   * ═══════════════════════════════════════════════════════════════════════════
+   * HOW LONG UNTIL THE SOONEST OPEN ROUND CLOSES ITSELF — or null for never.
+   * ═══════════════════════════════════════════════════════════════════════════
    *
-   * ABSENT MEANS THE WHOLE LEVEL, which is what every snapshot meant before
-   * parties existed and is still what the gateway's "has the barrier changed?"
-   * key is built from: the level-wide blocking set is the exact UNION of every
-   * party's, because `isBlocking` is a fact about one actor and the scope only
-   * decides whose quorum counts it. So one cheap level-wide comparison cannot
-   * miss a per-party change, and the per-recipient frames are built from
-   * per-recipient snapshots.
+   * Milliseconds from the moment of the snapshot, like `bellDurationMs` a
+   * duration and never a deadline, because the engine's clock is injected and
+   * the gateway's is not. The gateway arms its one wake-up timer for the sooner
+   * of this and the Bell, and pumps the realm when it fires — without it the
+   * round tail (engine/scheduler.ts `applyRoundTails`) was only ever checked
+   * when somebody pressed a key, so an open round beside one idle player, which
+   * arms no Bell, waited for one.
+   *
+   * OPTIONAL, and absent reads as null: a snapshot built by hand, or by an
+   * engine with no talent runtime, has no round that can stay open. Never on
+   * the wire — `projectTurn` copies its fields one by one.
+   */
+  readonly roundTailInMs?: number | null;
+  /**
+   * WHOSE CARDS THE STRIP DRAWS — a list of player ids, or absent for everybody
+   * in the realm.
+   *
+   * The blocking set, the Bell and `acting` above are the REALM'S in every
+   * snapshot: everyone in an engaged realm waits on everyone in it, party or not
+   * (`PumpCtx.parties` in engine/scheduler.ts). So in combat this is ABSENT and
+   * the strip names whoever is holding the viewer, stranger or not. Out of
+   * combat nobody blocks, and it is the viewer's party, so a town full of
+   * people who are not playing together is not drawn as one table. Absent too
+   * for the gateway's viewerless snapshot and for a build with no parties.
    *
    * It is here rather than passed beside `TurnState` because the two must not
-   * be able to disagree: `whoseTurn` was computed against this membership, and
-   * an `actors` list built from one party's blocking set and another party's
-   * roster would say the game is waiting on nobody in particular.
+   * be able to disagree: a strip filtered on one roster while `whoseTurn`
+   * named somebody outside it would say the game is waiting on nobody in
+   * particular, which is what a held player was shown until 2026-09-22.
    */
   readonly party?: readonly string[];
 };
@@ -973,12 +992,10 @@ function projectTurnActors(
 
   for (const actor of world.allActors()) {
     if (actor.kind !== ActorKind.Player) continue;
-    // v6: THE STRIP IS THE VIEWER'S PARTY, NOT THE FLOOR. `state.party` is the
-    // membership the blocking set above was computed against, so filtering on
-    // it is what keeps the two halves of one card describing one barrier. A
-    // player from another party who fell through to this loop would be drawn
-    // `committed` — the fall-through in `playerCardState` — and the strip would
-    // quietly claim the game was waiting on nobody in particular.
+    // THE STRIP IS THE REALM IN A FIGHT AND THE VIEWER'S PARTY OUT OF ONE — see
+    // `TurnState.party`. The blocking set above is the realm's either way, so a
+    // stranger who is holding the viewer is always on the strip when it
+    // matters: in combat `state.party` is absent and nobody is filtered.
     if (state.party !== undefined && !state.party.includes(actor.id)) continue;
 
     // The survival table is the ONLY thing that can tell a Downed detective from
@@ -3329,9 +3346,10 @@ export function projectParty(
     });
   }
 
-  // STILL THE WHOLE FLOOR, UNCHANGED BY v6. Who shares a barrier with whom is
+  // STILL THE WHOLE FLOOR, UNCHANGED BY v6. Who you are playing WITH is
   // `party_state`'s question, and it is per-recipient because the answer is —
-  // see `projectPartyState` below.
+  // see `projectPartyState` below. (Who shares a BARRIER is everyone in the
+  // realm, by ruling D-A4; the party no longer scopes it.)
   return { v: PROTOCOL_VERSION, t: 'party', members };
 }
 

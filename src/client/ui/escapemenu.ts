@@ -908,7 +908,7 @@ export type EscapeMenuView = {
    *
    * ═══ TWO ROWS HERE END SOMETHING, AND NEITHER ASKED ═══
    * `SWITCH CHARACTER` takes the world away and `LEAVE PARTY` drops the party
-   * the barrier scopes to — and both fired on a single click, from rows 6 and 7
+   * you are playing with — and both fired on a single click, from rows 6 and 7
    * of the menu every player opens most, adjacent to each other and one row from
    * `INVENTORY`. Upstream puts a yes/no popup in front of the equivalent
    * (`Game.lua:2561-2570`, `:2577-2587`: *"Save and go back to main menu?"*).
@@ -1067,7 +1067,7 @@ function entryRow(
  * THE TWO ROWS THAT END SOMETHING, BY INDEX.
  * ═══════════════════════════════════════════════════════════════════════════
  *
- * `LEAVE PARTY` drops the party the barrier scopes to; `SWITCH CHARACTER` takes
+ * `LEAVE PARTY` drops the party you are playing with; `SWITCH CHARACTER` takes
  * the world away. Both take a confirming second press — see
  * `EscapeMenuView.confirming` — and the gate that enforces it lives in main.ts,
  * so the numbers have to be stated somewhere BOTH can read them.

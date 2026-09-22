@@ -1359,13 +1359,37 @@ export type PumpCtx = {
    * WHO IS PLAYING WITH WHOM (engine/party.ts). Lives ACROSS pumps, like the
    * barrier and the survival table, because a party outlives every turn.
    *
-   * Present → THE BARRIER IS PER-PARTY. The quorum, the commit count, the Bell
-   * and the wipe are each computed once per party rather than once per level,
-   * so a solo player never waits on somebody they never agreed to play with —
-   * which is the entire reason parties exist. Engagement stays LEVEL-WIDE: it
-   * is a fact about the world, and barrier.ts's essay on it is unchanged.
+   * Present → THE WIPE IS PER-PARTY. NOTHING ELSE HERE IS. `partyScopes` hands
+   * one scope per party to `checkWipe`, and to nothing else, so a wipe resets
+   * only the party that fell (DECISIONS.md D10).
    *
-   * ABSENT → the pre-party game, byte for byte: one level-wide barrier and one
+   * THE WAIT, THE BELL AND THE ROUND TAILS ARE THE REALM'S. `isBlocking` takes
+   * no scope, and `tickLevel` parks the whole level on anybody who owes a
+   * decision (shared/energy.ts: once anyone is parked, no monster acts). So
+   * above `engagement > 0` every player in the realm waits on every other one,
+   * party or not. That is ruled: D-A4 in the sight plan, recorded in
+   * DECISIONS.md under "Sight is each player's own…" as "the engagement banner
+   * and the turn barrier stay realm-wide", and world/realms.ts
+   * keeps strangers out of one fight by instancing every combat space per
+   * party, not by scoping the barrier. So the Bell's expiry, the round tails
+   * and `PumpResult.bell` all ask the realm (`undefined`, barrier.ts's level
+   * slot), and the Bell's length comes from the realm's quorum.
+   *
+   * THEY WERE PER PARTY UNTIL 2026-09-22, and in a realm holding two parties
+   * that made the countdown disagree with the wait: an idle stranger, a party
+   * of one, was on the two-minute Solo Bell while the gateway's timer ran the
+   * twenty-second Normal one and the player held by them was shown nobody to
+   * wait on. The pinning cases are test/server/cross-party-wait.test.ts.
+   *
+   * Production puts two parties in one combat realm with a party command issued
+   * inside a delve — a `leave`, a `kick`, or an `accept` with no name; those
+   * are the paths known. The bare accept takes the oldest invite and checks
+   * nothing about where the inviter stands (`submitParty` in turn-engine.ts,
+   * `findInvite` in engine/party.ts, `answerVerb` in client/input/commands.ts),
+   * and a realm crossing does not clear invites. DECISIONS.md, 2026-09-22, "the
+   * cross-party wait in combat", lists it for the author.
+   *
+   * ABSENT → the pre-party game, byte for byte: one level-wide Bell and one
    * level-wide wipe, exactly as `pump(world, { nowMs, barrier })` has always
    * behaved. Every branch below is gated on it, for the same reason `downed` is.
    */
@@ -1429,7 +1453,13 @@ export type PumpCtx = {
 };
 
 /**
- * THE DISTINCT PARTIES STANDING ON THIS LEVEL, in a deterministic order.
+ * THE DISTINCT PARTIES STANDING ON THIS LEVEL, in a deterministic order — FOR
+ * THE WIPE, AND FOR NOTHING ELSE.
+ *
+ * `checkWipe` is the one question in this file a party answers (DECISIONS.md
+ * D10: your party falling resets the floor for your party). The Bell, the round
+ * tails and the wait are the realm's — see `PumpCtx.parties` — so nothing
+ * else may start iterating this list without reading that note first.
  *
  * Derived from the world's TURN ORDER rather than from the party table's own
  * iteration order, so two servers replaying the same session sweep the parties
@@ -1439,7 +1469,7 @@ export type PumpCtx = {
  * input and must not reach game state.
  *
  * `[undefined]` when no party table is wired in: one scope, the whole level,
- * and every call below reads exactly as it did before parties existed.
+ * and the wipe reads exactly as it did before parties existed.
  */
 function partyScopes(
   actors: readonly EngineActor[],
@@ -1460,26 +1490,15 @@ function partyScopes(
 }
 
 /**
- * Party membership, with `undefined` meaning the whole level.
- *
- * A local copy of barrier.ts's private `inScope` rather than an export of it:
- * four ids and an `includes` is not a rule anybody can get wrong, and exporting
- * it would invite a second caller to start deciding membership outside the
- * barrier — which is the one thing engine/party.ts exists to prevent.
- */
-function inScope(actorId: string, scope: PartyScope | undefined): boolean {
-  return scope === undefined || scope.members.includes(actorId);
-}
-
-/**
  * ═══════════════════════════════════════════════════════════════════════════
- * DOES THIS PARTY OWE A DECISION AT ALL? A STALLED ONE IS SKIPPED, NOT WAITED ON.
+ * DOES THIS REALM OWE A DECISION AT ALL? A STALLED ONE IS SKIPPED, NOT WAITED ON.
  * ═══════════════════════════════════════════════════════════════════════════
  *
- * ONE PARTY MUST NEVER BE ABLE TO FREEZE ANOTHER, and real co-op found the way
+ * A PARTY'S WIPE LOOP MUST NEVER STARVE THE PUMP, and real co-op found the way
  * it could: a party trapped on the floor churned the shared pump while a player
  * in a different party — with an invite still unanswered — could not get a turn
- * resolved. Parties scope the BARRIER; `pump` is LEVEL-WIDE.
+ * resolved (wipe-recovery.test.ts, "one party on the floor does not starve
+ * another"). The wipe is per party; `pump` is LEVEL-WIDE.
  *
  * ═══ AND `pump` STAYS LEVEL-WIDE. THAT IS DELIBERATE. ═══
  * Making the pump per-party would FORK THE WORLD CLOCK, and world.ts says what
@@ -1487,28 +1506,26 @@ function inScope(actorId: string, scope: PartyScope | undefined): boolean {
  * live levels means two clocks and an unsolvable UX problem for a Friday
  * night."* Two clocks on one floor means two answers to "what turn is it",
  * monsters ticking at two rates in the same room, and an engagement counter
- * nobody owns. SKIPPING IS ENOUGH, and skipping is all this does.
+ * nobody owns. The Bell is the realm's for the same reason — see
+ * `PumpCtx.parties`.
  *
- * A party with nobody in its quorum — every member Downed, Erased, disconnected
+ * A realm with nobody in its quorum — every player Downed, Erased, disconnected
  * or Standing By — has no decision to owe. There is nobody to ring a Bell at,
  * nobody whose silence should be turned into a forced pass, and nobody whose
- * deadline the caller should arm its single wall-clock timer for.
+ * deadline the caller should arm its wall-clock timer for.
  *
  * ═══ IT IS A STATED INVARIANT, NOT A NEW RULE, AND THAT IS THE POINT ═══
  * `inQuorum` already answers no for every one of those bodies, so `expire`
- * returns nothing for such a party today and `bell` reports a dormant countdown.
+ * returns nothing for such a realm today and `bell` reports a dormant countdown.
  * Writing it down HERE is what keeps it true: the day `inQuorum` widens — a
  * downed player who may still vote, a Standing By player who may still be rung —
  * this is the line that has to be reconsidered on purpose, rather than
- * discovered when one party's Bell starts firing at another party's frozen
- * screen. The callers below still ask `bell` for its SIDE EFFECT even when they
- * skip; see there for why retiring the countdown matters.
+ * discovered when the Bell starts firing at a frozen screen. The caller below
+ * still asks `bell` for its SIDE EFFECT even when it skips; see there for why
+ * retiring the countdown matters.
  */
-function canDecide(actors: readonly EngineActor[], scope: PartyScope | undefined): boolean {
-  for (const actor of actors) {
-    if (inScope(actor.id, scope) && inQuorum(actor)) return true;
-  }
-  return false;
+function canDecide(actors: readonly EngineActor[]): boolean {
+  return actors.some((actor) => inQuorum(actor));
 }
 
 /**
@@ -1560,8 +1577,9 @@ type Run = {
   /** Null when the caller wired in no survival system. */
   readonly survival: SurvivalRun | null;
   /**
-   * The barriers this pump is arbitrating — one per party, or one un-scoped
-   * level when no party table was supplied.
+   * The parties `checkWipe` surveys — one per party, or one un-scoped level
+   * when no party table was supplied. NOT the barrier: the Bell and the round
+   * tails are the realm's (see `PumpCtx.parties`).
    *
    * Computed ONCE per pump against the same frozen actor snapshot everything
    * else uses, so a party that changed mid-tick cannot split a turn in half.
@@ -1874,15 +1892,17 @@ export function pump(world: World, ctx: PumpCtx): PumpResult {
   // it has to be true BEFORE anybody is asked whether they are blocking.
   updateEngagement(world, actors, ctx, sink, false);
 
-  // The Bell is checked ON ENTRY, ONCE PER PARTY. The caller sets a real timer
-  // for the deadline this returns and re-enters when it fires; expiry is applied
-  // right here, which means the whole countdown is exercised by calling pump
-  // twice with two different `nowMs` values and no timers at all.
-  for (const scope of scopes) applyBellExpiry(world, actors, ctx, sink, scope);
-  // AND THE OPEN ROUNDS, beside the Bell and per party for the same reason.
+  // The Bell is checked ON ENTRY, ONCE, FOR THE WHOLE REALM — the wait it
+  // shortens is realm-wide (`PumpCtx.parties`), so its countdown is too. The
+  // caller sets a real timer for the deadline and re-enters when it fires;
+  // expiry is applied right here, which means the whole countdown is exercised
+  // by calling pump twice with two different `nowMs` values and no timers.
+  applyBellExpiry(world, actors, ctx, sink);
+  // AND THE OPEN ROUNDS, beside the Bell and realm-wide for the same reason.
   // Without this the floor freezes the moment two people hold budget at once —
-  // see `applyRoundTails`, which is the entire argument.
-  for (const scope of scopes) applyRoundTails(actors, ctx, scope);
+  // see `applyRoundTails`, which is the entire argument, and `nextRoundTail`,
+  // which is how the caller knows to come back for it.
+  applyRoundTails(actors, ctx);
 
   /**
    * THE GROUND UNDER EVERY BODY, for `actBase`'s air step (tome/class/Actor.lua:584).
@@ -2121,62 +2141,11 @@ export function pump(world: World, ctx: PumpCtx): PumpResult {
     gameTurns: result.gameTurns,
     gameTurn: world.turn.clock.gameTurn,
     engagement: world.turn.engagement,
-    bell: soonestBell(world, actors, ctx, scopes),
+    // THE REALM'S ONE COUNTDOWN, asked of the whole realm for the reason
+    // `PumpCtx.parties` gives. With parties it was the soonest of one countdown
+    // per party, which disagreed with the wait once a realm held two of them.
+    bell: ctx.barrier.bell(actors, world.turn, ctx.nowMs),
   };
-}
-
-/**
- * THE BELL THE CALLER SHOULD SET ITS ONE TIMER FOR.
- *
- * With parties there are N countdowns and only one wall clock above this layer,
- * so `PumpResult.bell` reports the one that will ring FIRST. That is the honest
- * answer for a single timer: it is a WAKE-UP, and when it fires the caller
- * re-enters `pump`, which sweeps every party's `expire` — each of which checks
- * its own deadline and does nothing if that party still has time. So a later
- * party is never rung early, and it is never forgotten either, because whatever
- * pump follows the earlier ring reports the next-soonest deadline in turn.
- *
- * With no party table there is exactly one scope and this is a single
- * `barrier.bell` call, identical to what it replaced.
- */
-function soonestBell(
-  world: World,
-  actors: readonly EngineActor[],
-  ctx: PumpCtx,
-  scopes: readonly (PartyScope | undefined)[],
-): BellState {
-  let soonest: BellState | null = null;
-  for (const scope of scopes) {
-    const state = ctx.barrier.bell(actors, world.turn, ctx.nowMs, scope);
-    // A PARTY THAT OWES NO DECISION CONTRIBUTES NO DEADLINE — see `canDecide`.
-    // The `bell` call above is still made, and the reason is its SIDE EFFECT:
-    // an unarmed survey RETIRES that party's countdown. Skipping the call as
-    // well would leave a row behind from before the party went down, and a solo
-    // party coming back off the floor would inherit whatever was left of the
-    // twenty seconds it was on when it fell — which reads as the Bell firing on
-    // somebody the instant they get up.
-    if (!canDecide(actors, scope)) continue;
-    if (soonest === null) {
-      soonest = state;
-      continue;
-    }
-    // A running countdown always beats a dormant one — the caller needs a timer
-    // for it — and between two running ones the earlier deadline wins.
-    if (!state.running) continue;
-    if (
-      !soonest.running ||
-      (state.deadlineMs !== null &&
-        soonest.deadlineMs !== null &&
-        state.deadlineMs < soonest.deadlineMs)
-    ) {
-      soonest = state;
-    }
-  }
-  // `scopes` is never empty — `partyScopes` answers `[undefined]` for the
-  // un-scoped level and a level with no players still yields one scope — but
-  // the type does not say so, and inventing a state here would be a lie the
-  // caller could arm a timer against.
-  return soonest ?? ctx.barrier.bell(actors, world.turn, ctx.nowMs);
 }
 
 /**
@@ -5644,23 +5613,30 @@ function restoreBreath(ctx: PumpCtx, body: EngineActor): void {
  * random attack: an auto-attack picks a target the player did not, pulls
  * something they were avoiding, and gets somebody killed. That ends friendships
  * and it ends sessions.
+ *
+ * ONE COUNTDOWN, THE REALM'S — no scope is passed, which is barrier.ts's level
+ * slot. See `PumpCtx.parties` for why it is not one per party any more.
  */
 function applyBellExpiry(
   world: World,
   actors: readonly EngineActor[],
   ctx: PumpCtx,
   sink: EventSink,
-  scope: PartyScope | undefined,
 ): void {
-  // A PARTY THAT OWES NO DECISION IS SKIPPED, NOT WAITED ON — see `canDecide`.
-  // `bell` is still asked, for the side effect `soonestBell` documents: it is
-  // what retires a countdown that was running when the last member went down.
-  if (!canDecide(actors, scope)) {
-    ctx.barrier.bell(actors, world.turn, ctx.nowMs, scope);
+  // A REALM THAT OWES NO DECISION IS SKIPPED, NOT WAITED ON — see `canDecide`.
+  // `bell` is still asked, and the reason is its SIDE EFFECT: an unarmed
+  // survey RETIRES the countdown. Skipping the call as well would leave a row
+  // behind from before everybody went down, and a solo player coming back off
+  // the floor would inherit whatever was left of the clock they were on when
+  // they fell — which reads as the Bell firing on somebody the instant they
+  // get up (floor-reset.test.ts, "hands a party coming back off the floor a
+  // FRESH countdown").
+  if (!canDecide(actors)) {
+    ctx.barrier.bell(actors, world.turn, ctx.nowMs);
     return;
   }
 
-  for (const pass of ctx.barrier.expire(actors, world.turn, ctx.nowMs, scope)) {
+  for (const pass of ctx.barrier.expire(actors, world.turn, ctx.nowMs)) {
     const actor = world.getActor(pass.id);
     if (actor === undefined) continue;
     actor.pendingIntent = HOLD_INTENT;
@@ -5829,33 +5805,74 @@ function roundStaysOpen(
  * game-turn deadline would never arrive — the same trap that nearly shipped in
  * the townsfolk dialogue.
  *
- * ═══ SOLO IS NEVER HURRIED ═══
+ * ═══ A REALM OF ONE IS NEVER HURRIED ═══
  * At a quorum of one there is nobody to keep waiting, and a six-second clock on
  * a person playing alone is a stopwatch nobody asked for. The Solo Bell already
- * covers the absent case at 120s.
+ * covers the absent case at 120s. The quorum counted is the REALM'S, as the
+ * Bell's is (`PumpCtx.parties`): a stranger standing in the same fight is
+ * somebody being kept waiting, whatever party they are in.
+ *
+ * ═══ AND SOMEBODY HAS TO COME BACK FOR IT ═══
+ * The deadline is only read HERE, at the head of a pump, and until 2026-09-22
+ * nothing pumped for it: the gateway armed a timer for the Bell and for nothing
+ * else. An open round beside one idle player is two blockers, so no Bell, so no
+ * timer, and the tail meant to rescue exactly that case waited for a keypress
+ * like everything else. `nextRoundTail` is how the caller finds out when to
+ * come back; net/gateway.ts's `syncWake` arms its one timer for the sooner of
+ * the Bell and this.
  */
-function applyRoundTails(
-  actors: readonly EngineActor[],
-  ctx: PumpCtx,
-  scope: PartyScope | undefined,
-): void {
-  // SOLO IS NEVER HURRIED. `inQuorum` is the same test the Bell's `canDecide`
-  // uses, so "how many people are we waiting on" has one answer in this file.
-  let inParty = 0;
-  for (const actor of actors) {
-    if (inScope(actor.id, scope) && inQuorum(actor)) inParty += 1;
-  }
-  if (inParty <= 1) return;
+function applyRoundTails(actors: readonly EngineActor[], ctx: PumpCtx): void {
+  if (!tailsApply(actors)) return;
 
   for (const actor of actors) {
     if (actor.kind !== ActorKind.Player) continue;
-    if (!inScope(actor.id, scope)) continue;
     if (actor.roundTailMs === null || ctx.nowMs < actor.roundTailMs) continue;
     // THE ORDINARY PATH. A hold is refused by `roundStaysOpen`, so it resolves,
     // spends the turn, and clears the round — no special close to keep in step.
     actor.pendingIntent = HOLD_INTENT;
     actor.roundTailMs = null;
   }
+}
+
+/**
+ * MAY A TAIL FIRE IN THIS REALM AT ALL? Not with one player in its quorum — see
+ * "A REALM OF ONE IS NEVER HURRIED" above. `inQuorum` is the same test
+ * `canDecide` uses, so "how many people are we waiting on" has one answer in
+ * this file, and `applyRoundTails` and `nextRoundTail` share this one copy of
+ * it: a caller told of a deadline the pump would then refuse to act on would
+ * wake, pump, find nothing to do, and be told the same deadline again.
+ */
+function tailsApply(actors: readonly EngineActor[]): boolean {
+  let deciding = 0;
+  for (const actor of actors) {
+    if (inQuorum(actor)) deciding += 1;
+  }
+  return deciding > 1;
+}
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * WHEN THE SOONEST OPEN ROUND IN THIS REALM CLOSES ITSELF — or null for never.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * The earliest `roundTailMs` among the players in `actors`, on the same clock
+ * `PumpCtx.nowMs` is on, or null when there is none or when `applyRoundTails`
+ * would not act on it (a realm of one). The caller arms a wall-clock timer for
+ * it and pumps the realm when it fires, exactly as it does for the Bell — see
+ * "AND SOMEBODY HAS TO COME BACK FOR IT" on `applyRoundTails`.
+ *
+ * A QUESTION, NOT A TIMER. This directory may not hold one (the same split
+ * barrier.ts makes for the Bell): the engine states the deadline and the
+ * caller owns the wall clock.
+ */
+export function nextRoundTail(actors: readonly EngineActor[]): number | null {
+  if (!tailsApply(actors)) return null;
+  let soonest: number | null = null;
+  for (const actor of actors) {
+    if (actor.kind !== ActorKind.Player || actor.roundTailMs === null) continue;
+    if (soonest === null || actor.roundTailMs < soonest) soonest = actor.roundTailMs;
+  }
+  return soonest;
 }
 
 /** Is any hostile pair currently in view of each other?

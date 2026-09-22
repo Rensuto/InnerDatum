@@ -159,36 +159,36 @@ export type BarrierLevel = {
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════
- * WHO SHARES A BARRIER WITH THE ASKING PLAYER — THE PARTY, NOT THE LEVEL.
+ * AN OPTIONAL PARTY FILTER THE ENGINE NO LONGER PASSES. THE REALM IS THE SCOPE.
  * ═══════════════════════════════════════════════════════════════════════════
  *
- * The level-wide clause on `BarrierLevel.engagement` above is still exactly
- * right and is UNCHANGED: engagement is a fact about the world (a fight is
- * happening here), and above zero every player IN A PARTY blocks every other
- * member of that party, including one thirty tiles away. That is the argument
- * the essay makes and it survives intact — WITHIN a party.
+ * The level-wide clause on `BarrierLevel.engagement` above is the whole rule:
+ * engagement is a fact about the world (a fight is happening here), and above
+ * zero every player IN THE REALM blocks every other one, party or not, even one
+ * thirty tiles away. D-A4 keeps it so ("the engagement banner and the turn
+ * barrier stay realm-wide"; `PumpCtx.parties` in engine/scheduler.ts argues it).
  *
- * What it never argued for, because until src/server/engine/party.ts there was
- * no vocabulary in which to say it, is a barrier between two people who never
- * agreed to share one. Real multiplayer found that half first: a solo player
+ * This scope was added for the report parties were introduced to answer, and
+ * the report is still true history: a barrier between two people who never
+ * agreed to share one. Real multiplayer found it first: a solo player
  * waited on a stranger, and then on a stranger who had closed the tab.
  *
- * So the quorum, the commit count, the blocking set and the Bell all take an
- * OPTIONAL scope. Absent means the whole level, which is byte-for-byte the
- * behaviour every one of these functions had before parties existed — a server
- * with no party table wired in is the same game it was, and every test written
- * against the level-wide barrier still describes the truth.
+ * It never lifted that wait — `isBlocking` takes no scope, and `tickLevel`
+ * parks on anybody — it only split the COUNTDOWN, so an idle stranger in a
+ * party of one sat on the two-minute Solo Bell while the gateway's timer ran
+ * the twenty-second one. Since 2026-09-22 every caller in src/ passes none:
+ * the realm's one countdown lives in the `LEVEL_SCOPE` slot, and strangers are
+ * kept out of one fight by instancing each combat space per party (realms.ts),
+ * not by this filter. It stays because it is pure and party.test.ts reads a
+ * party's count through it; a new caller must say why it asks a party question.
  *
- * A PARAMETER RATHER THAN AN IMPORT, and the direction of that arrow is the
- * reason it is one. Party membership is a social fact that engine/party.ts owns
- * and net/gateway.ts drives; this module is turn arbitration and it must not
- * learn what an invite is in order to count a quorum. It is the same split
- * downed.ts makes with `PresenceCheck` and the same one this file already makes
- * with `nowMs`: the caller knows, so the caller says.
+ * A PARAMETER RATHER THAN AN IMPORT, as it always was: party membership is a
+ * social fact engine/party.ts owns, and this module must not learn what an
+ * invite is in order to count a quorum. The caller knows, so the caller says.
  */
 export type PartyScope = {
   /**
-   * A STABLE IDENTITY FOR THIS PARTY, and the Bell keys its countdown on it.
+   * A STABLE IDENTITY FOR THIS PARTY, and a scoped Bell keys its countdown on it.
    *
    * It has to be stable across pumps for the same reason `bellKey` below has to
    * be: a countdown whose identity changed every frame would restart every
@@ -206,12 +206,12 @@ export type PartyScope = {
 };
 
 /**
- * The countdown key for the level itself.
+ * The countdown key for the level itself — THE REALM'S, and the only one the
+ * engine uses (see `PartyScope` above).
  *
  * Empty string because no party id can be one (`party_<n>`), so the un-scoped
- * caller's countdown can never collide with a real party's — and the un-scoped
- * caller is exactly the pre-party behaviour, which is why it deserves a slot in
- * the same table rather than a second field.
+ * caller's countdown can never collide with a scoped one — which is why it has
+ * a slot in the same table rather than a second field.
  */
 const LEVEL_SCOPE = '';
 
@@ -308,12 +308,12 @@ export function isBlocking(actor: BarrierActor, level: BarrierLevel): boolean {
 /**
  * The quorum, the commit count and the blocking set, computed in one pass.
  *
- * @param scope the asking player's party, or undefined for the whole level.
- *   `isBlocking` is deliberately NOT given one: whether an actor owes a
- *   decision is a fact about that actor and nobody else, and the scope decides
- *   only whose decisions are counted into WHOSE quorum. Keeping it that way is
- *   what makes the level-wide survey the exact union of every party's — which
- *   is what lets the gateway keep using one cheap "has anything changed?" key.
+ * @param scope a party to count, or undefined for the whole level — which is
+ *   what the engine passes (see `PartyScope`). `isBlocking` is deliberately
+ *   NOT given one: whether an actor owes a decision is a fact about that actor
+ *   and nobody else, and the tick loop waits on every such actor in the realm.
+ *   A scope only narrows whose decisions are COUNTED, which is why a scoped
+ *   survey is never the question to ask about who is holding the world.
  */
 export function surveyQuorum(
   actors: readonly BarrierActor[],
@@ -365,9 +365,9 @@ export type Barrier = {
    * condition holds. Idempotent: calling it twice with the same inputs does not
    * restart anything.
    *
-   * ONE COUNTDOWN PER PARTY. Two parties on one floor deliberate independently
-   * and neither one's Bell has anything to say about the other, so the start
-   * time is kept per `scope.id` — see `countdowns` in `createBarrier`.
+   * ONE COUNTDOWN PER SCOPE, keyed by `scope.id` — see `countdowns` in
+   * `createBarrier`. The engine passes no scope, so a realm has one countdown,
+   * because it has one wait (`PumpCtx.parties` in engine/scheduler.ts).
    */
   bell(
     actors: readonly BarrierActor[],
@@ -380,9 +380,9 @@ export type Barrier = {
    * CALLER installs the hold, because the barrier does not know what an intent
    * looks like and must not learn.
    *
-   * Call it once PER PARTY. Each call reads that party's own deadline, so a
-   * caller with one wall-clock timer can wake up and sweep every party: the
-   * ones whose deadline has not passed return nothing and cost one survey.
+   * It reads its own deadline, so a caller whose wall-clock timer fired early,
+   * or fired for something else (the gateway's one wake-up also serves the
+   * round tail), gets nothing back and pays one survey.
    */
   expire(
     actors: readonly BarrierActor[],
@@ -424,9 +424,9 @@ export function createBarrier(): Barrier {
   const records = new Map<string, BarrierRecord>();
 
   /**
-   * ONE RUNNING COUNTDOWN PER PARTY, keyed by `PartyScope.id`.
+   * ONE RUNNING COUNTDOWN PER SCOPE, keyed by `PartyScope.id` or `LEVEL_SCOPE`.
    *
-   * `key` is the identity of the countdown currently running for that party:
+   * `key` is the identity of the countdown currently running for that scope:
    * the blocking set, joined.
    *
    * Keyed by WHO rather than by turn number so the countdown restarts on its
@@ -445,14 +445,14 @@ export function createBarrier(): Barrier {
    * so the last person standing is handed the two minutes measured from when
    * they started thinking. That is exactly right, and it is not a special case.
    *
-   * ═══ A MAP RATHER THAN TWO VARIABLES, AND ONLY BECAUSE OF PARTIES ═══
-   * Two parties on the same floor are two independent deliberations. Sharing
-   * one start time between them would mean the second party's stragglers
-   * inherited whatever was left of the first party's twenty seconds — a
-   * countdown that is already half spent before anybody was asked anything.
-   * A party that dissolves simply stops being asked about; its row is dropped
-   * the next time a scope with that id is armed, and an orphan row is a few
-   * bytes that never fires because nothing ever passes its id in again.
+   * ═══ A MAP RATHER THAN TWO VARIABLES, AND ONLY BECAUSE OF THE SCOPE ═══
+   * A scoped caller gets its own start time. The engine is not one: two parties
+   * on one floor are NOT two deliberations — they share one wait, so they share
+   * the `LEVEL_SCOPE` row, and a stranger is on the same countdown as everybody
+   * else holding the realm. Per-party rows are what made the Bell disagree with
+   * that wait until 2026-09-22 (`PumpCtx.parties`). An orphan row — a party
+   * that dissolved, or a scope nobody passes any more — is a few bytes that
+   * never fires because nothing ever passes its id in again.
    */
   const countdowns = new Map<string, { key: string; startedMs: number }>();
 
@@ -544,8 +544,8 @@ export function createBarrier(): Barrier {
       passes.push({ id, consecutive: record.autoPasses, standingBy });
     }
 
-    // The countdown is spent. Whoever blocks next IN THIS PARTY gets a fresh
-    // one; nobody else's is touched.
+    // The countdown is spent. Whoever blocks next IN THIS SCOPE gets a fresh
+    // one; no other scope's row is touched.
     countdowns.delete(scope?.id ?? LEVEL_SCOPE);
     return passes;
   };
