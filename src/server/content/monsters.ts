@@ -2340,12 +2340,22 @@ export const INDEX_GLUT: MonsterTemplate = Object.freeze({
    * worth", chosen against a swing of about four and a half, and a burst is
    * that same per-turn figure spread over ground instead of into one body. What
    * makes it worth more than a bleed is the AREA and the denial, not a bigger
-   * number — which is also why the radius is one rather than upstream's two: a
-   * radius-two ball is thirteen tiles, and thirteen tiles of a forty-square
-   * floor is not a hazard, it is a wall.
+   * number — which is also why the radius is one rather than upstream's two.
    *
-   * RADIUS ONE IS THE FIVE-TILE PLUS, the same shape the Alchemic Vial throws,
-   * so a player already knows how to read it at a glance.
+   * ═══ THAT ARGUMENT WAS MADE IN TILE COUNTS, AND THE COUNTS HAVE MOVED ═══
+   * It read: *"a radius-two ball is thirteen tiles, and thirteen tiles of a
+   * forty-square floor is not a hazard, it is a wall"*, and *"RADIUS ONE IS THE
+   * FIVE-TILE PLUS, the same shape the Alchemic Vial throws"*. Both counts were
+   * the exact-Euclid disc `ballTiles` used to cut. Balls take ToME's disc now
+   * (`shared/distance.ts` `discTiles`), so radius one is the whole 3x3 — NINE
+   * tiles, and no longer the vial's shape — and upstream's radius two is
+   * twenty-one.
+   *
+   * THE RADIUS IS UNCHANGED AND AWAITS THE AUTHOR'S RULING: keep one, which is
+   * nine tiles now, or take upstream's two. Nine sits between the five this note
+   * chose and the thirteen it called a wall, so the old argument no longer
+   * settles the number on its own, and it is left at one rather than re-argued
+   * here.
    *
    * ═══ PHYSICAL, AND DARKNESS WAS THE OBVIOUS WRONG ANSWER ═══
    * Darkness is the Index's own element and would have been the flavour pick.

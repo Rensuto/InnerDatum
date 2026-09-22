@@ -50,6 +50,7 @@
 // PLAIN .mjs AND NOT IN THE TS BUILD, like everything else in tools/.
 
 import { hasLineOfSight, sightDistance } from '../src/shared/sight.ts';
+import { ballTiles, crossTiles } from '../src/server/engine/talents.ts';
 
 /**
  * Every single-target attack a class owns that actually reaches, longest first.
@@ -385,9 +386,13 @@ export function classStrikes(cls, known) {
       id: t.id,
       range: t.targeting.range ?? 1,
       minRange: t.targeting.minRange ?? 0,
-      // `radius` is a Cross and Ball field (engine/talents.ts:1345) and is what
-      // decides whether an aim is worth the reagents. Absent on a single.
-      ...(AREA_SHAPES.has(t.targeting.shape) ? { radius: t.targeting.radius ?? 1 } : {}),
+      // `radius` is a Cross and Ball field (engine/talents.ts `TalentTargeting`)
+      // and is what decides whether an aim is worth the reagents. Absent on a
+      // single. The SHAPE travels with it, because the two shapes cover
+      // different tiles at the same radius — see `caughtBy`.
+      ...(AREA_SHAPES.has(t.targeting.shape)
+        ? { radius: t.targeting.radius ?? 1, shape: t.targeting.shape }
+        : {}),
     }))
     .sort((a, b) => b.range - a.range);
 }
@@ -491,6 +496,32 @@ export async function bestShot(attacks, self, foes, tryShot, level) {
  */
 const AREA_MINIMUM = 2;
 
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * DOES `body` STAND ON A TILE AN AREA TALENT AIMED AT `aim` WILL HIT?
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * THE ENGINE'S TWO SHAPES, ASKED OF THE ENGINE'S OWN FUNCTIONS — never a copy.
+ * A ball is `ballTiles` itself and a cross is `crossTiles` itself. The first
+ * version of this asked `tileDistance <= radius` for the ball, which is the
+ * same set only by proof (test/shared/distance.test.ts) and stops being the
+ * same set the day `ballTiles` learns about walls: the probe would go on
+ * aiming at the open disc while the engine hit less.
+ *
+ * THIS WAS ONE EUCLIDEAN TEST FOR BOTH, `sightDistance <= radius`, and at
+ * radius 1 that is the five-tile plus. It was right about the cross by accident
+ * and right about the ball only while `ballTiles` cut the same plus. Once balls
+ * took ToME's disc — the whole 3x3 at radius 1 — one rule could be right about
+ * one shape at most: `tileDistance` alone would count a foe on the vial's
+ * diagonal, which the vial does not touch, and fire it at a pair it hits one of.
+ */
+function caughtBy(attack, aim, body) {
+  if (attack.shape === 'cross') {
+    return crossTiles(aim, attack.radius).some((t) => t.x === body.x && t.y === body.y);
+  }
+  return ballTiles(aim, attack.radius).some((t) => t.x === body.x && t.y === body.y);
+}
+
 export function takeShot(engine, actorId, attacks, self, foes, onRefusal, level) {
   let gap = null;
   for (const attack of attacks) {
@@ -499,12 +530,11 @@ export function takeShot(engine, actorId, attacks, self, foes, onRefusal, level)
     /**
      * A BALL AIMED AT ONE BODY IS A SINGLE-TARGET SHOT AT FOUR TIMES THE PRICE.
      * The aim is the foe's own tile (below), so the catch is everything living
-     * inside `radius` of it — Euclidean, because `ballTiles` cuts a circle
-     * (engine/talents.ts:3438, *"a CIRCULAR cut, not a square"*).
+     * on the tiles the talent will actually hit. See `caughtBy`.
      */
     if (attack.radius !== undefined) {
       const caught = foes.filter(
-        (f) => f.alive !== false && sightDistance(shootable.f, f) <= attack.radius,
+        (f) => f.alive !== false && caughtBy(attack, shootable.f, f),
       ).length;
       if (caught < AREA_MINIMUM) continue;
     }

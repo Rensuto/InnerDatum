@@ -10,6 +10,7 @@ import { describe, expect, it } from 'vitest';
 
 import { AiProfile } from '../../src/server/engine/actor.ts';
 import { BLEEDING, EffectId } from '../../src/server/content/effects.ts';
+import { INDEX_GLUT } from '../../src/server/content/monsters.ts';
 import { DamageType } from '../../src/server/engine/damage.ts';
 import { createDownedState } from '../../src/server/engine/downed.ts';
 import { createEffectState, registerEffect, setEffect } from '../../src/server/engine/effects.ts';
@@ -151,6 +152,54 @@ describe('a creature that bursts when it dies', () => {
     expect(table.world.zones(), 'a creature with no onDie row still burst').toEqual([]);
   });
 
+  it('covers the whole 3x3 at radius 1 — the Glut`s own row, corners included', () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * ToME's BALL, NOT THE PLUS. `shared/distance.ts` `discTiles`.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * `ballTiles` cut the exact-Euclid disc, so a radius-1 cloud was the
+     * five-tile plus and its four corners were bare floor. ToME's disc at radius
+     * 1 is every neighbour. Asserted on the SHIPPED row rather than `CLOUD`,
+     * because the Glut is the body a player meets this on — and its radius is
+     * awaiting the author's ruling, so a change to it should name itself here
+     * rather than quietly re-shape this test.
+     */
+    const row = INDEX_GLUT.onDie;
+    if (row === undefined) throw new Error('the Glut no longer leaves anything behind');
+    expect(row.radius, 'the Glut`s radius moved — see its note in content/monsters.ts').toBe(1);
+    const table = stage('ondie-corners', { onDie: row });
+
+    expect(table.engine.submitMove('p1', 'e').ok).toBe(true);
+    table.engine.pump();
+
+    expect(table.world.getActor('m1')?.alive ?? true, 'the husk survived the swing').toBe(false);
+    const tiles = table.world.zones()[0]?.tiles ?? [];
+    // THE FOUR CORNERS, BY NAME — none of them is in the plus.
+    for (const corner of [
+      { x: 5, y: 4 },
+      { x: 7, y: 4 },
+      { x: 5, y: 6 },
+      { x: 7, y: 6 },
+    ]) {
+      expect(tiles, `the cloud left ${String(corner.x)},${String(corner.y)} bare`).toContainEqual(
+        corner,
+      );
+    }
+    // And the whole of it, in the row-major order the zone was laid in.
+    expect(tiles).toEqual([
+      { x: 5, y: 4 },
+      { x: 6, y: 4 },
+      { x: 7, y: 4 },
+      { x: 5, y: 5 },
+      { x: 6, y: 5 },
+      { x: 7, y: 5 },
+      { x: 5, y: 6 },
+      { x: 6, y: 6 },
+      { x: 7, y: 6 },
+    ]);
+  });
+
   it('STOPS AT A WALL rather than pooling in the corridor beyond it', () => {
     /**
      * ═══════════════════════════════════════════════════════════════════════
@@ -160,7 +209,7 @@ describe('a creature that bursts when it dies', () => {
      * The `true` is a blocking flag, so upstream's ball is not a disc of
      * coordinates: it is the part of a disc the centre can see. `ballTiles`
      * knows nothing about terrain, so the filter is applied where the zone is
-     * built — see `visibleFrom` for why it cannot go in `ballTiles` itself.
+     * built — see `visibleFrom` for why it is there and not in `ballTiles`.
      *
      * ═══ ASSERTED BY COORDINATE, NEVER BY COUNT ═══
      * A `tiles.length` assertion passes under a filter that drops the WRONG
@@ -197,9 +246,10 @@ describe('a creature that bursts when it dies', () => {
      *
      * `visibleFrom` has two clauses and the test above only proves one of them.
      * Every tile of a radius-1 ball is ADJACENT to the centre, so nothing is
-     * ever behind anything and `hasLineOfSight` is true for all five — deleting
-     * it left that test green. The Glut authors radius 1, so with today's
-     * content the line-of-sight half is unobservable in play.
+     * ever behind anything and `hasLineOfSight` is true for all nine (it was
+     * all five while `ballTiles` cut the exact-Euclid plus) — deleting it left
+     * that test green. The Glut authors radius 1, so with today's content the
+     * line-of-sight half is unobservable in play.
      *
      * It is not unobservable in the helper, and the helper is general: the next
      * creature or talent to lay a zone will not be radius 1. So this drives the

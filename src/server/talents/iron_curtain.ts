@@ -53,6 +53,7 @@
  * people, which is the position the guard needs him in anyway.
  */
 
+import { tileDistance } from '../../shared/distance.ts';
 import { combatTalentScale } from '../../shared/scale.ts';
 import { MELEE_REACH } from '../engine/combat.ts';
 import { TalentPower } from '../engine/derived.ts';
@@ -182,6 +183,17 @@ const TOME_COOLDOWN = 10;
  * everything that was ever pointed at the Inspector, from eight tiles, and
  * deletes positioning outright. The radius is the safety rail on the narrowing,
  * not a payoff. `MELEE_REACH` bounds the STRIKE half regardless.
+ *
+ * ═══ A BALL, AS UPSTREAM'S IS — AND IT WAS A SQUARE ═══
+ * Taunt projects `type="ball"` on the caster's own tile
+ * (summon-utility.lua:28-36), so the reach is `core.fov.distance <= 4`:
+ * `dx^2 + dy^2 <= 20`, sixty-nine tiles. It was `withinTiles`, a Chebyshev
+ * box of eighty-one, whose corners pulled a hunter at (4,3) or (4,4) that
+ * ToME's Taunt never reaches. `tileDistance` is the same test `ballTiles`
+ * makes, so this and every other ball in the game share one edge.
+ *
+ * NOT YET WALL-AWARE: upstream's ball stops at `block_radius`, and a hunter
+ * behind masonry inside the disc is still pulled here.
  */
 const TAUNT_RADIUS = 4;
 /**
@@ -294,7 +306,7 @@ export const ironCurtain: Talent = {
     const pulled = pullAggro(
       ctx.world,
       self,
-      (hostile) => hostile.ai?.targetId === ally.id && withinTiles(self, hostile, TAUNT_RADIUS),
+      (hostile) => hostile.ai?.targetId === ally.id && tileDistance(self, hostile) <= TAUNT_RADIUS,
     );
 
     const threat = threatBetween(ctx.world, self, ally);

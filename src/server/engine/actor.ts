@@ -1518,8 +1518,10 @@ export type OnHitStatus = {
  */
 export type OnDeathZone = {
   /**
-   * How far from the body, in the `ballTiles` sense — Euclidean, so radius 1 is
-   * the five-tile plus and the diagonals at 1.41 are outside it.
+   * How far from the body, in the `ballTiles` sense — ToME's disc, every tile
+   * whose `core.fov.distance` is at most this, so radius 1 is the whole 3x3 and
+   * the diagonals are inside it. It was the exact Euclidean length, under which
+   * radius 1 was the five-tile plus and the diagonals at 1.41 fell outside.
    *
    * Upstream's worm mass passes 2 with `dir = 5` (a circle) at Map.lua:1103.
    */

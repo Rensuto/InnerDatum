@@ -1258,7 +1258,11 @@ export const TalentShape = {
   Single: 'single',
   /** A tile plus its four orthogonal arms of length `radius` — Alchemic Vial. */
   Cross: 'cross',
-  /** Every tile within `radius`, EUCLIDEAN — so the preview is a disc, not a box. */
+  /**
+   * Every tile within `radius` by `core.fov.distance` (`shared/distance.ts`
+   * `discTiles`) — a disc, not a box: radius 1 is the 3x3, radius 2 the 5x5 less
+   * its corners. It was the exact Euclidean length, which made radius 1 a plus.
+   */
   Ball: 'ball',
   /** A free tile to stand on. Fog Step. The overlay must reject occupied tiles. */
   Tile: 'tile',

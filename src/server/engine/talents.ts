@@ -122,6 +122,7 @@ import type { PassiveContribution } from './equipment.ts';
 import { createTurnProcs, fireTurnStart } from './hooks.ts';
 import type { BoundHooks, PassiveView, TalentHooks, TurnProcs } from './hooks.ts';
 import { DIR_ORDER, DIR_VECTORS, chebyshev } from '../../shared/coords.ts';
+import { discTiles } from '../../shared/distance.ts';
 import { ENERGY_TO_ACT } from '../../shared/version.ts';
 import { bound, combatTalentScale, rescaleDamage } from '../../shared/scale.ts';
 import { hasLineOfSight } from '../../shared/sight.ts';
@@ -335,7 +336,10 @@ export const TargetShape = {
   Single: 'single',
   /** A tile plus its four orthogonal neighbours — Alchemic Vial. */
   Cross: 'cross',
-  /** Every actor within `radius` of the origin, Euclidean. */
+  /**
+   * Every actor within `radius` of the origin by `core.fov.distance`, the rounded
+   * length — `ballTiles`, so radius 1 is the whole 3x3. It was the exact length.
+   */
   Ball: 'ball',
   /** A free tile to stand on. Fog Step. */
   Tile: 'tile',
@@ -3446,10 +3450,13 @@ export function isFriend(a: Sided, b: Sided): boolean {
 /**
  * CHEBYSHEV proximity — the "adjacent" / "nearby" test, NOT the range test.
  *
- * combat.ts explains the two metrics: Euclidean for every range, radius and
- * targeting ring (`core.fov.distance`), Chebyshev for adjacency and A* step
- * costs. This is the second one, and it is only ever used for "is this thing
- * standing next to me", where a diagonal genuinely is adjacent.
+ * combat.ts explains the metrics: Chebyshev for adjacency and A* step costs,
+ * and a radius for everything else. A BALL's radius is ToME's rounded
+ * `core.fov.distance` now (`ballTiles` -> `discTiles`, shared/distance.ts); it
+ * was exact Euclid, like the ranges and the targeting ring still are until the
+ * range increment of docs/wip/distance lands. This is the Chebyshev one, and it
+ * is only ever used for "is this thing standing next to me", where a diagonal
+ * genuinely is adjacent.
  */
 export function withinTiles(a: TileXY, b: TileXY, tiles: number): boolean {
   return chebyshev(a, b) <= tiles;
@@ -3700,27 +3707,36 @@ export function crossTiles(centre: TileXY, arms = 1): readonly TileXY[] {
 }
 
 /**
- * The tiles a Ball covers — a CIRCULAR cut, not a square.
+ * The tiles a Ball covers — ToME's `type="ball"` disc, `shared/distance.ts`'s
+ * `discTiles`: every offset with `dx^2 + dy^2 <= r^2 + r`, which is every tile
+ * whose `core.fov.distance` from the centre is at most `r`. Radius 1 is the
+ * whole 3x3 around the centre; radius 2 is the 5x5 less its four corners.
  *
- * Euclidean, matching `core.fov.distance` and ToME's `type="ball"` targeting.
- * A Chebyshev ball of radius 2 is a 5x5 square that reaches 2.83 tiles into its
- * corners, which is 40% more area than the ring the client draws. The
- * mismatch shows up as a heal that visibly did not reach someone standing
- * inside the circle, which is the worst possible place for it to show up.
+ * ═══ THIS WAS THE EXACT-EUCLID DISC, AND ITS NOTE SAID THAT MATCHED ToME ═══
+ * The body was `combatDistance(centre, tile) <= radius`, and this docblock said
+ * that was "matching `core.fov.distance`". It was not: `core.fov.distance`
+ * ROUNDS the length (`(int)(sqrt(dx*dx + dy*dy) + 0.5)`, the C core's
+ * `lua_fov_get_distance`), so a diagonal neighbour is 1 away, not 1.41.
+ * Radius 1 was the five-tile plus and radius 2 was thirteen tiles, and four
+ * talents whose text promises every neighbour — Truncheon Sweep, Expunge,
+ * Recension, Scattershot — missed all four diagonals.
+ *
+ * STILL A CIRCLE AND NOT A SQUARE: a Chebyshev ball of radius 2 is the whole
+ * 5x5 and reaches 2.83 tiles into its corners, which ToME's does not.
+ *
+ * ═══ NO WALLS YET ═══
+ * Upstream's projection passes a `block_radius` function to `calc_circle`
+ * (`engine/interface/ActorProject.lua:120-133`), so a ball stops at masonry.
+ * This takes no level and cannot; the zone site filters for itself
+ * (`engine/zones.ts` `visibleFrom`).
  *
  * Row-major order, so the tile list — and therefore the RNG draw order of
- * anything applied to it — is identical on every machine.
+ * anything applied to it — is identical on every machine. It is the order the
+ * exact disc was listed in, so a body standing on a tile both discs share is
+ * met at the same point of the walk; `discTiles` carries that argument.
  */
 export function ballTiles(centre: TileXY, radius: number): readonly TileXY[] {
-  const tiles: TileXY[] = [];
-  const span = Math.floor(radius);
-  for (let dy = -span; dy <= span; dy += 1) {
-    for (let dx = -span; dx <= span; dx += 1) {
-      const tile = { x: centre.x + dx, y: centre.y + dy };
-      if (combatDistance(centre, tile) <= radius) tiles.push(tile);
-    }
-  }
-  return tiles;
+  return discTiles(centre, radius);
 }
 
 /**

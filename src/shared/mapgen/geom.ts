@@ -97,14 +97,13 @@ export function line(x1: number, y1: number, x2: number, y2: number): TileXY[] {
  * `lua_fov_get_distance`, src/fov.c, `FOV_SHAPE_CIRCLE_ROUND`):
  * `(int)(sqrt(dx*dx + dy*dy) + 0.5)`, the Euclidean length ROUNDED HALF-UP.
  *
- * So `(0,0)` to `(1,1)` is 1 and `(0,0)` to `(2,2)` is 3. The coordinates are
- * doubles and are NOT truncated first.
+ * RE-EXPORTED, NOT DEFINED HERE. The body lives in shared/distance.ts, a leaf
+ * the client and the server can both import, so the generators, the talents
+ * and the aim preview measure with one function rather than three copies of
+ * it. Its callers (rooms-loader.ts, server/ai/npc.ts) keep importing it from
+ * this module.
  */
-export function fovDistance(x1: number, y1: number, x2: number, y2: number): number {
-  const dx = Math.abs(x2 - x1);
-  const dy = Math.abs(y2 - y1);
-  return Math.floor(Math.sqrt(dx * dx + dy * dy) + 0.5);
-}
+export { fovDistance } from '../distance.ts';
 
 /** Where a circle may reach: the level's size, or a test of one cell. */
 export type CircleBounds =

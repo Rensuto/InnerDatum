@@ -57,6 +57,7 @@
  */
 
 import { DIR_VECTORS, inBounds } from '../../shared/coords.ts';
+import { discTiles } from '../../shared/distance.ts';
 import { hasLineOfSight, playerLineClear } from '../../shared/sight.ts';
 import type { VisionView } from '../vision.ts';
 import { blocksSightAt } from '../../shared/level.ts';
@@ -201,18 +202,14 @@ function stampTiles(
       return [at];
     case TalentShape.Self:
       return [origin];
-    case TalentShape.Ball: {
-      const tiles: TileXY[] = [];
-      for (let dy = -r; dy <= r; dy += 1) {
-        for (let dx = -r; dx <= r; dx += 1) {
-          // Euclidean, so a ball is a disc. A Chebyshev "ball" would be a square
-          // and would over-promise by 41% along the diagonals.
-          if (Math.sqrt(dx * dx + dy * dy) > r) continue;
-          tiles.push({ x: at.x + dx, y: at.y + dy });
-        }
-      }
-      return tiles;
-    }
+    case TalentShape.Ball:
+      // THE SERVER'S OWN DISC, on the server's own number. `ballTiles`
+      // (server/engine/talents.ts) is `discTiles`, and a talent passes it the
+      // same `radius` the wire carries here, so the preview and the tiles hit
+      // are one function of one value. This was a private exact-Euclid loop,
+      // which drew radius 1 as the five-tile plus; ToME's ball, and the
+      // server's now, is the whole 3x3.
+      return discTiles(at, radius);
     case TalentShape.Cross: {
       const tiles: TileXY[] = [at];
       for (let step = 1; step <= r; step += 1) {

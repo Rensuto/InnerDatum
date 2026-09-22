@@ -4795,8 +4795,15 @@ function noteMonsterDeath(
    * `ballTiles` does not consult terrain; upstream's
    * `core.fov.circle_grids(x, y, radius, true)` does, and the `true` is that
    * flag. `visibleFrom` is it, applied here rather than inside `ballTiles`
-   * because every talent AoE goes through that function and changing its
-   * footprint would reorder `actorsInShape` and move every seed in the suite.
+   * because `ballTiles` takes no level and this site has one. It used to add
+   * that changing the footprint "would reorder `actorsInShape` and move every
+   * seed in the suite"; that was false — a narrower or wider disc walked in the
+   * same row-major order keeps every shared tile's place, so only a body on an
+   * added or removed tile moves a draw. `visibleFrom`'s note has the argument.
+   *
+   * THE DISC ITSELF IS ToME'S NOW: `ballTiles` is `discTiles`, so a radius-1
+   * cloud covers the whole 3x3 the body fell in the middle of, where the
+   * exact-Euclid disc it used to cut left the four diagonals out.
    *
    * This paragraph used to say the flag could wait — *"nothing living stands in
    * a wall … the day zones are DRAWN, a cloud will appear to seep through"* —

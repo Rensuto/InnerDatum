@@ -261,12 +261,34 @@ export function tickZones(world: ZoneWorld, rng: Parameters<typeof applyDamage>[
  * one side of it instead of appearing in the corridor beyond.
  *
  * ═══ WHY IT IS HERE AND NOT IN `ballTiles` ═══
- * `engine/talents.ts#ballTiles` takes no level and every talent AoE in the game
- * goes through it. Teaching it about walls would change the footprint of every
- * one of them, which reorders `actorsInShape` and therefore the per-target
- * damage draws — `shared/rng.ts`'s rule again: a different order is a different
- * replay, and every seed in the suite would move. The zone site filters what it
- * was handed instead.
+ * `engine/talents.ts#ballTiles` takes no level, so it cannot ask about a wall,
+ * and the zone site has the level to hand. That is the whole reason, and it is
+ * plumbing: the talent balls that go through `ballTiles` are no more correct
+ * for ignoring walls, since upstream's projected balls stop at them too
+ * (`block_radius`, `engine/interface/ActorProject.lua:120-133`). The zone site
+ * filters what it was handed until `ballTiles` can take a level.
+ *
+ * ═══ IT GAVE A SECOND REASON, AND THAT ONE WAS FALSE AS MATHS ═══
+ * This paragraph said teaching `ballTiles` about walls would change every
+ * talent's footprint, "which reorders `actorsInShape` and therefore the
+ * per-target damage draws", so "every seed in the suite would move". The
+ * footprint changes; the ORDER does not, and the draws follow the order.
+ *
+ *   - A wall-aware ball is the same row-major list with the shadowed tiles
+ *     taken out. A wider ball — ToME's `dx^2 + dy^2 <= r^2 + r`, which
+ *     `ballTiles` cuts now — is the old list with tiles put in: for a whole
+ *     radius the exact disc `dx^2 + dy^2 <= r^2` it used to cut is a subset,
+ *     and both are walked row-major, so every tile the two lists share keeps
+ *     its place relative to the others (test/shared/distance.test.ts pins it).
+ *   - `actorsInShape` takes no draw. The draws are what the caller does to each
+ *     body it found, in the order it found them, and this site takes none
+ *     either (`world.addZone` advances a counter).
+ *
+ * So a stream moves only from a cast or a burst in which some BODY stands on an
+ * added or removed tile — from there on, since every later draw shares the
+ * stream — and a run in which none ever does replays bit for bit. The claim
+ * would have been true of one change only: reordering the list, for instance by
+ * walking it x-major the way shared/mapgen/geom.ts's `circleGrids` does.
  *
  * ═══ IT COSTS NOTHING TODAY AND THAT IS NOT THE REASON TO SKIP IT ═══
  * `tickZones` asks `world.actorAt` per tile and nothing living stands inside a

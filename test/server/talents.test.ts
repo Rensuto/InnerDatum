@@ -12,6 +12,7 @@ import {
   ALL_LOCKED_TALENTS,
   CLASSES,
   INSPECTOR,
+  REDACTOR,
   WATCHMAN,
   createContentTalentEngine,
   loadoutViewFor,
@@ -2033,6 +2034,207 @@ describe('shapes and affinity', () => {
     );
   });
 });
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ *   A BALL IS ToME'S DISC — EVERY NEIGHBOUR AT 1, A KNIGHT'S MOVE AT 2.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `ballTiles` cut the exact-Euclid disc, `dx^2 + dy^2 <= r^2`: the five-tile
+ * plus at radius 1 and thirteen tiles at radius 2. ToME's ball is
+ * `core.fov.distance <= r`, which is `dx^2 + dy^2 <= r^2 + r` — the whole 3x3,
+ * and the 5x5 less its corners (`shared/distance.ts` `discTiles`). The shape
+ * test above never told the two apart: (2,0) is in both and (2,2) is in
+ * neither.
+ *
+ * SO EVERY CASE HERE STANDS A BODY ON A TILE ONLY THE NEW DISC HOLDS — a
+ * diagonal at radius 1, (2,1) at radius 2 — drives the SHIPPED talent at it,
+ * and asserts the setup (the body really is on that offset, the talent really
+ * resolved) before the claim. Put `ballTiles` back on `combatDistance <=
+ * radius` and each goes red — except Taunt, which asks `tileDistance` itself
+ * rather than `ballTiles` (iron_curtain.ts) and is red only when THAT is put
+ * back on exact Euclid or on the old Chebyshev box.
+ */
+describe('a ball covers ToME`s disc, not the exact-Euclid one', () => {
+  it('Truncheon Sweep catches a foe on the diagonal', () => {
+    const f = fixture(PLENTY);
+    const watchman = f.add(WATCHMAN, 'dalt', 5, 5);
+    refill(f.engine, 'dalt');
+    f.addMonster('husk', 6, 6, 400);
+    expect(offsetOf(f, 'husk', watchman), 'the foe is not on the diagonal').toEqual([1, 1]);
+
+    const result = useTalent(
+      f.engine,
+      watchman,
+      talentId('truncheon_sweep'),
+      { x: 5, y: 5 },
+      f.ctx,
+    );
+    expect(result.ok, 'the sweep did not resolve').toBe(true);
+    if (!result.ok) return;
+    expect(result.hits.map((h) => h.targetId)).toEqual(['husk']);
+  });
+
+  it('Expunge catches the diagonal neighbour of the body it is dropped on', () => {
+    const f = fixture(PLENTY);
+    const redactor = f.add(REDACTOR, 'ink', 2, 5);
+    refill(f.engine, 'ink');
+    const aimed = f.addMonster('aimed', 5, 5, 400);
+    f.addMonster('corner', 6, 6, 400);
+    expect(offsetOf(f, 'corner', aimed), 'the neighbour is not on the diagonal').toEqual([1, 1]);
+
+    const result = useTalent(
+      f.engine,
+      redactor,
+      talentId('expunge'),
+      { x: aimed.x, y: aimed.y, actorId: aimed.id },
+      f.ctx,
+    );
+    expect(result.ok, 'the block did not fall').toBe(true);
+    if (!result.ok) return;
+    // Row-major: the aimed body's row first, then the corner's.
+    expect(result.hits.map((h) => h.targetId)).toEqual(['aimed', 'corner']);
+  });
+
+  it('Scattershot catches the diagonal of the tile it is fired at', () => {
+    const f = fixture(PLENTY);
+    const inspector = f.add(INSPECTOR, 'sam', 2, 5);
+    refill(f.engine, 'sam');
+    const aimed = f.addMonster('aimed', 5, 5, 400);
+    f.addMonster('corner', 4, 4, 400);
+    expect(offsetOf(f, 'corner', aimed), 'the neighbour is not on the diagonal').toEqual([-1, -1]);
+
+    const result = useTalent(
+      f.engine,
+      inspector,
+      talentId('scattershot'),
+      { x: aimed.x, y: aimed.y, actorId: aimed.id },
+      f.ctx,
+    );
+    expect(result.ok, 'the shot was not fired').toBe(true);
+    if (!result.ok) return;
+    expect(result.hits.map((h) => h.targetId)).toEqual(['corner', 'aimed']);
+  });
+
+  it('Recension slows a body on the diagonal of where the Redactor lands', () => {
+    const f = fixture(PLENTY);
+    const redactor = f.add(REDACTOR, 'ink', 2, 5);
+    refill(f.engine, 'ink');
+    f.addMonster('corner', 6, 6, 400);
+
+    /**
+     * WHO THE TALENT ASKED TO SLOW, recorded on the way through to the real
+     * status table. The slow itself is a save, which a seed decides; being
+     * ASKED is the footprint, and the footprint is the claim.
+     */
+    const asked: string[] = [];
+    const real = f.ctx.status;
+    const ctx: TalentCtx = {
+      ...f.ctx,
+      status: (target, effectId, duration, params) => {
+        asked.push(target.id);
+        if (real === undefined) throw new Error('fixture: no status table');
+        return real(target, effectId, duration, params);
+      },
+    };
+
+    const result = useTalent(f.engine, redactor, talentId('recension'), { x: 5, y: 5 }, ctx);
+    expect(result.ok, 'the revision did not resolve').toBe(true);
+    // WHERE SHE ACTUALLY LANDED — the talent reads the real position, so the
+    // setup is only what the claim needs if the walk arrived.
+    expect([redactor.x, redactor.y], 'the walk stopped short').toEqual([5, 5]);
+    expect(offsetOf(f, 'corner', redactor), 'the body is not on the diagonal').toEqual([1, 1]);
+    expect(asked).toEqual(['corner']);
+  });
+
+  it('Mend Wounds binds an ally a knight`s move away, and not one at (2,2)', () => {
+    const f = fixture(PLENTY);
+    const alchemist = f.add(ALCHEMIST, 'rey', 5, 5);
+    refill(f.engine, 'rey');
+    const knight = f.add(WATCHMAN, 'dalt', 7, 6);
+    const corner = f.add(INSPECTOR, 'sam', 7, 7);
+    knight.hp = 10;
+    corner.hp = 10;
+    expect(offsetOf(f, 'dalt', alchemist)).toEqual([2, 1]);
+    expect(offsetOf(f, 'sam', alchemist)).toEqual([2, 2]);
+
+    const result = useTalent(f.engine, alchemist, talentId('mend_wounds'), { x: 5, y: 5 }, f.ctx);
+    expect(result.ok, 'the kit was not opened').toBe(true);
+    if (!result.ok) return;
+    // (2,1) is 2.24 away — outside the exact disc, and 2 by `core.fov.distance`.
+    expect(knight.hp, 'the ally at (2,1) was not bound').toBeGreaterThan(10);
+    // (2,2) is 2.83, which rounds to 3: outside both discs.
+    expect(corner.hp, 'the ally at (2,2) was bound').toBe(10);
+  });
+
+  it('Clear the Street shoves a body a knight`s move away, and leaves one at (2,2)', () => {
+    const f = fixture(PLENTY);
+    const watchman = f.add(WATCHMAN, 'dalt', 5, 5);
+    refill(f.engine, 'dalt');
+    const knight = f.addMonster('knight', 7, 6, 400);
+    const corner = f.addMonster('corner', 3, 7, 400);
+    expect(offsetOf(f, 'knight', watchman)).toEqual([2, 1]);
+    expect(offsetOf(f, 'corner', watchman)).toEqual([-2, 2]);
+
+    const result = useTalent(
+      f.engine,
+      watchman,
+      talentId('clear_the_street'),
+      { x: 5, y: 5 },
+      f.ctx,
+    );
+    expect(result.ok, 'the shout did not resolve').toBe(true);
+    expect([knight.x, knight.y], 'the body at (2,1) was not shoved').not.toEqual([7, 6]);
+    expect(
+      Math.hypot(knight.x - watchman.x, knight.y - watchman.y),
+      'it was shoved, but not away',
+    ).toBeGreaterThan(Math.hypot(2, 1));
+    expect([corner.x, corner.y], 'the body at (2,2) was shoved').toEqual([3, 7]);
+  });
+
+  it('Iron Curtain`s Taunt pulls a hunter at (3,3) and (4,2), and not one at (4,3)', () => {
+    /**
+     * UPSTREAM'S TAUNT IS A RADIUS-4 BALL (summon-utility.lua:28-36), so the
+     * rim is `dx^2 + dy^2 <= 20`. It was a Chebyshev box, which reaches (4,3)
+     * and (4,4) as well. (4,2) is the rim case that tells the rounded distance
+     * from the exact one: 4.47 away, and 4 by `core.fov.distance`.
+     */
+    const f = fixture(PLENTY);
+    const watchman = f.add(WATCHMAN, 'dalt', 5, 5);
+    const guarded = f.add(INSPECTOR, 'sam', 6, 5);
+    guarded.hp = 6; // the worst-off neighbour, so the curtain falls over him
+    refill(f.engine, 'dalt');
+    const hunters = [
+      { id: 'near', at: [8, 8] },
+      { id: 'rim', at: [9, 7] },
+      { id: 'far', at: [9, 8] },
+    ] as const;
+    for (const h of hunters) {
+      const body = f.addMonster(h.id, h.at[0], h.at[1], 400);
+      if (body.ai !== undefined) body.ai.targetId = 'sam';
+    }
+    expect(offsetOf(f, 'near', watchman)).toEqual([3, 3]);
+    expect(offsetOf(f, 'rim', watchman)).toEqual([4, 2]);
+    expect(offsetOf(f, 'far', watchman)).toEqual([4, 3]);
+
+    const result = useTalent(f.engine, watchman, talentId('iron_curtain'), { x: 5, y: 5 }, f.ctx);
+    expect(result.ok, 'the curtain did not go up').toBe(true);
+    // The narrowing pulls only the GUARDED ally's hunters, so the claim needs
+    // the curtain to have fallen over the Inspector.
+    expect(f.engine.effectOn('dalt', TalentEffect.Guarding)?.otherId).toBe('sam');
+    const targetOf = (id: string): string | null | undefined => f.world.getActor(id)?.ai?.targetId;
+    expect(targetOf('near'), 'the hunter at (3,3) was not pulled').toBe('dalt');
+    expect(targetOf('rim'), 'the hunter at (4,2) was not pulled').toBe('dalt');
+    expect(targetOf('far'), 'the hunter at (4,3) was pulled').toBe('sam');
+  });
+});
+
+/** Where `id` stands relative to `from`, as `[dx, dy]`. */
+function offsetOf(f: Fixture, id: string, from: { x: number; y: number }): [number, number] {
+  const body = f.world.getActor(id);
+  if (body === undefined) throw new Error(`fixture: no ${id}`);
+  return [body.x - from.x, body.y - from.y];
+}
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════
