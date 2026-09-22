@@ -8,6 +8,9 @@ import { alchemicVial } from '../../src/server/talents/alchemic_vial.ts';
 import { expunge } from '../../src/server/talents/expunge.ts';
 import { classStrikes, takeShot } from '../../tools/fightlib.mjs';
 import type { ProbeAttack } from '../../tools/fightlib.d.mts';
+import { createWorld } from '../../src/server/world/world.ts';
+import { TileCode } from '../../src/shared/protocol.ts';
+import type { LevelView } from '../../src/shared/protocol.ts';
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════
@@ -91,6 +94,93 @@ describe('an area talent is pressed on a pair it will actually catch', () => {
 
     const shot = takeShot(engine, 'p1', [vial], SELF, [AIMED, beside]);
 
+    expect(engine.submitted).toHaveLength(1);
+    expect(shot.fired).toBe(true);
+  });
+});
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * AND A BALL'S CATCH STOPS AT A WALL, AS THE ENGINE'S DOES.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `ballTiles` shadowcasts over the level now (`shared/ball.ts`), so a foe on
+ * the far side of a wall from the aimed body is not caught — and a probe that
+ * still counted the open disc would fire a ball at one body for the price of
+ * an area. `caughtBy` asks on the ground `takeShot` is given.
+ *
+ * RADIUS 2, BY HAND. No ball a class carries today is wider than 1 (Expunge
+ * and Scattershot), and radius 1 is the whole 3x3 whatever blocks, so with the
+ * shipped kits this join cannot show a wall at all; the record below is
+ * Expunge's own with its radius raised, which is the next ball to ship.
+ */
+describe('an area talent`s catch stops at a wall', () => {
+  const W = 12;
+  function levelWithWall(wall: { readonly x: number; readonly y: number }): LevelView {
+    const tiles = new Array<number>(W * W).fill(TileCode.FLOOR);
+    tiles[wall.y * W + wall.x] = TileCode.WALL;
+    return { w: W, h: W, tiles };
+  }
+  const wide = (): ProbeAttack => ({ ...strikeFor(REDACTOR, expunge.id), radius: 2 });
+  // Two tiles east of the aimed foe, with a wall between them: libfov's
+  // fixture C, which hides exactly (2,0).
+  const behind = { x: AIMED.x + 2, y: AIMED.y } as const;
+  const wall = { x: AIMED.x + 1, y: AIMED.y } as const;
+
+  it('holds the ball back from a pair a wall splits', () => {
+    const engine = acceptingEngine();
+    const shot = takeShot(
+      engine,
+      'p1',
+      [wide()],
+      SELF,
+      [AIMED, behind],
+      undefined,
+      levelWithWall(wall),
+    );
+    expect(engine.submitted, 'the ball was pressed at a pair it hits one of').toEqual([]);
+    expect(shot.fired).toBe(false);
+  });
+
+  it('fires it at the same pair on open ground', () => {
+    // NOT VACUOUS: the wall is the only difference, so the refusal above is the
+    // shadow and not the band.
+    const engine = acceptingEngine();
+    const open = levelWithWall({ x: 0, y: 0 });
+    const shot = takeShot(engine, 'p1', [wide()], SELF, [AIMED, behind], undefined, open);
+    expect(engine.submitted).toHaveLength(1);
+    expect(shot.fired).toBe(true);
+  });
+
+  /**
+   * AND ON A WORLD, which is what the in-process probes pass. `levelOf` takes a
+   * World's `.level` and a bare view as it is; the two cases above are the bare
+   * view. Read the World as a level and the ball has no map under it, so the
+   * open-ground pair below is not a crowd; ignore it and the disc is open, so
+   * the walled pair is. Each goes red on its own.
+   */
+  function worldWithWall(at: { readonly x: number; readonly y: number }) {
+    const world = createWorld('fightlib-area', {
+      view: levelWithWall(at),
+      spawns: [{ x: 1, y: 1 }],
+      sites: new Map<string, string>(),
+    });
+    expect(typeof world.lineClearFor, 'this is not the World branch').toBe('function');
+    return world;
+  }
+
+  it('holds the ball back from a pair a wall splits, on a real World', () => {
+    const engine = acceptingEngine();
+    const world = worldWithWall(wall);
+    const shot = takeShot(engine, 'p1', [wide()], SELF, [AIMED, behind], undefined, world);
+    expect(engine.submitted, 'the ball was pressed at a pair it hits one of').toEqual([]);
+    expect(shot.fired).toBe(false);
+  });
+
+  it('fires it at the same pair on a real World with open ground', () => {
+    const engine = acceptingEngine();
+    const world = worldWithWall({ x: 0, y: 0 });
+    const shot = takeShot(engine, 'p1', [wide()], SELF, [AIMED, behind], undefined, world);
     expect(engine.submitted).toHaveLength(1);
     expect(shot.fired).toBe(true);
   });

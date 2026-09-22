@@ -57,7 +57,7 @@
 //
 // PLAIN .mjs AND NOT IN THE TS BUILD, like everything else in tools/.
 
-import { euclidDistance, tileDistance } from '../src/shared/distance.ts';
+import { discTiles, euclidDistance, tileDistance } from '../src/shared/distance.ts';
 import { hasLineOfSight } from '../src/shared/sight.ts';
 import { ballTiles, crossTiles } from '../src/server/engine/talents.ts';
 
@@ -530,10 +530,18 @@ const AREA_MINIMUM = 2;
  *
  * THE ENGINE'S TWO SHAPES, ASKED OF THE ENGINE'S OWN FUNCTIONS — never a copy.
  * A ball is `ballTiles` itself and a cross is `crossTiles` itself. The first
- * version of this asked `tileDistance <= radius` for the ball, which is the
- * same set only by proof (test/shared/distance.test.ts) and stops being the
- * same set the day `ballTiles` learns about walls: the probe would go on
- * aiming at the open disc while the engine hit less.
+ * version of this asked `tileDistance <= radius` for the ball, which was the
+ * same set only by proof (test/shared/distance.test.ts) and only on open
+ * ground.
+ *
+ * ═══ AND THE BALL STOPS AT WALLS, SO IT IS ASKED ON THE PROBE'S GROUND ═══
+ * `ballTiles` takes the world now and shadowcasts over its level
+ * (`shared/ball.ts`): a foe behind a pillar from the aimed body is not caught.
+ * `ground` is the same argument `reachable` takes — a World, or a bare level
+ * view — and a probe with NO ground has no walls, for the ball exactly as for
+ * the line (`lineFor`): the open disc, `discTiles`, which is what `ballTiles`
+ * lists on open ground. Asked without the ground, the probe would count a pair
+ * split by a wall as a crowd and fire at one body for four times the price.
  *
  * THIS WAS ONE EUCLIDEAN TEST FOR BOTH, `sightDistance <= radius`, and at
  * radius 1 that is the five-tile plus. It was right about the cross by accident
@@ -542,11 +550,20 @@ const AREA_MINIMUM = 2;
  * one shape at most: `tileDistance` alone would count a foe on the vial's
  * diagonal, which the vial does not touch, and fire it at a pair it hits one of.
  */
-function caughtBy(attack, aim, body) {
+function caughtBy(attack, aim, body, ground) {
   if (attack.shape === 'cross') {
     return crossTiles(aim, attack.radius).some((t) => t.x === body.x && t.y === body.y);
   }
-  return ballTiles(aim, attack.radius).some((t) => t.x === body.x && t.y === body.y);
+  const level = levelOf(ground);
+  const tiles =
+    level === undefined ? discTiles(aim, attack.radius) : ballTiles({ level }, aim, attack.radius);
+  return tiles.some((t) => t.x === body.x && t.y === body.y);
+}
+
+/** The level under `ground` — a World's, or `ground` itself when it is a bare view. See `lineFor`. */
+function levelOf(ground) {
+  if (ground === undefined) return undefined;
+  return typeof ground.lineClearFor === 'function' ? ground.level : ground;
 }
 
 export function takeShot(engine, actorId, attacks, self, foes, onRefusal, level) {
@@ -561,7 +578,7 @@ export function takeShot(engine, actorId, attacks, self, foes, onRefusal, level)
      */
     if (attack.radius !== undefined) {
       const caught = foes.filter(
-        (f) => f.alive !== false && caughtBy(attack, shootable.f, f),
+        (f) => f.alive !== false && caughtBy(attack, shootable.f, f, level),
       ).length;
       if (caught < AREA_MINIMUM) continue;
     }

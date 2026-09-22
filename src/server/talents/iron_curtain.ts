@@ -53,7 +53,6 @@
  * people, which is the position the guard needs him in anyway.
  */
 
-import { tileDistance } from '../../shared/distance.ts';
 import { combatTalentScale } from '../../shared/scale.ts';
 import { MELEE_REACH } from '../engine/combat.ts';
 import { TalentPower } from '../engine/derived.ts';
@@ -63,6 +62,7 @@ import {
   ClassId,
   TalentEffect,
   TargetShape,
+  ballTiles,
   isEnemy,
   isFriend,
   pullAggro,
@@ -188,14 +188,16 @@ const TOME_COOLDOWN = 10;
  *
  * ═══ A BALL, AS UPSTREAM'S IS — AND IT WAS A SQUARE ═══
  * Taunt projects `type="ball"` on the caster's own tile
- * (summon-utility.lua:28-36), so the reach is `core.fov.distance <= 4`:
- * `dx^2 + dy^2 <= 20`, sixty-nine tiles. It was `withinTiles`, a Chebyshev
- * box of eighty-one, whose corners pulled a hunter at (4,3) or (4,4) that
- * ToME's Taunt never reaches. `tileDistance` is the same test `ballTiles`
- * makes, so this and every other ball in the game share one edge.
+ * (tome/data/talents/gifts/summon-utility.lua:28-31, through `self:project`), so the reach is
+ * `core.fov.distance <= 4`: `dx^2 + dy^2 <= 20`, sixty-nine tiles on open
+ * ground. It was `withinTiles`, a Chebyshev box of eighty-one, whose corners
+ * pulled a hunter at (4,3) or (4,4) that ToME's Taunt never reaches.
  *
- * NOT YET WALL-AWARE: upstream's ball stops at `block_radius`, and a hunter
- * behind masonry inside the disc is still pulled here.
+ * AND IT STOPS AT WALLS. `self:project` lays the ball through `calc_circle`
+ * with the default `block_radius` (`engine/interface/ActorProject.lua:118-135`),
+ * so a hunter behind masonry is not taunted. It was `tileDistance <= 4`, which
+ * pulled one through a wall; it is membership in `ballTiles` now, the same
+ * list every other ball in the game walks.
  */
 const TAUNT_RADIUS = 4;
 /**
@@ -305,10 +307,13 @@ export const ironCurtain: Talent = {
     // the whole room. A room-wide taunt on this cooldown would delete
     // positioning; pulling exactly the things that threaten the person you are
     // standing over is the same fantasy and leaves the rest of the fight alone.
+    const taunted = ballTiles(ctx.world, { x: self.x, y: self.y }, TAUNT_RADIUS);
     const pulled = pullAggro(
       ctx.world,
       self,
-      (hostile) => hostile.ai?.targetId === ally.id && tileDistance(self, hostile) <= TAUNT_RADIUS,
+      (hostile) =>
+        hostile.ai?.targetId === ally.id &&
+        taunted.some((tile) => tile.x === hostile.x && tile.y === hostile.y),
     );
 
     const threat = threatBetween(ctx.world, self, ally);

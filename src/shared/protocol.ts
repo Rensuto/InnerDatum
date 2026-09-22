@@ -1259,9 +1259,14 @@ export const TalentShape = {
   /** A tile plus its four orthogonal arms of length `radius` — Alchemic Vial. */
   Cross: 'cross',
   /**
-   * Every tile within `radius` by `core.fov.distance` (`shared/distance.ts`
-   * `discTiles`) — a disc, not a box: radius 1 is the 3x3, radius 2 the 5x5 less
-   * its corners. It was the exact Euclidean length, which made radius 1 a plus.
+   * ToME's ball: every tile within `radius` by `core.fov.distance` that its
+   * centre can reach past terrain a projectile cannot cross (`shared/ball.ts`
+   * `ballTiles` with `blocksProjection`). A disc, not a box: radius 1 is the
+   * 3x3, radius 2 the 5x5 less its corners, and a wall takes away what it hides
+   * from a ball of radius 2 or more. Aimed at a tile, it is centred where it
+   * stops, the last open tile before a wall (`ballCentre`), not always on the
+   * aim. It was the exact Euclidean length, which made radius 1 a plus, and
+   * then the bare disc (`discTiles`), which walls did not stop.
    */
   Ball: 'ball',
   /** A free tile to stand on. Fog Step. The overlay must reject occupied tiles. */
@@ -5210,8 +5215,13 @@ export type TalentEvent = {
   /** Namespaced `talent:<id>`. The client resolves the icon from its manifest. */
   talentId: string;
   /**
-   * Where it landed — the centre of the stamp, the far end of a beam, and the
-   * CASTER'S OWN TILE for a `self` shape (never a sentinel; -1 would be drawn).
+   * Where it was aimed — the far end of a beam, the centre of most stamps, and
+   * the CASTER'S OWN TILE for a `self` shape (never a sentinel; -1 would be
+   * drawn).
+   *
+   * FOR A BALL IT IS THE AIM, NOT ALWAYS THE CENTRE: a ball aimed at a wall
+   * goes off on the last open tile before it (`ballCentre`, shared/ball.ts),
+   * and this carries the tile that was aimed at.
    */
   x: number;
   y: number;

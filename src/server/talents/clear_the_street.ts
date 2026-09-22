@@ -142,7 +142,7 @@ export const clearTheStreet: Talent = {
     // THE SAME CONSTANT THE WIRE SENDS AS `radius`, so the client's shape
     // preview and the tiles that are actually cleared cannot disagree —
     // `alchemic_vial.ts` makes the identical guarantee for the same reason.
-    const tiles = ballTiles(self, RADIUS);
+    const tiles = ballTiles(ctx.world, self, RADIUS);
     const victims = actorsInShape(ctx.world, self, tiles, Affinity.Hostile);
 
     /**

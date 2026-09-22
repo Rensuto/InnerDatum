@@ -608,7 +608,7 @@ describe('an Ally-affinity shape includes a companion and excludes a shopkeeper'
     const found = actorsInShape(
       world,
       ren,
-      ballTiles({ x: ren.x, y: ren.y }, 2),
+      ballTiles(world, { x: ren.x, y: ren.y }, 2),
       Affinity.Ally,
     ).map((body) => body.id);
 

@@ -122,7 +122,8 @@ import type { PassiveContribution } from './equipment.ts';
 import { createTurnProcs, fireTurnStart } from './hooks.ts';
 import type { BoundHooks, PassiveView, TalentHooks, TurnProcs } from './hooks.ts';
 import { DIR_ORDER, DIR_VECTORS, chebyshev } from '../../shared/coords.ts';
-import { discTiles, tileDistance } from '../../shared/distance.ts';
+import { tileDistance } from '../../shared/distance.ts';
+import { ballCentre, ballTiles as shadowcastBall, blocksProjection } from '../../shared/ball.ts';
 import { ENERGY_TO_ACT } from '../../shared/version.ts';
 import { bound, combatTalentScale, rescaleDamage } from '../../shared/scale.ts';
 import { hasLineOfSight } from '../../shared/sight.ts';
@@ -338,7 +339,8 @@ export const TargetShape = {
   Cross: 'cross',
   /**
    * Every actor within `radius` of the origin by `core.fov.distance`, the rounded
-   * length — `ballTiles`, so radius 1 is the whole 3x3. It was the exact length.
+   * length, that the origin can reach past the walls — `ballTiles`, so radius 1
+   * is the whole 3x3. It was the exact length, and it ignored walls.
    */
   Ball: 'ball',
   /** A free tile to stand on. Fog Step. */
@@ -3456,9 +3458,10 @@ export function isFriend(a: Sided, b: Sided): boolean {
  *
  * combat.ts explains the metrics: Chebyshev for adjacency and A* step costs,
  * and a radius for everything else. Every radius and range is ToME's rounded
- * `core.fov.distance` — a BALL through `ballTiles` -> `discTiles`, a range
- * through `combatDistance` -> `tileDistance` (shared/distance.ts), and the
- * targeting ring through the same `tileDistance`. All three were the exact
+ * `core.fov.distance` — a BALL through `ballTiles` -> `discTiles` (less what
+ * a wall hides, `shared/ball.ts`), a range through `combatDistance` ->
+ * `tileDistance` (shared/distance.ts), and the targeting ring through the same
+ * `tileDistance`. All three were the exact
  * length once. This is the Chebyshev one, and it is only ever used for "is this
  * thing standing next to me", where a diagonal genuinely is adjacent — and at a
  * radius of 1 the two agree, since a diagonal rounds to 1 as well.
@@ -3724,10 +3727,12 @@ export function crossTiles(centre: TileXY, arms = 1): readonly TileXY[] {
 }
 
 /**
- * The tiles a Ball covers — ToME's `type="ball"` disc, `shared/distance.ts`'s
- * `discTiles`: every offset with `dx^2 + dy^2 <= r^2 + r`, which is every tile
- * whose `core.fov.distance` from the centre is at most `r`. Radius 1 is the
- * whole 3x3 around the centre; radius 2 is the 5x5 less its four corners.
+ * The tiles a Ball covers on the caster's level — ToME's `type="ball"`, the
+ * part of the disc its centre can reach (`shared/ball.ts`). The disc is
+ * `shared/distance.ts`'s `discTiles`: every offset with `dx^2 + dy^2 <= r^2 + r`,
+ * which is every tile whose `core.fov.distance` from the centre is at most `r`.
+ * Radius 1 is the whole 3x3 around the centre; radius 2 is the 5x5 less its
+ * four corners, less whatever a wall hides.
  *
  * ═══ THIS WAS THE EXACT-EUCLID DISC, AND ITS NOTE SAID THAT MATCHED ToME ═══
  * The body was `combatDistance(centre, tile) <= radius`, and this docblock said
@@ -3741,19 +3746,62 @@ export function crossTiles(centre: TileXY, arms = 1): readonly TileXY[] {
  * STILL A CIRCLE AND NOT A SQUARE: a Chebyshev ball of radius 2 is the whole
  * 5x5 and reaches 2.83 tiles into its corners, which ToME's does not.
  *
- * ═══ NO WALLS YET ═══
+ * ═══ AND IT STOPS AT WALLS NOW — IT TOOK NO LEVEL, SO IT COULD NOT ═══
  * Upstream's projection passes a `block_radius` function to `calc_circle`
  * (`engine/interface/ActorProject.lua:120-133`), so a ball stops at masonry.
- * This takes no level and cannot; the zone site filters for itself
- * (`engine/zones.ts` `visibleFrom`).
+ * This took only a centre and a radius, so a radius-2 heal reached an ally on
+ * the far side of a pillar and a shove went through a wall; the zone site
+ * filtered for itself. It takes the world now, for its level, and asks
+ * `blocksProjection` — the default `block_radius`'s terrain clause — at every
+ * cell the shadowcaster wants. Radius 1 is untouched: the whole in-bounds 3x3
+ * is reached whatever blocks.
+ *
+ * ONE FUNCTION, TWO SIDES: the client's aim preview calls `shared/ball.ts`'s
+ * `ballTiles` with the same block on the same map, so the stamp is this list
+ * (laid from `ballCentre` for a ball aimed at a tile, `aimedBallTiles` below).
  *
  * Row-major order, so the tile list — and therefore the RNG draw order of
- * anything applied to it — is identical on every machine. It is the order the
- * exact disc was listed in, so a body standing on a tile both discs share is
- * met at the same point of the walk; `discTiles` carries that argument.
+ * anything applied to it — is identical on every machine. It is `discTiles`'s
+ * order with the hidden tiles taken out, so a body standing on a tile the wall
+ * did not hide is met at the same point of the walk; `discTiles` and
+ * `shared/ball.ts` carry that argument.
  */
-export function ballTiles(centre: TileXY, radius: number): readonly TileXY[] {
-  return discTiles(centre, radius);
+export function ballTiles(
+  world: Pick<TalentWorld, 'level'>,
+  centre: TileXY,
+  radius: number,
+): readonly TileXY[] {
+  return shadowcastBall(world.level, centre, radius, blocksProjection(world.level));
+}
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE TILES A BALL AIMED AT A TILE COVERS, LAID FROM WHERE IT STOPPED.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `ballTiles` round `shared/ball.ts`'s `ballCentre(level, from, aim)`: the aim
+ * when a projectile can enter it, and otherwise the last tile before it on the
+ * line from the caster, which is upstream's `stop_radius`
+ * (`engine/interface/ActorProject.lua:66-114`). Every talent that AIMS a ball
+ * lays it with this: Expunge, Scattershot and Clear the Altar. A ball centred
+ * on its caster (Truncheon Sweep, Mend Wounds and the rest) calls `ballTiles`
+ * on the caster's tile, where the two agree anyway.
+ *
+ * THE THREE LAID THE BALL ON THE AIM (`ballTiles(target, RADIUS)`, as they
+ * were written). `checkTargeting` accepts a wall as the aim, because line of
+ * sight leaves out the end of the line, so the ball went off inside the wall
+ * and a radius-1 ball reached the three tiles behind a one-thick one.
+ *
+ * The client's Ball stamp (`stampTiles`, client/input/targeting.ts) is the same
+ * two shared calls on the same map, so the preview is this list.
+ */
+export function aimedBallTiles(
+  world: Pick<TalentWorld, 'level'>,
+  from: TileXY,
+  aim: TileXY,
+  radius: number,
+): readonly TileXY[] {
+  return ballTiles(world, ballCentre(world.level, from, aim), radius);
 }
 
 /**

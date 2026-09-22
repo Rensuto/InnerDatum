@@ -106,8 +106,11 @@ function markersFor(events: readonly TurnEvent[]): TileOverlay[] {
         break;
       // FX SEAM (M3 client). A `talent` carries `shape` and `radius` precisely
       // so the stamp can be drawn without a second copy of the talent table in
-      // the browser: `ball`/`cross` expand into a set of tiles from the two
-      // fields, `beam` walks the line from the caster. Nothing is drawn yet —
+      // the browser: a `cross` expands into a set of tiles from the two fields,
+      // `beam` walks the line from the caster. A `ball` no longer expands from
+      // them alone: it stops at walls, so it needs the level, and it is laid
+      // from `ballCentre(level, caster, aim)` (shared/ball.ts), because the
+      // event's tile is the aim. Nothing is drawn yet —
       // the marker set has no AoE glyph — and the ordering below already puts
       // blows on top of arrivals, which is where the stamp belongs too.
       case 'talent':

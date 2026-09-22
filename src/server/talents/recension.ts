@@ -110,7 +110,7 @@ export const recension: Talent = {
     if (moved === 0) return talentRefused(TalentRefusal.NoTarget);
 
     // WHERE THE CASTER ACTUALLY IS. See the header: the walk can be stopped short.
-    const tiles = ballTiles({ x: self.x, y: self.y }, RADIUS);
+    const tiles = ballTiles(ctx.world, { x: self.x, y: self.y }, RADIUS);
     const caught = actorsInShape(ctx.world, self, tiles, Affinity.Hostile);
     const turns = slowTurns(ctx.talentLevel);
     const power = combatMindpower(self.combat ?? {});

@@ -1870,7 +1870,7 @@ describe('the Alchemist — AoE that never touches an ally, and the party heal',
   });
 
   it('a ball is a DISC — the corner of the bounding square is excluded', () => {
-    const tiles = ballTiles({ x: 5, y: 5 }, 2);
+    const tiles = ballTiles({ level: openLevel() }, { x: 5, y: 5 }, 2);
     expect(tiles).toContainEqual({ x: 7, y: 5 });
     // (2,2) is 2.83 away. A Chebyshev ball would include it and the heal would
     // visibly reach someone standing outside the ring the client drew.
@@ -2073,9 +2073,9 @@ describe('shapes and affinity', () => {
  * (`euclidDistance <= radius`, which is what `combatDistance <= radius` was
  * before `combatDistance` took ToME's rounding — it is the same disc as
  * `discTiles` now, so that particular revert is no longer a mutant) and each
- * goes red — except Taunt, which asks `tileDistance` itself
- * rather than `ballTiles` (iron_curtain.ts) and is red only when THAT is put
- * back on exact Euclid or on the old Chebyshev box.
+ * goes red. Taunt asked `tileDistance` itself until it took `ballTiles` for
+ * its walls (iron_curtain.ts), so it goes red with the rest now; putting it
+ * back on the old Chebyshev box turns the (4,3) pin red on its own.
  */
 describe('a ball covers ToME`s disc, not the exact-Euclid one', () => {
   it('Truncheon Sweep catches a foe on the diagonal', () => {
@@ -2248,6 +2248,202 @@ describe('a ball covers ToME`s disc, not the exact-Euclid one', () => {
     expect(targetOf('near'), 'the hunter at (3,3) was not pulled').toBe('dalt');
     expect(targetOf('rim'), 'the hunter at (4,2) was not pulled').toBe('dalt');
     expect(targetOf('far'), 'the hunter at (4,3) was pulled').toBe('sam');
+  });
+});
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ *   A BALL STOPS AT A WALL — `block_radius`, through the shipped talents.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Upstream lays every `type="ball"` through `calc_circle` with the default
+ * `block_radius` (`engine/interface/ActorProject.lua:118-135`,
+ * `engine/Target.lua:518-565`): terrain that blocks movement and lacks
+ * `pass_projectile` hides what lies behind it. `ballTiles` was the bare disc
+ * and reached through masonry; it takes the world now and shadowcasts over its
+ * level (`shared/ball.ts`).
+ *
+ * THE FIXTURE IS libfov's C (test/shared/mapgen/fovcircle.test.ts): one wall at
+ * (1,0) from the centre hides (2,0) at radius 2 and nothing else, so (2,1) —
+ * beside the hidden tile, and just as far — is the control that says the WALL
+ * did the work and not the radius. Each case asserts both, by coordinate.
+ *
+ * Put `blocksProjection` back to "nothing blocks" and each goes red; radius 1
+ * cannot show any of this (the whole 3x3 is always reached), which is why every
+ * case here is a radius of 2 or more.
+ */
+describe('a ball stops at a wall, as upstream`s block_radius stops it', () => {
+  it('Mend Wounds does not bind an ally behind a wall, and binds the one beside it', () => {
+    const f = fixture(PLENTY, [[6, 5]]);
+    const alchemist = f.add(ALCHEMIST, 'rey', 5, 5);
+    refill(f.engine, 'rey');
+    const hidden = f.add(WATCHMAN, 'dalt', 7, 5);
+    const beside = f.add(INSPECTOR, 'sam', 7, 6);
+    hidden.hp = 10;
+    beside.hp = 10;
+    expect(offsetOf(f, 'dalt', alchemist)).toEqual([2, 0]);
+    expect(offsetOf(f, 'sam', alchemist)).toEqual([2, 1]);
+    expect(f.world.level.tiles[5 * f.world.level.w + 6], 'the wall is not at (1,0)').toBe(
+      TileCode.WALL,
+    );
+
+    const result = useTalent(f.engine, alchemist, talentId('mend_wounds'), { x: 5, y: 5 }, f.ctx);
+    expect(result.ok, 'the kit was not opened').toBe(true);
+    if (!result.ok) return;
+    expect(hidden.hp, 'the ally behind the wall was bound').toBe(10);
+    expect(beside.hp, 'the ally at (2,1) was not bound').toBeGreaterThan(10);
+  });
+
+  it('Clear the Street does not shove a body through a wall', () => {
+    const f = fixture(PLENTY, [[6, 5]]);
+    const watchman = f.add(WATCHMAN, 'dalt', 5, 5);
+    refill(f.engine, 'dalt');
+    const hidden = f.addMonster('hidden', 7, 5, 400);
+    const beside = f.addMonster('beside', 7, 6, 400);
+    expect(offsetOf(f, 'hidden', watchman)).toEqual([2, 0]);
+    expect(offsetOf(f, 'beside', watchman)).toEqual([2, 1]);
+
+    const result = useTalent(
+      f.engine,
+      watchman,
+      talentId('clear_the_street'),
+      { x: 5, y: 5 },
+      f.ctx,
+    );
+    expect(result.ok, 'the shout did not resolve').toBe(true);
+    expect([hidden.x, hidden.y], 'the body behind the wall was shoved').toEqual([7, 5]);
+    expect([beside.x, beside.y], 'the body at (2,1) was not shoved').not.toEqual([7, 6]);
+  });
+
+  it('Iron Curtain`s Taunt does not pull a hunter behind a wall', () => {
+    /**
+     * UPSTREAM'S TAUNT IS `self:project` OF A BALL (tome/data/talents/gifts/summon-utility.lua:28-31),
+     * so it takes `block_radius` like any other. A wall two tiles south of the
+     * Watchman hides (0,3) at radius 4; (1,3) is seen past its corner.
+     */
+    const f = fixture(PLENTY, [[5, 7]]);
+    const watchman = f.add(WATCHMAN, 'dalt', 5, 5);
+    const guarded = f.add(INSPECTOR, 'sam', 6, 5);
+    guarded.hp = 6; // the worst-off neighbour, so the curtain falls over him
+    refill(f.engine, 'dalt');
+    for (const [id, x, y] of [
+      ['hidden', 5, 8],
+      ['seen', 6, 8],
+    ] as const) {
+      const body = f.addMonster(id, x, y, 400);
+      if (body.ai !== undefined) body.ai.targetId = 'sam';
+    }
+    expect(offsetOf(f, 'hidden', watchman)).toEqual([0, 3]);
+    expect(offsetOf(f, 'seen', watchman)).toEqual([1, 3]);
+
+    const result = useTalent(f.engine, watchman, talentId('iron_curtain'), { x: 5, y: 5 }, f.ctx);
+    expect(result.ok, 'the curtain did not go up').toBe(true);
+    expect(f.engine.effectOn('dalt', TalentEffect.Guarding)?.otherId).toBe('sam');
+    const targetOf = (id: string): string | null | undefined => f.world.getActor(id)?.ai?.targetId;
+    expect(targetOf('hidden'), 'the hunter behind the wall was pulled').toBe('sam');
+    expect(targetOf('seen'), 'the hunter past the wall`s corner was not pulled').toBe('dalt');
+  });
+
+  it('asks the level it is given: the same cast on open ground reaches (2,0)', () => {
+    // NOT VACUOUS: the fixture's walls are the only difference, so the pins
+    // above are the wall and not some other refusal.
+    const f = fixture(PLENTY);
+    const alchemist = f.add(ALCHEMIST, 'rey', 5, 5);
+    refill(f.engine, 'rey');
+    const open = f.add(WATCHMAN, 'dalt', 7, 5);
+    open.hp = 10;
+    const result = useTalent(f.engine, alchemist, talentId('mend_wounds'), { x: 5, y: 5 }, f.ctx);
+    expect(result.ok).toBe(true);
+    expect(open.hp, 'the ally at (2,0) on open ground was not bound').toBeGreaterThan(10);
+  });
+});
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ *   A BALL AIMED AT A WALL GOES OFF BEFORE IT, NEVER INSIDE IT.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `checkTargeting` accepts a wall as the aim — line of sight leaves out the end
+ * of the line — and Expunge and Scattershot laid their ball ON the aim, so a
+ * radius-1 ball aimed at a one-thick wall reached the three tiles behind it.
+ * Upstream's projection stops at the wall and lays the ball from `stop_radius`,
+ * the last open tile before it, or the caster's own tile when the wall is the
+ * first step (`engine/interface/ActorProject.lua:66-134`,
+ * `engine/Target.lua:458-468`). `aimedBallTiles` -> `ballCentre`.
+ *
+ * THE FIXTURE: a wall down column 5, rows 2-8. Aimed at (5,5) from (2,5), the
+ * ball goes off on (4,5): `near` at (3,4) is inside it and was not inside a
+ * ball on the wall, and `far` at (6,5) behind the wall was inside that one
+ * and is not inside this. Both are asserted, so `ballCentre` handing the aim
+ * back unchanged turns every case red.
+ *
+ * ADJACENT: from (4,5) the wall is the first step, so the ball goes off on the
+ * caster. Who it hurts is the talent's affinity — `Affinity.Hostile`, which is
+ * upstream's `selffire = false` and `friendlyfire = false` together (the
+ * defaults are both true, `engine/Target.lua:633-634`) — so the caster and the
+ * ally beside him are untouched and the foe beside him is caught.
+ */
+describe('a ball aimed at a wall goes off on the last open tile before it', () => {
+  const COLUMN: readonly (readonly [number, number])[] = [2, 3, 4, 5, 6, 7, 8].map(
+    (y) => [5, y] as const,
+  );
+  const AIM = { x: 5, y: 5 } as const;
+
+  /** A caster of `cls` at `at`, a foe beside the near face and one behind the wall. */
+  function walled(cls: ClassDef, id: string, at: readonly [number, number]) {
+    const f = fixture(PLENTY, COLUMN);
+    const caster = f.add(cls, id, at[0], at[1]);
+    refill(f.engine, id);
+    const near = f.addMonster('near', 3, 4, 400);
+    const far = f.addMonster('far', 6, 5, 400);
+    expect(f.world.level.tiles[AIM.y * W + AIM.x], 'the aim is not a wall').toBe(TileCode.WALL);
+    // NOT VACUOUS: a ball laid ON the aim catches `far` and misses `near`.
+    const onTheWall = ballTiles(f.world, AIM, 1);
+    expect(onTheWall).toContainEqual({ x: far.x, y: far.y });
+    expect(onTheWall).not.toContainEqual({ x: near.x, y: near.y });
+    return { f, caster, near, far };
+  }
+
+  for (const [name, cls, id] of [
+    ['expunge', REDACTOR, 'ink'],
+    ['scattershot', INSPECTOR, 'sam'],
+  ] as const) {
+    it(`${name}: aimed at the wall from three tiles, it catches the near foe and not the far`, () => {
+      const { f, caster } = walled(cls, id, [2, 5]);
+      const result = useTalent(f.engine, caster, talentId(name), AIM, f.ctx);
+      expect(result.ok, `${name} refused the wall as an aim`).toBe(true);
+      if (!result.ok) return;
+      expect(result.hits.map((h) => h.targetId)).toEqual(['near']);
+    });
+
+    it(`${name}: aimed at an adjacent wall, it goes off on the caster and spares him`, () => {
+      const { f, caster } = walled(cls, id, [4, 5]);
+      const ally = f.add(ALCHEMIST, 'rey', 4, 6);
+      const casterHp = caster.hp;
+      const allyHp = ally.hp;
+      const result = useTalent(f.engine, caster, talentId(name), AIM, f.ctx);
+      expect(result.ok, `${name} refused the adjacent wall as an aim`).toBe(true);
+      if (!result.ok) return;
+      // (3,4) is the caster's diagonal neighbour, inside a ball on the caster;
+      // (6,5) is behind the wall and two tiles from him.
+      expect(result.hits.map((h) => h.targetId)).toEqual(['near']);
+      expect(caster.hp, 'the caster was caught in his own ball').toBe(casterHp);
+      expect(ally.hp, 'the ally beside him was caught').toBe(allyHp);
+    });
+  }
+
+  it('alchemic vial: its cross is laid from where the flask stops, not inside the wall', () => {
+    const { f, caster } = walled(ALCHEMIST, 'rey', [2, 5]);
+    const arm = f.addMonster('arm', 4, 4, 400);
+    // NOT VACUOUS: a cross ON the wall burns `far` behind it and misses `arm`.
+    expect(crossTiles(AIM, 1)).toContainEqual({ x: 6, y: 5 });
+    expect(crossTiles(AIM, 1)).not.toContainEqual({ x: arm.x, y: arm.y });
+    const result = useTalent(f.engine, caster, talentId('alchemic_vial'), AIM, f.ctx);
+    expect(result.ok, 'the vial refused the wall as an aim').toBe(true);
+    if (!result.ok) return;
+    const hit = result.hits.map((h) => h.targetId);
+    expect(hit, 'the vial burned through the wall').not.toContain('far');
+    expect(hit).toContain('arm');
   });
 });
 

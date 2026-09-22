@@ -112,9 +112,11 @@ export function euclidDistance(a: TileXY, b: TileXY): number {
  *   (`engine/interface/ActorProject.lua:118-134`), and `circle_grids` always
  *   adds its origin.
  * - NO BOUNDS AND NO WALLS. The caller filters: `calc_circle`'s block function
- *   is a shadowcaster, not arithmetic, and it is not ported here.
+ *   is a shadowcaster, not arithmetic, and it is not here. It is
+ *   `shared/mapgen/fovcircle.ts`, and `shared/ball.ts` filters this list by it.
  * - EVERY TILE IS A FRESH OBJECT, the centre included. Callers pass live bodies
- *   as the centre (`ballTiles(self, ...)`), and a list that held the body itself
+ *   as the centre (`ballTiles(ctx.world, self, ...)`, server/engine/talents.ts,
+ *   which hands back this list filtered), and a list that held the body itself
  *   would move when the body did.
  *
  * ═══ ROW-MAJOR — `dy` OUTER, `dx` INNER — AND THE ORDER IS LOAD-BEARING ═══

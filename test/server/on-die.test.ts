@@ -207,9 +207,9 @@ describe('a creature that bursts when it dies', () => {
      * ═══════════════════════════════════════════════════════════════════════
      *
      * The `true` is a blocking flag, so upstream's ball is not a disc of
-     * coordinates: it is the part of a disc the centre can see. `ballTiles`
-     * knows nothing about terrain, so the filter is applied where the zone is
-     * built — see `visibleFrom` for why it is there and not in `ballTiles`.
+     * coordinates: it is the part of a disc the centre can reach, shadowcast
+     * with terrain `block_move` as the wall. `visibleFrom` is that ball
+     * (`shared/ball.ts` with `blocksMove`) and our `canWalk` clause.
      *
      * ═══ ASSERTED BY COORDINATE, NEVER BY COUNT ═══
      * A `tiles.length` assertion passes under a filter that drops the WRONG
@@ -230,9 +230,9 @@ describe('a creature that bursts when it dies', () => {
     expect(tiles, 'the cloud was not laid at all').toContainEqual({ x: 6, y: 5 });
     // THE TILE IN FRONT SURVIVES and the wall does not. Radius 1 does not reach
     // `beyond`, so the wall itself is the assertion with teeth here — it is
-    // inside the ball, and `hasLineOfSight` alone would keep it, because that
-    // function walks the INTERIOR of the line and a neighbouring wall has no
-    // interior. `canWalk` is the clause that removes it.
+    // inside the ball, and the shadowcast alone keeps it, because it reaches a
+    // wall's face (and at radius 1 the whole 3x3 whatever blocks). `canWalk` is
+    // the clause that removes it.
     expect(tiles, 'the tile in front of the wall was dropped too').toContainEqual({ x: 5, y: 5 });
     expect(tiles, 'the cloud filled the wall it was born beside').not.toContainEqual(wall);
     expect(tiles, 'the cloud reached past the wall').not.toContainEqual(beyond);
@@ -246,10 +246,11 @@ describe('a creature that bursts when it dies', () => {
      *
      * `visibleFrom` has two clauses and the test above only proves one of them.
      * Every tile of a radius-1 ball is ADJACENT to the centre, so nothing is
-     * ever behind anything and `hasLineOfSight` is true for all nine (it was
-     * all five while `ballTiles` cut the exact-Euclid plus) — deleting it left
-     * that test green. The Glut authors radius 1, so with today's content the
-     * line-of-sight half is unobservable in play.
+     * ever behind anything and the shadowcast reaches all nine (the old
+     * line-of-sight stand-in passed all nine too, and all five while
+     * `ballTiles` cut the exact-Euclid plus) — deleting it leaves that test
+     * green. The Glut authors radius 1, so with today's content the blocking
+     * half is unobservable in play.
      *
      * It is not unobservable in the helper, and the helper is general: the next
      * creature or talent to lay a zone will not be radius 1. So this drives the
@@ -278,7 +279,43 @@ describe('a creature that bursts when it dies', () => {
     expect(tiles, 'the cloud reached around the wall').not.toContainEqual(behind);
     // ...while the same distance in the clear direction is kept, so this is the
     // WALL doing the work and not the radius.
-    expect(tiles, 'the cloud lost a tile it had line of sight to').toContainEqual({ x: 8, y: 5 });
+    expect(tiles, 'the cloud lost a tile it could reach').toContainEqual({ x: 8, y: 5 });
+  });
+
+  it('stops at LAVA, which the eye crosses — the cloud asks block_move, not sight', () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * `circle_grids(x, y, radius, true)` BLOCKS ON MOVEMENT (engine/utils.lua:2183-2186).
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * Molten lava is solid to the foot and clear to the eye (`SOLID_BUT_CLEAR`),
+     * so it is the tile where the two questions part. `visibleFrom` WAS a
+     * Bresenham line over `blocksSightAt`, which saw straight across the lava
+     * and laid the cloud on the floor beyond it. Upstream's ball is shadowcast
+     * with terrain `block_move` as the wall, so the floor behind the lava is
+     * hidden, and the lava itself is not ground (`canWalk`).
+     *
+     * RADIUS 2, because radius 1 is the whole 3x3 whatever blocks and cannot
+     * show a shadow at all.
+     */
+    const table = stage('ondie-lava', { onDie: { ...CLOUD, radius: 2 } });
+    // Lava due east of the death tile at (6,5), and the floor beyond it.
+    const lava = { x: 7, y: 5 };
+    const beyond = { x: 8, y: 5 };
+    table.world.level.tiles[lava.y * table.world.level.w + lava.x] = TileCode.MOLTEN_LAVA;
+
+    expect(table.engine.submitMove('p1', 'e').ok).toBe(true);
+    table.engine.pump();
+
+    expect(table.world.getActor('m1')?.alive ?? true, 'the husk survived the swing').toBe(false);
+    const tiles = table.world.zones()[0]?.tiles ?? [];
+    expect(tiles, 'the cloud was not laid at all').toContainEqual({ x: 6, y: 5 });
+    expect(tiles, 'the cloud poured across the lava').not.toContainEqual(beyond);
+    expect(tiles, 'the cloud burned on the lava itself').not.toContainEqual(lava);
+    // The same distance the other way is kept, so this is the LAVA and not the radius.
+    expect(tiles, 'the cloud lost a tile it could reach').toContainEqual({ x: 4, y: 5 });
+    // And (2,1), beside the hidden tile and just as far, is reached past the lava's corner.
+    expect(tiles, 'the shadow was wider than the lava casts').toContainEqual({ x: 8, y: 6 });
   });
 
   it('narrates as DAMAGE, never as a dead thing swinging at you', () => {

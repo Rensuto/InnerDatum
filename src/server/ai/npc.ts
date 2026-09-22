@@ -1285,10 +1285,13 @@ type SafeGrid = {
  * ═══ WHAT IS NOT UPSTREAM'S, EACH ON PURPOSE ═══
  * - THE CIRCLE DOES NOT SHADOWCAST. Upstream's `calc_circle` takes a block
  *   function (:755-768) that hides tiles behind a wall or behind a tile that
- *   could not beat the best. `circleGrids` has no block function (see its note
- *   in `shared/mapgen/geom.ts`), so every tile in the disc is scored, and one
- *   that is reachable but hidden behind a wall can win here where upstream would
- *   not look.
+ *   could not beat the best. This walks `circleGrids`, which has no block
+ *   function (see its note in `shared/mapgen/geom.ts`), so every tile in the
+ *   disc is scored, and one that is reachable but hidden behind a wall can win
+ *   here where upstream would not look. The shadowcaster itself exists now
+ *   (`calcCircle`, `shared/mapgen/fovcircle.ts`, which asks its block live and
+ *   applies in the C's order, as a best-so-far block needs); this search has
+ *   not been moved onto it.
  * - THE ORDER IS NEAREST FIRST, then by row and column, where upstream's is the
  *   FOV scan's. It only decides a tie, and it makes the first safe tile cheap to
  *   find, so later tiles are ruled out on distance before any A*.

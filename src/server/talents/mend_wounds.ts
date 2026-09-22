@@ -169,7 +169,7 @@ export const mendWounds: Talent = {
   damageType: DamageType.Physical,
 
   onUse: (ctx, self) => {
-    const tiles = ballTiles({ x: self.x, y: self.y }, RADIUS);
+    const tiles = ballTiles(ctx.world, { x: self.x, y: self.y }, RADIUS);
     const allies = actorsInShape(ctx.world, self, tiles, Affinity.Ally);
 
     const fraction = healFraction(ctx.talentLevel);

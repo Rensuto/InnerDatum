@@ -129,7 +129,7 @@ export const truncheonSweep: Talent = {
   scalesWith: { damage: TalentPower.Weapon },
 
   onUse: (ctx, self) => {
-    const tiles = ballTiles({ x: self.x, y: self.y }, RADIUS);
+    const tiles = ballTiles(ctx.world, { x: self.x, y: self.y }, RADIUS);
     // `Affinity.Hostile` is what keeps the party out of it, the same way the
     // vial's cross does. A sweep that caught the person you are standing in
     // front of would be a trap rather than a talent.

@@ -43,6 +43,7 @@
  */
 
 import { applyLoad } from './loads.ts';
+import { ballCentre } from '../../shared/ball.ts';
 import { combatTalentScale } from '../../shared/scale.ts';
 import { DamageType } from '../engine/damage.ts';
 import { TalentPower } from '../engine/derived.ts';
@@ -132,7 +133,12 @@ export const alchemicVial: Talent = {
   onUse: (ctx, self, target) => {
     // The arm length is the SAME constant the wire sends as `radius`, so the
     // client's shape preview and the tiles that actually burn cannot disagree.
-    const tiles = crossTiles(target, RADIUS);
+    //
+    // AND THE CROSS IS LAID WHERE THE VIAL STOPS, not where it was aimed: a
+    // thrown flask stops at a wall like any projection (`ballCentre`,
+    // shared/ball.ts; engine/interface/ActorProject.lua:66-114). Laid on the
+    // aim, a vial thrown at a one-thick wall burned the tile behind it.
+    const tiles = crossTiles(ballCentre(ctx.world.level, self, target), RADIUS);
     const victims = actorsInShape(ctx.world, self, tiles, Affinity.Hostile);
 
     // A vial thrown at an empty crossroads still burns, still costs its two

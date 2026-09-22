@@ -1519,10 +1519,16 @@ export type OnHitStatus = {
  */
 export type OnDeathZone = {
   /**
-   * How far from the body, in the `ballTiles` sense — ToME's disc, every tile
-   * whose `core.fov.distance` is at most this, so radius 1 is the whole 3x3 and
-   * the diagonals are inside it. It was the exact Euclidean length, under which
-   * radius 1 was the five-tile plus and the diagonals at 1.41 fell outside.
+   * How far from the body — ToME's disc, every tile whose `core.fov.distance`
+   * is at most this, so radius 1 is the whole 3x3 and the diagonals are inside
+   * it. It was the exact Euclidean length, under which radius 1 was the
+   * five-tile plus and the diagonals at 1.41 fell outside.
+   *
+   * AND WALLS STOP IT. The patch is `visibleFrom` (engine/zones.ts): the disc
+   * shadowcast from where the body fell with terrain that blocks movement as
+   * the wall, upstream's `circle_grids(x, y, radius, true)`. So a radius of 2
+   * or more leaves out what a wall, or a lava channel, hides. It was the bare
+   * disc filtered by a line of sight, which let a cloud across lava.
    *
    * Upstream's worm mass passes 2 with `dir = 5` (a circle) at Map.lua:1103.
    */

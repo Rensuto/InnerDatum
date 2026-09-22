@@ -86,6 +86,7 @@ import {
 } from '../../shared/mapgen/infinite.ts';
 import { embellish } from './encounter.ts';
 import { canWalk, tileAt } from '../../shared/level.ts';
+import { ballTiles, blocksMove } from '../../shared/ball.ts';
 import { airOf, breathes } from '../../shared/terrain.ts';
 import type { Breather } from '../../shared/terrain.ts';
 import { reachableSet } from '../../shared/mapgen/connectivity.ts';
@@ -101,6 +102,7 @@ import type { ZoneLevelRange } from '../../shared/zone.ts';
 import type { PartyStrength } from '../world/strength.ts';
 import type { AuthoredMap } from '../../shared/level.ts';
 import type { TileXY } from '../../shared/coords.ts';
+import type { LevelView } from '../../shared/protocol.ts';
 import { DOOR_CLEARANCE } from '../../shared/sitemap.ts';
 import { qualified } from '../world/world.ts';
 import type { World } from '../world/world.ts';
@@ -3005,6 +3007,54 @@ export const PopulationScope = {
 } as const;
 export type PopulationScope = (typeof PopulationScope)[keyof typeof PopulationScope];
 
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * WHICH OF A BODY'S TILES ARE "NEAR A SPOT" — `util.findFreeGrid`'s circle.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * ```lua
+ * -- engine/generator/actor/OnSpots.lua:52
+ * local _, _, gs = util.findFreeGrid(spot.x, spot.y, self.spot_radius, "block_move", {[Map.ACTOR]=true})
+ * ```
+ *
+ * `findFreeGrid` (`engine/utils.lua:2370-2401`) starts from
+ * `core.fov.circle_grids(sx, sy, radius, block)`, and its `block` is the STRING
+ * `"block_move"` — truthy and not a function, so `circle_grids` takes its
+ * terrain branch (`engine/utils.lua:2183-2186`) and shadowcasts with terrain
+ * `block_move` as the wall. Then it keeps the grids that are in bounds, hold no
+ * actor and do not block movement. So "near a spot" is the ROUNDED disc
+ * (`core.fov.distance <= spot_radius`), cut by the walls between the spot and
+ * the tile: a pack on the far side of a wall from its spot is not near it.
+ *
+ * `share` already holds only ground this body may be born on, and the walk
+ * after the draw skips a tile somebody is standing on, so the ball is the
+ * only thing this adds. The order is `share`'s.
+ *
+ * ═══ IT WAS A CHEBYSHEV BOX, AND MOVING IT MOVES POPULATION SEEDS ═══
+ * This was `max(|dx|, |dy|) <= radius`: at OnSpots' default radius of 5 that
+ * is 121 tiles, where the disc is 97 on open ground and fewer behind walls.
+ * The list the `delve.at` draw indexes into is shorter now, so on-spot bodies
+ * stand elsewhere on the same seed, and everything downstream of where a body
+ * stands moves with them. The draw COUNT is unchanged; `bounded`'s rejection
+ * loop (shared/rng.ts) can rarely take one more or one fewer word for a
+ * different span, and then later draws shift too.
+ *
+ * NOT PORTED: `findFreeGrid`'s `rng.range(1, 1000)` per free grid. It only
+ * orders `gs` for its first result, and OnSpots never reads that — it takes
+ * `rng.table(gs)`, a uniform pick, which our `delve.at` draw already is.
+ */
+export function nearSpot(
+  level: LevelView,
+  share: readonly TileXY[],
+  spot: TileXY,
+  radius: number,
+): TileXY[] {
+  const near = new Set(
+    ballTiles(level, spot, radius, blocksMove(level)).map((t) => `${String(t.x)},${String(t.y)}`),
+  );
+  return share.filter((t) => near.has(`${String(t.x)},${String(t.y)}`));
+}
+
 export function populateDelve(
   world: World,
   map: AuthoredMap,
@@ -3234,12 +3284,7 @@ export function populateDelve(
     const anchor = onSpot
       ? spots[world.rng.int(`delve.spotpick.${String(i)}`, 0, spots.length - 1)]
       : undefined;
-    const near =
-      anchor === undefined
-        ? share
-        : share.filter(
-            (t) => Math.max(Math.abs(t.x - anchor.x), Math.abs(t.y - anchor.y)) <= radius,
-          );
+    const near = anchor === undefined ? share : nearSpot(world.level, share, anchor, radius);
     // `util.findFreeGrid` finding nothing inside the radius is
     // engine/generator/actor/OnSpots.lua:58's
     // "No more free space for spawning": upstream returns and places nobody. We

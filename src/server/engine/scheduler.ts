@@ -91,7 +91,7 @@ import {
 } from './actor.ts';
 import { AttackRefusal, attackTarget, canAttack } from './combat.ts';
 import type { AttackResult } from './combat.ts';
-import { TalentRefusal, ballTiles } from './talents.ts';
+import { TalentRefusal } from './talents.ts';
 import type { KillNote } from './talents.ts';
 import { inQuorum, isBlocking } from './barrier.ts';
 import {
@@ -798,7 +798,12 @@ export type GameEvent =
 export type TalentLanding = {
   /** Namespaced `talent:<id>` — the registry key, which IS the wire id. */
   readonly talentId: string;
-  /** The centre of the stamp. The caster's own tile for a `self` shape. */
+  /**
+   * The tile the talent was AIMED at — the caster's own tile for a `self`
+   * shape. For a ball or a cross thrown at a wall that is not the centre of the
+   * stamp: it goes off on the last open tile before the wall (`ballCentre`,
+   * shared/ball.ts), and main.ts fills this from the aim.
+   */
   readonly at: TileXY;
   readonly shape: TalentShape;
   /** Arms for `cross`, radius for `ball`, 0 otherwise. */
@@ -4796,18 +4801,21 @@ function noteMonsterDeath(
    * for exactly that reason.
    *
    * ═══ AND IT STOPS AT THE WALLS — `engine/Map.lua:1103-1104`'S BLOCKING FLAG ═══
-   * `ballTiles` does not consult terrain; upstream's
-   * `core.fov.circle_grids(x, y, radius, true)` does, and the `true` is that
-   * flag. `visibleFrom` is it, applied here rather than inside `ballTiles`
-   * because `ballTiles` takes no level and this site has one. It used to add
+   * Upstream's `core.fov.circle_grids(x, y, radius, true)` shadowcasts, and
+   * the `true` makes terrain `block_move` the wall. `visibleFrom` is that call
+   * (`shared/ball.ts` with `blocksMove`) plus our `canWalk` clause. It WAS the
+   * talent ball's disc filtered by a Bresenham line over `blocksSightAt`,
+   * because `ballTiles` took no level; that asked sight where upstream asks
+   * movement, and a cloud crossed lava it should have stopped at. It used to add
    * that changing the footprint "would reorder `actorsInShape` and move every
    * seed in the suite"; that was false — a narrower or wider disc walked in the
    * same row-major order keeps every shared tile's place, so only a body on an
    * added or removed tile moves a draw. `visibleFrom`'s note has the argument.
    *
-   * THE DISC ITSELF IS ToME'S NOW: `ballTiles` is `discTiles`, so a radius-1
-   * cloud covers the whole 3x3 the body fell in the middle of, where the
-   * exact-Euclid disc it used to cut left the four diagonals out.
+   * THE DISC ITSELF IS ToME'S: `discTiles`, so a radius-1 cloud covers the
+   * whole 3x3 the body fell in the middle of, where the exact-Euclid disc
+   * `ballTiles` used to cut left the four diagonals out. A wall cannot take a
+   * tile from a radius-1 ball; only radius 2 and up can lose one.
    *
    * This paragraph used to say the flag could wait — *"nothing living stands in
    * a wall … the day zones are DRAWN, a cloud will appear to seep through"* —
@@ -4819,11 +4827,7 @@ function noteMonsterDeath(
   if (leaves !== undefined) {
     run.world.addZone({
       srcId: victim.id,
-      tiles: visibleFrom(
-        run.world.level,
-        { x: victim.x, y: victim.y },
-        ballTiles({ x: victim.x, y: victim.y }, leaves.radius),
-      ),
+      tiles: visibleFrom(run.world.level, { x: victim.x, y: victim.y }, leaves.radius),
       type: leaves.type,
       damage: leaves.damage,
       turns: leaves.turns,

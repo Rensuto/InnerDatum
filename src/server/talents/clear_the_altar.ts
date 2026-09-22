@@ -18,7 +18,7 @@ import {
   TalentRefusal,
   TargetShape,
   actorsInShape,
-  ballTiles,
+  aimedBallTiles,
   knockback,
   percent,
   talentBaseDamage,
@@ -127,7 +127,11 @@ export const clearTheAltar: Talent = {
   scalesWith: { damage: TalentPower.Weapon },
 
   onUse: (ctx, self, target) => {
-    const tiles = ballTiles(target, RADIUS);
+    // The AI aims at its victim's tile (`castable`, server/main.ts), and a body
+    // stands on ground a projectile can enter, so in practice this is the aim
+    // itself. It is `aimedBallTiles` so that an aim at a wall, from any caller,
+    // cannot set the blast off inside it.
+    const tiles = aimedBallTiles(ctx.world, self, target, RADIUS);
     const victims = actorsInShape(ctx.world, self, tiles, Affinity.Hostile);
     // Legality already required a hostile within reach, so an empty sweep means
     // the board moved between the AI choosing and the turn resolving. Refusing

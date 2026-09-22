@@ -39,7 +39,7 @@ import {
   TalentKind,
   TargetShape,
   actorsInShape,
-  ballTiles,
+  aimedBallTiles,
   talentBaseDamage,
   talentDone,
   talentId,
@@ -149,8 +149,9 @@ export const scattershot: Talent = {
   onUse: (ctx, self, target) => {
     // The same constant the wire sent as `radius`, so the preview and the tiles
     // that are actually hit cannot disagree -- `alchemic_vial.ts` states the
-    // rule and this is the second reader of it.
-    const tiles = ballTiles(target, RADIUS);
+    // rule and this is the second reader of it. Fired at a wall, the burst
+    // goes off on the last open tile before it (`aimedBallTiles`).
+    const tiles = aimedBallTiles(ctx.world, self, target, RADIUS);
     const victims = actorsInShape(ctx.world, self, tiles, Affinity.Hostile);
 
     const base = talentBaseDamage(self);

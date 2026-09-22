@@ -62,7 +62,8 @@
  */
 
 import { DIR_VECTORS, inBounds } from '../../shared/coords.ts';
-import { discTiles, euclidDistance, tileDistance } from '../../shared/distance.ts';
+import { ballCentre, ballTiles, blocksProjection } from '../../shared/ball.ts';
+import { euclidDistance, tileDistance } from '../../shared/distance.ts';
 import { hasLineOfSight, playerLineClear } from '../../shared/sight.ts';
 import type { VisionView } from '../vision.ts';
 import { blocksSightAt } from '../../shared/level.ts';
@@ -202,6 +203,7 @@ function stampTiles(
   radius: number,
   origin: TileXY,
   at: TileXY,
+  level: LevelView,
 ): readonly TileXY[] {
   const r = Math.max(0, Math.floor(radius));
   switch (shape) {
@@ -214,20 +216,33 @@ function stampTiles(
     case TalentShape.Self:
       return [origin];
     case TalentShape.Ball:
-      // THE SERVER'S OWN DISC, on the server's own number. `ballTiles`
-      // (server/engine/talents.ts) is `discTiles`, and a talent passes it the
-      // same `radius` the wire carries here, so the preview and the tiles hit
-      // are one function of one value. This was a private exact-Euclid loop,
-      // which drew radius 1 as the five-tile plus; ToME's ball, and the
-      // server's now, is the whole 3x3.
-      return discTiles(at, radius);
+      // THE SERVER'S OWN BALL, on the server's own number and the same map.
+      // `ballTiles` (server/engine/talents.ts) is `shared/ball.ts`'s
+      // `ballTiles` with `blocksProjection` of the caster's level, and a talent
+      // passes it the same `radius` the wire carries here, so the preview and
+      // the tiles hit are one function of one value. It was a private
+      // exact-Euclid loop, which drew radius 1 as the five-tile plus, and then
+      // the bare disc, which drew a radius-2 ball straight through a wall the
+      // server's stops at. The client holds the whole map (`projectLevel`), so
+      // it asks the same wall the server does.
+      //
+      // AND IT IS LAID FROM WHERE THE BALL STOPS, which is not always `at`.
+      // Aimed at a wall, the server's ball goes off on the last open tile
+      // before it on the line from the caster (`ballCentre`, and
+      // `aimedBallTiles` on the server), or on the caster when the wall is the
+      // first step. The preview was centred on `at` and drew the ball reaching
+      // through the wall, which the server's no longer does.
+      return ballTiles(level, ballCentre(level, origin, at), radius, blocksProjection(level));
     case TalentShape.Cross: {
-      const tiles: TileXY[] = [at];
+      // FROM WHERE THE FLASK STOPS, for the Ball case's reason: the server's
+      // vial lays its cross from `ballCentre` too (alchemic_vial.ts).
+      const hub = ballCentre(level, origin, at);
+      const tiles: TileXY[] = [hub];
       for (let step = 1; step <= r; step += 1) {
-        tiles.push({ x: at.x + step, y: at.y });
-        tiles.push({ x: at.x - step, y: at.y });
-        tiles.push({ x: at.x, y: at.y + step });
-        tiles.push({ x: at.x, y: at.y - step });
+        tiles.push({ x: hub.x + step, y: hub.y });
+        tiles.push({ x: hub.x - step, y: hub.y });
+        tiles.push({ x: hub.x, y: hub.y + step });
+        tiles.push({ x: hub.x, y: hub.y - step });
       }
       return tiles;
     }
@@ -292,9 +307,14 @@ export function createTargeting(options: TargetingOptions): Targeting {
     // `<`, not `<=`: minRange 3 makes 3 the closest LEGAL tile, matching both the
     // authored `min_range` in content/skills/*.json and `canAttack`.
     if (talent.minRange > 0 && d < talent.minRange) return TargetAdvice.TooClose;
-    // SOLID TO AN EYE, not merely code 1 — see `hasLineOfSight` above. The
-    // server reaches the same refusal one line later through `requiresLos`, so
-    // this stays the friendlier name for the same no.
+    // SOLID TO AN EYE, not merely code 1 — see `hasLineOfSight` above. THIS
+    // IS THE CLIENT'S OWN NO, AND THE SERVER DOES NOT SAY IT. This said the
+    // server reached "the same refusal one line later through `requiresLos`",
+    // and it does not: line of sight leaves out the end of the line, so
+    // `checkTargeting` accepts a wall as the aim. A Single aimed at one then
+    // finds nobody there (`NoTarget`); a Ball goes off on the last open tile
+    // before it (`ballCentre`), and the stamp below draws it there. `confirm`
+    // sends the aim either way.
     if (blocksSightAt(level, tile.x, tile.y)) return TargetAdvice.Blocked;
     // Adjacent needs no sight check — you are standing on them. Mirrors the
     // `distance > 1` guard in `canAttack`.
@@ -547,8 +567,10 @@ export function createTargeting(options: TargetingOptions): Targeting {
 
     // The stamp, over the ring. Walls inside an AoE are skipped so the preview
     // shows where the vial actually lands rather than painting the wall it
-    // splashes against.
-    for (const tile of stampTiles(active.shape, active.radius, from, at)) {
+    // splashes against. A ball's list already stops AT a wall — it holds the
+    // face it reached and nothing behind — so this skip is cosmetic for a ball:
+    // it leaves the face unpainted, and nobody stands in one.
+    for (const tile of stampTiles(active.shape, active.radius, from, at, lv)) {
       if (!inBounds(tile.x, tile.y, lv.w, lv.h)) continue;
       if (blocksSightAt(lv, tile.x, tile.y)) continue;
       out.push({ x: tile.x, y: tile.y, marker: MarkerKind.Aoe, shaded: false });

@@ -3,6 +3,7 @@
 // Ported from t-engine4 game/engines/default/engine/Map.lua:1089-1116 (addEffect)
 //              t-engine4 game/engines/default/engine/Map.lua:1231-1254 (processEffects)
 //              t-engine4 game/modules/tome/class/Game.lua:1737 (the once-per-game-turn cadence)
+//              t-engine4 game/engines/default/engine/utils.lua:2178-2199 (circle_grids, a zone's ball)
 // T-Engine4 (C) 2009-2018 Nicolas Casalini "DarkGod" — https://te4.org/license
 
 /**
@@ -86,7 +87,7 @@ import { DAMAGE_TYPES } from '../../shared/damagetype.ts';
 import type { DamageType } from '../../shared/damagetype.ts';
 import { applyDamage } from './damage.ts';
 import { areEnemies } from './actor.ts';
-import { hasLineOfSight } from '../../shared/sight.ts';
+import { ballTiles, blocksMove } from '../../shared/ball.ts';
 import { canWalk } from '../../shared/level.ts';
 import type { TileXY } from '../../shared/coords.ts';
 import type { DamageOutcome } from './damage.ts';
@@ -255,31 +256,38 @@ export function tickZones(world: ZoneWorld, rng: Parameters<typeof applyDamage>[
  *   grids = core.fov.circle_grids(x, y, radius, true)
  * ```
  *
- * THE `true` IS THE BLOCKING FLAG, and it is the entire content of this
- * function. Upstream's ball is not a disc of coordinates, it is the part of a
- * disc the centre can actually see — so a cloud released against a wall pools on
- * one side of it instead of appearing in the corridor beyond.
+ * THE `true` IS THE BLOCKING FLAG. Upstream's ball is not a disc of
+ * coordinates: `circle_grids` runs `calc_circle`, libfov's shadowcaster, with
+ * terrain `block_move` as the wall (`engine/utils.lua:2183-2186`), so a cloud
+ * released against a wall pools on one side of it instead of appearing in the
+ * corridor beyond. That call is `shared/ball.ts`'s `ballTiles` with
+ * `blocksMove`, and this is it plus one clause of ours. "Visible" is libfov's
+ * sense of the word — what its field of view reaches — and here the thing that
+ * stops the view is movement, not the eye.
  *
- * ═══ WHY IT IS HERE AND NOT IN `ballTiles` ═══
- * `engine/talents.ts#ballTiles` takes no level, so it cannot ask about a wall,
- * and the zone site has the level to hand. That is the whole reason, and it is
- * plumbing: the talent balls that go through `ballTiles` are no more correct
- * for ignoring walls, since upstream's projected balls stop at them too
- * (`block_radius`, `engine/interface/ActorProject.lua:120-133`). The zone site
- * filters what it was handed until `ballTiles` can take a level.
+ * ═══ IT WAS A STAND-IN, AND IT ASKED THE WRONG QUESTION ═══
+ * This took the talent ball's tile list and kept each tile `hasLineOfSight`
+ * passed: one Bresenham line per tile, over `blocksSightAt`. It was built that
+ * way because `engine/talents.ts#ballTiles` took no level and there was no
+ * shadowcaster in the tree. Both have landed (`shared/mapgen/fovcircle.ts`,
+ * and `ballTiles` takes the world), and the stand-in was not only rough at the
+ * rim, it was WRONG about the terrain: it asked SIGHT where upstream asks
+ * MOVEMENT. Lava and solid water are clear to the eye and solid to the foot, so
+ * a cloud born beside a lava channel poured across it onto the floor beyond,
+ * where upstream's stops at the bank.
  *
- * ═══ IT GAVE A SECOND REASON, AND THAT ONE WAS FALSE AS MATHS ═══
- * This paragraph said teaching `ballTiles` about walls would change every
+ * ═══ A WALL ONLY TAKES TILES AWAY, SO IT DOES NOT MOVE EVERY SEED ═══
+ * This paragraph once said teaching `ballTiles` about walls would change every
  * talent's footprint, "which reorders `actorsInShape` and therefore the
  * per-target damage draws", so "every seed in the suite would move". The
  * footprint changes; the ORDER does not, and the draws follow the order.
  *
- *   - A wall-aware ball is the same row-major list with the shadowed tiles
- *     taken out. A wider ball — ToME's `dx^2 + dy^2 <= r^2 + r`, which
- *     `ballTiles` cuts now — is the old list with tiles put in: for a whole
- *     radius the exact disc `dx^2 + dy^2 <= r^2` it used to cut is a subset,
- *     and both are walked row-major, so every tile the two lists share keeps
- *     its place relative to the others (test/shared/distance.test.ts pins it).
+ *   - A wall-aware ball is `discTiles`'s row-major list with the shadowed tiles
+ *     taken out — `shared/ball.ts` filters that list and never takes the
+ *     shadowcaster's own visit order. ToME's wider disc, `dx^2 + dy^2 <= r^2 + r`,
+ *     was the old exact list with tiles put in, the same way round (for a whole
+ *     radius the exact disc is a subset, test/shared/distance.test.ts pins it).
+ *     Either way every tile the two lists share keeps its place.
  *   - `actorsInShape` takes no draw. The draws are what the caller does to each
  *     body it found, in the order it found them, and this site takes none
  *     either (`world.addZone` advances a counter).
@@ -290,17 +298,11 @@ export function tickZones(world: ZoneWorld, rng: Parameters<typeof applyDamage>[
  * would have been true of one change only: reordering the list, for instance by
  * walking it x-major the way shared/mapgen/geom.ts's `circleGrids` does.
  *
- * ═══ IT COSTS NOTHING TODAY AND THAT IS NOT THE REASON TO SKIP IT ═══
- * `tickZones` asks `world.actorAt` per tile and nothing living stands inside a
- * wall, so the tiles this removes were burning nobody. They are still WRONG,
- * and they are the list a renderer will draw: without this, the first thing a
- * player ever sees of a ground zone is fire seeping through masonry.
- *
  * ═══ AND THE TILE ITSELF HAS TO BE GROUND, WHICH IS THE HALF UPSTREAM OMITS ═══
- * `hasLineOfSight` walks the INTERIOR of a Bresenham line, so a wall directly
- * beside the centre passes it — you can see a wall's face. Upstream's
- * `circle_grids` behaves the same way and it costs upstream nothing: its
- * overlay is a particle emitter and nothing stands in masonry either.
+ * A shadowcast APPLIES the wall faces it can see: a cloud against masonry lists
+ * the masonry, and at radius 1 the whole 3x3 is reached whatever blocks.
+ * Upstream's `circle_grids` does exactly that and it costs upstream nothing:
+ * its overlay is a particle emitter and nothing stands in a wall.
  *
  * It costs US something, because this list is the authoritative one — the tiles
  * `tickZones` burns AND the tiles a renderer will wash. Fire drawn on a wall is
@@ -309,19 +311,15 @@ export function tickZones(world: ZoneWorld, rng: Parameters<typeof applyDamage>[
  * rather than a port.
  *
  * ═══ THE LIST CAN NEVER COME BACK EMPTY ═══
- * A tile always has an unobstructed line to itself, and the centre is where a
- * body was standing a moment ago, so it satisfies both clauses. That matters
- * because `assertZoneSpec` THROWS on an empty list and `world.addZone` is called
- * inside the pump, inside a websocket handler, mid-fight. No defensive branch —
- * the property is the guarantee.
+ * The centre is always in the ball (`circle_grids` adds its origin, and so does
+ * `circleCells`), and it is where a body was standing a moment ago, so it is
+ * ground. That matters because `assertZoneSpec` THROWS on an empty list and
+ * `world.addZone` is called inside the pump, inside a websocket handler,
+ * mid-fight. No defensive branch — the property is the guarantee.
  */
-export function visibleFrom(
-  level: SightLevel,
-  centre: TileXY,
-  tiles: readonly TileXY[],
-): readonly TileXY[] {
-  return tiles.filter(
-    (tile) => canWalk(level, tile.x, tile.y) && hasLineOfSight(level, centre, tile),
+export function visibleFrom(level: SightLevel, centre: TileXY, radius: number): readonly TileXY[] {
+  return ballTiles(level, centre, radius, blocksMove(level)).filter((tile) =>
+    canWalk(level, tile.x, tile.y),
   );
 }
 

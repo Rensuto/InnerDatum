@@ -16,7 +16,7 @@ import {
   TalentKind,
   TargetShape,
   actorsInShape,
-  ballTiles,
+  aimedBallTiles,
   percent,
   talentBaseDamage,
   talentDone,
@@ -105,8 +105,10 @@ export const expunge: Talent = {
   onUse: (ctx, self, target) => {
     // THE SAME CONSTANT THE WIRE SENDS AS `radius`, so the client's shape
     // preview and the tiles that are actually covered cannot disagree — the
-    // guarantee `alchemic_vial.ts` and `clear_the_street.ts` both make.
-    const tiles = ballTiles(target, RADIUS);
+    // guarantee `alchemic_vial.ts` and `clear_the_street.ts` both make. LAID
+    // FROM WHERE IT STOPS: aimed at a wall, the block falls on the last open
+    // tile before it, never inside it (`aimedBallTiles`).
+    const tiles = aimedBallTiles(ctx.world, self, target, RADIUS);
     const victims = actorsInShape(ctx.world, self, tiles, Affinity.Hostile);
 
     const base = talentBaseDamage(self);

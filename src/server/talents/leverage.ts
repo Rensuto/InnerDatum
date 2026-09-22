@@ -297,7 +297,7 @@ export const overreach: Talent = {
   },
 
   onUse: (ctx, self) => {
-    const tiles = ballTiles(self, GRIT_RADIUS);
+    const tiles = ballTiles(ctx.world, self, GRIT_RADIUS);
     const victims = actorsInShape(ctx.world, self, tiles, Affinity.Hostile);
     const turns = damageAt(ctx.talentLevel);
     const power = combatPhysicalpower(self.combat ?? {});
