@@ -611,8 +611,12 @@ export const INSPECTOR: ClassDef = {
    * `coldReading` IS HERE AND `steadyHands` IS NOT, AND THAT WAS MEASURED.
    * ═══════════════════════════════════════════════════════════════════════════
    *
-   * `pointsForLevel(1)` is 0 (shared/progression.ts), so these four ARE the
-   * level-1 character; nothing else is reachable until level 2. Cold Reading now
+   * These four are what a level-1 character is BORN knowing. This note used to
+   * say they were the whole level-1 character, because `pointsForLevel(1)` is 0
+   * and nothing else could be bought until level 2; that stopped being true
+   * when ToME's birth points landed (2 class, 1 generic, 3 attribute —
+   * `BIRTH_CLASS_POINTS`, shared/progression.ts), so a level-1 character can
+   * buy a tier-1 talent such as Steady Hands at once. Cold Reading now
    * carries `heightened_senses` (cunning/survival.lua:21-48), and upstream gives
    * the Archer that tree OPEN AT BIRTH (warrior.lua:213) with two unspent points
    * to put in it (tome/class/Actor.lua:170-172) — so a born Inspector who can
@@ -623,8 +627,9 @@ export const INSPECTOR: ClassDef = {
    * 3.00 — and she won 4% of unlit floors against 47% of lit ones. Steady Hands
    * is crit chance and crit power on a shot she was not able to take.
    *
-   * IT IS STILL IN `passives` and still the first thing worth a point at level
-   * 2. Losing it at BIRTH is the trade, and the trade is a class that can act.
+   * IT IS STILL IN `passives` and a birth point can buy it on the first
+   * evening. Losing it as a FREE birth talent is the trade, and the trade is a
+   * class that can act.
    *
    * ═══════════════════════════════════════════════════════════════════════════
    * AND IT REACHES NEW CHARACTERS ONLY. AN EXISTING INSPECTOR KEEPS STEADY HANDS.
@@ -635,7 +640,7 @@ export const INSPECTOR: ClassDef = {
    * `applyTalentPoints` replays it verbatim, so an existing level-1 Inspector
    * loads with `steady_hands: 1` and `cold_reading: 0` and never receives this
    * grant for free. She has the zero-tile dark firing band until she buys the
-   * talent at level 2.
+   * talent, which her birth points can now do at level 1.
    *
    * THE LEDGER IS UNDAMAGED, WHICH IS THE PART THAT MATTERED. `spendByPurse`
    * counts birth grants by COUNT and not by id (`spentFromSpread`,

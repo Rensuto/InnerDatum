@@ -92,17 +92,21 @@ describe('the cap bonus', () => {
     /**
      * The whole-career figures, which are what a finished character is holding.
      * Stat points are the one that can be checked against upstream directly:
-     * 49 level-ups at 3 apiece is 147, plus the 10 at the cap.
+     * the 3 a character is born with (`unused_stats or 3`,
+     * tome/class/Actor.lua:170), 49 level-ups at 3 apiece is 147, plus the 10 at
+     * the cap — 160. It was 157 before the birth 3 was ported.
      */
     expect(totalStatPointsAtLevel(MAX_CHARACTER_LEVEL)).toBe(
-      (MAX_CHARACTER_LEVEL - 1) * STAT_POINTS_PER_LEVEL + CAP_BONUS_STATS,
+      3 + (MAX_CHARACTER_LEVEL - 1) * STAT_POINTS_PER_LEVEL + CAP_BONUS_STATS,
     );
 
-    // And the two talent purses still differ by exactly the fifth-level swaps,
-    // because the cap bonus pays both sides equally and cannot change the gap.
+    // And the two talent purses differ by exactly the fifth-level swaps plus the
+    // birth grants' own gap: the cap bonus pays both sides equally and cannot
+    // change it, and a character is born with 2 class points against 1 generic
+    // (tome/class/Actor.lua:171-172). It was `fifths * 2` before those landed.
     const fifths = Math.floor(MAX_CHARACTER_LEVEL / 5);
     expect(
       totalPointsAtLevel(MAX_CHARACTER_LEVEL) - totalGenericPointsAtLevel(MAX_CHARACTER_LEVEL),
-    ).toBe(fifths * 2);
+    ).toBe(fifths * 2 + 1);
   });
 });

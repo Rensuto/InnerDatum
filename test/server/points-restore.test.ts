@@ -46,7 +46,7 @@ import {
 } from '../../src/server/persist/saves.ts';
 import { createTurnEngine } from '../../src/server/turn-engine.ts';
 import { SITES, createRealms } from '../../src/server/world/realms.ts';
-import { MASTERY_STEP } from '../../src/shared/progression.ts';
+import { MASTERY_STEP, TALENT_MAX_LEVEL } from '../../src/shared/progression.ts';
 import {
   totalCategoryPointsAtLevel,
   totalGenericPointsAtLevel,
@@ -316,6 +316,23 @@ async function start(opts: { root?: string; graceMs?: number } = {}): Promise<Ha
       attach(actorId, classId);
     },
     ...talentLedgerSeams(talents),
+    /**
+     * THE SPEND SEAM, so a `spend_point` can land: the birth-grant case at the
+     * foot of this file spends what a reload hands back and then reloads again.
+     *
+     * A STUB, THE ONE test/server/gateway-progression.test.ts carries:
+     * production's lives inside `buildServer` beside the realm registry and is
+     * not exported. It skips the tier ladder, which is not this file's question;
+     * the ranks it is asked for are ones a level-5 Watchman may buy anyway.
+     */
+    raiseTalentPoint: (actorId: string, talentId: string): number | null => {
+      const sheet = talents.sheetOf(actorId);
+      const current = sheet?.points.get(talentId);
+      if (sheet === undefined || current === undefined) return null;
+      if (current >= TALENT_MAX_LEVEL) return current;
+      sheet.points.set(talentId, current + 1);
+      return current + 1;
+    },
   };
 
   const realms = createRealms({
@@ -1061,5 +1078,144 @@ describe('a file written before a class changed its four', () => {
     // longer granted" means and is the rank that was taken off.
     expect(sheet?.points.get('talent:open_ledger'), 'the displaced stance is still free').toBe(0);
     client.close();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// THE BIRTH GRANT ARRIVES ON A FILE WRITTEN BEFORE IT — once, and only once
+// ---------------------------------------------------------------------------
+
+describe('a file saved before the birth points existed', () => {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * `tome/class/Actor.lua:170-172` — 3 ATTRIBUTE, 2 CLASS, 1 GENERIC — AND NO
+   * MIGRATION, BECAUSE THE PURSES ARE DERIVED.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   *     self.unused_stats = self.unused_stats or 3
+   *     self.unused_talents = self.unused_talents or 2
+   *     self.unused_generics = self.unused_generics or 1
+   *
+   * Nothing new is stored: every purse is the level's total minus what the
+   * durable record says was spent, and the totals now carry the birth grant. So
+   * a character who had spent EVERYTHING before the grant landed comes back
+   * holding exactly 3 / 2 / 1 — and must never hold them again once spent.
+   *
+   * ═══ THE SECOND HALF IS THE ONE WITH A HISTORY ═══
+   * `3b345f7` fixed a duplication in this ledger: a subtraction that forgave a
+   * rank per talent handed a spent point back on every load. A birth grant is
+   * the same shape of bug waiting to happen — a restore that treated the first
+   * three attribute points spent as the free ones would give them back on
+   * every reload. So this spends the grant, saves, and comes back twice.
+   *
+   * LITERAL NUMBERS, FROM THE LUA, never the totals read back: a test that
+   * derived its expectation from `totalStatPointsAtLevel` would pass whatever
+   * that function said.
+   */
+  const OLD = 'chr_before_birth_points';
+
+  /**
+   * A LEVEL-5 CITYBORN WATCHMAN WHO HAD SPENT EVERY POINT THE OLD LEDGER GRANTED.
+   *
+   * Before the grant, level 5 paid 5 class points, 3 generic and 12 attribute
+   * (`tome/class/Actor.lua:3748-3752`), and Cornac's `copy_add` one class, one
+   * generic and one category point on top (`human.lua:128-132`): 6 / 4 / 1 / 12.
+   * This spread spends exactly that, so the old ledger read nothing in hand —
+   * and the file says so in the one purse it caches.
+   */
+  function spentOut(): Parameters<typeof createCharacterFile>[0] {
+    return {
+      id: OLD,
+      ownerId: OWNER,
+      name: 'Ren',
+      classId: CLASS_ID,
+      origin: ORIGIN_ID,
+      level: 5,
+      // WHAT THE OLD LEDGER CACHED: nothing left.
+      unspentPoints: 0,
+      talentPoints: {
+        // The four birth talents: two raised twice (4 class points), two left
+        // at their free rank.
+        'talent:crude_blow': 3,
+        'talent:shin_crack': 3,
+        'talent:standing_orders': 1,
+        'talent:issued_kit': 1,
+        // Two more class points, on a talent learned from 0.
+        'talent:ward_rush': 2,
+        // Four generic points, on two of the generic talents every class owns.
+        'talent:second_wind': 2,
+        'talent:braced': 2,
+        // The body's three birth inscriptions, at their free rank.
+        'talent:healing_infusion': 1,
+        'talent:regeneration_infusion': 1,
+        'talent:wild_infusion': 1,
+      },
+      // The one category point, on a discipline.
+      unlockedTrees: [BOUGHT_TREE],
+      // Twelve attribute points, both stats under the level-5 ceiling of 27.
+      spentStats: { con: 6, wil: 6 },
+      resources: { hp: 100, ap: 1, mp: 0, special: { kind: 'resolve', value: 10 } },
+    };
+  }
+
+  /** The sum of a `spentStats` record. */
+  const statTotal = (spent: Readonly<Record<string, number>> | undefined): number =>
+    Object.values(spent ?? {}).reduce((sum, n) => sum + n, 0);
+
+  it('gains exactly 3 / 2 / 1 on the first load, and never again once they are spent', async () => {
+    const harness = await start({ graceMs: 20 });
+    await harness.store.saveCharacter(createCharacterFile(spentOut()), SaveReason.Manual);
+    await harness.store.flush();
+
+    // ── THE FILE, AS WRITTEN: the setup is asserted before it is trusted ────
+    const before = await harness.store.loadCharacter(OWNER, OLD);
+    expect(before.file?.level, 'the file is not level 5').toBe(5);
+    expect(before.file?.unspentPoints, 'the file does not cache an empty purse').toBe(0);
+    expect(statTotal(before.file?.spentStats), 'the file has not spent level 5’s twelve').toBe(12);
+    expect(before.file?.unlockedTrees, 'the category point is not spent').toEqual([BOUGHT_TREE]);
+
+    // ── THE FIRST LOAD SINCE THE GRANT: exactly the birth points appear ─────
+    const first = await arrive(harness.port, OLD);
+    const selfId = String(first.last('welcome')?.['selfId']);
+    const arrived: Purses = { level: 5, class: 2, generic: 1, category: 0, stat: 3 };
+    expect(pursesOnTheBody(harness.bodyOf(selfId)), 'not exactly the birth grant').toEqual(arrived);
+    expect(pursesOnTheWire(first.last('progress')), 'the panel was told otherwise').toEqual(
+      arrived,
+    );
+
+    // ── SPEND ALL SIX, through the handlers a player's presses reach ────────
+    for (let i = 0; i < 3; i += 1) first.send({ t: 'spend_stat', stat: 'mag' });
+    first.send({ t: 'spend_point', talentId: 'talent:crude_blow' });
+    first.send({ t: 'spend_point', talentId: 'talent:crude_blow' });
+    first.send({ t: 'spend_point', talentId: 'talent:second_wind' });
+    await first.settle();
+    const empty: Purses = { level: 5, class: 0, generic: 0, category: 0, stat: 0 };
+    expect(pursesOnTheBody(harness.bodyOf(selfId)), 'a spend was refused').toEqual(empty);
+    expect(harness.talents.sheetOf(selfId)?.points.get('talent:crude_blow')).toBe(5);
+    expect(harness.talents.sheetOf(selfId)?.points.get('talent:second_wind')).toBe(3);
+
+    // ── SAVE, THEN LOG IN TWICE MORE: empty every time ─────────────────────
+    first.close();
+    await sleep(400);
+    await harness.store.flush();
+
+    for (const round of ['second', 'third']) {
+      const again = await arrive(harness.port, OLD);
+      const id = String(again.last('welcome')?.['selfId']);
+      expect(pursesOnTheBody(harness.bodyOf(id)), `the ${round} load paid a point back`).toEqual(
+        empty,
+      );
+      expect(pursesOnTheWire(again.last('progress')), `the ${round} load's panel`).toEqual(empty);
+      again.close();
+      await sleep(400);
+      await harness.store.flush();
+    }
+
+    // ── AND THE FILE SAYS WHERE THEY WENT: fifteen attribute points ─────────
+    const after = await harness.store.loadCharacter(OWNER, OLD);
+    expect(after.file?.spentStats).toEqual({ con: 6, wil: 6, mag: 3 });
+    expect(statTotal(after.file?.spentStats), 'the file lost an attribute point').toBe(15);
+    expect(after.file?.talentPoints?.['talent:crude_blow']).toBe(5);
+    expect(after.file?.talentPoints?.['talent:second_wind']).toBe(3);
   });
 });

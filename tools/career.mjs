@@ -167,13 +167,17 @@ console.log('  A party earns a FULL share each, so three friends walk it in a th
  * decides whether the opening drags is how many of those stand between a new
  * character and the first thing they get to choose.
  *
- * LEVEL 2 IS THAT MOMENT. A character starts with four talents at rank 1 and
- * zero points — `pointsForLevel` argues for it at length, *"our four loadout
- * talents, already learned at level 1, ARE our birth grant"* — so level 2 is the
- * first time the panel is a decision rather than a description.
+ * LEVEL 2 WAS THAT MOMENT, AND IS NOT ANY MORE. A character starts with four
+ * talents at rank 1 AND ToME's birth points — 3 attribute, 2 class and 1
+ * generic (tome/class/Actor.lua:170-172, `BIRTH_STAT_POINTS` and its siblings in
+ * src/shared/progression.ts) — so the panel is a decision from level 1. This
+ * used to quote `pointsForLevel`'s argument that the four loadout talents,
+ * already learned at level 1, WERE the birth grant and a new character held zero
+ * points; that argument was dropped when the grant was ported. Level 2 is still
+ * the first LEVEL-UP, and the rooms to it are what this section counts.
  */
 console.log('');
-console.log('──── ROOMS TO THE FIRST THING YOU GET TO CHOOSE');
+console.log('──── ROOMS TO THE FIRST LEVEL-UP');
 console.log('');
 
 const payouts = [];
@@ -219,7 +223,7 @@ console.log(
 );
 console.log('');
 console.log(
-  `  So the first point is TWO different rooms away — ${payouts[0].name} and ${payouts[1].name}`,
+  `  So the first level-up is TWO different rooms away — ${payouts[0].name} and ${payouts[1].name}`,
 );
 console.log(
   `  together pay ${(payouts[0].xp + payouts[1].xp).toFixed(1)} against ${String(toTwo)} — and the moment is announced:`,

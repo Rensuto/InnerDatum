@@ -954,10 +954,13 @@ export type PlayerActor = ActorCommon & {
    * the identical reason: the SCHEDULER is what grants a level's points and
    * `engine/` may not import `content/`.
    *
-   * THE BIRTH GRANT IS NOT HERE. It is paid once, into the purse, at the moment
-   * the origin is chosen — a number already spent cannot also be a rule the
-   * scheduler re-applies every level. What the scheduler needs is only the
-   * PERIOD.
+   * THE BIRTH GRANTS ARE NOT HERE — neither the origin's `atBirth` nor the 2
+   * class and 1 generic every character is born with (`BIRTH_CLASS_POINTS`,
+   * `BIRTH_GENERIC_POINTS`, tome/class/Actor.lua:171-172). Both are terms in the
+   * totals in `shared/progression.ts`, which seed a new body's purses and are
+   * recomputed on every restore; `choose_class` moves a purse only by the
+   * difference between two origins' totals. A grant the scheduler re-applied on
+   * each level would be a second payment. What it needs is only the PERIOD.
    */
   extraPointEvery?: number;
 
@@ -1069,7 +1072,8 @@ export type PlayerActor = ActorCommon & {
   unspentCategories: number;
   /**
    * ATTRIBUTE POINTS IN HAND. ToME's `unused_stats` (`Actor.lua:3748`), three a
-   * level and freely assignable.
+   * level and freely assignable, and three more at birth
+   * (`tome/class/Actor.lua:170`, `BIRTH_STAT_POINTS`).
    *
    * SEPARATE FROM `unspentPoints` AND NOT A SECOND USE OF IT, because the two
    * are not interchangeable in either direction: upstream grants them on
@@ -2054,12 +2058,15 @@ export function createPlayerActor(id: string, init: PlayerInit): PlayerActor {
     ...(init.origin === undefined ? {} : { origin: init.origin }),
     ...(init.expMod === undefined ? {} : { expMod: init.expMod }),
     ...(init.extraPointEvery === undefined ? {} : { extraPointEvery: init.extraPointEvery }),
-    // PROGRESSION STARTS AT THE BOTTOM AND EMPTY. Level 1 with no spare points
-    // is the whole birth grant argument: ToME hands a fresh character 2 unused
-    // points on top of its free birth talents (tome/class/Actor.lua:171, warrior.lua:80-86),
-    // and OUR birth grant is the four loadout talents themselves, already
-    // learned at level 1 — see `pointsForLevel` in src/shared/progression.ts for
-    // the budget arithmetic that falls out of dropping the 2.
+    // PROGRESSION STARTS AT LEVEL 1, AND THE PURSES ARE ZERO ONLY UNTIL THE
+    // GATEWAY FILLS THEM. A fresh character is not born empty-handed: ToME hands
+    // every one 3 attribute, 2 class and 1 generic point on top of its free birth
+    // talents (tome/class/Actor.lua:170-172), and an adaptable origin adds its
+    // own. Those are terms in the totals in src/shared/progression.ts, and the
+    // gateway writes the totals here — `seedFreshPurses` for a body built from
+    // nothing, `restoreProgression` for one read from a file. These zeros used
+    // to BE the birth grant argument ("our four loadout talents are the grant");
+    // that was dropped when the grant was ported.
     //
     // A RESTORED CHARACTER OVERWRITES ALL FOUR. They are mutable and the save
     // path assigns them after construction; there is deliberately no
@@ -2071,9 +2078,11 @@ export function createPlayerActor(id: string, init: PlayerInit): PlayerActor {
     unspentPoints: 0,
     unspentGenerics: 0,
     unspentCategories: 0,
-    // BORN WITH NONE, exactly like the talent points above: a level-1 character
-    // has been granted nothing yet (`statPointsForLevel` answers 0 at 1), and
-    // the class sheet is where their starting attributes already live.
+    // ZERO HERE FOR THE SAME REASON as the talent points above: the birth 3
+    // (`BIRTH_STAT_POINTS`) is in `totalStatPointsAtLevel`, which the seed and
+    // the restore read, while `statPointsForLevel` answers 0 at 1 so the
+    // level-up loop never pays it a second time. The class sheet is where the
+    // starting attributes themselves live.
     unspentStatPoints: 0,
     // EMPTY, AND FRESH PER BODY. A shared literal here would give every
     // character in the process one ledger — `Object.freeze`'s absence is the

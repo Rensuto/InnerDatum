@@ -73,10 +73,13 @@
  * BIRTH — on the Archer (data/birth/classes/warrior.lua:213), and upstream
  * hands every character two unspent class points at birth
  * (tome/class/Actor.lua:170-172) to spend on exactly that kind of thing. Our
- * birth points were converted into four free birth talents long ago
- * (`src/shared/tiers.ts`), so the faithful equivalent of "the Archer may buy
- * Heightened Senses with her first point" is "this is one of the Inspector's
- * four". It is, in `INSPECTOR.birthTalents`.
+ * birth points WERE converted into four free birth talents (`src/shared/tiers.ts`)
+ * and this note used that as the reason Heightened Senses had to be one of the
+ * four. The birth points exist now as well, 2 class / 1 generic / 3 attribute
+ * on top of the four, as upstream pays them on top of its descriptor talents —
+ * so this being one of the Inspector's four free talents is now a choice to
+ * keep her able to see in the dark from the first step, not the only faithful
+ * place for it. It is, in `INSPECTOR.birthTalents`.
  *
  * ═══ WHAT IT WAS WORTH, MEASURED ═══
  * A level-1 Inspector's legal firing band in an unlit cave was EMPTY — not

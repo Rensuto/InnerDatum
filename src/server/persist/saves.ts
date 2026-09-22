@@ -951,11 +951,14 @@ const UNLEARNED = 0;
 /**
  * How many points this spread REPRESENTS AS PURCHASES: `Σ (raw − 1)`.
  *
- * ═══ THE MINUS ONE IS THE BIRTH GRANT AND IT IS EASY TO DROP ═══
- * Every loadout talent starts at rank 1 for free — those four ranks are the
- * whole of our birth grant (`createTalentSheet`, and `pointsForLevel`'s docblock
- * for why upstream's separate 2-point grant was dropped in exchange). A raw 3 is
- * therefore TWO points spent, not three. Two docblocks state the ledger in the
+ * ═══ THE MINUS ONE IS THE FREE BIRTH RANK AND IT IS EASY TO DROP ═══
+ * Every birth talent starts at rank 1 for free (`createTalentSheet`), so a raw 3
+ * is TWO points spent, not three. Those ranks are one part of what a character
+ * is born with. The rest is upstream's birth points — 2 class, 1 generic and 3
+ * attribute (tome/class/Actor.lua:170-172) — which this docblock used to say
+ * were dropped in exchange for the four ranks; they are `BIRTH_CLASS_POINTS`
+ * and its siblings now, and they sit in the totals — the other side of the
+ * subtraction — so nothing here has to know about them. Two docblocks state the ledger in the
  * shorthand `totalPointsAtLevel(level) - sum(points.values())`
  * (engine/talents.ts:908, engine/actor.ts:460); read literally that hands a
  * fresh level-1 character MINUS FOUR points, which is the arithmetic this

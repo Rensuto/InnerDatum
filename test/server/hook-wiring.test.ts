@@ -254,9 +254,13 @@ describe('the Redactor is paid in life for a kill — cursed-form.lua:59-67', ()
    * This fixture hard-wrote `level: 1`. Measured with a mutant: swap `indelible`
    * off `REDACTOR.birthTalents` for `marginalia` and the whole suite stays green
    * — 337 files, 6931 tests — because the talent stays in `passives` at rank 0,
-   * `main.ts:1521` binds no hook, and no kill ever heals her. `pointsForLevel(1)`
-   * is 0, so `birthTalents` IS the level-1 character, and the one line that
-   * decides whether this whole talent reaches a Redactor at all was uncovered.
+   * `main.ts:1521` binds no hook, and no kill ever heals her. `birthTalents` is
+   * every talent a level-1 character KNOWS until she spends her birth points —
+   * 2 class and 1 generic (tome/class/Actor.lua:171-172), which may go anywhere,
+   * so nothing else guarantees her this one — and the one line that decides
+   * whether this whole talent reaches a Redactor at all was uncovered. (This
+   * used to say `birthTalents` IS the level-1 character, from `pointsForLevel(1)`
+   * being 0; that stopped being the whole story when the birth points landed.)
    *
    * So the level is READ from `sheetForClass(REDACTOR)` and asserted positive,
    * which is what `woundedWatchman` twelve lines up already does. Not `trained`:

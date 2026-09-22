@@ -1040,7 +1040,10 @@ describe('character files: level, xp, unspent points and raw talent points', () 
 
     expect(parsed.file.level).toBe(1);
     expect(parsed.file.xp).toBe(0);
-    expect(parsed.file.unspentPoints).toBe(0);
+    // THE BIRTH 2, `unused_talents or 2` (tome/class/Actor.lua:171): the ledger
+    // is the level's total minus nothing spent. It was 0 while that grant was
+    // dropped, and the file states no count of its own, so nothing is repaired.
+    expect(parsed.file.unspentPoints).toBe(2);
     expect(parsed.file.talentPoints).toEqual({});
 
     // AN ABSENCE IS NOT A REPAIR. Nothing was wrong with this file, so nothing
@@ -1064,8 +1067,10 @@ describe('character files: level, xp, unspent points and raw talent points', () 
    * field neither one has. These assertions name the field and the number.
    */
   it('carries all four fields through create → serialise → parse with their values intact', () => {
-    // Level 7 grants 7 points (levels 2-7, plus the extra at 5). The spread below
-    // spends 3 + 1 + 0 + 2 = 6 of them, so exactly one is left in hand.
+    // Level 7 grants 9 points: the birth 2 (tome/class/Actor.lua:171), one for
+    // each of levels 2-7, and the extra at 5. The spread below spends
+    // 3 + 1 + 0 + 2 = 6 of them, so three are left in hand. It was one before the
+    // birth grant was ported.
     const spread = {
       'talent:crude_blow': 4,
       'talent:ward_rush': 2,
@@ -1093,7 +1098,7 @@ describe('character files: level, xp, unspent points and raw talent points', () 
     expect(parsed.file.level).toBe(7);
     expect(parsed.file.xp).toBe(123.5);
     expect(parsed.file.talentPoints).toEqual(spread);
-    expect(parsed.file.unspentPoints).toBe(1);
+    expect(parsed.file.unspentPoints).toBe(3);
     // The same number as the ledger, spelled out so a retune of `pointsForLevel`
     // moves this test rather than leaving it asserting a stale literal.
     expect(parsed.file.unspentPoints).toBe(totalPointsAtLevel(7) - 6);
@@ -1271,10 +1276,11 @@ describe('character files: level, xp, unspent points and raw talent points', () 
     expect(parsed.ok).toBe(true);
     if (!parsed.ok) return;
 
-    // Level 5 grants 5 (one each for levels 2-5, plus the fifth-level extra);
-    // rank 3 in one talent is 2 points spent, because rank 1 was free.
-    expect(totalPointsAtLevel(5)).toBe(5);
-    expect(parsed.file.unspentPoints).toBe(3);
+    // Level 5 grants 7: the birth 2 (tome/class/Actor.lua:171), one each for
+    // levels 2-5, and the fifth-level extra. Rank 3 in one talent is 2 points
+    // spent, because rank 1 was free. These were 5 and 3 before the birth grant.
+    expect(totalPointsAtLevel(5)).toBe(7);
+    expect(parsed.file.unspentPoints).toBe(5);
     expect(parsed.problems.some((problem) => problem.startsWith('unspentPoints:'))).toBe(true);
   });
 
@@ -1291,18 +1297,38 @@ describe('character files: level, xp, unspent points and raw talent points', () 
   });
 
   /**
-   * A fresh character's four talents cost nothing. If the birth grant is ever
+   * A fresh character's four talents cost nothing. If the free ranks are ever
    * dropped from the ledger, a brand-new level-1 Watchman shows minus four
    * points in hand and the panel is unusable from the first second.
+   *
+   * ═══ AND IT HOLDS THE BIRTH 2, WHICH THE SAVE LAYER MUST AGREE ON ═══
+   * `unused_talents or 2` (tome/class/Actor.lua:171). This read 0 while that
+   * grant was dropped. The second half is the one with teeth: the gateway
+   * writes `unspentPoints` from `totalPointsAtLevel(level, classPointBonus(…))`,
+   * and this layer checks it against `totalPointsAtLevel(level)` with no bonus
+   * at all — so a grant carried in an origin's bonus instead of in the total
+   * would make every file the server writes disagree with its own ledger, and
+   * the store would log a repair on every load.
    */
-  it('charges nothing for the four birth talents at rank 1', () => {
+  it('charges nothing for the four birth talents at rank 1, and holds the birth 2', () => {
     const parsed = parseCharacterFile({
       ...V1_BEFORE_PROGRESSION,
       level: 1,
       talentPoints: Object.fromEntries(WATCHMAN_LOADOUT.map((id) => [id, 1])),
     });
-    expect(parsed.ok && parsed.file.unspentPoints).toBe(0);
+    expect(parsed.ok && parsed.file.unspentPoints).toBe(2);
     expect(parsed.ok && parsed.problems).toEqual([]);
+
+    // A FILE THAT STATES THE BIRTH 2 — what a level-1 body with no origin bonus
+    // holds — is one this layer agrees with and does not repair.
+    const written = parseCharacterFile({
+      ...V1_BEFORE_PROGRESSION,
+      level: 1,
+      unspentPoints: 2,
+      talentPoints: Object.fromEntries(WATCHMAN_LOADOUT.map((id) => [id, 1])),
+    });
+    expect(written.ok && written.file.unspentPoints).toBe(2);
+    expect(written.ok && written.problems, 'the ledger disagrees with the birth 2').toEqual([]);
   });
 
   it('survives the real store: a save and a load keep the level and the spread', async () => {
@@ -1316,7 +1342,7 @@ describe('character files: level, xp, unspent points and raw talent points', () 
     const file = sampleCharacter({
       level: 6,
       xp: 40.8,
-      unspentPoints: 4,
+      unspentPoints: 6,
       talentPoints: { 'talent:crude_blow': 3 },
     });
 
@@ -1327,9 +1353,11 @@ describe('character files: level, xp, unspent points and raw talent points', () 
     expect(loaded.file?.level).toBe(6);
     expect(loaded.file?.xp).toBe(40.8);
     expect(loaded.file?.talentPoints).toEqual({ 'talent:crude_blow': 3 });
-    // 6 granted at level 6, 2 spent on rank 3 — the file's own 4 agrees, so the
-    // reconciliation is silent rather than logging a repair on every load.
-    expect(loaded.file?.unspentPoints).toBe(4);
+    // 8 granted at level 6 (the birth 2, tome/class/Actor.lua:171, and 6 from
+    // levels 2-6), 2 spent on rank 3 — the file's own 6 agrees, so the
+    // reconciliation is silent rather than logging a repair on every load. The
+    // file said 4 before the birth grant was ported.
+    expect(loaded.file?.unspentPoints).toBe(6);
     expect(loaded.problems.filter((problem) => problem.includes('unspentPoints'))).toEqual([]);
 
     await store.close();
@@ -2242,9 +2270,11 @@ describe('the character bridge carries progression in both directions', () => {
     expect(await first.openCharacter?.(OWNER, ACTOR)).toBe(null);
 
     // Ren ends the evening at level 6 with Crude Blow at rank 3 and Iron Curtain
-    // at rank 2 — three raw points spent out of the six a level-6 character has,
-    // so three are still in hand. This is exactly the shape `snapshotPlayers`
-    // builds off `PlayerActor` plus the `talentPointsOf` seam.
+    // at rank 2 — three raw points spent out of the eight a level-6 character has
+    // (the birth 2, tome/class/Actor.lua:171, and six from levels 2-6), so five
+    // are still in hand. This is exactly the shape `snapshotPlayers` builds off
+    // `PlayerActor` plus the `talentPointsOf` seam. It was six and three before
+    // the birth grant was ported.
     first.savePlayersNow?.(
       [
         {
@@ -2257,7 +2287,7 @@ describe('the character bridge carries progression in both directions', () => {
           classId: 'watchman',
           level: 6,
           xp: 41.6,
-          unspentPoints: 3,
+          unspentPoints: 5,
           talentPoints: { 'talent:crude_blow': 3, 'talent:iron_curtain': 2 },
         },
       ],
@@ -2274,7 +2304,7 @@ describe('the character bridge carries progression in both directions', () => {
 
     expect(restored?.level).toBe(6);
     expect(restored?.xp).toBe(41.6);
-    expect(restored?.unspentPoints).toBe(3);
+    expect(restored?.unspentPoints).toBe(5);
     expect(restored?.talentPoints).toEqual({
       'talent:crude_blow': 3,
       'talent:iron_curtain': 2,
@@ -2285,10 +2315,10 @@ describe('the character bridge carries progression in both directions', () => {
     expect(restored?.classId).toBe('watchman');
     expect(restored?.cooldowns).toEqual({ 'talent:crude_blow': 2 });
 
-    // `totalPointsAtLevel(6)` minus the two raw points spent above (3-1 and 2-1)
-    // is 3 — the number the file claims — so `parseCharacterFile` reconciled
+    // `totalPointsAtLevel(6)` minus the raw points spent above (3-1 and 2-1)
+    // is 5 — the number the file claims — so `parseCharacterFile` reconciled
     // silently rather than logging a repair on a file it had just written.
-    expect(totalPointsAtLevel(6) - 2 - 1).toBe(3);
+    expect(totalPointsAtLevel(6) - 2 - 1).toBe(5);
 
     await store.close();
   });

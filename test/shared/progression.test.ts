@@ -12,7 +12,12 @@ import {
   gainExp,
   pointsForLevel,
   rankWorth,
+  genericPointsForLevel,
+  statPointsForLevel,
+  totalCategoryPointsAtLevel,
+  totalGenericPointsAtLevel,
   totalPointsAtLevel,
+  totalStatPointsAtLevel,
   worthExp,
   STAT_MAX,
   canRaiseStat,
@@ -250,9 +255,12 @@ describe('gainExp — ActorLevel.lua:95-107', () => {
 });
 
 describe('talent points — Actor.lua:3749-3752', () => {
-  it('grants nothing at level 1: that is where a character starts', () => {
+  it('pays nothing FOR level 1, and the level-1 total is the birth 2', () => {
+    // `pointsForLevel` answers what a level-UP pays, and level 1 is not one.
     expect(pointsForLevel(1)).toBe(0);
-    expect(totalPointsAtLevel(1)).toBe(0);
+    // …but a level-1 character holds `unused_talents or 2` (tome/class/Actor.lua:171).
+    // This was 0 while the birth grant was dropped.
+    expect(totalPointsAtLevel(1)).toBe(2);
   });
 
   it('grants 2 on every fifth level and 1 otherwise', () => {
@@ -278,22 +286,24 @@ describe('talent points — Actor.lua:3749-3752', () => {
     // Level 1 grants nothing — it is where a character starts, not a level-up.
     expect(pointsForLevel(1)).toBe(0);
 
-    // The total is then arithmetic rather than a remembered number: one a level,
-    // one more per fifth, and the cap bonus once.
+    // The total is then arithmetic rather than a remembered number: the birth 2
+    // (tome/class/Actor.lua:171, written as the Lua's literal), one a level, one
+    // more per fifth, and the cap bonus once.
     const fifths = Math.floor(MAX_CHARACTER_LEVEL / 5);
     expect(totalPointsAtLevel(MAX_CHARACTER_LEVEL)).toBe(
-      MAX_CHARACTER_LEVEL - 1 + fifths + CAP_BONUS_CLASS_POINTS,
+      2 + MAX_CHARACTER_LEVEL - 1 + fifths + CAP_BONUS_CLASS_POINTS,
     );
   });
 
   /**
    * THE BUDGET IS THE DESIGN, so it is a test rather than a comment.
    *
-   * 11 points against 4 loadout talents x 4 upgrade steps each = 16 steps, or
-   * 69%. Every player finishes an evening with about five steps unbought and
-   * had to choose which — which is the only thing that makes the panel worth
-   * opening. Restoring ToME's birth grant of 2 (Actor.lua:171) puts it at 81%
-   * and the panel becomes a checklist.
+   * At the old level-10 cap this was 11 points against 4 loadout talents x 4
+   * upgrade steps each = 16 steps, or 69%, and the note argued that restoring
+   * ToME's birth grant of 2 (tome/class/Actor.lua:171) would make it 81% and the
+   * panel a checklist. Both figures were the cap-10 budget against a four-talent
+   * book. The cap is 50, and the birth 2 is restored because upstream pays it on
+   * top of the birth talents (engine/Birther.lua:411-418).
    */
   it('gives a budget the current content cannot absorb, which is the point', () => {
     /**
@@ -324,6 +334,50 @@ describe('talent points — Actor.lua:3749-3752', () => {
       expect(pointsForLevel(level)).toBeGreaterThan(0);
       expect(totalPointsAtLevel(level)).toBeGreaterThan(totalPointsAtLevel(level - 1));
     }
+  });
+});
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE BIRTH POINTS — tome/class/Actor.lua:170-172, IN THE TOTALS AND NOWHERE ELSE.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ *     self.unused_stats = self.unused_stats or 3
+ *     self.unused_talents = self.unused_talents or 2
+ *     self.unused_generics = self.unused_generics or 1
+ *
+ * LITERALS, NOT THE CONSTANTS. A test that read `BIRTH_STAT_POINTS` back would
+ * only track whatever the constant says; these are the Lua's own numbers.
+ *
+ * TWO HALVES, AND EACH HAS ITS OWN WAY TO BE WRONG. Deleting the term from a
+ * total fails the level-1 totals. Paying it from a per-level function instead
+ * fails the per-level-at-1 case — and in the game it would pay the grant a
+ * second time, because the level-up loop asks those functions from level 2 and
+ * the seed and the restore read the totals.
+ */
+describe('the birth points — tome/class/Actor.lua:170-172', () => {
+  it('a level-1 character holds 3 attribute, 2 class and 1 generic point', () => {
+    expect(totalStatPointsAtLevel(1)).toBe(3);
+    expect(totalPointsAtLevel(1)).toBe(2);
+    expect(totalGenericPointsAtLevel(1)).toBe(1);
+  });
+
+  it('none of it is a level-up: every per-level function pays 0 at level 1', () => {
+    expect(statPointsForLevel(1)).toBe(0);
+    expect(pointsForLevel(1)).toBe(0);
+    expect(genericPointsForLevel(1)).toBe(0);
+  });
+
+  it('a level-2 character holds the birth grant and one level-up: 6, 3 and 2', () => {
+    // tome/class/Actor.lua:3748-3750 — 3 attribute, 1 class and 1 generic for
+    // reaching level 2, on top of 3 / 2 / 1.
+    expect(totalStatPointsAtLevel(2)).toBe(6);
+    expect(totalPointsAtLevel(2)).toBe(3);
+    expect(totalGenericPointsAtLevel(2)).toBe(2);
+  });
+
+  it('carries no universal category point: tome/class/Actor.lua:173 is `or 0`', () => {
+    expect(totalCategoryPointsAtLevel(1)).toBe(0);
   });
 });
 

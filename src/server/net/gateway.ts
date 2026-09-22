@@ -8764,8 +8764,9 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
      * `unspentGenerics` and `unspentCategories` appear nowhere in
      * `persist/saves.ts`, and `createActor` starts both at 0 — so every
      * reconnect that rebuilt a body from file (a restart, a grace expiry, a
-     * character swap) silently emptied both. A level-50 character is granted 42
-     * generic points and 3 category points over a career.
+     * character swap) silently emptied both. A level-50 character is granted 43
+     * generic points and 3 category points over a career (42 generic before
+     * ToME's birth 1, tome/class/Actor.lua:172, was ported).
      *
      * ═══ DERIVED RATHER THAN PERSISTED, WHICH IS WHY THIS IS THE WHOLE FIX ═══
      * Every spend is already recorded somewhere durable: talent ranks in the
@@ -10146,8 +10147,13 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     // number because the scheduler spends it and may not read `content/`.
     expMod: origin.experienceMult,
     // Actor.lua:3485-3486 — the extra-point period, cached for the same reason.
-    // THE BIRTH GRANT IS NOT STAMPED HERE: it is paid into the purse in
-    // `handleChooseClass`, once, because it is an amount rather than a rule.
+    // THE BIRTH GRANTS ARE NOT STAMPED HERE, because they are amounts rather
+    // than rules: the origin's `atBirth` and everybody's 3/2/1
+    // (tome/class/Actor.lua:170-172) are terms in the progression totals, which
+    // `seedFreshPurses` and `restoreProgression` pay into the purses and
+    // `handleChooseClass` moves by the difference between two origins. This used
+    // to say `handleChooseClass` paid the origin's grant, once; that went stale
+    // when the totals took it over.
     ...(origin.extraPointEvery === undefined ? {} : { extraPointEvery: origin.extraPointEvery }),
   });
 

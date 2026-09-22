@@ -199,7 +199,7 @@ export const TALENT_TREES: readonly TalentTree[] = Object.freeze([
      * Discipline is Strength, the Line is Constitution, and this is Will.
      * Authority is a thing you have rather than a thing you can lift, and
      * upstream agrees — its warcries check Willpower. Three stats across three
-     * trees is what makes 157 attribute points a set of decisions rather than a
+     * trees is what makes 160 attribute points a set of decisions rather than a
      * formality, and it is the first real fork in what a Watchman can BE.
      *
      * ═══ IT COULD NOT HAVE EXISTED A WEEK AGO ═══
@@ -683,8 +683,9 @@ export const TALENT_TREES: readonly TalentTree[] = Object.freeze([
      * one a decision rather than a purchase.
      *
      * ═══ AND IT EXISTS BECAUSE THE POINTS HAD NOWHERE TO GO ═══
-     * A character reaches the cap with 42 generic points against six talents
-     * five ranks deep — 29 buyable ranks once the birth grant is taken off. A
+     * A character reached the cap with 42 generic points against six talents
+     * five ranks deep — 29 buyable ranks once the birth grant is taken off. (43
+     * now, with ToME's birth 1, tome/class/Actor.lua:172.) A
      * THIRD of every generic point in a career was unspendable, which is not a
      * balance problem but a missing-content one: upstream runs about 0.4 points
      * per available rank and this game ran 1.45. Twelve talents halves that; the

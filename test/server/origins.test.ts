@@ -183,16 +183,25 @@ describe('the adaptable origin is paid, and paid exactly once', () => {
    * function grants and the total does not know about is a point confiscated on
    * the next reload, silently, and only from the players who earned it.
    */
-  it('hands over one of each at birth', () => {
-    expect(totalPointsAtLevel(1, classPointBonus(CITYBORN))).toBe(1);
-    expect(totalGenericPointsAtLevel(1, genericPointBonus(CITYBORN))).toBe(1);
+  /**
+   * ON TOP OF EVERYBODY'S BIRTH POINTS: 2 class and 1 generic
+   * (tome/class/Actor.lua:171-172) and no category point (:173 is `or 0`). So a
+   * Cornac holds 3 / 2 / 1 — it read 1 / 1 / 1 before the universal grant was
+   * ported.
+   */
+  it('hands over one of each at birth, on top of the universal grant', () => {
+    expect(totalPointsAtLevel(1, classPointBonus(CITYBORN))).toBe(3);
+    expect(totalGenericPointsAtLevel(1, genericPointBonus(CITYBORN))).toBe(2);
     expect(totalCategoryPointsAtLevel(1, birthCategoryPoints(CITYBORN))).toBe(1);
   });
 
-  /** …and the origin that pays in experience instead gets none of it. */
-  it('hands the Indexed nothing at birth', () => {
-    expect(totalPointsAtLevel(1, classPointBonus(INDEXED))).toBe(0);
-    expect(totalGenericPointsAtLevel(1, genericPointBonus(INDEXED))).toBe(0);
+  /**
+   * …and the origin that pays in experience instead gets none of it: only the
+   * universal 2 / 1 / 0. It read 0 / 0 / 0 before that grant was ported.
+   */
+  it('hands the Indexed nothing of its own at birth', () => {
+    expect(totalPointsAtLevel(1, classPointBonus(INDEXED))).toBe(2);
+    expect(totalGenericPointsAtLevel(1, genericPointBonus(INDEXED))).toBe(1);
     expect(totalCategoryPointsAtLevel(1, birthCategoryPoints(INDEXED))).toBe(0);
   });
 

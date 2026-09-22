@@ -983,9 +983,11 @@ describe('charSheetHitAt', () => {
     //
     // ═══ RE-BASED FOR THE WIDER LABEL ═══
     // The box was sized for four characters (`[--]`) and is now sized for SEVEN,
-    // because the control carries the unspent count: `[G·2]`, and at worst
-    // `[--·11]` for a player who has unbound `show_talents` and banked every
-    // point `totalPointsAtLevel(MAX_CHARACTER_LEVEL)` can grant. The width is
+    // because the control carries the unspent count: `[G·2]`, and `[--·11]` for
+    // a player who has unbound `show_talents` and banked every point, when that
+    // was `totalPointsAtLevel(MAX_CHARACTER_LEVEL)` at the old level-10 cap. It
+    // is not the widest label any more — see `TALENTS_BTN_W`'s note in
+    // ui/charsheet.ts, where the count is all four purses. The width is
     // TRANSCRIBED here rather than imported, the same way test/client/drag.ts's
     // RESERVED table transcribes each panel's close arithmetic: seven glyphs at
     // the 10px monospace's six-pixel advance, plus `drawButton`'s own 6 pixels

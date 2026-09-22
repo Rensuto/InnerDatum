@@ -5404,8 +5404,11 @@ function applyPendingLevels(actor: EngineActor, run: Run): void {
     // ONE GRANT PER LEVEL CROSSED, never one per award: a boss that carries a
     // character from 4 to 6 owes the level-5 pair AND the level-6 single.
     // `extra_talent_point_every` RIDES ALONG, and `atBirth` deliberately does
-    // not: a birth grant is paid once into the purse when the origin is chosen,
-    // not re-granted on every level crossed.
+    // not — nor does anybody's 3/2/1 (tome/class/Actor.lua:170-172). A birth
+    // grant is a term in the progression totals, which the gateway pays into
+    // the purses once (seeded fresh, or recomputed on a restore); it is never
+    // re-granted on a level crossed. `from` is the first level GAINED, so it is
+    // never 1, and the per-level functions answer 0 at 1 anyway.
     const originBonus = { every: actor.extraPointEvery };
     actor.unspentPoints += pointsForLevel(level, originBonus);
     // AND THE GENERIC POINT, which is the same grant seen from the other side:

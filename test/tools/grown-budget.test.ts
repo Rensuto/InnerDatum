@@ -234,13 +234,24 @@ describe('growTo spends the attribute points the server grants, and none it woul
     }
   });
 
-  it('a level-1 body with an empty purse comes out as it went in', () => {
-    expect(totalStatPointsAtLevel(1), 'there is a level-1 purse now; re-read this case').toBe(0);
+  it('a level-1 body spends the birth 3, all of it under the level-1 ceiling', () => {
+    /**
+     * THIS WAS "a level-1 body with an empty purse comes out as it went in",
+     * guarded by `totalStatPointsAtLevel(1)` being 0 and a note to re-read it the
+     * day a level-1 purse landed. It landed: `unused_stats or 3`
+     * (tome/class/Actor.lua:170), the purse a character is born holding. So
+     * the level-1 body is grown like every other — which is what removing the
+     * old `level <= 1` early return was for — and every class has a stat under
+     * 21.4 to put all three into.
+     */
+    expect(totalStatPointsAtLevel(1), 'the level-1 purse is not the birth 3').toBe(3);
     for (const cls of CLASSES) {
       const body = growTo(newBody(cls, 'l1'), cls, 1);
-      expect(body.combat, cls.id).toBe(cls.combat);
-      expect(body.spentStats, cls.id).toBeUndefined();
-      expect(body.maxHp, cls.id).toBe(cls.maxHp);
+      expect(spentOf(body.spentStats), cls.id).toBe(3);
+      expect(body.unspentStatPoints, cls.id).toBe(0);
+      expect(ceilingBreaches(body, 1), cls.id).toEqual([]);
+      // THE POOL PAYS FOR WHAT WAS BOUGHT — never less than the class's own.
+      expect(body.maxHp, cls.id).toBeGreaterThanOrEqual(cls.maxHp);
     }
   });
 });
@@ -307,9 +318,17 @@ describe('spendPointsTo spends the class purse and never buys a rank the ladder 
     }
   });
 
-  it('the whole early game is spent: every class point through level 20 finds a rank', () => {
+  it('the whole early game is spent: every class point through level 19 finds a rank', () => {
+    /**
+     * THROUGH 19, AND IT WAS THROUGH 20. ToME's birth 2 (tome/class/Actor.lua:171)
+     * put two more class points in every purse, and at level 20 the Watchman and
+     * the Alchemist hold 28 against the 27 ranks their own trees sell by then —
+     * measured, with every loadout talent capped or locked. That point is KEPT
+     * because nothing can take it, which the sweep above allows and checks
+     * (`anyOpen`); below 20 no class keeps one, and that is what this pins.
+     */
     for (const cls of CLASSES) {
-      for (let level = 1; level <= 20; level += 1) {
+      for (let level = 1; level < 20; level += 1) {
         const engine = createContentTalentEngine();
         const body = growTo(newBody(cls, `early:${String(level)}`), cls, level);
         const sheet = sheetForClass(cls);

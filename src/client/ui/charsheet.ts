@@ -538,10 +538,15 @@ const CLOSE_PX = 13;
  *
  * ═══ THE WIDTH IS DERIVED AND IT IS NOT A FREE NUMBER ═══
  * SEVEN CHARACTERS plus `drawButton`'s own 6 pixels of padding: 7 × CHAR_W + 6 =
- * 48. Seven is the widest label this game can produce — `[--·11]`, the player
- * who has left `show_talents` unbound AND banked every point, since
- * `totalPointsAtLevel(MAX_CHARACTER_LEVEL)` is 11 (src/shared/progression.ts).
- * It was 30 (four characters) when the label was at most `[--]`, and 30 would
+ * 48. Seven was sized for `[--·11]` — the player who has left `show_talents`
+ * unbound AND banked every point — when the count was the class purse alone and
+ * `totalPointsAtLevel(MAX_CHARACTER_LEVEL)` was 11, at the old level-10 cap.
+ * Neither premise holds any more. That total was 62 at the cap of 50 and is 64
+ * with ToME's birth grant (src/shared/progression.ts), and the count is
+ * `pointsWaiting`, all four purses: a Cityborn who banked a whole career holds
+ * 283 (70 class, 49 generic, 4 category, 160 attribute). A three-digit count
+ * still fits beside a one-letter key, `[G·283]`; the unbound `[--·283]` is one
+ * character over and would ellipsise. It was 30 (four characters) when the label was at most `[--]`, and 30 would
  * have ellipsised `[G·2]` to `[G·…` — a control that reports the wrong count is
  * worse than one that reports none.
  *

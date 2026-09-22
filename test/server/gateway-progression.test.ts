@@ -548,23 +548,27 @@ describe('the three game rules', () => {
     playsThe(WATCHMAN);
     const body = bodyOf(await ren.hello('ren-handle'));
     /**
-     * A FRESH CHARACTER HOLDS EXACTLY ONE POINT, and it is the ORIGIN'S.
+     * A FRESH CHARACTER HOLDS THREE CLASS POINTS: the universal 2
+     * (`unused_talents or 2`, tome/class/Actor.lua:171) and the ADAPTABLE
+     * ORIGIN's one on top (`human.lua:128-132`).
      *
      * This read `toBe(0)` and "NOTHING granted yet" while every body was
-     * implicitly Cornac with its `copy_add` unported. The universal birth grant
-     * of 2 is still dropped — `pointsForLevel`'s docblock argues that at length
-     * and nothing here reverses it; what arrives is the one point an ADAPTABLE
-     * ORIGIN is owed (`human.lua:128-132`), which is why it is counted off the
-     * origin rather than spelled as a literal.
+     * implicitly Cornac with its `copy_add` unported, and then the origin's
+     * one alone while the universal 2 was dropped. Literal, from the Lua, so
+     * the next change to the grant has to change this line.
      */
+    expect(body.unspentPoints).toBe(3);
     expect(body.unspentPoints).toBe(totalPointsAtLevel(1, classPointBonus(DEFAULT_ORIGIN)));
     ren.clear();
 
-    // SPEND IT, so the purse is genuinely empty — which is the state this test
-    // is about. A test that asserted the refusal without draining first would
-    // pass for the wrong reason the day the grant changes again.
-    ren.send({ t: 'spend_point', talentId: 'talent:crude_blow' });
-    await ren.settle();
+    // SPEND ALL THREE, so the purse is genuinely empty — which is the state
+    // this test is about. A test that asserted the refusal without draining
+    // first would pass for the wrong reason the day the grant changes again,
+    // and draining only one of three is how it nearly did.
+    for (let i = 0; i < 3; i += 1) {
+      ren.send({ t: 'spend_point', talentId: 'talent:crude_blow' });
+      await ren.settle();
+    }
     expect(body.unspentPoints).toBe(0);
     ren.clear();
 
@@ -572,9 +576,9 @@ describe('the three game rules', () => {
     await ren.settle();
 
     expect(ren.last('error')?.['code']).toBe('bad_message');
-    // …and the rank the FIRST, legal spend bought is still there: a refusal must
-    // not roll back the purchase before it.
-    expect(server.talents.sheetOf(body.id)?.points.get('talent:crude_blow')).toBe(2);
+    // …and the ranks the three legal spends bought are still there (1 + 3): a
+    // refusal must not roll back the purchases before it.
+    expect(server.talents.sheetOf(body.id)?.points.get('talent:crude_blow')).toBe(4);
   });
 
   it('refuses a spend on a talent already at the cap', async () => {

@@ -22,8 +22,9 @@
  *
  * ═══ AND THE QUIETER HALF: CONSTITUTION BOUGHT NOTHING ═══
  * Upstream pays +4 max life per point of CON (Actor.lua:3884-3885). Here it fed
- * one physical save and nothing else, so of the 157 attribute points a career
- * now grants, every one spent on Constitution was close to dead currency — a
+ * one physical save and nothing else, so of the attribute points a career
+ * grants (157 then; 160 since ToME's birth 3 was ported, tome/class/Actor.lua:170),
+ * every one spent on Constitution was close to dead currency — a
  * stat the character sheet invites you to raise and the game declines to reward.
  *
  * ═══════════════════════════════════════════════════════════════════════════

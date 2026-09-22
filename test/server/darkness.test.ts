@@ -166,9 +166,13 @@ describe('sensing in the dark', () => {
    * on `INSPECTOR.birthTalents` in place of `coldReading` — the pre-fix loadout,
    * the darkness port granted to nobody — and the whole suite stays green.
    *
-   * `pointsForLevel(1)` is 0 (shared/progression.ts), so `birthTalents` IS the
-   * level-1 character and this one line is the difference between the measured
-   * 0/6 -> 6/6 on the intro floor and nothing at all.
+   * `birthTalents` is every talent a level-1 character KNOWS until the birth
+   * points are spent — 2 class and 1 generic (tome/class/Actor.lua:171-172,
+   * shared/progression.ts), which a player may put anywhere — so this one line
+   * is the difference between the measured 0/6 -> 6/6 on the intro floor and
+   * nothing at all. (It used to say `birthTalents` IS the level-1 character,
+   * from `pointsForLevel(1)` being 0; that stopped being the whole story when the
+   * birth points landed.)
    *
    * THE RANK IS READ FROM THE SHIPPED SHEET AND THEN SPENT, so the case fails
    * both ways: a class that stops granting it, and a fold that stops carrying

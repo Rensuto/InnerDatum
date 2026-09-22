@@ -2330,14 +2330,19 @@ export type TalentSheetInit = {
 };
 
 /**
- * BIRTH GRANTS THE FOUR AT LEVEL 1, and that seeding is the whole birth grant.
+ * BIRTH GRANTS THE FOUR AT LEVEL 1. They are one part of what a character is
+ * born with, not all of it: upstream's 2 class, 1 generic and 3 attribute points
+ * come on top.
  *
  * ToME's own pattern: data/birth/classes/warrior.lua:80-86 hands a fresh
  * Berserker five talents outright, already learned, before a single point is
- * spent. Ours hands four — `ClassDef.loadout` — and `pointsForLevel` therefore
- * drops upstream's separate 2-point birth grant (tome/class/Actor.lua:171), because these
- * four ARE that gift, paid in talents instead of points. See
- * src/shared/progression.ts for the budget arithmetic that falls out of it.
+ * spent. Ours hands four — `init.birth`, which is `ClassDef.birthTalents` — and
+ * upstream's points come on top: 2 class and 1 generic (tome/class/Actor.lua:171-172),
+ * which are `BIRTH_CLASS_POINTS` and `BIRTH_GENERIC_POINTS` in
+ * src/shared/progression.ts and are paid into the purses, not seeded here. This
+ * note used to say the four WERE that gift, paid in talents instead of points;
+ * upstream learns the descriptor's talents and keeps the points as well
+ * (engine/Birther.lua:411-418).
  *
  * Seeding at 1 rather than 0 is load-bearing in a way that is easy to miss:
  * `combatTalentScale` maps tl <= 0 to 0.1 (scale.ts:191), so a talent at level

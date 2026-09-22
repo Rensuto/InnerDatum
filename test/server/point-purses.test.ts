@@ -26,8 +26,9 @@ import type { TalentSheet } from '../../src/server/engine/talents.ts';
  * `unspentGenerics` and `unspentCategories` appear NOWHERE in
  * `persist/saves.ts`, and `createActor` starts both at zero — so any path that
  * rebuilt a body from file (a restart, a grace expiry, a character swap) emptied
- * them silently. A level-50 character is granted 42 generic points and 3
- * category points over a career.
+ * them silently. A level-50 character is granted 43 generic points and 3
+ * category points over a career (42 generic before ToME's birth 1,
+ * tome/class/Actor.lua:172, was ported).
  *
  * The fix is not to persist them. Every spend is ALREADY recorded somewhere
  * durable — talent ranks in the spread, disciplines in `unlockedTrees`,

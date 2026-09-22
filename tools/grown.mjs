@@ -129,10 +129,9 @@ function contentRegistry() {
  *
  * ═══ AND IT RUNS AT LEVEL 1 ═══
  * There was a `level <= 1` early return. A level-1 character has whatever the
- * level-1 purse holds — nothing today, and the birth grant the day one lands —
- * and a probe that skipped the purse at level 1 would never see that change.
- * With nothing to spend, a level-1 body comes out exactly as it went in: the
- * class sheet, by reference, and the class's own pool.
+ * level-1 purse holds — the birth 3 now (tome/class/Actor.lua:170); it was
+ * nothing when this was written — and a probe that skipped the purse at level 1
+ * would never have seen that change. A level-1 body is grown like any other.
  *
  * ═══ THE LEDGER, NOT A SECOND CLASS SHEET ═══
  * `baseCombat` is the CLASS sheet and `spentStats` the points bought, which is
@@ -179,8 +178,9 @@ export function growTo(body, cls, level) {
  * That is `seedFreshPurses` for a fresh sheet and `restoreProgression`'s
  * arithmetic for any other — the total the level grants, minus `spendByPurse`,
  * the ledger the restore path reads (main.ts#talentSpendOf). It was a sum of
- * `pointsForLevel` from level 2, which is the same number today and stops being
- * the same number the moment the total grows a birth term.
+ * `pointsForLevel` from level 2, which was the same number when it was written
+ * and stopped being it when the total grew ToME's birth 2
+ * (tome/class/Actor.lua:171).
  *
  * ═══ WITH THE ORIGIN'S BONUS, BECAUSE THERE IS NO SUCH THING AS NO ORIGIN ═══
  * The server asks `totalPointsAtLevel(level, classPointBonus(origin))`, and a

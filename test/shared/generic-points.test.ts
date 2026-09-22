@@ -81,10 +81,12 @@ describe('the grant', () => {
     const classPoints = totalPointsAtLevel(MAX_CHARACTER_LEVEL);
     const generics = totalGenericPointsAtLevel(MAX_CHARACTER_LEVEL);
     expect(generics).toBeLessThan(classPoints);
-    // ...and the gap is exactly twice the number of fifth levels: one point
-    // moved across, counted once on each side.
+    // ...and the gap is twice the number of fifth levels — one point moved
+    // across, counted once on each side — plus the one the birth grant starts
+    // with: 2 class against 1 generic (tome/class/Actor.lua:171-172). It was
+    // exactly `fifths * 2` before the birth grant was ported.
     const fifths = Math.floor(MAX_CHARACTER_LEVEL / 5);
-    expect(classPoints - generics).toBe(fifths * 2);
+    expect(classPoints - generics).toBe(fifths * 2 + 1);
   });
 });
 

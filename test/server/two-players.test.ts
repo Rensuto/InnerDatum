@@ -15,6 +15,7 @@ import { createTurnEngine } from '../../src/server/turn-engine.ts';
 import { createRealms } from '../../src/server/world/realms.ts';
 import { COMMAND_GAP_MS, PROTOCOL_VERSION } from '../../src/shared/version.ts';
 import { STAT_POINTS_PER_LEVEL } from '../../src/shared/progression.ts';
+import { CITYBORN, originOf } from '../../src/server/content/origins.ts';
 import type { PartyState } from '../../src/server/engine/party.ts';
 import type { Realms } from '../../src/server/world/realms.ts';
 
@@ -364,13 +365,14 @@ describe('somebody else turns up', () => {
      * ═══════════════════════════════════════════════════════════════════════
      *
      * A character starts with four talents at rank 1 and no point from a LEVEL
-     * yet (only its origin's birth points, see `seedFreshPurses`), which
-     * `pointsForLevel` argues for at length: *"our four loadout talents, already
-     * learned at level 1, ARE our birth grant"*, and 11 points against 16
-     * purchasable steps is what keeps the panel a choice rather than a checklist.
+     * yet — only its birth points: ToME's 3 attribute, 2 class and 1 generic
+     * (tome/class/Actor.lua:170-172) and its origin's, see `seedFreshPurses`.
+     * This used to quote `pointsForLevel`'s argument that the four loadout
+     * talents WERE the birth grant, with 11 points against 16 purchasable steps
+     * keeping the panel a choice; that argument was dropped when the grant was
+     * ported.
      *
-     * So level 2 is the first time a player decides anything, and MEASURED it is
-     * two delves away — the quiet Drowned Chapel pays 12.8 and the Underworks
+     * So level 2 is the first LEVEL-UP, and MEASURED it is two delves away — the quiet Drowned Chapel pays 12.8 and the Underworks
      * 16.0 against a threshold of 27, or nine lone roamers at 3.2 each.
      *
      * ═══ AND THIS BEAT HAS ALREADY BEEN HALF-BROKEN ONCE ═══
@@ -501,6 +503,89 @@ describe('somebody else turns up', () => {
       said.some((text) => text.includes('attribute point')),
       `the attribute points were granted and not announced — ${JSON.stringify(said)}`,
     ).toBe(true);
+  });
+
+  it('reaches level 2 holding the birth grant and one level-up: 6 / 4 / 3, paid once', async () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * THE BIRTH POINTS THROUGH A REAL KILL, AS ABSOLUTE NUMBERS.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * The case above measures what a level ADDS, as a difference from the purse
+     * before the kill, and a difference cannot see a purse that was wrong
+     * before it started — seeded twice, say. This one states both ends in the
+     * Lua's own numbers.
+     *
+     * BEFORE, a fresh Cityborn holds the birth grant: 3 attribute, 2 class and
+     * 1 generic (`tome/class/Actor.lua:170-172`), plus Cornac's `copy_add` of 1
+     * class, 1 generic and 1 category (`human.lua:128-132`) — 3 / 3 / 2 / 1.
+     *
+     * AFTER reaching level 2: + 3 attribute, 1 class, 1 generic
+     * (`tome/class/Actor.lua:3748-3750`) — 6 / 4 / 3 / 1. A level-up loop that
+     * paid the birth grant again as it crossed the level would read 9 / 6 / 4.
+     */
+    const a = await connect(server.port);
+    const actorId = await a.hello();
+    await sleep(250);
+
+    const world = server.realms.overworld.world;
+    const body = world.getActor(actorId);
+    if (body === undefined || body.kind !== ActorKind.Player) throw new Error('no player body');
+    body.maxHp = 9000;
+    body.hp = 9000;
+
+    // THE PRECONDITIONS: a fresh level-1 body of the baseline origin.
+    expect(body.level, 'a fresh body is not level 1').toBe(1);
+    expect(originOf(body.origin).id, 'the body is not the baseline origin').toBe(CITYBORN.id);
+    expect({
+      stat: body.unspentStatPoints,
+      class: body.unspentPoints,
+      generic: body.unspentGenerics,
+      category: body.unspentCategories,
+    }).toEqual({ stat: 3, class: 3, generic: 2, category: 1 });
+
+    // ONE KILL SHORT OF THE THRESHOLD, as the case above arranges it.
+    body.xp = 26;
+    let spot: { x: number; y: number; dir: string } | null = null;
+    for (const [dx, dy, dir] of [
+      [1, 0, 'e'],
+      [-1, 0, 'w'],
+      [0, 1, 's'],
+      [0, -1, 'n'],
+    ] as const) {
+      const x = body.x + dx;
+      const y = body.y + dy;
+      if (canWalk(world.level, x, y) && world.actorAt(x, y) === undefined) {
+        spot = { x, y, dir };
+        break;
+      }
+    }
+    expect(spot, 'nowhere to stand a husk').not.toBeNull();
+    if (spot === null) return;
+    world.addMonster('husk_birth_grant', {
+      name: 'Index Husk',
+      sprite: 'enemy_index_husk_s',
+      x: spot.x,
+      y: spot.y,
+      maxHp: 1,
+      profile: AiProfile.MeleeChaser,
+    });
+    for (let i = 0; i < 8 && world.getActor('husk_birth_grant') !== undefined; i += 1) {
+      a.send({ t: 'move', dir: spot.dir });
+      await sleep(160);
+    }
+    await sleep(250);
+
+    expect(world.getActor('husk_birth_grant'), 'the husk never died').toBeUndefined();
+    const after = world.getActor(actorId);
+    if (after === undefined || after.kind !== ActorKind.Player) throw new Error('the body is gone');
+    expect(after.level, 'the kill did not level them').toBe(2);
+    expect({
+      stat: after.unspentStatPoints,
+      class: after.unspentPoints,
+      generic: after.unspentGenerics,
+      category: after.unspentCategories,
+    }).toEqual({ stat: 6, class: 4, generic: 3, category: 1 });
   });
 
   it('says what changed when you put something on', async () => {

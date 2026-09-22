@@ -3,7 +3,7 @@
 // Ported from t-engine4 game/modules/tome/load.lua:192-206 (exp_chart, defineMaxLevel)
 //             t-engine4 game/engines/default/engine/interface/ActorLevel.lua:95-107 (gainExp)
 //             t-engine4 game/engines/default/engine/interface/ActorTalents.lua:71 (t.points)
-//             t-engine4 game/modules/tome/class/Actor.lua:171, 3747-3774, 6513-6531
+//             t-engine4 game/modules/tome/class/Actor.lua:170-173, 3747-3774, 6513-6531
 //             t-engine4 game/modules/tome/data/birth/classes/warrior.lua:80-86
 //             t-engine4 game/modules/tome/data/birth/descriptors.lua:73 (max_level = 50)
 // T-Engine4 (C) 2009-2018 Nicolas Casalini "DarkGod" — https://te4.org/license
@@ -176,6 +176,48 @@ export const BIRTH_TALENT_GRANTS = 4;
  * cannot quietly hand every returning character a free point.
  */
 export const BIRTH_INSCRIPTION_GRANTS = 3;
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ *   WHAT EVERY CHARACTER IS BORN HOLDING. `tome/class/Actor.lua:170-172`.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ *     self.unused_stats = self.unused_stats or 3
+ *     self.unused_talents = self.unused_talents or 2
+ *     self.unused_generics = self.unused_generics or 1
+ *
+ * Three attribute points, two class points and one generic point, in hand at
+ * level 1 before a single level has been gained. The next line,
+ * `tome/class/Actor.lua:173`, is `unused_talents_types or 0`: there is no
+ * universal category point, and the one an adaptable origin brings is its own
+ * (`PointBonus.atBirth`, `totalCategoryPointsAtLevel`).
+ *
+ * ═══ ON TOP OF THE BIRTH TALENTS, NOT INSTEAD OF THEM ═══
+ * This grant was once argued away on the ground that the four
+ * `ClassDef.birthTalents`, learned at rank 1, were the same gift paid in talents.
+ * Upstream pays both. The birther learns a descriptor's `talents` outright
+ * (`engine/Birther.lua:411-418`) and the 2 and the 1 above are still in hand
+ * afterwards. With "auto-assign talents at birth" switched off (it defaults on,
+ * `tome/settings.lua:44`) the descriptor ranks are refunded INTO these pools, on
+ * top of them (`tome/dialogs/Birther.lua:301-338`), so the grant is the floor
+ * either way. `BIRTH_TALENT_GRANTS` is unchanged by this: it counts the free
+ * ranks, and these are points.
+ *
+ * ═══ INSIDE THE THREE TOTALS, AND NOWHERE ELSE ═══
+ * `totalPointsAtLevel`, `totalGenericPointsAtLevel` and `totalStatPointsAtLevel`
+ * start from these. Every purse is derived from those totals — seeded for a new
+ * body, recomputed from the spend for a saved one, checked by the save layer's
+ * ledger — so one term in each total reaches all of them, and a character saved
+ * before the grant existed finds it waiting on the next load with nothing new
+ * stored. `choose_class` moves a purse by the difference between two origins'
+ * totals, and a term both totals carry cancels there, so it is not paid twice.
+ *
+ * THE PER-LEVEL FUNCTIONS STAY 0 AT LEVEL 1, because the level-up loop asks them
+ * from level 2 onwards and a grant written there as well would be a second one.
+ */
+export const BIRTH_STAT_POINTS = 3;
+export const BIRTH_CLASS_POINTS = 2;
+export const BIRTH_GENERIC_POINTS = 1;
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════
@@ -746,66 +788,51 @@ export function forceLevelup(level: number, xp: number, to: number): ExpGain {
  *     if self.level % 5 == 0 then self.unused_talents = self.unused_talents + 1 end
  *     if self.level % 5 == 0 then self.unused_generics = self.unused_generics - 1 end
  *
- * ═══ WHAT WAS DROPPED, AND WHY EACH ═══
+ * ═══ WHAT IS PAID ELSEWHERE, AND THE ONE GRANT STILL NOT PORTED ═══
  *
- *   `unused_generics` AND ITS -1 SWAP (:3750, :3752). ToME runs TWO pools: class
- *   points and generic points, and every fifth level moves one from the generic
- *   pool to the class pool. That needs a generic/class TREE SPLIT to spend
- *   against, and we have one book of four class talents. With no generic tree,
- *   a generic pool is a currency with nothing to buy.
+ *   `unused_generics` AND ITS -1 SWAP (:3750, :3752) are `genericPointsForLevel`.
+ *   This list used to drop them as a currency with nothing to buy; the generic
+ *   trees landed and the pool came with them.
  *
- *   CATEGORY POINTS at levels 10, 20 and 36 (:3758-3760). They buy a NEW TREE.
- *   There are no new trees; `ClassDef.loadout` is exactly four talents.
+ *   CATEGORY POINTS at levels 10, 20 and 36 (:3758-3760) are
+ *   `categoryPointsForLevel`. They buy a locked tree or deepen a known one.
  *
- *   PRODIGIES at 30 and 42 (:3761-3766). NOT unreachable — that reason was
- *   written against a cap of 10 and `MAX_CHARACTER_LEVEL` is 50, which the
- *   docblock on that very constant gives prodigies as one of its reasons for.
- *   Both levels are mid-game now.
+ *   STAT POINTS, `unused_stats + (stats_per_level or 3)` (:3748), are
+ *   `statPointsForLevel`. This list used to call them out of scope.
  *
- *   The true reason is smaller and still holds: NO PRODIGY TALENTS ARE
- *   PORTED, so the point would be a currency with nothing to buy — which is
- *   exactly the argument this list used against generic points before a
- *   generic tree existed. Port the grant WITH the talents, not before them.
+ *   THE LEVEL-50 BONUS (:3767-3774) is `CAP_BONUS_CLASS_POINTS` and its two
+ *   siblings, paid by the per-level functions at `MAX_CHARACTER_LEVEL`.
  *
- *   STAT POINTS, `unused_stats + (stats_per_level or 3)` (:3748). A second spend
- *   screen against six stats, and this pass ships one panel. Out of scope, not
- *   rejected — when it lands it is one more line here.
+ *   PRODIGIES at 30 and 42 (:3761-3766) are the one grant still missing. Not
+ *   because they are unreachable — that reason was written against a cap of 10,
+ *   and `MAX_CHARACTER_LEVEL` is 50 — but because NO PRODIGY TALENTS ARE
+ *   PORTED, so the point would be a currency with nothing to buy. Port the grant
+ *   WITH the talents, not before them.
  *
- *   THE LEVEL-50 BONUS (:3767-3774). Above the cap, same as prodigies.
+ * ═══ THE BIRTH GRANT OF 2 IS NOT PAID HERE — `BIRTH_CLASS_POINTS` ═══
+ *     self.unused_talents = self.unused_talents or 2    -- tome/class/Actor.lua:171
+ * It is in hand at level 1 and it is part of `totalPointsAtLevel`. This function
+ * answers what a level-UP pays, and level 1 is not one.
  *
- * ═══ AND THE BIRTH GRANT OF 2 IS DROPPED TOO — tome/class/Actor.lua:171 ═══
- *     self.unused_talents = self.unused_talents or 2
- * ToME hands a fresh character 2 spare points ON TOP of its free birth talents
- * (data/birth/classes/warrior.lua:80-86 hands a Berserker five outright, at
- * level 1, before the 2 points are counted). It can afford to, because it has
- * DOZENS of talents to spend them on. **Our four loadout talents,
- * already learned at level 1, ARE our birth grant** — the equivalent gift, paid
- * in talents instead of points.
+ * IT WAS DROPPED FOR A WHILE, under the claim that our four loadout talents,
+ * already learned at level 1, WERE our birth grant, paid in talents instead of
+ * points. Upstream pays both: the birther learns the descriptor's talents
+ * (`engine/Birther.lua:411-418`) and the 2 is still there afterwards — see
+ * `BIRTH_STAT_POINTS` for the whole of it. The budget argument beside that claim
+ * went stale as well: 11 points through level 10 against 4 talents × 4 upgrade
+ * steps was 69%, and the birth 2 would have made it 81%, a panel with nothing
+ * left to decide. Those were the figures at the old level-10 cap against a
+ * four-talent book; the cap is 50 now and the trees are many times that wide.
  *
- * The budget is why it matters and it is arithmetic, not taste: levels 2-10 give
- * 9 points, levels 5 and 10 give 2 more, so 11 points against 4 talents × 4
- * upgrade steps = 16 purchasable steps. 11/16 = 69%, so every player finishes an
- * evening with about five steps unbought and had to CHOOSE which. Add the birth
- * 2 and it is 13/16 = 81%, at which point there is nothing to decide and the
- * panel is a checklist you tick until it is empty.
+ * ═══ AN ORIGIN MAY ADD ONE ON TOP ═══
+ * An adaptable origin carries `atBirth: 1` plus one every ten levels — a RACE
+ * bonus (`human.lua:128-132`). Upstream gives EVERY character 2 and then gives
+ * a Cornac one MORE, and so does this: `BIRTH_CLASS_POINTS` is universal and the
+ * origin's point is the gap on top of it.
  *
- * ═══ AN ORIGIN MAY ADD ONE, AND THAT IS NOT THIS DECISION BEING REVERSED ═══
- * `PointBonus` exists now and an adaptable origin carries `atBirth: 1` plus one
- * every ten levels. That is a RACE bonus (`human.lua:128-132`), which is a
- * different thing from the universal birth grant argued away above: upstream
- * gives EVERY character 2 and then gives a Cornac one MORE. The 2 is still
- * dropped — our four loadout talents are still what a character is born with —
- * and what an origin restores is only the RELATIVE gap that makes one origin
- * different from another.
- *
- * The arithmetic moves accordingly and stays inside the argument: through level
- * 10 an adaptable origin holds 12 of 16 steps (75%) against a plain one's 11
- * (69%). Both leave steps unbought and a choice to make; neither is a checklist.
- * If a future origin ever pushes that past ~80%, this paragraph is the one that
- * says why it should not.
- *
- * @param level the level just REACHED. Level 1 grants nothing — it is where a
- *   character starts, not somewhere it levelled up to.
+ * @param level the level just REACHED. Level 1 grants nothing here — it is where
+ *   a character starts, not somewhere it levelled up to, and what a character
+ *   starts with is in the total.
  */
 export function pointsForLevel(level: number, bonus: PointBonus = {}): number {
   if (level <= 1) return 0;
@@ -890,11 +917,13 @@ export const CAP_BONUS_GENERIC_POINTS = 3;
 
 /**
  * Every point a character of `level` has ever been granted, spent or not: the
- * sum of `pointsForLevel` over 2..level.
+ * birth grant (`BIRTH_CLASS_POINTS`, plus an origin's `atBirth`) and then the sum
+ * of `pointsForLevel` over 2..level.
  *
  * Kept as a loop over the per-level function rather than a closed form, because
- * the closed form (`(level - 1) + floor(level / 5)`) silently stops agreeing the
- * moment `pointsForLevel` grows a clause, and it is nine iterations at most.
+ * the closed form (`2 + (level - 1) + floor(level / 5)`, before the cap bonus)
+ * silently stops agreeing the moment `pointsForLevel` grows a clause, and it is
+ * forty-nine iterations at most.
  *
  * This is the LEDGER, and it is what makes the persisted shape safe: saves store
  * the RAW per-talent points, never the unspent count (docs/data-schemas.md § 1,
@@ -902,14 +931,17 @@ export const CAP_BONUS_GENERIC_POINTS = 3;
  * `totalPointsAtLevel(level) - (sum of raw points spent)`. Retuning this grant
  * therefore corrects every existing character instead of stranding them.
  *
- * At `MAX_CHARACTER_LEVEL` it is 11 — 9 from levels 2-10, plus 1 each at 5 and 10.
+ * At `MAX_CHARACTER_LEVEL` it is 64 with no origin bonus: the birth 2, 49 from
+ * levels 2-50, 10 more on the fifth levels and the cap's 3. It was 11 at the old
+ * level-10 cap, and 62 before the birth grant was ported.
  */
 export function totalPointsAtLevel(level: number, bonus: PointBonus = {}): number {
-  // THE BIRTH GRANT IS PART OF THE TOTAL, and forgetting it is not cosmetic:
+  // THE BIRTH GRANTS ARE PART OF THE TOTAL, and forgetting one is not cosmetic:
   // `applyRestore` derives points-in-hand as this total MINUS everything spent,
   // so a birth point that has been spent would come back negative, be clamped to
-  // zero, and be confiscated on every single reload. See `PointBonus.atBirth`.
-  let total = bonus.atBirth ?? 0;
+  // zero, and be confiscated on every single reload. Everybody's 2
+  // (`BIRTH_CLASS_POINTS`), then the origin's own (`PointBonus.atBirth`).
+  let total = BIRTH_CLASS_POINTS + (bonus.atBirth ?? 0);
   for (let l = 2; l <= level; l++) {
     total = total + pointsForLevel(l, bonus);
   }
@@ -1105,10 +1137,16 @@ export function genericPointsForLevel(level: number, bonus: PointBonus = {}): nu
   return capped;
 }
 
-/** Every generic point a character of this level has been handed. */
+/**
+ * Every generic point a character of this level has been handed: the birth 1
+ * (`BIRTH_GENERIC_POINTS`, plus an origin's `atBirth`), then every level-up's.
+ * 43 at `MAX_CHARACTER_LEVEL` with no origin bonus; it was 42 before the birth
+ * grant was ported.
+ */
 export function totalGenericPointsAtLevel(level: number, bonus: PointBonus = {}): number {
-  // The birth grant, for `totalPointsAtLevel`'s stated reason.
-  let total = bonus.atBirth ?? 0;
+  // Both birth grants, for `totalPointsAtLevel`'s stated reason: everybody's 1
+  // (`BIRTH_GENERIC_POINTS`), then the origin's own.
+  let total = BIRTH_GENERIC_POINTS + (bonus.atBirth ?? 0);
   for (let l = 2; l <= level; l++) {
     total = total + genericPointsForLevel(l, bonus);
   }
@@ -1149,7 +1187,11 @@ export function isGenericTree(tree: string): boolean {
  */
 export const STAT_POINTS_PER_LEVEL = 3;
 
-/** How many attribute points arriving at `level` grants. Nothing at birth. */
+/**
+ * How many attribute points arriving at `level` grants. Nothing at level 1: the
+ * birth 3 (`BIRTH_STAT_POINTS`) is in `totalStatPointsAtLevel`, and the level-up
+ * loop, which asks this function from level 2, must never see it.
+ */
 export function statPointsForLevel(level: number): number {
   if (level <= 1) return 0;
   // Actor.lua:3767-3768 — the cap pays ten attribute points on top of its three.
@@ -1168,11 +1210,15 @@ export function statPointsForLevel(level: number): number {
  * recomputed on load. Retuning the grant then corrects every existing character
  * instead of stranding them.
  *
- * A loop rather than `(level - 1) * 3` for the same reason too — the closed form
- * stops agreeing the moment the grant grows a clause, and it is nine iterations.
+ * A loop rather than a closed form for the same reason too: the closed form
+ * stops agreeing the moment the grant grows a clause, and the cap's 10 is one
+ * already. 160 at `MAX_CHARACTER_LEVEL` — the birth 3, 147 from levels 2-50 and
+ * the cap's 10. It was 157 before the birth grant was ported.
  */
 export function totalStatPointsAtLevel(level: number): number {
-  let total = 0;
+  // THE BIRTH 3 (`BIRTH_STAT_POINTS`), in the total for the ledger's reason and
+  // never in `statPointsForLevel`, which the level-up loop pays from level 2.
+  let total = BIRTH_STAT_POINTS;
   for (let l = 2; l <= level; l++) {
     total = total + statPointsForLevel(l);
   }

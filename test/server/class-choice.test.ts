@@ -994,6 +994,67 @@ describe('choose_class, accepted', () => {
     ).toEqual(owed);
   });
 
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * AND THE SAME PURSES IN THE LUA'S OWN NUMBERS — `tome/class/Actor.lua:170-172`.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   *     self.unused_stats = self.unused_stats or 3
+   *     self.unused_talents = self.unused_talents or 2
+   *     self.unused_generics = self.unused_generics or 1
+   *
+   * The case above derives its expectation from the same totals production
+   * reads, so it passes whatever those totals say. These two do not: the birth
+   * grant is every character's, and an origin's `copy_add` (`human.lua:128-132`,
+   * one class, one generic and one category point) lands on top of it — so a
+   * Cityborn is born holding 3 / 3 / 2 / 1 and an Indexed, whose origin pays in
+   * experience instead, 3 / 2 / 1 / 0.
+   *
+   * THE SEED, NOT THE RESTORE. Nothing is on disk for this account, so the purses
+   * can only have come from `seedFreshPurses` and `choose_class`'s origin delta.
+   */
+  it('hands a fresh Cityborn 3 attribute, 3 class, 2 generic and 1 category point', async () => {
+    server = await boot('choice-birth-cityborn');
+    expect(server.disk.files.size, 'this account already has a file').toBe(0);
+    const client = await connect(server.port);
+    const body = bodyOf(await client.hello('ren-handle'));
+    expect(await client.waitFor('class_options'), 'no chooser, so not a fresh join').toBeDefined();
+    expect(body.level).toBe(1);
+
+    client.send({ t: 'choose_class', classId: ALCHEMIST.id });
+    await client.settle();
+    expect(body.classId).toBe(ALCHEMIST.id);
+    expect(body.origin).toBe(CITYBORN.id);
+
+    expect({
+      stat: body.unspentStatPoints,
+      class: body.unspentPoints,
+      generic: body.unspentGenerics,
+      category: body.unspentCategories,
+    }).toEqual({ stat: 3, class: 3, generic: 2, category: 1 });
+  });
+
+  it('hands a fresh Indexed the birth grant alone: 3 / 2 / 1 and no category point', async () => {
+    server = await boot('choice-birth-indexed');
+    expect(server.disk.files.size, 'this account already has a file').toBe(0);
+    const client = await connect(server.port);
+    const body = bodyOf(await client.hello('ren-handle'));
+    expect(await client.waitFor('class_options'), 'no chooser, so not a fresh join').toBeDefined();
+    expect(body.level).toBe(1);
+
+    client.send({ t: 'choose_class', classId: ALCHEMIST.id, originId: INDEXED.id });
+    await client.settle();
+    expect(body.classId).toBe(ALCHEMIST.id);
+    expect(body.origin).toBe(INDEXED.id);
+
+    expect({
+      stat: body.unspentStatPoints,
+      class: body.unspentPoints,
+      generic: body.unspentGenerics,
+      category: body.unspentCategories,
+    }).toEqual({ stat: 3, class: 2, generic: 1, category: 0 });
+  });
+
   it('resends the hotbar, the cooldowns and the board', async () => {
     server = await boot('choice-refresh');
 

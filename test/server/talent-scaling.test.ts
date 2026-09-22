@@ -1411,10 +1411,12 @@ describe('THE GUARD COUNTER rides on the effect instance, not on a constant', ()
 });
 
 describe('the sheet is where a rank lives', () => {
-  it('seeds every talent it owns at 1 — the four AND the passives are the birth grant', () => {
+  it('seeds every talent it owns at 1 — the four AND the passives are the birth ranks', () => {
     // warrior.lua:80-86 hands a fresh Berserker five talents outright before a
-    // point is spent; `ClassDef.loadout` hands ours four. That is why
-    // `pointsForLevel` drops ToME's separate 2-point birth grant (Actor.lua:171).
+    // point is spent; `ClassDef.birthTalents` hands ours four. ToME's 2 class
+    // points (tome/class/Actor.lua:171) come on top of those, as they do
+    // upstream — this used to say the four were why that grant was dropped, and
+    // the grant is `BIRTH_CLASS_POINTS` in shared/progression.ts now.
     //
     // THE PASSIVES ARE BORN LEARNED TOO, and the count below is the two lists
     // rather than the literal four — a passive seeded at rank 0 would not be
