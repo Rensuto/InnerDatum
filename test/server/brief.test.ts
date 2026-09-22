@@ -33,6 +33,7 @@ import { AiProfile } from '../../src/server/engine/actor.ts';
 import { FIELD_FOLK } from '../../src/server/content/townsfolk.ts';
 import { STRANDED_HAND } from '../../src/server/content/monsters.ts';
 import { canWalk } from '../../src/shared/level.ts';
+import { tileDistance } from '../../src/shared/distance.ts';
 import { ActorKind, ActorRank } from '../../src/shared/protocol.ts';
 import { PROTOCOL_VERSION } from '../../src/shared/version.ts';
 import type { Brief, BriefSpec } from '../../src/server/world/brief.ts';
@@ -1144,19 +1145,20 @@ describe('the direction answer', () => {
 
   /**
    * ═══════════════════════════════════════════════════════════════════════════
-   * THE BAND IS EUCLIDEAN, AND ONLY A DIAGONAL CAN SHOW IT.
+   * THE BAND IS A STRAIGHT LINE, AND ONLY A DIAGONAL CAN SHOW IT.
    * ═══════════════════════════════════════════════════════════════════════════
    *
-   * `Party.lua:411` is `core.fov.distance`, a straight-line radius, and the
-   * three bands were chosen against it. Every fixture that exercised the bands
-   * was AXIS-ALIGNED (dx=20/dy=0, dx=-1/dy=0), where Euclidean and Chebyshev
-   * agree exactly — so swapping one for the other changed no test at all.
+   * `tome/class/Party.lua:411` is `core.fov.distance`, a straight-line radius
+   * rounded half-up, and the three bands were chosen against it. Every fixture
+   * that exercised the bands was AXIS-ALIGNED (dx=20/dy=0, dx=-1/dy=0), where
+   * the straight line and Chebyshev agree exactly — so swapping one for the
+   * other changed no test at all.
    *
-   * dx=dy=7 is 9.9 Euclidean ("close") and 7 Chebyshev ("very close"), which is
-   * the whole difference in one case.
+   * dx=dy=7 is 9.9 long, 10 rounded ("close"), and 7 Chebyshev ("very close"),
+   * which is the whole difference in one case.
    *
-   * MUTANT: `Math.hypot` -> `Math.max(Math.abs(dx), Math.abs(dy))`. The offerer
-   * calls a body ten tiles away "very close", and a party walks the wrong way.
+   * MUTANT: pass `chebyshev` instead of `tileDistance`. The offerer calls a
+   * body ten tiles away "very close", and a party walks the wrong way.
    */
   it('measures the distance in a straight line and not in king moves', () => {
     const realms = makeRealms();
@@ -1170,10 +1172,42 @@ describe('the direction answer', () => {
     const said = briefSnapshotFor(realm, speaker, { x: body.x - 7, y: body.y - 7 });
     expect(said?.band, 'the diagonal was measured in king moves').toBe('close');
     expect(said?.bearing).toBe('south-east');
-    // AND THE TWO BANDS STILL MEET WHERE THEY MEET, read off the function
-    // directly: 7.99 is inside the first band and 8 is not.
-    expect(distanceBand(Math.hypot(7, 7))).toBe('close');
-    expect(distanceBand(Math.hypot(5, 5))).toBe('very close');
+    // AND THE TWO BANDS STILL MEET WHERE THEY MEET, read off the function on
+    // the length the game passes it: (7,7) is 9.9, rounds to 10, and is past
+    // the `< 8` of the first band; (5,5) is 7.07, rounds to 7, and is inside.
+    expect(distanceBand(tileDistance({ x: 0, y: 0 }, { x: 7, y: 7 }))).toBe('close');
+    expect(distanceBand(tileDistance({ x: 0, y: 0 }, { x: 5, y: 5 }))).toBe('very close');
+  });
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * AND IT IS ROUNDED, WHICH ONLY A BODY JUST SHORT OF A BOUNDARY CAN SHOW.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `core.fov.distance` is `(int)(sqrt(dx*dx + dy*dy) + 0.5)`, so ToME never
+   * hands `dist < 8` anything but a whole number. (7,3) is 7.62 long: the exact
+   * length is under 8 and says "very close", and ToME rounds it to 8 and says
+   * "close". The case above cannot see this — 9.9 and 10 are in the same band.
+   *
+   * MUTANT: pass `Math.hypot` again. This body reads "very close".
+   */
+  it('rounds the distance the way ToME does before it picks the words', () => {
+    const realms = makeRealms();
+    const realm = floorWith(realms, [QUARRY], 2);
+    armBrief(realm);
+    const brief = acceptBrief(realm, 'dalt');
+    const target = brief?.target;
+    const body = realm.world.getActor(target?.k === BriefKind.Quarry ? (target.actorId ?? '') : '');
+    const speaker = realm.brief?.offererId ?? '';
+    if (body === undefined) throw new Error('nothing was named');
+    const asker = { x: body.x - 7, y: body.y - 3 };
+    const exact = Math.hypot(body.x - asker.x, body.y - asker.y);
+    expect(exact, 'the fixture is not just short of 8').toBeGreaterThan(7.6);
+    expect(exact, 'the fixture is not just short of 8').toBeLessThan(8);
+    expect(tileDistance(body, asker), 'the fixture does not round to 8').toBe(8);
+
+    const said = briefSnapshotFor(realm, speaker, asker);
+    expect(said?.band, 'the exact length was read, not the rounded one').toBe('close');
   });
 
   /**

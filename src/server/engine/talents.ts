@@ -122,7 +122,7 @@ import type { PassiveContribution } from './equipment.ts';
 import { createTurnProcs, fireTurnStart } from './hooks.ts';
 import type { BoundHooks, PassiveView, TalentHooks, TurnProcs } from './hooks.ts';
 import { DIR_ORDER, DIR_VECTORS, chebyshev } from '../../shared/coords.ts';
-import { discTiles } from '../../shared/distance.ts';
+import { discTiles, tileDistance } from '../../shared/distance.ts';
 import { ENERGY_TO_ACT } from '../../shared/version.ts';
 import { bound, combatTalentScale, rescaleDamage } from '../../shared/scale.ts';
 import { hasLineOfSight } from '../../shared/sight.ts';
@@ -3575,11 +3575,22 @@ export function stepToward(
  * Upstream builds the list, and the list is also what makes "nowhere to go" a
  * clean `false` rather than a hang.
  *
- * ═══ EUCLIDEAN, WHICH IS WHY IT IS A DISC AND NOT THE BOX IT SCANS ═══
- * `core.fov.distance` is `sqrt(dx² + dy²)`, so the square loop above is only the
- * bounding box and the `<= dist` test carves the circle out of it. Chebyshev
- * here would hand out corners a tenth of a tile further than the sentence
- * promises, which is the same trap `DEFAULT_SIGHT_RADIUS` documents.
+ * ═══ ToME'S ROUNDED DISC, CARVED OUT OF THE BOX IT SCANS ═══
+ * `tome/class/Actor.lua:1564-1570` floors `dist` and `min_dist`, walks the
+ * square `x - dist .. x + dist`, and keeps a tile only when
+ * `core.fov.distance(x, y, i, j)` is both `<= dist` and `>= min_dist`. That
+ * distance is the straight line ROUNDED HALF-UP — `tileDistance`, whose header
+ * in shared/distance.ts derives it — so the square is only the bounding box and
+ * the two tests carve ToME's circle out of it: every offset with
+ * `dx^2 + dy^2 <= r^2 + r`. At range 4 that takes (4,2), 4.47 long, which
+ * rounds to 4; at a minimum range of 3 it takes (2,2), 2.83 long, which
+ * rounds to 3.
+ *
+ * THIS WAS `Math.hypot`, and this note said `core.fov.distance` was the plain
+ * `sqrt(dx² + dy²)`. It is not — it rounds — so the exact length cut a smaller
+ * disc than ToME's: 49 tiles at range 4 against ToME's 69, and a minimum range
+ * that refused diagonals ToME allows. The box would be the opposite mistake,
+ * handing out corners ToME's circle does not reach.
  *
  * ═══ ONE DRAW, LABELLED ═══
  * `rng.range(1, #poss)`. shared/rng.ts's rule is that adding or removing a draw
@@ -3619,7 +3630,8 @@ export function teleportRandom(
   const options: TileXY[] = [];
   for (let x = actor.x - reach; x <= actor.x + reach; x += 1) {
     for (let y = actor.y - reach; y <= actor.y + reach; y += 1) {
-      const away = Math.hypot(x - actor.x, y - actor.y);
+      // `core.fov.distance(x, y, i, j) <= dist and ... >= min_dist`, rounded.
+      const away = tileDistance(actor, { x, y });
       if (away > reach || away < floor) continue;
       if (!canWalk(world.level, x, y)) continue;
       // `canMove` upstream is terrain AND nobody standing there. `canWalk` is

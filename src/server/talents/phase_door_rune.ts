@@ -63,6 +63,12 @@ import { EffectId } from '../content/effects.ts';
  * lands inside your own sight radius has not lost you, and one that goes
  * further leaves you somewhere you cannot see. Ten is the edge — the furthest
  * you can go and still know what is around you when you arrive.
+ *
+ * ONE RING SHORT OF TRUE UNTIL SIGHT IS PORTED TOO. The blink's circle is
+ * ToME's rounded one now (`teleportRandom`, `tileDistance`) and player sight is
+ * still the exact disc, so a range-10 blink can land on 32 rim tiles (dx²+dy²
+ * from 101 to 110) just outside what you can see. Both are 10 in ToME's own
+ * measure; they agree again when sight takes the rounded circle.
  */
 const RANGE = 10;
 

@@ -67,8 +67,11 @@ import { talentRuntimeFor } from '../../src/server/main.ts';
 import { createWorld } from '../../src/server/world/world.ts';
 import { playerCombat } from '../../src/server/content/classes.ts';
 import { ActorKind } from '../../src/shared/protocol.ts';
+import { chebyshev } from '../../src/shared/coords.ts';
+import { tileDistance } from '../../src/shared/distance.ts';
 import {
   CALL_SHADOWS_ID,
+  SHADOW_SUMMONER_RANGE,
   maxShadowsAt,
   shadowMaxHpAt,
   shadowsOf,
@@ -325,7 +328,7 @@ describe('Call Shadows puts a body on the map', () => {
 
   it('goes when it is left behind — the leash upstream keeps in its AI', () => {
     /**
-     * `ai_state.summoner_range = 10` (shadows.lua:265). Upstream's shadow AI
+     * `ai_state.summoner_range = 10` (shadows.lua:248). Upstream's shadow AI
      * hovers inside it; ours enforces it as a LEASH on the base clock, because
      * a REALM's world goes on ticking a body whose summoner walked through a
      * door and upstream's levels simply stop existing.
@@ -341,6 +344,70 @@ describe('Call Shadows puts a body on the map', () => {
     table.ren.x = shadow.x + 11;
     table.advance();
     expect(table.world.getActor(shadow.id), 'the shadow followed nobody home').toBeUndefined();
+  });
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THE LEASH IS ToME'S ROUNDED CIRCLE, NOT A SQUARE AND NOT THE EXACT LINE.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Upstream's shadow AI (`ai/shadow.lua`, git-only in the reference, at
+   * `-- out of summoner range?`) asks `core.fov.distance(...) > summoner_range`,
+   * and `core.fov.distance` rounds half-up. So, R across and `dy` down:
+   *
+   *   the LAST row kept is the largest `dy` with R² + dy² <= R² + R, which
+   *     rounds to R — (10,3) at R = 10, 10.44 long;
+   *   the FIRST row reaped is one further — (10,4), 10.77, which rounds to 11
+   *     and is still R in Chebyshev.
+   *
+   * Derived from `SHADOW_SUMMONER_RANGE`, not typed, so a retuned leash moves
+   * the boundary with it. The case above is axis-aligned, where every metric
+   * agrees, and could not tell any of them apart.
+   *
+   * MUTANTS: the Chebyshev square keeps the reaped one; the exact
+   * `Math.hypot` reaps the kept one.
+   */
+  function leashedAt(seed: string, offset: { x: number; y: number }) {
+    const table = arena(seed);
+    raise(table, CALL_SHADOWS_ID);
+    expect(pumpUntilShadow(table)).toBeGreaterThan(0);
+    const shadow = shadowsOf(table.world, 'p1')[0];
+    if (shadow === undefined) throw new Error('no shadow');
+    // Ren stands at (20, 20). Up and to the left keeps both offsets on the
+    // test level's open floor, and `placeAt` refuses anything that is not.
+    const tile = { x: table.ren.x - offset.x, y: table.ren.y - offset.y };
+    expect(table.world.placeAt(shadow.id, tile), 'the shadow could not stand there').toBe(true);
+    expect({ x: shadow.x, y: shadow.y }).toEqual(tile);
+    return { table, shadow };
+  }
+
+  const R = SHADOW_SUMMONER_RANGE;
+  const KEEP_DY = Math.floor(Math.sqrt(R));
+  const kept = { x: R, y: KEEP_DY };
+  const reaped = { x: R, y: KEEP_DY + 1 };
+
+  it('keeps a shadow whose distance ROUNDS to the leash', () => {
+    expect(Math.hypot(kept.x, kept.y), 'the fixture is not past R exactly').toBeGreaterThan(R);
+    expect(tileDistance({ x: 0, y: 0 }, kept), 'the fixture does not round to R').toBe(R);
+
+    const { table, shadow } = leashedAt('shadows-leash-kept', kept);
+    table.advance();
+    expect(
+      table.world.getActor(shadow.id),
+      'a shadow inside ToME`s circle was reaped',
+    ).toBeDefined();
+  });
+
+  it('reaps a shadow that rounds past the leash while still inside its square', () => {
+    expect(chebyshev({ x: 0, y: 0 }, reaped), 'the fixture left the square').toBe(R);
+    expect(tileDistance({ x: 0, y: 0 }, reaped), 'the fixture does not round past R').toBe(R + 1);
+
+    const { table, shadow } = leashedAt('shadows-leash-reaped', reaped);
+    table.advance();
+    expect(
+      table.world.getActor(shadow.id),
+      'the square kept a shadow ToME recalls',
+    ).toBeUndefined();
   });
 
   it('keeps to its ceiling and its cadence, and neither is a coincidence', () => {

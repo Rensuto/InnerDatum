@@ -60,8 +60,9 @@
  *   talent's raw rank — so even a rank-1 shadow blinks, charges and heals
  *   itself upstream. None of the three crossed:
  *     `SHADOW_PHASE_DOOR` (:37-63) teleports toward `ai_state.shadow_wall_target`
- *       or the summoner. `teleportRandom` has no port here and the AI state it
- *       aims at belongs to the `"shadow"` AI, which is the next item.
+ *       or the summoner. `teleportRandom` is ported now (Phase Door,
+ *       engine/talents.ts), but the AI state it aims at belongs to the
+ *       `"shadow"` AI, which is the next item.
  *     `SHADOW_BLINDSIDE` (:65-102) is `talents/rush.ts`'s shape — appear beside
  *       a target up to 10 tiles away and hit for `combatTalentWeaponDamage(t,
  *       0.9, 1.9)`. It is portable and it is not ported, because a MONSTER
@@ -127,6 +128,7 @@
 
 import { RANK_VALUE, lifeGainedTo } from '../../shared/leveling.ts';
 import { bound, combatTalentScale } from '../../shared/scale.ts';
+import { tileDistance } from '../../shared/distance.ts';
 import {
   BOUND_SHADOW,
   SHADOW_ATK_BASE,
@@ -565,6 +567,21 @@ function summonPass(
  *     within `summoner_range`, which is `ai_state.summoner_range = 10` (:248)
  *     used as the bound upstream's AI uses it as a target.
  *
+ * ═══ MEASURED THE WAY THE SHADOW AI MEASURES IT ═══
+ * Upstream's test is in the module's `ai/shadow.lua`, a file that is in the
+ * reference repository's git history but not in its sparse checkout
+ * (`git -C reference/t-engine4 show HEAD:game/modules/tome/ai/shadow.lua`),
+ * under the comment `-- out of summoner range?`:
+ *
+ *     if core.fov.distance(self.x, self.y, self.summoner.x, self.summoner.y)
+ *         > self.ai_state.summoner_range then
+ *
+ * — the straight line ROUNDED HALF-UP, which is `tileDistance`, and strictly
+ * greater. So a shadow at (10,3) from its summoner, 10.44 tiles, rounds to 10
+ * and stays, and one at (10,4), 10.77 tiles, rounds to 11 and goes. This was
+ * a Chebyshev square, which kept both, and every shadow out to (10,10) with
+ * them.
+ *
  * A DOWNED PLAYER IS NOT A DEAD ONE. `alive` goes false the moment a detective
  * hits zero and the five-turn rescue window opens (`engine/downed.ts`), and a
  * shadow that vanished at that instant would remove the one body that might
@@ -585,9 +602,7 @@ function shadowPass(
   const sheet = engine.sheetOf(summonerId);
   if (sheet === undefined || !sheet.sustained.has(CALL_SHADOWS_ID)) return { reap: [shadow.id] };
 
-  const dx = Math.abs(summoner.x - shadow.x);
-  const dy = Math.abs(summoner.y - shadow.y);
-  if (Math.max(dx, dy) > SHADOW_SUMMONER_RANGE) return { reap: [shadow.id] };
+  if (tileDistance(summoner, shadow) > SHADOW_SUMMONER_RANGE) return { reap: [shadow.id] };
 
   /**
    * `feed()` — see `shadowCombatAt`. Re-derived from the body's OWN level, so a

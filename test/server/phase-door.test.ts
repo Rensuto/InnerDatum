@@ -36,12 +36,15 @@ import { effectsOn, setEffect, statusApplier } from '../../src/server/engine/eff
 import { talentRuntimeFor } from '../../src/server/main.ts';
 import { createWorld } from '../../src/server/world/world.ts';
 import { makeTestMap } from '../../src/shared/level.ts';
+import { tileDistance } from '../../src/shared/distance.ts';
+import { TileCode } from '../../src/shared/protocol.ts';
 import { teleportRandom } from '../../src/server/engine/talents.ts';
 import { phaseDoorRune } from '../../src/server/talents/phase_door_rune.ts';
 import { UNFILED } from '../../src/server/content/origins.ts';
 import { STUNNED } from '../../src/server/content/effects.ts';
 import { recomposeCombat } from '../../src/server/engine/effects.ts';
 import { trained } from '../helpers/trained.ts';
+import type { TileXY } from '../../src/shared/coords.ts';
 
 /** A body that knows the rune, in a real world, with a real runtime. */
 function arena() {
@@ -118,22 +121,76 @@ describe('the blink', () => {
 
   it('stays inside the range it promises, measured as a disc', () => {
     /**
-     * `core.fov.distance` is Euclidean, so the square loop upstream scans is the
-     * BOUNDING BOX and `<= dist` carves the circle out of it. Chebyshev here
-     * would hand out corners a tenth of a tile further than the sentence says —
-     * the same trap `DEFAULT_SIGHT_RADIUS` documents.
+     * `core.fov.distance` is the straight line ROUNDED HALF-UP
+     * (`tileDistance`), so the square loop upstream scans is the BOUNDING BOX
+     * and `<= dist` carves ToME's circle out of it. The box would hand out
+     * corners the circle does not reach.
      */
     const { world, player } = arena();
     const RANGE = 4;
     for (let i = 0; i < 100; i += 1) {
       const from = { x: player.x, y: player.y };
       if (!teleportRandom(world, player, RANGE, world.rng)) continue;
-      const away = Math.hypot(player.x - from.x, player.y - from.y);
+      const away = tileDistance(from, player);
       expect(
         away,
         `blinked ${String(away)} tiles on a range of ${String(RANGE)}`,
       ).toBeLessThanOrEqual(RANGE);
     }
+  });
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * ToME'S CIRCLE, NOT THE EXACT ONE — `tome/class/Actor.lua:1564-1570`.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Both tests are `core.fov.distance`, which rounds. So the rim of a range-4
+   * blink holds (4,2), 4.47 tiles off, and a minimum range of 3 admits (2,2),
+   * 2.83 tiles off. The exact length refuses both.
+   *
+   * Each floor below is solid except the caster's tile and ONE other, so the
+   * only question the blink can answer is whether that one tile is in range.
+   *
+   * MUTANT: measure either test with `Math.hypot` again. That tile leaves the
+   * list, the list is empty and the blink answers false.
+   */
+  function pocket(offset: TileXY) {
+    const W = 16;
+    const caster = { x: 5, y: 5 };
+    const landing = { x: caster.x + offset.x, y: caster.y + offset.y };
+    const tiles = new Array<number>(W * W).fill(TileCode.WALL);
+    tiles[caster.y * W + caster.x] = TileCode.FLOOR;
+    tiles[landing.y * W + landing.x] = TileCode.FLOOR;
+    const world = createWorld('blink-pocket', {
+      view: { w: W, h: W, tiles },
+      spawns: [caster],
+      sites: new Map<string, string>(),
+    });
+    const player = world.addPlayer('p1', 'Dalt');
+    return { world, player, caster, landing };
+  }
+
+  it('reaches (4,2) on a range of 4, which rounds to 4', () => {
+    const { world, player, caster, landing } = pocket({ x: 4, y: 2 });
+    expect({ x: player.x, y: player.y }, 'the caster did not start in the pocket').toEqual(caster);
+    expect(Math.hypot(4, 2), 'the fixture is not past 4 exactly').toBeGreaterThan(4);
+    expect(tileDistance(caster, landing), 'the fixture does not round to 4').toBe(4);
+
+    expect(teleportRandom(world, player, 4, world.rng), 'the rim tile was out of range').toBe(true);
+    expect({ x: player.x, y: player.y }).toEqual(landing);
+  });
+
+  it('lets a minimum range of 3 take (2,2), which rounds to 3', () => {
+    const { world, player, caster, landing } = pocket({ x: 2, y: 2 });
+    expect({ x: player.x, y: player.y }, 'the caster did not start in the pocket').toEqual(caster);
+    expect(Math.hypot(2, 2), 'the fixture is not short of 3 exactly').toBeLessThan(3);
+    expect(tileDistance(caster, landing), 'the fixture does not round to 3').toBe(3);
+
+    expect(
+      teleportRandom(world, player, 4, world.rng, 3),
+      'the diagonal was inside the minimum range',
+    ).toBe(true);
+    expect({ x: player.x, y: player.y }).toEqual(landing);
   });
 
   it('answers false rather than hanging when there is nowhere to go', () => {

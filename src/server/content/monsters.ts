@@ -3794,18 +3794,18 @@ export const UNDERMOST_PICKET: MonsterTemplate = Object.freeze({
  * the summoner's level. Exported because `talents/call_shadows.ts` builds the
  * per-level half and the two must not disagree about the fixed half.
  */
-/** `combat_def = 3` — shadows.lua:227. */
+/** `combat_def = 3` — shadows.lua:209. */
 export const SHADOW_DEF = 3;
-/** `atk = 10 + level` — shadows.lua:230. This is the 10. */
+/** `atk = 10 + level` — shadows.lua:212. This is the 10. */
 export const SHADOW_ATK_BASE = 10;
-/** `apr = 8` — shadows.lua:231. */
+/** `apr = 8` — shadows.lua:213. */
 export const SHADOW_APR = 8;
-/** `resists_pen = { all=25 }` — shadows.lua:253. */
+/** `resists_pen = { all=25 }` — shadows.lua:242. */
 export const SHADOW_RESIST_PEN = 25;
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════
- * THE MOVING HALF — `createShadow`'s stat block, shadows.lua:217-232.
+ * THE MOVING HALF — `createShadow`'s stat block, shadows.lua:201-213.
  * ═══════════════════════════════════════════════════════════════════════════
  *
  * ```lua
@@ -3840,14 +3840,14 @@ export function shadowStatsAt(level: number): PrimaryStats {
   };
 }
 
-/** `dam = math.floor(self:combatScale(level, 1.5, 1, 75, 50, 0.75))` — shadows.lua:229. */
+/** `dam = math.floor(self:combatScale(level, 1.5, 1, 75, 50, 0.75))` — shadows.lua:211. */
 export function shadowWeaponDamageAt(level: number): number {
   return Math.floor(combatScale(level, SHADOW_DAM_LOW, 1, SHADOW_DAM_HIGH, 50, SHADOW_STAT_POWER));
 }
 
 /** The `power` every one of `createShadow`'s curves uses. shadows.lua:219-229. */
 const SHADOW_STAT_POWER = 0.75;
-/** `dam` at level 1 and at level 50 — shadows.lua:229. */
+/** `dam` at level 1 and at level 50 — shadows.lua:211. */
 const SHADOW_DAM_LOW = 1.5;
 const SHADOW_DAM_HIGH = 75;
 
@@ -3956,9 +3956,16 @@ export const BOUND_SHADOW: MonsterTemplate = Object.freeze({
    * the eight-to-ten band it can see and the shadow cannot.
    *
    * TEN KEEPS THE PAIRING INTACT because the leash is ten as well
-   * (`SHADOW_SUMMONER_RANGE`): the furthest thing it can notice is exactly as
-   * far as it is allowed to go. Upstream's eight is written down here rather
-   * than exported as a constant nothing reads.
+   * (`SHADOW_SUMMONER_RANGE`): the furthest thing it can notice is as far as
+   * it is allowed to go. Upstream's eight is written down here rather than
+   * exported as a constant nothing reads.
+   *
+   * NOT EXACTLY, FOR NOW: the leash is ToME's rounded circle
+   * (`call_shadows.ts`), while monster sight is still a Chebyshev square
+   * (`visibleEnemies`, scheduler.ts) until the sight increment of the distance
+   * port. So a shadow can notice a husk at (9,9) and be reaped chasing it at
+   * (8,8), which rounds to 11. It was kept all the way to (10,10) while both
+   * were squares.
    */
   aggroRange: DEFAULT_SIGHT_RADIUS,
   preferredRange: 1,

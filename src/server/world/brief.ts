@@ -57,6 +57,7 @@ import { DEFAULT_SIGHT_RADIUS } from '../../shared/sight.ts';
 import { FOLLOW_LEASH } from '../ai/npc.ts';
 import { Faction, areEnemies } from '../engine/actor.ts';
 import { DIR_ORDER, DIR_VECTORS, bearingWord, chebyshev } from '../../shared/coords.ts';
+import { tileDistance } from '../../shared/distance.ts';
 import { canWalk, tileAt } from '../../shared/level.ts';
 import { monsterInit } from '../content/monsters.ts';
 import { standFolk } from '../content/townsfolk.ts';
@@ -1253,9 +1254,10 @@ function keepAnchor(realm: Realm, walking: MonsterActor): void {
  * reason to stand and wait for somebody.
  *
  * `DEFAULT_SIGHT_RADIUS`, EUCLIDEAN, because that is what this game means by
- * being able to see something (`shared/vision.ts`, `distanceBand` above), and
- * the sentence the rule is written from is *"you were there when they got
- * there"*.
+ * being able to see something (`shared/vision.ts`), and the sentence the rule
+ * is written from is *"you were there when they got there"*. `distanceBand`
+ * below was measured the same way once and now rounds, as ToME's does; this
+ * test stays exact until sight itself moves to ToME's circle.
  *
  * ═══ ANY PLAYER ON THE FLOOR IS THE ACCEPTING PARTY ═══
  * An Inner realm holds exactly one party — `Realms.open` is keyed on
@@ -1384,7 +1386,7 @@ export function briefSnapshotFor(
     at === undefined
       ? {}
       : {
-          band: distanceBand(Math.hypot(at.x - asker.x, at.y - asker.y)),
+          band: distanceBand(tileDistance(at, asker)),
           bearing: bearingWord(at.x - asker.x, at.y - asker.y),
         };
   return {
@@ -1420,8 +1422,11 @@ function objectiveCell(realm: Realm, brief: Brief): TileXY | undefined {
  * else dist = "still far away" end
  * ```
  *
- * EUCLIDEAN, because upstream's is — `core.fov.distance` (`Party.lua:411`) is a
- * straight-line radius and the bands were chosen against it. This is a sentence
+ * THE CALLER PASSES `tileDistance`, because upstream's is
+ * `core.fov.distance` (`tome/class/Party.lua:411`): the straight line ROUNDED
+ * HALF-UP to a whole number of tiles, and the bands were chosen against it. It
+ * was the exact length here, which put a body 7.62 tiles off at (7,3) in
+ * "very close" where ToME rounds it to 8 and says "close". This is a sentence
  * somebody reads and then walks, so it is deliberately coarse: a number would be
  * a map mark with extra steps, and `BeaconView`'s header is emphatic that an
  * objective's position is *"the intelligence the fog exists to withhold"*.

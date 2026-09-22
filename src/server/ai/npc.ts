@@ -438,7 +438,7 @@ export const FOLLOW_LEASH = 2;
  * ═══════════════════════════════════════════════════════════════════════════
  *
  * `tome/class/Party.lua:69` is `actor.ai_state.tactic_leash = actor.ai_state.tactic_leash or 10`,
- * the default every summoned party member gets, and `shadows.lua:249` is the
+ * the default every summoned party member gets, and `shadows.lua:248` is the
  * same ten for a shadow's `summoner_range`. ToME's escort start overrides it to
  * 100 on acceptance; **we take the summon default and not the escort override**,
  * because a hundred-tile radius on a fifty-by-fifty floor is a companion in
