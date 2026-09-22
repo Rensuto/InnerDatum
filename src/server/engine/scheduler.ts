@@ -3321,10 +3321,13 @@ function talentRefusalToRefusal(reason: TalentRefusal): Refusal {
     case TalentRefusal.NoAp:
     case TalentRefusal.NoMp:
     case TalentRefusal.NoResource:
-    /* falls through — A PASSIVE HAS NOTHING TO FIRE, which from the turn's point
-       of view is the same outcome as a cooldown: the intent produced no effect
-       and cost no energy. It joins the group rather than taking a `Refusal` of
-       its own, because nothing downstream would draw it differently. */
+    case TalentRefusal.NoShooter:
+    /* falls through — NOTHING IN THE HAND TO FIRE (`NoShooter`, `archerPreUse`)
+       is the build and not the aim, so it is here with the budgets. A PASSIVE
+       HAS NOTHING TO FIRE, which from the turn's point of view is the same
+       outcome as a cooldown: the intent produced no effect and cost no energy.
+       It joins the group rather than taking a `Refusal` of its own, because
+       nothing downstream would draw it differently. */
     case TalentRefusal.Passive:
       return Refusal.NoTalentEffect;
   }

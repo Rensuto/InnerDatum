@@ -534,6 +534,13 @@ const CLOSE_SUPERSEDED = 4001;
 type WsFrame = Buffer | ArrayBuffer | Buffer[];
 
 /**
+ * A body's paper doll, slot -> item id — `PlayerActor.equipped`, named so
+ * `gateKeyFor`'s parameter still fits on the one line gate-refresh.test.ts
+ * reads it from.
+ */
+type Worn = PlayerActor['equipped'];
+
+/**
  * The parts of the `ws` socket this gateway touches.
  *
  * `ws@8.21` ships no type declarations and `@types/ws` is not a dependency
@@ -896,7 +903,9 @@ type Session = {
    * loadout — every talent, every description, both prose lines each — on every
    * kill would be a frame the size of the talent panel several times a fight.
    * This holds only what can actually OPEN A GATE: the character level and the
-   * six attributes `statRequiredFor` reads.
+   * six attributes `statRequiredFor` reads — and the item in the weapon hand,
+   * which opens or shuts the other gate the frame carries, `unusable` on a gun
+   * talent (`archerPreUse`). See `gateKeyFor` for why the id and not the answer.
    */
   gateKey: string | null;
   /**
@@ -1089,6 +1098,12 @@ export type TalentRefusal = Extract<
   | 'on_cooldown'
   | 'no_resource'
   | 'no_los'
+  /**
+   * A RULE WHOSE SENTENCE THE SERVER ALREADY HOLDS — today exactly one, a gun
+   * talent pressed with no gun in the hand (`TalentRefusal.NoShooter`). No
+   * targeting control can act on it, so the client shows the server's words.
+   */
+  | 'refused'
 >;
 
 /**
@@ -6087,10 +6102,53 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     cun: statValue(sheet, 'cun'),
   });
 
-  const gateKeyFor = (viewer: { level: number; combat?: Combatant }): string =>
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * AND THE WEAPON HAND, WHICH IS THE THIRD THING A LOADOUT FRAME READS.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `LoadoutTalent.unusable` is set on a gun talent when the hand holds no gun
+   * (`archerPreUse`, techniques/archery.lua:46-50, asked by `toLoadoutView`).
+   * The answer flips when the MAINHAND changes and at no other time — the
+   * composed weapon is the class's own unless a worn mainhand with a combat
+   * table replaces it (`composeSheet`, engine/equipment.ts), and a class change
+   * already resends from `handleChooseClass`. Without this term a player who put
+   * a maul in her hand kept six lit gun buttons until she levelled or bought an
+   * attribute, and every press was refused.
+   *
+   * ═══ WHY THE KEY AND NOT A `sendLoadout` IN `handleEquip` ═══
+   * `handleEquip` and `handleUnequip` both end in `pumpAndBroadcast`, and every
+   * pump walks `refreshViewers`, which is where this key is compared. So the
+   * resend needs no line in either handler, and it holds for any FUTURE writer
+   * of `equipped` that is followed by a pump — a weapon that breaks, a thief —
+   * without that writer having to know the loadout reads the hand.
+   *
+   * IT COVERS WRITES TO `equipped` AND NOTHING ELSE. A new INPUT to
+   * `archerPreUse` must join this key in the same commit: upstream's disarm is
+   * an attribute (`self:attr("disarmed")`, class/interface/Archery.lua:745-746)
+   * that never touches a slot, so ported as one it would flip the answer with
+   * the mainhand id unchanged and no loadout would follow. Ammunition would be
+   * the same. A
+   * `sendLoadout` bolted onto the two verbs would be a rule each new writer had
+   * to remember; this is the arrangement the level and the six attributes
+   * already use, for the reason `Session.gateKey` gives. The join needs nothing:
+   * `hello` sends the loadout after the save's gear is on, and its own closing
+   * pump seeds this key from that same hand.
+   *
+   * ═══ THE HAND'S ITEM ID, NOT "IS IT A GUN" ═══
+   * net/** may not import engine/talents.ts, and restating `weapon.archery ===
+   * true` here would be a second copy of `archerPreUse` — the one rule the grey
+   * and the refusal must share. The id is the INPUT, and it decides nothing: it
+   * says "the hand changed, ask again", and `toLoadoutView` does the asking.
+   * It also refreshes `scales`, which reads the same hand's `damMod` and was
+   * stale across a weapon swap for the same reason.
+   *
+   * Cheap to be broad: a hand changes a handful of times a delve, never per turn.
+   */
+  const gateKeyFor = (viewer: { level: number; combat?: Combatant; equipped?: Worn }): string =>
     `${String(viewer.level)}|${STAT_ORDER.map((which) =>
       String(statValue(viewer.combat ?? {}, which)),
-    ).join(',')}`;
+    ).join(',')}|${viewer.equipped?.mainhand ?? ''}`;
 
   /**
    * Resend the hotbar when — and only when — a gate could have opened or shut.

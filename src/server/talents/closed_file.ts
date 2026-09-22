@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Dalton Barraclough
-// SHAPE:   t-engine4 game/modules/tome/data/talents/cunning/dirty.lua -- the
-//          execute shape: a blow whose multiplier is a function of how little
-//          the target has left.
+// SHAPE:   t-engine4 game/modules/tome/data/talents/techniques/2h-assault.lua:
+//          161-195 -- Execution, the execute shape: a blow whose multiplier is a
+//          function of how little the target has left. Ours is FIRED, not swung.
 // NUMBERS: authored.
 // T-Engine4 (C) 2009-2018 Nicolas Casalini "DarkGod" -- https://te4.org/license
 
@@ -108,6 +108,12 @@ export const closedFile: Talent = {
   iconId: 'icon_active_closed_file',
   cost: { ap: AP_COST, resource: FOCUS_COST },
   cooldownTurns: COOLDOWN_TURNS,
+  // FIRED FROM THE REVOLVER, and the flag is OURS. The SHAPE is Execution, a
+  // melee execute whose own `on_pre_use` asks for a two-handed weapon
+  // (2h-assault.lua:171); this talent is authored as a shot — six tiles and the
+  // gun's dead zone — so it takes the gun's precondition instead
+  // (`archerPreUse`, techniques/archery.lua:46-50). See `Talent.archery`.
+  archery: true,
   targeting: {
     shape: TargetShape.Single,
     range: RANGE,

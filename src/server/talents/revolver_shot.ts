@@ -102,6 +102,10 @@ export const revolverShot: Talent = {
   // At-will, like every reliable slot: skills/*.json carry no cooldown field
   // (0 of 33, docs/data-schemas.md § 5) and AP is the limiter.
   cooldownTurns: 0,
+  // FIRED FROM THE REVOLVER, so refused without it: Shoot's `on_pre_use` is
+  // `wardenPreUse` (techniques/archery.lua:82), which is `archerPreUse` plus a
+  // Warden's weapon swap we do not have. See `Talent.archery`.
+  archery: true,
   targeting: {
     shape: TargetShape.Single,
     range: RANGE,

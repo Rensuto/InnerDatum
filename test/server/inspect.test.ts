@@ -576,6 +576,37 @@ describe('`attackBlockedReason` asks exactly the question `canAttack` answers', 
     expect(attackBlockedReason(world, shooter, husk)).toContain('too close');
   });
 
+  it('says nothing is blocking an Inspector who can punch what stands on her', () => {
+    /**
+     * THE REAL SHEET, gun and all. At contact `barehandAt` lets her fist
+     * through (`rangeRefusal`, engine/combat.ts), so the card must not say
+     * "too close" there — it did, while her bump landed. One step further out
+     * is the hole the class is built around, and the card must still say so.
+     */
+    const world = createWorld('inspect-fist');
+    const shooter = world.addPlayer('p_inspector', 'Wren', { combat: INSPECTOR.combat });
+    shooter.x = 10;
+    shooter.y = 10;
+    expect(shooter.combat?.weapon?.archery, 'the Inspector lost her gun').toBe(true);
+
+    const husk = world.addMonster('m_contact', {
+      name: 'Bent Husk',
+      sprite: 'enemy_index_husk_s',
+      x: 11,
+      y: 10,
+      profile: AiProfile.MeleeChaser,
+    });
+    husk.x = 11;
+    husk.y = 10;
+
+    expect(canAttack(shooter, husk, world), 'the fist is refused at contact').toBeNull();
+    expect(attackBlockedReason(world, shooter, husk)).toBeUndefined();
+
+    husk.x = 12;
+    expect(canAttack(shooter, husk, world)).toBe(AttackRefusal.MinRange);
+    expect(attackBlockedReason(world, shooter, husk)).toContain('too close');
+  });
+
   it('lets a melee body swing on the diagonal, exactly as the scheduler does', () => {
     // `MELEE_REACH` 1.5 contains √2. A raw Euclidean 1 here would have the card
     // refuse the four diagonals that bump-attack has always allowed.

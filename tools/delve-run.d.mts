@@ -26,6 +26,11 @@
  * opinion about what a site, a class or a body is.
  */
 
+import type { ClassDef } from '../src/server/content/classes.ts';
+import type { DownedState } from '../src/server/engine/downed.ts';
+import type { TalentSheet } from '../src/server/engine/talents.ts';
+import type { Actor, World } from '../src/server/world/world.ts';
+
 /** What `run` reports back. Only the fields a test may read are named. */
 export type ProbeRun = {
   /** `clear` (no foes left), `stall` (the driver could not finish) or `wipe`. */
@@ -42,6 +47,33 @@ export type ProbeRun = {
   readonly levelOut: readonly number[];
   /** Each body's experience bar at the end, in party order. */
   readonly xpOut: readonly number[];
+  /**
+   * Respawns pressed during the run — the deaths `deaths`/`downCount` cannot
+   * see, because a respawned body is standing again by the end.
+   */
+  readonly respawned: number;
+  /**
+   * What the turns were spent on, one count per verb (`shot`, `bumped`,
+   * `moved`, `held`, `closed`, `revived`, `respawned`, ...). A verb the run
+   * never used may be absent rather than zero.
+   */
+  readonly orders: Readonly<Record<string, number>>;
+};
+
+/**
+ * What `opts.stage` is handed: the floor, the survival table and each body as
+ * the driver holds it. THE SERVER'S OWN TYPES, imported rather than restated —
+ * a test arranging a room reaches the real objects, and a shape written out
+ * here would be the second opinion the note above refuses.
+ */
+export type ProbeStage = {
+  readonly world: World;
+  readonly downed: DownedState;
+  readonly members: readonly {
+    readonly body: Actor;
+    readonly cls: ClassDef;
+    readonly sheet: TalentSheet;
+  }[];
 };
 
 /** One party, one floor of one site, one seed — the driver every probe shares. */
@@ -58,5 +90,7 @@ export function run(
     lantern?: boolean;
     equipped?: unknown;
     strength?: { level: number; size: number };
+    /** Arrange the room before the first turn. Tests only; see the call in delve-run.mjs. */
+    stage?: (scene: ProbeStage) => void;
   },
 ): ProbeRun;

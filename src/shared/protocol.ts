@@ -1549,6 +1549,49 @@ export type LoadoutTalent = {
   descNext: string | null;
   /**
    * ═════════════════════════════════════════════════════════════════════════
+   * WHY THIS CANNOT BE PRESSED WITH THE BODY AS IT STANDS — or absent.
+   * ═════════════════════════════════════════════════════════════════════════
+   *
+   * `locked` below says no to the next POINT; this says no to the PRESS. Today
+   * exactly one rule sets it: a talent that fires the gun in the hand
+   * (`Talent.archery`) while the hand holds no gun — `archerPreUse`
+   * (techniques/archery.lua:46-50), the `on_pre_use` every archery talent
+   * upstream carries. The sentence is `NO_SHOOTER_REASON`, the string the
+   * refused press itself carries (`refusalSentence`, turn-engine.ts), so the
+   * greyed button and the refusal cannot say two different things.
+   *
+   * ═══ UPSTREAM GREYS IT, AND THIS IS THE FACT OURS WAS MISSING ═══
+   * engine/HotkeysIconsDisplay.lua:182 asks `preUseTalent(t, true, true)` —
+   * silent, fake — of every talent on the bar (:182 for one cooling down, :194
+   * for one that is not) and draws the `disabled` frame when it fails;
+   * engine/HotkeysDisplay.lua:129 and tome/dialogs/UseTalents.lua:38 (and :302)
+   * do the same for the text bar and the talents list. That call reaches
+   * `on_pre_use` at tome/class/Actor.lua:5547. Without this field all six of an Inspector's
+   * gun buttons stayed lit with a maul in her hand, and every press was refused.
+   *
+   * ═══ COMPUTED SERVER-SIDE, LIKE EVERY OTHER ANSWER ON THIS TYPE ═══
+   * The client has no `archery` flag to read and must not be given one: "is
+   * this a gun" is `archerPreUse`'s question, answered once in
+   * engine/talents.ts, and `toLoadoutView` (content/classes.ts) asks it of the
+   * COMPOSED sheet — the one `canUseTalent` refuses against.
+   *
+   * A SENTENCE AND NOT A BOOLEAN, for `lockedReason`'s reason: a `usable: false`
+   * would leave the tooltip to invent the why, and the why — empty your weapon
+   * hand — is the only part a player can act on.
+   *
+   * ═══ ONLY A RULE ABOUT THE BODY, NEVER ONE ABOUT THE TURN OR THE AIM ═══
+   * Cooldowns and budgets already grey the button from their own frames
+   * (`cooldowns`, `resource`) on every turn; range and sight depend on a tile
+   * nobody has picked yet. This is for what holds until the body changes, and
+   * the loadout is re-sent when the hand does (`gateKeyFor`, net/gateway.ts).
+   *
+   * OPTIONAL, so no `PROTOCOL_VERSION` bump: an older client ignores it, draws
+   * the lit button it always drew, and is refused with this same sentence —
+   * which is today's behaviour. ABSENT MEANS PRESSABLE, never an empty string.
+   */
+  unusable?: string;
+  /**
+   * ═════════════════════════════════════════════════════════════════════════
    * WHETHER THE NEXT POINT MAY BE SPENT HERE AT ALL, AND WHY NOT.
    * ═════════════════════════════════════════════════════════════════════════
    *

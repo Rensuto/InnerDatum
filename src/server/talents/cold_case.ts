@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Dalton Barraclough
-// SHAPE:   t-engine4 game/modules/tome/data/talents/techniques/archery-utility.lua
-//          -- the archer's distance talents, which pay for the range the class
-//          is trying to keep.
+// SHAPE:   t-engine4 game/modules/tome/data/talents/techniques/archery.lua:463-787
+//          -- `technique/archery-utility` (Headshot, Volley, Called Shots,
+//          Bullseye), the archer's distance talents, which pay for the range the
+//          class is trying to keep. The category lives in archery.lua; there is
+//          no archery-utility.lua.
 // NUMBERS: authored.
 // T-Engine4 (C) 2009-2018 Nicolas Casalini "DarkGod" -- https://te4.org/license
 

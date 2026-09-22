@@ -310,6 +310,8 @@ import {
   hotbarDropTargetAt,
   hotbarSlotAt,
   itemSlotAction,
+  talentAffordable,
+  unpressableReason,
   wornSlotOf,
 } from './ui/hotbar.ts';
 import { createContextMenu, MapVerb } from './ui/contextmenu.ts';
@@ -4988,52 +4990,14 @@ function talentInSlot(index: number): LoadoutTalent | undefined {
 }
 
 /**
- * Can this client see a reason the talent is unpayable?
- *
- * ADVISORY, and used only to grey a button. The server re-checks every budget on
- * arrival and answers `no_resource`; nothing here refuses to send.
- *
- * THE AP FRAME LANDED, AND THIS IS THE COMPARISON IT WAS WAITING FOR.
- *
- * This note used to end *"When an AP/MP frame lands, the two extra comparisons
- * go here and nothing else changes"*, and that turned out to be exactly right —
- * `ResourceView` now carries `ap`/`maxAp` and the AP half is below. It is still
- * ADVISORY: the server re-checks every budget on arrival and answers
- * `no_resource`, and nothing here refuses to send.
- *
- * MP IS STILL NOT CHECKED, deliberately. Only one talent in the game spends any
- * (Fog Step, 1), and a client that greyed a button on a budget the engine does
- * not yet gate would be lying in the other direction. It goes in beside the AP
- * line when a move costs MP — one comparison, same shape.
- *
- * `ap === undefined` MEANS "AN OLDER SERVER", not "no budget". The field is
- * optional so that no version bump was needed, which means a client can outlive
- * a server that never sends it; treating absent as zero would grey every button
- * on the bar.
+ * THE BAR'S ANSWER FOR THIS CLIENT'S OWN POOL — `talentAffordable` (ui/hotbar.ts)
+ * asked with the last `resource` frame. The whole rule and its reasons live
+ * there, beside `unpressableReason`, as a pure function a test can drive; it was
+ * here, where the only guard it could have was a scrape of this file's text, and
+ * a mutant that kept the text and ignored `unusable` passed every test.
  */
 function affordable(talent: LoadoutTalent): boolean {
-  /**
-   * ═══════════════════════════════════════════════════════════════════════════
-   * A TALENT NOBODY HAS LEARNED IS NOT AFFORDABLE AT ANY PRICE.
-   * ═══════════════════════════════════════════════════════════════════════════
-   *
-   * A class used to be born knowing every talent it owned, so rank 0 was
-   * unreachable and the bar could assume every button on it was a real one. A
-   * class is now born with four of its eighteen — so most of what the panel
-   * lists is owned, drawn, and not yet learned.
-   *
-   * ROUTED THROUGH `affordable` RATHER THAN A NEW SLOT FIELD, deliberately:
-   * `isSlotDisabled` already greys on this, the tooltip already prints a
-   * reason line for it, and the server's `canUseTalent` already answers
-   * `not_learned` — so one predicate keeps the bar, the tip and the rule
-   * saying the same thing. A parallel `known` flag would be a second place
-   * for that agreement to break.
-   */
-  if (talent.level < 1) return false;
-  if (resource === null) return true;
-  if (resource.ap !== undefined && talent.cost.ap > resource.ap) return false;
-  if (talent.cost.resource <= 0) return true;
-  return resource.current >= talent.cost.resource;
+  return talentAffordable(talent, resource);
 }
 
 /**
@@ -6902,9 +6866,11 @@ function refusalText(code: ErrorCode, fallback: string): string {
        * dead code and is not deleted: `attackRefusalToRefusal` still maps
        * `AttackRefusal.MinRange` to `TooClose` for the bump path, so the day a
        * body has a dead zone its basic attack is refused inside — a class whose
-       * weapon is not `archery`, or an Inspector handed a non-archery weapon —
-       * this is the sentence that body gets, and a two-word refusal is the
-       * failure this whole block exists to prevent.
+       * weapon is not `archery` — this is the sentence that body gets, and a
+       * two-word refusal is the failure this whole block exists to prevent. (An
+       * Inspector handed a melee weapon is NOT that body: the gun's reach and
+       * dead zone leave her hand with the gun, `composeSheet` in
+       * server/engine/equipment.ts.)
        */
       return talent === null
         ? 'too close to shoot — back off a step and fire, or use a talent'
@@ -8777,6 +8743,22 @@ async function boot(): Promise<void> {
     }
     targeting?.cancel();
     clearNotice();
+
+    /**
+     * ═══ A PRESS THE SERVER WILL REFUSE SAYS SO BEFORE ANYTHING IS AIMED ═══
+     * Upstream's `useTalent` asks `preUseTalent` OUT LOUD (the non-silent
+     * call reaching `on_pre_use`, tome/class/Actor.lua:5547) and prints its
+     * sentence — *"You require a missile launcher to use this talent."* — before
+     * any targeting opens. Ours opened the cursor on a greyed gun slot, let the
+     * player pick a tile, and only then printed the refusal. `unpressableReason`
+     * is the answer the slot was greyed on, so the notice and the grey are one
+     * fact, and the text after the name is the server's own (`NO_SHOOTER_REASON`).
+     */
+    const why = unpressableReason(talent);
+    if (why !== null) {
+      showNotice(`${talent.name}: ${why}`);
+      return;
+    }
 
     if (talent.shape === TalentShape.Self) {
       sendTalent(talent, null);
@@ -15159,8 +15141,10 @@ async function boot(): Promise<void> {
          * neither may be bound: a bar slot that refuses every press is worse
          * than an empty one. `loadout` holds exactly the actives — passives
          * travel in their own array — and a rank-0 entry is filtered by the
-         * `level` check, which is the same rule `affordable` applies to grey
-         * the slot out.
+         * `level` check, the rank half of what `talentAffordable` greys on.
+         * NOT its `unusable` half, on purpose: a gun talent with a maul in the
+         * hand is still the player's to bind, and lights the moment the hand is
+         * empty.
          */
         /**
          * ═══════════════════════════════════════════════════════════════════

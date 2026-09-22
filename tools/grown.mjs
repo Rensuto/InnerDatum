@@ -222,6 +222,24 @@ export function dressFor(body, level, rng) {
     // RESOLVED BEFORE IT IS WORN, so an id the catalogue cannot answer for never
     // reaches the doll — the same check `handleEquip` makes.
     if (resolveItem(rolled) === undefined) continue;
+    /**
+     * ═══ A GUNMAN DOES NOT PUT HER GUN DOWN FOR A MAUL ═══
+     * The roll is class-blind, and for one class that is not a character
+     * anybody plays. Every mainhand in the catalogue is a melee weapon, and
+     * with one in her hand the Inspector's six gun talents refuse
+     * (`archerPreUse`, engine/talents.ts — upstream's own `on_pre_use`), so a
+     * player who picked one up would be told *"you need your gun in your hand"*
+     * and put it back. Measured before the refusal existed: 35 of 40 dressed
+     * Inspector rows were holding a melee weapon; after it, those rows measured
+     * a gunless melee body, and her first hour read 14 of 28 instead of 19.
+     *
+     * DRAWN AND THEN LEFT ON THE FLOOR, not skipped: the draw above has
+     * already been taken, so every other slot on this body is rolled exactly as
+     * before and the rows stay comparable with every table printed before this.
+     */
+    if (slot === Slot.Mainhand && body.combat?.weapon?.archery === true) {
+      if (resolveItem(rolled)?.combat?.archery !== true) continue;
+    }
     worn[slot] = rolled;
   }
   body.equipped = worn;

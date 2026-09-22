@@ -159,6 +159,7 @@ import type { SpriteSource } from '../render/assets.ts';
 import type { PanelRect } from './panel.ts';
 import { BlitAnchor, blitReduced } from './panel.ts';
 import { STAT_ROWS } from './talents.ts';
+import { unpressableReason } from './hotbar.ts';
 
 // ---------------------------------------------------------------------------
 // Geometry constants. See the header before changing any of them.
@@ -720,7 +721,7 @@ export type SheetRow =
       readonly cost: string;
       /** "3–7", "melee/personal" or "self". ToME's own wording where it has one. */
       readonly range: string;
-      /** "ready", "1 turn" or "3 turns". */
+      /** "ready", "unusable", "1 turn" or "3 turns". */
       readonly cooldown: string;
       /**
        * THE SERVER'S OWN SENTENCE ABOUT THE TALENT, AT THE RANK IT IS AT.
@@ -1164,14 +1165,26 @@ export function charSheetRows(
       // the client not to sort; a sheet that listed them alphabetically would
       // teach a different order from the one under the player's fingers.
       const turns = view.cooldowns[talent.id] ?? 0;
+      /**
+       * ═══ "READY" ONLY IF A PRESS WOULD BE TAKEN — tome/dialogs/UseTalents.lua:34-39 ═══
+       * Upstream's status column is the cooldown first, then a grey
+       * "Unavailable" when `preUseTalent(t, true, true)` fails. This row said
+       * "ready" in the bright colour for a gun talent with a maul in the hand
+       * while the hotbar greyed the same button, and for a rank-0 talent too.
+       * `unpressableReason` is the hotbar's own answer, so the two surfaces
+       * cannot disagree. "unusable" and not upstream's word: the column is
+       * sized for `AP 5 · melee/personal · ready` (TALENT_META_CHARS above),
+       * and eleven letters would lose the word at the sizes that barely fit.
+       */
+      const unpressable = unpressableReason(talent) !== null;
       rows.push({
         kind: SheetRowKind.Talent,
         name: talent.name,
         icon: talent.icon,
         cost: costText(talent, view.resource),
         range: rangeText(talent),
-        cooldown: cooldownText(turns),
-        ready: turns <= 0,
+        cooldown: turns > 0 ? cooldownText(turns) : unpressable ? 'unusable' : 'ready',
+        ready: turns <= 0 && !unpressable,
         desc: talent.desc,
         descNext: talent.level < talent.maxLevel ? (talent.descNext ?? undefined) : undefined,
         rank: `${String(talent.level)}/${String(talent.maxLevel)}`,

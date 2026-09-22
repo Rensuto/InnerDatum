@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Dalton Barraclough
-// SHAPE:   t-engine4 game/modules/tome/data/talents/techniques/archery-utility.lua
-//          -- Crippling Shot: a shot whose point is what it leaves behind
-//          rather than what it takes off.
+// SHAPE:   t-engine4 game/modules/tome/data/talents/techniques/archery.lua:789-816
+//          -- Crippling Shot (commented out of `technique/archery-utility` at
+//          :791 and filed under `technique/other`): a shot whose point is what
+//          it leaves behind rather than what it takes off.
 // NUMBERS: authored. The slow is `SLOWED`, which already exists.
 // T-Engine4 (C) 2009-2018 Nicolas Casalini "DarkGod" -- https://te4.org/license
 
@@ -114,6 +115,9 @@ export const lineOfEnquiry: Talent = {
   iconId: 'icon_active_line_of_enquiry',
   cost: { ap: AP_COST, resource: FOCUS_COST },
   cooldownTurns: COOLDOWN_TURNS,
+  // FIRED FROM THE REVOLVER: Crippling Shot's `on_pre_use = archerPreUse`
+  // (techniques/archery.lua:802). See `Talent.archery`.
+  archery: true,
   targeting: {
     shape: TargetShape.Single,
     range: RANGE,

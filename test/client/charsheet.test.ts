@@ -773,6 +773,29 @@ describe('the talent rows', () => {
     expect(rows.map((row) => row.ready)).toEqual([true, true, false, true]);
   });
 
+  it('never says “ready” for a press the server will refuse — tome/dialogs/UseTalents.lua:38', () => {
+    // A GUN TALENT WITH A MAUL IN THE HAND, and a talent never bought: the
+    // hotbar greys both (`unpressableReason`), so the sheet must not light them.
+    // A cooldown still outranks it, as upstream's column checks it first.
+    const [first, second, third] = LOADOUT;
+    if (first === undefined || second === undefined || third === undefined) {
+      throw new Error('the fixture loadout lost its talents');
+    }
+    expect(first.level, 'the fixture talent is not learned').toBeGreaterThan(0);
+    const rows = talentRows(
+      sheet({
+        loadout: [
+          { ...first, unusable: 'fired from your own gun' },
+          { ...second, level: 0 },
+          { ...third, unusable: 'fired from your own gun' },
+        ],
+        cooldowns: { [third.id]: 2 },
+      }),
+    );
+    expect(rows.map((row) => row.cooldown)).toEqual(['unusable', 'unusable', '2 turns']);
+    expect(rows.map((row) => row.ready)).toEqual([false, false, false]);
+  });
+
   it('says “1 turn”, not “1 turns”', () => {
     expect(talentRows(sheet({ cooldowns: { 'talent:ward_rush': 1 } }))[0]?.cooldown).toBe('1 turn');
   });

@@ -1280,6 +1280,25 @@ function toLoadoutTalent(talent: LoadoutTalent): LoadoutTalent {
     // for the same reason. It is the answer to a different question from
     // `requires` and disagrees with it on most talents; see `TalentScaling`.
     ...(talent.scales === undefined ? {} : { scales: talent.scales }),
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * WHY THE PRESS IS REFUSED — `LoadoutTalent.unusable`, AND IT IS THE SIXTH.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * Five optional fields have been dropped at this function in silence —
+     * `tree`, `treeName` and `kind`, then `hidden`, then `locked` with its
+     * sentence — and each was correct at both ends and deleted in the middle.
+     * This one would have been a greyed gun button that never greyed: the
+     * server writes `NO_SHOOTER_REASON` onto a gun talent held without a gun
+     * (`toLoadoutView`, content/classes.ts), and the client's `affordable`
+     * greys on it. Spread like the rest, so absent stays absent — absent is
+     * how the wire says "pressable".
+     *
+     * The key-set test in projector.test.ts carries it in its `Required<>`
+     * fixture, which is what makes forgetting this line a failing test rather
+     * than a feature nobody sees.
+     */
+    ...(talent.unusable === undefined ? {} : { unusable: talent.unusable }),
   };
 }
 

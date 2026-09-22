@@ -56,7 +56,7 @@ import {
 import { ActorKind, InspectGroup } from '../../shared/protocol.ts';
 import { classById } from '../content/classes.ts';
 import { originOf } from '../content/origins.ts';
-import { MELEE_REACH, combatDistance } from '../engine/combat.ts';
+import { AttackRefusal, MELEE_REACH, combatDistance, rangeRefusal } from '../engine/combat.ts';
 import type { InspectRow, InspectView } from '../../shared/protocol.ts';
 import {
   combatAPR,
@@ -1126,7 +1126,17 @@ export function attackBlockedReason(
    * scheduler will ask, including the `Math.max(attackRange, MELEE_REACH)` floor
    * that makes a diagonal melee swing legal. This function's own promise is that
    * it "mirrors the server's own resolution-time refusals rather than inventing
-   * a parallel set of rules"; it now does that literally.
+   * a parallel set of rules".
+   *
+   * ═══ IT SAID SO AND DID NOT, AND THE FIST IS WHAT IT MISSED ═══
+   * This paragraph claimed the band came from `rangeRefusal` while the code
+   * below re-derived it by hand — reach and dead zone, and nothing else. So it
+   * never heard of `barehandAt`: an Inspector with her gun in hand standing on a
+   * husk read *"too close: needs 3 tiles"* on the husk's card, while `canAttack`
+   * answered null and her bump punched it. The card told her she could not hit
+   * the thing she could. Now, when no talent band is passed, the band IS
+   * `rangeRefusal`'s answer; `opts` keeps the hand-written test only for a
+   * caller asking about a talent's own range, which has no fist in it.
    */
   const dist = combatDistance(viewer, target);
   // Reach and the dead zone belong to the ATTACKER's sheet. `opts` overrides
@@ -1134,11 +1144,19 @@ export function attackBlockedReason(
   const minRange = opts.minRange ?? viewer.combat?.minRange ?? 0;
   const maxRange =
     opts.maxRange ?? viewer.combat?.range ?? Math.max(viewer.attackRange ?? 1, MELEE_REACH);
+  const basicAttack = opts.minRange === undefined && opts.maxRange === undefined;
+  const band = basicAttack
+    ? rangeRefusal(viewer, target)
+    : minRange > 0 && dist < minRange
+      ? AttackRefusal.MinRange
+      : dist > maxRange
+        ? AttackRefusal.OutOfRange
+        : null;
 
   if (!target.alive) return 'already down';
   if (!hasLineOfSight(world.level, viewer, target)) return 'no line of sight';
-  if (minRange > 0 && dist < minRange) return `too close: needs ${minRange} tiles`;
-  if (dist > maxRange) {
+  if (band === AttackRefusal.MinRange) return `too close: needs ${minRange} tiles`;
+  if (band === AttackRefusal.OutOfRange) {
     // ═══ WHOLE TILES IN A SENTENCE A PLAYER READS ═══
     // The metric is a real-valued radius, but "out of range: 5.66 tiles,
     // reaches 1.5" is arithmetic, not advice. `round` on the distance is the

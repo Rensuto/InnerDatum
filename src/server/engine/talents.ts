@@ -1678,6 +1678,12 @@ export const TalentRefusal = {
   NoLineOfSight: 'no_los',
   /** Terrain or a body in the way of a shove, a step or a placement. */
   Blocked: 'blocked',
+  /**
+   * A SHOT WITH NOTHING IN THE HAND TO FIRE IT — upstream's own key, `"no
+   * shooter"` (techniques/archery.lua:28, *"You require a missile launcher to
+   * use this talent."*). See `Talent.archery` and `archerPreUse`.
+   */
+  NoShooter: 'no_shooter',
 } as const;
 export type TalentRefusal = (typeof TalentRefusal)[keyof typeof TalentRefusal];
 
@@ -1796,6 +1802,25 @@ export type Talent = {
    * two of those eight fights had no rush in them at all.
    */
   readonly closesIn?: boolean;
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * THIS TALENT FIRES THE WEAPON IN THE HAND — `on_pre_use = archerPreUse`.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * Ported from techniques/archery.lua:46-50 (`archerPreUse`, and its twin at
+   * agility.lua:48-52), which every archery talent upstream carries: Shoot
+   * (:82, through `wardenPreUse`), Fragmentation Shot (:334), Crippling Shot
+   * (:802), Snipe (sniper.lua:272). It asks `hasArcheryWeapon`
+   * (class/interface/Archery.lua:744-763) whether the MAINHAND holds a
+   * launcher, and refuses the talent before anything is spent when it does not.
+   *
+   * WHY IT EXISTS HERE: our Inspector's gun is her class sheet's weapon, and
+   * `composeSheet` replaces it with any mainhand that has a combat table. With a
+   * maul in her hand her Revolver Shot fired the MAUL — 60 base damage against
+   * the revolver's 18, from five tiles. Upstream refuses that shot; so does this.
+   * `archerPreUse` below is the whole test, and `canUseTalent` asks it.
+   */
+  readonly archery?: boolean;
   /**
    * WHICH INSCRIPTION FAMILY THIS BELONGS TO, or absent for a class talent.
    *
@@ -2928,12 +2953,65 @@ export function effectiveTalentRange(targeting: TalentTargeting, talentLevel: nu
 }
 
 /**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * IS THERE A GUN IN THE HAND? — techniques/archery.lua:46-50, `archerPreUse`.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Upstream's is `hasArcheryWeapon` (class/interface/Archery.lua:744-763): the
+ * MAINHAND, if it holds a launcher. Ours reads the COMPOSED sheet's weapon,
+ * because that is where the mainhand already landed — `composeSheet`
+ * (engine/equipment.ts) takes a worn weapon over the class's own, which is
+ * `Combat.lua:175-192` walking MAINHAND. So an Inspector with an empty hand
+ * has her revolver (`archery: true`, content/classes.ts) and one holding a
+ * maul has a maul.
+ *
+ * NOT PORTED, and there is nothing here for them to read: ammunition (we have
+ * no quiver, and the revolver is not a launcher that takes one), the
+ * `weapon_type` sling/bow distinction (one gun), `disarmed` (no effect of ours
+ * sets it), and the three places upstream finds a launcher OUTSIDE the mainhand
+ * — the offhand (`can_offshoot`), a psionic focus (`psi_focus_combat`), and
+ * the swap set's `QS_*` slots when asked with `quickset`
+ * (class/interface/Archery.lua:744-794). We have one gun, and it is the sheet's.
+ */
+export function archerPreUse(actor: Pick<TalentActor, 'combat'>): boolean {
+  return actor.combat?.weapon?.archery === true;
+}
+
+/**
+ * WHAT `archerPreUse` SAYS WHEN IT SAYS NO — one sentence, for the refusal
+ * (`refusalSentence`, turn-engine.ts) and the greyed hotbar button alike, so the
+ * two cannot drift apart.
+ *
+ * NOT UPSTREAM'S WORDS, on purpose. *"You require a missile launcher to use this
+ * talent"* (techniques/archery.lua:28) is right where a launcher is an item you
+ * can go and equip. Our Inspector's gun is not an item: it is her class sheet's
+ * weapon, and it comes back when her weapon hand is EMPTY (`composeSheet`,
+ * engine/equipment.ts). So the sentence names the one thing she can do.
+ */
+export const NO_SHOOTER_REASON = 'fired from your own gun — empty your weapon hand to draw it';
+
+/**
  * Can this actor use this talent on this target, RIGHT NOW?
  *
  * PURE — it reads the world and the actor's SHEET, and mutates neither. That is
- * what lets the scheduler call it at resolution time (the refund rule) and the
- * projector call it to grey out a hotbar slot, with no chance of the two
- * disagreeing.
+ * what lets three callers ask it with no chance of disagreeing: the talent
+ * book's `check` at SUBMISSION (`createTalentBook`, content/classes.ts), the
+ * resolution in `useTalent` below (the refund rule), and the monster AI's
+ * `castable` (server/main.ts).
+ *
+ * ═══ NOTHING GREYS A HOTBAR SLOT WITH IT — THIS SAID THE PROJECTOR DID ═══
+ * No code in view/ ever called it. It cannot be the grey: it wants a TARGET,
+ * and a button is drawn before anyone has aimed. The client greys on the
+ * clauses it can see every turn — rank, AP and the class pool from the
+ * `loadout` and `resource` frames (`talentAffordable`, client/ui/hotbar.ts), the
+ * cooldown from the `cooldowns` frame (`isSlotDisabled`, same file).
+ * The ONE clause about the body it cannot see is the gun, and that travels as
+ * `LoadoutTalent.unusable`: `toLoadoutView` (content/classes.ts) asks
+ * `archerPreUse` — the very function the `NoShooter` line below asks — so the
+ * grey and this refusal share the rule rather than a copy of it. That is
+ * upstream's arrangement too: `preUseTalent(t, true, true)` greys the hotbar
+ * (engine/HotkeysIconsDisplay.lua:182) by reaching the same `on_pre_use`
+ * (tome/class/Actor.lua:5547) that refuses the use.
  *
  * ("Reads the sheet" is not new; it has read it since the `NotLearned` check
  * below, and the AP/MP/resource checks are three more reads. It is restated
@@ -2975,6 +3053,10 @@ export function canUseTalent(
   if (sheet.ap < (cost.ap ?? 0)) return TalentRefusal.NoAp;
   if (sheet.mp < (cost.mp ?? 0)) return TalentRefusal.NoMp;
   if (!hasResource(sheet.resource, cost.resource ?? 0)) return TalentRefusal.NoResource;
+
+  // `on_pre_use`, IN UPSTREAM'S PLACE: tome/class/Actor.lua:5547 asks it after
+  // the costs and before anything is spent, and a `false` there costs nothing.
+  if (talent.archery === true && !archerPreUse(actor)) return TalentRefusal.NoShooter;
 
   // The sheet is already in hand, so the level costs nothing to resolve here —
   // and resolving it HERE rather than inside `checkTargeting` keeps that

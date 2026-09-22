@@ -144,7 +144,7 @@ import { DragKind } from './drag.ts';
 import { PANEL_PAD, PanelSkin, drawPanel } from './panel.ts';
 import { resourceLabel } from './resource.ts';
 import type { DragSubject, PanelSize } from './drag.ts';
-import type { LoadoutTalent, ResourceKind, Slot } from '../../shared/protocol.ts';
+import type { LoadoutTalent, ResourceKind, ResourceView, Slot } from '../../shared/protocol.ts';
 import type { SpriteSource } from '../render/assets.ts';
 
 /**
@@ -522,7 +522,13 @@ export type HotbarTalentSlot = {
   readonly talent: LoadoutTalent;
   /** GAME TURNS remaining. 0 is ready — the `cooldowns` frame omits ready talents. */
   readonly cooldown: number;
-  /** Advisory: the last `resource` frame says this is payable. */
+  /**
+   * Advisory: the last `resource` frame says this is payable — AND nothing on
+   * the talent itself says it cannot be pressed at all (`unpressableReason`:
+   * rank 0, or the server's `unusable`). main.ts's `affordable` folds both in,
+   * so the name is narrower than the fact; its docblock says why one predicate
+   * rather than a second slot field.
+   */
   readonly affordable: boolean;
 };
 
@@ -1076,6 +1082,114 @@ export function itemSlotAction(
 // ---------------------------------------------------------------------------
 // STATE → PICTURE
 // ---------------------------------------------------------------------------
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * WHY THIS TALENT CANNOT BE PRESSED WHATEVER THE POOLS HOLD — or null.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Two answers today, both READ rather than worked out, and in the order the
+ * server's `canUseTalent` refuses them (engine/talents.ts):
+ *
+ *   'not learned yet'    rank 0 — owned, drawn in the panel, never bought.
+ *   `talent.unusable`    the server's own sentence, today only a gun talent
+ *                        held without a gun (`archerPreUse`,
+ *                        techniques/archery.lua:46-50). Printed as sent: it is
+ *                        `NO_SHOOTER_REASON`, which is also what a refused
+ *                        press says, so the tip and the refusal are one string.
+ *
+ * ═══ ONE FUNCTION FOR THE GREY AND THE WORDS ═══
+ * main.ts's `affordable` greys the slot on a non-null answer here, and
+ * `hotbarTipAt` below prints it. They used to be two copies of `level < 1`, one
+ * in each file, and the tip's comment already said why the second fact must
+ * not read as the first: a player told "not affordable" waits for a pool,
+ * and neither of these answers is ever going to arrive by waiting.
+ *
+ * Upstream draws the same two out of one call — `preUseTalent(t, true, true)`
+ * (engine/HotkeysIconsDisplay.lua:182) greys the icon, and it is the same
+ * `on_pre_use` (tome/class/Actor.lua:5547) that refuses the use.
+ *
+ * WHAT IS NOT HERE: the cooldown and the budgets. Both change between two
+ * turns, both arrive on their own frames, and the slot already carries them
+ * (`cooldown`, `affordable`); folding them in would make this answer go stale
+ * on every tick.
+ */
+export function unpressableReason(talent: LoadoutTalent): string | null {
+  if (talent.level < 1) return 'not learned yet';
+  return talent.unusable ?? null;
+}
+
+/**
+ * Can this client see a reason the talent is unpayable? — `affordable` in main.ts,
+ * moved here WHOLE so a test can drive it rather than read its source.
+ *
+ * ADVISORY, and used only to grey a button. The server re-checks every budget on
+ * arrival and answers `no_resource`; nothing here refuses to send.
+ *
+ * THE AP FRAME LANDED, AND THIS IS THE COMPARISON IT WAS WAITING FOR.
+ *
+ * This note used to end *"When an AP/MP frame lands, the two extra comparisons
+ * go here and nothing else changes"*, and that turned out to be exactly right —
+ * `ResourceView` now carries `ap`/`maxAp` and the AP half is below. It is still
+ * ADVISORY: the server re-checks every budget on arrival and answers
+ * `no_resource`, and nothing here refuses to send.
+ *
+ * MP IS STILL NOT CHECKED, deliberately. Only one talent in the game spends any
+ * (Fog Step, 1), and a client that greyed a button on a budget the engine does
+ * not yet gate would be lying in the other direction. It goes in beside the AP
+ * line when a move costs MP — one comparison, same shape.
+ *
+ * `ap === undefined` MEANS "AN OLDER SERVER", not "no budget". The field is
+ * optional so that no version bump was needed, which means a client can outlive
+ * a server that never sends it; treating absent as zero would grey every button
+ * on the bar.
+ */
+export function talentAffordable(talent: LoadoutTalent, resource: ResourceView | null): boolean {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * A TALENT NOBODY HAS LEARNED IS NOT AFFORDABLE AT ANY PRICE.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * A class used to be born knowing every talent it owned, so rank 0 was
+   * unreachable and the bar could assume every button on it was a real one. A
+   * class is now born with four of its eighteen — so most of what the panel
+   * lists is owned, drawn, and not yet learned.
+   *
+   * ROUTED THROUGH `affordable` RATHER THAN A NEW SLOT FIELD, deliberately:
+   * `isSlotDisabled` already greys on this, the tooltip already prints a
+   * reason line for it, and the server's `canUseTalent` already answers
+   * `not_learned` — so one predicate keeps the bar, the tip and the rule
+   * saying the same thing. A parallel `known` flag would be a second place
+   * for that agreement to break.
+   *
+   * ═══════════════════════════════════════════════════════════════════════════
+   * AND A GUN TALENT WITH NO GUN IN THE HAND, BY THE SAME ROUTE, FOR THE SAME
+   * REASON.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `LoadoutTalent.unusable` is the server's sentence for a press it will
+   * refuse whatever the pools hold — today exactly one, `archerPreUse`
+   * (techniques/archery.lua:46-50): an Inspector holding a maul cannot fire
+   * her revolver. Upstream greys that icon (`preUseTalent(t, true, true)`,
+   * engine/HotkeysIconsDisplay.lua:182); ours drew six lit gun buttons and
+   * refused every press. It goes through HERE and not through a new slot field
+   * for the paragraph above's reason word for word: `isSlotDisabled` already
+   * greys on this, the tooltip prints the line, and the server refuses the
+   * press with the same sentence after the talent's name. `unpressableReason`
+   * (ui/hotbar.ts) is the one answer both this and the tooltip read, so the
+   * grey and the words cannot disagree about which talents it covers.
+   *
+   * THE ORANGE COST IS THE ONE PLACE THIS OVER-SAYS. The painter colours the cost
+   * on `affordable`, so a gun talent's price reads as unpaid while the maul is
+   * held — exactly what it already did for a rank-0 talent, and on a slot whose
+   * frame is already the disabled one and whose card names the real reason.
+   */
+  if (unpressableReason(talent) !== null) return false;
+  if (resource === null) return true;
+  if (resource.ap !== undefined && talent.cost.ap > resource.ap) return false;
+  if (talent.cost.resource <= 0) return true;
+  return resource.current >= talent.cost.resource;
+}
 
 /**
  * A slot is DEAD when pressing it cannot accomplish anything.
@@ -1868,12 +1982,15 @@ export function hotbarTipAt(
               ? 'press to raise'
               : null,
           slot.cooldown > 0 ? `cooling — ${String(slot.cooldown)}t` : null,
-          // TWO DIFFERENT FACTS, and "not affordable" is the wrong sentence for
+          // TWO KINDS OF FACT, and "not affordable" is the wrong sentence for
           // the second: a player short on the pool waits a turn, and a player who
-          // has not learned the talent spends a point. Telling them the first
-          // when it is the second sends them to wait for something that will
-          // never arrive.
-          slot.talent.level < 1 ? 'not learned yet' : slot.affordable ? null : 'not affordable',
+          // has not learned the talent spends a point — or, holding a maul, puts
+          // it away. Telling them the first when it is the second sends them to
+          // wait for something that will never arrive. `unpressableReason` is
+          // the second kind, and it wins because `affordable` is false whenever
+          // it answers (main.ts folds it in), so the budget word could only
+          // ever be the wrong one there.
+          unpressableReason(slot.talent) ?? (slot.affordable ? null : 'not affordable'),
         ]
           .filter((part) => part !== null)
           .join('  ·  ');

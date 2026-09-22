@@ -138,6 +138,10 @@ function climb(site, cls, seed) {
       outcome: r.outcome,
       roster: r.roster,
       worst: r.worst,
+      // THE LIVES THIS FLOOR COST — `r.outcome` is 'clear' for a party that
+      // lost members and pressed Respawn, so the descent carries on past a
+      // floor that killed somebody. See `respawned` in delve-run.mjs.
+      respawned: r.respawned,
     });
     level = r.levelOut[0];
     xp = r.xpOut[0];
@@ -190,7 +194,7 @@ console.log(
   `${'delve'.padEnd(24)} ${'fl'.padStart(2)} ${'class'.padEnd(12)} ${'in'.padStart(3)}` +
     ` ${'at boss'.padStart(7)} ${'out'.padStart(4)} ${'gained'.padStart(6)}` +
     ` ${'>=2 by boss'.padStart(11)} ${'reached'.padStart(7)} ${'full runs'.padStart(9)}` +
-    ` ${'stopped on'.padStart(10)}`,
+    ` ${'stopped on'.padStart(10)} ${'respawns'.padStart(8)}`,
 );
 
 for (const site of sites) {
@@ -214,7 +218,12 @@ for (const site of sites) {
         ` ${(reached.length === 0 ? '-' : `${String(twice)}/${String(reached.length)}`).padStart(11)}` +
         ` ${`${String(reached.length)}/${String(RUNS)}`.padStart(7)}` +
         ` ${`${String(full.length)}/${String(RUNS)}`.padStart(9)}` +
-        ` ${(stops.length === 0 ? '-' : `fl ${avg(stops).toFixed(1)}`).padStart(10)}`,
+        ` ${(stops.length === 0 ? '-' : `fl ${avg(stops).toFixed(1)}`).padStart(10)}` +
+        // PER DESCENT, summed over its floors: 0.0 on every solo row, since a
+        // lone body that is Erased has wiped the floor and stopped the climb.
+        ` ${avg(rs.map((r) => r.perFloor.reduce((n, f) => n + f.respawned, 0)))
+          .toFixed(1)
+          .padStart(8)}`,
     );
   }
 }

@@ -105,6 +105,7 @@ import { sightDistance } from '../shared/sight.ts';
 import { fogHas } from '../shared/fog.ts';
 import { visionOf } from './view/eyesight.ts';
 import { currentTile, orbOnMyLine } from './engine/projectile.ts';
+import { NO_SHOOTER_REASON } from './engine/talents.ts';
 import type { Actor, World } from './world/world.ts';
 
 /**
@@ -457,6 +458,14 @@ function refusalSentence(name: string, code: TalentRefusal): string {
       // `REFUSAL_TO_CODE`, which collapses five of them onto this code for the
       // reason a targeting UI can act on: ask for another tile.
       return `${name}: not at that`;
+    case ErrorCode.Refused:
+      // ONE RULE REACHES THIS: `TalentRefusal.NoShooter` (`archerPreUse`,
+      // engine/talents.ts), upstream's *"You require a missile launcher to use
+      // this talent"* (techniques/archery.lua:28). A second rule mapped onto
+      // `Refused` in `REFUSAL_TO_CODE` needs its own sentence, not this one.
+      // The words are `NO_SHOOTER_REASON`'s, which the greyed hotbar button
+      // shows too, and that constant says why they are not upstream's.
+      return `${name}: ${NO_SHOOTER_REASON}`;
   }
 }
 

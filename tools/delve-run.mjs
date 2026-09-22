@@ -33,7 +33,7 @@
 
 import { SITES, RealmKind, createRealms } from '../src/server/world/realms.ts';
 import { createTurnEngine } from '../src/server/turn-engine.ts';
-import { createDownedState, isDowned } from '../src/server/engine/downed.ts';
+import { createDownedState, isDowned, isErased } from '../src/server/engine/downed.ts';
 import { createMvpEffectState } from '../src/server/content/effects.ts';
 import { effectsOn, recomposeCombat } from '../src/server/engine/effects.ts';
 import { resolveItem } from '../src/server/content/resolve.ts';
@@ -66,6 +66,8 @@ import { STEPS, firstStep } from './walk.mjs';
 import {
   classStrikes,
   firingSpot,
+  learnedTalents,
+  nearestFoe,
   nearestQuarry,
   selfHelp,
   takeHelp,
@@ -130,6 +132,9 @@ const PARTY = CLASSES.slice(0, 3);
  *              and it is here rather than in a note because "the fix moved the
  *              numbers" is a claim somebody has to be able to re-run. Nothing
  *              but `delve-density.mjs --blind` passes it.
+ *   `stage`    `({ world, downed, members }) => void`, run once the bodies
+ *              stand on the floor and before the roster is counted. Tests
+ *              only; see the call.
  */
 export function run(site, size, seed, opts = {}) {
   const party = opts.party ?? PARTY;
@@ -382,7 +387,9 @@ export function run(site, size, seed, opts = {}) {
     realm.engine.setConnected(p.id, true);
     bodies.push({
       body: p,
-      attacks: classStrikes(cls),
+      // NO `attacks` HERE ANY MORE — they are read off the sheet every turn,
+      // below, because a list built once at birth is the whole hotbar or the
+      // birth kit and never the character standing on the floor now.
       // AND THE BUTTONS THAT HELP THE PRESSER. Read from the same two sources
       // `sheetForClass` joins, because an inscription is in neither `ClassDef`.
       helps: selfHelp(cls, undefined, talentsFor(BIRTH_INSCRIPTIONS)),
@@ -408,6 +415,18 @@ export function run(site, size, seed, opts = {}) {
       accept(parties, b.id, lead, 0);
     }
   }
+
+  /**
+   * THE ROOM, ARRANGED BY HAND BEFORE THE FIRST TURN — `opts.stage`, for tests.
+   *
+   * A rule in this driver is only worth a test if the test drives THIS loop,
+   * and a whole floor is too many bodies to say which rule won a run. So a
+   * caller may clear the floor down to one foe, set a pool, put somebody on the
+   * floor — anything a real run could reach — and then the unaltered loop plays
+   * it. It runs before the roster is counted, so the counts describe the room
+   * that was actually fought. Nothing but test/tools/delve-run.test.ts passes it.
+   */
+  opts.stage?.({ world: realm.world, downed, members: [...born.values()] });
 
   /**
    * ═══════════════════════════════════════════════════════════════════════════
@@ -541,8 +560,31 @@ export function run(site, size, seed, opts = {}) {
      * ONE RESCUER, NOT ALL OF THEM. The nearest able body breaks off; the rest
      * keep fighting, because a party that all downs tools to fetch one person is
      * a different and equally wrong reading.
+     *
+     * ═════════════════════════════════════════════════════════════════════════
+     * AND ONLY THE DOWNED CAN BE PICKED UP. THE ERASED PRESS RESPAWN.
+     * ═════════════════════════════════════════════════════════════════════════
+     *
+     * This read `body.alive === false || isDowned(...)`, which also names a body
+     * that has BLED OUT — and `revive` refuses an Erased body
+     * (`ReviveRefusal.Erased`, engine/downed.ts). A refused intent costs no
+     * energy, so the rescuer pressed revive for the rest of the run: 772-832
+     * revive orders in each stalled Drowned Chapel party run, each of which
+     * had exactly one death. Measured over 240 party-of-four runs: zero wipes,
+     * and every failure a stall at the turn cap, for that reason.
+     *
+     * In the game the Erased player presses Respawn (`respawn`, downed.ts —
+     * full hp, at the floor's spawn, and free), which is what this does, first,
+     * so the party that is left fights on. `tally.respawned` counts them, and
+     * it is the number that says how hard a floor was on a party: a party with
+     * one member standing cannot lose, so its win rate only measures the clock.
      */
-    const fallen = bodies.find(({ body }) => body.alive === false || isDowned(downed, body.id));
+    for (const { body } of bodies) {
+      if (isErased(downed, body.id) && realm.engine.submitRespawn(body.id)?.ok !== false) {
+        tally.respawned = (tally.respawned ?? 0) + 1;
+      }
+    }
+    const fallen = bodies.find(({ body }) => isDowned(downed, body.id));
     const rescuer =
       fallen === undefined
         ? undefined
@@ -553,7 +595,16 @@ export function run(site, size, seed, opts = {}) {
             }))
             .sort((x, y) => x.d - y.d)[0]?.m;
 
-    for (const { body: b, attacks, helps } of up) {
+    for (const { body: b, helps } of up) {
+      /**
+       * WHAT THIS BODY CAN FIRE, AS IT STANDS THIS TURN — only what it has
+       * LEARNED (`learnedTalents`, fightlib.mjs, which carries the measurement),
+       * and re-read every turn because a level gained mid-floor spends its
+       * point on the sheet (`levelOnTheFloor`) and a list taken at birth would
+       * never see the talent it bought.
+       */
+      const row = born.get(b.id);
+      const attacks = classStrikes(row.cls, learnedTalents(row.sheet));
       if (fallen !== undefined && rescuer !== undefined && b.id === rescuer.body.id) {
         const gapToFallen = Math.max(Math.abs(b.x - fallen.body.x), Math.abs(b.y - fallen.body.y));
         if (gapToFallen <= 1) {
@@ -721,6 +772,72 @@ export function run(site, size, seed, opts = {}) {
           lastVerb.set(b.id, `bump:${into[2]}`);
           realm.engine.submitMove(b.id, into[2]);
           continue;
+        }
+        /**
+         * ═════════════════════════════════════════════════════════════════════
+         * "A PLAYER WAITS" IS THE INSPECTOR'S ANSWER, AND IT WAS EVERYBODY'S.
+         * ═════════════════════════════════════════════════════════════════════
+         *
+         * Holding is right for a body with a DEAD ZONE: walking in is walking
+         * into the hole in her ring. A body with none (`combat.minRange` 0 —
+         * the Watchman, the Alchemist, the Redactor) has a swing that costs no
+         * resource, and holding still with every shot refused is standing in a
+         * shooter's lane waiting for Reagents or Ink that come back at a trickle
+         * (1 per kill plus 1 per 12 turns; Strike Out's 5 Ink against 0.6 a turn).
+         *
+         * MEASURED, the smallest case there is — one body, one level-1 Cairn at
+         * five tiles, open ground, six seeds each: the Alchemist at 0 Reagents
+         * that holds is dead by turn 13-15 in all six; the one that walks in
+         * wins all six and takes no damage. The Redactor at 0 Ink, the same.
+         * Over the seven first-hour delves this one rule took the Alchemist from
+         * 7 wins in 28 to 19 and the Redactor from 3 to 15 — on the five of them
+         * that carry a kiter, from 1 of 20 to 15 and from 0 of 20 to 12. It is
+         * not free: on the two all-melee floors the Alchemist went 6 of 8 to 4.
+         *
+         * AND IT IS UPSTREAM'S ANSWER. The crystal the Cairn ports has
+         * `never_move = 1` and `talent_in = 1` (npcs/crystal.lua:39, :30): a ToME
+         * player walks up to it or leaves its line of fire. content/delve.ts
+         * says the same of our Cairn — *"a weak shooter you walk up to and kill
+         * in three turns"* — and this driver was the one body that never did.
+         * OURS IS NOT STATIONARY: `never_move` is not ported, so our Cairn backs
+         * away, at 0.7 speed (`INDEX_CAIRN`), which a walker still out-paces.
+         *
+         * AT THE NEAREST FOE, KITER INCLUDED (`nearestFoe`), because the thing
+         * refusing you a shot is usually the thing shooting you, and the
+         * commonest such thing is slow enough to catch. A kiter as fast as the
+         * walker is NOT caught this way — see `nearestFoe` for that limit. And
+         * UNDER THE SAME GUARD the walk below keeps: an order already refused
+         * from this tile is not re-sent. The first version had no guard, and a
+         * party pressing into each other in a corridor froze the floor's clock
+         * (see `lastOrder`).
+         */
+        const target = (b.combat?.minRange ?? 0) === 0 ? nearestFoe(living, b) : undefined;
+        if (target !== undefined) {
+          const onTerrain = (x, y) => canRoute(realm.world.level, x, y);
+          const unoccupied = (x, y) => onTerrain(x, y) && realm.world.actorAt(x, y) === undefined;
+          const step =
+            firstStep(unoccupied, { x: b.x, y: b.y }, { x: target.f.x, y: target.f.y }) ??
+            firstStep(onTerrain, { x: b.x, y: b.y }, { x: target.f.x, y: target.f.y });
+          const sent = lastOrder.get(b.id);
+          if (
+            step !== null &&
+            sent !== undefined &&
+            sent.dir === step &&
+            sent.x === b.x &&
+            sent.y === b.y
+          ) {
+            lastOrder.delete(b.id);
+            tally.held += 1;
+            realm.engine.hold(b.id);
+            continue;
+          }
+          if (step !== null) {
+            lastOrder.set(b.id, { dir: step, x: b.x, y: b.y });
+            tally.closed = (tally.closed ?? 0) + 1;
+            lastVerb.set(b.id, `close:${step}`);
+            realm.engine.submitMove(b.id, step);
+            continue;
+          }
         }
         tally.held += 1;
         realm.engine.hold(b.id);
@@ -1186,6 +1303,19 @@ export function run(site, size, seed, opts = {}) {
    */
   const deaths = bodies.filter(({ body: b }) => !b.alive).length;
   /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * AND THE DEATHS THE END STATE CANNOT SEE — every Respawn pressed on the way.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `deaths` and `downCount` are read off the bodies AFTER the last turn, and a
+   * member who bled out and pressed Respawn is standing at the spawn with full
+   * hp by then. So a party that lost somebody three times and won by attrition
+   * reads `deaths 0, downed 0` — the same row as a room nobody was hurt in.
+   * This is the count of those, and it is printed beside `downed` so a clear
+   * that cost lives says so.
+   */
+  const respawned = tally.respawned ?? 0;
+  /**
    * THE FLOOR ITSELF, so a density can be worked out from a row rather than
    * re-derived by whoever reads it. `canWalk` is the same predicate the placer
    * uses to decide where a body may stand (`roomFor`), so "monsters per hundred
@@ -1219,6 +1349,7 @@ export function run(site, size, seed, opts = {}) {
   const xpOut = bodies.map(({ body: b }) => b.xp);
   return {
     deaths,
+    respawned,
     damage,
     levelIn,
     levelOut,
@@ -1282,7 +1413,7 @@ if (import.meta.main) {
   for (const size of [1, 3]) {
     console.log(`\n${size === 1 ? 'ALONE' : 'A PARTY OF THREE'} — ${RUNS} runs each\n`);
     console.log(
-      `${'delve'.padEnd(32)} ${'clear'.padStart(6)} ${'wipe'.padStart(5)} ${'stall'.padStart(5)}  ${'turns'.padStart(5)}  ${'hp low'.padStart(6)}  ${'downed'.padStart(6)}  ${'gold'.padStart(5)}  ${'items'.padStart(5)}  ${'worn'.padStart(4)}  ${'sells for'.padStart(9)}  ${'foes'.padStart(4)}  ${'drop/foe'.padStart(8)}`,
+      `${'delve'.padEnd(32)} ${'clear'.padStart(6)} ${'wipe'.padStart(5)} ${'stall'.padStart(5)}  ${'turns'.padStart(5)}  ${'hp low'.padStart(6)}  ${'downed'.padStart(6)}  ${'respawn'.padStart(7)}  ${'gold'.padStart(5)}  ${'items'.padStart(5)}  ${'worn'.padStart(4)}  ${'sells for'.padStart(9)}  ${'foes'.padStart(4)}  ${'drop/foe'.padStart(8)}`,
     );
     for (const site of delves) {
       const rs = Array.from({ length: RUNS }, (_u, i) =>
@@ -1299,6 +1430,9 @@ if (import.meta.main) {
           `${avg(rs.map((r) => r.downCount))
             .toFixed(1)
             .padStart(6)}  ` +
+          `${avg(rs.map((r) => r.respawned))
+            .toFixed(1)
+            .padStart(7)}  ` +
           // THE PAY, AVERAGED OVER THE RUNS THAT ACTUALLY CLEARED. A stalled run
           // left half the room alive, so its floor is not what the room is worth.
           `${(clears.length === 0 ? 0 : avg(clears.map((r) => r.gold))).toFixed(0).padStart(5)}  ` +
@@ -1319,9 +1453,13 @@ if (import.meta.main) {
   }
 
   console.log(
-    `\nA STALL IS THE DRIVER, NOT THE ROOM: it walks at the nearest body and\n` +
-      `bump-attacks, so a party carrying the Inspector — which deliberately cannot\n` +
-      `shoot adjacent — will stand next to something and do nothing. Read stalls as\n` +
-      `"this driver cannot finish", never as "this delve cannot be cleared".`,
+    `\nA STALL IS THE DRIVER, NOT THE ROOM: it walks, shoots and bump-attacks, and\n` +
+      `it does not kite, retreat or blink, so a body it cannot bring to bear holds.\n` +
+      `Read stalls as "this driver cannot finish", never as "this delve cannot be\n` +
+      `cleared".\n\n` +
+      `A PARTY CLEAR IS NOT A CLEAN RUN: an Erased member presses Respawn and walks\n` +
+      `back, so a party with one body standing cannot lose and its clear rate\n` +
+      `measures the clock. The 'respawn' column is the price: read it beside\n` +
+      `'clear' for any party row.`,
   );
 }

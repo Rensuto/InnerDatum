@@ -37,7 +37,7 @@ import { combatAttack } from '../../src/server/engine/derived.ts';
 import { resolveItem } from '../../src/server/content/resolve.ts';
 import type { EngineActor } from '../../src/server/engine/actor.ts';
 import type { Combatant } from '../../src/server/engine/derived.ts';
-import { RESOURCE_RULES } from '../../src/server/engine/talents.ts';
+import { NO_SHOOTER_REASON, RESOURCE_RULES } from '../../src/server/engine/talents.ts';
 import { createWorld } from '../../src/server/world/world.ts';
 import { AiProfile } from '../../src/server/engine/actor.ts';
 import { ActorRank, MONSTERS_TURN_ID } from '../../src/shared/protocol.ts';
@@ -1640,6 +1640,11 @@ describe('the loadout projection loses no field', () => {
       // and unnoticed for months before that was made a compile error.
       scales: 'damage from your weapon (Strength); lands on Mindpower (Willpower, Cunning)',
       requires: [{ text: 'level 4', met: true }],
+      // WHY A PRESS WOULD BE REFUSED — `LoadoutTalent.unusable`, the gun talent
+      // held without a gun. Present here for the reason every optional field
+      // is: `toLoadoutTalent` had dropped five of them before this fixture was
+      // made `Required`, and this is the sixth it could drop.
+      unusable: NO_SHOOTER_REASON,
     };
 
     const projected = projectLoadout({ id: 'a' } as never, [full]).talents[0];
@@ -1659,6 +1664,8 @@ describe('the loadout projection loses no field', () => {
     expect(projected.locked).toBe(full.locked);
     expect(projected.lockedReason).toBe(full.lockedReason);
     expect(projected.sustained).toBe(full.sustained);
+    // AND THE REFUSAL'S SENTENCE, word for word — the client prints it as is.
+    expect(projected.unusable).toBe(full.unusable);
   });
 
   it('carries the trees already deepened, and no field at all when there are none', () => {

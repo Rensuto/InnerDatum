@@ -330,6 +330,52 @@ export function firingSpot(attacks, self, foes, level, walkable, radius = 6) {
  */
 const AREA_SHAPES = new Set(['ball', 'cross']);
 
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * WHAT THIS CHARACTER HAS LEARNED — the `known` set every caller should pass.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * RANK 1 IS "LEARNED": `canUseTalent` refuses `getTalentLevelRaw(sheet, id) < 1`
+ * as `NotLearned` (engine/talents.ts), and `getTalentLevelRaw` is
+ * `sheet.points.get(id) ?? 0`, so this reads the same map the engine does.
+ *
+ * ═══ WITHOUT IT A PROBE HOLDS STILL IN FRONT OF A GUN ═══
+ * `delve-run.mjs` called `classStrikes(cls)` with no `known`, so it offered
+ * the whole eventual hotbar. A foe inside the band of a talent the body has not
+ * learned (Sniper's Mark reaches 7, Line of Enquiry and Closed File 6) made
+ * `takeShot` report a target with nothing fired, and the driver's answer to
+ * that is to hold. Measured, one level-1 Inspector at full Focus against one
+ * Cairn at six tiles: 0 shots in 6 runs with the whole hotbar, and 6 wins by
+ * turn 5 with this set. `first-fight.mjs` already passed it, so the two probes
+ * had been measuring two different characters.
+ *
+ * A SET BUILT FROM THE SHEET, NOT FROM A LEVEL. A level gained mid-floor spends
+ * its point through `levelOnTheFloor` (grown.mjs), so a caller that wants the
+ * character as it stands NOW asks again rather than keeping the first answer.
+ */
+export function learnedTalents(sheet) {
+  return new Set([...sheet.points].filter(([, rank]) => rank >= 1).map(([id]) => id));
+}
+
+/**
+ * THE NEAREST LIVING FOE, WHATEVER IT IS — `nearestQuarry` without the kiter
+ * preference, for the one question where the preference is wrong: "I cannot
+ * shoot, so what do I walk up to and hit?" The thing refusing you a shot is
+ * usually a kiter, and the commonest is the Cairn: a `RangedKiter` at 0.7 speed
+ * (`INDEX_CAIRN`, content/monsters.ts). It DOES back away — upstream's
+ * `never_move = 1` (crystal.lua:39) is deliberately not ported — but a
+ * speed-1.0 walker gains on it every turn, so walking in catches it.
+ *
+ * NOT TRUE OF EVERY KITER, and that is a known limit of this rule rather than a
+ * property of it: a kiter at speed 1.0 or better (the Inquisitor) is not caught
+ * by walking, and a body that walks in at one is towed round the room — the
+ * failure `nearestQuarry`'s own note warns about. Euclidean, by `sightDistance`,
+ * like every band here; a tie keeps the order it was handed.
+ */
+export function nearestFoe(foes, self) {
+  return foes.map((f) => ({ f, d: sightDistance(self, f) })).sort((a, b) => a.d - b.d)[0];
+}
+
 export function classStrikes(cls, known) {
   return (cls.loadout ?? [])
     .filter((t) => known === undefined || known.has(t.id))

@@ -152,3 +152,62 @@ describe('a probe body is born wearing what the server gives a new character', (
     }
   });
 });
+
+describe('a probe body wields what its class would', () => {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * A GUNMAN DOES NOT PUT HER GUN DOWN FOR A MAUL.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `dressFor` rolls every slot class-blind, and every mainhand in the catalogue
+   * is a melee weapon. With one in her hand the Inspector's gun talents refuse
+   * (`archerPreUse`, engine/talents.ts), so the probe was measuring a gunless
+   * melee body no player would build: measured, 35 of 40 dressed Inspector rows,
+   * and her first hour read 14 of 28 against 19 with her revolver kept.
+   *
+   * DERIVED FROM THE SHEET, not from a class id: whichever class's own weapon
+   * is `archery` keeps it, and every other class still rolls its hand.
+   */
+  const levels = [2, 5, 10, 15];
+  const seeds = 20;
+  const dress = (cls: (typeof CLASSES)[number], level: number, n: number) => {
+    const body: Record<string, unknown> = { id: 'dressed', combat: cls.combat };
+    growTo(body, cls, level);
+    dressFor(body, level, createRng(`dress-hand:${String(level)}:${String(n)}`));
+    return body['equipped'] as Partial<Record<string, string>>;
+  };
+
+  it('leaves a class revolver in the hand, and every other class a rolled weapon', () => {
+    const gunmen = CLASSES.filter((c) => c.combat.weapon?.archery === true);
+    expect(gunmen.length, 'no class carries a gun, so this asserts nothing').toBeGreaterThan(0);
+    for (const cls of CLASSES) {
+      const gun = cls.combat.weapon?.archery === true;
+      let held = 0;
+      for (const level of levels) {
+        for (let n = 0; n < seeds; n += 1) {
+          const hand = dress(cls, level, n)[Slot.Mainhand];
+          if (hand === undefined) continue;
+          held += 1;
+          expect(gun, `${cls.name} put her gun down for ${hand}`).toBe(false);
+        }
+      }
+      if (!gun) expect(held, `${cls.name} was never handed a weapon`).toBeGreaterThan(0);
+    }
+  });
+
+  it('draws the hand and leaves it on the floor, so every other slot is rolled as before', () => {
+    // SAME SEED, ONE GUNMAN, ONE NOT: every slot but the hand must match. A
+    // version that SKIPPED the mainhand draw would shift every roll after it,
+    // and every dressed row taken before this rule would stop comparing.
+    const gunman = CLASSES.find((c) => c.combat.weapon?.archery === true);
+    const other = CLASSES.find((c) => c.combat.weapon?.archery !== true);
+    if (gunman === undefined || other === undefined) throw new Error('need one of each');
+    for (const level of levels) {
+      for (let n = 0; n < seeds; n += 1) {
+        const { [Slot.Mainhand]: _gunHand, ...gunRest } = dress(gunman, level, n);
+        const { [Slot.Mainhand]: _hand, ...rest } = dress(other, level, n);
+        expect(gunRest).toEqual(rest);
+      }
+    }
+  });
+});

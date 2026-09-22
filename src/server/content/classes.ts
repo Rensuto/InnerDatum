@@ -172,7 +172,9 @@ import {
   RESOURCE_RULES,
   ResourceKind,
   TalentKind,
+  NO_SHOOTER_REASON,
   TalentRefusal,
+  archerPreUse,
   canUseTalent,
   combatOf,
   createTalentEngine,
@@ -1960,6 +1962,38 @@ export function toLoadoutView(
       ? {}
       : { scales: scalingText(combatOf(self), talent.scalesWith) ?? '' }),
     /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * AND WHETHER THE HAND CAN FIRE IT — `on_pre_use = archerPreUse`, ASKED.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * Upstream greys a hotbar talent on the very call that refuses it:
+     * `preUseTalent(t, true, true)` (engine/HotkeysIconsDisplay.lua:182), which
+     * reaches `on_pre_use` at tome/class/Actor.lua:5547. So this does not
+     * restate the rule — it calls `archerPreUse`, the function `canUseTalent`
+     * calls at submission and again at resolution (engine/talents.ts), against
+     * the same COMPOSED sheet: `self.combat`, which `recomposeCombat` has already
+     * folded the mainhand into. The grey and the refusal are one answer read
+     * twice, and the sentence is the one `refusalSentence` prints.
+     *
+     * ═══ HERE, BECAUSE THIS IS THE ONE PLACE HOLDING THE TALENT AND THE BODY ═══
+     * view/projector.ts copies what it is handed, and net/** may not import
+     * engine/talents.ts at all. `scales` directly above reads the same `self`
+     * for the same reason — the weapon's `damMod` is a fact about this body's
+     * hand, not about the talent.
+     *
+     * THE PREVIEWS SAY NOTHING, AND THAT IS CORRECT RATHER THAN LUCKY. The class
+     * picker and a locked tree hand in `previewActorFor`, the class as authored,
+     * whose weapon is the class's own — for the Inspector, her revolver.
+     *
+     * ═══ NOT `canUseTalent` ITSELF, WHICH WOULD ANSWER MORE THAN THIS MEANS ═══
+     * It needs a TARGET, for range and sight, and it would fold the cooldown and
+     * the three budgets into a frame that is only re-sent when a gate moves —
+     * while the client already greys on those from `cooldowns` and `resource`,
+     * which arrive every turn. The gun is the one clause about the body that
+     * outlasts a turn, so it is the one clause that belongs on the loadout.
+     */
+    ...(talent.archery === true && !archerPreUse(self) ? { unusable: NO_SHOOTER_REASON } : {}),
+    /**
      * ABSENT WHEN NOBODY ASKED, AND ABSENT WHEN THE ANSWER IS YES. The first
      * keeps the class picker's preview exactly as it was; the second keeps the
      * common case off the wire. A present `locked: true` is the only shape
@@ -2160,11 +2194,12 @@ type RefusalCode = Extract<
   | 'on_cooldown'
   | 'no_resource'
   | 'no_los'
+  | 'refused'
 >;
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════
- * THE ENGINE'S REFUSAL VOCABULARY -> THE CLIENT'S. FIFTEEN INTO EIGHT.
+ * THE ENGINE'S REFUSAL VOCABULARY -> THE CLIENT'S. SEVENTEEN INTO NINE.
  * ═══════════════════════════════════════════════════════════════════════════
  *
  * `TalentRefusal` (engine/talents.ts) is about the RULE that said no;
@@ -2213,12 +2248,12 @@ const REFUSAL_TO_CODE: Readonly<Record<TalentRefusal, RefusalCode>> = {
    * a rule saying no, which is what `IllegalMove` means for the four below it.
    *
    * `Refused` WOULD READ BETTER and is what the seventeen other rule-refusals
-   * moved to. It is not used here because `RefusalCode` is a deliberately narrow
-   * Extract of eight codes and widening it breaks the assignability of
-   * `createTalentBook` to `TalentBook`, whose `check` is annotated with the
-   * ENGINE's vocabulary rather than the client's. Those two unions overlap by
-   * five members and disagree about three, which is a knot worth untying on its
-   * own and not underneath a talent.
+   * moved to. It was not used here because `RefusalCode` was a deliberately
+   * narrow Extract of eight codes, and widening it on ONE side breaks the
+   * assignability of `createTalentBook` to `TalentBook`, whose `check` is
+   * annotated with the gateway's `TalentRefusal`. `NoShooter` (below) widened
+   * both by `refused` together; this row was left as it was, because moving it
+   * is a separate change about a separate rule.
    */
   [TalentRefusal.Passive]: ErrorCode.IllegalMove,
   [TalentRefusal.UnknownTalent]: ErrorCode.BadMessage,
@@ -2228,6 +2263,17 @@ const REFUSAL_TO_CODE: Readonly<Record<TalentRefusal, RefusalCode>> = {
   [TalentRefusal.Self]: ErrorCode.IllegalMove,
   [TalentRefusal.NotHostile]: ErrorCode.IllegalMove,
   [TalentRefusal.NotAlly]: ErrorCode.IllegalMove,
+  /**
+   * NO GUN IN THE HAND (`archerPreUse`, engine/talents.ts) IS NOT "NOT AT THAT".
+   * No tile would help and no pool will refill into it, so none of the eight
+   * category codes tells the player anything true. `Refused` is the code for a
+   * rule whose sentence the server writes (`refusalSentence`, turn-engine.ts),
+   * and `RefusalCode` and the gateway's `TalentRefusal` were widened by that
+   * one member TOGETHER — which is the assignability the `Passive` note above
+   * says a one-sided widening breaks. `Passive` was not moved with it: it is
+   * a different rule, and nothing measured it.
+   */
+  [TalentRefusal.NoShooter]: ErrorCode.Refused,
 };
 
 /**

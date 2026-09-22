@@ -371,10 +371,34 @@ export function composeSheet(base: CombatSheet, worn: readonly Item[]): CombatSh
     (item) => item.slot === Slot.Mainhand && item.combat !== undefined,
   )?.combat;
   if (armed === undefined) return folded;
-  return {
-    ...folded,
-    weapon: { ...armed, damMod: armed.damMod ?? folded.weapon?.damMod },
-  };
+  const weapon = { ...armed, damMod: armed.damMod ?? folded.weapon?.damMod };
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * AND THE GUN'S REACH AND DEAD ZONE LEAVE THE HAND WITH THE GUN.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * The Inspector's sheet carries `range: 5` and `minRange: 3` because of the
+   * revolver it names (`Weapon.archery`, content/classes.ts) — they are the
+   * gun's numbers written on the class. This function swapped the weapon and
+   * kept both, so an Inspector holding a maul was a maul with a dead zone: her
+   * bump was refused at contact (`AttackRefusal.MinRange`) and never swung,
+   * while her gun talents fired the maul — Revolver Shot for the maul's 60
+   * base damage against the revolver's 18, from five tiles.
+   *
+   * UPSTREAM HAS NEITHER HALF. A melee weapon in the mainhand is swung by the
+   * melee loop (`Combat.lua:175-192`) at melee reach with no minimum, and the
+   * archery talents refuse to fire without a launcher (`archerPreUse`,
+   * techniques/archery.lua:46-50 — ported as `Talent.archery`). So when a
+   * weapon that is not archery replaces one that was, the reach and the hole go
+   * too, and `rangeRefusal`'s own fallback (`MELEE_REACH`, engine/combat.ts)
+   * is what the body swings at. A sheet whose weapon was never archery keeps
+   * whatever reach it authored, which is every other body in the game.
+   */
+  if (folded.weapon?.archery === true && armed.archery !== true) {
+    const { range: _gunReach, minRange: _gunDeadZone, ...melee } = folded;
+    return { ...melee, weapon };
+  }
+  return { ...folded, weapon };
 }
 
 /**
