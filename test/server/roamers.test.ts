@@ -608,6 +608,66 @@ describe('it notices you, and that is all a roamer is allowed to do about it', (
   });
 });
 
+describe('it gets home when somebody is standing on home', () => {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * ONE STEP FROM HOME IS HOME, ON A DIAGONAL AS MUCH AS ON AN AXIS.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `stepRoamer` lets a latched roamer arrive ADJACENT, because the home tile
+   * can be taken. It measured adjacency as an exact distance of at most 1,
+   * which a diagonal (1.41) fails. A roamer diagonal to a taken home tries the
+   * home tile and then the two orthogonal sidesteps `walkToward` offers; with
+   * those taken as well it has no move, and before the fix it stood there with
+   * `goingHome` latched for good, never drifting and never noticing anybody.
+   *
+   * THE FIXTURE TAKES ALL THREE on purpose. With a free sidestep the old rule
+   * got home a beat late, by stepping onto an axis first, and a test that left
+   * one open would pass for it. Bodies take them because `placeRoamer` refuses
+   * a tile a body stands on; a player on the home tile is the same refusal as
+   * the other roamer the source note describes.
+   */
+  function besieged(seed: string, dx: number, dy: number) {
+    const realms = makeRealms(seed);
+    const spot = openGround(realms, 12);
+    const mine = stage(realms, spot);
+    const world = realms.overworld.world;
+    const taken = [
+      { x: spot.x, y: spot.y },
+      { x: spot.x + 1, y: spot.y },
+      { x: spot.x, y: spot.y + 1 },
+    ];
+    taken.forEach((tile, i) => {
+      const body = world.addPlayer(`p${String(i)}`, 'Detective');
+      body.x = tile.x;
+      body.y = tile.y;
+    });
+    mine.x = spot.x + dx;
+    mine.y = spot.y + dy;
+    mine.goingHome = true;
+    return { beat: beater(realms.overworld), mine, spot };
+  }
+
+  it('counts the diagonal beside a taken home as arrived', () => {
+    const { beat, mine, spot } = besieged('roam-home-diagonal', 1, 1);
+    beat();
+    expect(mine.goingHome, 'latched for good one diagonal step from home').toBe(false);
+    // ARRIVED, NOT MOVED. It had nowhere to go, so the latch is what changed.
+    expect({ x: mine.x, y: mine.y }).toEqual({ x: spot.x + 1, y: spot.y + 1 });
+  });
+
+  it('but two steps out is still on the way home', () => {
+    // THE OTHER EDGE: a rule that let go of the latch at any distance would pass
+    // the case above. Two diagonal steps out it walks one, and only then is home.
+    const { beat, mine, spot } = besieged('roam-home-two', 2, 2);
+    beat();
+    expect(mine.goingHome, 'arrived from two steps away').toBe(true);
+    expect({ x: mine.x, y: mine.y }).toEqual({ x: spot.x + 1, y: spot.y + 1 });
+    beat();
+    expect(mine.goingHome, 'walked up beside a taken home and stayed latched').toBe(false);
+  });
+});
+
 describe('and when nobody is about, it keeps to its own country', () => {
   it('drifts, but never further from where it appeared than the leash', () => {
     /**

@@ -40,6 +40,7 @@
  * argument `rollForEncounter` makes for its d100.
  */
 
+import { chebyshev } from '../../shared/coords.ts';
 import { REDACTION_SITE_ID, canWalk } from '../../shared/level.ts';
 import { DEFAULT_SIGHT_RADIUS, hasLineOfSight, sightDistance } from '../../shared/sight.ts';
 import { ActorKind, isHaunt } from '../../shared/protocol.ts';
@@ -438,8 +439,25 @@ function stepRoamer(realm: Realm, roamer: Roamer): boolean {
      * correctly refuses it, and that creature then hovers beside its own anchor
      * for the rest of the session with `goingHome` latched — never drifting,
      * never noticing anybody. Within one tile is home.
+     *
+     * ═══ "WITHIN ONE TILE" IS A STEP COUNT, SO IT IS `chebyshev` ═══
+     * Adjacent means the eight tiles one step away, the same eight
+     * `walkToward` can step onto. Upstream writes adjacency as
+     * `core.fov.distance(...) == 1` (engine/interface/PlayerMouse.lua:59) or
+     * `<= 1` (tome/class/Trap.lua:103), and that counts a diagonal only because
+     * upstream's distance ROUNDS: sqrt(2) + 0.5 truncates to 1 (src/fov.c
+     * `lua_fov_get_distance`, the circle shape engine/Module.lua:918 sets).
+     *
+     * THIS WAS `sightDistance(...) <= 1`, upstream's idiom under our exact
+     * Euclid, where a diagonal is 1.41 and fails it. So the note above held
+     * for four of the eight neighbours. A roamer that arrived diagonally beside
+     * an occupied home tried the home tile, then the two orthogonal sidesteps
+     * `walkToward` offers, and where both of those were taken or unwalkable it
+     * stood there latched for good — the exact hover this note was written to
+     * end. A step count does not depend on which distance the port settles on,
+     * which is why it is not written as a radius.
      */
-    if (sightDistance(roamer, { x: roamer.homeX, y: roamer.homeY }) <= 1) {
+    if (chebyshev(roamer, { x: roamer.homeX, y: roamer.homeY }) <= 1) {
       roamer.goingHome = false;
       return false;
     }
