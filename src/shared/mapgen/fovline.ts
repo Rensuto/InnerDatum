@@ -80,12 +80,12 @@ const f = Math.fround;
 export const GRID_EPSILON = f(1.0e-5);
 
 /** `FOV_BUFFER_SIZE` (`src/fov/fov.h`). A power of two: `GET_BUFFER` masks with it. */
-const FOV_BUFFER_SIZE = 2048;
+export const FOV_BUFFER_SIZE = 2048;
 
 /** A boundary is three floats: where it is, and the slope that reached it. */
-const X = 0;
-const Y = 1;
-const K = 2;
+export const X = 0;
+export const Y = 1;
+export const K = 2;
 
 /** Is this cell opaque? The C's `settings->opaque(map, x, y)`. */
 export type Opaque = (x: number, y: number) => boolean;
@@ -122,8 +122,8 @@ export function tomeFovSettings(opaque: Opaque): FovSettings {
   };
 }
 
-type Axis = 'x' | 'y';
-type Axes = { x: number; y: number };
+export type Axis = 'x' | 'y';
+export type Axes = { x: number; y: number };
 
 /**
  * `fov_line_data` (`src/fov/fov.h`): a source, a ray, and a cursor.
@@ -157,11 +157,14 @@ export type LosStep = {
   readonly cornerY: number | null;
 };
 
-/** `fov_buffer_type`: the slope-list ring. One per line; see the file note. */
-type Ring = { index: number; prevLen: number; readonly buffer: Float32Array };
+/**
+ * `fov_buffer_type`: the slope-list ring. One per line, and one per circle
+ * (`fovcircle.ts`); see the file note.
+ */
+export type Ring = { index: number; prevLen: number; readonly buffer: Float32Array };
 
 /** `GET_BUFFER(target, buffer_data, len)`: the offset of `len` fresh floats. */
-function getBuffer(ring: Ring, len: number): number {
+export function getBuffer(ring: Ring, len: number): number {
   const overrun = (ring.index + ring.prevLen + len) & (FOV_BUFFER_SIZE - 1);
   ring.index = (ring.index + ring.prevLen) & (FOV_BUFFER_SIZE - 1);
   if (overrun < ring.index) ring.index = 0;
@@ -170,14 +173,14 @@ function getBuffer(ring: Ring, len: number): number {
 }
 
 /** A float sum, left to right, as C adds `a + b + c`. `a - b` is passed as `a + -b`, which is exact. */
-function sum(...terms: number[]): number {
+export function sum(...terms: number[]): number {
   let r = terms[0] ?? 0;
   for (let i = 1; i < terms.length; i += 1) r = f(r + (terms[i] ?? 0));
   return r;
 }
 
 /** `signx v` in the macros: `-` or nothing. */
-function sgn(sign: 1 | -1, v: number): number {
+export function sgn(sign: 1 | -1, v: number): number {
   return sign < 0 ? -v : v;
 }
 
