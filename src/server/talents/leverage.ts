@@ -40,6 +40,7 @@
 
 import { combatTalentScale } from '../../shared/scale.ts';
 import { healActor } from '../engine/damage.ts';
+import { MELEE_REACH } from '../engine/combat.ts';
 import { EffectId } from '../content/effects.ts';
 import { EffectStatus, SetEffectOutcome } from '../engine/effects.ts';
 import { combatPhysicalpower, TalentPower } from '../engine/derived.ts';
@@ -446,11 +447,34 @@ export function twistReachAt(level: number): number {
   return Math.max(1, Math.floor(combatTalentScale(level, REACH_LOW, REACH_HIGH, CURVE)));
 }
 
-/** How far a twist reaches. Upstream is `range = 1`, melee (dirty.lua:162). */
-const TWIST_RANGE = 1;
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * HOW FAR A TWIST REACHES: THE EIGHT TILES AROUND YOU, AS UPSTREAM'S DOES.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Upstream is `range = 1` with `target = {type="hit", range=...}`
+ * (cunning/dirty.lua:162-163), and the engine refuses a tile when
+ * `core.fov.distance(...) > typ.range` (engine/Target.lua:447-448). That
+ * distance is ROUNDED: `(int)(sqrt(dx*dx + dy*dy) + 0.5)` (src/fov.c
+ * `lua_fov_get_distance`, the circle shape engine/Module.lua:918 sets). A
+ * diagonal is sqrt(2) + 0.5 = 1.91, which rounds to 1 and is in reach; (2,0)
+ * and (2,1) round to 2 and are not. So upstream's range 1 is the 3x3.
+ *
+ * OURS IS EXACT EUCLID (`combatDistance`, engine/combat.ts), where a diagonal
+ * is 1.41 and a reach of 1 is the four orthogonal tiles only. `MELEE_REACH` is
+ * the number that exists for exactly that: 1.5 covers the eight neighbours and
+ * nothing at two, which is the same set upstream's 1 covers.
+ *
+ * `TWIST_RANGE` WAS 1, upstream's literal carried across without its metric,
+ * and it refused every foe standing diagonally next to you: the cursor said
+ * out of range and so did the server, about a body upstream lets you hit.
+ * When the metric becomes upstream's rounded one this may go back to 1; the
+ * test in test/server/full-swing-reach.test.ts holds either way.
+ */
+const TWIST_RANGE = MELEE_REACH;
 /** Four of six. Upstream's is a weapon-speed attack; ours is most of a turn. */
 const TWIST_AP = 4;
-/** Ported from dirty.lua:157 — `cooldown = 15`, and `fixed_cooldown = true`. */
+/** Ported from dirty.lua:156-157 — `cooldown = 15`, and `fixed_cooldown = true`. */
 const TWIST_COOLDOWN_ACTIONS = 15;
 const TWIST_COOLDOWN = tomeCooldownToTurns(TWIST_COOLDOWN_ACTIONS);
 
