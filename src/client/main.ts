@@ -379,6 +379,7 @@ import {
   guardTakeBack,
   pressAgainstGuard,
   pointsWaiting,
+  opensAtBirth,
   talentPanelGeometry,
   talentTipAt,
   talentPanelRect,
@@ -2701,6 +2702,22 @@ let storedUiScale: number | null = null;
  * frame about something else cannot re-send a correction already made.
  */
 let keymapRepair: KeyRemap | null = null;
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE BIRTH LEVEL-UP SCREEN, OWED AND NOT YET OPENED.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `storedUiScale`'s seam once more. `case 'loadout'` is the one place that knows
+ * a class choice has just landed, and it runs at module scope; the panel's
+ * toggle (`toggleTalentPanel`) lives in `boot`'s closure beside `requestDraw`.
+ * So the frame handler records the debt and `onMessage` pays it, through the
+ * toggle rather than a second copy of what the toggle resets.
+ *
+ * FALSE MEANS "NOTHING OWED", and it is cleared as it is consumed, so a later
+ * frame about something else cannot open the panel a second time.
+ */
+let birthPanelOwed = false;
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════
@@ -8541,6 +8558,13 @@ async function boot(): Promise<void> {
         const repair = keymapRepair;
         keymapRepair = null;
         commitRemap(repair);
+      }
+      // THE BIRTH LEVEL-UP SCREEN OPENS HERE, owed by `case 'loadout'` on the
+      // frame that acknowledged a class choice. Cleared before the call, as the
+      // repair above is. See `birthPanelOwed`.
+      if (birthPanelOwed) {
+        birthPanelOwed = false;
+        toggleTalentPanel(true);
       }
       // RE-ANCHOR THE RING. The caster can be shoved while it is open —
       // Backdraft pushes, and so will monsters — and a ring still drawn around
@@ -16089,7 +16113,7 @@ function applyServerMessage(msg: ServerMsg): void {
     // resource, and nobody else's — protocol.ts makes broadcasting them a
     // compile error server-side, because another player's cooldowns are both a
     // leak (they say what someone is holding for the boss) and noise.
-    case 'loadout':
+    case 'loadout': {
       // Wholesale replacement, in SERVER ORDER, never sorted: slot 1 is
       // `talents[0]` and muscle memory for which key is Ward Rush outranks any
       // ordering this renderer could impose.
@@ -16144,6 +16168,17 @@ function applyServerMessage(msg: ServerMsg): void {
       // The ordering in `hello` is what makes this safe on a first connection:
       // the gateway sends `loadout` BEFORE `class_options`, so a fresh player's
       // picker is put up after this line has already run with nothing to clear.
+      //
+      // ═══ WHETHER THIS IS THAT FRAME, READ BEFORE THE CLEAR ERASES IT ═══
+      // `classOptions` is non-null only while the picker is up, so the line
+      // below is the last moment it can say a choice just landed. Nearly every
+      // other loadout — the re-send after every spend, a realm crossing's —
+      // arrives with it already null. TWO DO NOT: `hello`'s on a reconnect
+      // while the picker is still up (it is sent before `class_options` is
+      // re-sent), and one from `sendLoadoutIfGatesMoved` if the held body's
+      // level, stats or hand move mid-picker. Both open the panel behind the
+      // picker; see the fifth deviation below. Used by the birth screen below.
+      const choseClass = classOptions !== null;
       classOptions = null;
       selectedClass = null;
       pickerHovered = null;
@@ -16167,6 +16202,59 @@ function applyServerMessage(msg: ServerMsg): void {
       // both reasons; adding a third means editing one function rather than
       // finding every call site.
       syncCommandLineReach();
+      /**
+       * ═══════════════════════════════════════════════════════════════════
+       * AND THE BIRTH LEVEL-UP SCREEN OPENS, WITH THE POINTS IN HAND.
+       * ═══════════════════════════════════════════════════════════════════
+       *
+       * Upstream opens its level-up dialog the moment a character is made:
+       * `self.player:playerLevelup(birthend, true)` (`tome/class/Game.lua:320-321`),
+       * a `LevelupDialog` registered with `on_birth` set
+       * (`tome/class/Player.lua:1487-1490`). Ours is the panel `g` opens, owed
+       * here and opened by `onMessage` — see `birthPanelOwed` — and it still
+       * sends nothing when it opens, so this is a picture and not a request.
+       * `opensAtBirth` says when; the guard says only on the frame that
+       * answered the chooser, never on an ordinary reconnect or on the re-send
+       * after a spend.
+       *
+       * ═══ ON THIS FRAME, NOT ON THE `progress` THAT FOLLOWS IT ═══
+       * `handleChooseClass` sends `loadout` first and then its progress frame
+       * through `sendProgressIfChanged`, whose memo key is the level, the xp,
+       * the four purses, the filed count and the two sets of six attributes.
+       * Taking the provisional class with the baseline origin can leave every
+       * one of them where it was, and then no frame is sent at all — so waiting
+       * for one would open nothing on the commonest pick there is. The
+       * `progress` held now is at worst the one from before the choice, which
+       * already carries the purses `hello` seeded, and any frame that follows
+       * re-renders the open panel.
+       *
+       * ═══ WHAT IS NOT PORTED, SAID RATHER THAN LEFT TO BE FOUND ═══
+       *   - NO UNDO INSIDE THE SCREEN. `LevelupDialog` snapshots the actor as it
+       *     opens and lets anything bought since come back out, at birth even a
+       *     starting talent (`tome/dialogs/LevelupDialog.lua:264`, `:345`). This
+       *     panel has no sitting to snapshot. A FRESH character has already
+       *     woken in the birthplace, where a take-back is refused as in every
+       *     delve; a returning one choosing a class has not crossed and may take
+       *     points back at once if it stands in a shared realm. Birth spends
+       *     enter `lastLearnt` like any other, so the ordinary take-back works
+       *     in town while the spend is still inside the window.
+       *   - NO `resetToFull` AFTERWARDS (`tome/class/Game.lua:300`). Constitution
+       *     bought here raises maximum life and not current life — the pool seam
+       *     in src/server/main.ts only clamps down — so a character can wake a
+       *     few points short of full.
+       *   - THE NARROWEST PANEL HAS NO ATTRIBUTE COLUMN (`talentPanelGeometry`'s
+       *     `hasStats`). On those windows only talents can be bought here, and
+       *     the attribute points wait in the purse.
+       *   - A RETURNING CHARACTER OFFERED THE CHOOSER SEES IT TOO: every file
+       *     from before classes holds `UNASSIGNED_CLASS`. They have points to
+       *     spend, which is the screen's whole reason, so that is intended.
+       *   - A SOCKET THAT RECONNECTS WHILE THE PICKER IS UP opens it too, behind
+       *     the picker: `hello` sends `loadout` before it re-sends
+       *     `class_options`, so the guard reads that loadout as the answer. It
+       *     shows the provisional class, dimmed, until the real choice lands and
+       *     opens the same panel over again.
+       */
+      if (choseClass && opensAtBirth(progress)) birthPanelOwed = true;
       // Whatever was being aimed may not be in the new loadout, and its range
       // ring certainly is not — this frame is RE-SENT on every spend precisely
       // because `range`, `desc` and `descNext` are stale the instant a rank
@@ -16183,6 +16271,7 @@ function applyServerMessage(msg: ServerMsg): void {
       // the point is still in hand and the panel is still explaining itself.
       talentsArmedId = null;
       break;
+    }
     case 'progress':
       // ═══ v9 — THE VIEWER'S OWN LEDGER. UNICAST, ABSOLUTE, REPLACED WHOLESALE ═══
       //

@@ -996,6 +996,35 @@ export function pointsWaiting(progress: ProgressMsg | null): number {
   );
 }
 
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * WHETHER THE TALENT PANEL OPENS BY ITSELF WHEN A CLASS HAS JUST BEEN CHOSEN.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Upstream opens its level-up dialog at birth, before the intro text:
+ * `self.player:playerLevelup(birthend, true)` (`tome/class/Game.lua:320-321`),
+ * which is `LevelupDialog.new(self, on_finish, on_birth)` registered as a
+ * dialog (`tome/class/Player.lua:1487-1490`). A new character is handed its
+ * birth points and the screen to spend them on at the same moment.
+ *
+ * ANY OF THE FOUR PURSES, through `pointsWaiting` and nothing else, so this
+ * cannot drift from the number every other nag counts. An attribute point alone
+ * is enough: the attribute column is on this panel, and a character holding
+ * only stat points has exactly as much to do here as one holding a class point.
+ *
+ * CONDITIONAL, AS UPSTREAM'S IS, ON A DIFFERENT CONDITION. `tome/class/Game.lua:320` skips
+ * the screen for `no_birth_levelup` (the Tutorial, tome/data/birth/
+ * descriptors.lua:126) and for a quick birth (`no_birth_popup`,
+ * tome/dialogs/Birther.lua:383); otherwise a character always arrives with
+ * points (`tome/class/Actor.lua:170-172`), so its dialog is never empty. Ours
+ * can be — a returning character whose points are all spent is offered the
+ * chooser too — and a screen that opens with nothing to spend is a screen that
+ * exists only to be closed, so ours opens on points rather than on a flag.
+ */
+export function opensAtBirth(progress: ProgressMsg | null): boolean {
+  return pointsWaiting(progress) > 0;
+}
+
 function pointsText(progress: ProgressMsg): string {
   /**
    * ═══════════════════════════════════════════════════════════════════════════
