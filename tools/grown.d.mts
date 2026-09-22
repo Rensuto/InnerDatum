@@ -20,6 +20,10 @@
  * layers, which is this repository's recurring failure, and neither can be
  * guarded from inside `tools/`.
  *
+ * `test/tools/grown-budget.test.ts` is the second reader, for the same shape of
+ * join: `growTo`, `spendPointsTo` and `levelOnTheFloor` spend the purses the
+ * server seeds and must refuse what its spend path refuses.
+ *
  * DECLARATIONS ONLY, AND LOOSE ON PURPOSE. The probe's bodies are duck-typed
  * plain objects assembled by `World.addPlayer` and by fixtures; giving them a
  * real type here would be a second opinion about what a body is, living in the
@@ -30,8 +34,19 @@
 /** Grow a body to `level` the way the server would have. */
 export function growTo<T>(body: T, cls: unknown, level: number): T;
 
-/** Spend the talent points those levels came with, down the class loadout. */
-export function spendPointsTo<T>(sheet: T, cls: unknown, level: number, maxRank?: number): T;
+/**
+ * Spend the class points a character of `level` holds, down the class loadout,
+ * refusing every rank the server's tier gate refuses. `body` is required: the
+ * gate reads its level and composed stats, and a point nothing can take is left
+ * in its `unspentPoints`. Returns how many points were spent.
+ */
+export function spendPointsTo(
+  sheet: unknown,
+  cls: unknown,
+  level: number,
+  body: unknown,
+  registry?: unknown,
+): number;
 
 /** One rolled item per slot at this level's band — and the lamp its level allows. */
 export function dressFor<T>(body: T, level: number, rng: unknown): T;
@@ -51,4 +66,5 @@ export function levelOnTheFloor(
   cls: unknown,
   sheet: unknown,
   effects: unknown,
+  ctx?: { readonly registry?: unknown; readonly engine?: unknown; readonly world?: unknown },
 ): void;

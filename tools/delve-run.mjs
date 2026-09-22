@@ -28,7 +28,7 @@
  * is impossible alone is not necessarily wrong, it is possibly the point. The
  * table prints both so the difference is visible rather than argued about.
  *
- * Usage:  node tools/delve-run.mjs [runs]
+ * Usage:  node tools/delve-run.mjs [runs] [level] [--four]
  */
 
 import { SITES, RealmKind, createRealms } from '../src/server/world/realms.ts';
@@ -37,6 +37,7 @@ import { createDownedState, isDowned, isErased } from '../src/server/engine/down
 import { createMvpEffectState } from '../src/server/content/effects.ts';
 import { effectsOn, recomposeCombat } from '../src/server/engine/effects.ts';
 import { resolveItem } from '../src/server/content/resolve.ts';
+import { originOf } from '../src/server/content/origins.ts';
 import {
   CLASSES,
   createContentTalentEngine,
@@ -76,7 +77,15 @@ import {
 import { BIRTH_INSCRIPTIONS, talentsFor } from '../src/server/content/inscriptions.ts';
 import { accept, createPartyState, invite, MAX_PARTY_SIZE } from '../src/server/engine/party.ts';
 
-const RUNS = Number(process.argv[2] ?? 8);
+/**
+ * THE NUMBERS ARE POSITIONAL AND THE FLAGS ARE NOT. A flag is taken out before
+ * the two numbers are read, so `8 1 --four` and `--four 8 1` agree. With no flag
+ * the list IS `process.argv.slice(2)`, so a bare run reads exactly the two
+ * numbers it has always read.
+ */
+const ARGS = process.argv.slice(2);
+const POSITIONAL = ARGS.filter((arg) => !arg.startsWith('--'));
+const RUNS = Number(POSITIONAL[0] ?? 8);
 
 /**
  * WHAT LEVEL THE PARTY IS — `node tools/delve-run.mjs 8 6`.
@@ -93,15 +102,44 @@ const RUNS = Number(process.argv[2] ?? 8);
  * reported 0 of 8 on every row. A row measured against a character nobody has
  * ever played is a measurement of the probe.
  *
- * Defaults to 1, so running it bare prints what it has always printed and every
- * number anybody wrote down still compares.
+ * Defaults to 1, so running it bare prints the same TABLES from the same seeds.
+ * The NUMBERS are not frozen: a body grown or levelled here spends the points
+ * the server would grant and refuses what it would refuse (`growTo`,
+ * `spendPointsTo`, grown.mjs), so a row where a body reaches level 5 (the
+ * Redactor 10) mid-run moved when the tier gate arrived. Compare a table
+ * against a baseline taken by the same version of this file, never against a
+ * number written down from an older one.
  */
-const LEVEL = Number(process.argv[3] ?? 1);
+const LEVEL = Number(POSITIONAL[1] ?? 1);
 /** Long enough to cross a 34x30 room several times and kill ten things. */
 const TURN_CAP = 900;
 
 /** The three classes, so a party is a real party rather than one body tripled. */
 const PARTY = CLASSES.slice(0, 3);
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * `--four` — ONE OF EACH CLASS IN ONE PARTY, THE SHAPE THE GAME IS BUILT FOR.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `MAX_PARTY_SIZE` is four, and the bare tables measure one body and three. A
+ * full party is the room every balance change is finally read against — a
+ * floor-1 wipe there is the reading that stops one — so it gets its own table
+ * rather than an ad-hoc harness.
+ *
+ * OPT-IN, AND IT PRINTS ONLY THE FOUR. Without the flag this tool prints the
+ * same two tables, from the same seeds (see `LEVEL` on why their numbers are
+ * not frozen). With it, it prints the
+ * party-of-four table and nothing else: the solo table would be the bare run's
+ * again, and the time is better spent once.
+ */
+const PARTY_OF_FOUR = CLASSES.slice(0, 4);
+const TABLES = ARGS.includes('--four')
+  ? [{ title: 'A PARTY OF FOUR', size: PARTY_OF_FOUR.length, party: PARTY_OF_FOUR }]
+  : [
+      { title: 'ALONE', size: 1, party: PARTY },
+      { title: 'A PARTY OF THREE', size: 3, party: PARTY },
+    ];
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════
@@ -283,6 +321,14 @@ export function run(site, size, seed, opts = {}) {
      * universal half alone and measures a character nobody has ever played.
      */
     p.classId = cls.id;
+    /**
+     * AND THE DEFAULT ORIGIN'S POINT PERIOD, which `overlayFor` (net/gateway.ts)
+     * stamps on every real body and the scheduler reads when a level is crossed
+     * (`actor.extraPointEvery`). Without it a probe body levelling on the floor
+     * earned fewer points than any player: Cityborn pays one more every ten.
+     */
+    const origin = originOf(p.origin);
+    if (origin.extraPointEvery !== undefined) p.extraPointEvery = origin.extraPointEvery;
     // THE COMBAT SHEET. See the header.
     p.combat = cls.combat;
     p.baseCombat = cls.combat;
@@ -314,7 +360,6 @@ export function run(site, size, seed, opts = {}) {
     if (opts.equipped !== undefined) p.equipped = { ...opts.equipped };
     else if (level > 1) dressFor(p, level, realm.world.lootRng.fork(`delve.dress.p${String(i)}`));
     const sheet = sheetForClass(cls);
-    spendPointsTo(sheet, cls, level);
     talentEngine.attach(p.id, sheet);
     /**
      * ═══════════════════════════════════════════════════════════════════════
@@ -338,6 +383,19 @@ export function run(site, size, seed, opts = {}) {
      */
     if (opts.lantern === false) recomposeCombat(p, effects, resolveItem);
     else bearBirthKit(p, effects);
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * THE TALENT POINTS, SPENT ON THE BODY THE SERVER WOULD GATE.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * AFTER THE DOLL IS FOLDED, and it used to be before it. `spendPointsTo`
+     * now asks the tier gate, and the gate reads `body.combat` — the COMPOSED
+     * sheet, gear and all (main.ts#raiseTalentPoint says why). Spent before
+     * the fold, a point of Willpower on a rolled ring would not have counted.
+     * BEFORE THE STANCES, as it always was: a birth sustain goes up at the
+     * rank it was bought to.
+     */
+    spendPointsTo(sheet, cls, level, p, talentEngine.registry);
     /**
      * AND THE PASSIVES, BEFORE THE FIRST TURN RATHER THAN AFTER IT.
      * `refreshBody` above folds them on `onActBase`, which is once the clock has
@@ -1407,17 +1465,17 @@ const label = (site) =>
  * `run` is exported, and an export nobody may import without also running
  * twenty-seven delves twice is not an export. `import.meta.main` is Node's own
  * answer (24.2+, and this repo is on 24.19), so `node tools/delve-run.mjs`
- * prints exactly what it always printed and `import { run }` costs nothing.
+ * prints its tables and `import { run }` costs nothing.
  */
 if (import.meta.main) {
-  for (const size of [1, 3]) {
-    console.log(`\n${size === 1 ? 'ALONE' : 'A PARTY OF THREE'} — ${RUNS} runs each\n`);
+  for (const { title, size, party } of TABLES) {
+    console.log(`\n${title} — ${RUNS} runs each\n`);
     console.log(
       `${'delve'.padEnd(32)} ${'clear'.padStart(6)} ${'wipe'.padStart(5)} ${'stall'.padStart(5)}  ${'turns'.padStart(5)}  ${'hp low'.padStart(6)}  ${'downed'.padStart(6)}  ${'respawn'.padStart(7)}  ${'gold'.padStart(5)}  ${'items'.padStart(5)}  ${'worn'.padStart(4)}  ${'sells for'.padStart(9)}  ${'foes'.padStart(4)}  ${'drop/foe'.padStart(8)}`,
     );
     for (const site of delves) {
       const rs = Array.from({ length: RUNS }, (_u, i) =>
-        run(site, size, `delve-run:${site.id}:${size}:${i}`),
+        run(site, size, `delve-run:${site.id}:${size}:${i}`, { party }),
       );
       const clears = rs.filter((r) => r.outcome === 'clear');
       const avg = (xs) => (xs.length === 0 ? 0 : xs.reduce((a, b) => a + b, 0) / xs.length);

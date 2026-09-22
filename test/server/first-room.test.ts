@@ -506,12 +506,30 @@ describe('the gentlest room in the game', () => {
        * 80 on the Undermost, worst run bottoming out at 7% of the bar. What this
        * catches is a room that became lethal rather than one that drifted a
        * point.
+       *
+       * ═══ AND THEN RANGES TOOK TOME'S ROUNDING, AND THE RATE DID DRIFT ═══
+       * Measured 2026-09-22, eighty seeds each, one snapshot per commit:
+       *
+       *                          Drowned Chapel   Undermost
+       *   before the port             1 / 80        0 / 80
+       *   balls take the disc         1 / 80        0 / 80
+       *   ranges round (0a03d5f)      5 / 80        0 / 80
+       *   + the birth point probe     3 / 80        1 / 80
+       *
+       * Ranged monsters fire from ToME's rounded circle now — a few more tiles
+       * off each axis — and a lone level-1 Watchman walking the Chapel takes a
+       * shot or two more. That is ToME's geometry, reported rather than tuned
+       * back. It moved the base rate from ~1% to ~5%, which put a rare wipe on
+       * one of these six fixed seeds (seed 3 once the probe spends Cityborn's
+       * birth point). So the bar is ONE of six: at a ~5% rate two wipes in six
+       * fixed seeds is a ~3% draw, while a room that had really become lethal —
+       * one in three — puts two or more in six about two times in three.
        */
       const wiped = runs.filter((r) => r.outcome === 'wipe').length;
       expect(
         wiped,
         `${String(id)} erased a level-1 Watchman ${String(wiped)} of ${String(DRIVEN_SEEDS)} times`,
-      ).toBe(0);
+      ).toBeLessThanOrEqual(1);
 
       /**
        * AND IT IS FINISHABLE, which is the other half and the half a wipe count

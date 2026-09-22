@@ -28,23 +28,40 @@
 //
 // It grows the two things the server would have grown by the time a player got
 // there — STATS and HIT POINTS — and spends the talent points that came with
-// them. It does NOT invent a levelling path: `spreadStatPoints` is the same
-// round-robin `monsters.ts` uses for `autoStats`, so the character is the
-// straightforward build rather than an optimised one, and that is the honest
-// baseline for "is this room fair".
+// them. It does NOT invent a levelling path: the stats go round-robin down the
+// class's own sheet, the same deal `monsters.ts` makes for `autoStats`, so the
+// character is the straightforward build rather than an optimised one, and that
+// is the honest baseline for "is this room fair".
+//
+// ═══ THE SERVER'S PURSES AND THE SERVER'S REFUSALS, OR IT IS NOT A PLAYER ═══
+// Both halves used to be the probe's own arithmetic. The stats came from
+// `statPointsGainedTo` — the MONSTER formula (shared/leveling.ts), which has no
+// birth term and no ceiling — so a level-2 Watchman stood at Strength 25 where
+// `statCeilingForLevel(2)` is 22.8 and `handleSpendStat` would have refused
+// the point. The talents went round-robin with no tier gate, so a level-3 body
+// held a tier-3 rank the server opens at level 8. Now every point is one the
+// server would have seeded (`totalStatPointsAtLevel`, `totalPointsAtLevel` —
+// `seedFreshPurses` in net/gateway.ts) and every spend asks the question the
+// server asks (`canRaiseStat` over `boughtSheet`, `checkTier` over the composed
+// sheet). A point the server would refuse stays in the purse, as it would for a
+// player, and `levelOnTheFloor` tries it again at the next level.
 //
 // GEAR IS ROLLED FROM THE GAME'S OWN TABLE, never authored here. `rollLoot` is
 // what the floor uses, so a grown body wears what the floor would have given it
 // by that level — which is the whole point, and is why this takes an `Rng`
 // rather than picking the best of everything.
 
+import { maxLifeFor, PLAYER_RANK } from '../src/shared/leveling.ts';
 import {
-  spreadStatPoints,
-  statPointsGainedTo,
-  maxLifeFor,
-  PLAYER_RANK,
-} from '../src/shared/leveling.ts';
-import { canRaiseStat, pointsForLevel, TALENT_MAX_LEVEL } from '../src/shared/progression.ts';
+  canRaiseStat,
+  isGenericTree,
+  totalPointsAtLevel,
+  totalStatPointsAtLevel,
+  TALENT_MAX_LEVEL,
+} from '../src/shared/progression.ts';
+import { checkTier } from '../src/shared/tiers.ts';
+import { registerAllTalents, spendByPurse } from '../src/server/content/classes.ts';
+import { classPointBonus, originOf } from '../src/server/content/origins.ts';
 import { rollLoot, bandFor } from '../src/server/content/loot.ts';
 import { ITEMS, birthKitFor } from '../src/server/content/items.ts';
 import { resolveItem } from '../src/server/content/resolve.ts';
@@ -61,7 +78,7 @@ import {
   toggleSustain,
 } from '../src/server/engine/talents.ts';
 import { maxLifeOf } from '../src/server/engine/pools.ts';
-import { STAT_BASE } from '../src/server/engine/derived.ts';
+import { stat as statValue } from '../src/server/engine/derived.ts';
 import { ActorKind, Slot, SLOT_ORDER } from '../src/shared/protocol.ts';
 import { visionOf } from '../src/server/view/eyesight.ts';
 import { rememberSeen } from '../src/shared/vision.ts';
@@ -83,6 +100,13 @@ function growthOrder(cls) {
     .sort((a, b) => (stats[b] ?? 0) - (stats[a] ?? 0));
 }
 
+/** The content registry, built once, for a caller that has no engine to hand. */
+let CONTENT_REGISTRY;
+function contentRegistry() {
+  CONTENT_REGISTRY ??= registerAllTalents();
+  return CONTENT_REGISTRY;
+}
+
 /**
  * ═══════════════════════════════════════════════════════════════════════════
  * GROW A BODY TO `level`, the way the server would have.
@@ -94,23 +118,47 @@ function growthOrder(cls) {
  * thing as a bug it once had — *"THIS USED TO COME AFTER `maxHp`, AND THE ORDER
  * WAS THE BUG"*.
  *
+ * ═══ THE PURSE IS THE SERVER'S, AND SO IS EVERY REFUSAL ═══
+ * `totalStatPointsAtLevel` is what `seedFreshPurses` (net/gateway.ts) hands a
+ * character of this level, and the points go through `spendBankedStats` — the
+ * loop the floor already spends with, which asks `canRaiseStat` of exactly what
+ * `handleSpendStat` asks it of. This used to be `statPointsGainedTo(level,
+ * PLAYER_RANK)` dealt by `spreadStatPoints`: the MONSTER formula, with no birth
+ * term and no ceiling, so a level-2 Watchman was built at Strength 25 against
+ * a ceiling of 22.8 — a body the server refuses to create.
+ *
+ * ═══ AND IT RUNS AT LEVEL 1 ═══
+ * There was a `level <= 1` early return. A level-1 character has whatever the
+ * level-1 purse holds — nothing today, and the birth grant the day one lands —
+ * and a probe that skipped the purse at level 1 would never see that change.
+ * With nothing to spend, a level-1 body comes out exactly as it went in: the
+ * class sheet, by reference, and the class's own pool.
+ *
+ * ═══ THE LEDGER, NOT A SECOND CLASS SHEET ═══
+ * `baseCombat` is the CLASS sheet and `spentStats` the points bought, which is
+ * how the server holds them (`boughtSheet` folds one onto the other, and
+ * `recomposeCombat` does it again with gear). The old body wrote the grown
+ * stats INTO `baseCombat`; the composed numbers are the same either way, but
+ * only this shape lets the floor's spends continue the same ledger and lets a
+ * test count what was spent.
+ *
  * Returns the body, so a caller can chain.
  */
 export function growTo(body, cls, level) {
-  if (level <= 1) return body;
   body.level = level;
-
-  const base = cls.combat?.stats ?? {};
-  const grown = spreadStatPoints(base, growthOrder(cls), statPointsGainedTo(level, PLAYER_RANK));
-  // BOTH SHEETS, because they are two different questions and the engine reads
-  // both: `baseCombat` is what a swap comparison measures against and what
-  // `recomposeCombat` folds gear onto; `combat` is the live sheet.
-  body.baseCombat = { ...cls.combat, stats: grown };
-  body.combat = { ...cls.combat, stats: grown };
+  body.baseCombat = cls.combat;
+  // A FRESH LEDGER. Growing a body is its whole career from the class sheet;
+  // points already on it would be bought twice.
+  delete body.spentStats;
+  body.unspentStatPoints = totalStatPointsAtLevel(level);
+  spendBankedStats(body, cls);
+  // THE LIVE SHEET, folded the server's way. No gear yet — the caller dresses
+  // the body and `recomposeCombat` folds the doll on top of this.
+  body.combat = boughtSheet(body, body.baseCombat);
 
   // AND THE POOL THE STATS JUST EARNED. `conAbove` is exactly what
   // `engine/pools.ts#maxLifeOf` passes — the Constitution over the class's own.
-  const conAbove = (grown['con'] ?? 0) - (base['con'] ?? 0);
+  const conAbove = statValue(body.combat, 'con') - statValue(cls.combat, 'con');
   body.maxHp = maxLifeFor(cls.maxHp, cls.lifeRating, level, PLAYER_RANK, conAbove);
   body.hp = body.maxHp;
   return body;
@@ -119,33 +167,122 @@ export function growTo(body, cls, level) {
 /**
  * THE TALENT POINTS THAT CAME WITH THOSE LEVELS, spent down the loadout.
  *
- * ROUND-ROBIN ACROSS THE CLASS'S OWN TALENTS, capped at `TALENT_MAX_LEVEL` by
- * the sheet itself. Like the stat spread this is the straightforward build
+ * ROUND-ROBIN ACROSS THE CLASS'S OWN TALENTS, refused wherever the server
+ * refuses. Like the stat spread this is the straightforward build
  * rather than a good one — a probe that measured an optimised character would
  * be answering a question no first-time player is asking.
  *
  * `points` is a Map on the sheet and rank 1 is what `NotLearned` tests, so this
  * writes the same field `spend_point` does.
+ *
+ * ═══ THE PURSE IS `totalPointsAtLevel`, LESS WHAT THE SHEET HAS SPENT ═══
+ * That is `seedFreshPurses` for a fresh sheet and `restoreProgression`'s
+ * arithmetic for any other — the total the level grants, minus `spendByPurse`,
+ * the ledger the restore path reads (main.ts#talentSpendOf). It was a sum of
+ * `pointsForLevel` from level 2, which is the same number today and stops being
+ * the same number the moment the total grows a birth term.
+ *
+ * ═══ WITH THE ORIGIN'S BONUS, BECAUSE THERE IS NO SUCH THING AS NO ORIGIN ═══
+ * The server asks `totalPointsAtLevel(level, classPointBonus(origin))`, and a
+ * body with no `origin` is `originOf(undefined)` — the default, Cityborn, one
+ * point at birth and one every ten levels (human.lua:128-132, :142-143). The
+ * first version left the bonus out and measured a body no player can be:
+ * Cityborn's stats with a purse 1 short at level 1 and 6 short at level 50.
+ *
+ * ═══ EVERY RANK ASKS THE TIER GATE FIRST ═══
+ * `serverWouldRaise` below is main.ts#raiseTalentPoint's question, so the body
+ * has to come along: the gate reads its level and its composed stats. Without
+ * it this bought tier-3 and tier-4 ranks at level 3 that the server opens at 8
+ * and 12. A point no talent can take is left in `body.unspentPoints`, which is
+ * where the server leaves it, and `levelOnTheFloor` spends it when it opens.
+ *
+ * `registry` defaults to the content registry; pass the engine's where there
+ * is one.
+ *
+ * @returns how many points were spent.
  */
-export function spendPointsTo(sheet, cls, level, maxRank = 5) {
-  let budget = 0;
-  for (let l = 2; l <= level; l += 1) budget += pointsForLevel(l);
-  const ids = (cls.loadout ?? []).map((t) => t.id);
-  if (ids.length === 0 || budget <= 0) return sheet;
-
-  let i = 0;
-  let guard = 0;
-  while (budget > 0 && guard < budget + ids.length * maxRank + 1) {
-    const id = ids[i % ids.length];
-    i += 1;
-    guard += 1;
-    if (id === undefined) continue;
-    const at = sheet.points.get(id) ?? 0;
-    if (at >= maxRank) continue;
-    sheet.points.set(id, at + 1);
-    budget -= 1;
+export function spendPointsTo(sheet, cls, level, body, registry = contentRegistry()) {
+  if (body === undefined) {
+    throw new Error('spendPointsTo needs the body: the tier gate reads its level and its stats');
   }
-  return sheet;
+  const spent = spendByPurse(sheet, cls, (id) => registry.get(id)?.tree).class;
+  const bonus = classPointBonus(originOf(body.origin));
+  body.unspentPoints = Math.max(0, totalPointsAtLevel(level, bonus) - spent);
+  return spendClassPoints(body, sheet, cls, registry);
+}
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * WOULD THE SERVER TAKE THIS POINT? — the spend path's refusals, in its order.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ *   THE PURSE      `handleSpendPoint` pays a `generic/` tree from the generic
+ *                  purse. This probe spends only the class purse, so a
+ *                  generic talent is not something it may buy.
+ *   THE CAP        `talent.maxLevel ?? TALENT_MAX_LEVEL` (`toLoadoutView`'s
+ *                  `maxLevel`, which `handleSpendPoint` refuses at), and
+ *                  `raiseTalentPoint`'s own `TALENT_MAX_LEVEL`.
+ *   NOT A RANK     an id with no entry in `points` is not on this sheet, and
+ *                  `raiseTalentPoint` answers null.
+ *   THE LADDER     `checkTier`, with the context `raiseTalentPoint` builds:
+ *                  the rank AFTER the point, the COMPOSED stat, the body's
+ *                  level, and the OTHER talents of the tree at rank 1 or more.
+ *
+ * `checkTier` is the function the server asks, not a copy of it. The context
+ * has to be assembled here because main.ts assembles it inline; it is the same
+ * five reads `content/classes.ts#gateFor` makes for the panel, and a test holds
+ * this answer against that one.
+ */
+function serverWouldRaise(body, sheet, id, registry) {
+  const talent = registry.get(id);
+  if (talent === undefined) return false;
+  if (isGenericTree(talent.tree ?? '')) return false;
+  const current = sheet.points.get(id);
+  if (current === undefined) return false;
+  if (current >= (talent.maxLevel ?? TALENT_MAX_LEVEL) || current >= TALENT_MAX_LEVEL) {
+    return false;
+  }
+  const known = [...sheet.points.entries()].filter(
+    ([other, rank]) => other !== id && rank >= 1 && registry.get(other)?.tree === talent.tree,
+  ).length;
+  return checkTier({
+    tier: talent.tier,
+    rank: current + 1,
+    stat: talent.statGate,
+    statValue: talent.statGate === undefined ? 0 : (body.combat?.stats?.[talent.statGate] ?? 0),
+    characterLevel: body.level ?? 1,
+    treeKnown: known,
+  }).ok;
+}
+
+/**
+ * THE ONE ROUND-ROBIN BOTH TALENT SPENDERS USE, down the class loadout.
+ *
+ * Starts at the top of the loadout every call and skips what the server would
+ * refuse, so with nothing refused it deals exactly as the old loop did. Stops
+ * when the purse is empty or nothing left can take a point.
+ */
+function spendClassPoints(body, sheet, cls, registry) {
+  const ids = (cls.loadout ?? []).map((t) => t.id);
+  let spent = 0;
+  if (ids.length === 0) return spent;
+  let i = 0;
+  while ((body.unspentPoints ?? 0) > 0) {
+    let raised = false;
+    for (let step = 0; step < ids.length; step += 1) {
+      const id = ids[(i + step) % ids.length];
+      if (id === undefined) continue;
+      if (!serverWouldRaise(body, sheet, id, registry)) continue;
+      sheet.points.set(id, (sheet.points.get(id) ?? 0) + 1);
+      body.unspentPoints -= 1;
+      spent += 1;
+      i = i + step + 1;
+      raised = true;
+      break;
+    }
+    if (!raised) break;
+  }
+  return spent;
 }
 
 /**
@@ -418,8 +555,17 @@ export function rememberWhatProbesSee(world) {
  * shield up. Still a bias, still in the hard direction, still said out loud.
  */
 export function levelOnTheFloor(body, cls, sheet, effects, ctx = undefined) {
-  spendBankedStats(body, cls);
-  spendBankedTalents(body, sheet, cls);
+  /**
+   * STATS FIRST, AND REFOLDED BEFORE ANY TALENT IS BOUGHT. `handleSpendStat`
+   * recomposes the moment a point lands, so a player who raises Willpower and
+   * then presses `+` on a Willpower talent is gated on the new figure. The tier
+   * gate below reads `body.combat`, so without this refold it would be asking
+   * about the body from before this level's three points.
+   */
+  if (spendBankedStats(body, cls) > 0 && (body.unspentPoints ?? 0) > 0) {
+    recomposeCombat(body, effects, resolveItem);
+  }
+  spendBankedTalents(body, sheet, cls, ctx?.registry);
   foldPassives(body, sheet, effects, ctx);
   // `recomposeCombat` IS THE ONLY WRITER OF `combat` — this writes its inputs
   // and asks it to run, exactly as main.ts#refreshPassives does.
@@ -597,74 +743,67 @@ export function foldPassives(body, sheet, effects, ctx = undefined) {
 }
 
 /**
- * THE THREE ATTRIBUTE POINTS A LEVEL OWES, SPENT DOWN THE CLASS'S OWN ORDER.
+ * THE ATTRIBUTE POINTS IN THE PURSE, SPENT DOWN THE CLASS'S OWN ORDER.
  *
  * `spentStats` is the ledger a player writes with the `+` button and the one
  * `boughtSheet` folds at stage one and a half — so this is the same arithmetic
- * `handleSpendStat` performs, minus the wire. `canRaiseStat` is asked for the
- * same reason the gateway asks it: `statCeilingForLevel` is a real cap and a
- * probe that walked past it would be measuring a character the server refuses
- * to create.
+ * `handleSpendStat` performs, minus the wire. The ceiling question is the
+ * gateway's line verbatim — `canRaiseStat` of `stat(boughtSheet(body,
+ * body.baseCombat ?? body.combat))` — because `statCeilingForLevel` is a real
+ * cap and a probe that walked past it would be measuring a character the
+ * server refuses to create.
  *
- * ROUND-ROBIN, LIKE `growTo`'s. A point that no stat can take is dropped rather
- * than banked forever; at the levels these probes reach the ceiling is far away
- * and this arm is unreachable, which is why it is a `break` and not a search.
+ * `growTo` spends a whole career through here and the floor spends each level
+ * through here, so there is one loop and one ceiling.
+ *
+ * ROUND-ROBIN, starting from the top of the order every call. A stat at its
+ * ceiling is skipped and the point goes to the next one — a class can author a
+ * stat above a low level's ceiling, and the Watchman's Strength at level 2 is
+ * one. A point NO stat can take stays in `unspentStatPoints`, where the server
+ * would leave it, and the next level's call tries it again.
+ *
+ * @returns how many points were spent.
  */
 function spendBankedStats(body, cls) {
-  if ((body.unspentStatPoints ?? 0) <= 0) return;
+  let spent = 0;
+  if ((body.unspentStatPoints ?? 0) <= 0) return spent;
   const order = growthOrder(cls);
-  if (order.length === 0) return;
-  const grown = { ...(body.spentStats ?? {}) };
+  if (order.length === 0) return spent;
   let i = 0;
   while (body.unspentStatPoints > 0) {
-    let spent = false;
+    let raised = false;
     for (let step = 0; step < order.length; step += 1) {
       const key = order[(i + step) % order.length];
       if (key === undefined) continue;
-      const base = boughtSheet({ spentStats: grown }, body.baseCombat ?? body.combat);
-      const at = base?.stats?.[key] ?? STAT_BASE;
-      if (!canRaiseStat(at, body.level)) continue;
-      grown[key] = (grown[key] ?? 0) + 1;
+      // net/gateway.ts#handleSpendStat, the two lines that decide it.
+      const base = statValue(boughtSheet(body, body.baseCombat ?? body.combat) ?? {}, key);
+      if (!canRaiseStat(base, body.level)) continue;
+      body.spentStats = { ...body.spentStats, [key]: (body.spentStats?.[key] ?? 0) + 1 };
       body.unspentStatPoints -= 1;
+      spent += 1;
       i = i + step + 1;
-      spent = true;
+      raised = true;
       break;
     }
-    if (!spent) break;
+    if (!raised) break;
   }
-  body.spentStats = grown;
+  return spent;
 }
 
 /**
- * AND THE TALENT POINT, down the same loadout `spendPointsTo` uses at birth.
+ * AND THE TALENT POINTS, down the same loadout `spendPointsTo` uses at birth,
+ * through the same round-robin and the same refusals (`serverWouldRaise`).
  *
- * ONE ROUND-ROBIN, ONE CAP. `TALENT_MAX_LEVEL` is the sheet's own ceiling, and a
- * point with nowhere to go is dropped — a probe cannot bank a point for a
- * discipline it has no opinion about.
+ * A point with nowhere to go stays in `unspentPoints`, as it would for a
+ * player: a rank the ladder refuses at this level may open at the next, and
+ * this runs again on every base turn.
  *
  * THE GENERICS AND THE CATEGORY POINTS ARE LEFT WHERE THEY LAND. Both buy trees
  * this probe does not model (`unlockTree` is a gateway verb), and spending them
  * into the class loadout would be inventing a build rather than measuring one.
  * Like the passive fold above, that biases every number in the HARD direction.
  */
-function spendBankedTalents(body, sheet, cls) {
+function spendBankedTalents(body, sheet, cls, registry = contentRegistry()) {
   if (sheet === undefined || (body.unspentPoints ?? 0) <= 0) return;
-  const ids = (cls.loadout ?? []).map((t) => t.id);
-  if (ids.length === 0) return;
-  let i = 0;
-  while (body.unspentPoints > 0) {
-    let spent = false;
-    for (let step = 0; step < ids.length; step += 1) {
-      const id = ids[(i + step) % ids.length];
-      if (id === undefined) continue;
-      const at = sheet.points.get(id) ?? 0;
-      if (at >= TALENT_MAX_LEVEL) continue;
-      sheet.points.set(id, at + 1);
-      body.unspentPoints -= 1;
-      i = i + step + 1;
-      spent = true;
-      break;
-    }
-    if (!spent) break;
-  }
+  spendClassPoints(body, sheet, cls, registry);
 }
