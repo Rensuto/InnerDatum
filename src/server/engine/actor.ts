@@ -391,9 +391,10 @@ type ActorCommon = {
    * band read. 1 is melee, and 1 is the Moore neighbourhood, which is what makes
    * bump-attack work on the diagonals.
    *
-   * Its Euclidean twin is `combat.range`, which is what `canAttack` refuses on.
-   * A melee creature therefore carries `attackRange: 1` AND `combat.range: 1.5`
-   * — see the two-metrics note in content/monsters.ts.
+   * Its `core.fov.distance` twin is `combat.range`, which is what `canAttack`
+   * refuses on. A melee creature carries `attackRange: 1` AND `combat.range:
+   * 1.5` — the same eight tiles on both metrics now that the range one rounds;
+   * see the two-metrics note in content/monsters.ts.
    */
   attackRange: number;
   /**
@@ -1815,7 +1816,7 @@ const DEFAULT_MONSTER_HP_REGEN = 0;
  *
  * THAT IS FIXED. `strike` now resolves through `combat.ts#attackTarget`, which
  * was one change and not two — the scheduler's Chebyshev range check and
- * `canAttack`'s Euclidean one had to move together or attacks pass legality and
+ * `canAttack`'s then-Euclidean one had to move together or attacks pass legality and
  * then quietly do nothing (see the wiring note at the head of engine/combat.ts).
  * An accuracy of 19 on a husk now means what it says.
  *

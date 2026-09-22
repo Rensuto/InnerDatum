@@ -69,6 +69,7 @@ import { WebSocket } from 'ws';
 
 import { COMMAND_GAP_MS, PROTOCOL_VERSION } from '../src/shared/version.ts';
 import { canRoute } from '../src/shared/level.ts';
+import { tileDistance } from '../src/shared/distance.ts';
 import { firstStep } from './walk.mjs';
 import { helloAndChoose } from './handshake.mjs';
 
@@ -459,15 +460,20 @@ const usedIt = () => frames.some((f) => f.t === 'used' && f.ev?.talentId === DRI
  */
 const STRIKE_RANGE = DRIVER.range ?? 6;
 /**
- * THE SERVER'S METRIC, WHICH IS EUCLIDEAN. `engine/combat.ts#combatDistance` is
- * `sqrt(dx*dx + dy*dy)`; this probe used Chebyshev, walked to 12,12 against a
- * body at 18,14, measured "6 tiles, range is 6" and could not understand why
- * `out_of_range` came back. (6, 2) is 6.32 away. The server was right every time.
+ * THE SERVER'S METRIC, IMPORTED — NOT WRITTEN OUT A SECOND TIME.
+ * `engine/combat.ts#combatDistance` is `tileDistance` (shared/distance.ts):
+ * ToME's `core.fov.distance`, the straight line rounded half-up. This probe
+ * first used Chebyshev, walked to 12,12 against a body at 18,14, measured "6
+ * tiles, range is 6" and could not understand why `out_of_range` came back.
+ * (6, 2) is 6.32 away, which rounds to 6 now — the shot the server refused
+ * then, it takes today. The server was right every time, by its own metric.
  *
- * A probe that measures distance differently from the thing it is probing will
- * always eventually accuse it of a bug it does not have.
+ * THE COPY THAT FIXED IT WAS `Math.sqrt` WRITTEN OUT HERE, and it was right
+ * only while the server was unrounded too. A probe that measures distance
+ * differently from the thing it is probing will always eventually accuse it of
+ * a bug it does not have, so this asks the server's own function.
  */
-const reach = (a, b) => Math.sqrt((a.x - b.x) ** 2 + (a.y - b.y) ** 2);
+const reach = tileDistance;
 /**
  * POSITIONS COME AS DELTAS. `realm` is a SNAPSHOT and the bodies move inside
  * `moved` frames after it, so reading a position out of the snapshot is reading
@@ -560,7 +566,7 @@ for (let step = 0; step < 20; step += 1) {
 
 const me = hereNow();
 const goal = victimNow();
-const away = me === undefined ? '?' : reach(me, goal).toFixed(1);
+const away = me === undefined ? '?' : String(reach(me, goal));
 console.log(
   `  me at ${String(me?.x)},${String(me?.y)} — ${String(goal.name)} at ` +
     `${String(goal.x)},${String(goal.y)}, ${away} tiles, range is ${String(STRIKE_RANGE)}`,

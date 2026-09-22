@@ -1459,7 +1459,8 @@ export type TalentCost = {
 export type TalentTargeting = {
   readonly shape: TargetShape;
   /**
-   * Tiles, EUCLIDEAN (`core.fov.distance`) — see combat.ts's note on metrics.
+   * Tiles, by `core.fov.distance` — the straight line rounded half-up
+   * (`combatDistance`, which is `tileDistance`); see combat.ts's note on metrics.
    *
    * THE LEVEL-1 RANGE when `rangeAt` is present. Read it through
    * `effectiveTalentRange`, never directly, or Fog Step is gated at 3 tiles for
@@ -3086,9 +3087,12 @@ function checkTargeting(
 ): TalentRefusal | null {
   if (targeting.shape === TargetShape.Self) return null;
 
-  // EUCLIDEAN, matching `core.fov.distance` and every other range in the game.
-  // A Chebyshev ring is a square that reaches 7.07 tiles into its corners, and
-  // the targeting UI draws a circle (combat.ts documents the two metrics).
+  // `core.fov.distance`, ROUNDED, as every other range in the game is: the same
+  // `combatDistance` a weapon swing and the monster AI ask, and the
+  // `tileDistance` the targeting ring draws with. A Chebyshev ring is a square
+  // that reaches 7.07 tiles into its corners (combat.ts documents the metrics).
+  // Whole tiles, so the Inspector's hole of 3 lets her shoot a foe two diagonal
+  // steps away (2.83, which rounds to 3) and refuses one at (2,1).
   const distance = combatDistance(actor, target);
   if (distance > range) return TalentRefusal.OutOfRange;
 
@@ -3451,12 +3455,13 @@ export function isFriend(a: Sided, b: Sided): boolean {
  * CHEBYSHEV proximity — the "adjacent" / "nearby" test, NOT the range test.
  *
  * combat.ts explains the metrics: Chebyshev for adjacency and A* step costs,
- * and a radius for everything else. A BALL's radius is ToME's rounded
- * `core.fov.distance` now (`ballTiles` -> `discTiles`, shared/distance.ts); it
- * was exact Euclid, like the ranges and the targeting ring still are until the
- * range increment of docs/wip/distance lands. This is the Chebyshev one, and it
- * is only ever used for "is this thing standing next to me", where a diagonal
- * genuinely is adjacent.
+ * and a radius for everything else. Every radius and range is ToME's rounded
+ * `core.fov.distance` — a BALL through `ballTiles` -> `discTiles`, a range
+ * through `combatDistance` -> `tileDistance` (shared/distance.ts), and the
+ * targeting ring through the same `tileDistance`. All three were the exact
+ * length once. This is the Chebyshev one, and it is only ever used for "is this
+ * thing standing next to me", where a diagonal genuinely is adjacent — and at a
+ * radius of 1 the two agree, since a diagonal rounds to 1 as well.
  */
 export function withinTiles(a: TileXY, b: TileXY, tiles: number): boolean {
   return chebyshev(a, b) <= tiles;

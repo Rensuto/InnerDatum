@@ -175,8 +175,9 @@
  * and crit all run for a monster: every `weapon.dam` / `atk` / `apr` ported
  * below is LIVE on the attacker side, and an accuracy of 19 on the husk now
  * means the husk actually rolls it. (That was ONE change and not two — the
- * Chebyshev range check in the scheduler and the Euclidean `canAttack` had to
- * move together; the wiring note at the head of engine/combat.ts is the record.)
+ * Chebyshev range check in the scheduler and the then-Euclidean `canAttack` had
+ * to move together; the wiring note at the head of engine/combat.ts is the
+ * record. `canAttack` measures ToME's rounded length now.)
  *
  * THE PROJECTILE HALF IS NOT ON THAT FUNCTION AND IS NOT GOING TO BE, which is
  * why this roster's one ranged creature reads its damage out of two different
@@ -205,21 +206,27 @@
  * ═══════════════════════════════════════════════════════════════════════════
  *
  * ToME measures MOVEMENT in Chebyshev (a diagonal step costs the same as an
- * orthogonal one — Astar.lua) and RANGE in Euclidean (`core.fov.distance`; see
- * the header of engine/combat.ts). This port keeps both, so every template
- * declares both:
+ * orthogonal one — Astar.lua) and RANGE in `core.fov.distance`, the straight
+ * line rounded half-up (`combatDistance`; see the header of engine/combat.ts).
+ * This port keeps both, so every template declares both:
  *
- *   `attackRange`  CHEBYSHEV. What the scheduler's legality check and the AI's
- *                  chase band read. For melee it is 1, which IS the Moore
+ *   `attackRange`  CHEBYSHEV. The orb's flight limit (engine/projectile.ts),
+ *                  the guard counter's reach, and `canAttack`'s fallback when a
+ *                  sheet names no `combat.range`. NOTHING IN ai/ READS IT: the
+ *                  AI's band is `kite`'s, asked of `combatDistance` and
+ *                  `rangeRefusal`. For melee it is 1, which IS the Moore
  *                  neighbourhood and is what makes bump-attack work.
- *   `combat.range` EUCLIDEAN. What `canAttack` refuses on.
+ *   `combat.range` `core.fov.distance`. What `canAttack` refuses on, and what
+ *                  the AI asks through `rangeRefusal`.
  *
- * A melee template therefore declares `combat.range` **1.5**, not 1: the four
- * diagonal neighbours sit at √2 = 1.4142, and a Euclidean reach of exactly 1
- * would refuse every diagonal melee attack in the game while the scheduler
- * happily accepted it. 1.5 is the radius that makes the circle equal the Moore
- * neighbourhood — it contains 1.4142 and excludes the nearest non-neighbour at
- * 2.0. `validateTemplate` enforces it.
+ * A melee template declares `combat.range` **1.5**. On the rounded metric that
+ * is the same reach as upstream's 1 — the eight neighbours are all 1 away and
+ * the nearest tile past them is 2 — and 1.5 is kept because it was chosen while
+ * `combatDistance` was the UNROUNDED length, under which the diagonals sat at
+ * √2 = 1.4142 and a reach of exactly 1 refused every diagonal melee attack in
+ * the game. `validateTemplate` used to refuse a melee reach under √2 for that
+ * reason; it no longer does, because a template authoring upstream's 1 now
+ * swings at (1,1) (test/server/monsters.test.ts).
  *
  * ═══════════════════════════════════════════════════════════════════════════
  * SYNCHRONOUS AND PURE
@@ -1246,7 +1253,7 @@ export const INDEX_WRAITH: MonsterTemplate = Object.freeze({
   //
   // ═══ IT IS A LEGALITY CEILING. `preferredRange` IS THE OPERATIVE REACH. ═══
   // `kite` (ai/npc.ts) returns `advance` for anything beyond `preferredRange`,
-  // so control only ever reaches its `distance <= self.attackRange` test with a
+  // so control only ever reaches its `rangeRefusal` test with a
   // distance already <= 4. THE AI CANNOT FIRE A SIX-TILE SHOT. What this number
   // actually does is bound `canAttack` and `proj.range`, neither of which binds
   // at four tiles either. Tuning it alone will therefore change NOTHING you can
@@ -1277,7 +1284,8 @@ export const INDEX_WRAITH: MonsterTemplate = Object.freeze({
   // full reach" and "two whole decisions". BOTH WERE WRONG, and wrong in the
   // reader's favour, which is the worse direction. The six-tile figure was
   // computed from `attackRange`, and `kite` can never fire a six-tile shot (see
-  // the note on `attackRange` above). The real firing band is Euclidean 2 to 4:
+  // the note on `attackRange` above). The real firing band is 2 to 4 tiles by
+  // `combatDistance`:
   //
   //   distance   tiles   ticks to impact   player decisions in between
   //   ────────   ─────   ───────────────   ───────────────────────────
@@ -1493,9 +1501,11 @@ export const INDEX_WRAITH: MonsterTemplate = Object.freeze({
       // `{ all = 100 }`. The familiar 70 is a PLAYER birth descriptor
       // (descriptors.lua:63) and monsters do not get it.
     },
-    // EUCLIDEAN, and equal to `attackRange` because the AI's band arithmetic is
-    // Euclidean too (ai/npc.ts `kite`). Equality means every shot the AI wants
-    // is a shot `canAttack` allows.
+    // `core.fov.distance` (`combatDistance`), and equal to `attackRange` because
+    // the AI's band reads the same body (ai/npc.ts `kite`) and the orb's
+    // Chebyshev flight limit is `attackRange` (engine/projectile.ts). Equality
+    // means every shot the AI wants is a shot `canAttack` allows, and every orb
+    // it fires reaches the tile it was fired at.
     range: 6,
     // THE SAME NUMBER AS `minRange` ABOVE, and `validateTemplate` proves it. Two
     // dead zones that disagree is a monster that walks to a tile it then refuses
@@ -2014,10 +2024,10 @@ export const INDEX_EIDOLON: MonsterTemplate = Object.freeze({
         [DamageType.Darkness]: 50,
       },
     },
-    // 1.5, MATCHING THE HUSK, and it is not 1: `validateTemplate` refuses a
-    // melee reach below the diagonal step (√2), because a creature standing
-    // corner-to-corner with you IS adjacent and a reach of exactly 1 would let
-    // it be stood next to without being able to swing.
+    // 1.5, MATCHING THE HUSK. On the rounded `combatDistance` that is the same
+    // reach as 1 — a creature standing corner-to-corner with you IS adjacent,
+    // and 1 away — and it was not while the length was unrounded, when a reach
+    // of exactly 1 let it be stood next to without being able to swing.
     range: 1.5,
     minRange: 0,
   },
@@ -2803,16 +2813,20 @@ export const INDEX_INQUISITOR: MonsterTemplate = Object.freeze({
    */
   preferredRange: 7,
   /**
-   * 3, NOT THE 4 THIS WAS AUTHORED WITH, and `validateTemplate` is the reason:
+   * 3, NOT THE 4 THIS WAS AUTHORED WITH, and `validateTemplate` was the reason.
+   * Its cap note read:
    *
    *   > At `minRange` 4 the pure diagonal at offset (3, 3) is Chebyshev 3
    *   > (inside the hole, so the AI backs off) and Euclidean 4.243 (outside it,
    *   > so `canAttack` would have allowed the shot).
    *
    * A creature that retreats from a tile it is willing to shoot from reads as
-   * the server being broken, not as a weakness. 3 is `MAX_SAFE_MIN_RANGE` and
-   * is the cairn's, and it costs this design nothing — the dead zone was never
-   * the point. `preferredRange` is, and that is still the longest in the game.
+   * the server being broken, not as a weakness. The AI does not measure its
+   * hole in Chebyshev, though — `kite` and `canAttack` share `combatDistance` —
+   * and on that rounded metric the two part at 3 as well; `MAX_SAFE_MIN_RANGE`
+   * says where that leaves the cap. 3 is that cap and the cairn's, and it costs
+   * this design nothing — the dead zone was never the point. `preferredRange`
+   * is, and that is still the longest in the game.
    */
   minRange: 3,
   attackRange: 9,
@@ -4526,19 +4540,26 @@ export function monsterInit(
 // Validation
 // ---------------------------------------------------------------------------
 
-/** √2 — the diagonal neighbour, and the reason a melee reach cannot be 1.0. */
-const DIAGONAL_STEP = Math.SQRT2;
-
 /**
- * Past this, a Chebyshev dead-zone test and a Euclidean one stop agreeing.
+ * THE LARGEST DEAD ZONE A TEMPLATE MAY AUTHOR — and the argument it was chosen
+ * on has moved, so it is written down rather than left to mislead.
  *
- * At `minRange` 4 the pure diagonal at offset (3, 3) is Chebyshev 3 (inside the
- * hole, so the AI backs off) and Euclidean 4.243 (outside it, so `canAttack`
- * would have allowed the shot). At 1, 2 and 3 there is no such tile anywhere on
- * the grid — a test proves it by exhaustion. The AI and the refusal use the same
- * metric today, so this is belt and braces; it is also the number that makes the
- * Inspector's authored 3 the largest dead zone that is safe to reason about
- * loosely, which is worth knowing before someone authors a 5.
+ * IT WAS "past this, a Chebyshev dead-zone test and the range metric stop
+ * agreeing". Against the UNROUNDED length that was true: at `minRange` 4 the
+ * pure diagonal at (3,3) is Chebyshev 3 (inside the hole) and 4.243 (outside
+ * it), and at 1, 2 and 3 no tile on the grid disagreed.
+ *
+ * ON ToME'S ROUNDED DISTANCE THEY PART ONE EARLIER. At 3 the diagonal (2,2) is
+ * Chebyshev 2 and rounds to 3 — inside a Chebyshev hole and a legal shot — and
+ * so do its three mirror images; test/server/monsters.test.ts pins the
+ * disagreement list at every size by exhaustion. Only 1 and 2 still agree.
+ *
+ * NOTHING IN THE ENGINE ASKS CHEBYSHEV ABOUT A DEAD ZONE, which is why that is
+ * not a bug: `kite`, `approach`'s `keepAway`, `rangeRefusal` and the talent
+ * gate all read one body, `combatDistance`. The cap stays at 3 — the cairn,
+ * the Inquisitor and the Watcher author exactly that — as the ceiling on how
+ * large a hole content may cut, and a reader measuring a hole by counting
+ * steps is now wrong at 3, which is worth knowing before someone authors a 5.
  */
 const MAX_SAFE_MIN_RANGE = 3;
 
@@ -4654,15 +4675,24 @@ export function validateTemplate(template: MonsterTemplate): readonly string[] {
     );
   }
 
-  // The Euclidean circle must never be tighter than the Chebyshev square's edge,
-  // or the scheduler accepts an attack `canAttack` then refuses.
+  // The `core.fov.distance` circle must never be tighter than the Chebyshev
+  // square's edge. This note used to say the AI's stand-off arithmetic was in
+  // `attackRange`; nothing in ai/ reads it any more (`kite` asks
+  // `rangeRefusal`). What the rule does now is pair with the orb invariant in
+  // monsters.test.ts — every `projSpeed` shooter has `attackRange >=
+  // combat.range` — so a shooter's orb limit and its legal reach are one
+  // number, and because a Chebyshev length never exceeds the rounded one, the
+  // orb always reaches the tile the legality check accepted.
   if (reach < template.attackRange) {
     problems.push(`${where} combat.range ${reach} < attackRange ${template.attackRange}`);
   }
-  // ...and at melee reach it must contain the four diagonals. See the header.
-  if (template.attackRange === 1 && reach < DIAGONAL_STEP) {
-    problems.push(`${where} melee combat.range ${reach} excludes the diagonal ${DIAGONAL_STEP}`);
-  }
+  // THERE WAS A SECOND RULE HERE, and it is gone on purpose: "at melee reach
+  // `combat.range` must contain the four diagonals", refused below √2. That was
+  // arithmetic on the UNROUNDED length, where a diagonal is 1.4142. On ToME's
+  // rounded `combatDistance` a diagonal is 1, so a reach of 1 — upstream's own
+  // number on every melee talent — holds all eight neighbours, and the rule
+  // would have refused a template that works. test/server/monsters.test.ts
+  // pins that a range-1 melee template is accepted and swings at (1,1).
 
   // A PROJECTILE THAT DOES NOT MOVE NEVER ARRIVES. `projSpeed` is tiles per game
   // turn, so 0 is an orb that hangs in the air forever and a negative one flies

@@ -7,6 +7,7 @@ import { canBe, setEffect } from '../../src/server/engine/effects.ts';
 import { decideNpcAction } from '../../src/server/ai/npc.ts';
 import { ALCHEMIST, CLASSES, INSPECTOR, WATCHMAN } from '../../src/server/content/classes.ts';
 import {
+  ALL_TEMPLATES,
   INDEX_CAIRN,
   INDEX_HUSK,
   INDEX_EIDOLON,
@@ -312,18 +313,32 @@ describe('the roster is well formed', () => {
     ]);
   });
 
-  it('rejects a melee reach that would refuse its own diagonals', () => {
-    // combat.range 1 is the trap: the four diagonal neighbours sit at √2 =
-    // 1.4142, so a Euclidean reach of exactly 1 refuses every diagonal melee
-    // attack in the game while the scheduler's Chebyshev check happily accepts
-    // it. 1.5 is the radius that makes the circle equal the Moore neighbourhood.
-    const tight: MonsterTemplate = {
+  it('accepts a range-1 melee template, and it swings at (1,1)', () => {
+    // THIS WAS "rejects a melee reach that would refuse its own diagonals": a
+    // validator refused `combat.range` under √2, because on the UNROUNDED length
+    // a diagonal neighbour sat at 1.4142 and a reach of 1 refused all four.
+    // `combatDistance` is ToME's rounded `core.fov.distance` now, a diagonal is
+    // 1 away, and upstream's own `range = 1` reaches it — so the rule went, and
+    // this pins both halves of why: the template is accepted, AND the creature
+    // it spawns really does swing at a body on its diagonal.
+    const upstream: MonsterTemplate = {
       ...INDEX_HUSK,
       combat: { ...INDEX_HUSK.combat, range: 1 },
     };
-    expect(validateTemplate(tight)).toEqual([
-      `index_husk: melee combat.range 1 excludes the diagonal ${Math.SQRT2}`,
-    ]);
+    expect(validateTemplate(upstream)).toEqual([]);
+
+    const husk = spawn(upstream, 'm1', { x: 3, y: 3 });
+    const player = detective('p1', { x: 4, y: 4 });
+    expect(canAttack(husk, player, { level: openRoom(8, 8) })).toBeNull();
+    const intent = decideNpcAction(
+      husk,
+      aiCtx(
+        passableIn(['........', '........', '........', '........', '........']),
+        [player, husk],
+        createRng('diagonal'),
+      ),
+    );
+    expect(intent).toEqual({ kind: IntentKind.Attack, targetId: 'p1' });
   });
 });
 
@@ -1643,7 +1658,7 @@ describe('reach', () => {
       });
     }
 
-    // The nearest non-neighbour is at Euclidean 2.0, outside the 1.5 circle.
+    // The nearest non-neighbour is 2 away, outside the 1.5 reach.
     const far = detective('far', { x: 7, y: 4 });
     expect(canAttack(husk, far, world)).toBe(AttackRefusal.OutOfRange);
   });
@@ -1664,6 +1679,25 @@ describe('reach', () => {
     );
   });
 
+  it('lets every orb it fires reach the tile it was fired at — attackRange >= combat.range', () => {
+    // THE ORB'S FLIGHT LIMIT IS CHEBYSHEV AGAINST `attackRange`
+    // (engine/projectile.ts `blockPath`), and the shot was allowed by
+    // `canAttack` on the rounded `combatDistance` against `combat.range`.
+    // Chebyshev is never longer than the rounded length, so every tile on the
+    // line to an accepted target is inside the flight limit — PROVIDED
+    // `attackRange` is not below `combat.range`. `validateTemplate` holds the
+    // other direction; this holds this one, over every shooter in the build.
+    const shooters = ALL_TEMPLATES.filter((t) => t.projSpeed !== undefined);
+    expect(shooters.length, 'nothing fires an orb, so this proves nothing').toBeGreaterThan(0);
+    for (const t of shooters) {
+      const reach = t.combat.range ?? t.attackRange;
+      expect(
+        { id: t.id, ok: t.attackRange >= reach },
+        `${t.id}: attackRange ${String(t.attackRange)} < combat.range ${String(reach)}`,
+      ).toEqual({ id: t.id, ok: true });
+    }
+  });
+
   it('does not out-range the Inspector, whose whole identity is range', () => {
     // test/server/combat.test.ts pins the Inspector at range 7 / min_range 3.
     // A monster that outshoots the ranged class deletes that class.
@@ -1671,18 +1705,22 @@ describe('reach', () => {
     expect(INDEX_WRAITH.minRange).toBeLessThan(3);
   });
 
-  it('keeps the Chebyshev band and the Euclidean refusal in agreement up to 3', () => {
-    // The AI's kite band is Euclidean and so is `canAttack`, so this is belt and
-    // braces — but it is also the number that says the Inspector's authored 3 is
-    // the largest dead zone anybody can reason about loosely, and that a 5 is
-    // not. Proved by exhaustion over every offset, not by argument.
+  it('says exactly where a Chebyshev hole and the rounded refusal part', () => {
+    // The AI's kite band and `canAttack` both read `combatDistance`, so nothing
+    // in the engine measures a hole in steps and this is not a guard on the
+    // engine. It is the map for anybody who DOES count steps — a probe, a
+    // player, a comment — and it moved when `combatDistance` took ToME's
+    // rounding: against the unrounded length the two agreed up to 3 and parted
+    // at 4, and on `core.fov.distance` they part at 3, on the (2,2) diagonal,
+    // which rounds to 3 and is a legal shot two steps away. Proved by
+    // exhaustion over every offset, not by argument.
     const disagreements = (min: number): string[] => {
       const out: string[] = [];
       for (let dx = -8; dx <= 8; dx += 1) {
         for (let dy = -8; dy <= 8; dy += 1) {
           const cheb = chebyshev({ x: 0, y: 0 }, { x: dx, y: dy });
-          const euc = combatDistance({ x: 0, y: 0 }, { x: dx, y: dy });
-          if (cheb < min !== euc < min) out.push(`${dx},${dy}`);
+          const rounded = combatDistance({ x: 0, y: 0 }, { x: dx, y: dy });
+          if (cheb < min !== rounded < min) out.push(`${dx},${dy}`);
         }
       }
       return out;
@@ -1690,10 +1728,25 @@ describe('reach', () => {
 
     expect(disagreements(1)).toEqual([]);
     expect(disagreements(2)).toEqual([]);
-    expect(disagreements(3)).toEqual([]);
-    // At 4 the pure diagonal parts them: (3,3) is Chebyshev 3 (the AI would back
-    // off) and Euclidean 4.243 (the shot was legal all along).
-    expect(disagreements(4)).toEqual(['-3,-3', '-3,3', '3,-3', '3,3']);
+    // At 3 the pure diagonal parts them: (2,2) is Chebyshev 2 (inside a hole
+    // counted in steps) and 2.83, which rounds to 3 (a legal shot).
+    expect(disagreements(3)).toEqual(['-2,-2', '-2,2', '2,-2', '2,2']);
+    // At 4 the (3,2) family joins the diagonal: (3,2) is 3.61 and (3,3) is 4.24,
+    // both of which round to 4 — twelve offsets, all Chebyshev 3.
+    expect(disagreements(4)).toEqual([
+      '-3,-3',
+      '-3,-2',
+      '-3,2',
+      '-3,3',
+      '-2,-3',
+      '-2,3',
+      '2,-3',
+      '2,3',
+      '3,-3',
+      '3,-2',
+      '3,2',
+      '3,3',
+    ]);
   });
 });
 
@@ -1717,7 +1770,7 @@ describe('the wraith holds its lane', () => {
 
   it('closes to its stand-off distance and stops there', () => {
     // Chebyshev 8 — exactly its `aggroRange`, so it can see the detective — and
-    // Euclidean 8, which is past its `preferredRange` of 4
+    // `combatDistance` 8, which is past its `preferredRange` of 4
     // (tome/resolvers.lua:901, `safe_range = 4`).
     const player = detective('p1', { x: 5, y: 4 });
     const wraith = spawn(INDEX_WRAITH, 'm1', { x: 13, y: 4 });

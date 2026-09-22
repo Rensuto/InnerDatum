@@ -29,12 +29,17 @@
  * own marker art, it is drawn BEFORE anything else can claim those cells, and
  * it is CIRCULAR:
  *
- *     minRange 3, the target at (3,3) -> Euclidean 2.83 -> INSIDE the hole.
+ *     minRange 3, the target two steps off on the diagonal, (2,2)
+ *         -> 2.83, which rounds to 3 -> LEGAL, on the rim of the hole.
+ *     minRange 3, the target at (2,1) -> 2.24, which rounds to 2 -> INSIDE it.
  *
- * That is Euclidean because `combatDistance` on the server is Euclidean
- * (`core.fov.distance`), and a Chebyshev ring would be a square that reaches
- * 7.07 tiles into its corners. The client drawing a square while the server
- * checks a circle is a lie in exactly the corners a player aims into.
+ * That is `tileDistance` (shared/distance.ts) because `combatDistance` on the
+ * server is that same function — ToME's `core.fov.distance`, the straight line
+ * rounded half-up — and a Chebyshev ring would be a square that reaches 7.07
+ * tiles into its corners. The client drawing a square while the server checks
+ * a circle is a lie in exactly the corners a player aims into. (This example
+ * used to say (2,2) was 2.83 and inside the hole: that was this file's own
+ * unrounded copy of the length, which the server had too.)
  *
  * ---------------------------------------------------------------------------
  * TWO LAYERS, RECOMPUTED AT DIFFERENT RATES
@@ -57,7 +62,7 @@
  */
 
 import { DIR_VECTORS, inBounds } from '../../shared/coords.ts';
-import { discTiles } from '../../shared/distance.ts';
+import { discTiles, euclidDistance, tileDistance } from '../../shared/distance.ts';
 import { hasLineOfSight, playerLineClear } from '../../shared/sight.ts';
 import type { VisionView } from '../vision.ts';
 import { blocksSightAt } from '../../shared/level.ts';
@@ -156,12 +161,18 @@ export type Targeting = {
   readonly cancel: () => void;
 };
 
-/** Euclidean, matching `combatDistance` (`core.fov.distance`) on the server. */
-function distance(a: TileXY, b: TileXY): number {
-  const dx = a.x - b.x;
-  const dy = a.y - b.y;
-  return Math.sqrt(dx * dx + dy * dy);
-}
+/**
+ * ═══ NO PRIVATE DISTANCE: THE REACH IS `tileDistance`, THE ONE THE SERVER ASKS ═══
+ * This file had its own `Math.sqrt` here, "matching `combatDistance`", and it
+ * did match — both were the unrounded length, and both were wrong the same way.
+ * The server now measures with `tileDistance` (engine/combat.ts's
+ * `combatDistance` is a call to it), so the cursor, the ring and the hole below
+ * ask that function by name: a copy is how the two sides drift.
+ *
+ * `euclidDistance` is used ONCE, for the opening cursor's "nearest" — an
+ * ordering, not a reach. ToME's own scan ranks by the exact squared length
+ * (`engine/Target.lua:707`, sorted at :724-727), which is what that picks by.
+ */
 
 /**
  * SIGHT IS SHARED NOW. This file carried a byte-identical REIMPLEMENTATION of
@@ -276,7 +287,7 @@ export function createTargeting(options: TargetingOptions): Targeting {
     if (talent === null || level === null || origin === null) return TargetAdvice.OutOfRange;
     if (!inBounds(tile.x, tile.y, level.w, level.h)) return TargetAdvice.OutOfRange;
 
-    const d = distance(origin, tile);
+    const d = tileDistance(origin, tile);
     if (d > talent.range) return TargetAdvice.OutOfRange;
     // `<`, not `<=`: minRange 3 makes 3 the closest LEGAL tile, matching both the
     // authored `min_range` in content/skills/*.json and `canAttack`.
@@ -339,9 +350,9 @@ export function createTargeting(options: TargetingOptions): Targeting {
      *
      * THE FLOOR IS ONLY HOW FAR THE SQUARE WALKS. A tile within range R has
      * both |dx| and |dy| at most R, and they are integers, so at most
-     * floor(R): the box below always holds every cell the test can pass. That
-     * stays true when the metric becomes upstream's rounded
-     * `core.fov.distance`, because a rounded length is never shorter than the
+     * floor(R): the box below always holds every cell the test can pass. The
+     * metric is upstream's rounded `core.fov.distance` (`tileDistance`), and
+     * that holds for it, because a rounded length is never shorter than the
      * longer axis.
      *
      * THIS WAS ONE VALUE DOING BOTH JOBS. `reach` was `Math.floor(active.range)`
@@ -349,10 +360,11 @@ export function createTargeting(options: TargetingOptions): Targeting {
      * is `MELEE_REACH`, the range of the player `single`s that work at arm's
      * length — Field Dressing, Move Along and Crude Blow among them, and Full
      * Swing from a locked tree (the ring test finds them all through
-     * `allTalents()`) — and a diagonal is 1.41 away. The ring marked the
-     * four orthogonal neighbours and left the four diagonals blank, while the
-     * cursor on a diagonal said Ok (`adviseTile` never floored) and the server
-     * accepted the press. The picture was stricter than the rule it drew.
+     * `allTalents()`) — and under the unrounded length this file then used, a
+     * diagonal was 1.41 away. The ring marked the four orthogonal neighbours
+     * and left the four diagonals blank, while the cursor on a diagonal said Ok
+     * (`adviseTile` never floored) and the server accepted the press. The
+     * picture was stricter than the rule it drew.
      */
     const bound = Math.max(0, Math.floor(active.range));
     for (let dy = -bound; dy <= bound; dy += 1) {
@@ -360,7 +372,9 @@ export function createTargeting(options: TargetingOptions): Targeting {
         const x = from.x + dx;
         const y = from.y + dy;
         if (!inBounds(x, y, lv.w, lv.h)) continue;
-        if (Math.sqrt(dx * dx + dy * dy) > active.range) continue;
+        // ONE LENGTH FOR THE REACH AND THE HOLE, and it is `adviseTile`'s.
+        const d = tileDistance(from, { x, y });
+        if (d > active.range) continue;
 
         // The caster's own tile is part of the HOLE when there is one — "you
         // cannot shoot what is standing on you" is exactly the thing the
@@ -376,7 +390,6 @@ export function createTargeting(options: TargetingOptions): Targeting {
         // so a channel you can shoot across must keep its range markers.
         if (blocksSightAt(lv, x, y)) continue;
 
-        const d = Math.sqrt(dx * dx + dy * dy);
         if (active.minRange > 0 && d < active.minRange) {
           cells.push({ x, y, marker: MarkerKind.MinRange, shaded: false });
           continue;
@@ -402,7 +415,8 @@ export function createTargeting(options: TargetingOptions): Targeting {
     let bestD = Number.POSITIVE_INFINITY;
     for (const tile of candidates) {
       if (adviseTile(tile) !== TargetAdvice.Ok) continue;
-      const d = distance(from, tile);
+      // AN ORDERING, NOT A REACH — the exact length, as ToME's scan ranks by.
+      const d = euclidDistance(from, tile);
       // Ties broken on x then y so two clients aiming the same talent at the
       // same board open on the same tile. Nothing depends on it today; a
       // spectator view in M7 would.

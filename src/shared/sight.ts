@@ -245,7 +245,12 @@ export function playerLineClear(
   return true;
 }
 
-/** `core.fov.distance` — the straight line between two tiles, in tiles. */
+/**
+ * The straight line between two tiles, in tiles, UNROUNDED. This said it was
+ * `core.fov.distance`, and it is not: that rounds half-up (`tileDistance`,
+ * shared/distance.ts), and every range and radius in the game now asks it.
+ * Sight keeps this length until sight itself is ported onto ToME's circle.
+ */
 export function sightDistance(from: TileXY, to: TileXY): number {
   const dx = to.x - from.x;
   const dy = to.y - from.y;

@@ -24,9 +24,12 @@ import type { LevelView, LoadoutTalent } from '../../../src/shared/protocol.ts';
  *
  * ═══ THE INTEGER RING IS PINNED TOO, SO THE FIX CANNOT BE "MARK EVERYTHING" ═══
  * An integer range floors to itself, so a range-5 ring must come out exactly as
- * it did. Its pins are cells whose answer is the same under today's exact
- * Euclidean distance and under upstream's rounded `core.fov.distance`, so the
- * metric switch planned in docs/wip/distance does not have to edit them.
+ * it did. Its pins are cells whose answer is the same under the exact length
+ * the ring used when they were written and under upstream's rounded
+ * `core.fov.distance` it uses now, so the metric switch did not have to edit
+ * them. The cells the two metrics DISAGREE on — (5,2) in, (2,2) out of a hole
+ * of 3 — are pinned by test/client/input/targeting-join.test.ts, against the
+ * server.
  */
 
 const W = 15;
@@ -136,7 +139,7 @@ describe('an integer ring is unchanged', () => {
 
   it('still refuses the corners inside the square it walks', () => {
     const ring = validOffsets(single(5));
-    // (4,4) is 5.66 away: inside the 11x11 box the loop covers and outside the
+    // (4,4) is 5.66 away, 6 rounded: inside the 11x11 box the loop covers and outside the
     // ring. It is the cell that proves the reach test still discriminates.
     for (const offset of ['4,4', '-4,4', '5,5', '5,-5']) {
       expect(ring.has(offset), `range 5 marked ${offset}`).toBe(false);

@@ -35,9 +35,10 @@ const key = (t: TileXY): string => `${String(t.x)},${String(t.y)}`;
 /**
  * WHAT `ballTiles` WAS, frozen here as the reference the seed argument is about.
  * engine/talents.ts's body read `combatDistance(centre, tile) <= radius` over
- * this same row-major loop, and `combatDistance` is the unrounded length. It is
- * written out rather than imported because the production function no longer
- * cuts this disc, and the claim is about the list it used to produce.
+ * this same row-major loop, and `combatDistance` was then the unrounded length
+ * (it is `tileDistance` now). It is written out rather than imported because
+ * neither production function cuts this disc any more, and the claim is about
+ * the list it used to produce.
  */
 function exactBall(centre: TileXY, radius: number): TileXY[] {
   const tiles: TileXY[] = [];

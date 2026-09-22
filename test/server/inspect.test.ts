@@ -418,6 +418,24 @@ describe('`blockedReason` is asked with the viewer’s own reach', () => {
     const distance = rowsOf(view).find((row) => row['label'] === 'Distance');
     expect(distance?.['value']).toBe('2 tiles');
   });
+
+  it('measures the Distance row on the same length as the refusal beside it', async () => {
+    // (2,2) is the one kind of offset where the two metrics part: Chebyshev
+    // says 2, ToME's rounded length says 3 (2.83 rounds up). The row was
+    // Chebyshev while `blockedReason` on the same card is rounded, so the card
+    // printed two numbers for one gap.
+    const floor = await scene();
+    const diagonal = husk('m_diagonal', floor.viewer.x - 2, floor.viewer.y - 2);
+    expect(canWalk(server.world.level, diagonal.x, diagonal.y), 'the fixture tile is rock').toBe(
+      true,
+    );
+    expect(hasLineOfSight(server.world.level, floor.viewer, diagonal), 'no line to it').toBe(true);
+
+    const view = viewOf(await floor.client.inspect(diagonal.id));
+    const distance = rowsOf(view).find((row) => row['label'] === 'Distance');
+    expect(distance?.['value']).toBe('3 tiles');
+    expect(String(view?.['blockedReason'])).toContain('out of range: 3 tiles');
+  });
 });
 
 // ===========================================================================
@@ -513,12 +531,13 @@ describe('`attackBlockedReason` asks exactly the question `canAttack` answers', 
    * ═════════════════════════════════════════════════════════════════════════
    *
    * `attackBlockedReason` measured with CHEBYSHEV and compared against
-   * `combat.range`, which is a EUCLIDEAN radius. That agreed by accident while
-   * no player carried a combat sheet at all. Now the Inspector carries range 5
-   * and the two disagree along the whole diagonal rim of her ring: Chebyshev 4
-   * passes, Euclid 5.657 does not, so the card advertised a shootable target
-   * that the server refused on click. combat.ts's wiring note is explicit that
-   * the metrics must move together.
+   * `combat.range`, which is a `core.fov.distance` radius. That agreed by
+   * accident while no player carried a combat sheet at all. Then the Inspector
+   * carried range 5 and the two disagreed along the whole diagonal rim of her
+   * ring: Chebyshev 4 passes, the straight line (5.657, 6 once rounded as
+   * `combatDistance` rounds it) does not, so the card advertised a shootable
+   * target that the server refused on click. combat.ts's wiring note is
+   * explicit that the metrics must move together.
    *
    * Driven directly rather than over a socket because the property is about the
    * two functions AGREEING, and the only honest way to assert that is to call
@@ -543,7 +562,7 @@ describe('`attackBlockedReason` asks exactly the question `canAttack` answers', 
     husk.x = 14;
     husk.y = 14;
 
-    // Chebyshev 4 — inside the old square. Euclid 5.657 — outside the circle.
+    // Chebyshev 4 — inside the old square. 5.657, rounded 6 — outside the circle.
     expect(chebyshev(shooter, husk)).toBe(4);
     expect(combatDistance(shooter, husk)).toBeGreaterThan(5);
 
@@ -608,8 +627,9 @@ describe('`attackBlockedReason` asks exactly the question `canAttack` answers', 
   });
 
   it('lets a melee body swing on the diagonal, exactly as the scheduler does', () => {
-    // `MELEE_REACH` 1.5 contains √2. A raw Euclidean 1 here would have the card
-    // refuse the four diagonals that bump-attack has always allowed.
+    // `MELEE_REACH` 1.5 holds the diagonals on either metric. A raw 1 on the
+    // UNROUNDED length would have had the card refuse the four diagonals that
+    // bump-attack has always allowed; on the rounded one a diagonal is 1 away.
     const world = createWorld('inspect-diagonal-melee');
     const watchman = world.addPlayer('p_watchman', 'Ren', { combat: { range: 1.5 } });
     watchman.x = 10;

@@ -1326,7 +1326,9 @@ export type LoadoutTalent = {
    */
   cooldownTurns: number;
   /**
-   * Maximum EUCLIDEAN distance in tiles. 0 for a `self` shape.
+   * Maximum distance in tiles, by `tileDistance` (shared/distance.ts) — ToME's
+   * `core.fov.distance`, the straight line rounded half-up, which is what the
+   * server refuses on. 0 for a `self` shape.
    *
    * ═══ PER-ACTOR FROM v9. IT IS NO LONGER A CONSTANT OF THE CLASS ═══
    * Until v8 this was `talent.targeting.range` — one authored number, the same
@@ -1355,8 +1357,9 @@ export type LoadoutTalent = {
    * reads as broken rather than as positional.
    *
    * The comparison is `distance < minRange`, so minRange 3 makes 3 the closest
-   * LEGAL tile — and it is CIRCULAR, so the diagonal at (3,3) is 2.83 away and
-   * sits INSIDE the hole. src/server/engine/combat.ts pins that with a test.
+   * LEGAL tile — and it is CIRCULAR, on `tileDistance`'s rounded length: (2,1)
+   * is 2.24, rounds to 2 and sits INSIDE the hole, while the diagonal at (2,2)
+   * is 2.83, rounds to 3 and is legal. test/server/combat.test.ts pins both.
    */
   minRange: number;
   shape: TalentShape;
@@ -4974,7 +4977,7 @@ export const ErrorCode = {
   // distance 1 is someone testing whether the dead zone is real.
   // -------------------------------------------------------------------------
 
-  /** Beyond the talent's `range`, EUCLIDEAN — the ring is a circle, not a box. */
+  /** Beyond the talent's `range` by `tileDistance` — the ring is a circle, not a box. */
   OutOfRange: 'out_of_range',
   /**
    * INSIDE the dead zone: nearer than `minRange`. The Inspector cannot shoot

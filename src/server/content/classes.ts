@@ -402,16 +402,16 @@ export const WATCHMAN: ClassDef = {
       damMod: { str: 0.6 },
     },
     /**
-     * ═══ MELEE_REACH, NOT 1, AND THE ARITHMETIC IS THE WHOLE REASON ═══
+     * ═══ MELEE_REACH, WHICH ON THE ROUNDED METRIC IS UPSTREAM'S 1 ═══
      *
-     * `CombatSheet.range` is a EUCLIDEAN radius — `canAttack` measures with
-     * `combatDistance`, which is `core.fov.distance` (engine/combat.ts). The
-     * four diagonal neighbours sit at √2 = 1.4142…, so a reach of exactly 1
-     * REFUSES ALL FOUR DIAGONALS: the Watchman standing corner-to-corner with a
-     * husk passes the scheduler's legality check and then quietly does nothing.
-     * 1.5 is the only round number between √2 and the nearest non-neighbour at
-     * 2.0, which is what makes a circle of that radius exactly the eight tiles
-     * around you.
+     * `CombatSheet.range` is a `core.fov.distance` radius — `canAttack`
+     * measures with `combatDistance`, the straight line rounded half-up
+     * (engine/combat.ts). The eight neighbours are all 1 away and the nearest
+     * tile past them is 2, so 1.5 and 1 are the same reach now. It was chosen
+     * while `combatDistance` was the UNROUNDED length, under which the four
+     * diagonals sat at √2 = 1.4142… and a reach of exactly 1 REFUSED ALL FOUR:
+     * the Watchman standing corner-to-corner with a husk passed the scheduler's
+     * legality check and then quietly did nothing.
      *
      * Imported rather than written as 1.5 here, because a second literal is a
      * second definition of what melee means — see the constant's own note.
@@ -480,8 +480,10 @@ export const WATCHMAN: ClassDef = {
  * band question (`ai/npc.ts` calls it directly so a monster cannot submit an
  * intent `canAttack` would refuse every turn), and it is the engine-level
  * statement of the rule that `test/server/combat.test.ts` drives off this very
- * sheet — 2.0 and 2.83 refused, 3.0 legal. Deleting it would move the rule into
- * three talent files and leave the engine with no opinion at all.
+ * sheet — (2,0) and (2,1) refused, (3,0) and the (2,2) diagonal legal, since
+ * 2.83 rounds to 3 (it was refused while the length was unrounded). Deleting it
+ * would move the rule into three talent files and leave the engine with no
+ * opinion at all.
  *
  * ═══ AND `archery: true` IS WHAT STOPS IT REFUSING HER FIST AS WELL ═══
  *

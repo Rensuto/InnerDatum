@@ -29,19 +29,27 @@
 //   AIM AT WHO IS REACHABLE, not who is nearest. Backing away from the closest
 //   monster walks you into the second one.
 //
-//   THE BAND IS EUCLIDEAN, AND THIS FILE USED TO SAY SO WHILE DOING OTHERWISE.
+//   THE BAND IS THE ENGINE'S LENGTH, AND THIS FILE HAS GOT THAT WRONG TWICE.
 //   `reachable` measured Chebyshev — `max(|dx|, |dy|)` — and the engine measures
-//   `combatDistance`, a straight line (engine/talents.ts#checkTargeting, whose
-//   comment names the hazard exactly: *"A Chebyshev ring is a square that
-//   reaches 7.07 tiles into its corners"*). So a probe offered shots the engine
-//   then refused as `too far away`: 92 of them across one 96-fight sample, and
-//   every one cost the driver a whole iteration.
+//   `combatDistance` (engine/talents.ts#checkTargeting, whose comment names the
+//   hazard exactly: *"A Chebyshev ring is a square that reaches 7.07 tiles into
+//   its corners"*). So a probe offered shots the engine then refused as `too
+//   far away`: 92 of them across one 96-fight sample, and every one cost the
+//   driver a whole iteration.
 //
-//   The 1.5 note below was already Euclidean reasoning — a diagonal neighbour is
-//   1.41, which is why 1.5 "admits a diagonal neighbour and nothing further".
-//   Under Chebyshev a diagonal is 1 and that sentence is a coincidence. The
-//   metric now comes from `sightDistance`, which is `core.fov.distance` itself,
-//   so it cannot drift from the engine again.
+//   The fix took `sightDistance` and said it was "`core.fov.distance` itself".
+//   It was not: `sightDistance` (shared/sight.ts) is the UNROUNDED length, and
+//   `core.fov.distance` rounds half-up. It matched the engine only because the
+//   engine's `combatDistance` was unrounded too, and the day the engine took
+//   ToME's rounding this copy would have refused the Inspector every foe two
+//   diagonal steps away while the server let her shoot it. So the band now asks
+//   `tileDistance` (shared/distance.ts) — the function `combatDistance` IS —
+//   by import, and test/tools/fightlib-band.test.ts holds `reachable` to the
+//   engine's own answer for Revolver Shot over every offset.
+//
+//   The 1.5 note below still holds on the rounded metric: a diagonal neighbour
+//   is 1 away (1.41 rounded half-up) and the nearest tile past it is 2, so 1.5
+//   "admits a diagonal neighbour and nothing further".
 //
 //   AND THE BAND INCLUDES LINE OF SIGHT, because `checkTargeting` does. A foe at
 //   a legal distance behind a wall is NOT a shot, and treating it as one is what
@@ -49,7 +57,8 @@
 //
 // PLAIN .mjs AND NOT IN THE TS BUILD, like everything else in tools/.
 
-import { hasLineOfSight, sightDistance } from '../src/shared/sight.ts';
+import { euclidDistance, tileDistance } from '../src/shared/distance.ts';
+import { hasLineOfSight } from '../src/shared/sight.ts';
 import { ballTiles, crossTiles } from '../src/server/engine/talents.ts';
 
 /**
@@ -118,6 +127,23 @@ export function rangedAttacks(cls, known) {
  *   band (which is the only case where backing off is the whole answer).
  */
 /**
+ * Every foe with its distance, NEAREST FIRST.
+ *
+ * `d` IS THE ENGINE'S: `tileDistance`, whole tiles, the number every band here
+ * compares and every caller reports as a gap. THE ORDER IS THE EXACT LENGTH
+ * (`euclidDistance`), because the rounded one ties constantly — a foe at (3,0)
+ * and one at (2,2) are both 3 — and "nearest" should still mean the nearer
+ * one. ToME's own target scan ranks the same way, by the exact squared length
+ * (engine/Target.lua:707, sorted at :724-727). Sorting on the exact length is
+ * also sorting on the rounded one, since rounding never reverses an order.
+ */
+function byNearest(self, foes) {
+  return foes
+    .map((f) => ({ f, d: tileDistance(self, f), exact: euclidDistance(self, f) }))
+    .sort((a, b) => a.exact - b.exact);
+}
+
+/**
  * The nearest foe this attack can actually reach, or undefined.
  *
  * ONE COPY, USED BY BOTH SHOOTERS. The band is `minRange <= d <= range` and the
@@ -125,18 +151,19 @@ export function rangedAttacks(cls, known) {
  * once for the in-process engine and once for the socket, is the moment the two
  * start disagreeing about what "in range" means. This file exists because a rule
  * written down twice is how this codebase gets bitten.
+ *
+ * EXPORTED for test/tools/fightlib-band.test.ts, which asks it and the engine's
+ * `canUseTalent` the same question over every tile around a body.
  */
-function reachable(attack, self, foes, ground) {
+export function reachable(attack, self, foes, ground) {
   const lineClear = lineFor(ground);
   return (
-    foes
-      .map((f) => ({ f, d: sightDistance(self, f) }))
+    byNearest(self, foes)
       // THE THREE TERMS OF `checkTargeting`, IN ITS ORDER. `> range` then
       // `< minRange` then line of sight, and LoS only beyond distance 1 — the
       // engine skips the bresenham walk for a neighbour and so does this.
       .filter((c) => c.d <= attack.range && c.d >= attack.minRange)
-      .filter((c) => lineClear === null || c.d <= 1 || lineClear(self, c.f))
-      .sort((a, b) => a.d - b.d)[0]
+      .filter((c) => lineClear === null || c.d <= 1 || lineClear(self, c.f))[0]
   );
 }
 
@@ -200,7 +227,7 @@ function lineFor(ground) {
  * deciding what it knows.
  */
 export function nearestQuarry(foes, self) {
-  const byDistance = foes.map((f) => ({ f, d: sightDistance(self, f) })).sort((a, b) => a.d - b.d);
+  const byDistance = byNearest(self, foes);
   const standing = byDistance.find((c) => c.f.ai?.profile !== 'ranged_kiter');
   return standing ?? byDistance[0];
 }
@@ -237,9 +264,9 @@ export function nearestQuarry(foes, self) {
  *
  * `steps` IS CHEBYSHEV, AND THAT IS NOT THE BUG THIS FUNCTION FIXES. "How far
  * away is that tile" is a question about MOVEMENT, which is eight-directional
- * here, so a diagonal is one step. Only the TARGETING band is Euclidean, and it
- * is Euclidean because `checkTargeting` is. Two questions, two metrics, on
- * purpose.
+ * here, so a diagonal is one step. Only the TARGETING band is
+ * `core.fov.distance` (`tileDistance`, through `reachable`), and it is because
+ * `checkTargeting` is. Two questions, two metrics, on purpose.
  */
 export function firingSpot(attacks, self, foes, level, walkable, radius = 6) {
   let best = null;
@@ -292,8 +319,8 @@ export function firingSpot(attacks, self, foes, level, walkable, radius = 6) {
  *
  * ═══ THE 1.5 TRAP IS HANDLED IN THE BAND, NOT BY A FILTER ═══
  * `loadoutStrikes` argues this in full and it holds here: `reachable` asks
- * whether the foe is within `range`, and 1.5 admits a diagonal neighbour (1.41)
- * and nothing further. Turning that number into a category test is what produced
+ * whether the foe is within `range`, and 1.5 admits a diagonal neighbour (1.41,
+ * which rounds to 1) and nothing further. Turning that number into a category test is what produced
  * three wrong answers in this repo; leaving it a distance is what makes one
  * function serve a truncheon and a revolver.
  */
@@ -370,11 +397,11 @@ export function learnedTalents(sheet) {
  * NOT TRUE OF EVERY KITER, and that is a known limit of this rule rather than a
  * property of it: a kiter at speed 1.0 or better (the Inquisitor) is not caught
  * by walking, and a body that walks in at one is towed round the room — the
- * failure `nearestQuarry`'s own note warns about. Euclidean, by `sightDistance`,
- * like every band here; a tie keeps the order it was handed.
+ * failure `nearestQuarry`'s own note warns about. `d` is `tileDistance` like
+ * every band here, and the order is the exact length — see `byNearest`.
  */
 export function nearestFoe(foes, self) {
-  return foes.map((f) => ({ f, d: sightDistance(self, f) })).sort((a, b) => a.d - b.d)[0];
+  return byNearest(self, foes)[0];
 }
 
 export function classStrikes(cls, known) {

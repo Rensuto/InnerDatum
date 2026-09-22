@@ -158,10 +158,11 @@ function scene(seed: string, options: { readonly wired?: boolean } = {}): Scene 
   ren.hpRegen = 0;
   ren.maxHp = WATCHMAN.maxHp;
   ren.hp = WATCHMAN.maxHp;
-  // MELEE_REACH, not the class sheet's authored 1: `canAttack` measures in
-  // EUCLIDEAN, and a reach of exactly 1 refuses all four diagonals. Wiring the
-  // class sheets onto joining players — and fixing that 1 — is W2's job; this
-  // file only needs the Watchman to be able to swing.
+  // MELEE_REACH, not the class sheet's authored 1: when this was written
+  // `canAttack` measured the UNROUNDED length, and a reach of exactly 1 refused
+  // all four diagonals. It measures ToME's rounded `core.fov.distance` now, where
+  // 1 and MELEE_REACH are the same reach; this file only needs the Watchman to
+  // be able to swing.
   ren.combat = { ...WATCHMAN.combat, range: MELEE_REACH };
 
   world.addMonster('m_husk', {

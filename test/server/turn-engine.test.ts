@@ -168,13 +168,15 @@ describe("the Inspector's dead zone", () => {
 
   it('CUTS A CIRCULAR HOLE, not a square one', () => {
     const s = session(ALL);
-    // (12,12) is dx 2, dy 2 — Euclidean 2.83, INSIDE a minRange of 3. A
-    // Chebyshev metric would call it 2 and also refuse, but the pair below is
-    // what separates the two: (13,11) is Chebyshev 3 and Euclidean 3.16, and it
-    // must be legal. The metric is `core.fov.distance`, shared with
-    // engine/combat.ts's `combatDistance` so a talent and a weapon swing cannot
-    // disagree about one tile.
-    expect(use(s, SNIPERS_MARK.id, { x: 12, y: 12 })).toBe(ErrorCode.TooClose);
+    // (12,12) is dx 2, dy 2 — two steps, which a Chebyshev hole would refuse,
+    // and 2.83 by the straight line, which ToME's `core.fov.distance` ROUNDS to
+    // 3: LEGAL at a minRange of 3. (This pinned too_close while the length was
+    // unrounded.) (12,11) is dx 2, dy 1 — 2.24, which rounds to 2: inside.
+    // (13,11) is Chebyshev 3 and 3.16, legal on every metric. The metric is
+    // engine/combat.ts's `combatDistance`, so a talent and a weapon swing
+    // cannot disagree about one tile.
+    expect(use(s, SNIPERS_MARK.id, { x: 12, y: 12 })).toBe('ok');
+    expect(use(s, SNIPERS_MARK.id, { x: 12, y: 11 })).toBe(ErrorCode.TooClose);
     expect(use(s, SNIPERS_MARK.id, { x: 13, y: 11 })).toBe('ok');
   });
 
@@ -194,10 +196,11 @@ describe('range', () => {
   it('is a CIRCLE, so the diagonal corner is out of range', () => {
     const s = session(ALL);
     // (14,14) is dx 4, dy 4 — Chebyshev 4, which a square ring would allow
-    // inside `range: 5`. Euclidean it is 5.66 and it is out. This is the whole
-    // reason two metrics exist: ToME uses Chebyshev for A* step costs and
-    // Euclidean for every range, radius and targeting ring, and reproducing only
-    // one makes ranged talents feel wrong by 41% along the diagonals.
+    // inside `range: 5`. By the straight line it is 5.66, which rounds to 6,
+    // and it is out. This is the whole reason two metrics exist: ToME uses
+    // Chebyshev for A* step costs and `core.fov.distance` for every range,
+    // radius and targeting ring, and reproducing only one makes ranged talents
+    // feel wrong by 41% along the diagonals.
     expect(use(s, REVOLVER_SHOT.id, { x: 14, y: 14 })).toBe(ErrorCode.OutOfRange);
     expect(use(s, REVOLVER_SHOT.id, { x: 15, y: 10 })).toBe('ok');
     expect(use(s, REVOLVER_SHOT.id, { x: 13, y: 13 })).toBe('ok');

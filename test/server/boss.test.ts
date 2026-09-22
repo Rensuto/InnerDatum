@@ -144,8 +144,9 @@ describe('the Watcher', () => {
      * has already used.
      *
      * The dead zone must therefore be REAL and reachable: a zero would mean no
-     * counter, and `MAX_SAFE_MIN_RANGE` is 3 because beyond that the Chebyshev
-     * and Euclidean tests stop agreeing.
+     * counter, and `MAX_SAFE_MIN_RANGE` caps it at 3 (content/monsters.ts says
+     * why, and why the old "Chebyshev and Euclidean agree up to 3" reason moved
+     * when the range metric took ToME's rounding).
      */
     const watcher = monsterById('index_watcher');
     if (watcher === undefined) throw new Error('no watcher');

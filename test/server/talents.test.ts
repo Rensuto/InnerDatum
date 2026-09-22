@@ -101,8 +101,10 @@ import { ORIGINS, ORIGIN_TALENTS } from '../../src/server/content/origins.ts';
  *  2. THE REFUND RULE. A talent that goes illegal costs ZERO AP, ZERO resource,
  *     no cooldown, and — the part that only a scripted RNG can see — ZERO
  *     DRAWS. A refusal that consumed a draw would desync every replay.
- *  3. THE DEAD ZONE, and that it is a EUCLIDEAN DISC rather than a count of
- *     steps: two diagonal steps is 2.83 tiles and is INSIDE a min_range 3 hole.
+ *  3. THE DEAD ZONE, and that it is a DISC on ToME's rounded
+ *     `core.fov.distance` rather than a count of steps: two diagonal steps is
+ *     2.83, which rounds to 3 and is OUTSIDE a min_range 3 hole, while (2,1)
+ *     is 2.24, rounds to 2 and is inside it.
  *     Fog Step is the one talent that works at any distance, because it is the
  *     only way out of one.
  *  4. COOLDOWNS TICK ON THE BASE CLOCK — `actBase`, once per game turn, at any
@@ -755,24 +757,26 @@ describe('MELEE REACH — the Watchman can swing on a DIAGONAL', () => {
     // ═══════════════════════════════════════════════════════════════════════
     //
     // `checkTargeting` here and `submitTalent` in turn-engine.ts both measure
-    // with `combatDistance`, which is EUCLIDEAN — `core.fov.distance`, the same
-    // metric every range and radius in the game uses, because a Chebyshev ring
-    // is a square that reaches 7.07 tiles into its corners.
+    // with `combatDistance` — `core.fov.distance`, the same metric every range
+    // and radius in the game uses, because a Chebyshev ring is a square that
+    // reaches 7.07 tiles into its corners.
     //
-    // All four Watchman talents authored `range: 1`. The four diagonal
-    // neighbours sit at √2 = 1.4142…, which is GREATER THAN 1 — so a Watchman
-    // standing corner to corner with a husk was told `out_of_range` on Crude
-    // Blow, Ward Rush, Iron Curtain and Lockdown. Only the orthogonal
-    // neighbours worked, on the one class whose entire job is to be standing on
-    // top of something.
+    // All four Watchman talents authored `range: 1`, while `combatDistance` was
+    // the UNROUNDED length. The four diagonal neighbours sat at √2 = 1.4142…,
+    // GREATER THAN 1 — so a Watchman standing corner to corner with a husk was
+    // told `out_of_range` on Crude Blow, Ward Rush, Iron Curtain and Lockdown.
+    // Only the orthogonal neighbours worked, on the one class whose entire job
+    // is to be standing on top of something.
     //
     // 1.5 is the only round number between √2 and the nearest NON-neighbour at
     // 2.0, so a circle of that radius holds exactly the eight tiles around you.
-    // That is `MELEE_REACH`, and it is what all four now author.
+    // That is `MELEE_REACH`, and it is what all four now author. ToME ROUNDS
+    // the length (a diagonal is 1), so upstream's own 1 holds the same eight
+    // tiles now; the pin below holds on either.
     const f = fixture(PLENTY);
     const watchman = f.add(WATCHMAN, 'dalt', 5, 5);
     refill(f.engine, 'dalt');
-    // (6,6) — one step diagonally. Chebyshev 1, EUCLIDEAN 1.4142…
+    // (6,6) — one step diagonally. Chebyshev 1, unrounded 1.4142…, rounded 1.
     const husk = f.addMonster('husk', 6, 6);
     expect(Math.hypot(husk.x - watchman.x, husk.y - watchman.y)).toBeCloseTo(Math.SQRT2, 5);
 
@@ -926,11 +930,14 @@ describe('THE DEAD ZONE — the Inspector cannot shoot adjacent', () => {
   });
 
   it('is a DISC, not a ring of movement steps', () => {
-    // The hole is measured with `core.fov.distance` — EUCLIDEAN — not in steps
-    // taken. Two diagonal steps LOOK like enough distance and are 2.83 tiles,
-    // which is inside a minRange 3 hole; three steps of which only one is
-    // diagonal is 3.16 and is outside it. Players read the ring, not the
-    // arithmetic, which is exactly why the ring has to be a circle.
+    // The hole is measured with `core.fov.distance` — the straight line ROUNDED
+    // half-up — not in steps taken. Two diagonal steps are only two steps and
+    // are 2.83 tiles, which rounds to 3: a LEGAL shot, where a hole counted in
+    // steps would refuse it. (This pinned MinRange while the length was
+    // unrounded.) Two steps with one diagonal, (2,1), is 2.24 and rounds to 2:
+    // inside. Three steps of which only one is diagonal is 3.16 and is outside
+    // either way. Players read the ring, not the arithmetic, which is exactly
+    // why the ring has to be a circle drawn on the same length.
     const f = fixture(PLENTY);
     const inspector = f.add(INSPECTOR, 'sam', 5, 5);
     refill(f.engine, 'sam');
@@ -938,7 +945,19 @@ describe('THE DEAD ZONE — the Inspector cannot shoot adjacent', () => {
     expect(mark).toBeDefined();
     if (mark === undefined) return;
 
-    const near = f.addMonster('near', 7, 7); // (2,2) -> 2.83
+    const diagonal = f.addMonster('diagonal', 7, 7); // (2,2) -> 2.83 -> 3
+    expect(
+      canUseTalent(
+        f.engine,
+        inspector,
+        mark,
+        { x: diagonal.x, y: diagonal.y, actorId: diagonal.id },
+        f.world,
+      ),
+    ).toBe(null);
+    diagonal.alive = false;
+
+    const near = f.addMonster('near', 7, 6); // (2,1) -> 2.24 -> 2
     expect(
       canUseTalent(f.engine, inspector, mark, { x: near.x, y: near.y, actorId: near.id }, f.world),
     ).toBe(TalentRefusal.MinRange);
@@ -2050,8 +2069,11 @@ describe('shapes and affinity', () => {
  * SO EVERY CASE HERE STANDS A BODY ON A TILE ONLY THE NEW DISC HOLDS — a
  * diagonal at radius 1, (2,1) at radius 2 — drives the SHIPPED talent at it,
  * and asserts the setup (the body really is on that offset, the talent really
- * resolved) before the claim. Put `ballTiles` back on `combatDistance <=
- * radius` and each goes red — except Taunt, which asks `tileDistance` itself
+ * resolved) before the claim. Put `ballTiles` back on the exact length
+ * (`euclidDistance <= radius`, which is what `combatDistance <= radius` was
+ * before `combatDistance` took ToME's rounding — it is the same disc as
+ * `discTiles` now, so that particular revert is no longer a mutant) and each
+ * goes red — except Taunt, which asks `tileDistance` itself
  * rather than `ballTiles` (iron_curtain.ts) and is red only when THAT is put
  * back on exact Euclid or on the old Chebyshev box.
  */

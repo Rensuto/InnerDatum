@@ -10,6 +10,7 @@ import {
   canAttack,
   combatDistance,
 } from '../../src/server/engine/combat.ts';
+import { tileDistance } from '../../src/shared/distance.ts';
 import { DamageType } from '../../src/server/engine/damage.ts';
 // THE SHIPPED SHEETS, not fixtures — see `a gun at contact is a fist` below for
 // why the join between `Weapon.archery` and `barehandAt` has to be driven from
@@ -83,20 +84,66 @@ function actor(
 /** The Inspector: reach 7, and a three-tile hole in the middle of it. */
 const INSPECTOR: CombatSheet = { range: 7, minRange: 3 };
 
-describe('combatDistance — EUCLIDEAN, matching core.fov.distance', () => {
-  it('measures diagonals as longer than orthogonals', () => {
-    // ToME uses two metrics on purpose: Chebyshev for A* step cost, Euclidean
-    // for every range, radius and targeting ring (docs/tome-mechanics.md § 10).
-    // A Chebyshev range 5 is a SQUARE that reaches 7.07 tiles into the corners.
+describe('combatDistance — core.fov.distance, the straight line rounded half-up', () => {
+  it('measures diagonals as longer than orthogonals, in whole tiles', () => {
+    // ToME uses two metrics on purpose: Chebyshev for A* step cost, and
+    // `core.fov.distance` for every range, radius and targeting ring
+    // (docs/tome-mechanics.md § 10). A Chebyshev range 5 is a SQUARE that
+    // reaches 7.07 tiles into the corners. The C rounds half-up, so (3,3) is
+    // 4.24 -> 4. It was 4.2426 here while this was the unrounded length.
     expect(combatDistance({ x: 0, y: 0 }, { x: 3, y: 0 })).toBe(3);
-    expect(combatDistance({ x: 0, y: 0 }, { x: 3, y: 3 })).toBeCloseTo(4.2426, 4);
+    expect(combatDistance({ x: 0, y: 0 }, { x: 3, y: 3 })).toBe(4);
+  });
+
+  it('IS tileDistance — one body, not a second copy of the rounding', () => {
+    for (let dx = -12; dx <= 12; dx += 1) {
+      for (let dy = -12; dy <= 12; dy += 1) {
+        const b = { x: dx, y: dy };
+        expect(combatDistance({ x: 0, y: 0 }, b)).toBe(tileDistance({ x: 0, y: 0 }, b));
+      }
+    }
   });
 });
 
-describe('MELEE_REACH — the Euclidean radius that equals the Moore neighbourhood', () => {
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE RIM OF A RANGE AND THE RIM OF A HOLE, ON ToME'S ROUNDED DISTANCE.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Each pin is a tile the unrounded length and the rounded one answer
+ * DIFFERENTLY for, or its nearest neighbour that they answer the same — so a
+ * `combatDistance` that went back to `Math.sqrt` fails the first half, and one
+ * that rounded too generously fails the second.
+ *
+ *   range 5:  (5,2) 5.39 -> 5  in     (4,3) 5.00 -> 5  in
+ *             (5,3) 5.83 -> 6  out    (4,4) 5.66 -> 6  out
+ *   minRange 3: (2,2) 2.83 -> 3  legal     (2,1) 2.24 -> 2  too close
+ */
+describe('the rounded rim — through canAttack, the question the swing asks', () => {
+  it('range 5 accepts (5,2) and (4,3) and refuses (5,3) and (4,4)', () => {
+    const w = world();
+    const archer = actor('a', 1, 1, { combat: { range: 5 } });
+    expect(canAttack(archer, actor('t', 6, 3), w), '(5,2) is 5.39, which rounds to 5').toBeNull();
+    expect(canAttack(archer, actor('t', 5, 4), w), '(4,3) is exactly 5').toBeNull();
+    expect(canAttack(archer, actor('t', 6, 4), w), '(5,3) is 5.83').toBe(AttackRefusal.OutOfRange);
+    expect(canAttack(archer, actor('t', 5, 5), w), '(4,4) is 5.66').toBe(AttackRefusal.OutOfRange);
+  });
+
+  it('min range 3 accepts (2,2) and refuses (2,1)', () => {
+    const w = world();
+    const inspector = actor('insp', 1, 1, { combat: INSPECTOR });
+    expect(canAttack(inspector, actor('t', 3, 3), w), '(2,2) is 2.83 -> 3').toBeNull();
+    expect(canAttack(inspector, actor('t', 3, 2), w), '(2,1) is 2.24 -> 2').toBe(
+      AttackRefusal.MinRange,
+    );
+  });
+});
+
+describe('MELEE_REACH — the reach that equals the Moore neighbourhood', () => {
   it('is 1.5, and the arithmetic is the whole justification', () => {
-    // The four diagonals sit at √2; the nearest NON-neighbour sits at 2.0.
-    // 1.5 is the radius whose circle contains the first and excludes the second.
+    // The four diagonals sit at √2 unrounded (1 rounded); the nearest
+    // NON-neighbour sits at 2.0 either way. 1.5 contains the first and excludes
+    // the second on BOTH metrics, which is why it survived the rounding.
     expect(MELEE_REACH).toBe(1.5);
     expect(MELEE_REACH).toBeGreaterThan(Math.SQRT2);
     expect(MELEE_REACH).toBeLessThan(2);
@@ -108,12 +155,13 @@ describe('MELEE_REACH — the Euclidean radius that equals the Moore neighbourho
     // ═══════════════════════════════════════════════════════════════════════
     //
     // `attackRange` is CHEBYSHEV (engine/actor.ts:299-309): 1 means the eight
-    // neighbours, which is what makes bump-attack work on a diagonal. Feed that
-    // 1 into `canAttack` RAW, as a Euclidean radius, and every diagonal swing in
-    // the game is refused as `OutOfRange` — while the scheduler's own Chebyshev
-    // check happily accepted it. That is the exact failure the wiring note at
-    // the head of engine/combat.ts warns about: legality passes, the swing does
-    // nothing, and nothing fails anywhere.
+    // neighbours, which is what makes bump-attack work on a diagonal. Fed into
+    // `canAttack` RAW while it measured the UNROUNDED length, that 1 refused
+    // every diagonal swing in the game as `OutOfRange` — while the scheduler's
+    // own Chebyshev check happily accepted it. That is the exact failure the
+    // wiring note at the head of engine/combat.ts warns about: legality passes,
+    // the swing does nothing, and nothing fails anywhere. On the rounded metric
+    // the raw 1 would reach them too; the pin holds on either.
     const w = world();
     const brawler = actor('b', 5, 5, { attackRange: 1 });
 
@@ -139,9 +187,10 @@ describe('MELEE_REACH — the Euclidean radius that equals the Moore neighbourho
   it('and stops there — 2.0 is out of reach, so the circle IS the neighbourhood', () => {
     const w = world();
     const brawler = actor('b', 5, 5, { attackRange: 1 });
-    // Two tiles orthogonally: distance 2.0, the nearest non-neighbour.
+    // Two tiles orthogonally: distance 2, the nearest non-neighbour.
     expect(canAttack(brawler, actor('t', 7, 5), w)).toBe(AttackRefusal.OutOfRange);
-    // A knight's move: 2.24. Also out, and not adjacent by any metric.
+    // A knight's move: 2.24, which rounds to 2. Also out, and not adjacent by
+    // any metric.
     expect(canAttack(brawler, actor('t', 7, 6), w)).toBe(AttackRefusal.OutOfRange);
   });
 
@@ -151,8 +200,8 @@ describe('MELEE_REACH — the Euclidean radius that equals the Moore neighbourho
     // every one of them into a brawler.
     const w = world();
     const archer = actor('a', 1, 1, { attackRange: 5 });
-    expect(canAttack(archer, actor('t', 5, 4), w)).toBeNull(); // 5.0 exactly
-    expect(canAttack(archer, actor('t', 7, 1), w)).toBe(AttackRefusal.OutOfRange); // 6.0
+    expect(canAttack(archer, actor('t', 5, 4), w)).toBeNull(); // (4,3): 5 exactly
+    expect(canAttack(archer, actor('t', 7, 1), w)).toBe(AttackRefusal.OutOfRange); // (6,0): 6
   });
 
   it('is overridden outright by an authored combat.range, in both directions', () => {
@@ -164,9 +213,20 @@ describe('MELEE_REACH — the Euclidean radius that equals the Moore neighbourho
     expect(canAttack(pinned, actor('t', 6, 6), w)).toBeNull();
     expect(canAttack(pinned, actor('t', 7, 5), w)).toBe(AttackRefusal.OutOfRange);
 
-    const stunted = actor('s', 5, 5, { attackRange: 1, combat: { range: 1 } });
-    expect(canAttack(stunted, actor('t', 6, 5), w)).toBeNull();
-    expect(canAttack(stunted, actor('t', 6, 6), w)).toBe(AttackRefusal.OutOfRange);
+    // A range of 1 is upstream's melee reach, and on the rounded metric it
+    // reaches the diagonal: (1,1) is 1.41, which rounds to 1. It REFUSED the
+    // diagonal while this was the unrounded length — this line said
+    // `OutOfRange` — so 1 and the 1.5 floor are one reach now, and 1 is no
+    // longer a way to show the sheet winning downward.
+    const upstreamMelee = actor('s', 5, 5, { attackRange: 1, combat: { range: 1 } });
+    expect(canAttack(upstreamMelee, actor('t', 6, 5), w)).toBeNull();
+    expect(canAttack(upstreamMelee, actor('t', 6, 6), w)).toBeNull();
+    expect(canAttack(upstreamMelee, actor('t', 7, 5), w)).toBe(AttackRefusal.OutOfRange);
+
+    // ...so the downward half is pinned where it still bites: an authored 0 is
+    // honoured, and refuses even the orthogonal neighbour the floor would give.
+    const stunted = actor('z', 5, 5, { attackRange: 1, combat: { range: 0 } });
+    expect(canAttack(stunted, actor('t', 6, 5), w)).toBe(AttackRefusal.OutOfRange);
   });
 });
 
@@ -184,10 +244,14 @@ describe('the dead zone — min_range, game-design.md § 2', () => {
   it('cuts a CIRCULAR hole, not a square one', () => {
     const w = world();
     const inspector = actor('insp', 1, 1, { combat: INSPECTOR });
-    // (3,3) is Chebyshev 2 and Euclidean 2.83 — inside either way.
-    expect(canAttack(inspector, actor('t', 3, 3), w)).toBe(AttackRefusal.MinRange);
-    // (4,3) is Euclidean 3.61: outside the hole, though a naive ring drawn at
-    // Chebyshev 3 would put it right on the boundary.
+    // The diagonal two steps off, (2,2) from her, is Chebyshev 2 — inside a
+    // hole counted in steps — and 2.83, which ToME rounds to 3: LEGAL. It was
+    // refused while `combatDistance` was the unrounded length.
+    expect(canAttack(inspector, actor('t', 3, 3), w)).toBeNull();
+    // (2,1) is 2.24, which rounds to 2: inside the hole.
+    expect(canAttack(inspector, actor('t', 3, 2), w)).toBe(AttackRefusal.MinRange);
+    // (3,2) is 3.61: outside the hole, though a naive ring drawn at Chebyshev 3
+    // would put it right on the boundary.
     expect(canAttack(inspector, actor('t', 4, 3), w)).toBeNull();
   });
 
@@ -247,11 +311,14 @@ describe('a gun at contact is a fist — Combat.lua:221-231', () => {
   it('still refuses between melee reach and the dead zone — the hole is intact', () => {
     const w = world();
     const her = actor('insp', 1, 1, { combat: gun });
-    // 2.0 and 2.83 are past MELEE_REACH (1.5) and inside minRange (3).
+    // (2,0) and (2,1) round to 2: past MELEE_REACH (1.5) and inside minRange (3).
     expect(canAttack(her, actor('t', 3, 1), w), 'two tiles away').toBe(AttackRefusal.MinRange);
-    expect(canAttack(her, actor('t', 3, 3), w), 'the diagonal at 2.83').toBe(
+    expect(canAttack(her, actor('t', 3, 2), w), 'a knight`s move, 2.24').toBe(
       AttackRefusal.MinRange,
     );
+    // The diagonal at (2,2) is 2.83, which rounds to 3 — a shot, not a punch
+    // and not a refusal. It was inside the hole on the unrounded length.
+    expect(canAttack(her, actor('t', 3, 3), w), 'the diagonal at 2.83 -> 3').toBeNull();
     // …and 3.0 is legal, as it always was.
     expect(canAttack(her, actor('t', 4, 1), w), 'three tiles away').toBeNull();
   });
@@ -397,12 +464,13 @@ describe('a gun at contact is a fist — Combat.lua:221-231', () => {
 });
 
 describe('reach and sight', () => {
-  it('measures reach with the Euclidean metric', () => {
+  it('measures reach with core.fov.distance, not Chebyshev', () => {
     const w = world();
     const archer = actor('a', 1, 1, { combat: { range: 5 } });
-    // (5,5) is Chebyshev 4 — inside a square range 5 — but Euclidean 5.66.
+    // (4,4) is Chebyshev 4 — inside a square range 5 — but 5.66 by the straight
+    // line, which rounds to 6.
     expect(canAttack(archer, actor('t', 5, 5), w)).toBe(AttackRefusal.OutOfRange);
-    expect(canAttack(archer, actor('t', 5, 4), w)).toBeNull(); // 5.0 exactly
+    expect(canAttack(archer, actor('t', 5, 4), w)).toBeNull(); // (4,3): 5 exactly
   });
 
   it('refuses to shoot through a wall', () => {

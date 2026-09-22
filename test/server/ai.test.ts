@@ -1,18 +1,25 @@
 import { describe, expect, it } from 'vitest';
 
 import { decideNpcAction } from '../../src/server/ai/npc.ts';
+import { ALL_TEMPLATES, monsterInit } from '../../src/server/content/monsters.ts';
 import {
   AiProfile,
   IntentKind,
   createMonsterActor,
   createPlayerActor,
 } from '../../src/server/engine/actor.ts';
-import { AttackRefusal, canAttack } from '../../src/server/engine/combat.ts';
+import {
+  AttackRefusal,
+  canAttack,
+  combatDistance,
+  rangeRefusal,
+} from '../../src/server/engine/combat.ts';
 import { DIR_VECTORS, chebyshev } from '../../src/shared/coords.ts';
 import { TileCode } from '../../src/shared/protocol.ts';
 import { createRng } from '../../src/shared/rng.ts';
 import { drawCount, scriptedRng } from '../helpers/scripted-rng.ts';
 import type { AiCtx } from '../../src/server/ai/npc.ts';
+import type { MonsterTemplate } from '../../src/server/content/monsters.ts';
 import type { EngineActor, Intent, MonsterActor } from '../../src/server/engine/actor.ts';
 import type { TileXY } from '../../src/shared/coords.ts';
 import type { LevelView } from '../../src/shared/protocol.ts';
@@ -372,7 +379,7 @@ describe('ai_state.talent_in gates the shot', () => {
   });
 
   it('does not take the fire draw on a turn it has no shot lined up', () => {
-    // Out of its band: Euclidean 7.21 against `preferredRange` 5 (and inside
+    // Out of its band: 7.21, which rounds to 7, against `preferredRange` 5 (and inside
     // `aggroRange` 9, so it can see and therefore target), which routes through
     // `advance` and never reaches the fire branch. The draw must be taken INSIDE
     // that branch only, or the number of turns a kiter spends walking changes
@@ -510,8 +517,9 @@ describe('the AI never submits an attack canAttack would refuse', () => {
   it('agrees with canAttack on every tile a CHASER can stand on', () => {
     // Swept rather than sampled, because the disagreement this guards against is
     // precisely a corner case: the four DIAGONALS, which are Chebyshev 1 and
-    // Euclidean 1.4142. A reach fed in raw as a Euclidean radius refuses all
-    // four, and the AI would keep asking for them.
+    // were 1.4142 on the unrounded length. A reach fed in raw as an unrounded
+    // radius refused all four, and the AI would have kept asking for them. On
+    // the rounded `combatDistance` they are 1; the sweep holds either way.
     const world = { level: levelFor(OPEN_ROOM) };
     const player = detective('p1', { x: 5, y: 3 });
     let swings = 0;
@@ -570,6 +578,166 @@ describe('the AI never submits an attack canAttack would refuse', () => {
     }
 
     expect(shots).toBeGreaterThan(0);
+  });
+});
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * EVERY KITER IN THE ROSTER, FROM EVERY TILE IT CAN SEE ITS TARGET FROM:
+ * NO FREEZE, AND NO TWO-STEP PACE.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * The kite band (`kite`'s `distance`), the dead-zone step test (`approach`'s
+ * `keepAway`) and the refusal (`rangeRefusal`) all read ONE body,
+ * `combatDistance`, and it took ToME's rounding in that body so the three
+ * moved together. These two detectors are what fails if one of them is ever
+ * asked on a different length again.
+ *
+ *   THE FREEZE. An un-gated kiter (no `talentIn`, so every in-band turn is a
+ *   shot) with no talent to use, in a room with space behind it, has no
+ *   legitimate reason to HOLD: in band it shoots, too close it retreats, too
+ *   far it advances. A HOLD with `rangeRefusal` null is a band narrower than
+ *   the refusal; a HOLD with `rangeRefusal` answering is the kite band calling
+ *   a tile "in band" that the refusal does not — the kiter stands there and
+ *   never fires, forever. Both are reported, with the refusal named.
+ *
+ *   THE CYCLE. Two decisions against a target that does not move, and the
+ *   kiter is back where it started: stepped in and stepped out. The retreat
+ *   test (`canRetreat`) is the one attack-side reader on the UNROUNDED length,
+ *   and it is safe only because it cannot undo what the band decided.
+ *
+ * THE ROSTER'S OWN TEMPLATES, through `monsterInit`, so a fifth kiter is swept
+ * the day it is authored — and the count is pinned so an empty filter cannot
+ * pass by testing nothing.
+ */
+describe('every kiter holds its band without freezing or pacing', () => {
+  const SIZE = 37;
+  const OPEN = Array.from({ length: SIZE }, () => '.'.repeat(SIZE));
+  const CENTRE = { x: 18, y: 18 } as const;
+  const kiters = ALL_TEMPLATES.filter((t) => t.profile === AiProfile.RangedKiter);
+
+  it('sweeps the four kiters the roster ships', () => {
+    expect(kiters.map((t) => t.id).sort()).toEqual(
+      ['index_cairn', 'index_inquisitor', 'index_watcher', 'index_wraith'].sort(),
+    );
+    // Room enough on every side: the widest sight in the sweep plus a margin,
+    // so no retreat anywhere below is a wall's fault.
+    for (const t of kiters) expect(t.aggroRange + 3).toBeLessThanOrEqual(CENTRE.x);
+  });
+
+  for (const template of kiters) {
+    it(`${template.id}: never holds in the open, and never paces in and out`, () => {
+      const ungated: MonsterTemplate = { ...template, talentIn: undefined };
+      const freezes: string[] = [];
+      const cycles: string[] = [];
+      const misfires: string[] = [];
+      const seen = { attack: 0, retreat: 0, advance: 0 };
+
+      for (let y = 0; y < SIZE; y += 1) {
+        for (let x = 0; x < SIZE; x += 1) {
+          if (x === CENTRE.x && y === CENTRE.y) continue;
+          const start = { x, y };
+          // Only where it can see its target: past `aggroRange` it has nobody
+          // to kite, and holding there is the right answer.
+          if (chebyshev(start, CENTRE) > template.aggroRange) continue;
+
+          const player = detective('p1', CENTRE);
+          const monster = createMonsterActor('m1', monsterInit(ungated, start));
+          if (monster.kind !== 'monster') throw new Error('createMonsterActor returned a player');
+          const ctx = aiCtx(OPEN, [player, monster], createRng(`kite-sweep:${template.id}`));
+
+          const before = rangeRefusal(monster, player);
+          /**
+           * THE BAND ITSELF, stated as `kite` states it and asked of the one
+           * length: shoot exactly when the target is between the dead zone and
+           * the preferred range AND the refusal agrees. The freeze and cycle
+           * detectors cannot see a kite band that drifts onto another length on
+           * its own — the kiter then retreats from (2,2) or advances from the
+           * rounded rim instead of firing, which is neither a hold nor a pace.
+           * This can: measured, the kite band alone on the exact length took
+           * the Watcher from 272 first-turn shots to 228 with both detectors
+           * green.
+           */
+          const reach = combatDistance(monster, player);
+          const shouldShoot =
+            reach >= monster.ai.minRange && reach <= monster.ai.preferredRange && before === null;
+          const first = decideNpcAction(monster, ctx);
+          if ((first.kind === IntentKind.Attack) !== shouldShoot) {
+            misfires.push(
+              `(${String(x - CENTRE.x)},${String(y - CENTRE.y)}) ${first.kind}, expected ${shouldShoot ? 'attack' : 'no attack'}`,
+            );
+          }
+          if (first.kind === IntentKind.Hold) {
+            freezes.push(
+              `(${String(x - CENTRE.x)},${String(y - CENTRE.y)}) refusal=${String(before)}`,
+            );
+            continue;
+          }
+          if (first.kind === IntentKind.Attack) {
+            seen.attack += 1;
+            continue;
+          }
+          if (first.kind !== IntentKind.Move) continue;
+          const squared = (at: TileXY): number => (at.x - CENTRE.x) ** 2 + (at.y - CENTRE.y) ** 2;
+          const d0 = squared(start);
+          applyMove(monster, first);
+          if (squared(monster) > d0) seen.retreat += 1;
+          else seen.advance += 1;
+
+          const second = decideNpcAction(monster, ctx);
+          applyMove(monster, second);
+          if (monster.x === start.x && monster.y === start.y) {
+            cycles.push(`(${String(x - CENTRE.x)},${String(y - CENTRE.y)})`);
+          }
+        }
+      }
+
+      expect(freezes, `${template.id} held with nothing stopping it`).toEqual([]);
+      expect(misfires, `${template.id}'s band and its refusal disagree`).toEqual([]);
+      expect(cycles, `${template.id} stepped away and back`).toEqual([]);
+      // NOT VACUOUS: all three branches of the band were reached.
+      expect(seen.attack, 'never shot').toBeGreaterThan(0);
+      expect(seen.retreat, 'never retreated').toBeGreaterThan(0);
+      expect(seen.advance, 'never advanced').toBeGreaterThan(0);
+    });
+  }
+});
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * A RETREAT IS "FURTHER" BY THE UNROUNDED LENGTH — `canRetreat`.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * The kiter stands one tile east of its target with the whole column beyond it
+ * walled: straight away (east) and both 45-degree sides (north-east,
+ * south-east) are rock. What is left is the two hard sides, straight north and
+ * straight south, to (1,±1) off the target.
+ *
+ * On ToME's rounded length that step is 1 to 1 — a diagonal neighbour is 1
+ * away, exactly as the orthogonal one is — so a "further away" test asked on
+ * `combatDistance` says no, and the kiter holds in a pocket it could have
+ * slipped out of. On the exact length it is 1 to 1.41, and it goes.
+ *
+ * ```
+ * ...#
+ * .pk#     p = the target, k = the kiter, # = the walled column
+ * ...#
+ * ```
+ */
+describe('a kiter pressed against a wall slides out sideways', () => {
+  it('retreats to (1,±1) when straight back and both near sides are walled', () => {
+    const ROOM = ['....#..', '....#..', '....#..', '....#..', '....#..', '....#..', '....#..'];
+    const player = detective('p1', { x: 2, y: 3 });
+    const monster = kiter('m1', { x: 3, y: 3 });
+    monster.combat = { range: 5, minRange: 3 };
+
+    const intent = decideNpcAction(monster, aiCtx(ROOM, [player, monster], createRng('slide')));
+    expect(intent.kind).toBe(IntentKind.Move);
+    applyMove(monster, intent);
+    expect([
+      { x: 1, y: -1 },
+      { x: 1, y: 1 },
+    ]).toContainEqual({ x: monster.x - player.x, y: monster.y - player.y });
   });
 });
 

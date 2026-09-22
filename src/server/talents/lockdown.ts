@@ -74,15 +74,17 @@ const AP_COST = 5;
  */
 const RESOLVE_COST = 30;
 /**
- * MELEE REACH — 1.5, NOT 1, AND THE ARITHMETIC IS THE WHOLE JUSTIFICATION.
+ * MELEE REACH — 1.5, WHICH ON ToME'S ROUNDED DISTANCE IS UPSTREAM'S 1.
  *
  * `checkTargeting` (engine/talents.ts) and `submitTalent` (turn-engine.ts) both
- * measure with `combatDistance`, which is EUCLIDEAN — `core.fov.distance`. The
- * four diagonal neighbours sit at √2 = 1.4142…, so a range of exactly 1 refuses
- * every one of them: a Watchman standing corner-to-corner with a husk is told
- * OutOfRange on a talent whose whole point is that he is standing on it. 1.5 is
- * the only round number between √2 and the nearest non-neighbour at 2.0, so a
- * circle of that radius holds exactly the eight tiles around you.
+ * measure with `combatDistance` — `core.fov.distance`, the straight line
+ * rounded half-up. The eight neighbours are all 1 away (a diagonal's 1.41
+ * rounds down) and the nearest tile past them is 2, so 1.5 and upstream's 1
+ * hold the same eight tiles. It was chosen while `combatDistance` was the
+ * UNROUNDED length, under which the diagonals sat at √2 = 1.4142 and a range of
+ * exactly 1 refused every one of them: a Watchman standing corner-to-corner
+ * with a husk was told OutOfRange on a talent whose whole point is that he is
+ * standing on it.
  *
  * Imported rather than written as 1.5, because a second literal somewhere else
  * is a second definition of what melee means (engine/combat.ts `MELEE_REACH`).

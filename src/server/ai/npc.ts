@@ -41,27 +41,34 @@
  * ===========================================================================
  *
  * ToME measures MOVEMENT in Chebyshev (Astar.lua — a diagonal step costs what an
- * orthogonal one does) and RANGE in Euclidean (`core.fov.distance`; see the
- * header of engine/combat.ts). This file keeps both, and the split is not
- * arbitrary:
+ * orthogonal one does) and RANGE in `core.fov.distance`, the straight-line
+ * length rounded half-up (`combatDistance`; see the header of engine/combat.ts).
+ * This file keeps both, and the split is not arbitrary:
  *
  *   MOVEMENT — `approach`, `backAway` and the flanking sides are all Chebyshev
  *            steps, because a diagonal step costs what an orthogonal one does.
  *   RANGE  — every "may I attack from here?" goes through `rangeRefusal`, which
  *            is the reach-and-dead-zone half of `canAttack` itself, exported
- *            from engine/combat.ts for exactly this call.
+ *            from engine/combat.ts for exactly this call. The kite band and the
+ *            dead-zone step test read `combatDistance`, the same body.
+ *
+ * AND ONE THIRD LENGTH, WHICH IS NOT A RANGE: `canRetreat` asks whether a step
+ * took a fleeing body FURTHER from its threat, and asks it of the unrounded
+ * length (`euclidDistance`). Its own note says why the rounded one cannot.
  *
  * ═══ THE AI MUST ASK THE QUESTION THE LEGALITY CHECK WILL ASK ═══
  * `chase` used to test `chebyshev(self, target) <= self.attackRange` while
- * `canAttack` refused on EUCLIDEAN. For the current roster the two agree — a
- * husk's `attackRange` 1 against `combat.range` 1.5, and the wraith's
- * `preferredRange` 4 gates long before its `attackRange` 6 — so nothing was
- * visibly wrong. But a creature whose AI band is one tile WIDER than its reach
- * submits an attack that is refused every single turn: the intent costs the
- * turn (a monster does not get refunded), and the sweep shows a `blocked` step,
- * forever. From outside that is an AI freeze, not a range bug, and nothing fails
- * anywhere. Asking one function removes the class of bug rather than the
- * instance.
+ * `canAttack` refused on the straight line. For the roster of the day the two
+ * agreed — a husk's `attackRange` 1 against `combat.range` 1.5, and the
+ * wraith's `preferredRange` 4 gating long before its `attackRange` 6 — so
+ * nothing was visibly wrong. But a creature whose AI band is one tile WIDER than
+ * its reach submits an attack that is refused every single turn: the intent
+ * costs the turn (a monster does not get refunded), and the sweep shows a
+ * `blocked` step, forever. From outside that is an AI freeze, not a range bug,
+ * and nothing fails anywhere. Asking one function removes the class of bug
+ * rather than the instance — and it is why the metric changed in
+ * `combatDistance`'s body and not at the callers, where one missed site is that
+ * freeze again.
  *
  * ===========================================================================
  * DETERMINISM
@@ -92,6 +99,7 @@
  */
 
 import { DIR_ORDER, DIR_VECTORS, chebyshev } from '../../shared/coords.ts';
+import { euclidDistance } from '../../shared/distance.ts';
 import { circleGrids, fovDistance } from '../../shared/mapgen/geom.ts';
 import { percent } from '../../shared/mapgen/lua.ts';
 import { findPath, findPathAvoiding } from '../../shared/path.ts';
@@ -520,12 +528,14 @@ export function followStep(self: MonsterActor, ctx: AiCtx): Intent | undefined {
   const anchor = ctx.anchorAt?.(self);
   if (anchor === undefined) return undefined;
   /**
-   * ═══ CHEBYSHEV HERE AND EUCLIDEAN FOR THE COMBAT LEASH, DELIBERATELY ═══
+   * ═══ CHEBYSHEV HERE AND `core.fov.distance` FOR THE COMBAT LEASH ═══
    * Movement is eight-way, so chebyshev IS the number of steps between two
    * tiles — and this number's whole meaning is *how many steps behind you are
    * they*. `COMPANION_LEASH` is upstream's `tactic_leash`, which upstream
-   * measures with `core.fov.distance` (`combatDistance`), so that one keeps the
-   * metric it was chosen against. The same chebyshev is what `world/brief.ts`
+   * measures with `core.fov.distance` (the `party_member` AI's leash test), and
+   * `combatDistance` is that function — it was the unrounded length until the
+   * range port, and this sentence said the two were one when they were not —
+   * so that one keeps the metric it was chosen against. The same chebyshev is what `world/brief.ts`
    * asks at the destination — AT `FOLLOW_LEASH + 1`, and the extra tile is not
    * slack: the destination of a `leaves` escort is the way out, standing on it
    * IS leaving, so the closest a living party can hold is one tile off it and
@@ -917,7 +927,9 @@ function aroundKin(ctx: AiCtx, target: EngineActor): PassableFn {
  * what stops it giving ground forever.
  */
 function kite(self: MonsterActor, target: EngineActor, ctx: AiCtx): Intent {
-  // EUCLIDEAN — the same metric `canAttack` refuses on. See the file header.
+  // `combatDistance` — the same body `canAttack` refuses on, whole tiles. See
+  // the file header: this line and `rangeRefusal` below must never be asked on
+  // two metrics, or a kiter holds in a band its every shot is refused from.
   const distance = combatDistance(self, target);
 
   if (distance < self.ai.minRange) {
@@ -1026,7 +1038,8 @@ function kite(self: MonsterActor, target: EngineActor, ctx: AiCtx): Intent {
  * ADDED, NOT PORTED: a step is only taken if it INCREASES the distance to the
  * target. ToME's flee has no such test because ToME's fleeing monster has no
  * dead zone to fall back into; ours does, and a "retreat" that ends up closer is
- * a retreat that hands the player a free turn.
+ * a retreat that hands the player a free turn. It is asked of the UNROUNDED
+ * length — see `canRetreat`.
  *
  * @returns undefined when there is nowhere to go, so the caller can decide what
  * being cornered means for that profile.
@@ -1035,7 +1048,7 @@ function backAway(self: MonsterActor, target: EngineActor, ctx: AiCtx): Intent |
   const away = dirToward(target, self);
   if (away === undefined) return undefined;
 
-  const from = combatDistance(self, target);
+  const from = euclidDistance(self, target);
   if (canRetreat(self, away, ctx, target, from)) return { kind: IntentKind.Move, dir: away };
 
   const sides = sideDirs(away);
@@ -1049,7 +1062,28 @@ function backAway(self: MonsterActor, target: EngineActor, ctx: AiCtx): Intent |
   return undefined;
 }
 
-/** Walkable, unoccupied, AND further from the target than we are now. */
+/**
+ * Walkable, unoccupied, AND further from the target than we are now.
+ *
+ * ═══ THE UNROUNDED LENGTH, AND IT IS THE ONLY ATTACK-SIDE READER THAT IS ═══
+ * Every range in this file is `combatDistance` — `core.fov.distance`, whole
+ * tiles — and this test is not a range. It asks whether ONE STEP moved the body
+ * away, and the rounded length is flat across exactly the steps a cornered
+ * kiter needs: from (1,0) off its target to (1,1) is 1 to 1, and (2,0) to
+ * (2,1) is 2 to 2. Asked on that metric, the hard sidesteps out of a pocket are
+ * never "further", and the kiter holds where it could have slipped away.
+ * `euclidDistance` strictly increases on every step that really is away, so
+ * this admits them.
+ *
+ * IT CANNOT CYCLE AGAINST THE ROUNDED BAND. Every step this admits strictly
+ * increases the exact length, and the rounded length never falls when the
+ * exact one rises, so a retreat never takes the body deeper into the dead zone
+ * the band measures — and `approach` refuses any step that would END inside it
+ * (`keepAway`, on `combatDistance`), so no pair of decisions walks it out and
+ * back in. The two tests disagree only about whether a FLAT step counts as
+ * away, never about which way is away. test/server/ai.test.ts runs a cycle
+ * detector over every kiter in the roster.
+ */
 function canRetreat(
   self: MonsterActor,
   dir: Dir,
@@ -1060,7 +1094,7 @@ function canRetreat(
   const to = stepTile(self, dir);
   if (!ctx.isPassable(to.x, to.y)) return false;
   if (ctx.actorAt(to.x, to.y) !== undefined) return false;
-  return combatDistance(to, target) > from;
+  return euclidDistance(to, target) > from;
 }
 
 // ---------------------------------------------------------------------------
@@ -1326,7 +1360,10 @@ function targetPosition(self: MonsterActor, ctx: AiCtx): TileXY | undefined {
 /** Per-call overrides on how a monster is allowed to close the distance. */
 type ApproachOpts = {
   /**
-   * No step may END strictly inside this EUCLIDEAN distance of the target.
+   * No step may END strictly inside this distance of the target, measured by
+   * `combatDistance` — the same whole-tile `core.fov.distance` the kite band and
+   * `rangeRefusal` read, so the tile a kiter steps onto is judged exactly as
+   * the shot it will take from there.
    *
    * A kiter's dead zone. 0 (the default) means melee: walk right up to it, and
    * step onto it if it is standing in the way, which becomes a bump-attack.

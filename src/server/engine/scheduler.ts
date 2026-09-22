@@ -3589,8 +3589,12 @@ function fire(
     // endpoints at this instant (ActorProject.lua:343-347), and never rebuilt.
     to: { x: target.x, y: target.y },
     projSpeed,
-    // The same reach the legality check above measured with, and with the same
-    // metric — see the deviation note on `blockPath` in engine/projectile.ts.
+    // NOT the legality check's number or metric: `canAttack` measured
+    // `combat.range` on ToME's rounded length, and this is `attackRange`, the
+    // orb's CHEBYSHEV flight limit (see the deviation note on `blockPath` in
+    // engine/projectile.ts). The orb invariant in monsters.test.ts keeps the
+    // two numbers equal for every shooter, and a Chebyshev length never exceeds
+    // the rounded one, so the orb reaches every tile the check accepted.
     range: attacker.attackRange,
     // THE RIDER, FROZEN AT THE MUZZLE alongside the damage below. See
     // `ProjectileInit.onHit` for why it is read here and not at impact.

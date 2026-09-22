@@ -183,8 +183,8 @@ export const REVIVE_AP = 4;
  * The same metric `attackRange` and bump-attack use, deliberately: *"any ally
  * **reaching** you"* has to mean the same thing as "any monster reaching you",
  * or a rescuer ends up in a tile from which they can be hit but cannot help.
- * Euclidean is the metric for RANGE (combat.ts's two-metrics note); adjacency is
- * Chebyshev, and a diagonal genuinely is adjacent.
+ * `core.fov.distance` is the metric for RANGE (combat.ts's two-metrics note);
+ * adjacency is Chebyshev, and a diagonal genuinely is adjacent.
  */
 export const REVIVE_REACH = 1;
 

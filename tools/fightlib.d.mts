@@ -17,6 +17,10 @@
  * DECLARATIONS ONLY, AND LOOSE ON PURPOSE — only what the test calls, typed no
  * tighter than the duck-typed objects the probes pass. The point is that the
  * module RESOLVES, not that it is checked.
+ *
+ * test/tools/fightlib-band.test.ts is the second reader: `reachable` is the
+ * probes' copy of the engine's distance band — the join between a probe and
+ * the rule it measures — and it is held to `canUseTalent` over every offset.
  */
 
 /** One attack a probe may press, as `classStrikes` builds it. */
@@ -32,6 +36,17 @@ export type ProbeAttack = {
 
 /** Every attack a class owns that a probe may aim at a foe, longest first. */
 export function classStrikes(cls: unknown, known?: ReadonlySet<string>): ProbeAttack[];
+
+/**
+ * The nearest foe this attack's band reaches, with its `tileDistance`, or
+ * undefined. test/tools/fightlib-band.test.ts holds it to `canUseTalent`.
+ */
+export function reachable<F extends { readonly x: number; readonly y: number }>(
+  attack: Pick<ProbeAttack, 'range' | 'minRange'>,
+  self: { readonly x: number; readonly y: number },
+  foes: readonly F[],
+  ground?: unknown,
+): { readonly f: F; readonly d: number } | undefined;
 
 /** Fire the best attack the engine accepts this turn. */
 export function takeShot(

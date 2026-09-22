@@ -24,7 +24,7 @@
 //
 // ═══ IT DOES NOT OWN A DRIVER, AND THAT IS THE POINT ═══
 // Everything about how a probe plays a character — the cooldown fall-through,
-// the Euclidean band, the kiter, the rescue, the firing spot, the commitment,
+// the range band, the kiter, the rescue, the firing spot, the commitment,
 // the lantern — was learned once, painfully, in `delve-run.mjs` and
 // `fightlib.mjs`. This imports `run` from the first of those. A second copy of
 // that loop would have to learn all of it again, and this repository has the

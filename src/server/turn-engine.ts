@@ -2409,9 +2409,9 @@ export function createTurnEngine(opts: TurnEngineOptions): ReapingTurnEngine {
      * engine/combat.ts (:252-262), deliberately: two places that decide "can this
      * reach that" must agree, or a talent and a weapon swing disagree about the
      * same tile and the bug reads as the server cheating. `combatDistance` is
-     * imported from that file for the same reason — one Euclidean metric in the
-     * process, matching `core.fov.distance`, so a range-5 ring is a CIRCLE and
-     * not a square that reaches 7.07 tiles into its corners.
+     * imported from that file for the same reason — one metric in the process,
+     * `core.fov.distance` rounded half-up (`tileDistance`), so a range-5 ring is
+     * a CIRCLE and not a square that reaches 7.07 tiles into its corners.
      *
      * TOO_CLOSE IS NEVER OUT_OF_RANGE. game-design.md § 2 calls `min_range 3`
      * the single most important number in the Inspector, and the two failures
@@ -2556,25 +2556,30 @@ export function createTurnEngine(opts: TurnEngineOptions): ReapingTurnEngine {
       // and the bug would present as the server cheating. The rule is: whatever
       // supplies `loadoutOf` must resolve the range at the actor's level, and
       // nothing in this file may re-derive it from a talent definition.
+      // WHOLE TILES IN THE SENTENCE, because the distance is whole tiles:
+      // `combatDistance` is `core.fov.distance`, rounded. It printed
+      // `toFixed(1)` while it was the unrounded length.
       if (distance > talent.range) {
         return refuseTalent(
           ErrorCode.OutOfRange,
-          `${talent.name}: range ${talent.range}, target ${distance.toFixed(1)} away`,
+          `${talent.name}: range ${talent.range}, target ${String(distance)} away`,
         );
       }
       // THE DEAD ZONE. `<` not `<=`, so min_range 3 makes 3 the closest LEGAL
-      // tile — and because the metric is Euclidean the hole is a CIRCLE: the
-      // diagonal at (3,3) is 2.83 away and sits inside it, exactly as
+      // tile — and the hole is a CIRCLE cut on the rounded length: (2,1) is 2.24,
+      // which rounds to 2 and sits inside it, while the diagonal at (2,2) is
+      // 2.83, which rounds to 3 and is legal — exactly as
       // test/server/combat.test.ts pins for a weapon.
       if (talent.minRange > 0 && distance < talent.minRange) {
         return refuseTalent(
           ErrorCode.TooClose,
-          `${talent.name}: needs ${talent.minRange}, target ${distance.toFixed(1)} away`,
+          `${talent.name}: needs ${talent.minRange}, target ${String(distance)} away`,
         );
       }
       // Melee needs no sight check — you are standing on them. The guard mirrors
-      // `canAttack`; Bresenham excludes both endpoints, so an adjacent tile is
-      // always in sight anyway and the two agree by construction.
+      // `canAttack`; `> 1` on the rounded length is "outside the 3x3", and
+      // Bresenham excludes both endpoints, so an adjacent tile is always in
+      // sight anyway and the two agree by construction.
       if (distance > 1 && !world.lineClearFor(actor, target)) {
         return refuseTalent(ErrorCode.NoLos, `${talent.name}: no line of sight to that tile`);
       }

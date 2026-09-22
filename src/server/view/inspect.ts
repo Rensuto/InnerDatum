@@ -44,7 +44,6 @@
  */
 
 import { hitChance } from '../../shared/checkhit.ts';
-import { chebyshev } from '../../shared/coords.ts';
 import { IMMUNITY_KEYS } from '../../shared/immunity.ts';
 import { DAMAGE_TYPES, damageTypeName } from '../../shared/damagetype.ts';
 import {
@@ -1038,7 +1037,11 @@ export function inspectActor(
 
     pushEffectRows(rows, effects, target);
 
-    rows.push({ label: 'Distance', value: `${chebyshev(viewer, target)} tiles` });
+    // THE SAME LENGTH AS THE REFUSAL BELOW, ToME's rounded `core.fov.distance`.
+    // This row was CHEBYSHEV while `attackBlockedReason` on the same card is
+    // rounded, so a husk at (4,4) read "Distance 4 tiles" beside "out of range:
+    // 6 tiles, reaches 5" — two numbers for one gap, on one card.
+    rows.push({ label: 'Distance', value: `${combatDistance(viewer, target)} tiles` });
   } else {
     // ALLY — BYTE FOR BYTE WHAT IT HAS ALWAYS BEEN. Two rows, and the reason it
     // is only two is the block above: a party member's sheet is theirs.
@@ -1102,18 +1105,19 @@ export function attackBlockedReason(
 ): string | undefined {
   /**
    * ═══════════════════════════════════════════════════════════════════════════
-   * EUCLIDEAN, BECAUSE THAT IS THE METRIC THE SERVER WILL ANSWER WITH.
+   * `combatDistance`, BECAUSE THAT IS THE METRIC THE SERVER WILL ANSWER WITH.
    * ═══════════════════════════════════════════════════════════════════════════
    *
    * This measured with CHEBYSHEV and compared against `viewer.combat.range`,
-   * which is a EUCLIDEAN radius. That agreed by ACCIDENT while no player had a
-   * combat sheet at all — the `?? 1` fallback happened to match the old
-   * Chebyshev-1 scheduler. Now every player carries a class sheet and the two
-   * disagree along the whole diagonal:
+   * which is a `core.fov.distance` radius. That agreed by ACCIDENT while no
+   * player had a combat sheet at all — the `?? 1` fallback happened to match
+   * the old Chebyshev-1 scheduler. Once every player carried a class sheet the
+   * two disagreed along the whole diagonal:
    *
    *   Inspector (range 5) at (10,10), husk at (14,14). Chebyshev 4 ≤ 5, so this
-   *   returned `undefined` and the card advertised a shootable target. Euclid is
-   *   5.657, so `canAttack` answers `out_of_range` and the shot is refused on
+   *   returned `undefined` and the card advertised a shootable target. The
+   *   straight line is 5.657 — 6 once rounded, as `combatDistance` now rounds
+   *   it — so `canAttack` answers `out_of_range` and the shot is refused on
    *   click. The whole diagonal rim of her range ring said yes and meant no.
    *
    * combat.ts's own wiring note is the argument: the metrics must move together
@@ -1158,14 +1162,15 @@ export function attackBlockedReason(
   if (band === AttackRefusal.MinRange) return `too close: needs ${minRange} tiles`;
   if (band === AttackRefusal.OutOfRange) {
     // ═══ WHOLE TILES IN A SENTENCE A PLAYER READS ═══
-    // The metric is a real-valued radius, but "out of range: 5.66 tiles,
-    // reaches 1.5" is arithmetic, not advice. `round` on the distance is the
-    // number of squares between them; `floor` on the reach is what the circle
-    // actually CONTAINS — `MELEE_REACH` is 1.5 exactly so that the eight
-    // neighbours at √2 are inside it, and "reaches 1" is what that means to
-    // somebody looking at a grid. Last week this sentence said "reaches 1" and
-    // it must keep saying so.
-    return `out of range: ${Math.round(dist)} tiles, reaches ${Math.floor(maxRange)}`;
+    // The distance is whole tiles already — `combatDistance` is the rounded
+    // `core.fov.distance` — and it used to be the real-valued length, which is
+    // why this sentence once needed a `round` to avoid "out of range: 5.66
+    // tiles". The reach can still be fractional: `floor` on it is what the
+    // circle actually CONTAINS — `MELEE_REACH` is 1.5, which holds the eight
+    // neighbours (all 1 away) and nothing at 2, and "reaches 1" is what that
+    // means to somebody looking at a grid. This sentence has said "reaches 1"
+    // for a melee body and it must keep saying so.
+    return `out of range: ${String(dist)} tiles, reaches ${Math.floor(maxRange)}`;
   }
   return undefined;
 }

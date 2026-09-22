@@ -129,8 +129,9 @@
  *    its target BLOCKS the shot here and merely gets clipped by it upstream.
  *    Widen `impact` to a list and this becomes `typ.line` on a flag.
  *
- * 2. THE RANGE METRIC IS CHEBYSHEV, not `core.fov.distance`'s Euclidean. The
- *    whole argument is on `blockPath` below, where the line lives.
+ * 2. THE RANGE METRIC IS CHEBYSHEV, not `core.fov.distance`'s rounded length.
+ *    The whole argument is on `blockPath` below, where the line lives — and why
+ *    it changes nothing a player can see.
  *
  * 3. WALK-INTO-A-LIVE-ORB IS TESTED IN FLIGHT, NOT IN THE MOVER. Upstream's
  *    `Projectile:on_move` (:250-267) is called BY the mover when something
@@ -539,17 +540,26 @@ const PASSES: Block = { block: false, hit: true, hitRadius: true };
  * `block_path` — Target.lua:441-510, in upstream's own order, minus everything
  * that needs a system we do not have.
  *
- * ═══ DEVIATION 2 OF 3: THE RANGE METRIC IS CHEBYSHEV ═══
- * Upstream measures with `core.fov.distance`, which is EUCLIDEAN (engine/
- * combat.ts's `combatDistance` is the port of it). This uses Chebyshev because
- * the scheduler's own legality gate does — `chebyshev(actor, target) >
- * actor.attackRange` is what let this shot be fired at all — and mixing the two
- * metrics means an orb fired at a diagonal target that PASSED the legality check
- * stops short of it and detonates on empty floor, every single time, with
- * nothing failing anywhere. engine/combat.ts's wiring note says the same thing
- * about the same pair of metrics: they move together or not at all. When the
- * scheduler moves onto `attackTarget` and its Euclidean `canAttack`, this line
- * moves with it.
+ * ═══ DEVIATION 2 OF 3: THE RANGE METRIC IS CHEBYSHEV, AND IT IS INERT ═══
+ * Upstream measures with `core.fov.distance` — the straight line rounded
+ * half-up, which engine/combat.ts's `combatDistance` is. This measures
+ * Chebyshev against the shooter's `attackRange`, and it was written while the
+ * scheduler's gate did the same (`chebyshev(actor, target) > actor.attackRange`
+ * let the shot be fired at all), because mixing two metrics means an orb fired
+ * at a target that PASSED the gate stops short of it and detonates on empty
+ * floor, every time, with nothing failing anywhere.
+ *
+ * THE GATE HAS MOVED; THIS HAS NOT, AND NEED NOT. The scheduler now asks
+ * `canAttack`, which refuses past `combat.range` by `combatDistance`. The two
+ * cannot disagree in the direction that matters: Chebyshev is never longer
+ * than the rounded length (the rounded length is at least the longer axis),
+ * so every tile on the line to a target `canAttack` accepted is within
+ * `combat.range` by Chebyshev too — and `attackRange` is never less than
+ * `combat.range` on anything that fires an orb. test/server/monsters.test.ts
+ * pins that last half over every `projSpeed` template; set a shooter's
+ * `attackRange` below its `combat.range` and this line starts detonating orbs
+ * on the floor again. Moving it onto `combatDistance` is a later, separate
+ * change with no visible effect today.
  *
  * NOT PORTED, and each is a system rather than a line: `requires_knowledge` (no
  * remembered-map layer yet), `pass_terrain` (a targeting flag no attack here

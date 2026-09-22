@@ -460,16 +460,19 @@ export function twistReachAt(level: number): number {
  * diagonal is sqrt(2) + 0.5 = 1.91, which rounds to 1 and is in reach; (2,0)
  * and (2,1) round to 2 and are not. So upstream's range 1 is the 3x3.
  *
- * OURS IS EXACT EUCLID (`combatDistance`, engine/combat.ts), where a diagonal
- * is 1.41 and a reach of 1 is the four orthogonal tiles only. `MELEE_REACH` is
- * the number that exists for exactly that: 1.5 covers the eight neighbours and
- * nothing at two, which is the same set upstream's 1 covers.
+ * OURS IS THAT ROUNDED DISTANCE NOW (`combatDistance`, engine/combat.ts, is
+ * `tileDistance`). It was exact Euclid, where a diagonal was 1.41 and a reach
+ * of 1 was the four orthogonal tiles only — which is what `MELEE_REACH` exists
+ * for: 1.5 covers the eight neighbours and nothing at two, the same set
+ * upstream's 1 covers, on either metric.
  *
  * `TWIST_RANGE` WAS 1, upstream's literal carried across without its metric,
  * and it refused every foe standing diagonally next to you: the cursor said
  * out of range and so did the server, about a body upstream lets you hit.
- * When the metric becomes upstream's rounded one this may go back to 1; the
- * test in test/server/full-swing-reach.test.ts holds either way.
+ * On the rounded metric 1 and `MELEE_REACH` are the same reach, so this could
+ * go back to upstream's 1 with nothing moving; it stays with every other melee
+ * talent on `MELEE_REACH` until that constant itself is ruled on (its note in
+ * engine/combat.ts). test/server/full-swing-reach.test.ts holds either way.
  */
 const TWIST_RANGE = MELEE_REACH;
 /** Four of six. Upstream's is a weapon-speed attack; ours is most of a turn. */

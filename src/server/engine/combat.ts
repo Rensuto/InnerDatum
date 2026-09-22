@@ -114,20 +114,25 @@
  * HISTORY, KEPT BECAUSE IT IS THE REASON `MELEE_REACH` EXISTS. `scheduler.ts#
  * strike` used to be the M2 placeholder — `rng.int(damageMin, damageMax)`
  * straight into `actor.ts#applyDamage` — and it range-checked with CHEBYSHEV,
- * while this file measures in EUCLIDEAN because that is what ToME's
- * `core.fov.distance` is and what every range and radius in the game is measured
- * with (docs/tome-mechanics.md § 10). A Chebyshev range ring is a square; the
- * targeting UI draws a circle.
+ * while this file measured a straight line, because every range and radius in
+ * ToME is measured with `core.fov.distance` (docs/tome-mechanics.md § 10). A
+ * Chebyshev range ring is a square; the targeting UI draws a circle.
  *
  * Swapping the scheduler over was therefore ONE change, not two: the range check
  * and the resolution had to move together. Leaving `strike` on Chebyshev while
- * `attackTarget` refused on Euclidean produced attacks that passed the
+ * `attackTarget` refused on the straight line produced attacks that passed the
  * scheduler's legality check and then quietly did nothing — and the first thing
- * that fell out of moving them together was that a Euclidean reach of exactly 1
- * refuses every diagonal melee swing in the game. Hence `MELEE_REACH`.
+ * that fell out of moving them together was that an UNROUNDED reach of exactly 1
+ * refused every diagonal melee swing in the game. Hence `MELEE_REACH`.
+ *
+ * THE STRAIGHT LINE WAS THE WRONG ONE. `core.fov.distance` ROUNDS the length
+ * half-up (`combatDistance` below), so a diagonal neighbour is 1 away and a
+ * reach of 1 holds all eight. The metric the two halves share is that rounded
+ * one now; the pairing argument above is unchanged by it.
  */
 
 import { checkHit } from '../../shared/checkhit.ts';
+import { tileDistance } from '../../shared/distance.ts';
 import { hasLineOfSight } from '../../shared/sight.ts';
 import { DAMAGE_TYPES } from '../../shared/damagetype.ts';
 import { DamageType, applyDamage } from './damage.ts';
@@ -226,7 +231,10 @@ export type CombatSheet = Combatant & {
    * has to survive being taken off, and only recomposition does that.
    */
   readonly immunities?: Readonly<Record<string, number>>;
-  /** Reach, in Euclidean tiles. 1 is melee. */
+  /**
+   * Reach, in `combatDistance` tiles — `core.fov.distance`, the length rounded
+   * half-up. 1 is melee, diagonals included; `MELEE_REACH` is the same reach.
+   */
   readonly range?: number;
   /**
    * The dead zone: closer than this and the attack is REFUSED.
@@ -331,30 +339,34 @@ const DEFAULT_SHEET: CombatSheet = {};
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════
- * THE EUCLIDEAN RADIUS THAT EQUALS THE MOORE NEIGHBOURHOOD. 1.5, AND THE
- * ARITHMETIC IS THE WHOLE JUSTIFICATION.
+ * THE REACH THAT IS THE MOORE NEIGHBOURHOOD. 1.5, AND UNDER ToME'S ROUNDED
+ * DISTANCE IT IS THE SAME REACH AS UPSTREAM'S 1.
  * ═══════════════════════════════════════════════════════════════════════════
  *
- *   the four diagonal neighbours sit at √2 = 1.4142…
- *   the nearest NON-neighbour (two tiles orthogonally) sits at 2.0
- *   1.5 is the only round number between them
+ * `combatDistance` is `core.fov.distance`, whole tiles: the eight neighbours
+ * are all 1 away (a diagonal is 1.41 rounded half-up) and the nearest tile past
+ * them is 2. So any reach from 1 up to just under 2 is the same set of tiles —
+ * the 3x3 — and 1.5 is one of them. It is not the smaller number upstream
+ * writes (`range = 1` on every melee talent) only because it was chosen while
+ * this file measured the UNROUNDED length, under which the diagonals sat at
+ * 1.4142 and a reach of exactly 1 refused all four. The number is kept rather
+ * than lowered because nothing behaves differently for it; lowering it to
+ * upstream's literal is the author's call, not a fix.
  *
- * So a circle of radius 1.5 contains exactly the eight tiles around you and
- * nothing else, which is what "melee" has to mean when the metric is Euclidean.
- * content/monsters.ts:210-220 states the same argument from the content side —
- * the √2 = 1.4142 two-metrics paragraph — and `validateTemplate`
- * (content/monsters.ts:1207, against its `DIAGONAL_STEP = Math.SQRT2` at
- * content/monsters.ts:1184) refuses any melee template whose `combat.range`
- * excludes the diagonal.
+ * `validateTemplate` in content/monsters.ts used to refuse a melee template
+ * whose `combat.range` was under √2, on the same unrounded arithmetic. It is
+ * gone: a template authoring upstream's 1 now reaches the diagonals, and
+ * test/server/monsters.test.ts pins that it is accepted and swings at (1,1).
  *
  * ═══ WHY A CONSTANT AND NOT A LITERAL, AND WHY `Math.max` BELOW ═══
  * `EngineActor.attackRange` is CHEBYSHEV (engine/actor.ts:299-309): 1 means the
- * eight-neighbourhood, which is what makes bump-attack work on a diagonal.
- * Feeding that 1 into `canAttack` RAW, as a Euclidean radius, is precisely what
- * refuses every diagonal melee attack in the game — the swing passes the
- * scheduler and then quietly does nothing, which is the failure the wiring note
- * at the top of this file warns about. `Math.max(attackRange, MELEE_REACH)`
- * fixes every melee actor while leaving a ranged fixture that sets only
+ * eight-neighbourhood, which is what makes bump-attack work on a diagonal. On
+ * the rounded metric a raw 1 would now reach the same eight tiles; it was the
+ * UNROUNDED metric under which feeding that 1 into `canAttack` refused every
+ * diagonal melee attack in the game — the swing passed the scheduler and then
+ * quietly did nothing, which is the failure the wiring note at the top of this
+ * file warns about. `Math.max(attackRange, MELEE_REACH)` is kept for the actor
+ * with no sheet at all, and it still leaves a ranged fixture that sets only
  * `attackRange: 5` with the reach it asked for.
  *
  * It is EXPORTED because the class sheets (content/classes.ts) and every melee
@@ -445,19 +457,39 @@ function barehandAt(sheet: CombatSheet, distance: number): boolean {
 }
 
 /**
- * `core.fov.distance` — EUCLIDEAN.
+ * `core.fov.distance` — the straight-line length ROUNDED HALF-UP to whole tiles,
+ * which is `tileDistance` (shared/distance.ts) and nothing else.
  *
- * REIMPLEMENTED, not translated: `core.fov.*` is native C and absent from the
- * reference clone (docs/tome-mechanics.md § 10). ToME uses TWO metrics on
- * purpose — Chebyshev for A* step costs (`ENGINE/Astar.lua`, diagonals cost the
- * same as orthogonals) and Euclidean for every range, radius and targeting ring.
- * Reproducing only one makes ranged talents feel wrong: a Chebyshev range 5 is a
- * square that reaches 7.07 tiles into the corners.
+ * ToME uses TWO metrics on purpose — Chebyshev for A* step costs
+ * (`ENGINE/Astar.lua`, diagonals cost the same as orthogonals) and
+ * `core.fov.distance` for every range, radius and targeting ring. Reproducing
+ * only one makes ranged talents feel wrong: a Chebyshev range 5 is a square that
+ * reaches 7.07 tiles into the corners. Under the rounded length a range of 5
+ * reaches (5,2) and (4,3) and stops short of (5,3) and (4,4).
+ *
+ * ═══ IT WAS THE UNROUNDED LENGTH, AND ITS NOTE SAID THAT WAS ToME ═══
+ * `Math.sqrt(dx*dx + dy*dy)`, under a docblock reading "`core.fov.distance` —
+ * EUCLIDEAN". The C rounds (`lua_fov_get_distance`; shared/distance.ts has the
+ * derivation), so every band here was a sliver tighter than upstream's: the
+ * Inspector refused a foe two diagonal steps away (2.83) that ToME calls 3 and
+ * lets her shoot.
+ *
+ * ═══ ONE BODY, AND EVERY ATTACK-BAND READER GOES THROUGH IT ═══
+ * `rangeRefusal` and `canAttack` below, the AI's kite band and dead-zone step
+ * test (ai/npc.ts), `checkTargeting` (engine/talents.ts), the submission gate's
+ * fallback (turn-engine.ts) and the inspect card (view/inspect.ts) all call this
+ * function. That is the point of changing the body rather than the callers: an
+ * AI band on one metric and a refusal on another is a kiter that stands in what
+ * it thinks is its band while every shot is refused. The ONE caller that must
+ * not ask this is `canRetreat` (ai/npc.ts), whose "is this step further away"
+ * needs a length that moves on every step; it asks `euclidDistance` and says why.
+ *
+ * INTEGER-VALUED NOW. A caller that sorts on it or wants "strictly further"
+ * sees ties it did not see before; each such caller was checked when the body
+ * changed, and the retreat above is the only one that needed the exact length.
  */
 export function combatDistance(a: { x: number; y: number }, b: { x: number; y: number }): number {
-  const dx = a.x - b.x;
-  const dy = a.y - b.y;
-  return Math.sqrt(dx * dx + dy * dy);
+  return tileDistance(a, b);
 }
 
 /** The sheet, or ToME's defaults for every field it omits. */
@@ -522,10 +554,11 @@ export function rangeRefusal(
 ): AttackRefusal | null {
   const sheet = sheetOf(attacker);
   // `attackRange` IS CHEBYSHEV (engine/actor.ts:299-309) and this is a
-  // EUCLIDEAN radius, so it is floored at `MELEE_REACH` rather than used raw —
-  // read that constant's note, because a raw 1 here refuses all four diagonals.
-  // `Math.max` and not a blanket 1.5: a ranged fixture that sets only
-  // `attackRange: 5` keeps the five tiles it asked for.
+  // `core.fov.distance` radius. They agree at 1 now — a diagonal rounds to 1 —
+  // and the floor at `MELEE_REACH` is what made them agree back when this was
+  // the unrounded length, under which a raw 1 refused all four diagonals. Read
+  // that constant's note. `Math.max` and not a blanket 1.5: a ranged fixture
+  // that sets only `attackRange: 5` keeps the five tiles it asked for.
   const reach = sheet.range ?? Math.max(attacker.attackRange ?? 1, MELEE_REACH);
   const minRange = sheet.minRange ?? 0;
   const distance = combatDistance(attacker, target);

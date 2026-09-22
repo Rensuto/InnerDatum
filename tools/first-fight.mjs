@@ -93,7 +93,7 @@ import { canRoute, canWalk, Ground } from '../src/shared/level.ts';
 import { ErasedReason } from '../src/shared/protocol.ts';
 import { firstStep } from './walk.mjs';
 import { areEnemies } from '../src/server/engine/actor.ts';
-import { classStrikes, firingSpot, takeShot } from './fightlib.mjs';
+import { classStrikes, firingSpot, nearestFoe, takeShot } from './fightlib.mjs';
 import { bearBirthKit, foldPassives, raiseBirthSustains } from './grown.mjs';
 import { recomposeCombat } from '../src/server/engine/effects.ts';
 import { resolveItem } from '../src/server/content/resolve.ts';
@@ -287,9 +287,19 @@ function fight(cls, seed) {
   for (; turns < TURN_CAP; turns += 1) {
     const foes = hostiles().filter((a) => a.alive);
     if (foes.length === 0 || !p.alive || isDowned(downed, 'p1')) break;
-    const near = foes
-      .map((f) => ({ f, d: Math.max(Math.abs(f.x - p.x), Math.abs(f.y - p.y)) }))
-      .sort((a, b) => a.d - b.d)[0];
+    /**
+     * THE NEAREST FOE AND ITS GAP, BY THE ENGINE'S LENGTH — fightlib's
+     * `nearestFoe`, whose `d` is `tileDistance`.
+     *
+     * THIS WAS CHEBYSHEV, `max(|dx|, |dy|)`, and `gap` below is compared with
+     * a talent's `minRange` to decide whether to back out of the dead zone.
+     * Counting a hole in steps agreed with the engine only while no tile
+     * inside a hole of 3 was a legal shot. On ToME's rounded
+     * `core.fov.distance` the diagonal two steps off is 3 and IS one: this
+     * driver would have backed the Inspector away from a foe she could shoot.
+     * test/server/monsters.test.ts pins where the two metrics part.
+     */
+    const near = nearestFoe(foes, p);
     /**
      * ═══════════════════════════════════════════════════════════════════════
      * SHOOT IF YOU CAN SHOOT. A BUMP DRIVER CANNOT PLAY A GUNMAN.
@@ -436,8 +446,8 @@ console.log(
     `left had one cause: "close" and "back off" are both moves along the line to\n` +
     `the foe, so neither answers a WALL. The driver now walks to a tile it could\n` +
     `actually shoot from (fightlib.mjs#firingSpot), and the band it asks about is\n` +
-    `the engine's -- Euclidean, line of sight included -- rather than a Chebyshev\n` +
-    `square that called a foe 7.07 tiles away a shot.\n\n` +
+    `the engine's -- core.fov.distance, rounded, line of sight included -- rather\n` +
+    `than a Chebyshev square that called a foe 7.07 tiles away a shot.\n\n` +
     `THE LEVEL ARGUMENT SCALES THE ROOM, NOT THE PARTY. seedAmbush grows its\n` +
     `roster, and the body stays exactly the level-1 character sheetForClass\n` +
     `builds -- no points spent, no stats grown. So "first-fight 24 upland 8" is a\n` +
