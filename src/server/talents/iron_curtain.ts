@@ -29,7 +29,7 @@
  *             (summon-utility.lua:29-38, `a:setTarget(self)`), and it works
  *             with no new hook anywhere because src/server/ai/npc.ts already
  *             reads `ai.targetId` and already keeps it across turns (ToME's 90%
- *             hysteresis, ai/simple.lua:253). That hysteresis is what makes a
+ *             hysteresis, engine/ai/simple.lua:253). That hysteresis is what makes a
  *             taunt STICK instead of being re-decided on the next tick.
  *   PUNISH  — while the curtain stands, anything that hits the guarded ally
  *             anyway eats a free counter-swing. That is `resolveGuardCounter`

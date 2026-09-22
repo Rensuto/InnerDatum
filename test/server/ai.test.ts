@@ -94,6 +94,7 @@ function aiCtx(rows: readonly string[], actors: readonly EngineActor[], rng: Rng
       });
       return seen.map((entry) => entry.actor);
     },
+    actorById: (id) => actors.find((actor) => actor.id === id),
     rng,
   };
 }
@@ -204,7 +205,7 @@ describe('melee_chaser closes the distance', () => {
   });
 
   it('remembers who it is chasing instead of re-deciding from scratch', () => {
-    // ToME keeps its target 90% of the time (ai/simple.lua:253). That hysteresis
+    // ToME keeps its target 90% of the time (engine/ai/simple.lua:253). That hysteresis
     // is what stops a monster standing between two players from committing to
     // neither. The draw is what makes this module consume the seeded stream at
     // all, so it is also what the determinism test below is measuring.
@@ -228,6 +229,114 @@ describe('melee_chaser closes the distance', () => {
     const state = rng.getState();
     expect(state.count).toBeGreaterThan(0);
     expect(state.lastLabel).toBe('ai.target.keep');
+  });
+});
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE KEEP ROLL IS TAKEN FOR A TARGET OUT OF SIGHT.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * ToME's `target_simple` (the module's, tome/ai/target.lua lines 40-51, which
+ * replaces the engine's engine/ai/simple.lua:253) rolls `rng.percent(90)` for a
+ * remembered target that is not dead, is on the level and is hostile. It never
+ * asks whether the target can be seen. Ours used to take the roll only for a
+ * target in `visibleEnemies`, so a monster hunting someone round a corner
+ * drew a different number of times from ToME on every one of those turns.
+ *
+ * `scriptedRng` throws on a draw the script does not hold, so a script of one
+ * number says "exactly this one draw", and an empty one says "no draw at all".
+ *
+ * The fixture's sight is `aggroRange`, so pinning it to 2 puts a body five
+ * tiles off out of view on an open floor.
+ */
+describe('the keep roll does not ask whether the target is in view', () => {
+  const HIDDEN_AT = { x: 7, y: 3 } as const;
+  const REMEMBERED = { x: 3, y: 3 } as const;
+
+  function hunter(at: TileXY, targetId: string): MonsterActor {
+    const monster = husk('m1', at);
+    monster.ai.aggroRange = 2;
+    monster.ai.targetId = targetId;
+    monster.ai.lastSeen = { ...REMEMBERED };
+    return monster;
+  }
+
+  it('rolls for a live hostile target that cannot be seen, and keeps it', () => {
+    const player = detective('p1', HIDDEN_AT);
+    const monster = hunter({ x: 1, y: 3 }, 'p1');
+    const rng = scriptedRng([50]);
+    const actors: EngineActor[] = [player, monster];
+    expect(
+      aiCtx(DIVIDED_ROOM, actors, rng).visibleEnemies(monster),
+      'fixture: p1 is in view',
+    ).toEqual([]);
+
+    const intent = decideNpcAction(monster, aiCtx(DIVIDED_ROOM, actors, rng));
+
+    expect(drawCount(rng)).toBe(1);
+    expect(rng.getState().lastLabel).toBe('ai.target.keep');
+    expect(monster.ai.targetId).toBe('p1');
+    // Kept, and hunted where it was last seen: a step, and the hunt's counter moved.
+    expect(intent.kind).toBe(IntentKind.Move);
+    expect(monster.ai.unseenTurns).toBe(1);
+  });
+
+  it('keeps an unseen target over a visible one on a kept roll, and swaps on a lapsed one', () => {
+    // p2 stands adjacent and in view; p1 is out of view. The remembered tile is
+    // north-east, away from p2, so a kept hunt is a step and never a swing at p2.
+    const board = (roll: number) => {
+      const hidden = detective('p1', HIDDEN_AT);
+      const beside = detective('p2', { x: 1, y: 3 });
+      const monster = hunter({ x: 2, y: 3 }, 'p1');
+      monster.ai.lastSeen = { x: 4, y: 1 };
+      const rng = scriptedRng([roll]);
+      const intent = decideNpcAction(monster, aiCtx(DIVIDED_ROOM, [hidden, beside, monster], rng));
+      return { intent, monster, draws: drawCount(rng) };
+    };
+
+    const kept = board(90);
+    expect(kept.draws).toBe(1);
+    expect(kept.monster.ai.targetId).toBe('p1');
+    expect(kept.intent.kind).toBe(IntentKind.Move);
+
+    const lapsed = board(91);
+    expect(lapsed.draws).toBe(1);
+    expect(lapsed.monster.ai.targetId).toBe('p2');
+    expect(lapsed.intent).toEqual({ kind: IntentKind.Attack, targetId: 'p2' });
+  });
+
+  it('takes no roll for a target that is dead, gone from the floor, or not hostile', () => {
+    // Each case is a remembered target upstream would not keep. The empty
+    // script is the assertion: any draw throws.
+    const cases = [
+      {
+        name: 'dead',
+        build: () => {
+          const player = detective('p1', HIDDEN_AT);
+          player.alive = false;
+          return { monster: hunter({ x: 1, y: 3 }, 'p1'), others: [player] };
+        },
+      },
+      {
+        name: 'gone from the floor',
+        build: () => ({ monster: hunter({ x: 1, y: 3 }, 'p-left'), others: [] }),
+      },
+      {
+        name: 'not hostile',
+        build: () => ({
+          monster: hunter({ x: 1, y: 3 }, 'm2'),
+          others: [husk('m2', HIDDEN_AT)],
+        }),
+      },
+    ];
+    for (const { name, build } of cases) {
+      const { monster, others } = build();
+      const rng = scriptedRng([]);
+      const decide = () => decideNpcAction(monster, aiCtx(DIVIDED_ROOM, [...others, monster], rng));
+      expect(decide, name).not.toThrow();
+      expect({ name, draws: drawCount(rng) }).toEqual({ name, draws: 0 });
+    }
   });
 });
 

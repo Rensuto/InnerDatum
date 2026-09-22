@@ -203,7 +203,7 @@ export type MonsterAi = {
    * Who this monster is chasing, remembered across turns.
    *
    * Kept rather than recomputed every turn because ToME keeps its target 90% of
-   * the time (ai/simple.lua:253) — that hysteresis is what stops a monster
+   * the time (engine/ai/simple.lua:253) — that hysteresis is what stops a monster
    * standing between two players and oscillating instead of committing.
    */
   targetId: string | null;
@@ -2664,7 +2664,7 @@ export function actBase(actor: EngineActor, statusPass?: StatusPass, terrain?: T
 /**
  * Hostility, M2 edition: players and monsters, nothing else.
  *
- * FACTION SEAM. ToME resolves this through `reactionToward` (ai/simple.lua:253,
+ * FACTION SEAM. ToME resolves this through `reactionToward` (engine/ai/simple.lua:253,
  * :263) over faction tables, which is what charm, summons and monster-on-monster
  * chains all need. Until one of those exists, a faction table would be a lookup
  * with one row.

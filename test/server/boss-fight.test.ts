@@ -488,6 +488,17 @@ describe('fighting the Watcher', () => {
     expect(boss.carried?.length ?? 0, 'the boss generated empty-handed').toBeGreaterThan(0);
     const floorBefore = realm.world.groundItems().length;
 
+    // THE KITING TEST'S 900, AND NOT FOR BALANCE. The floor's other bodies stay
+    // standing, so a lone player on starting hit points lived only as long as
+    // the seeded to-hit rolls allowed. When the AI's keep roll began to be taken
+    // for targets out of sight (`acquireTarget`), the stream moved: more of the
+    // player's swings missed, the husks wore a 72-hp body down while the Watcher
+    // still stood, and once the party was erased its floor reset took the
+    // spilled prize with it. This test is about the spill, not a race with
+    // bystanders.
+    me.maxHp = 900;
+    me.hp = 900;
+
     boss.hp = 1;
     for (let swing = 0; swing < 40 && boss.alive; swing += 1) {
       me.x = boss.x - 1;

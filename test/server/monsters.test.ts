@@ -155,6 +155,7 @@ function aiCtx(
       });
       return seen.map((entry) => entry.actor);
     },
+    actorById: (id) => actors.find((actor) => actor.id === id),
     rng,
   };
 }

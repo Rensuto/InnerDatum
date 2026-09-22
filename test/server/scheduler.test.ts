@@ -989,4 +989,51 @@ describe('losing sight of the party', () => {
     expect(monster.ai.lastSeen, 'a hunt that never ends is an idle loop').toBeNull();
     expect(last?.engagement, 'engagement never came back down').toBe(0);
   });
+
+  /**
+   * THE KEEP ROLL, THROUGH THE REAL CONTEXT. `ai.test.ts` proves `acquireTarget`
+   * rolls `ai.target.keep` for a target out of view, against a hand-built
+   * context. That context answers `actorById` from its own list. This proves
+   * `makeAiCtx`'s answer does too: if it said "nobody" for a body out of sight,
+   * every AI test would pass and no real hunt would ever take the roll ToME takes
+   * (tome/ai/target.lua lines 40-51).
+   */
+  it('takes the keep roll on a turn the hunted body is out of sight', () => {
+    const world = createWorld('keep-roll-unseen');
+    const player = world.addPlayer('p1', 'Player 1');
+    player.maxHp = 10_000;
+    player.hp = 10_000;
+    world.addMonster('m1', {
+      name: 'Index Husk',
+      sprite: HUSK_SPRITE,
+      x: 12,
+      y: 2,
+      profile: AiProfile.MeleeChaser,
+      globalSpeed: 1,
+      aggroRange: 10,
+    });
+
+    const barrier = createBarrier();
+    const step = (nowMs: number): PumpResult => {
+      submitIntent(world, barrier, 'p1', HOLD_INTENT);
+      return pump(world, { nowMs, barrier });
+    };
+
+    step(0);
+    const monster = must(world.getActor('m1'), 'm1');
+    if (!isMonster(monster)) throw new Error('fixture: m1 is not a monster');
+    expect(monster.ai.targetId, 'fixture: the husk never saw p1').toBe('p1');
+
+    player.x = 27;
+    player.y = 2;
+    const before = world.rng.getState().count;
+    step(1);
+    const after = world.rng.getState();
+
+    // Hunting, not seeing: the counter only moves on a turn with nobody in view.
+    expect(monster.ai.unseenTurns, 'the husk could still see p1').toBe(1);
+    expect(monster.ai.targetId).toBe('p1');
+    expect(after.count - before).toBe(1);
+    expect(after.lastLabel).toBe('ai.target.keep');
+  });
 });

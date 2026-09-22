@@ -84,10 +84,11 @@
  *     whoever happens to sit earlier in a hash table. The elite's isolation
  *     scan re-sorts that list without ever consulting the stream.
  *   - Every random draw goes through the world's seeded PCG32 with a LABEL.
- *     Four are ported from the engine's AI files: the 90% target-keep at
- *     ai/simple.lua:253, the two coin flips that order the flanking sidesteps at
- *     ai/simple.lua:79 and :85, and the 1-in-`talent_in` fire roll at
- *     ai/talented.lua:122. The fourth is CONDITIONAL on the creature declaring a
+ *     Four are ported from upstream's AI files: the 90% target-keep (the
+ *     module's `target_simple`, which replaces engine/ai/simple.lua:253 — see
+ *     `acquireTarget`), the two coin flips that order the flanking sidesteps at
+ *     engine/ai/simple.lua:79 and :85, and the 1-in-`talent_in` fire roll at
+ *     engine/ai/talented.lua:122. The fourth is CONDITIONAL on the creature declaring a
  *     `talentIn` at all, so a monster that does not (every melee creature in the
  *     roster) consumes the stream exactly as it did before that draw existed.
  *     A fifth, `ai.air.seek` (tome/data/resources.lua:58), is conditional the
@@ -162,6 +163,24 @@ export type AiCtx = {
    * is why `kite` never re-checks LOS before shooting.
    */
   readonly visibleEnemies: (self: MonsterActor) => readonly EngineActor[];
+  /**
+   * THE BODY AN ID NAMES ON THIS FLOOR, IN SIGHT OR NOT. `World.getActor`.
+   *
+   * Undefined once the body has left the floor, which is upstream's
+   * `game.level:hasEntity`. A corpse or a downed body still resolves, so the
+   * caller reads `alive` itself.
+   *
+   * It exists for one question: may the keep roll in `acquireTarget` be taken?
+   * Upstream asks it of the remembered target without asking whether it can be
+   * seen, and `visibleEnemies` cannot answer it for a body out of view. Nothing
+   * here reads the position of what it returns. Where an unseen target stands
+   * is `lastSeen`'s business.
+   *
+   * REQUIRED, unlike the optional seams below. If a fixture left it out, the
+   * keep roll would not be taken for an unseen target, so that fixture would
+   * draw a different number of times from the game it stands in for.
+   */
+  readonly actorById: (id: string) => EngineActor | undefined;
   /** The world's seeded generator. Every draw takes a label. */
   readonly rng: Rng;
   /**
@@ -318,7 +337,8 @@ export function decideNpcAction(self: MonsterActor, ctx: AiCtx): Intent {
 
   const target = acquireTarget(self, ctx);
   if (target === undefined) {
-    // Nothing to be blocked BY. Losing the target has to clear both counters, or
+    // No target in view — nothing seen, or a kept target out of sight (the
+    // hunt below walks to it). Losing the target has to clear both counters, or
     // an elite banks blocked turns while it stands in an empty room and then
     // shoulders through the first ally it meets on the next contact — and
     // resumes a flank around a body that is no longer there.
@@ -549,7 +569,7 @@ export function followStep(self: MonsterActor, ctx: AiCtx): Intent | undefined {
 }
 
 // ---------------------------------------------------------------------------
-// Targeting — ported from ai/simple.lua:251-268 (`target_simple`)
+// Targeting — ToME's `target_simple`, tome/ai/target.lua (see `acquireTarget`)
 // ---------------------------------------------------------------------------
 
 /**
@@ -558,12 +578,49 @@ export function followStep(self: MonsterActor, ctx: AiCtx): Intent | undefined {
  * The hysteresis is the whole point of the port and it is easy to mistake for
  * noise: without it a monster standing equidistant from two players re-picks
  * the nearest every turn, and a one-tile shuffle by either player makes it
- * oscillate on the spot instead of committing to anyone. ToME writes this as
- * `rng.percent(90)` at ai/simple.lua:253.
+ * oscillate on the spot instead of committing to anyone.
  *
- * The draw happens ONLY when there is still a live, visible, hostile target —
- * mirroring Lua's short-circuit at that line, so the number of draws per turn
- * is the same as ToME's and the stream does not shift.
+ * ═══ WHICH UPSTREAM: THE MODULE'S, NOT THE ENGINE'S ═══
+ * The engine's `target_simple` is engine/ai/simple.lua:251-268. ToME replaces
+ * it by name: tome/load.lua:234-235 loads `/engine/ai/` and then `/mod/ai/`,
+ * and `newAI` overwrites (engine/interface/ActorAI.lua:37-38). The live one is
+ * tome/ai/target.lua lines 25-82. That file is in git but not in the sparse
+ * checkout (`git -C reference/t-engine4 show HEAD:game/modules/tome/ai/target.lua`),
+ * so its line numbers here are prose, not checked citations.
+ *
+ * ═══ THE KEEP ROLL DOES NOT ASK WHETHER THE TARGET CAN BE SEEN ═══
+ * Neither version asks. The module keeps a remembered target that is not
+ * dead, is still on the level, and is hostile, on `rng.percent(90)` (lines
+ * 40-51). The engine's line 253 is the same test without the level check.
+ * So the roll here is taken when the id resolves on this floor (`actorById`),
+ * the body is `alive`, and it is `isHostile`. It is taken whether or not the
+ * body is in `visibleEnemies`.
+ *
+ * `alive`, not a "dead" flag, because a downed detective is not a target
+ * anywhere in this engine: `visibleEnemies` drops it, and it cannot be
+ * damaged. ToME has no downed state: a body out of life there is dead.
+ *
+ * THIS USED TO REQUIRE THE TARGET TO BE IN SIGHT, and said that was Lua's
+ * short-circuit. It was not. A monster whose target had stepped out of view
+ * skipped a draw ToME takes, so on every such turn it drew a different number
+ * of times from ToME.
+ *
+ * ═══ A KEPT TARGET OUT OF SIGHT IS KEPT, NOT SWAPPED ═══
+ * Upstream returns it (line 49) and hunts where it thinks it is. Ours returns
+ * undefined with the id left in place, and `decideNpcAction` walks to
+ * `lastSeen`, as it does when nothing at all is in view. So a monster that
+ * loses sight of its target does not turn on the nearest other body until the
+ * roll lapses (one turn in ten) or the hunt ends — `PURSUIT_TURNS`, or
+ * `forget` on arriving at the tile or finding no route to it.
+ *
+ * ═══ NOT PORTED ═══
+ *   - The friendly arm. Line 47 keeps a target that is NOT hostile on
+ *     `rng.percent(50)`. Here a non-hostile target takes no roll and is
+ *     replaced. A monster only holds one after a body's faction changes under
+ *     it: an escort that lands becomes Townsfolk (`world/brief.ts`).
+ *   - The dead summon's summoner (lines 32-36): a monster whose target was a
+ *     shadow does not turn on the shadow's caller when it dies.
+ *   - `invulnerable` (line 49): nothing in this game grants it.
  *
  * WHICH target is chosen when the hysteresis lapses is the one thing an elite
  * changes, and it changes NO draws: `mostIsolated` is a pure scan of a list that
@@ -576,12 +633,22 @@ function acquireTarget(self: MonsterActor, ctx: AiCtx): EngineActor | undefined 
 
   const current = self.ai.targetId;
   if (current !== null) {
-    const kept = visible.find((actor) => actor.id === current);
-    if (kept !== undefined && ctx.rng.int('ai.target.keep', 1, 100) <= 90) return kept;
+    const held = ctx.actorById(current);
+    if (
+      held !== undefined &&
+      held.alive &&
+      isHostile(self, held) &&
+      ctx.rng.int('ai.target.keep', 1, 100) <= 90
+    ) {
+      // In sight: that body. Out of sight: undefined, with the id kept.
+      return visible.find((actor) => actor.id === current);
+    }
   }
 
-  // `visible` is nearest-first, so the plain case is ToME's walk down
-  // `fov.actors_dist` (ai/simple.lua:259-267) taking the closest live hostile.
+  // `visible` is nearest-first, so the plain case is upstream's walk down
+  // `fov.actors_dist` taking the closest live hostile (engine/ai/simple.lua:259-267;
+  // the module's walk, tome/ai/target.lua lines 57-75, also asks what the
+  // monster's senses reach).
   const chosen = self.ai.huntsIsolated ? mostIsolated(visible, ctx) : visible[0];
 
   /**
@@ -593,10 +660,11 @@ function acquireTarget(self: MonsterActor, ctx: AiCtx): EngineActor | undefined 
    * target stepped out of view the monster forgot WHO it had been fighting —
    * and `decideNpcAction` then had nothing left to pursue toward.
    *
-   * Upstream keeps the target with no visibility test at all (`target_simple`,
-   * ai/simple.lua:250-253); the memory is bounded by `unseenTurns` instead. So
-   * an empty view leaves the id alone and the caller decides whether to hunt or
-   * to give up.
+   * Upstream never drops a hostile target for being out of view. A lapsed roll
+   * with nobody in sight leaves it set: tome/ai/target.lua line 49 says "never
+   * clear it", line 50 forgets only the local, so line 76 has nothing to clear.
+   * The memory is bounded by `unseenTurns` instead. So an empty view leaves the
+   * id alone and the caller decides whether to hunt or to give up.
    */
   if (chosen === undefined) return undefined;
   self.ai.targetId = chosen.id;
@@ -609,7 +677,7 @@ function acquireTarget(self: MonsterActor, ctx: AiCtx): EngineActor | undefined 
  * ═══════════════════════════════════════════════════════════════════════════
  *
  * NOT A ToME PORT. ToME's targeting is strictly nearest-first
- * (ai/simple.lua:259-267) because ToME is a single-player game and "nearest" and
+ * (engine/ai/simple.lua:259-267) because ToME is a single-player game and "nearest" and
  * "you" are the same actor. This is a four-humans-in-a-voice-channel game, and
  * the design is explicitly trying to manufacture the sentence "get over here"
  * (game-design.md § 10, and the co-op rationale in PLAN.md § M3).
@@ -737,7 +805,8 @@ function chase(self: MonsterActor, target: EngineActor, ctx: AiCtx): Intent {
  * design rather than a redundancy". It was not pleasant and it was not the
  * design: engagement is level-wide, refreshes only when a monster can SEE a
  * player, and lasts three turns — so a monster hunting a remembered tile (which
- * by definition sees nobody) was frozen by `actMonster` after three, with seven
+ * then saw nobody; since the keep roll it may see a body that is not its
+ * target) was frozen by `actMonster` after three, with seven
  * turns of this counter left. TEN WAS UNREACHABLE. Every fight could be ended
  * by stepping round a corner and waiting three turns.
  *
@@ -1493,9 +1562,12 @@ function intentForStep(
      * `acquireTarget` reaches such a body FIRST — an adjacent enemy is inside
      * `aggroRange` and has line of sight, so it is what `visibleEnemies`
      * returns nearest-first, and `chase` attacks it before any step is
-     * proposed. TRACED rather than assumed, and it is the reason there is no
-     * test here for a stall: this branch cannot currently be reached with a
-     * hostile occupant that is not already the target.
+     * proposed. That USED to make this branch unreachable with a hostile
+     * occupant that was not already the target. It is reachable now: a target
+     * kept out of sight (`acquireTarget`, upstream's 90% keep) sends the
+     * monster toward `lastSeen`, and that route can run into a visible hostile
+     * that is not the target — which it then bump-attacks, close to ToME's own
+     * bump, while `targetId` stays on the unseen one. Untested here.
      *
      * It stays stated correctly for the reason the Downed guard in
      * `scheduler.ts`'s swap block stays: the rule is one relation, written in

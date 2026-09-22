@@ -6034,6 +6034,10 @@ function makeAiCtx(
     isPassable: (x, y) => canWalk(world.level, x, y),
     actorAt: (x, y) => world.actorAt(x, y),
     visibleEnemies: (self) => visibleEnemies(self, world, actors),
+    // RESOLVED AT THE MOMENT OF ASKING, like `anchorAt` below: a body that took
+    // the stair earlier in this pump is off the level, which is upstream's
+    // `hasEntity` test (see `AiCtx.actorById`).
+    actorById: (id) => world.getActor(id),
     rng: world.rng,
     // THE GROUND, BY CODE, READ AT THE MOMENT OF ASKING — so a bubble spent or a
     // door opened earlier in this pump is the tile it is now. The per-body half

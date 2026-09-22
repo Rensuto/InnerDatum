@@ -446,7 +446,9 @@ export type MonsterTemplate = {
    * — the whole field of view, ordered by distance — and targets the first
    * hostile in it. There is no second radius, no threshold, no notice check. A
    * ToME monster attacks what it can SEE. (The 90% target-keep in
-   * `acquireTarget` is :253's `rng.percent(90)`, ported from these same lines.)
+   * `acquireTarget` is ported from ToME's own `target_simple`, tome/ai/target.lua
+   * in git, which replaces this engine function by name and keeps a hostile
+   * target without asking whether it is in view.)
    *
    * So the upstream-equivalent number is the creature's `sight`, and ToME's
    * default for a monster is `t.sight = t.sight or 10` — tome/class/Actor.lua:178,

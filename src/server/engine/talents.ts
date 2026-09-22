@@ -3987,7 +3987,7 @@ export function talentBaseDamage(self: TalentActor): number {
  *
  * THE GUARD THAT ACTUALLY PROTECTS AN ALLY, with no new hook anywhere. The AI
  * in src/server/ai/npc.ts already reads `ai.targetId` and already keeps it
- * across turns (ToME's 90% hysteresis, ai/simple.lua:253) — which is exactly
+ * across turns (ToME's 90% hysteresis, engine/ai/simple.lua:253) — which is exactly
  * what makes a taunt stick for more than one tick instead of being re-decided
  * the instant it lands.
  *
