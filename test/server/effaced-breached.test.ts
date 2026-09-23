@@ -26,7 +26,16 @@ import {
   createMvpEffectState,
   validateEffect,
 } from '../../src/server/content/effects.ts';
-import { recomputeAttributes, setEffect } from '../../src/server/engine/effects.ts';
+import {
+  canBe,
+  immunityAgainst,
+  recomputeAttributes,
+  removeEffect,
+  setEffect,
+} from '../../src/server/engine/effects.ts';
+import { INDEX_WRAITH, monsterInit } from '../../src/server/content/monsters.ts';
+import { createMonsterActor } from '../../src/server/engine/actor.ts';
+import { drawCount, scriptedRng } from '../helpers/scripted-rng.ts';
 import { createRng } from '../../src/shared/rng.ts';
 import {
   combatArmorHardiness,
@@ -180,3 +189,79 @@ describe('breached', () => {
     expect(combatDefense(marked.combat ?? {})).toBe(combatDefense(clean.combat ?? {}));
   });
 });
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * BREACH HALVES FOUR IMMUNITIES — magical.lua:3223-3235.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `effectTemporaryValue(eff, "confusion_immune", -self:attr("confusion_immune") / 2)`
+ * and the same for stun, blind and pin: half of what the body had when the
+ * breach landed, taken away while it lasts. Driven on a wraith spawned the way
+ * the game spawns it — a body with NO talent sheet, which is exactly the body
+ * a `wielder` fold never reaches.
+ */
+describe('breached halves stun, confusion, blind and pin immunity', () => {
+  const wraith = (): EffectActor =>
+    createMonsterActor('w1', monsterInit(INDEX_WRAITH, { x: 1, y: 1 }));
+
+  it('takes a wraith`s total confusion immunity to half, and gives it back', () => {
+    const state = createMvpEffectState();
+    const body = wraith();
+    const confused = state.defs.get(EffectId.Confused);
+    if (confused === undefined) throw new Error('unreachable: Confused is in MVP_EFFECTS');
+
+    // The setup: total immunity, refused with no draw.
+    const before = scriptedRng([50]);
+    expect(canBe(state, body, confused, before)).toEqual({ can: false, chance: 0 });
+    expect(drawCount(before)).toBe(0);
+
+    setEffect(state, body, EffectId.Breached, TURNS, {}, createRng('breach'));
+    const during = scriptedRng([50]);
+    expect(canBe(state, body, confused, during)).toEqual({ can: true, chance: 50 });
+    expect(drawCount(during), 'a half immunity must be rolled against').toBe(1);
+
+    removeEffect(state, body, EffectId.Breached, createRng('mend'));
+    const after = scriptedRng([50]);
+    expect(canBe(state, body, confused, after)).toEqual({ can: false, chance: 0 });
+    expect(drawCount(after)).toBe(0);
+  });
+
+  it('halves immunity worn as gear, and only the four keys', () => {
+    const state = createMvpEffectState();
+    const body = afflictable({ stun: 20, pin: 40, cut: 60 });
+    setEffect(state, body, EffectId.Breached, TURNS, {}, createRng('breach'));
+    expect(immunityAgainst(state, body, 'stun')).toBe(10);
+    expect(immunityAgainst(state, body, 'pin')).toBe(20);
+    // Cut is not one of the four (magical.lua:3224-3235).
+    expect(immunityAgainst(state, body, 'cut')).toBe(60);
+    // A key at zero loses nothing and goes nowhere below it.
+    expect(immunityAgainst(state, body, 'confusion')).toBe(0);
+  });
+
+  it('keeps the loss it took when it landed, as a temporary value does', () => {
+    // Gear taken off mid-breach does not refund the half the breach took.
+    const state = createMvpEffectState();
+    const body = afflictable({ stun: 40 });
+    setEffect(state, body, EffectId.Breached, TURNS, {}, createRng('breach'));
+    expect(immunityAgainst(state, body, 'stun')).toBe(20);
+    body.combat = { ...body.combat, immunities: { stun: 30 } };
+    expect(immunityAgainst(state, body, 'stun')).toBe(10);
+    // And never below nothing: with the gear gone the loss outweighs what is
+    // left, and `immunityAgainst` answers a 0-100 percentage whoever reads it.
+    body.combat = { ...body.combat, immunities: {} };
+    expect(immunityAgainst(state, body, 'stun')).toBe(0);
+  });
+});
+
+function afflictable(immunities: Record<string, number>): EffectActor {
+  return {
+    id: 'p1',
+    kind: 'player',
+    name: 'Worn',
+    alive: true,
+    x: 1,
+    y: 1,
+    combat: { immunities },
+  } as unknown as EffectActor;
+}

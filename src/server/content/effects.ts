@@ -961,12 +961,14 @@ export const EFFACED: EffectDef = Object.freeze({
  * *"The target's defenses have been breached, reducing armor hardiness, stun,
  * pin, blindness, and confusion immunity by 50%."*
  *
- * ═══ THE HARDINESS HALF ONLY, AND THAT IS THE WHOLE EFFECT HERE ═══
- * Upstream also halves four immunities. This engine has no immunity attribute
- * to halve — `SetEffectOutcome.Immune` is a boolean answer from the save roll,
- * not a percentage anything could scale. Porting the other four would mean
- * inventing a system to weaken, so they are stated as absent rather than
- * silently dropped. The hardiness line is the one that already exists:
+ * ═══ AND IT HALVES FOUR IMMUNITIES — magical.lua:3223-3235 ═══
+ * `stun_immune`, `confusion_immune`, `blind_immune` and `pin_immune`, each
+ * lowered by half of what the body had when the breach landed. This said the
+ * engine had no immunity attribute to halve; it has had one since monsters
+ * carried immunities (`immunityAgainst`, a 0-100 percentage). The halves are
+ * stored on the instance (`EffectParams.immunityDrop`) and subtracted while it
+ * lives, and NOT through `wielder`, whose fold walks only the gear keys and
+ * never reaches a body without talents. The hardiness line is the other half:
  * `combatArmorHardiness` (engine/derived.ts) reads `c.flags?.breached` and
  * multiplies by 0.5 AFTER the 0-100 bound, verbatim from Combat.lua:1334.
  *
@@ -980,11 +982,16 @@ export const EFFACED: EffectDef = Object.freeze({
  * that has the least to do with how much armour you are wearing. Being
  * overwritten is not something you shrug off by being sturdy.
  */
+/** magical.lua:3224-3235 — the four immunities a breach halves, in upstream's order. */
+export const BREACH_HALVES = ['stun', 'confusion', 'blind', 'pin'] as const;
+
 export const BREACHED: EffectDef = Object.freeze({
   id: EffectId.Breached,
   badge: 'Br',
   displayName: 'Breached',
-  description: 'Something got through. Armour turns away half of what it should.',
+  description:
+    'Something got through. Armour turns away half of what it should, and stuns, pins, ' +
+    'blindness and confusion find half the resistance they did.',
   // magical.lua:3214 — `type = "magical"`.
   type: SaveChannel.Magical,
   status: EffectStatus.Detrimental,
@@ -998,6 +1005,19 @@ export const BREACHED: EffectDef = Object.freeze({
     // Combat.lua:1334, via `combatArmorHardiness` — a 0.5 multiplier applied
     // after the bound. The flag has been read by that getter all along.
     breached: true,
+  },
+  /**
+   * magical.lua:3223-3235 — each `if self:attr(x) then effectTemporaryValue(eff,
+   * x, -self:attr(x) / 2)`. A snapshot of what the body had as it landed: a key
+   * at zero loses nothing, and gear taken off mid-breach does not change the loss.
+   */
+  activate: ({ state, actor, eff }: EffectHookArgs): void => {
+    const drop: Record<string, number> = {};
+    for (const key of BREACH_HALVES) {
+      const had = immunityAgainst(state, actor, key);
+      if (had > 0) drop[key] = had / 2;
+    }
+    eff.params.immunityDrop = drop;
   },
 } satisfies EffectDef);
 

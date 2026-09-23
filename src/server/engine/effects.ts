@@ -675,6 +675,15 @@ export type EffectParams = {
    * cross-tier cost once.
    */
   readonly noCtEffect?: boolean;
+  /**
+   * IMMUNITY THIS APPLICATION TAKES AWAY, per key, while it lasts — upstream's
+   * `effectTemporaryValue(eff, "stun_immune", -x)`, a snapshot taken when the
+   * effect activates (BREACH, magical.lua:3223-3235). `immunityAgainst`
+   * subtracts every live instance's rows, so the loss ends with the effect.
+   *
+   * MUTABLE because `activate` writes it, as STUNNED's writes `power`.
+   */
+  immunityDrop?: Record<string, number>;
 };
 
 /** What actually landed. `p`, after `on_set_temporary_effect` has had it. */
@@ -1078,7 +1087,12 @@ export function immunityOf(state: EffectState, actorId: string, key: string): nu
  */
 export function immunityAgainst(state: EffectState, actor: EffectActor, key: string): number {
   const worn = actor.combat?.immunities?.[key] ?? 0;
-  return bound(immunityOf(state, actor.id, key) + worn, 0, 100);
+  // AND WHAT A LIVE EFFECT HAS TAKEN AWAY — `EffectParams.immunityDrop`. Summed
+  // into the same number before the bound, as upstream's temporary values are
+  // summed into the one attr.
+  let dropped = 0;
+  for (const eff of effectsOn(state, actor.id)) dropped += eff.params.immunityDrop?.[key] ?? 0;
+  return bound(immunityOf(state, actor.id, key) + worn - dropped, 0, 100);
 }
 
 /** `canBe`'s two return values — Actor.lua:6950, `true/false` plus the chance. */
