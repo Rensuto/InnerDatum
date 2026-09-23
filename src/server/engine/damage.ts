@@ -14,6 +14,7 @@
 //                                                              856-875 (darkness)
 //                                                              876-904 (mind)
 //                                                              1123-1141 (FIREBURN)
+//                                                              876-901 (MIND)
 //             t-engine4 game/engines/default/engine/interface/ActorLife.lua:71-81 (takeHit)
 //             t-engine4 game/modules/tome/class/interface/ActorLife.lua:41-60 (raw takeHit)
 // T-Engine4 (C) 2009-2018 Nicolas Casalini "DarkGod" — https://te4.org/license
@@ -89,7 +90,15 @@
 
 import { FLAT_RESIST_INTERVAL, bound, rescaleCombatStats } from '../../shared/scale.ts';
 import type { Rng } from '../../shared/rng.ts';
-import { HEAL_FACTOR_MAX, HEAL_FACTOR_MIN, healingFactor, ignoreDirectCrits } from './derived.ts';
+import {
+  HEAL_FACTOR_MAX,
+  HEAL_FACTOR_MIN,
+  combatMentalResist,
+  combatMindpower,
+  healingFactor,
+  ignoreDirectCrits,
+} from './derived.ts';
+import { checkHit } from '../../shared/checkhit.ts';
 import type { CombatMods, Combatant, PrimaryStats } from './derived.ts';
 import { fireDealDamage, fireKill, fireTakeDamage } from './hooks.ts';
 import type { BoundHooks, HookHost, TurnProcs } from './hooks.ts';
@@ -524,6 +533,18 @@ export type DamageSpec = {
   // --- step 7 ---------------------------------------------------------------
   /** Attacker's `resists_pen` table. */
   readonly penetration?: TypeTable;
+
+  // --- the MIND clause (damage_types.lua:876-901) ------------------------------
+  /**
+   * `dam.alwaysHit` — skip MIND's own mind-vs-save roll. Gesture of Pain passes
+   * it (gestures.lua:127) because it has already rolled that check itself.
+   */
+  readonly alwaysHit?: boolean;
+  /**
+   * `dam.mindpower` — the power MIND rolls with, where the source cannot be read
+   * at impact. Absent → the source's own `combatMindpower`.
+   */
+  readonly mindpower?: number;
 };
 
 /** The pipeline's output, before it reaches a body. */
@@ -948,6 +969,12 @@ export type DamageOutcome = {
   readonly crit: boolean;
   /** `DamageResolution.critRolled` — the roll, before any shrug. */
   readonly critRolled: boolean;
+  /**
+   * MIND's save held: the target's mental save beat the source's mindpower, so
+   * half the damage was projected (damage_types.lua:893-895). The caller owns
+   * the sentence — "%s resists the mind attack!".
+   */
+  readonly mindResisted: boolean;
   /** True only on the blow that crossed zero, so the death event fires once. */
   readonly killed: boolean;
   readonly type: DamageType;
@@ -1235,6 +1262,36 @@ export function applyDamage(
    * value and this defers. Every other caller now passes nothing and gets the
    * rule for free, which is the point: the next damage path cannot forget.
    */
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * MIND — A MIND-VS-SAVE ROLL BEFORE THE PROJECTOR. damage_types.lua:876-901.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * ```lua
+   * local hit_power = mindpower or src:combatMindpower()
+   * if alwaysHit or target:checkHit(hit_power, mentalresist or target:combatMentalResist(), 0, 95, 15) then
+   *   return DamageType.defaultProjector(src, x, y, type, dam, state)
+   * else
+   *   game.logSeen(target, "%s resists the mind attack!", target.name:capitalize())
+   *   return DamageType.defaultProjector(src, x, y, type, dam / 2, state)
+   * ```
+   *
+   * A SAVE THAT HALVES, not one that refuses: the mental save decides whether
+   * the whole blow lands or half of it. This file's type note and the egos' said
+   * so for as long as the branch was missing. One draw, before the pipeline's,
+   * as upstream's roll comes before `defaultProjector`'s; none with `alwaysHit`.
+   */
+  let projected = amount;
+  let mindResisted = false;
+  if (type === DamageType.Mind && spec.alwaysHit !== true) {
+    const power = spec.mindpower ?? combatMindpower(source.combat ?? {});
+    const save = combatMentalResist(target.combat ?? {});
+    if (!checkHit(power, save, rng, 'combat.damage.mind.save', { min: 0, max: 95 }).hit) {
+      projected = amount / 2;
+      mindResisted = true;
+    }
+  }
+
   const wielder = source.combat;
   const attackerDebuffs = {
     ...((spec.sourceDazed ?? wielder?.flags?.dazed) === undefined
@@ -1251,7 +1308,7 @@ export function applyDamage(
     {
       ...spec,
       ...attackerDebuffs,
-      base: amount,
+      base: projected,
       type,
       ...(shrug > 0 ? { ignoreDirectCrits: shrug } : {}),
     },
@@ -1265,6 +1322,7 @@ export function applyDamage(
     raw: resolved.amount,
     crit: resolved.crit,
     critRolled: resolved.critRolled,
+    mindResisted,
     killed: false,
     type,
     source: source.id,

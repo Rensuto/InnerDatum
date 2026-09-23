@@ -2232,9 +2232,10 @@ export const INDEX_CAIRN: MonsterTemplate = Object.freeze({
      * and casts `T_ICE_BOLT` (`:113`, `:115`) — and ours is neither of those
      * stones. `MIND` is upstream's own damage type (`data/damage_types.lua:874-877`).
      *
-     * IT MOVES NO NUMBER. An orb takes no armour stage at all
-     * (engine/projectile.ts:694-707) and nothing in the game grants a Physical
-     * or a Mind resist (content/egos.ts), so what changes is what a player sees.
+     * AND IT MOVES A NUMBER NOW: MIND rolls the cairn's mindpower against the
+     * target's MENTAL save and lands half when the save holds
+     * (damage_types.lua:887-895). A Physical orb had no save at all, so a
+     * strong-willed detective takes less from this stone than from a thrown rock.
      */
     damageType: DamageType.Mind,
     minRange: 3,
@@ -3237,11 +3238,10 @@ export const INDEX_WATCHER: MonsterTemplate = Object.freeze({
      * type (`data/damage_types.lua:874-877`) and the Watcher and the Cairn are
      * the first bodies in this game to throw it.
      *
-     * IT MOVES NO NUMBER, WHICH IS WHY IT COULD LAND WITHOUT A REBALANCE. An
-     * orb takes no armour stage at all (engine/projectile.ts:694-707), nothing
-     * in the game grants a Physical or a Mind resist (content/egos.ts), and
-     * `onHit` does not read the damage type. The fight arithmetic in the header
-     * is unchanged to the point.
+     * IT LANDED WITHOUT A REBALANCE AND MOVES ONE NUMBER SINCE: the MIND
+     * clause (damage_types.lua:887-895) halves the orb when the target's mental
+     * save holds. An orb still takes no armour stage (engine/projectile.ts), and
+     * `onHit` does not read the damage type.
      */
     damageType: DamageType.Mind,
     minRange: 3,

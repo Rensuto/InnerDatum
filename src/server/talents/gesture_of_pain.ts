@@ -296,6 +296,9 @@ export function gestureOfPainBlow(
     attacker,
     rng,
     {
+      // `alwaysHit=true` (gestures.lua:127): the check at :125 above WAS the
+      // mind-vs-save roll, so MIND's own must not roll it a second time.
+      alwaysHit: true,
       // THE MARK STILL COUNTS. `strike` folds `markMultiplier` into every swing
       // and a replaced swing is still the Redactor hitting something she marked.
       ...(mult === 1 ? {} : { mult }),

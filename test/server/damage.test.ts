@@ -128,6 +128,69 @@ describe('splitBurn — FIREBURN, damage_types.lua:1123-1141', () => {
   });
 });
 
+describe('MIND — a mind-vs-save roll that halves, damage_types.lua:876-901', () => {
+  /**
+   * `target:checkHit(hit_power, target:combatMentalResist(), 0, 95, 15)`: on a
+   * hit the whole blow is projected, on a miss half of it. ONE draw, labelled,
+   * before anything the pipeline rolls; none when `alwaysHit` is passed.
+   * `scriptedRng` hands the roll straight back, so 1 always hits under the 95
+   * cap and 100 never does.
+   */
+  // A plain body with the default mental save (Willpower and Cunning at 10).
+  const mindTarget = (): DamageTarget => ({ hp: 500, maxHp: 500, alive: true });
+
+  it('projects the whole blow when the mind beats the save', () => {
+    const rng = scriptedRng([1]);
+    const out = applyDamage(mindTarget(), 40, DamageType.Mind, { id: 'a' }, rng);
+    expect(out.mindResisted).toBe(false);
+    expect(out.dealt).toBeCloseTo(40, 10);
+    expect(drawCount(rng)).toBe(1);
+  });
+
+  it('projects HALF when the save holds, and says so on the outcome', () => {
+    const rng = scriptedRng([100]);
+    const out = applyDamage(mindTarget(), 40, DamageType.Mind, { id: 'a' }, rng);
+    expect(out.mindResisted).toBe(true);
+    expect(out.dealt).toBeCloseTo(20, 10);
+  });
+
+  it('rolls nothing with alwaysHit — gestures.lua:127 has rolled it already', () => {
+    const rng = scriptedRng([]);
+    const out = applyDamage(mindTarget(), 40, DamageType.Mind, { id: 'a' }, rng, {
+      alwaysHit: true,
+    });
+    expect(out.dealt).toBeCloseTo(40, 10);
+    expect(drawCount(rng)).toBe(0);
+  });
+
+  it('rolls with the power it is handed, and against the target`s mental save', () => {
+    // At 95 the roll is the cap's edge: a power far above the save hits on 95,
+    // and the same roll misses against a power far below it.
+    const strong = applyDamage(mindTarget(), 40, DamageType.Mind, { id: 'a' }, scriptedRng([95]), {
+      mindpower: 200,
+    });
+    expect(strong.mindResisted).toBe(false);
+    const weak = applyDamage(mindTarget(), 40, DamageType.Mind, { id: 'a' }, scriptedRng([95]), {
+      mindpower: 0,
+    });
+    expect(weak.mindResisted).toBe(true);
+  });
+
+  it('is never certain — the 95 cap (`checkHit(..., 0, 95)`) lets a save hold on 96', () => {
+    const out = applyDamage(mindTarget(), 40, DamageType.Mind, { id: 'a' }, scriptedRng([96]), {
+      mindpower: 1000,
+    });
+    expect(out.mindResisted, 'an overwhelming mind was made certain').toBe(true);
+  });
+
+  it('touches no other damage type', () => {
+    const rng = scriptedRng([]);
+    const out = applyDamage(mindTarget(), 40, DamageType.Darkness, { id: 'a' }, rng);
+    expect(out.mindResisted).toBe(false);
+    expect(drawCount(rng)).toBe(0);
+  });
+});
+
 describe('applyResists — damage_types.lua:345-352', () => {
   it('makes PENETRATION MULTIPLICATIVE, not subtractive', () => {
     // 10 penetration against 30 resistance leaves 27, not 20. Implementers
@@ -660,8 +723,10 @@ describe('damage affinity — the blow comes back as health', () => {
      * membership-versus-rank mistake in miniature: the assertion was true of the
      * fixture rather than of the rule.
      */
-    const target = body(5, 100, { affinity: { mind: 200 } });
-    const out = applyDamage(target, 40, DamageType.Mind, { id: 'a' }, scriptedRng([]));
+    // DARKNESS, not Mind: Mind rolls its own mind-vs-save first (the MIND
+    // clause below), and the rule under test here is the affinity's order.
+    const target = body(5, 100, { affinity: { darkness: 200 } });
+    const out = applyDamage(target, 40, DamageType.Darkness, { id: 'a' }, scriptedRng([]));
 
     expect(out.killed).toBe(true);
     expect(out.affinityHealed).toBe(0);

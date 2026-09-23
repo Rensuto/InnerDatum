@@ -107,11 +107,11 @@ import {
   tickDowned,
 } from './downed.ts';
 import { membersOf, partyIdOf } from './party.ts';
-import { combatAPR } from './derived.ts';
+import { combatAPR, combatMindpower } from './derived.ts';
 import { applyDamage, combatGetAffinity, combatGetResist, splitBurn } from './damage.ts';
 import { teleportRandom } from './talents.ts';
 import { canOpenDoors } from './doors.ts';
-import { trapSentence, trapTakes } from './traps.ts';
+import { capitalize, trapSentence, trapTakes } from './traps.ts';
 import {
   BUBBLES_DEPLETED,
   bubbleOf,
@@ -3604,6 +3604,8 @@ function fire(
       sourceDazed: sheet?.flags?.dazed,
       sourceStunned: sheet?.flags?.stunned,
       sourceNumbed: sheet?.mods?.numbed,
+      // What MIND rolls against the target's save on impact. See `ProjectileDamage`.
+      ...(sheet === undefined ? {} : { mindpower: combatMindpower(sheet) }),
     },
   });
 
@@ -3633,6 +3635,18 @@ function actProjectile(proj: Projectile, run: Run): ActResult {
   // Landed on empty floor: the target died, or stepped off the tile it was
   // aimed at. THAT IS THE COUNTERPLAY and it costs the shooter its shot.
   if (impact === null) return ActResult.Done;
+
+  /**
+   * "%s resists the mind attack!" — damage_types.lua:894, when MIND's save held
+   * and half landed. PLAYERS ONLY, for the fire trap's reason: the Record lane
+   * has no fog, and a monster's name would be handed to anybody on the floor.
+   */
+  if (impact.mindResisted === true) {
+    const struck = world.getActor(impact.targetId);
+    if (struck !== undefined && struck.kind === ActorKind.Player) {
+      run.records.push(`${capitalize(struck.name)} resists the mind attack!`);
+    }
+  }
 
   /**
    * ═══════════════════════════════════════════════════════════════════════════

@@ -207,6 +207,12 @@ export type ProjectileDamage = {
   readonly sourceDazed?: boolean;
   readonly sourceStunned?: boolean;
   readonly sourceNumbed?: number;
+  /**
+   * THE SHOOTER'S MINDPOWER, frozen at the muzzle for the same reason — MIND
+   * rolls it against the target's mental save on impact (damage_types.lua:887),
+   * and the flight cannot read the shooter. Upstream's `dam.mindpower`.
+   */
+  readonly mindpower?: number;
 };
 
 /**
@@ -505,6 +511,8 @@ export type ProjectileImpact = {
    */
   readonly maxHp?: number;
   readonly at: TileXY;
+  /** MIND's save held and half landed — `DamageOutcome.mindResisted`. */
+  readonly mindResisted?: boolean;
 };
 
 /** What one `act` call did. */
@@ -728,6 +736,7 @@ function projectDoStop(
       sourceDazed: proj.damage.sourceDazed,
       sourceStunned: proj.damage.sourceStunned,
       sourceNumbed: proj.damage.sourceNumbed,
+      mindpower: proj.damage.mindpower,
     },
   );
 
@@ -747,6 +756,7 @@ function projectDoStop(
     hp: foe.hp,
     maxHp: foe.maxHp,
     at: { x: foe.x, y: foe.y },
+    ...(outcome.mindResisted ? { mindResisted: true } : {}),
   };
 }
 

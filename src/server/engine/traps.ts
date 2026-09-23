@@ -293,9 +293,12 @@ export type TrapKit = Omit<TrapSpec, 'x' | 'y'>;
  * one test that could have caught it was testing the test.
  */
 export function trapSentence(message: string, victimName: string): string {
-  const capitalised =
-    victimName.length === 0 ? victimName : victimName[0]?.toUpperCase() + victimName.slice(1);
-  return message.replaceAll('@target@', victimName).replaceAll('@Target@', capitalised);
+  return message.replaceAll('@target@', victimName).replaceAll('@Target@', capitalize(victimName));
+}
+
+/** Lua's `name:capitalize()` — the first letter up, the rest as it was. */
+export function capitalize(name: string): string {
+  return name.length === 0 ? name : name[0]?.toUpperCase() + name.slice(1);
 }
 
 /**

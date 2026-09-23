@@ -25,6 +25,11 @@ import {
   tickLevel,
 } from '../../src/shared/energy.ts';
 import { createRng } from '../../src/shared/rng.ts';
+import { scriptedRng } from '../helpers/scripted-rng.ts';
+import { INDEX_CAIRN, monsterInit } from '../../src/server/content/monsters.ts';
+import { combatMindpower } from '../../src/server/engine/derived.ts';
+import { createTurnEngine } from '../../src/server/turn-engine.ts';
+import type { ProjectileInit } from '../../src/server/engine/projectile.ts';
 import type { Intent } from '../../src/server/engine/actor.ts';
 import type { Barrier } from '../../src/server/engine/barrier.ts';
 import type {
@@ -1078,5 +1083,100 @@ describe('terrain — an orb stops on `block_move` without `pass_projectile`', (
     expect(fired.length, 'the wraith never fired').toBeGreaterThan(0);
     expect(table.world.getActor('w1')?.x, 'the wraith crossed the moat').toBeGreaterThan(5);
     expect(player.hp).toBeLessThan(10_000);
+  });
+});
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * A MIND ORB CARRIES ITS SHOOTER'S MINDPOWER TO THE TARGET'S SAVE.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * MIND rolls `checkHit(mindpower, mental save, 0, 95)` on impact
+ * (damage_types.lua:887-888), and the flight cannot read the shooter, so the
+ * power is frozen at the muzzle (`ProjectileDamage.mindpower`). A scripted 95
+ * is the cap's edge: it hits for a power far above the save and misses for one
+ * far below, so the two orbs differ ONLY by the power they carried.
+ */
+describe('a mind orb rolls its frozen mindpower against the save', () => {
+  function mindShot(mindpower: number) {
+    const target = body('p1', 4, 1, 1000);
+    const world: ProjectileWorld = {
+      level: arenaLevel(['#######', '.......', '#######']),
+      rng: scriptedRng([95, 95, 95, 95]),
+      actorAt: (x, y) => (target.alive && target.x === x && target.y === y ? target : undefined),
+    };
+    const shot = createProjectile('proj_mind', {
+      sourceId: 'shooter',
+      origin: { x: 0, y: 1 },
+      to: { x: 4, y: 1 },
+      projSpeed: 10,
+      range: 6,
+      damage: { dam: 40, type: DamageType.Mind, apr: 0, mindpower },
+    });
+    const flight = fly(shot, world);
+    return { flight, target };
+  }
+
+  it('is frozen at the muzzle by the scheduler, from the shooter`s own sheet', () => {
+    // The join: a real Cairn (a Mind orb, `monsters.ts` INDEX_CAIRN) firing
+    // through the turn engine must put its mindpower on the orb it launches.
+    const world = createWorld('mind-muzzle');
+    world.level.tiles.fill(TileCode.FLOOR);
+    const ren = world.addPlayer('p1', 'Ren', { maxHp: 5000 });
+    ren.x = 2;
+    ren.y = 5;
+    const cairn = world.addMonster('m1', monsterInit(INDEX_CAIRN, { x: 7, y: 5 }, 1));
+    const fired: ProjectileInit[] = [];
+    const add = world.addProjectile.bind(world);
+    world.addProjectile = (init) => {
+      fired.push(init);
+      return add(init);
+    };
+    const engine = createTurnEngine({ world, now: () => 0 });
+    engine.join('p1');
+    for (let turn = 0; turn < 12 && fired.length === 0; turn += 1) {
+      engine.hold('p1');
+      engine.pump();
+    }
+    const shot = fired[0];
+    if (shot === undefined) throw new Error('the cairn never fired in twelve turns');
+    expect(shot.damage.type).toBe(DamageType.Mind);
+    expect(shot.damage.mindpower).toBe(combatMindpower(cairn.combat ?? {}));
+  });
+
+  it('tells a player who shrugged half of it — "resists the mind attack!"', () => {
+    // damage_types.lua:894, on the Record lane, for a player victim.
+    const world = createWorld('mind-record');
+    world.level.tiles.fill(TileCode.FLOOR);
+    const ren = world.addPlayer('p1', 'ren', { maxHp: 5000 });
+    ren.x = 2;
+    ren.y = 5;
+    world.addMonster('m1', monsterInit(INDEX_CAIRN, { x: 7, y: 5 }, 1));
+    const engine = createTurnEngine({ world, now: () => 0 });
+    engine.join('p1');
+    const lines: string[] = [];
+    for (let turn = 0; turn < 40 && lines.length === 0; turn += 1) {
+      engine.hold('p1');
+      for (const line of engine.pump().records ?? []) {
+        if (line.includes('mind attack')) lines.push(line);
+      }
+    }
+    // Capitalised as upstream's `name:capitalize()` is.
+    expect(lines[0], 'no save held in forty turns of mind orbs').toBe(
+      'Ren resists the mind attack!',
+    );
+  });
+
+  it('lands whole for a strong mind, and half for a weak one', () => {
+    const strong = mindShot(200);
+    expect(
+      strong.flight.outcome?.impact?.mindResisted,
+      'a strong mind was resisted',
+    ).toBeUndefined();
+    expect(1000 - strong.target.hp).toBeCloseTo(40, 10);
+
+    const weak = mindShot(0);
+    expect(weak.flight.outcome?.impact?.mindResisted, 'the save did not hold').toBe(true);
+    expect(1000 - weak.target.hp).toBeCloseTo(20, 10);
   });
 });
