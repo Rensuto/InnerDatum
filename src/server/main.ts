@@ -56,7 +56,13 @@ import {
   shieldAbsorber,
   statusExtender,
 } from './engine/effects.ts';
-import type { StatusApply, StatusCure, StatusExtend, StatusHas } from './engine/effects.ts';
+import type {
+  EffectCtx,
+  StatusApply,
+  StatusCure,
+  StatusExtend,
+  StatusHas,
+} from './engine/effects.ts';
 import type { BudgetPenalty, KillNote } from './engine/talents.ts';
 import { EffectId, MVP_EFFECTS, effectById } from './content/effects.ts';
 import {
@@ -106,7 +112,7 @@ import type {
   TalentSheet,
 } from './engine/talents.ts';
 import type { MonsterCast } from './ai/npc.ts';
-import type { ReapingTurnEngine, TalentRuntime } from './turn-engine.ts';
+import type { ReapingTurnEngine, TalentBook, TalentRuntime } from './turn-engine.ts';
 import type { World } from './world/world.ts';
 import type { TileXY } from '../shared/coords.ts';
 
@@ -208,6 +214,42 @@ const startedAt = hrtime.bigint();
  */
 const SATURATION_TURNS = tomeCooldownToTurns(10);
 const SATURATION_POWER = 1;
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE EFFECT CONTEXT THE TALENT SEAMS APPLY THROUGH — and they had none.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `statusFor`, `cureFor` and the daze break built their doors with no ctx, so
+ * every status a TALENT laid went in blind:
+ *
+ *   A STUN LOCKED NOTHING. `STUNNED.activate` picks three ready talents through
+ *     `ctx.activatableTalents` (physical.lua:495-504) and got `[]`, so Lockdown,
+ *     the flask and Bear Down stunned a body whose every talent stayed ready.
+ *   A SHEET EFFECT FOLDED A TURN LATE. `ctx.sheetDirty` never fired, so an
+ *     effect with a `wielder` landed on the sheet at the next base turn instead
+ *     of now — on every body, players' own buffs included.
+ *
+ * The pump's context (`turn-engine.ts`) cannot be shared: the talent runtime is
+ * built here, before any pump exists. So the seams get their own, answering the
+ * same three questions from the same sources — the loadout the pump reads, the
+ * world's bodies, and `refreshPassives`. Its `log` stays absent: a talent says
+ * what its status did in its own notes (`stunLine`, `burnLine`).
+ */
+export function talentEffectCtx(
+  forWorld: World,
+  book: TalentBook,
+  onSheetDirty: (actorId: string) => void,
+): EffectCtx {
+  return {
+    getActor: (id: string) => forWorld.getActor(id),
+    activatableTalents: (id: string): readonly string[] => {
+      const body = forWorld.getActor(id);
+      return body === undefined ? [] : book.loadoutOf(body).map((talent) => talent.id);
+    },
+    sheetDirty: onSheetDirty,
+  };
+}
 
 export function talentRuntimeFor(
   talents: TalentEngine,
@@ -1185,8 +1227,13 @@ export function buildServer() {
    * bandages an ally is not writing anything down, and one who is bleeding does
    * not get paid for it.
    */
+  // See `talentEffectCtx`: the talent seams' own context, one per world.
+  const seamCtx = (forWorld: World): EffectCtx =>
+    talentEffectCtx(forWorld, createTalentBook(talentEngine, forWorld), (id: string) => {
+      refreshPassives(id);
+    });
   const statusFor = (forWorld: World): StatusApply => {
-    const apply = statusApplier(effects, forWorld.rng);
+    const apply = statusApplier(effects, forWorld.rng, seamCtx(forWorld));
     return (target, effectId, duration, params = {}) => {
       const landed = apply(target, effectId, duration, params);
       /**
@@ -1209,7 +1256,8 @@ export function buildServer() {
     };
   };
   /** The same per-realm rng, for the same reason. See `statusFor` above. */
-  const cureFor = (forWorld: World): StatusCure => statusCurer(effects, forWorld.rng);
+  const cureFor = (forWorld: World): StatusCure =>
+    statusCurer(effects, forWorld.rng, seamCtx(forWorld));
   /**
    * NO WORLD AND NO RNG. Asking whether an effect is on a body reads the table
    * and draws nothing, so unlike its three neighbours this one is not per-world
@@ -1286,7 +1334,9 @@ export function buildServer() {
         // in no layer below, which is the whole reason these are seams.
         (id: string) => {
           const body = forWorld.getActor(id);
-          if (body !== undefined) breakDamageSensitive(effects, body, forWorld.rng);
+          if (body !== undefined) {
+            breakDamageSensitive(effects, body, forWorld.rng, seamCtx(forWorld));
+          }
         },
         extendFor(),
       ),
