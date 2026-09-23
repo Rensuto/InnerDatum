@@ -13,6 +13,7 @@ import {
   INDEX_EIDOLON,
   INDEX_INQUISITOR,
   INDEX_HUSK_ELITE,
+  INDEX_WATCHER,
   INDEX_WRAITH,
   MONSTER_TEMPLATES,
   monsterById,
@@ -2329,40 +2330,69 @@ describe('a marker stone cannot be made to bleed', () => {
 describe('the roster carries the immunities its upstream counterparts carry', () => {
   /**
    * ═══════════════════════════════════════════════════════════════════════════
-   * MOST OF THE ROSTER CORRECTLY CARRIES NONE, AND THAT IS THE FINDING.
+   * EVERY ROW UPSTREAM GIVES THAT A STATUS HERE CAN SPEND.
    * ═══════════════════════════════════════════════════════════════════════════
    *
    * Every monster here is ported from a named upstream creature, and each of
    * those creatures has an immunity list. Checked one by one:
    *
-   *   CAIRN       crystal.lua:41-49    cut + confusion (+ blind, fear, poison,
+   *   CAIRN       crystal.lua:41-49    cut + confusion + blind (+ fear, poison,
    *                                    disease -- no status for any of them)
-   *   WRAITH      losgoroth.lua:49-55  cut + confusion (+ stun, declined below;
-   *                                    + blind, knockback, poison, disease)
-   *   HUSK_ELITE  ghoul.lua:42         blind ONLY -- so nothing to port
+   *   WATCHER     crystal.lua:41-49    the same crystal base (ruled 2026-09-23)
+   *   WRAITH      losgoroth.lua:49-55  cut + confusion + blind (+ stun, declined
+   *                                    below; + knockback, poison, disease)
+   *   HUSK_ELITE  ghoul.lua:42         blind ONLY
    *   GLUT        troll.lua:50         fear ONLY -- so nothing to port
    *
-   * The seam looked bigger than it is. Two creatures take everything there was
-   * to take, and the rest are empty for a reason rather than by omission.
+   * Blind was "no status for it" on three of these until BLINDED shipped; the
+   * rows followed once it did. Refused with NO DRAW: total immunity is `canBe`'s
+   * chance 0, which returns before `rollPercent` (Actor.lua:6969).
    */
   const refuses = (template: Parameters<typeof monsterInit>[0], effect: string): boolean => {
     const state = createMvpEffectState();
     const def = state.defs.get(effect);
     if (def === undefined) throw new Error(`unreachable: ${effect} is in MVP_EFFECTS`);
     const actor = createMonsterActor('m', monsterInit(template, { x: 1, y: 1 }));
-    return !canBe(state, actor, def, createRng(effect)).can;
+    const rng = scriptedRng([50]);
+    const can = canBe(state, actor, def, rng).can;
+    if (!can) expect(drawCount(rng), `${template.id} drew to refuse ${effect}`).toBe(0);
+    return !can;
   };
 
-  it('makes the wraith refuse cuts and confusion, as losgoroth does', () => {
+  it('makes the wraith refuse cuts, confusion and blindness, as losgoroth does', () => {
     expect(refuses(INDEX_WRAITH, EffectId.Bleeding)).toBe(true);
     expect(refuses(INDEX_WRAITH, EffectId.Confused)).toBe(true);
+    expect(refuses(INDEX_WRAITH, EffectId.Blinded)).toBe(true);
   });
 
-  it('leaves BOTH standoff shooters stunnable, which upstream does not', () => {
+  it('makes both crystals refuse cuts, confusion and blindness', () => {
+    for (const template of [INDEX_CAIRN, INDEX_WATCHER]) {
+      expect(refuses(template, EffectId.Bleeding), `${template.id} bled`).toBe(true);
+      expect(refuses(template, EffectId.Confused), `${template.id} was confused`).toBe(true);
+      expect(refuses(template, EffectId.Blinded), `${template.id} was blinded`).toBe(true);
+    }
+  });
+
+  it('makes the husk elite refuse blindness and nothing else, as the ghoul does', () => {
+    expect(refuses(INDEX_HUSK_ELITE, EffectId.Blinded)).toBe(true);
+    expect(refuses(INDEX_HUSK_ELITE, EffectId.Bleeding)).toBe(false);
+    expect(refuses(INDEX_HUSK_ELITE, EffectId.Confused)).toBe(false);
+  });
+
+  it('leaves the husk and the glut open to all three — the controls', () => {
+    // ant.lua has no immunities and troll.lua:50 is fear-only.
+    for (const template of [INDEX_HUSK, INDEX_GLUT]) {
+      expect(refuses(template, EffectId.Bleeding), `${template.id} refused a bleed`).toBe(false);
+      expect(refuses(template, EffectId.Confused), `${template.id} refused confusion`).toBe(false);
+      expect(refuses(template, EffectId.Blinded), `${template.id} refused blindness`).toBe(false);
+    }
+  });
+
+  it('leaves the standoff shooters and the watcher stunnable', () => {
     /**
      * losgoroth carries `stun_immune` and the crystal does not, so this is a
-     * deviation on one of the two and a port on the other -- stated once, here,
-     * because the REASON is the same for both and it is a rule now.
+     * deviation on one and a port on the others -- stated once, here, because
+     * the REASON is the same and it is a rule now (R5, 2026-09-23).
      *
      * Concussion Flask is one of two answers a party has to something that will
      * not walk to them. ToME can close that door because a ToME character has a
@@ -2371,16 +2401,7 @@ describe('the roster carries the immunities its upstream counterparts carry', ()
      */
     expect(refuses(INDEX_WRAITH, EffectId.Stunned)).toBe(false);
     expect(refuses(INDEX_CAIRN, EffectId.Stunned)).toBe(false);
-  });
-
-  it('gives the husk elite and the glut none, because their sources have none we own', () => {
-    // ghoul.lua:42 is blind-only and troll.lua:50 is fear-only. Neither status
-    // exists here, so an immunity on either would be invented rather than
-    // ported -- and this asserts the ABSENCE so it stays a decision.
-    for (const template of [INDEX_HUSK_ELITE, INDEX_GLUT]) {
-      expect(refuses(template, EffectId.Bleeding)).toBe(false);
-      expect(refuses(template, EffectId.Confused)).toBe(false);
-    }
+    expect(refuses(INDEX_WATCHER, EffectId.Stunned)).toBe(false);
   });
 });
 

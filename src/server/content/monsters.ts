@@ -1469,8 +1469,9 @@ export const INDEX_WRAITH: MonsterTemplate = Object.freeze({
      * A SHADOW HAS NOTHING TO CUT AND NOTHING TO ADDLE.
      * ═══════════════════════════════════════════════════════════════════════
      * `losgoroth.lua:49-55` gives it seven `*_immune` lines: poison, disease,
-     * cut, stun, blind, knockback and confusion. We have statuses for two of
-     * those seven, and both are ported here.
+     * cut, stun, blind, knockback and confusion. We have statuses for five of
+     * those seven; cut, blind and confusion are ported here, stun is declined
+     * below, and knockback waits for the knockback gate.
      *
      * CUT IS THREE KEYS BECAUSE OUR `BLEEDING` DECLARES THREE. `subtypes` is
      * `['wound', 'cut', 'bleed']` (content/effects.ts), so upstream's single
@@ -1488,10 +1489,12 @@ export const INDEX_WRAITH: MonsterTemplate = Object.freeze({
      * stun-immune kiters would not make the floor harder, they would make one
      * talent dead weight.
      *
-     * Upstream's other five are unreachable rather than declined: there is no
-     * poison, disease, blind or knockback status in `MVP_EFFECTS`.
+     * BLIND (`:53`) ARRIVED WITH BLINDED. This note said there was no blind
+     * status; `BLINDED` has been in `MVP_EFFECTS` since the Inquisitor's rider,
+     * so the row upstream gives is ported. Poison and disease are still
+     * unreachable: there is no status for either.
      */
-    immunities: { wound: 100, cut: 100, bleed: 100, confusion: 100 },
+    immunities: { wound: 100, cut: 100, bleed: 100, confusion: 100, blind: 100 },
     profile: {
       resists: {
         // DEVIATION 6 OF 7 — OURS, KEPT. Upstream's equivalent is losgoroth.lua:46
@@ -1848,6 +1851,9 @@ export const INDEX_HUSK_ELITE: MonsterTemplate = Object.freeze({
     // header. `dammod` is unchanged at the ant's `{str=0.6}`, which is also the
     // ghoul's (:63) and the engine default (Combat.lua:1625).
     weapon: { dam: 15, atk: 18, apr: 8, damMod: { str: 0.6 } },
+    // ghoul.lua:42 — `blind_immune = 1`, the ghoul's one immunity. It was left
+    // off while there was no blind status; `BLINDED` exists, so it is ported.
+    immunities: { blind: 100 },
     // NO `profile`. The old block carried `resists { all: 10, Mind: 25 }`, both
     // invented, the pair chosen to exercise the multiplicative composition rule
     // at Combat.lua:2227-2228 (10 and 25 give 32.5, not 35). THAT RULE STILL HAS
@@ -2159,8 +2165,9 @@ export const INDEX_CAIRN: MonsterTemplate = Object.freeze({
      * ═══════════════════════════════════════════════════════════════════════
      * `crystal.lua:41-49` gives every crystal `cut_immune`, `confusion_immune`,
      * `blind_immune`, `fear_immune`, `poison_immune` and `disease_immune` — six
-     * lines, of which we have statuses for two. Ported as the two we can spend:
-     * a marker stone does not open a wound, and it has nothing to confuse.
+     * lines, of which we have statuses for three. Ported as the three we can
+     * spend: a marker stone does not open a wound, has nothing to confuse, and
+     * has no eyes to put out (`BLINDED`, which this note once said was absent).
      *
      * THE FIRST MONSTER IN THE ROSTER TO CARRY ANY IMMUNITY, and it is the
      * right one to start with, because its whole design is that you often
@@ -2176,7 +2183,7 @@ export const INDEX_CAIRN: MonsterTemplate = Object.freeze({
      * 100 IS TOTAL. `canBe` reads sheet immunities additively with the effect
      * state, so anything at or above a hundred refuses outright.
      */
-    immunities: { wound: 100, cut: 100, bleed: 100, confusion: 100 },
+    immunities: { wound: 100, cut: 100, bleed: 100, confusion: 100, blind: 100 },
     profile: {
       resists: {
         [DamageType.Darkness]: 50,
@@ -3183,6 +3190,14 @@ export const INDEX_WATCHER: MonsterTemplate = Object.freeze({
       apr: 6,
       damMod: { mag: 0.8 },
     },
+    /**
+     * THE CRYSTAL BASE'S IMMUNITIES — crystal.lua:41-42 and :49, the same base
+     * the Watcher's stats come from and the Cairn already carries. Ruled
+     * 2026-09-23 (R2): a boss built on a crystal cannot be cut, confused or
+     * blinded, and a party that brought bleeds brings damage instead. Fear,
+     * poison and disease have no status here to refuse.
+     */
+    immunities: { wound: 100, cut: 100, bleed: 100, confusion: 100, blind: 100 },
     profile: {
       resists: {
         [DamageType.Darkness]: 50,
