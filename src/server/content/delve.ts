@@ -1026,6 +1026,39 @@ const WEIR: readonly MonsterTemplate[] = [INDEX_RIBBON, INDEX_INKWELL, INDEX_STR
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════
+ * ONE ROSTER PER SITE — EACH SITE IS A ToME ZONE, AND A ZONE LOADS ITS OWN.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * The five lists above are SHARED: `DROWNED` is the Chapel's, the Undermost's
+ * and Cairnfoot's at once, so a creature added for one reached all three. But
+ * each site is built as a ToME zone, and a zone's bodies come from the families
+ * its own `npcs.lua` loads — the Undermost is reknor-escape (rodent, vermin,
+ * molds, snake: `zones/reknor-escape/npcs.lua:20-24`), Cairnfoot is heart-gloom
+ * (rodent, bear, canine, plant: `zones/heart-gloom/npcs.lua:52-55`). So the
+ * roster is per site, and the next creature joins only the sites whose zone
+ * loads its family (docs/wip/monsters/plan.md keeps the site key).
+ *
+ * SPLIT WITH IDENTICAL CONTENTS AND ORDER. `computeRarities` weights the list
+ * and `pickEntity` walks it cumulatively, so order is part of the seed contract
+ * and this split moves no draw on any floor. The shared lists stay as the base
+ * each site started from, with the notes that argue their contents.
+ */
+const DROWNED_CHAPEL_ROSTER: readonly MonsterTemplate[] = [...DROWNED];
+const UNDERMOST_ROSTER: readonly MonsterTemplate[] = [...DROWNED];
+const CAIRNFOOT_ROSTER: readonly MonsterTemplate[] = [...DROWNED];
+const UNDERWORKS_ROSTER: readonly MonsterTemplate[] = [...RANK_AND_FILE];
+const WATCHERS_ALTAR_ROSTER: readonly MonsterTemplate[] = [...RANK_AND_FILE];
+const HOLLOW_MINE_ROSTER: readonly MonsterTemplate[] = [...RANK_AND_FILE];
+const OUTER_INDEX_ROSTER: readonly MonsterTemplate[] = [...DEEP];
+const GLASS_ARCHIVE_ROSTER: readonly MonsterTemplate[] = [...DEEP];
+const GEARFORD_WARD_ROSTER: readonly MonsterTemplate[] = [...DEEP];
+const INFINITY_TOWER_ROSTER: readonly MonsterTemplate[] = [...DEEP];
+const BARROW_END_ROSTER: readonly MonsterTemplate[] = [...THICKET];
+const BLACKWOOD_OUTSKIRTS_ROSTER: readonly MonsterTemplate[] = [...THICKET];
+const WEIR_ROSTER: readonly MonsterTemplate[] = [...WEIR];
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
  * THE TWELVE, AND THEY ARE MEANT TO BE TOLD APART
  * ═══════════════════════════════════════════════════════════════════════════
  *
@@ -1174,7 +1207,7 @@ export const DELVES: ReadonlyMap<string, DelveSpec> = new Map<string, DelveSpec>
       // day a deep creature joins this roster it is the line that keeps it out
       // of the room the first case sends every new character to by name.
       maxOod: 2,
-      roster: DROWNED,
+      roster: DROWNED_CHAPEL_ROSTER,
       litter: [1, 2],
       levelRange: [1, 1],
     },
@@ -1303,7 +1336,7 @@ export const DELVES: ReadonlyMap<string, DelveSpec> = new Map<string, DelveSpec>
           fit: CountFit.Covers,
         },
       ],
-      roster: DROWNED,
+      roster: UNDERMOST_ROSTER,
       litter: [1, 2],
       levelRange: [1, 1],
       // THE WARDEN IS DRAWN ON THE MAP, NOT PLACED FROM HERE — `drawnBoss`.
@@ -1360,7 +1393,7 @@ export const DELVES: ReadonlyMap<string, DelveSpec> = new Map<string, DelveSpec>
       // `RANK_AND_FILE`, whose two entities are both `levelRange` `[1,
       // undefined]` — kept because it is half of the sourced answer.
       maxOod: 2,
-      roster: RANK_AND_FILE,
+      roster: UNDERWORKS_ROSTER,
       litter: [2, 3],
       levelRange: [3, 3],
       traps: [1, 2],
@@ -1400,7 +1433,7 @@ export const DELVES: ReadonlyMap<string, DelveSpec> = new Map<string, DelveSpec>
           fit: CountFit.Covers,
         },
       ],
-      roster: RANK_AND_FILE,
+      roster: WATCHERS_ALTAR_ROSTER,
       litter: [2, 4],
       levelRange: [7, 7],
       traps: [1, 2],
@@ -1496,7 +1529,7 @@ export const DELVES: ReadonlyMap<string, DelveSpec> = new Map<string, DelveSpec>
           fit: CountFit.Covers,
         },
       ],
-      roster: RANK_AND_FILE,
+      roster: HOLLOW_MINE_ROSTER,
       litter: [2, 4],
       levelRange: [9, 9],
       traps: [2, 3],
@@ -1568,7 +1601,7 @@ export const DELVES: ReadonlyMap<string, DelveSpec> = new Map<string, DelveSpec>
           fit: CountFit.Covers,
         },
       ],
-      roster: DEEP,
+      roster: OUTER_INDEX_ROSTER,
       litter: [3, 4],
       levelRange: [10, 10],
       traps: [2, 3],
@@ -1651,7 +1684,7 @@ export const DELVES: ReadonlyMap<string, DelveSpec> = new Map<string, DelveSpec>
           fit: CountFit.Covers,
         },
       ],
-      roster: DEEP,
+      roster: GLASS_ARCHIVE_ROSTER,
       litter: [2, 3],
       levelRange: [11, 11],
       traps: [2, 3],
@@ -1707,7 +1740,7 @@ export const DELVES: ReadonlyMap<string, DelveSpec> = new Map<string, DelveSpec>
       // the one zone in the game that is meant to hand you something well over
       // your head.
       maxOod: 6,
-      roster: DEEP,
+      roster: GEARFORD_WARD_ROSTER,
       litter: [3, 5],
       levelRange: [13, 13],
       traps: [2, 3],
@@ -1771,7 +1804,7 @@ export const DELVES: ReadonlyMap<string, DelveSpec> = new Map<string, DelveSpec>
         },
       ],
       maxOod: 2,
-      roster: DROWNED,
+      roster: CAIRNFOOT_ROSTER,
       litter: [3, 4],
       levelRange: [6, 6],
     },
@@ -1813,7 +1846,7 @@ export const DELVES: ReadonlyMap<string, DelveSpec> = new Map<string, DelveSpec>
         },
       ],
       maxOod: 2,
-      roster: THICKET,
+      roster: BARROW_END_ROSTER,
       litter: [3, 5],
       levelRange: [5, 5],
     },
@@ -1874,7 +1907,7 @@ export const DELVES: ReadonlyMap<string, DelveSpec> = new Map<string, DelveSpec>
         },
       ],
       maxOod: 2,
-      roster: WEIR,
+      roster: WEIR_ROSTER,
       litter: [3, 4],
       levelRange: [6, 6],
     },
@@ -1933,7 +1966,7 @@ export const DELVES: ReadonlyMap<string, DelveSpec> = new Map<string, DelveSpec>
       // is not set, so it is OnSpots' own default of 5
       // (engine/generator/actor/OnSpots.lua:31).
       spots: { nbSpots: 2, spotRadius: 5, onSpotChance: 35 },
-      roster: THICKET,
+      roster: BLACKWOOD_OUTSKIRTS_ROSTER,
       litter: [4, 6],
       levelRange: [15, 15],
     },
@@ -2017,7 +2050,7 @@ export const DELVES: ReadonlyMap<string, DelveSpec> = new Map<string, DelveSpec>
       // two: the one zone in the game meant to hand you something well over
       // your head.
       maxOod: 6,
-      roster: DEEP,
+      roster: INFINITY_TOWER_ROSTER,
       litter: [6, 9],
       levelRange: [1, 1],
       levelScheme: ZoneLevelScheme.Player,
