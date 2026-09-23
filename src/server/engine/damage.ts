@@ -13,6 +13,7 @@
 //                                                              774-792 (lightning)
 //                                                              856-875 (darkness)
 //                                                              876-904 (mind)
+//                                                              1123-1141 (FIREBURN)
 //             t-engine4 game/engines/default/engine/interface/ActorLife.lua:71-81 (takeHit)
 //             t-engine4 game/modules/tome/class/interface/ActorLife.lua:41-60 (raw takeHit)
 // T-Engine4 (C) 2009-2018 Nicolas Casalini "DarkGod" — https://te4.org/license
@@ -135,6 +136,45 @@ export const STUNNED_DAMAGE_MULT = 0.4;
 // both names, and a bare re-export does not bind them locally. `DamageType` is
 // a const AND a derived type, and one `export {}` carries both.
 export { DAMAGE_TYPES, DamageType };
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * FIREBURN — FIRE NOW, AND THE REST AS A BURN. damage_types.lua:1123-1141.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * ```lua
+ * local dur = 3
+ * local perc = 50
+ * if _G.type(dam) == "table" then dam, dur, perc = dam.dam, dam.dur, (dam.initial or perc) end
+ * local init_dam = dam * perc / 100
+ * if init_dam > 0 then DamageType:get(DamageType.FIRE).projector(src, x, y, DamageType.FIRE, init_dam, state) end
+ * ...
+ * dam = dam - init_dam
+ * target:setEffect(target.EFF_BURNING, dur, {src=src, power=dam / dur, no_ct_effect=true})
+ * ```
+ *
+ * NOT A SEVENTH DAMAGE TYPE, because it is not one: upstream's own projector is
+ * two calls to other things, a FIRE hit and an effect. What a caller needs from
+ * it is the arithmetic, so that is what lives here, and each caller spends the
+ * two halves through the doors it already has — `applyDamage` for the hit and
+ * its own `applyStatus` for the burn, since this module may not name an effect.
+ *
+ * THE BURN'S SHARE IS THE RAW REMAINDER, before any resistance. Each tick of it
+ * goes back through the FIRE projector (physical.lua:439-441), so resistance is
+ * taken per tick and never twice.
+ */
+export const FIREBURN_TURNS = 3;
+export const FIREBURN_INITIAL_PERCENT = 50;
+
+/** What FIREBURN's `dam` becomes: the hit now, and the burn's per-turn `power`. */
+export function splitBurn(
+  dam: number,
+  initialPercent: number,
+  turns: number,
+): { readonly initial: number; readonly power: number } {
+  const initial = (dam * initialPercent) / 100;
+  return { initial, power: (dam - initial) / turns };
+}
 
 /**
  * A per-type table with an `all` row — ToME's `resists.all + resists[type]`

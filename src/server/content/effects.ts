@@ -3,6 +3,7 @@
 // Ported from t-engine4 game/modules/tome/data/timed_effects/physical.lua:480-511 (STUNNED)
 //                                                              :123-152 (CUT — "Bleeding")
 //                                                              :621-637 (SLOW)
+//                                                              :420-443 (BURNING)
 //             t-engine4 game/modules/tome/class/Actor.lua:606 (the no_talents_cooldown guard)
 //             t-engine4 game/modules/tome/data/damage_types.lua:150-153 (stunned ×0.4 outgoing)
 //             t-engine4 game/engines/default/engine/interface/ActorTemporaryEffects.lua:54
@@ -276,6 +277,11 @@ export const EffectId = {
    * tell them apart would teleport somebody who called the recall off.
    */
   Elsewhere: 'effect:elsewhere',
+  /**
+   * ON FIRE — physical.lua:420-443, laid by FIREBURN (damage_types.lua:1123-1141).
+   * CUT's twin, ticking as fire from its source; see `BURNING`.
+   */
+  Burning: 'effect:burning',
 } as const;
 export type EffectId = (typeof EffectId)[keyof typeof EffectId];
 
@@ -590,21 +596,117 @@ export const BLEEDING: EffectDef = Object.freeze({
   // physical.lua:130 — `parameters = { power = 1 }`. See BLEED_POWER.
   parameters: { power: BLEED_POWER },
 
-  onTimeout: ({ actor, eff, rng, ctx }: EffectHookArgs): boolean => {
-    const power = eff.params.power ?? BLEED_POWER;
+  // physical.lua:149-151 — PHYSICAL, from `eff.src or self`.
+  onTimeout: damageOverTimeTick(DamageType.Physical, BLEED_POWER, 'or-self'),
+  // physical.lua:133-141.
+  onMerge: mergeDamageOverTime(BLEED_POWER),
+} satisfies EffectDef);
+
+// ---------------------------------------------------------------------------
+// BURNING — physical.lua:420-443
+// ---------------------------------------------------------------------------
+
+/**
+ * physical.lua:427 — `parameters = { power=10 }`. Only an application that
+ * names no power ever reads it; FIREBURN always names one.
+ */
+export const BURN_POWER = 10;
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * BURNING. CUT'S TWIN, ON FIRE, AND THE ONE WORD THAT DIFFERS.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * ```lua
+ * newEffect{
+ *   name = "BURNING", image = "talents/flame.png",
+ *   desc = "Burning",
+ *   type = "physical", subtype = { fire=true }, status = "detrimental",
+ *   parameters = { power=10 },
+ *   on_merge = function(self, old_eff, new_eff) ... end,                 -- :430-437
+ *   on_timeout = function(self, eff)
+ *     DamageType:get(DamageType.FIRE).projector(eff.src, self.x, self.y, DamageType.FIRE, eff.power)
+ *   end,                                                                  -- :439-441
+ * }
+ * ```
+ *
+ * THE MERGE IS CUT'S, LINE FOR LINE — :430-437 against :133-141, down to the
+ * "Merge the flames!" comment upstream left on both. So it is one function.
+ *
+ * THE TICK IS CUT'S TOO, EXCEPT FOR `or self`. A bleed with no source blames
+ * its own body; a burn is always handed one, because FIREBURN writes
+ * `src=src`. Ours has a source that is not a body — a trap — and a trap is not
+ * stunned, so a trap's burn must not take the victim's own stun off itself.
+ * `damageOverTimeTick` says how.
+ *
+ * NO SAVE AND NO DRAW. FIREBURN passes no `apply_power` (damage_types.lua:1137),
+ * so the burn lands at its full duration, and `canBe` over the one `fire`
+ * subtype stops at 100 without drawing. `no_ct_effect` rides along anyway.
+ */
+export const BURNING: EffectDef = Object.freeze({
+  id: EffectId.Burning,
+  badge: 'Bu',
+  // :422 — `desc = "Burning"`.
+  displayName: 'Burning',
+  // :423's `long_desc`, without the number `describe` puts back.
+  description: 'The target is on fire, taking fire damage per turn.',
+  // :423 — `("The target is on fire, taking %0.2f fire damage per turn."):format(eff.power)`.
+  describe: (instance: EffectInstance): string =>
+    `The target is on fire, taking ${(instance.params.power ?? BURN_POWER).toFixed(2)} fire damage per turn.`,
+  // :424 — `type = "physical"`.
+  type: SaveChannel.Physical,
+  status: EffectStatus.Detrimental,
+  // :430 declares `on_merge`.
+  stackMode: StackMode.Stack,
+  // :425 — `subtype = { fire=true }`.
+  subtypes: ['fire'],
+  decrease: 1,
+  icon: 'icon_status_burning',
+  parameters: { power: BURN_POWER },
+  // :439-441 — FIRE, from `eff.src` and never from the victim.
+  onTimeout: damageOverTimeTick(DamageType.Fire, BURN_POWER, 'source-only'),
+  // :430-437.
+  onMerge: mergeDamageOverTime(BURN_POWER),
+} satisfies EffectDef);
+
+// ---------------------------------------------------------------------------
+// The tick and the merge CUT and BURNING share
+// ---------------------------------------------------------------------------
+
+/**
+ * WHO A TICK IS BLAMED ON WHEN ITS SOURCE CANNOT BE FOUND.
+ *
+ *   `or-self`      CUT, `eff.src or self` (physical.lua:150). The wound blames
+ *                  its own body, and that body's stun weakens it.
+ *   `source-only`  BURNING, `eff.src` (physical.lua:440). Upstream always has a
+ *                  source, and ours may be one no `getActor` resolves — a
+ *                  trap. That source has no sheet, so nothing weakens the burn.
+ */
+type TickBlame = 'or-self' | 'source-only';
+
+/**
+ * One projector call a turn, on the BASE clock — physical.lua:149-151 and
+ * :439-441, which differ in the damage type and in `or self`.
+ */
+function damageOverTimeTick(
+  type: DamageType,
+  defaultPower: number,
+  fallback: TickBlame,
+): (args: EffectHookArgs) => boolean {
+  return ({ actor, eff, rng, ctx }: EffectHookArgs): boolean => {
+    const power = eff.params.power ?? defaultPower;
     if (power <= 0) return false;
 
-    // physical.lua:150 — `eff.src or self`. The bleeder is blamed when it is
-    // still around; otherwise the wound blames its owner, so the Case Log always
-    // has a name and a kill is always attributable.
+    // The source is blamed when it is still around. Otherwise see `TickBlame`:
+    // either way the Case Log has a name and nobody is paid for it.
     const srcId = eff.params.srcId;
     const src = srcId === undefined ? undefined : ctx.getActor?.(srcId);
-    const blame = src ?? actor;
+    const blame = src ?? (fallback === 'or-self' ? actor : { id: srcId ?? actor.id });
 
     // damage_types.lua:146-153 — the projector applies the SOURCE's own daze and
     // stun multipliers to every projected hit, DoTs included. Faithful and
     // slightly surprising: stunning the thing that cut you weakens its bleed.
-    const outcome = applyDamage(actor, power, DamageType.Physical, blame, rng, {
+    const outcome = applyDamage(actor, power, type, blame, rng, {
       // Dazed, Stunned and `numbed` come off `source.combat` inside
       // `applyDamage` now. This passed the first two and never `numbed`.
       increase: src?.combat?.increase,
@@ -660,21 +762,25 @@ export const BLEEDING: EffectDef = Object.freeze({
       });
     }
 
-    // ActorTemporaryEffects.lua:85 — returning true removes the effect. A bleed
+    // ActorTemporaryEffects.lua:85 — returning true removes the effect. A DoT
     // never self-terminates; it runs its duration out.
     return false;
-  },
+  };
+}
 
-  /**
-   * physical.lua:133-141, verbatim arithmetic.
-   *
-   * `Math.ceil` on the average duration matches `math.ceil` exactly for the
-   * positive values a duration can hold. `dur` is guaranteed ≥ 1 here because
-   * `setEffect` refuses a 0-duration application before it ever reaches a merge.
-   */
-  onMerge: ({ eff, incoming }: EffectHookArgs & { incoming: EffectInstance }): EffectInstance => {
-    const oldPower = eff.params.power ?? BLEED_POWER;
-    const newPower = incoming.params.power ?? BLEED_POWER;
+/**
+ * physical.lua:133-141 (CUT) and :430-437 (BURNING), verbatim arithmetic.
+ *
+ * `Math.ceil` on the average duration matches `math.ceil` exactly for the
+ * positive values a duration can hold. `dur` is guaranteed ≥ 1 here because
+ * `setEffect` refuses a 0-duration application before it ever reaches a merge.
+ */
+function mergeDamageOverTime(
+  defaultPower: number,
+): (args: EffectHookArgs & { incoming: EffectInstance }) => EffectInstance {
+  return ({ eff, incoming }: EffectHookArgs & { incoming: EffectInstance }): EffectInstance => {
+    const oldPower = eff.params.power ?? defaultPower;
+    const newPower = incoming.params.power ?? defaultPower;
     const oldDam = oldPower * eff.dur; // :135
     const newDam = newPower * incoming.dur; // :136
     const dur = Math.ceil((eff.dur + incoming.dur) / 2); // :137
@@ -684,8 +790,8 @@ export const BLEEDING: EffectDef = Object.freeze({
     // merge that left it stale would draw a bar longer than the effect.
     eff.totalDur = Math.max(eff.totalDur, dur);
     return eff; // :140
-  },
-} satisfies EffectDef);
+  };
+}
 
 // ---------------------------------------------------------------------------
 // SLOWED — physical.lua:621-637 (upstream's `SLOW`)
@@ -2471,6 +2577,7 @@ export const MVP_EFFECTS: readonly EffectDef[] = Object.freeze([
   // calls the free operation: a client holding an older badge atlas keeps every
   // index it already has.
   ELSEWHERE,
+  BURNING,
 ]);
 
 /** Effect ids, for a content-completeness check and for the client's badge atlas. */

@@ -307,8 +307,14 @@ const FOLLOW_H = 11;
  * sprite was taller. That is what cut the character off.
  */
 const FACE_PX = 32;
-/** The authored badge size. Every `icon_status_*` in the manifest is 24x24. */
+/**
+ * The badge box. Production badges are authored at 24x24; the commission
+ * masters under `ui/icons/status/commission/` are 64x64, and `drawBadge`
+ * reduces those to fit rather than assuming the art's size.
+ */
 const BADGE_PX = 24;
+/** 64 / 4 = 16, the largest exact reduction of a 64x64 master that fits. */
+const BADGE_MAX_REDUCTION = 4;
 /**
  * THE TURN CHIP, HALF ITS AUTHORED SIZE. Every `ui_icon_turn_*` is 24x24 and
  * this is 12, which is the exact half `blitReduced` will take with smoothing
@@ -1025,10 +1031,22 @@ function drawBadge(
   x: number,
   y: number,
 ): void {
-  const sprite = sprites.sprite(effect.icon);
-  if (sprite !== undefined) {
-    ctx.drawImage(sprite.image, x, y, sprite.w, sprite.h);
-  } else {
+  /**
+   * INSIDE THE BOX, BY AN EXACT DIVISOR — `blitReduced`, as the faces are.
+   * A badge drawn at the image's own size assumed every badge was authored at
+   * 24x24, and Burning was the first wired to a 64x64 commission master: it
+   * hung 35px into the next member's row. A 24x24 badge still draws 1:1; a 64
+   * lands at 16, centred and sharp; anything no divisor fits takes the glyph.
+   */
+  const drawn = blitReduced(
+    ctx,
+    sprites,
+    effect.icon,
+    { x, y, w: BADGE_PX, h: BADGE_PX },
+    BlitAnchor.Centre,
+    BADGE_MAX_REDUCTION,
+  );
+  if (!drawn) {
     ctx.fillStyle = PALETTE.VOID;
     ctx.fillRect(x, y, BADGE_PX, BADGE_PX);
     ctx.fillStyle = effect.harmful ? PALETTE.ORANGE : PALETTE.GOLD;

@@ -106,8 +106,21 @@ export type TrapEffect =
   /**
    * `TRAP_ELEMENTAL` — `self:project({type="hit",x=x,y=y}, ...)`, a single tile.
    * The bolt hits whoever stood on the plate and nobody else.
+   *
+   * `burn` IS THE FIRE TRAP'S `DamageType.FIREBURN` (elemental.lua:72): a part
+   * of `damage` lands now and the rest becomes a burn (`splitBurn`). The effect
+   * is a content id for the reason `status.effectId` below gives.
    */
-  | { readonly kind: 'bolt'; readonly damage: number; readonly damageType: DamageType }
+  | {
+      readonly kind: 'bolt';
+      readonly damage: number;
+      readonly damageType: DamageType;
+      readonly burn?: {
+        readonly effectId: string;
+        readonly turns: number;
+        readonly initialPercent: number;
+      };
+    }
   /**
    * `TRAP_ALARM`'s intruder alarm — `traps/alarm.lua:38-52`. Every non-player
    * body in a box around the plate takes the victim as its target.

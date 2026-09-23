@@ -4,6 +4,8 @@ import {
   DAMAGE_TYPES,
   DEFAULT_RESIST_CAP,
   DamageType,
+  FIREBURN_INITIAL_PERCENT,
+  FIREBURN_TURNS,
   applyArmour,
   applyDamage,
   applyResists,
@@ -14,6 +16,7 @@ import {
   resolveDamage,
   rollCrit,
   rollDamageRange,
+  splitBurn,
 } from '../../src/server/engine/damage.ts';
 import { createRng } from '../../src/shared/rng.ts';
 import { drawCount, scriptedRng } from '../helpers/scripted-rng.ts';
@@ -105,6 +108,23 @@ describe('combatGetResist — Combat.lua:2220-2231', () => {
   it('floors vulnerability at -100 so it cannot run away', () => {
     expect(combatGetResist({ resists: { fire: -50 } }, DamageType.Fire)).toBe(-50);
     expect(combatGetResist({ resists: { fire: -500 } }, DamageType.Fire)).toBe(-100);
+  });
+});
+
+describe('splitBurn — FIREBURN, damage_types.lua:1123-1141', () => {
+  it('lands `perc` percent now and spreads the REMAINDER over the turns', () => {
+    // Upstream's own defaults, 50 and 3: 12 becomes 6 now and 2 a turn.
+    expect(splitBurn(12, FIREBURN_INITIAL_PERCENT, FIREBURN_TURNS)).toEqual({
+      initial: 6,
+      power: 2,
+    });
+  });
+
+  it('burns the remainder, not the initial — which 50% alone cannot tell apart', () => {
+    // `dam.initial` may be anything (:1127); at 25 the burn is 9 over 3 turns,
+    // not the 3 that dividing the initial hit would give.
+    expect(splitBurn(12, 25, 3)).toEqual({ initial: 3, power: 3 });
+    expect(splitBurn(12, 0, 3)).toEqual({ initial: 0, power: 4 });
   });
 });
 

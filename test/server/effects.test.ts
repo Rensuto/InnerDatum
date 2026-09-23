@@ -37,6 +37,7 @@ import {
 import {
   BLEEDING,
   BLEED_POWER,
+  BURNING,
   EFFECT_IDS,
   EffectId,
   MVP_EFFECTS,
@@ -915,6 +916,96 @@ describe('BLEEDING — CUT`s on_merge conserves total damage (physical.lua:133-1
 });
 
 // ---------------------------------------------------------------------------
+// 7b. BURNING — CUT's twin, on fire
+// ---------------------------------------------------------------------------
+
+describe('BURNING — CUT`s merge, a FIRE tick, and no `or self` (physical.lua:420-443)', () => {
+  it('merges exactly as CUT does: {3, 1} + {9, 5} → power 16 over 3 turns (:430-437)', () => {
+    const state = createMvpEffectState();
+    const target = monster({ hp: 80, maxHp: 80 });
+    setEffect(state, target, EffectId.Burning, 1, { power: 3 }, scriptedRng([]));
+    const merged = setEffect(state, target, EffectId.Burning, 5, { power: 9 }, scriptedRng([]));
+
+    // A merge, not a replacement: summing the durations would give 6 turns,
+    // and a Refresh would keep the {9, 5} as it came.
+    expect(merged.outcome).toBe(SetEffectOutcome.Merged);
+    const eff = merged.effect;
+    if (eff === null) throw new Error('the second burn did not land');
+    expect(eff.dur).toBe(3);
+    expect(eff.params.power).toBe(16);
+  });
+
+  it('rounds an ODD duration sum UP — `math.ceil`, which an even sum cannot tell from floor', () => {
+    // {4, 2} + {2, 3}: 8 + 6 = 14 over ceil(5/2) = 3 turns. Floor would give 2
+    // turns of 7, the same total delivered faster.
+    const state = createMvpEffectState();
+    const target = monster({ hp: 80, maxHp: 80 });
+    setEffect(state, target, EffectId.Burning, 2, { power: 4 }, scriptedRng([]));
+    const merged = setEffect(state, target, EffectId.Burning, 3, { power: 2 }, scriptedRng([]));
+    if (merged.effect === null) throw new Error('the second burn did not land');
+    expect(merged.effect.dur).toBe(3);
+    expect(merged.effect.params.power).toBeCloseTo(14 / 3, 10);
+  });
+
+  it('ticks as FIRE — fire resistance halves it and physical resistance does nothing', () => {
+    const state = createMvpEffectState();
+    const target = monster({
+      hp: 40,
+      maxHp: 40,
+      combat: { profile: { resists: { fire: 50, physical: 100 } } },
+    });
+    setEffect(state, target, EffectId.Burning, 1, { power: 4 }, scriptedRng([]));
+    timedEffects(state, target, createRng('burn-fire'));
+    // 4 × (1 − 0.50). A physical tick would have dealt nothing at all.
+    expect(target.hp).toBe(38);
+  });
+
+  it('lands whole, with no save and no draw, when handed no apply_power', () => {
+    // What FIREBURN hands it (damage_types.lua:1137); the trap test in
+    // traps.test.ts checks the trap hands it exactly that. `scriptedRng([])`
+    // throws on any draw at all.
+    const state = createMvpEffectState();
+    const target = monster({ hp: 40, maxHp: 40 });
+    const rng = scriptedRng([]);
+    const landed = setEffect(state, target, EffectId.Burning, 3, { power: 2 }, rng);
+    expect(landed.outcome).toBe(SetEffectOutcome.Applied);
+    expect(landed.effect?.dur).toBe(3);
+    expect(drawCount(rng)).toBe(0);
+  });
+
+  it('with no source, the VICTIM`s own stun does not weaken it — `eff.src`, not `eff.src or self`', () => {
+    // The control first: a sourceless BLEED is weakened by its owner's stun
+    // (physical.lua:150), so this fixture can tell the two rules apart.
+    const bleeding = createMvpEffectState();
+    const cut = monster({ hp: 30, maxHp: 30 });
+    setEffect(bleeding, cut, EffectId.Stunned, 3, {}, scriptedRng([]));
+    setEffect(bleeding, cut, EffectId.Bleeding, 2, { power: 3 }, scriptedRng([]));
+    timedEffects(bleeding, cut, createRng('bleed-self'), { getActor: () => undefined });
+    expect(cut.hp, 'the control: a sourceless bleed is stunned by its own body').toBeCloseTo(
+      30 - 3 * STUNNED_DAMAGE_MULT,
+      10,
+    );
+
+    const burning = createMvpEffectState();
+    const burnt = monster({ hp: 30, maxHp: 30 });
+    setEffect(burning, burnt, EffectId.Stunned, 3, {}, scriptedRng([]));
+    setEffect(burning, burnt, EffectId.Burning, 2, { power: 3 }, scriptedRng([]));
+    timedEffects(burning, burnt, createRng('burn-self'), { getActor: () => undefined });
+    expect(burnt.hp).toBe(30 - 3);
+  });
+
+  it('says ToME`s own sentence, with the power in it (:423)', () => {
+    const state = createMvpEffectState();
+    const target = monster({ hp: 40, maxHp: 40 });
+    const landed = setEffect(state, target, EffectId.Burning, 3, { power: 7 / 6 }, scriptedRng([]));
+    if (landed.effect === null) throw new Error('the burn did not land');
+    expect(BURNING.describe?.(landed.effect)).toBe(
+      'The target is on fire, taking 1.17 fire damage per turn.',
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
 // 8. SLOWED — the D1 asymmetry
 // ---------------------------------------------------------------------------
 
@@ -1253,6 +1344,8 @@ describe('the status roster (game-design.md § 12)', () => {
        * the party out of the floor.
        */
       EffectId.Elsewhere,
+      // ON FIRE — physical.lua:420-443, laid by FIREBURN. Appended, as ever.
+      EffectId.Burning,
     ]);
     expect(MVP_EFFECTS.map((def) => def.icon)).toEqual([
       'icon_status_stunned',
@@ -1282,6 +1375,7 @@ describe('the status roster (game-design.md § 12)', () => {
       'icon_status_suffocating',
       'icon_status_zone_aura_underwater',
       'icon_status_elsewhere',
+      'icon_status_burning',
     ]);
   });
 
@@ -1365,6 +1459,9 @@ describe('the status roster (game-design.md § 12)', () => {
       [EffectId.Breached]: SaveChannel.Magical,
       // physical.lua:562 — `EFF_DAZED` is physical, subtype stun.
       [EffectId.Dazed]: SaveChannel.Physical,
+      // physical.lua:424 — `EFF_BURNING` is physical, subtype fire. A label
+      // here too: FIREBURN passes no `apply_power`, so no save is ever rolled.
+      [EffectId.Burning]: SaveChannel.Physical,
       /**
        * physical.lua's `EFF_EVASION`. THE CHANNEL IS A LABEL HERE, NOT A GATE:
        * nothing resists a buff, because `canBe` only consults immunities for a

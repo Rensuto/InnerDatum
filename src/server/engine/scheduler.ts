@@ -108,7 +108,7 @@ import {
 } from './downed.ts';
 import { membersOf, partyIdOf } from './party.ts';
 import { combatAPR } from './derived.ts';
-import { applyDamage, combatGetAffinity, combatGetResist } from './damage.ts';
+import { applyDamage, combatGetAffinity, combatGetResist, splitBurn } from './damage.ts';
 import { teleportRandom } from './talents.ts';
 import { canOpenDoors } from './doors.ts';
 import { trapSentence, trapTakes } from './traps.ts';
@@ -4248,9 +4248,19 @@ function noteTrap(effect: Effect, run: Run, sweepTurn: number | null, moverId: s
    * ═══════════════════════════════════════════════════════════════════════════
    */
   if (trap.effect.kind === 'bolt') {
+    /**
+     * FIREBURN, WHEN THE BOLT CARRIES ONE — damage_types.lua:1130-1140. Only
+     * `init_dam` goes through the projector now; the remainder becomes the
+     * burn below, so the two halves sum to the trap's whole `dam`.
+     */
+    const burn = trap.effect.burn;
+    const split =
+      burn === undefined
+        ? undefined
+        : splitBurn(trap.effect.damage, burn.initialPercent, burn.turns);
     const outcome = applyDamage(
       victim,
-      trap.effect.damage,
+      split?.initial ?? trap.effect.damage,
       trap.effect.damageType,
       trap,
       world.rng,
@@ -4280,6 +4290,40 @@ function noteTrap(effect: Effect, run: Run, sweepTurn: number | null, moverId: s
     if (sweepTurn === null) {
       run.sink.push({ t: 'attacked', id: trap.id, ...blow, ambient: true });
     } else run.sink.sweep(sweepTurn, { t: 'attack', id: trap.id, ...blow, ambient: true });
+
+    /**
+     * ═════════════════════════════════════════════════════════════════════════
+     * AND THE REST BURNS — `target:setEffect(target.EFF_BURNING, dur, {src=src,
+     * power=dam / dur, no_ct_effect=true})`, damage_types.lua:1134-1138.
+     * ═════════════════════════════════════════════════════════════════════════
+     *
+     * ONLY ON A BODY STILL STANDING. Upstream asks the map for an actor at the
+     * tile (:1133), and a body the first half killed has left the map. Ours is
+     * still on its tile, and `setEffect` refuses it — a corpse is immune to
+     * everything, with no draw and no line — so no guard is repeated here.
+     *
+     * AND DECIDED HERE, BEFORE THE CASUALTY PASS, WHICH IS WHAT MAKES THAT TRUE.
+     * `noteCasualty` can wipe the party and `resetFloorParty` stands everybody
+     * up inside it. Asked after that, a body the hit killed is alive again, and
+     * it was set alight and burnt twice inside the same pump — hp 496/500 on a
+     * full restore, measured. Upstream settles the burn inside the projector,
+     * while the body is still dead; so does this.
+     *
+     * NO `applyPower`, as upstream passes none: no save, no draw, full turns.
+     *
+     * `srcId` IS THE TRAP, as upstream's `src` is and as the bolt half above
+     * is blamed. `getActor` cannot resolve it, so `BURNING`'s tick blames a bare
+     * id with no sheet: nothing weakens the burn, since a trap is never stunned,
+     * and nobody is paid for it. The sliding rock below passes no source
+     * because upstream's passes none; this one passes the one upstream passes.
+     */
+    if (burn !== undefined && split !== undefined) {
+      run.ctx.applyStatus?.(victim, burn.effectId, burn.turns, {
+        power: split.power,
+        srcId: trap.id,
+        noCtEffect: true,
+      });
+    }
 
     const sprung: Effect = { kind: 'attack', ...blow };
     noteBlows(sprung, run);

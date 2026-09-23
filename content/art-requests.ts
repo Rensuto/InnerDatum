@@ -1875,7 +1875,6 @@ export const STATUS_ICON_ART_COMMISSION: readonly ArtRequest[] = [
     'data/timed_effects/physical.lua',
     'A green droplet with a skull-like highlight.',
   ),
-  cell({ id: 'icon_status_burning' }, 'any', 'data/timed_effects/magical.lua', 'A small flame.'),
   cell(
     { id: 'icon_status_frozen' },
     'any',

@@ -1168,6 +1168,64 @@ describe('a badge says what it is doing to you', () => {
     expect(lines[named + 1]).toContain('Dragging');
   });
 
+  it('draws a badge inside its box, whatever size the art arrived at', () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * A 64x64 COMMISSION MASTER, WIRED AS A BADGE, AND THE ROW IT FELL ONTO.
+     * ═══════════════════════════════════════════════════════════════════════
+     * Burning was the first status wired to one (`ui/icons/status/commission/`,
+     * 64x64; every production badge is 24x24). `drawBadge` drew at the image's
+     * natural size, so it hung 35px into the next member's row and 40px past
+     * the pane. The badge must land inside its 24px box, reduced by an exact
+     * divisor as every other icon in this pane is, never at its own size.
+     */
+    const master = 'icon_status_master';
+    const sprites: SpriteSource = {
+      sprite: (id: string) =>
+        id === master
+          ? { id, w: 64, h: 64, image: { id } as unknown as HTMLImageElement }
+          : undefined,
+    };
+    const drawn: { readonly id: string; readonly w: number; readonly h: number }[] = [];
+    const ctx = new Proxy(
+      {},
+      {
+        get: (_target, prop: string) => {
+          if (prop === 'measureText') return (t: string) => ({ width: t.length * 6 });
+          if (prop === 'drawImage')
+            return (
+              image: { readonly id?: string },
+              _x: number,
+              _y: number,
+              w: number,
+              h: number,
+            ) => {
+              if (image.id !== undefined) drawn.push({ id: image.id, w, h });
+            };
+          if (prop === 'canvas') return { width: 640, height: 320 };
+          return () => {};
+        },
+        set: () => true,
+      },
+    ) as unknown as CanvasRenderingContext2D;
+
+    const base = trio();
+    const view: PartyPaneView = {
+      ...base,
+      rows: base.rows.map((row) =>
+        row.member.id === 'actor_b' ? { ...row, effects: [{ ...SLOWED, icon: master }] } : row,
+      ),
+    };
+    drawPartyPane({ ctx, sprites, view, layout: wideLayout(view) });
+
+    const badge = drawn.filter((d) => d.id === master);
+    expect(badge, 'the badge was never drawn from its art').toHaveLength(1);
+    expect(badge[0]?.w, 'the badge was drawn wider than its box').toBeLessThanOrEqual(24);
+    expect(badge[0]?.h, 'the badge was drawn taller than its box').toBeLessThanOrEqual(24);
+    // An exact divisor of the master, so it stays sharp with smoothing off.
+    expect(64 % (badge[0]?.w ?? 0)).toBe(0);
+  });
+
   it('says only the name for an effect authored without a sentence', () => {
     // `desc` is optional, so an effect with none — and every client that has
     // never heard of the field — behaves exactly as it always did.

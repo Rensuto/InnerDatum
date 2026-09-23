@@ -39,17 +39,21 @@
  * one bolt upstream rates as hotter, and re-levelling it to match its siblings
  * would be the exact opposite of using the tuning.
  *
- * ═══ THE FIRE TRAP'S DAMAGE TYPE IS A NARROWING, AND IT IS STATED ═══
- * Upstream's is `DamageType.FIREBURN` — fire that also lays a burn over several
- * turns (`damage_types.lua`'s BURN family). Ours is plain `Fire`: the port has
- * a Fire type and a burning-ground system, but no damage type that applies a
- * damage-over-time status to an actor. The trap therefore does its number and
- * stops, which is strictly gentler than upstream and is the honest reading
- * rather than a guess at what the burn would have been worth.
+ * ═══ THE FIRE TRAP IS FIREBURN, AS UPSTREAM'S IS ═══
+ * `damtype = DamageType.FIREBURN` (elemental.lua:72): half the bolt lands as
+ * Fire and the other half burns over three turns (`splitBurn`, and `BURNING`
+ * in content/effects.ts). It was plain Fire until the burn existed.
+ *
+ * ═══ THE ICE TRAP IS A NARROWING, AND IT IS STATED ═══
+ * Upstream's is `DamageType.ICE` (damage_types.lua:1293), cold with a chance to
+ * freeze the body solid. Ours is plain `Cold`, because this game has no FROZEN
+ * status to put a body in. It does its number and stops, which is gentler than
+ * upstream rather than a guess at what the freeze would have been worth.
  */
 
 import { EffectId } from './effects.ts';
 import { DamageType } from '../../shared/damagetype.ts';
+import { FIREBURN_INITIAL_PERCENT, FIREBURN_TURNS } from '../engine/damage.ts';
 import { clscale } from '../engine/traps.ts';
 import { computeRarities, pickEntity } from './rarity.ts';
 import { resolveMBonus } from './resolvers.ts';
@@ -93,6 +97,12 @@ type TrapTemplate = {
         readonly damageType: DamageType;
         /** `resolvers.clscale(base, baseLevel, spread, 0.75, 0)` for `dam`. */
         readonly damage: readonly [base: number, baseLevel: number, spread: number];
+        /** FIREBURN's split — see `TrapEffect`'s bolt. Absent for every other bolt. */
+        readonly burn?: {
+          readonly effectId: string;
+          readonly turns: number;
+          readonly initialPercent: number;
+        };
       }
     | { readonly kind: 'alarm'; readonly radius: number }
     | { readonly kind: 'lethargy' }
@@ -164,7 +174,17 @@ const TEMPLATES: readonly TrapTemplate[] = [
     spent: false,
     name: 'fire trap',
     message: 'A bolt of fire blasts onto @target@!',
-    effect: { kind: 'bolt', damageType: DamageType.Fire, damage: [90, 30, 25] },
+    effect: {
+      kind: 'bolt',
+      damageType: DamageType.Fire,
+      damage: [90, 30, 25],
+      // `DamageType.FIREBURN` — elemental.lua:72. Upstream's own defaults.
+      burn: {
+        effectId: EffectId.Burning,
+        turns: FIREBURN_TURNS,
+        initialPercent: FIREBURN_INITIAL_PERCENT,
+      },
+    },
     rarity: 3,
     levelRange: [1, 30],
   },
@@ -181,7 +201,9 @@ const TEMPLATES: readonly TrapTemplate[] = [
     kind: 'trap_lightning',
     spent: false,
     name: 'lightning trap',
-    message: 'A bolt of lightning blasts onto @target@!',
+    // "fires onto", not "blasts onto" — elemental.lua:94. The only bolt whose
+    // sentence differs from its siblings, and this said what the others say.
+    message: 'A bolt of lightning fires onto @target@!',
     effect: { kind: 'bolt', damageType: DamageType.Lightning, damage: [70, 30, 15] },
     rarity: 3,
     levelRange: [1, 30],
@@ -515,6 +537,8 @@ function rollEffect(
       return {
         kind: 'bolt',
         damageType: picked.effect.damageType,
+        // Copied, not rolled: FIREBURN's split is fixed, so no draw moves.
+        ...(picked.effect.burn === undefined ? {} : { burn: picked.effect.burn }),
         // The explicit ZERO floor, which is truthy in Lua and is the reason a
         // level-1 fire trap does single digits rather than ninety.
         damage: clscale(

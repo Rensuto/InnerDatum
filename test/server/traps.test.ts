@@ -10,6 +10,8 @@ import { DELVES, populateDelve, specFor } from '../../src/server/content/delve.t
 import { EffectId, createMvpEffectState } from '../../src/server/content/effects.ts';
 import { TRAP_KINDS, TRAP_MESSAGES, rollTrap } from '../../src/server/content/traps.ts';
 import { AiProfile } from '../../src/server/engine/actor.ts';
+import { createDownedState } from '../../src/server/engine/downed.ts';
+import { effectOn, hasEffect } from '../../src/server/engine/effects.ts';
 import { TRIGGER_FAIL_PERCENT, clscale, trapSentence } from '../../src/server/engine/traps.ts';
 import { talentRuntimeFor } from '../../src/server/main.ts';
 import { createTurnEngine } from '../../src/server/turn-engine.ts';
@@ -755,6 +757,196 @@ describe('the sliding rock', () => {
       return;
     }
     throw new Error('200 rolls produced no sliding rock — the roster changed shape');
+  });
+});
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE FIRE TRAP BURNS — `damtype = DamageType.FIREBURN`, elemental.lua:72.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Half the bolt lands as Fire and the other half becomes BURNING for three
+ * turns (damage_types.lua:1123-1141). Driven through the turn engine, from the
+ * step onto the plate to the last tick, because the rule lives in the join
+ * between the trap, the projector and the effect clock.
+ */
+describe('the fire trap burns', () => {
+  const DAMAGE = 12;
+
+  function fireScene(
+    seed: string,
+    options: { readonly fireResist?: number; readonly survival?: boolean } = {},
+  ) {
+    const { fireResist, survival = false } = options;
+    const world = createWorld(seed);
+    world.level.tiles.fill(TileCode.FLOOR);
+    const effects = createMvpEffectState();
+
+    const ren = world.addPlayer('p1', 'Ren', { maxHp: 500 });
+    ren.x = 2;
+    ren.y = LANE_Y;
+    ren.hpRegen = 0;
+    if (fireResist !== undefined) {
+      ren.combat = { ...ren.combat, profile: { resists: { fire: fireResist } } };
+    }
+
+    // The roster's own kit, so the split is the one the game ships.
+    let kit: ReturnType<typeof rollTrap>;
+    for (let i = 0; ; i += 1) {
+      kit = rollTrap(1, createRng(`fire-kit-${String(i)}`), 'delve.traps.0');
+      if (kit?.kind === 'trap_fire') break;
+      if (i > 500) throw new Error('500 rolls produced no fire trap');
+    }
+    if (kit.effect.kind !== 'bolt') throw new Error('the fire trap stopped being a bolt');
+    world.addTrap({ ...kit, x: 3, y: LANE_Y, effect: { ...kit.effect, damage: DAMAGE } });
+
+    const engine = createTurnEngine({
+      world,
+      now: () => 0,
+      effects,
+      // The survival system, when a case needs a wipe to be able to happen.
+      ...(survival ? { downed: createDownedState() } : {}),
+    });
+    engine.join('p1');
+    return { world, engine, ren, effects };
+  }
+
+  /** Hold until the burn is gone, and a turn more to be sure it stays gone. */
+  function burnOut(table: ReturnType<typeof fireScene>): number {
+    let turns = 0;
+    while (hasEffect(table.effects, 'p1', EffectId.Burning)) {
+      expect(table.engine.hold('p1').ok).toBe(true);
+      table.engine.pump();
+      turns += 1;
+      if (turns > 10) throw new Error('the burn never went out');
+    }
+    expect(table.engine.hold('p1').ok).toBe(true);
+    table.engine.pump();
+    return turns;
+  }
+
+  it('lands half now, and burns the other half over three turns', () => {
+    const table = fireScene('fireburn');
+    const before = table.ren.hp;
+    // The setup, asserted, so a resist or a regen cannot carry the numbers.
+    expect(table.ren.combat?.profile?.resists?.fire ?? 0).toBe(0);
+    expect(table.ren.hpRegen).toBe(0);
+    expect(hasEffect(table.effects, 'p1', EffectId.Burning)).toBe(false);
+
+    expect(table.engine.submitMove('p1', 'e').ok).toBe(true);
+    table.engine.pump();
+
+    /**
+     * `init_dam = dam * perc / 100` with perc 50 (damage_types.lua:1129-1131),
+     * AND ONE TICK. The pump runs the game turn out, and the effect clock
+     * (`actBase`, tome/class/Actor.lua:597) fires once before the player is
+     * handed the next turn — as it does upstream, where it runs on the game
+     * clock and not on the player's act.
+     */
+    const tick = DAMAGE / 2 / 3;
+    expect(before - table.ren.hp, 'the first hit was not half the bolt').toBeCloseTo(
+      DAMAGE / 2 + tick,
+      10,
+    );
+    const burn = effectOn(table.effects, 'p1', EffectId.Burning);
+    if (burn === undefined) throw new Error('the fire trap set nobody alight');
+    // `power = dam / dur` of the remainder, for `dur = 3` — :1128 and :1137.
+    expect(burn.params.power).toBe(tick);
+    expect(burn.totalDur).toBe(3);
+    expect(burn.dur).toBe(2);
+    // `{src=src, ...}` and no `apply_power` (:1137): the trap is the source,
+    // and no save was rolled, so the whole three turns landed.
+    expect(burn.params.srcId).toBe(table.world.trapAt(3, LANE_Y)?.id);
+    expect(burn.savedVs, 'the burn was saved against').toBeNull();
+    expect(burn.maximum).toBe(3);
+
+    burnOut(table);
+    // Both halves, and nothing more: the burn is the remainder, not a bonus.
+    expect(before - table.ren.hp).toBeCloseTo(DAMAGE, 10);
+  });
+
+  it('is cut by fire resistance in BOTH halves — each tick is a FIRE hit', () => {
+    const table = fireScene('fireburn-resist', { fireResist: 50 });
+    const before = table.ren.hp;
+    expect(table.ren.combat?.profile?.resists?.fire).toBe(50);
+
+    expect(table.engine.submitMove('p1', 'e').ok).toBe(true);
+    table.engine.pump();
+    // Half of the first half, and half of the one tick the pump ran.
+    expect(before - table.ren.hp, 'resistance did not reach the first hit').toBeCloseTo(
+      DAMAGE / 4 + DAMAGE / 12,
+      10,
+    );
+
+    burnOut(table);
+    expect(before - table.ren.hp, 'resistance did not reach the ticks').toBeCloseTo(DAMAGE / 2, 10);
+  });
+
+  it('sets nobody alight that the first half killed', () => {
+    // damage_types.lua:1133 finds no actor on the tile once the body is gone.
+    // Ours stays on its tile, so this pins `setEffect`'s corpse refusal as the
+    // rule the trap relies on.
+    const table = fireScene('fireburn-kill-2');
+    table.ren.hp = DAMAGE / 4;
+
+    expect(table.engine.submitMove('p1', 'e').ok).toBe(true);
+    table.engine.pump();
+
+    // The setup: trigger_fail spares one step in twenty, and on a spared step
+    // there is nothing here to measure.
+    expect(table.ren.hp, 'the trap did not go off on this seed').toBeLessThan(DAMAGE / 4);
+    expect(table.ren.alive, 'the first half did not bring Ren down').toBe(false);
+    expect(hasEffect(table.effects, 'p1', EffectId.Burning), 'a corpse was set alight').toBe(false);
+  });
+
+  it('sets nobody alight that the wipe it caused has stood back up', () => {
+    /**
+     * THE SAME RULE, WITH THE SURVIVAL SYSTEM WIRED, and it is the case the
+     * fixture above cannot see. Ren is the whole party, so the hit that downs
+     * her wipes it, and `resetFloorParty` stands her up inside the same
+     * `noteCasualty`. Upstream decides the burn while the body is still dead
+     * (damage_types.lua:1131-1133), so a burn decided after the wipe would
+     * land on a body that was never alive to be hit.
+     */
+    const table = fireScene('fireburn-wipe', { survival: true });
+    table.ren.hp = DAMAGE / 4;
+
+    expect(table.engine.submitMove('p1', 'e').ok).toBe(true);
+    const result = table.engine.pump();
+
+    // The setup: the trap went off, and the wipe happened and stood her up.
+    expect(table.world.trapAt(3, LANE_Y)?.knownBy.has('p1'), 'the trap did not go off').toBe(true);
+    // A wipe reaches the wire as `erased` with the Wipe reason, and `downed`
+    // before it — see test/server/dot-kill.test.ts, which reads it the same way.
+    const kinds = result.playerEvents.map((event) => event.k);
+    expect(kinds, 'the trap never put Ren down').toContain('downed');
+    expect(kinds, 'the party did not wipe').toContain('erased');
+    expect(table.ren.alive, 'the wipe did not stand Ren back up').toBe(true);
+
+    /**
+     * THE CLAIM, ON THE HIT POINTS AND ON THE EVENTS, NOT ON THE EFFECT TABLE.
+     * Measured before the fix: the burn landed on the restored body and ticked
+     * twice inside the same pump (hp 496/500), and the wipe's own clean-up then
+     * took the effect away — so asking only "is she burning now" passed while
+     * she walked out of a full restore already hurt.
+     */
+    const afterWipe = kinds.slice(kinds.indexOf('erased') + 1);
+    expect(afterWipe, 'the body the wipe stood up was set alight').not.toContain('effect_applied');
+    expect(afterWipe, 'the body the wipe stood up kept burning').not.toContain('damage');
+    expect(table.ren.hp, 'the wipe restored her short of full').toBe(table.ren.maxHp);
+    expect(hasEffect(table.effects, 'p1', EffectId.Burning)).toBe(false);
+  });
+
+  it('leaves the ice and lightning bolts as they were — no burn', () => {
+    for (let i = 0; i < 300; i += 1) {
+      const kit = rollTrap(1, createRng(`bolt-${String(i)}`), 'delve.traps.0');
+      if (kit?.effect.kind !== 'bolt') continue;
+      if (kit.kind === 'trap_fire') {
+        expect(kit.effect.burn?.effectId, 'the fire trap lost its FIREBURN').toBe(EffectId.Burning);
+      } else {
+        expect(kit.effect.burn, `${kit.kind} grew a burn`).toBeUndefined();
+      }
+    }
   });
 });
 
