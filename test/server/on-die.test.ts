@@ -152,7 +152,7 @@ describe('a creature that bursts when it dies', () => {
     expect(table.world.zones(), 'a creature with no onDie row still burst').toEqual([]);
   });
 
-  it('covers the whole 3x3 at radius 1 — the Glut`s own row, corners included', () => {
+  it('covers the whole 3x3 at radius 1, corners included', () => {
     /**
      * ═══════════════════════════════════════════════════════════════════════
      * ToME's BALL, NOT THE PLUS. `shared/distance.ts` `discTiles`.
@@ -160,15 +160,11 @@ describe('a creature that bursts when it dies', () => {
      *
      * `ballTiles` cut the exact-Euclid disc, so a radius-1 cloud was the
      * five-tile plus and its four corners were bare floor. ToME's disc at radius
-     * 1 is every neighbour. Asserted on the SHIPPED row rather than `CLOUD`,
-     * because the Glut is the body a player meets this on — and its radius is
-     * awaiting the author's ruling, so a change to it should name itself here
-     * rather than quietly re-shape this test.
+     * 1 is every neighbour. This was asserted on the Glut's shipped row while
+     * the Glut was radius 1; it is radius 2 now (vermin.lua:83-86), so the rule
+     * is held on `CLOUD` and the Glut's own shape has its own case below.
      */
-    const row = INDEX_GLUT.onDie;
-    if (row === undefined) throw new Error('the Glut no longer leaves anything behind');
-    expect(row.radius, 'the Glut`s radius moved — see its note in content/monsters.ts').toBe(1);
-    const table = stage('ondie-corners', { onDie: row });
+    const table = stage('ondie-corners', { onDie: CLOUD });
 
     expect(table.engine.submitMove('p1', 'e').ok).toBe(true);
     table.engine.pump();
@@ -198,6 +194,49 @@ describe('a creature that bursts when it dies', () => {
       { x: 6, y: 6 },
       { x: 7, y: 6 },
     ]);
+  });
+
+  it('bursts over ToME`s radius-2 disc for five turns — the Glut`s own row (vermin.lua:83-86)', () => {
+    /**
+     * `addEffect(self, self.x, self.y, 5, BLIGHT, getStr(90, true), 2, ...)`:
+     * five turns, radius two. Radius 2 in ToME's disc is the 5x5 without its
+     * four corners — 21 tiles — so the corners are named and so is a knight's
+     * step, which is inside at rounded distance 2 and outside a square of 3x3.
+     * Asserted on the SHIPPED row, because the Glut is the body a player meets
+     * this on.
+     */
+    const row = INDEX_GLUT.onDie;
+    if (row === undefined) throw new Error('the Glut no longer leaves anything behind');
+    expect(row.radius, 'the Glut`s radius moved — see its note in content/monsters.ts').toBe(2);
+    expect(row.turns).toBe(5);
+    const table = stage('ondie-glut-shape', { onDie: row });
+
+    expect(table.engine.submitMove('p1', 'e').ok).toBe(true);
+    table.engine.pump();
+
+    expect(table.world.getActor('m1')?.alive ?? true, 'the husk survived the swing').toBe(false);
+    const tiles = table.world.zones()[0]?.tiles ?? [];
+    expect(tiles).toHaveLength(21);
+    // The husk fell on 6,5. The 5x5's corners are out; a knight's step is in.
+    for (const corner of [
+      { x: 4, y: 3 },
+      { x: 8, y: 3 },
+      { x: 4, y: 7 },
+      { x: 8, y: 7 },
+    ]) {
+      expect(
+        tiles,
+        `the cloud reached the far corner ${String(corner.x)},${String(corner.y)}`,
+      ).not.toContainEqual(corner);
+    }
+    for (const step of [
+      { x: 8, y: 4 },
+      { x: 4, y: 6 },
+      { x: 5, y: 3 },
+      { x: 7, y: 7 },
+    ]) {
+      expect(tiles, `the cloud left ${String(step.x)},${String(step.y)} bare`).toContainEqual(step);
+    }
   });
 
   it('STOPS AT A WALL rather than pooling in the corridor beyond it', () => {

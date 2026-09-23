@@ -37,6 +37,7 @@ import { AttackRefusal, canAttack, combatDistance } from '../../src/server/engin
 import {
   DamageType,
   applyArmour,
+  applyDamage,
   applyResists,
   combatGetDamageIncrease,
   combatGetResist,
@@ -1023,6 +1024,25 @@ function damagePerPlayerTurn(template: MonsterTemplate, victim: CombatSheet): nu
   const chance = hitChance(combatAttack(template.combat), combatDefense(victim)) / 100;
   return chance * meanBlow(template.combat, victim) * template.globalSpeed;
 }
+
+describe('index_glut, derived', () => {
+  it('takes half as much again from fire, as a troll does (troll.lua:49)', () => {
+    /**
+     * `resists = { [DamageType.FIRE] = -50 }` on BASE_NPC_TROLL. Driven through
+     * `applyDamage` on a spawned body rather than read off the template, so the
+     * row has to reach the composed sheet the projector reads. The other two
+     * rows are the controls: physical untouched, darkness halved.
+     */
+    const hit = (type: DamageType): number => {
+      const glut = spawn(INDEX_GLUT, 'm1', { x: 1, y: 1 });
+      expect(glut.hp, 'the fixture must survive the blow').toBeGreaterThan(20);
+      return applyDamage(glut, 10, type, { id: 'src' }, scriptedRng([])).dealt;
+    };
+    expect(hit(DamageType.Fire)).toBeCloseTo(15, 10);
+    expect(hit(DamageType.Physical)).toBeCloseTo(10, 10);
+    expect(hit(DamageType.Darkness)).toBeCloseTo(5, 10);
+  });
+});
 
 describe('the elite’s claw — the roster’s one melee rider', () => {
   /**

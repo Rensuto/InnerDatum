@@ -2361,24 +2361,16 @@ export const INDEX_GLUT: MonsterTemplate = Object.freeze({
    * SO IT IS ANCHORED TO THE ONE PER-TURN DAMAGE THIS GAME ALREADY PRICES.
    * `BLEED_POWER` is the game's existing answer to "what is damage every turn
    * worth", chosen against a swing of about four and a half, and a burst is
-   * that same per-turn figure spread over ground instead of into one body. What
-   * makes it worth more than a bleed is the AREA and the denial, not a bigger
-   * number — which is also why the radius is one rather than upstream's two.
+   * that same per-turn figure spread over ground instead of into one body.
    *
-   * ═══ THAT ARGUMENT WAS MADE IN TILE COUNTS, AND THE COUNTS HAVE MOVED ═══
-   * It read: *"a radius-two ball is thirteen tiles, and thirteen tiles of a
-   * forty-square floor is not a hazard, it is a wall"*, and *"RADIUS ONE IS THE
-   * FIVE-TILE PLUS, the same shape the Alchemic Vial throws"*. Both counts were
-   * the exact-Euclid disc `ballTiles` used to cut. Balls take ToME's disc now
-   * (`shared/distance.ts` `discTiles`), so radius one is the whole 3x3 — NINE
-   * tiles, and no longer the vial's shape — and upstream's radius two is
-   * twenty-one.
-   *
-   * THE RADIUS IS UNCHANGED AND AWAITS THE AUTHOR'S RULING: keep one, which is
-   * nine tiles now, or take upstream's two. Nine sits between the five this note
-   * chose and the thirteen it called a wall, so the old argument no longer
-   * settles the number on its own, and it is left at one rather than re-argued
-   * here.
+   * ═══ THE SHAPE IS UPSTREAM'S: RADIUS TWO, FIVE TURNS (vermin.lua:83-86) ═══
+   * `addEffect(self, self.x, self.y, 5, BLIGHT, getStr(90, true), 2, 5, ...)` —
+   * five turns, radius two. This was radius one and four turns, argued from
+   * tile counts that moved when balls took ToME's disc (`shared/distance.ts`
+   * `discTiles`): radius two is twenty-one tiles, not the thirteen once called
+   * a wall. The author ruled on 2026-09-23 to keep the port 1:1 with ToME, so
+   * the shape is the worm's own. The DAMAGE stays anchored above until the
+   * stat scale is ToME's, and the TYPE stays physical until Blight exists.
    *
    * ═══ PHYSICAL, AND DARKNESS WAS THE OBVIOUS WRONG ANSWER ═══
    * Darkness is the Index's own element and would have been the flavour pick.
@@ -2394,10 +2386,11 @@ export const INDEX_GLUT: MonsterTemplate = Object.freeze({
    * would be a punishment with no upside.
    */
   onDie: {
-    radius: 1,
+    // vermin.lua:83-86 — radius 2, duration 5.
+    radius: 2,
     type: DamageType.Physical,
     damage: BLEED_POWER,
-    turns: 4,
+    turns: 5,
     friendlyFire: true,
   },
   // Grows into what it already leads with. See `autoStats`.
@@ -2491,9 +2484,13 @@ export const INDEX_GLUT: MonsterTemplate = Object.freeze({
     },
     profile: {
       resists: {
-        // OURS, not a port — upstream's troll takes +50% from fire and this
-        // engine has no fire. The Index's own half-resistance to darkness is
-        // the identity every made thing in this file carries; physical is left
+        // troll.lua:49 — `resists = { [DamageType.FIRE] = -50 }`. A troll
+        // takes half as much again from fire. This said "this engine has no
+        // fire", which stopped being true when Fire became a damage type; the
+        // flare, the fire trap and Backdraft all deal it.
+        [DamageType.Fire]: -50,
+        // OURS, not a port. The Index's own half-resistance to darkness is the
+        // identity every made thing in this file carries; physical is left
         // alone, because the answer to a wall is to hit it and it must not also
         // be resistant to being hit.
         [DamageType.Darkness]: 50,
