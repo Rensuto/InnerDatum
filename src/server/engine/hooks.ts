@@ -300,7 +300,7 @@ export type PassiveView = {
   movedThisTurn(): boolean;
   /** Is this stance up right now? Lets one talent read another. */
   isSustained(talentId: string): boolean;
-  /** Chebyshev tiles to the nearest living hostile; Infinity when alone. */
+  /** ToME's distance (`tileDistance`) to the nearest living hostile; Infinity when alone. */
   nearestEnemyDistance(): number;
   /**
    * ═══════════════════════════════════════════════════════════════════════════

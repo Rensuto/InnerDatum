@@ -7,6 +7,7 @@ import { describe, expect, it } from 'vitest';
 import { EMPTY_PASSIVE_VIEW } from '../../src/server/engine/hooks.ts';
 import { ADJACENT_CAP, coldReading, perFoeAt } from '../../src/server/talents/cold_reading.ts';
 import { gritAt, seenWorse } from '../../src/server/talents/seen_worse.ts';
+import { tileDistance } from '../../src/shared/distance.ts';
 import type { PassiveView } from '../../src/server/engine/hooks.ts';
 
 /**
@@ -202,5 +203,24 @@ describe('the production PassiveView counts sides, not kinds', () => {
       MAIN.includes('!areEnemies(actor, other)) continue;'),
       'nearestEnemyDistance is back to a kind comparison — cold_case.ts folds beside a friend',
     ).toBe(true);
+  });
+
+  it('measures the nearest one by ToME`s distance, not the square', () => {
+    /**
+     * Ruled 2026-09-23: Cold Case's "within 4 tiles" is measured as every
+     * range and radius in the game is, `tileDistance` (`core.fov.distance`,
+     * rounded). Under the square a body at (4, 3) off is 4 tiles away — near —
+     * where ToME's disc makes it 5 and far. Scraped, for the reason this block
+     * states: the view lives inside `buildServer`'s closure.
+     */
+    const at = MAIN.indexOf('nearestEnemyDistance: () => {');
+    expect(at, 'the production view no longer defines nearestEnemyDistance').toBeGreaterThan(0);
+    const body = MAIN.slice(at, MAIN.indexOf('return best;', at));
+    expect(body, 'nearestEnemyDistance stopped using ToME`s distance').toContain(
+      'tileDistance(actor, other)',
+    );
+    expect(body, 'nearestEnemyDistance is measuring the square again').not.toContain('Math.max(');
+    // And the number the ruling turns on, from the function the view calls.
+    expect(tileDistance({ x: 0, y: 0 }, { x: 4, y: 3 })).toBe(5);
   });
 });

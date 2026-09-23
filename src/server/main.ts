@@ -29,6 +29,7 @@ import { checkTier, tierRefusalText } from '../shared/tiers.ts';
 import { treeById } from './content/talent-trees.ts';
 import type { ClassDef } from './content/classes.ts';
 import { PLAYER_RANK } from '../shared/leveling.ts';
+import { tileDistance } from '../shared/distance.ts';
 import { PROTOCOL_VERSION } from '../shared/version.ts';
 import {
   classById,
@@ -1550,7 +1551,10 @@ export function buildServer() {
           // line: `cold_case.ts` folds at `nearestEnemyDistance() < FAR`, so a
           // companion walking beside you switched it off for the whole floor.
           if (other.id === actor.id || !other.alive || !areEnemies(actor, other)) continue;
-          const d = Math.max(Math.abs(other.x - actor.x), Math.abs(other.y - actor.y));
+          // ToME'S DISTANCE, as every range and radius in the game is measured
+          // (`tileDistance`, `core.fov.distance`). This was the square, so a
+          // body a knight's step past the ring read as near. Ruled 2026-09-23.
+          const d = tileDistance(actor, other);
           if (d < best) best = d;
         }
         return best;
