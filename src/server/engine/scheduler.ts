@@ -1264,6 +1264,20 @@ export type PumpCtx = {
    */
   readonly startSuffocating?: (actor: EngineActor) => void;
   /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * A STATUS TICK HURT THIS BODY — take off what any damage takes off.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * `onTakeHit` un-dazes on ANY damage (tome/class/Actor.lua:2156-2158), and a
+   * bleed or a burn ticking is damage. A blow reaches the same rule through
+   * `TalentResolution.noteStruck`, but that also pays the Watchman's Resolve
+   * for absorbing a blow, and a DoT is not a blow — so the tick lane gets this
+   * door alone. Built beside `startSuffocating` from the same `EffectCtx`.
+   *
+   * Absent → a tick breaks nothing, which is every fixture without a status table.
+   */
+  readonly breakOnDamage?: (actorId: string) => void;
+  /**
    * AND THE WAY BACK OUT OF IT: `EFF_SUFFOCATING` removed with `force`, as
    * `cleanActor` removes it from a body death gives back
    * (dialogs/DeathDialog.lua:115). Called with `catchBreath` on every body a wipe
@@ -1777,6 +1791,10 @@ function resolveStatusHits(run: Run, sweepTurn: number | null): void {
       // the same reason and on the third mapper to need it.
       healed: hit.healed,
     });
+
+    // ANY DAMAGE UN-DAZES — see `PumpCtx.breakOnDamage`. Not on a heal
+    // (`amount` 0, `healed` set) and not on a tick every resist ate.
+    if (hit.amount > 0) run.ctx.breakOnDamage?.(hit.victimId);
 
     if (!hit.killed) continue;
     const victim = run.world.getActor(hit.victimId);

@@ -1019,6 +1019,38 @@ const ACTOR_ID_HEX = 16;
  * shapes satisfy `sanitiseId` in persist/saves.ts, which is what lets either
  * appear in a path component without a second rule.
  */
+/**
+ * WHAT A PLAYER IS TOLD WHEN A SUBMITTED INTENT IS REFUSED AT RESOLUTION.
+ *
+ * The routing the pump's refusals take, lifted out of `buildGateway` so it can
+ * be read and tested. Three codes have client sentences no server could write
+ * (the pending talent's range); `illegal_move` covers the bookkeeping refusals
+ * with no player meaning; and ONE carries upstream's own words.
+ *
+ * `pinned` IS A BODY THAT CANNOT MOVE — Pinned or, since the daze took
+ * `never_move`, Dazed. `illegal_move` prints "you cannot go that way", which
+ * sends a player looking for another direction when every direction is refused.
+ * Upstream says `game.logPlayer(self, "You are unable to move!")`
+ * (tome/class/Actor.lua:1341), and `Refused` carries that sentence as it is.
+ */
+export function refusalFrame(reason: string): {
+  readonly code: ErrorCode;
+  readonly message: string;
+} {
+  switch (reason) {
+    case 'too_close':
+      return { code: ErrorCode.TooClose, message: `refused at resolution: ${reason}` };
+    case 'out_of_range':
+      return { code: ErrorCode.OutOfRange, message: `refused at resolution: ${reason}` };
+    case 'no_los':
+      return { code: ErrorCode.NoLos, message: `refused at resolution: ${reason}` };
+    case 'pinned':
+      return { code: ErrorCode.Refused, message: 'You are unable to move!' };
+    default:
+      return { code: ErrorCode.IllegalMove, message: `refused at resolution: ${reason}` };
+  }
+}
+
 export function actorIdForUser(discordUserId: string): string {
   const digest = createHash('sha256')
     .update(ACTOR_ID_DOMAIN)
@@ -7421,18 +7453,6 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
      * verb would be the kind of small lie that costs an evening. Only the
      * developer sees it now — the player reads the client's sentence.
      */
-    const codeForRefusal = (reason: string): ErrorCode => {
-      switch (reason) {
-        case 'too_close':
-          return ErrorCode.TooClose;
-        case 'out_of_range':
-          return ErrorCode.OutOfRange;
-        case 'no_los':
-          return ErrorCode.NoLos;
-        default:
-          return ErrorCode.IllegalMove;
-      }
-    };
     /**
      * ═══════════════════════════════════════════════════════════════════════
      * SOMEBODY ELSE PUT THEM ON THE DOORSTEP. THAT IS NOT A DECISION TO LEAVE.
@@ -7491,11 +7511,8 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       const conn = connByActor.get(refusal.id);
       const owner = conn === undefined ? undefined : sessions.get(conn);
       if (owner === undefined || !owner.helloDone) continue;
-      sendError(
-        owner.socket,
-        codeForRefusal(refusal.reason),
-        `refused at resolution: ${refusal.reason}`,
-      );
+      const frame = refusalFrame(refusal.reason);
+      sendError(owner.socket, frame.code, frame.message);
     }
 
     /**

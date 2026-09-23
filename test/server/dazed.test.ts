@@ -35,13 +35,18 @@ import {
 import {
   breakDamageSensitive,
   effectsOn,
+  hasEffect,
   recomputeAttributes,
   setEffect,
 } from '../../src/server/engine/effects.ts';
 import { combatAttack, combatDefense } from '../../src/server/engine/derived.ts';
 import { createContentTalentEngine } from '../../src/server/content/classes.ts';
 import { talentRuntimeFor } from '../../src/server/main.ts';
+import { refusalFrame } from '../../src/server/net/gateway.ts';
+import { createTurnEngine } from '../../src/server/turn-engine.ts';
 import { createWorld } from '../../src/server/world/world.ts';
+import { AiProfile } from '../../src/server/engine/actor.ts';
+import { ErrorCode, TileCode } from '../../src/shared/protocol.ts';
 import { createRng } from '../../src/shared/rng.ts';
 import type { EffectActor } from '../../src/server/engine/effects.ts';
 
@@ -212,5 +217,131 @@ describe('breaking on damage', () => {
     recomputeAttributes(state, actor);
     expect(actor.combat?.flags?.dazed).toBe(false);
     expect(combatAttack(actor.combat ?? {})).toBe(combatAttack(clean.combat ?? {}));
+  });
+});
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * A DAZE ROOTS YOU, AND ANY DAMAGE BREAKS IT — through the turn engine.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * physical.lua:570 gives DAZED `never_move`; tome/class/Actor.lua:1338-1342 lets a
+ * rooted body still swing at what it walks into; and :2156-2158 takes the daze
+ * off on ANY damage, a bleed's tick included. Driven through `createTurnEngine`
+ * because the rule lives in the join between the effect, the move gate and the
+ * tick lane.
+ */
+describe('a daze roots you where you stand', () => {
+  function stage(seed: string) {
+    const world = createWorld(seed);
+    world.level.tiles.fill(TileCode.FLOOR);
+    const effects = createMvpEffectState();
+    const ren = world.addPlayer('p1', 'Ren', { maxHp: 500 });
+    ren.x = 2;
+    ren.y = 5;
+    ren.hpRegen = 0;
+    // Every blow the tick lane reports as a BLOW. A DoT must not appear here:
+    // `noteStruck` pays the Watchman's Resolve, and a tick is not a blow.
+    const struck: string[] = [];
+    const runtime = talentRuntimeFor(createContentTalentEngine(), world);
+    const engine = createTurnEngine({
+      world,
+      now: () => 0,
+      effects,
+      talentRuntime: {
+        ...runtime,
+        noteStruck: (id: string) => {
+          struck.push(id);
+          runtime.noteStruck(id);
+        },
+      },
+    });
+    engine.join('p1');
+    const daze = (): void => {
+      setEffect(effects, ren, EffectId.Dazed, TURNS, {}, createRng(`${seed}:daze`));
+      recomputeAttributes(effects, ren);
+    };
+    return { world, engine, effects, ren, struck, daze };
+  }
+
+  it('refuses the step, where the same body undazed walks', () => {
+    const table = stage('daze-root');
+    // The control, first: this body can walk.
+    expect(table.engine.submitMove('p1', 'e').ok).toBe(true);
+    table.engine.pump();
+    expect(table.ren.x, 'the fixture body could not walk to begin with').toBe(3);
+
+    table.daze();
+    expect(table.ren.combat?.flags?.pinned, 'the daze did not root').toBe(true);
+    expect(table.engine.submitMove('p1', 'e').ok).toBe(true);
+    const result = table.engine.pump();
+    expect(table.ren.x, 'a dazed body walked').toBe(3);
+    expect(result.refusals).toContainEqual({ id: 'p1', reason: 'pinned' });
+  });
+
+  it('still swings at what it walks into — the rooted body attacks', () => {
+    const table = stage('daze-swing');
+    const husk = table.world.addMonster('m1', {
+      name: 'Index Husk',
+      sprite: 'enemy_index_husk_s',
+      x: 3,
+      y: 5,
+      profile: AiProfile.MeleeChaser,
+      maxHp: 500,
+    });
+    husk.hpRegen = 0;
+    table.daze();
+
+    expect(table.engine.submitMove('p1', 'e').ok).toBe(true);
+    const result = table.engine.pump();
+    expect(result.refusals, 'the bump was refused as a move').not.toContainEqual({
+      id: 'p1',
+      reason: 'pinned',
+    });
+    expect(
+      result.playerEvents.some((event) => event.k === 'attack'),
+      'the rooted body did not swing',
+    ).toBe(true);
+    expect(table.ren.x).toBe(2);
+  });
+
+  it('is broken by a bleed ticking, which is not a blow — and then the body walks', () => {
+    const table = stage('daze-tick');
+    table.daze();
+    setEffect(table.effects, table.ren, EffectId.Bleeding, 3, { power: 1 }, createRng('bleed'));
+
+    expect(table.engine.hold('p1').ok).toBe(true);
+    table.engine.pump();
+    expect(table.ren.hp, 'the bleed never ticked').toBeLessThan(500);
+    expect(hasEffect(table.effects, 'p1', EffectId.Dazed), 'the tick left the daze on').toBe(false);
+    expect(table.struck, 'a tick was paid as a blow').toEqual([]);
+
+    expect(table.engine.submitMove('p1', 'e').ok).toBe(true);
+    table.engine.pump();
+    expect(table.ren.x, 'the body the tick woke up could not walk').toBe(3);
+  });
+
+  it('is NOT broken by a heal ticking — only damage un-dazes', () => {
+    // The un-daze is in `onTakeHit` (tome/class/Actor.lua:2156-2158); a heal is
+    // never a hit. The tick lane reports a heal with `amount` 0.
+    const table = stage('daze-heal');
+    table.ren.hp = 400;
+    table.daze();
+    setEffect(table.effects, table.ren, EffectId.Regeneration, 3, { power: 5 }, createRng('regen'));
+
+    expect(table.engine.hold('p1').ok).toBe(true);
+    table.engine.pump();
+    expect(table.ren.hp, 'the regeneration never ticked').toBeGreaterThan(400);
+    expect(hasEffect(table.effects, 'p1', EffectId.Dazed), 'a heal broke the daze').toBe(true);
+  });
+
+  it('says what upstream says to a body that cannot move', () => {
+    // tome/class/Actor.lua:1341 — "You are unable to move!", not "you cannot go
+    // that way", which sends a player looking for another direction.
+    expect(refusalFrame('pinned')).toEqual({
+      code: ErrorCode.Refused,
+      message: 'You are unable to move!',
+    });
+    expect(refusalFrame('terrain').code).toBe(ErrorCode.IllegalMove);
   });
 });

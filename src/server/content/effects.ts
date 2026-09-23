@@ -1028,23 +1028,23 @@ export const BREACHED: EffectDef = Object.freeze({
  * halved everything sounds oppressive and almost never happens, because in a
  * real fight nobody gets three untouched turns. Porting the numbers without
  * this rule would produce a citation that is true line by line and false as a
- * whole — so `breaksOnDamage` was built for this effect, and rides on
- * `noteStruck`, which already fires on exactly upstream's condition.
+ * whole — so `breaksOnDamage` was built for this effect. ANY damage is upstream's
+ * word (tome/class/Actor.lua:2156-2158, in `onTakeHit`): a blow reaches it
+ * through `noteStruck`, and a bleed or a burn ticking through the pump's
+ * `breakOnDamage`, which pays no Resolve.
  *
- * ═══ `never_move` IS ABSENT, AND STATED RATHER THAN DROPPED ═══
- * This engine has no movement-prohibition attribute. The nearest thing is
- * `mpPenalty`, and spending it here would be a lie of a different shape: a
- * player at 0 MP is a player who cannot step, but a MONSTER moves on the
- * actor's budget and would be untouched, so the same effect would mean two
- * different things depending on who wore it. A dazed body is slower to act and
- * worse at everything; it is not rooted. Rooting arrives when there is an
- * attribute for it.
+ * ═══ AND IT ROOTS YOU — `never_move`, the second line of `activate` ═══
+ * This used to say the engine had no movement-prohibition attribute. It has one:
+ * PINNED's `pinned`, read by the one gate in `tryAct` (tome/class/Actor.lua:1338),
+ * which still lets the body attack what it walks into. A dazed body now stands
+ * where it is, as upstream's does, and the daze is the reason to hit it.
  */
 export const DAZED: EffectDef = Object.freeze({
   id: EffectId.Dazed,
   badge: 'Dz',
   displayName: 'Dazed',
-  description: 'Reeling. Every roll you make and every roll you resist is halved.',
+  description:
+    'Reeling. Every roll you make and every roll you resist is halved, and you cannot move. Any damage ends it.',
   // physical.lua:562 — `type = "physical"`.
   type: SaveChannel.Physical,
   status: EffectStatus.Detrimental,
@@ -1061,6 +1061,8 @@ export const DAZED: EffectDef = Object.freeze({
   modifiers: {
     // The flag `finish()` has been reading since the port. Halves the eight.
     dazed: true,
+    // physical.lua:570 — `effectTemporaryValue(eff, "never_move", 1)`.
+    pinned: true,
   },
 } satisfies EffectDef);
 

@@ -59,6 +59,7 @@ import { createBarrier } from './engine/barrier.ts';
 import { RespawnRefusal, forgetActor as forgetDowned, isErased, respawn } from './engine/downed.ts';
 import type { DownedState } from './engine/downed.ts';
 import {
+  breakDamageSensitive,
   dispel,
   forgetActor as forgetEffects,
   hasEffect,
@@ -3453,6 +3454,20 @@ export function createTurnEngine(opts: TurnEngineOptions): ReapingTurnEngine {
          * upstream passes none either. The `{dam=20}` is the definition's own
          * `parameters`, which `setEffect` fills in.
          */
+        /**
+         * THE TICK LANE'S UN-DAZE — `PumpCtx.breakOnDamage`. From the same
+         * `EffectCtx` as the clock and the door, so "is not dazed anymore" is
+         * noted into the same drain as the tick that caused it.
+         */
+        breakOnDamage:
+          statusCtx === undefined
+            ? undefined
+            : (actorId: string): void => {
+                const body = world.getActor(actorId);
+                if (body !== undefined) {
+                  breakDamageSensitive(statusCtx.state, body, world.rng, statusCtx.ctx);
+                }
+              },
         startSuffocating:
           statusCtx === undefined
             ? undefined
