@@ -1470,8 +1470,8 @@ export const INDEX_WRAITH: MonsterTemplate = Object.freeze({
      * ═══════════════════════════════════════════════════════════════════════
      * `losgoroth.lua:49-55` gives it seven `*_immune` lines: poison, disease,
      * cut, stun, blind, knockback and confusion. We have statuses for five of
-     * those seven; cut, blind and confusion are ported here, stun is declined
-     * below, and knockback waits for the knockback gate.
+     * those seven; cut, blind, confusion and knockback are ported here, and
+     * stun is declined below.
      *
      * CUT IS THREE KEYS BECAUSE OUR `BLEEDING` DECLARES THREE. `subtypes` is
      * `['wound', 'cut', 'bleed']` (content/effects.ts), so upstream's single
@@ -1491,10 +1491,19 @@ export const INDEX_WRAITH: MonsterTemplate = Object.freeze({
      *
      * BLIND (`:53`) ARRIVED WITH BLINDED. This note said there was no blind
      * status; `BLINDED` has been in `MVP_EFFECTS` since the Inquisitor's rider,
-     * so the row upstream gives is ported. Poison and disease are still
-     * unreachable: there is no status for either.
+     * so the row upstream gives is ported. And KNOCKBACK (`:54`) since every
+     * shove reads `knockback_immune` (engine/talents.ts `knockback`): a shadow
+     * has nothing to push. Poison and disease are still unreachable: there is
+     * no status for either.
      */
-    immunities: { wound: 100, cut: 100, bleed: 100, confusion: 100, blind: 100 },
+    immunities: {
+      wound: 100,
+      cut: 100,
+      bleed: 100,
+      confusion: 100,
+      blind: 100,
+      knockback: 100,
+    },
     profile: {
       resists: {
         // DEVIATION 6 OF 7 — OURS, KEPT. Upstream's equivalent is losgoroth.lua:46

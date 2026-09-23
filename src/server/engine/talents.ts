@@ -3688,13 +3688,33 @@ export function teleportRandom(
   return world.placeAt(actor.id, pick);
 }
 
-/** Shove `victim` directly away from `origin`. Returns tiles actually moved. */
+/**
+ * Shove `victim` directly away from `origin`. Returns tiles actually moved.
+ *
+ * ═══ AND ONLY IF IT CAN BE — `canBe("knockback")`, tome/class/Actor.lua:6916 ═══
+ * `knockback = function(self) return self:attr("never_move") and 100 or 100 *
+ * (self:attr("knockback_immune") or 0) end`, read at :6975-6977 as
+ * `resist == 0 and true or rng.percent(100 - resist)`. So a rooted body (Pinned,
+ * Dazed) cannot be shoved at all, a `knockback` immunity is a chance, and a body
+ * with none takes NO draw. Every authored shove obeys it (ruled 2026-09-23, R4),
+ * as upstream's callers test `target:canBe("knockback")` first
+ * (techniques/archery.lua:403).
+ *
+ * It had to live here: `tryMove` is the world's step and skips the pinned gate
+ * in `tryAct`, so a pinned body could be shoved across the room.
+ */
 export function knockback(
   world: TalentWorld,
   victim: TalentActor,
   origin: TileXY,
   tiles: number,
+  rng: Rng,
 ): number {
+  const resist =
+    victim.combat?.flags?.pinned === true
+      ? 100
+      : Math.max(0, Math.min(100, victim.combat?.immunities?.knockback ?? 0));
+  if (resist > 0 && rng.int(`talent.knockback.${victim.id}`, 1, 100) > 100 - resist) return 0;
   let moved = 0;
   for (let i = 0; i < tiles; i += 1) {
     const dir = dirToward(origin, victim);

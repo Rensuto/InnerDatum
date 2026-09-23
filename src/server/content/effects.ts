@@ -1498,11 +1498,11 @@ export const BLINDED: EffectDef = Object.freeze({
  * creature is most of the answer to it, and against a melee one is nothing at
  * all. It is a positional status, and the counterplay is positional.
  *
- * ═══ NOT PORTED: THE KNOCKBACK ARM ═══
+ * ═══ AND NOTHING CAN SHOVE YOU — THE KNOCKBACK ARM ═══
  * `Actor.lua:6916` reads `knockback = function(self) return self:attr("never_move") and 100 ...`
- * — being pinned is total immunity to being knocked back. Nothing in this game
- * knocks anybody back yet, so there is no site to put it at; when one lands it
- * reads this flag and needs no edit here.
+ * — being pinned is total immunity to being knocked back. This said nothing
+ * knocked anybody back; five talents do, and `knockback` (engine/talents.ts)
+ * reads this flag before it moves anybody.
  */
 export const PINNED: EffectDef = Object.freeze({
   id: EffectId.Pinned,

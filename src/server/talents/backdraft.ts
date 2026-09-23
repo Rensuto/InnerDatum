@@ -143,7 +143,7 @@ export const backdraft: Talent = {
     // kill race (damage.ts makes the same guarantee).
     if (!victim.alive) return talentDone([hit], [`${victim.name} is unmade.`]);
 
-    const shoved = knockback(ctx.world, victim, origin, PUSH_TILES);
+    const shoved = knockback(ctx.world, victim, origin, PUSH_TILES, ctx.rng);
     return talentDone(
       [hit],
       shoved > 0

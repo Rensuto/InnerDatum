@@ -160,7 +160,7 @@ export const clearTheStreet: Talent = {
       // SHOVED FIRST, THEN SLOWED. The order matters and it is the intuitive
       // one: a body is pushed back and THEN finds itself struggling, rather
       // than being slowed and pushed the same distance anyway.
-      const shoved = knockback(ctx.world, victim, self, push);
+      const shoved = knockback(ctx.world, victim, self, push, ctx.rng);
       const landed = ctx.status?.(victim, EffectId.Slowed, turns, {
         applyPower: power,
         srcId: self.id,

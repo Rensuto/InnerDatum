@@ -155,7 +155,7 @@ export const clearTheAltar: Talent = {
      */
     for (const victim of victims) {
       hits.push(talentProject(ctx, self, victim, base, DamageType.Physical, mult));
-      if (victim.alive) knockback(ctx.world, victim, self, SHOVE_TILES);
+      if (victim.alive) knockback(ctx.world, victim, self, SHOVE_TILES, ctx.rng);
     }
 
     return talentDone(hits, [`The Watcher clears its ground. ${String(hits.length)} thrown back.`]);

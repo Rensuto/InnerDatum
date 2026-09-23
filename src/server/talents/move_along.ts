@@ -146,7 +146,7 @@ export const moveAlong: Talent = {
      * a worse thing to have to explain. The slow still lands, so the turn was
      * not wasted; a Watchman who wanted the shove has learned to check the wall.
      */
-    const shoved = knockback(ctx.world, victim, self, pushTilesAt(ctx.talentLevel));
+    const shoved = knockback(ctx.world, victim, self, pushTilesAt(ctx.talentLevel), ctx.rng);
 
     /**
      * AND THE SLOW LANDS ON A SAVE, like every other status in this game.

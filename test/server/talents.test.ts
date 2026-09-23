@@ -1,4 +1,5 @@
 import { isMonsterTalent } from '../../src/server/talents/monster.ts';
+import { INDEX_WRAITH, monsterInit } from '../../src/server/content/monsters.ts';
 import { treeById } from '../../src/server/content/talent-trees.ts';
 import { trained } from '../helpers/trained.ts';
 import { TALENTS_PER_CLASS_MAX, TALENTS_PER_CLASS_MIN } from '../../src/shared/progression.ts';
@@ -43,6 +44,7 @@ import {
   ballTiles,
   canUseTalent,
   crossTiles,
+  knockback,
   markMultiplier,
   resolveGuardCounter,
   secondsToTurns,
@@ -2122,6 +2124,69 @@ describe('Ashwick Flare lays FIREBURN (fire.lua:46)', () => {
     expect(hit.crit, 'the shrug did not happen — the fixture is not measuring').toBe(false);
     const critPower = ((burn.params.power ?? 0) * FIREBURN_TURNS * (1 + inc / 100)) / hit.damage;
     expect(critPower, 'the burn was built from the shrugged figure').toBeGreaterThan(1.4);
+  });
+});
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * A SHOVE ASKS `canBe("knockback")` FIRST — tome/class/Actor.lua:6916, :6976-6977.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `never_move` is total immunity; `knockback_immune` is a chance; and a body
+ * with neither takes no draw at all. Counted with a scripted stream, so a draw
+ * that should not happen is a thrown error rather than a shifted seed.
+ */
+describe('knockback obeys never_move and knockback immunity', () => {
+  function lane(combat?: TalentActor['combat']) {
+    const f = fixture();
+    const husk = f.addMonster('husk', 6, 5);
+    if (combat !== undefined) Object.assign(husk, { combat });
+    return { f, husk };
+  }
+
+  it('shoves a body with neither, and takes no draw', () => {
+    const { f, husk } = lane();
+    const rng = scriptedRng([]);
+    expect(knockback(f.world, husk, { x: 5, y: 5 }, 2, rng)).toBe(2);
+    expect(husk.x).toBe(8);
+    expect(drawCount(rng)).toBe(0);
+  });
+
+  it('cannot shove a pinned body, and draws once for it as upstream does', () => {
+    const { f, husk } = lane({ flags: { pinned: true } });
+    const rng = scriptedRng([1]);
+    expect(knockback(f.world, husk, { x: 5, y: 5 }, 2, rng)).toBe(0);
+    expect(husk.x).toBe(6);
+    // `rng.percent(100 - 100)` is still a roll.
+    expect(drawCount(rng)).toBe(1);
+  });
+
+  it('treats partial immunity as a chance — 50 lands on 50 and not on 51', () => {
+    const half = { immunities: { knockback: 50 } } as TalentActor['combat'];
+    const landed = lane(half);
+    expect(knockback(landed.f.world, landed.husk, { x: 5, y: 5 }, 1, scriptedRng([50]))).toBe(1);
+    const held = lane(half);
+    expect(knockback(held.f.world, held.husk, { x: 5, y: 5 }, 1, scriptedRng([51]))).toBe(0);
+  });
+
+  it('leaves a wraith where it is — losgoroth.lua:54', () => {
+    const f = fixture();
+    const wraith = f.addMonster('wraith', 6, 5);
+    Object.assign(wraith, { combat: monsterInit(INDEX_WRAITH, { x: 6, y: 5 }).combat });
+    expect(knockback(f.world, wraith, { x: 5, y: 5 }, 2, scriptedRng([1]))).toBe(0);
+    expect(wraith.x).toBe(6);
+  });
+
+  it('holds through the real talent: Move Along cannot shove a dazed body', () => {
+    // The daze roots (physical.lua:570), and a rooted body resists 100.
+    const f = fixture(PLENTY);
+    const watchman = f.add(WATCHMAN, 'dalt', 5, 5);
+    const husk = f.addMonster('husk', 6, 5, 400);
+    f.ctx.status?.(husk, EffectId.Dazed, 5, {});
+    expect(husk.combat?.flags?.pinned, 'the daze did not root the husk').toBe(true);
+    const result = useTalent(f.engine, watchman, talentId('move_along'), { x: 6, y: 5 }, f.ctx);
+    expect(result.ok).toBe(true);
+    expect(husk.x, 'Move Along shoved a rooted body').toBe(6);
   });
 });
 

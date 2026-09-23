@@ -201,7 +201,7 @@ export const wardRush: Talent = {
     // The vacated tile is wherever the victim was standing when the shove
     // started, so this is read before the knockback and not after.
     const vacated = { x: victim.x, y: victim.y };
-    const shoved = knockback(ctx.world, victim, origin, KNOCKBACK_TILES);
+    const shoved = knockback(ctx.world, victim, origin, KNOCKBACK_TILES, ctx.rng);
     if (shoved === 0) {
       return talentDone([hit], [`${victim.name} is pinned and cannot be driven back.`]);
     }
