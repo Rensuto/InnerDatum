@@ -130,7 +130,7 @@ import { hasLineOfSight } from '../../shared/sight.ts';
 import { areEnemies, cooldownOf, sameSide, setCooldown } from './actor.ts';
 import type { Faction, Sided } from './actor.ts';
 import { attackTarget, combatDistance } from './combat.ts';
-import { DamageType, applyDamage } from './damage.ts';
+import { DamageType, applyDamage, splitBurn } from './damage.ts';
 import { combatCrit, combatCritPower, combatDamage } from './derived.ts';
 import type { Dir, TileXY } from '../../shared/coords.ts';
 import type { ActorKind, ActorRank, LevelView } from '../../shared/protocol.ts';
@@ -3978,6 +3978,68 @@ export function talentProject(
 }
 
 /** The base damage a caster talent multiplies. See `talentAttack`'s note. */
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * `talentProject`, FOR FIREBURN — fire now, and the rest as a burn.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * ```lua
+ * self:projectile(tg, x, y, DamageType.FIREBURN, self:spellCrit(t.getDamage(self, t)), ...)   -- fire.lua:46
+ * ...
+ * local init_dam = dam * perc / 100                                                           -- damage_types.lua:1131
+ * DamageType:get(DamageType.FIRE).projector(src, x, y, DamageType.FIRE, init_dam, state)       -- :1132
+ * target:setEffect(target.EFF_BURNING, dur, {src=src, power=(dam - init_dam) / dur, ...})       -- :1136-1137
+ * ```
+ *
+ * THE CRIT IS TAKEN BEFORE THE SPLIT, so both halves carry it. Our crit rolls
+ * inside `resolveDamage`, on the half that lands now, and `critRolled` says
+ * whether it came up — BEFORE the defender's `ignore_direct_crits` could shrug
+ * it, because the shrug is the FIRE projector's (damage_types.lua:104-110) and
+ * the burn never goes through it with the crit's state. So the burn is the
+ * remainder of the crit'd figure however the landing half fared.
+ *
+ * THE BURN IS RAW. `power` is the remainder before inc_damage, resists and the
+ * caster's debuffs, because each tick takes those itself on its way through
+ * the FIRE projector (physical.lua:439-441); `BURNING`'s tick reads them off
+ * its source every turn.
+ *
+ * RETURNS THE HIT AND THE BURN'S POWER. Laying the burn is the caller's, since
+ * `engine/` may not name an effect: `ctx.status` with `EffectId.Burning`.
+ */
+export function talentProjectBurn(
+  ctx: TalentCallCtx,
+  self: TalentActor,
+  victim: TalentActor,
+  base: number,
+  mult: number,
+  initialPercent: number,
+  turns: number,
+): { readonly hit: TalentHit; readonly burnPower: number } {
+  const marked = mult * markMultiplier(ctx.engine, victim.id);
+  const critPower = combatCritPower(combatOf(self));
+  const outcome = applyDamage(victim, base, DamageType.Fire, self, ctx.rng, {
+    mult: (marked * initialPercent) / 100,
+    increase: combatOf(self).increase,
+    penetration: combatOf(self).penetration,
+    critChance: combatCrit(combatOf(self)),
+    critPower,
+  });
+  // `spellCrit` scaled the whole `dam`; FIREBURN split what it returned.
+  const whole = base * marked * (outcome.critRolled ? critPower : 1);
+  return {
+    hit: {
+      targetId: victim.id,
+      hit: true,
+      damage: outcome.dealt,
+      healed: 0,
+      crit: outcome.crit,
+      killed: outcome.killed,
+      type: DamageType.Fire,
+    },
+    burnPower: splitBurn(whole, initialPercent, turns).power,
+  };
+}
+
 export function talentBaseDamage(self: TalentActor): number {
   return combatDamage(combatOf(self));
 }

@@ -67,11 +67,15 @@ import { MELEE_REACH } from '../../src/server/engine/combat.ts';
 import { markPower, sigil } from '../../src/server/talents/sigil.ts';
 import { healFraction, mendWounds } from '../../src/server/talents/mend_wounds.ts';
 import { ActorKind, ActorRank, TileCode } from '../../src/shared/protocol.ts';
-import { DamageType } from '../../src/server/engine/damage.ts';
+import {
+  DamageType,
+  FIREBURN_TURNS,
+  combatGetDamageIncrease,
+} from '../../src/server/engine/damage.ts';
 import { drawCount, scriptedRng } from '../helpers/scripted-rng.ts';
 import { createRng } from '../../src/shared/rng.ts';
 import { EffectId, createMvpEffectState } from '../../src/server/content/effects.ts';
-import { effectDur, hasEffect, statusApplier } from '../../src/server/engine/effects.ts';
+import { effectDur, effectOn, hasEffect, statusApplier } from '../../src/server/engine/effects.ts';
 import type { EffectState } from '../../src/server/engine/effects.ts';
 import type { ClassDef } from '../../src/server/content/classes.ts';
 import type {
@@ -2018,6 +2022,106 @@ describe('the Alchemist — AoE that never touches an ally, and the party heal',
       if (result.ok) expect(result.hits[0]?.hit).toBe(true);
     }
     expect(husk.hp).toBeLessThan(before);
+  });
+});
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * ASHWICK FLARE LAYS FIREBURN — Flame's own delivery, fire.lua:46.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `self:projectile(tg, x, y, DamageType.FIREBURN, self:spellCrit(dam))`: the
+ * crit is taken on the WHOLE figure, then FIREBURN lands half as Fire and
+ * leaves the raw remainder as a three-turn burn (damage_types.lua:1131-1137).
+ *
+ * EVERY CASE IS A RELATION BETWEEN THE TWO HALVES, not a figure, because the
+ * figure moves with the Alchemist's sheet. The landing half went through the
+ * caster's `inc_damage` and the burn did not (each tick takes it), so:
+ *
+ *     landed === burn.power × 3 × (1 + inc/100) × (crit on the landing half)
+ *
+ * The script drives the crit roll directly — 100 misses, 1 lands — and the
+ * husk's base Dexterity gives it upstream's 3% shrug, so a crit draws a second
+ * number: 100 keeps the crit, 1 shrugs it.
+ */
+describe('Ashwick Flare lays FIREBURN (fire.lua:46)', () => {
+  const inc = combatGetDamageIncrease(ALCHEMIST.combat.increase, DamageType.Fire);
+
+  function flare(rolls: readonly number[]) {
+    const f = fixture(rolls);
+    const alchemist = f.add(ALCHEMIST, 'rey', 5, 5);
+    const husk = f.addMonster('husk', 8, 5, 400);
+    const result = useTalent(
+      f.engine,
+      alchemist,
+      talentId('ashwick_flare'),
+      { x: 8, y: 5, actorId: 'husk' },
+      f.ctx,
+    );
+    if (!result.ok) throw new Error('the flare was refused');
+    const hit = result.hits[0];
+    if (hit === undefined) throw new Error('the flare reported no hit');
+    const burn = effectOn(f.effects, 'husk', EffectId.Burning);
+    if (burn === undefined) throw new Error('the flare set nothing alight');
+    return { hit, burn, husk };
+  }
+
+  it('lands half now and leaves half as a three-turn burn, blamed on her', () => {
+    const { hit, burn } = flare([100, 100, 100, 100]);
+    // The setup: no crit, so the relation is the plain split.
+    expect(hit.crit).toBe(false);
+    expect(hit.damage).toBeGreaterThan(0);
+    expect(burn.dur).toBe(FIREBURN_TURNS);
+    expect(burn.params.power ?? 0, 'the burn is not the other half').toBeCloseTo(
+      hit.damage / FIREBURN_TURNS / (1 + inc / 100),
+      10,
+    );
+    // `{src=src}` (damage_types.lua:1137): a kill by the burn is hers.
+    expect(burn.params.srcId).toBe('rey');
+    expect(burn.savedVs, 'FIREBURN rolled a save').toBeNull();
+  });
+
+  it('carries the crit into BOTH halves — spellCrit came before the split', () => {
+    const { hit, burn } = flare([1, 100, 100, 100]);
+    expect(hit.crit, 'the scripted crit did not land').toBe(true);
+    expect(burn.params.power ?? 0, 'the burn lost the crit').toBeCloseTo(
+      hit.damage / FIREBURN_TURNS / (1 + inc / 100),
+      10,
+    );
+  });
+
+  it('offers no burn to a body the landing half killed, and says nothing about one', () => {
+    // damage_types.lua:1133 finds no actor once the body is gone.
+    const f = fixture([100, 100, 100, 100]);
+    const alchemist = f.add(ALCHEMIST, 'rey', 5, 5);
+    const husk = f.addMonster('husk', 8, 5, 1);
+    const result = useTalent(
+      f.engine,
+      alchemist,
+      talentId('ashwick_flare'),
+      { x: 8, y: 5, actorId: 'husk' },
+      f.ctx,
+    );
+    if (!result.ok) throw new Error('the flare was refused');
+    expect(result.hits[0]?.killed, 'the flare did not kill the husk').toBe(true);
+    expect(husk.alive).toBe(false);
+    expect(hasEffect(f.effects, 'husk', EffectId.Burning)).toBe(false);
+    expect(
+      result.notes.some((line) => line.includes('catch fire')),
+      'a corpse was told it did not catch fire',
+    ).toBe(false);
+  });
+
+  it('keeps the crit in the burn when the target shrugs it off the landing half', () => {
+    /**
+     * `ignore_direct_crits` lives in the FIRE projector (damage_types.lua:104-110),
+     * which the landing half goes through with the crit's state and the burn
+     * does not. So a shrug takes the crit off the hit and leaves it on the burn.
+     */
+    const { hit, burn } = flare([1, 1, 100, 100]);
+    expect(hit.crit, 'the shrug did not happen — the fixture is not measuring').toBe(false);
+    const critPower = ((burn.params.power ?? 0) * FIREBURN_TURNS * (1 + inc / 100)) / hit.damage;
+    expect(critPower, 'the burn was built from the shrugged figure').toBeGreaterThan(1.4);
   });
 });
 

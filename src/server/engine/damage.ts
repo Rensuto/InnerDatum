@@ -531,6 +531,14 @@ export type DamageResolution = {
   /** Final damage. A FLOAT — ToME never rounds, and neither does this. */
   readonly amount: number;
   readonly crit: boolean;
+  /**
+   * DID THE CRIT ROLL SUCCEED, BEFORE THE DEFENDER COULD SHRUG IT? `crit` is
+   * false after a shrug (damage_types.lua:104-110); this is the roll alone,
+   * upstream's `spellCrit` answer. FIREBURN needs it: its burn is the crit'd
+   * remainder (damage_types.lua:1136-1137), and a shrug is the projector's,
+   * taken on the half that lands now and never on the burn.
+   */
+  readonly critRolled: boolean;
   /** Damage after step 4, before the projector. Useful for a log's "raw" figure. */
   readonly beforeResists: number;
   /** The composed resistance percentage actually used, post-penetration inputs. */
@@ -598,6 +606,7 @@ export function resolveDamage(
     dam = rolled.dam;
     crit = rolled.crit;
   }
+  const critRolled = crit;
 
   /**
    * ═══════════════════════════════════════════════════════════════════════════
@@ -710,7 +719,7 @@ export function resolveDamage(
     dam = Math.max(0, dam - dec);
   }
 
-  return { amount: dam, crit, beforeResists, resist, affinityHeal };
+  return { amount: dam, crit, critRolled, beforeResists, resist, affinityHeal };
 }
 
 // ---------------------------------------------------------------------------
@@ -937,6 +946,8 @@ export type DamageOutcome = {
   /** The pipeline's own figure before the clamp to remaining HP. */
   readonly raw: number;
   readonly crit: boolean;
+  /** `DamageResolution.critRolled` — the roll, before any shrug. */
+  readonly critRolled: boolean;
   /** True only on the blow that crossed zero, so the death event fires once. */
   readonly killed: boolean;
   readonly type: DamageType;
@@ -1253,6 +1264,7 @@ export function applyDamage(
     dealt: 0,
     raw: resolved.amount,
     crit: resolved.crit,
+    critRolled: resolved.critRolled,
     killed: false,
     type,
     source: source.id,

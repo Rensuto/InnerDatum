@@ -6,6 +6,7 @@
 // SHAPE:   t-engine4 game/modules/tome/data/talents/spells/fire.lua:20-50
 //          (Flame: `cooldown = 3`, `range = 10`, a bolt that goes STRAIGHT to
 //           the projector — no `checkHit` anywhere in a spell's path)
+//          fire.lua:46 (Flame's `DamageType.FIREBURN` on `spellCrit(dam)`)
 // T-Engine4 (C) 2009-2018 Nicolas Casalini "DarkGod" — https://te4.org/license
 
 /**
@@ -15,7 +16,7 @@
  * palm. Smells like Ashwick Row for hours afterward."
  *
  * ═══ IT CANNOT MISS, AND THAT IS THE CLASS ═══
- * `talentProject` skips `checkHit` entirely, because ToME spells do: `Flame`
+ * `talentProjectBurn` skips `checkHit` entirely, because ToME spells do: `Flame`
  * (fire.lua:41-48) and `Throw Bomb` (explosives.lua:44-50) both call
  * `DamageType:get(…).projector` directly, and `attackTargetWith` — the only
  * function in the game that rolls to-hit or applies armour — is never in a
@@ -45,7 +46,8 @@
 
 import { applyLoad } from './loads.ts';
 import { combatTalentScale } from '../../shared/scale.ts';
-import { DamageType } from '../engine/damage.ts';
+import { EffectId } from '../content/effects.ts';
+import { DamageType, FIREBURN_INITIAL_PERCENT, FIREBURN_TURNS } from '../engine/damage.ts';
 import { TalentPower } from '../engine/derived.ts';
 import {
   Affinity,
@@ -56,11 +58,13 @@ import {
   talentId,
   percent,
   talentDone,
-  talentProject,
+  talentProjectBurn,
   talentRefused,
   targetActor,
   TalentKind,
 } from '../engine/talents.ts';
+import { SetEffectOutcome } from '../engine/effects.ts';
+import type { SetEffectResult } from '../engine/effects.ts';
 import type { Talent } from '../engine/talents.ts';
 
 /**
@@ -126,6 +130,19 @@ const DAMAGE_MULT_LOW = 1.3;
  */
 const DAMAGE_MULT_HIGH = 2.2;
 
+/**
+ * What the Record says about the burn, and it depends on whether it took.
+ * physical.lua:428 — `on_gain` is "#Target# is on fire!". Nothing saves against
+ * FIREBURN, so the other branch is an immunity or a body that could not burn.
+ */
+function burnLine(name: string, landed: SetEffectResult | undefined): string[] {
+  if (landed === undefined) return [];
+  if (landed.outcome === SetEffectOutcome.Immune || landed.dur <= 0) {
+    return [`${name} does not catch fire.`];
+  }
+  return [`${name} is on fire!`];
+}
+
 /** The one place this talent's curve is written. */
 function damageMult(talentLevel: number): number {
   return combatTalentScale(talentLevel, DAMAGE_MULT_LOW, DAMAGE_MULT_HIGH);
@@ -161,18 +178,36 @@ export const ashwickFlare: Talent = {
     const victim = targetActor(ctx.world, target);
     if (victim === undefined) return talentRefused(TalentRefusal.NoTarget);
 
-    const hit = talentProject(
+    /**
+     * FIREBURN, AS FLAME'S IS (fire.lua:46). Ruled 2026-09-23: the 2.2 at the
+     * top of the curve stays, and only the delivery splits — half lands now
+     * and half burns over three turns, the crit riding both. `srcId` is the
+     * caster, as upstream's `src=src` is, so a kill by the burn is hers.
+     */
+    const { hit, burnPower } = talentProjectBurn(
       ctx,
       self,
       victim,
       talentBaseDamage(self),
-      DamageType.Fire,
       damageMult(ctx.talentLevel),
+      FIREBURN_INITIAL_PERCENT,
+      FIREBURN_TURNS,
     );
-    return talentDone([hit], [...applyLoad(ctx, self, victim)]);
+    // A body the landing half killed has left the map upstream (damage_types.lua:1133),
+    // so it is not offered a burn to refuse.
+    if (!victim.alive) return talentDone([hit], [...applyLoad(ctx, self, victim)]);
+    const landed = ctx.status?.(victim, EffectId.Burning, FIREBURN_TURNS, {
+      power: burnPower,
+      srcId: self.id,
+      noCtEffect: true,
+    });
+    return talentDone([hit], [...burnLine(victim.name, landed), ...applyLoad(ctx, self, victim)]);
   },
 
+  // fire.lua:71 — "setting the target ablaze and doing %0.2f fire damage over
+  // 3 turns". The whole figure, and where it goes.
   describe: (_self, level) =>
-    `Loose a flare at a target up to ${RANGE} tiles away for ${percent(damageMult(level))} ` +
-    `fire damage. It does not miss.`,
+    `Loose a bolt of fire at a target up to ${RANGE} tiles away, setting it ablaze for ` +
+    `${percent(damageMult(level))} fire damage: half at once and half over ` +
+    `${String(FIREBURN_TURNS)} turns. It does not miss.`,
 };
