@@ -2126,11 +2126,8 @@ export function createTurnEngine(opts: TurnEngineOptions): ReapingTurnEngine {
      * `bellDurationMs` below — this exists as a named function so the two facts
      * `BellState` carries cannot be confused again by a one-line edit.
      */
-    const bellToArm = (): number | null => {
-      if (snapshot.total === 0) return null;
-      const state = barrier.bell(players, level, now());
-      return state.running ? state.durationMs : null;
-    };
+    const bellNow = snapshot.total === 0 ? null : barrier.bell(players, level, now());
+    const bellToArm = (): number | null => (bellNow?.running === true ? bellNow.durationMs : null);
 
     return {
       gameTurn: world.turn.clock.gameTurn,
@@ -2182,6 +2179,19 @@ export function createTurnEngine(opts: TurnEngineOptions): ReapingTurnEngine {
        * quorum of one: nobody is waiting on them, and ToME never hurries a player.
        */
       bellDurationMs: bellToArm(),
+      /**
+       * ═══ AND THE BARRIER'S OWN DEADLINE, WHICH IS THE ONLY ONE ═══
+       * The gateway arms its wall-clock timer from these two and nothing else
+       * (`syncBell`). It kept its own count, keyed on the game turn and the
+       * player, and the barrier restarts a player's count whenever they park
+       * again — a refund, or a `no_energy` talent — without either of those
+       * moving. So the clock on screen ran out while the barrier had most of a
+       * fresh twenty seconds left, nothing happened, and the pass landed one
+       * Bell late. The deadline is on the engine's clock; the remaining time is
+       * what the gateway can put on its own.
+       */
+      bellDeadlineMs: bellNow?.running === true ? bellNow.deadlineMs : null,
+      bellRemainingMs: bellNow?.running === true ? bellNow.remainingMs : null,
       // WHOSE CARDS THE STRIP DRAWS. See `stripFor`: the arrays above are the
       // realm's either way, so a card can never be built from one barrier's
       // blocking set over another's roster.

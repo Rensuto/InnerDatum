@@ -314,6 +314,15 @@ export type TurnState = {
   /** How long a freshly-armed Bell should run, or null for no Bell at all. */
   readonly bellDurationMs: number | null;
   /**
+   * THE BARRIER'S DEADLINE for the running Bell, on the ENGINE'S clock, or null.
+   * An identity, not a time the gateway may use: when it changes, the barrier
+   * has started a fresh count, and the gateway re-arms (`syncBell`). Absent
+   * reads as null — a hand-built snapshot has no Bell.
+   */
+  readonly bellDeadlineMs?: number | null;
+  /** What is left of that count at the snapshot, which the gateway CAN put on its clock. */
+  readonly bellRemainingMs?: number | null;
+  /**
    * WHOSE CARDS THE STRIP DRAWS — a list of player ids, or absent for everybody
    * in the realm.
    *

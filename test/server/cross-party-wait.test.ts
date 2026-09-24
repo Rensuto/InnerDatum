@@ -69,6 +69,10 @@ type Client = {
   send(frame: Frame): void;
   hello(): Promise<string>;
   latest(type: string): Frame | undefined;
+  /** How many frames have arrived — a mark for `latestSince`. */
+  count(): number;
+  /** The newest frame of a type that arrived AFTER `mark`, so a stale one cannot answer. */
+  latestSince(type: string, mark: number): Frame | undefined;
   close(): void;
 };
 
@@ -125,6 +129,12 @@ async function connect(port: number): Promise<Client> {
     },
     latest(type: string): Frame | undefined {
       return [...frames].reverse().find((f) => f['t'] === type);
+    },
+    count(): number {
+      return frames.length;
+    },
+    latestSince(type: string, mark: number): Frame | undefined {
+      return [...frames.slice(mark)].reverse().find((f) => f['t'] === type);
     },
     close(): void {
       socket.close();
@@ -393,6 +403,42 @@ describe('two parties in one engaged realm', () => {
     await waitUntil(() => b.client.latest('turn')?.['current'] === b.id, "B's turn on B's screen");
     expect(h.world.turn.clock.gameTurn, 'the fixture crossed a game turn').toBe(turn);
     const bellMs = b.client.latest('turn')?.['bellMs'];
+    expect(typeof bellMs).toBe('number');
+    expect(bellMs as number).toBeGreaterThan(BELL_MS.Normal - 1_000);
+  });
+
+  it('puts a refunded turn’s fresh count on screen, from the barrier’s own deadline', async () => {
+    // THE BARRIER RESTARTS A PLAYER'S COUNT when they park again inside one
+    // game turn — here a refund — and the gateway used to keep its own count,
+    // keyed on the game turn and the player, neither of which moved. So the
+    // clock on screen ran out on a deadline the barrier no longer had.
+    const { h, a, b } = await strangersEngaged('cross-party-refund-bell');
+    await waitUntil(() => h.engine.turnState().current === b.id, "B's turn");
+
+    // B TO THE MAP'S EDGE, where a step west is refused where it resolves. That
+    // changes what B can see, which moves B's frame by itself — so it goes out
+    // first, on a pump that restarts nothing: A queues a step behind B.
+    b.body.x = 0;
+    await step(a, 's');
+    expect(a.body.pendingIntent, 'A went out of turn').not.toBeNull();
+    await sleep(200);
+    const first = h.engine.turnState().bellDeadlineMs;
+    expect(first, 'no Bell on B to begin with').toBeTypeOf('number');
+
+    // B thinks for a second and a half of real time, then steps off the edge:
+    // accepted, refused where it resolves, refunded — B's turn again.
+    await sleep(1_500);
+    const mark = b.client.count();
+    b.client.send({ t: 'move', dir: 'w' });
+    await waitUntil(
+      () => h.engine.turnState().bellDeadlineMs !== first,
+      'the barrier to restart B’s count',
+    );
+    expect(h.engine.turnState().current).toBe(b.id);
+
+    // A frame goes out for the fresh count, and it carries the whole of it.
+    await waitUntil(() => b.client.latestSince('turn', mark) !== undefined, 'a turn frame');
+    const bellMs = b.client.latestSince('turn', mark)?.['bellMs'];
     expect(typeof bellMs).toBe('number');
     expect(bellMs as number).toBeGreaterThan(BELL_MS.Normal - 1_000);
   });

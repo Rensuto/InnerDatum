@@ -2910,11 +2910,14 @@ function isPartyWipe(result: PumpResult): boolean {
  * place, so a memo that held references to them would compare equal forever and
  * freeze the turn indicator on turn one.
  *
- * The Bell contributes only ARMED-OR-NOT. Its remaining milliseconds change
- * continuously and would make every key different, turning "broadcast on change"
- * into "broadcast on every pump".
+ * The Bell contributes WHICH COUNT IS RUNNING — the barrier's deadline, or
+ * nothing. Its remaining milliseconds change continuously and would make every
+ * key different, turning "broadcast on change" into "broadcast on every pump";
+ * the deadline moves only when the barrier starts a fresh count, which is
+ * exactly when the players have to be told (a refund, a re-park after a
+ * `no_energy` talent, the next player in line).
  */
-function turnKey(state: TurnState, bellArmed: boolean): string {
+function turnKey(state: TurnState, bellDeadline: number | null): string {
   return [
     state.gameTurn,
     // ═══ THE ZERO CROSSING. THE WHOLE REASON THIS TERM EXISTS ═══
@@ -2942,7 +2945,7 @@ function turnKey(state: TurnState, bellArmed: boolean): string {
     // WHOSE TURN IT IS. Also `whoseTurn[0]`, so it moves no frame by itself;
     // named so the key says what the client draws from.
     state.current ?? '-',
-    bellArmed ? 'bell' : '-',
+    bellDeadline === null ? '-' : `bell@${String(bellDeadline)}`,
   ].join('|');
 }
 
@@ -3204,11 +3207,13 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    * THE BELL — ONE PER REALM, AND THE TIMERS MUST NOT SHARE A VARIABLE.
    * ═══════════════════════════════════════════════════════════════════════════
    *
-   * `gameTurn` identifies WHICH park this Bell belongs to. Players are
-   * phase-locked (DECISIONS.md § D1) so the barrier parks exactly once per game
-   * turn, which makes the turn number a sufficient identity and stops a second
-   * commit arriving mid-countdown from restarting the clock — a Bell that
-   * restarts every time someone else commits never rings.
+   * `engineDeadline` identifies WHICH count this row is: the barrier's own
+   * deadline (`TurnState.bellDeadlineMs`). It was the game turn, and then the
+   * game turn and the player, and both were a second opinion — the barrier
+   * restarts a player's count when they park again inside one turn (a refund,
+   * a `no_energy` talent), so the count on screen ran out on a deadline the
+   * barrier no longer had, nothing happened, and the pass landed a Bell late.
+   * The barrier decides when a count starts; this row only follows it.
    *
    * ═══ WHY A MAP, AND WHAT THE SINGLE VARIABLE ACTUALLY BROKE ═══
    * This was one `bell | null`, which is correct for one floor and silently
@@ -3222,8 +3227,8 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    * has gone to make tea. Keyed by realm id, `clearBell(a)` cannot reach b's
    * timer, because it does not have it.
    *
-   * `gameTurn` STAYS THE PARK IDENTITY WITHIN a realm. Two realms genuinely can
-   * be on the same game turn; they are simply different rows.
+   * The deadline is the identity WITHIN a realm. Two realms can share one;
+   * they are simply different rows.
    *
    * THIS ROW IS THE COUNTDOWN, NOT THE TIMER. What players see (`bellRemainingMs`)
    * and whether one is armed (`turnKey`) read it; the wall-clock timer that
@@ -3231,10 +3236,10 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    * only deadline a realm has.
    */
   type Bell = {
-    readonly gameTurn: number;
-    /** Whose turn the count is on. The next player in line gets a fresh one. */
-    readonly current: string | null;
+    /** The barrier's deadline, on the ENGINE'S clock: which count this is. */
+    readonly engineDeadline: number;
     readonly durationMs: number;
+    /** The same moment on THIS clock, which is what the timer and the players see. */
     readonly deadline: number;
   };
   const bells = new Map<string, Bell>();
@@ -5550,43 +5555,33 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    * Bring the Bell into line with what the engine is asking for, then the
    * realm's one timer (`syncWake`).
    *
-   * Three cases, and the middle one is the whole reason this is not just
-   * "restart the countdown every pump":
+   * THE BARRIER'S COUNT, PUT ON THIS CLOCK. Three cases:
    *
-   *   no Bell wanted        -> drop it.
-   *   a Bell for a NEW park -> arm it. A park is a game turn AND whose turn it
-   *     is: the party takes its turns one at a time, and the second player in
-   *     line must not inherit what was left of the first player's count.
-   *   a Bell already running for THIS park -> leave the deadline alone, so the
-   *     countdown the current player can see keeps counting down.
+   *   no Bell running          -> drop it.
+   *   a count this row is not  -> arm it, at what the barrier has LEFT, which
+   *     is the whole duration for a count that just started and less for one
+   *     that started before this pump.
+   *   the count this row is    -> leave the deadline alone, so the countdown
+   *     the current player can see keeps counting down.
    *
-   * The one exception is a request for a LONGER Bell mid-park, which is honoured.
-   * A Bell may become more generous while it runs; it may never become harsher,
-   * because shortening a visible countdown out from under someone is
-   * indistinguishable from the server cheating.
-   *
-   * `state` is the realm's snapshot (`turnState()`), and since 2026-09-22 so is
-   * the countdown the engine expires, so the two agree on who is on the Bell
-   * and for how long, whatever parties are standing in the realm.
+   * The engine's clock is injected and this one is not, so the deadline itself
+   * cannot be copied across; the remaining time can, and the deadline is how
+   * this row knows the count is the same one.
    */
   const syncBell = (realm: PumpTarget, state: TurnState): void => {
     const wanted = state.bellDurationMs;
+    const engineDeadline = state.bellDeadlineMs ?? null;
+    const remaining = state.bellRemainingMs ?? null;
     const bell = bells.get(realm.id);
-    if (wanted === null) {
+    if (wanted === null || engineDeadline === null || remaining === null) {
       bells.delete(realm.id);
-    } else if (
-      bell === undefined ||
-      bell.gameTurn !== state.gameTurn ||
-      bell.current !== state.current ||
-      wanted > bell.durationMs
-    ) {
+    } else if (bell === undefined || bell.engineDeadline !== engineDeadline) {
       bells.set(realm.id, {
-        gameTurn: state.gameTurn,
-        current: state.current,
+        engineDeadline,
         durationMs: wanted,
-        deadline: Date.now() + wanted,
+        deadline: Date.now() + remaining,
       });
-      app.log.info({ realmId: realm.id, gameTurn: state.gameTurn, ms: wanted }, 'bell armed');
+      app.log.info({ realmId: realm.id, gameTurn: state.gameTurn, ms: remaining }, 'bell armed');
     }
     syncWake(realm);
   };
@@ -5635,7 +5630,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     const rang = bells.get(realm.id);
     if (rang !== undefined && rang.deadline <= at) {
       bells.delete(realm.id);
-      app.log.info({ realmId: realm.id, gameTurn: rang.gameTurn }, 'bell rang — stragglers hold');
+      app.log.info({ realmId: realm.id }, 'bell rang — the current player holds');
       try {
         realm.engine.bellExpired();
       } catch (err) {
@@ -5703,7 +5698,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     // nothing else, and the card would otherwise sit stale until the barrier did.
     const side = msg.actors.find((card) => card.kind === 'monsters');
     const key = [
-      turnKey(state, bells.has(realm.id)),
+      turnKey(state, bells.get(realm.id)?.engineDeadline ?? null),
       playerHpKey(realm),
       side === undefined
         ? '-'
