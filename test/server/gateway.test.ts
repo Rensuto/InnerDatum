@@ -218,6 +218,7 @@ function stubEngine(pending: Pending): TurnEngine {
     gameTurn: 4,
     engagement: 0,
     whoseTurn: [],
+    current: null,
     committed: [],
     standingBy: [],
     bellDurationMs: null,

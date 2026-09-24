@@ -16,12 +16,13 @@ import {
   disconnectActor,
   pump,
   reconnectActor,
+  rollInitiative,
   submitIntent,
 } from '../../src/server/engine/scheduler.ts';
 import { createTurnEngine } from '../../src/server/turn-engine.ts';
 import { createWorld } from '../../src/server/world/world.ts';
 import { chebyshev } from '../../src/shared/coords.ts';
-import { TileCode } from '../../src/shared/protocol.ts';
+import { ActorKind, TileCode } from '../../src/shared/protocol.ts';
 import { TICKS_PER_GAME_TURN } from '../../src/shared/energy.ts';
 import type { EngineActor, Intent } from '../../src/server/engine/actor.ts';
 import type { Barrier } from '../../src/server/engine/barrier.ts';
@@ -67,7 +68,20 @@ type Session = {
  * corridor east of them — close enough to have line of sight, which is what arms
  * `engagement` and therefore the barrier.
  */
-function session(seed: string, players: number, monsters: number, globalSpeed = 1): Session {
+/**
+ * @param order `'set'` (the default) gives the party the first turns in join
+ *   order and the monsters theirs after, which is the order every case in this
+ *   file was written against; a party's fight KEEPS a roll it finds
+ *   (`ensureInitiative`). `'rolled'` leaves the fight to roll its own — the
+ *   initiative cases below are the ones that want that.
+ */
+function session(
+  seed: string,
+  players: number,
+  monsters: number,
+  globalSpeed = 1,
+  order: 'set' | 'rolled' = 'set',
+): Session {
   const world = createWorld(seed);
   for (let i = 0; i < players; i += 1) {
     const actor = world.addPlayer(`p${i + 1}`, `Player ${i + 1}`);
@@ -86,6 +100,12 @@ function session(seed: string, players: number, monsters: number, globalSpeed = 
       profile: AiProfile.MeleeChaser,
       globalSpeed,
     });
+  }
+
+  if (order === 'set') {
+    for (const [i, body] of world.actorsInTurnOrder().entries()) {
+      body.initiative = body.kind === ActorKind.Player ? 100 - i : 50 - i;
+    }
   }
 
   const barrier = createBarrier();
@@ -244,6 +264,115 @@ describe('the actBase pass', () => {
       expect(table.advance(i).status).toBe('idle');
     }
     expect(cooldownOf(player, 'fog_step')).toBe(5);
+  });
+});
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * A PARTY TAKES ITS TURNS IN INITIATIVE ORDER — the author's 2026-09-23 ruling.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `ensureInitiative` rolls every living body when a fight starts in a realm
+ * with two or more players; the roll is `actorsInTurnOrder`; and in a fight a
+ * player acts only in their slot (`actsWhileBlocked`). Alone nobody rolls.
+ */
+describe('a party takes its turns in initiative order', () => {
+  it('rolls for every body when a party’s fight starts, and ticks in that order', () => {
+    const table = session('init-roll', 2, 2, 1, 'rolled');
+    table.advance(0);
+    expect(table.world.turn.engagement).toBeGreaterThan(0);
+    for (const body of table.world.allActors()) {
+      expect(body.initiative, `${body.id} did not roll`).toBeTypeOf('number');
+    }
+    const rolls = table.world.actorsInTurnOrder().map((body) => body.initiative ?? 0);
+    expect(rolls).toEqual([...rolls].sort((x, y) => y - x));
+  });
+
+  it('rolls nothing for a player alone, whose order stays ToME’s', () => {
+    const table = session('init-solo', 1, 2, 1, 'rolled');
+    table.advance(0);
+    expect(table.world.turn.engagement).toBeGreaterThan(0);
+    for (const body of table.world.allActors()) expect(body.initiative).toBeUndefined();
+  });
+
+  it('rolls the same from the same seed, and spends nothing from the world’s stream', () => {
+    const roll = (): { readonly value: number; readonly moved: boolean } => {
+      const world = createWorld('init-same');
+      const body = world.addPlayer('p1', 'Ren');
+      const before = JSON.stringify(world.rng.getState());
+      const value = rollInitiative(world, body);
+      return { value, moved: JSON.stringify(world.rng.getState()) !== before };
+    };
+    const first = roll();
+    expect(first.moved, 'the roll drew from the world stream').toBe(false);
+    expect(roll()).toEqual(first);
+    // 1d10 plus (Dex + Cun) / 10 at the base ten: 3 to 12.
+    expect(first.value).toBeGreaterThanOrEqual(3);
+    expect(first.value).toBeLessThanOrEqual(12);
+  });
+
+  it('lets a monster that rolled higher act before the party on contact', () => {
+    const table = session('init-monster-first', 2, 1);
+    must(table.world.getActor('m1'), 'm1').initiative = 200;
+    const first = table.advance(0);
+    // The control is `advances to a park`: the same scene with the husk rolled
+    // last parks on the party with no sweep in front of it.
+    expect(sweepSteps(first.events).map((step) => step.id)).toEqual(['m1']);
+    expect(first.parked).toEqual(['p1', 'p2']);
+  });
+
+  it('holds a later player’s move until the one before decides, then plays both in order', () => {
+    const table = session('init-queue', 2, 1);
+    table.advance(0);
+
+    const early = table.commit('p2', HOLD_INTENT, 1);
+    expect(early.parked, 'the realm is waiting on p1 alone').toEqual(['p1']);
+    expect(
+      must(table.world.getActor('p2'), 'p2').pendingIntent,
+      'p2 went out of turn',
+    ).not.toBeNull();
+    expect(early.events.filter((event) => event.t === 'held')).toEqual([]);
+
+    const released = table.commit('p1', HOLD_INTENT, 2);
+    const held = released.events.filter((event) => event.t === 'held');
+    expect(held.map((event) => ('id' in event ? event.id : ''))).toEqual(['p1', 'p2']);
+  });
+
+  it('breaks a tie party-first, and puts a body with no roll yet after every body with one', () => {
+    const table = session('init-tie', 2, 2);
+    const [p1, p2, m1, m2] = ['p1', 'p2', 'm1', 'm2'].map((id) =>
+      must(table.world.getActor(id), id),
+    );
+    if (p1 === undefined || p2 === undefined || m1 === undefined || m2 === undefined) {
+      throw new Error('fixture');
+    }
+    m1.initiative = 7;
+    p2.initiative = 7;
+    p1.initiative = 3;
+    m2.initiative = undefined;
+    expect(table.world.actorsInTurnOrder().map((body) => body.id)).toEqual([
+      'p2',
+      'm1',
+      'p1',
+      'm2',
+    ]);
+  });
+
+  it('clears the order when the fight ends, so the next contact rolls fresh', () => {
+    const table = session('init-clear', 2, 1, 1, 'rolled');
+    table.advance(0);
+    expect(must(table.world.getActor('p1'), 'p1').initiative).toBeTypeOf('number');
+
+    const husk = must(table.world.getActor('m1'), 'm1');
+    husk.hp = 0;
+    husk.alive = false;
+    for (let turn = 0; turn < 10 && table.world.turn.engagement > 0; turn += 1) {
+      table.commit('p1', HOLD_INTENT, turn * 2 + 1);
+      table.commit('p2', HOLD_INTENT, turn * 2 + 2);
+    }
+    expect(table.world.turn.engagement).toBe(0);
+    table.advance(100);
+    for (const body of table.world.allActors()) expect(body.initiative).toBeUndefined();
   });
 });
 

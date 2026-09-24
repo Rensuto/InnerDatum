@@ -11,6 +11,7 @@ import { submitIntent } from '../../src/server/engine/scheduler.ts';
 import { createCharacterFile, parseCharacterFile } from '../../src/server/persist/saves.ts';
 import { createTurnEngine } from '../../src/server/turn-engine.ts';
 import { createWorld } from '../../src/server/world/world.ts';
+import { ActorKind } from '../../src/shared/protocol.ts';
 import { DamageType } from '../../src/shared/damagetype.ts';
 import type { CombatSheet } from '../../src/server/engine/combat.ts';
 import type { TileXY } from '../../src/shared/coords.ts';
@@ -106,6 +107,14 @@ function arena(seed: string): Arena {
         kind: IntentKind.Attack,
         targetId: wardenId,
       });
+      // EVERY OTHER CHARACTER PASSES. With two characters in the fight the
+      // turns go in initiative order, and a swing would otherwise wait behind a
+      // character who has not decided. The rule here is who is handed the Knot.
+      for (const other of world.allActors()) {
+        if (other.kind !== ActorKind.Player || other.id === characterId || !other.alive) continue;
+        if (other.pendingIntent === null)
+          submitIntent(world, engine.barrier, other.id, HOLD_INTENT);
+      }
       engine.pump();
     }
     expect(body.alive, 'the warden is still standing after forty swings').toBe(false);

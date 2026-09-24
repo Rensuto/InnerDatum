@@ -474,6 +474,13 @@ export type PartyPaneMode = (typeof PartyPaneMode)[keyof typeof PartyPaneMode];
  */
 export type PartyPaneRow = {
   readonly member: PartyStateMember;
+  /**
+   * IS IT THIS MEMBER'S TURN — `TurnMsg.current` — or undefined when no `turn`
+   * frame has said. In a party's fight the turns go one at a time, so a member
+   * can owe a decision without it being their turn yet: that is the difference
+   * between "YOUR TURN" and "IN LINE" on the self row.
+   */
+  readonly current?: boolean;
   /** The map sprite's asset key, or null when the body is out of view. */
   readonly sprite: string | null;
   /** From the level roster, and the owner of the countdown. Null when upright. */
@@ -597,6 +604,8 @@ export function partyPaneView(options: {
   readonly money: number | null;
   /** The viewer's air, null when full. See `PartyPaneView.air`. */
   readonly air?: AirView | null;
+  /** Whose turn it is, off the last `turn` frame. See `PartyPaneRow.current`. */
+  readonly current?: string | null;
 }): PartyPaneView {
   const roster = new Map(options.roster.map((member) => [member.id, member]));
 
@@ -605,6 +614,7 @@ export function partyPaneView(options: {
       const level = roster.get(member.id);
       return {
         member,
+        ...(options.current === undefined ? {} : { current: member.id === options.current }),
         sprite: options.actors.get(member.id)?.sprite ?? null,
         /**
          * THE ROSTER FIRST, AND THE PARTY FRAME FOR EVERYBODY ELSE.
@@ -1155,7 +1165,7 @@ function drawHpBar(
  * distinct silhouettes), and as the RAIL down the left edge of the rows still
  * being waited on. Take the colour away and the checklist still reads.
  *
- * ═══ THE SELF ROW SAYS "YOUR MOVE", NOT "WAITING" ═══
+ * ═══ THE SELF ROW SAYS "YOUR TURN", NOT "WAITING" ═══
  * The single most important fact on this screen is that the game is waiting on
  * the person reading it, and "WAITING" beside your own name is the passive voice
  * for it — it reads as *you are waiting*, which is the opposite. The word, the
@@ -1204,8 +1214,14 @@ function stateWord(row: PartyPaneRow): TurnMark | null {
   const chip = turnChipIdFor(row.member.state);
   switch (row.member.state) {
     case TurnActorState.Waiting:
+      // IN LINE: you owe a decision and somebody before you is taking theirs.
+      // Only a `turn` frame that named somebody else says so; alone, and
+      // before any frame, a waiting self row is your turn.
+      if (self && row.current === false) {
+        return { word: 'IN LINE', ink: PALETTE.VIOLET_HI, chip, owed: true };
+      }
       return {
-        word: self ? 'YOUR MOVE' : 'WAITING',
+        word: self ? 'YOUR TURN' : 'WAITING',
         ink: self ? PALETTE.GOLD : PALETTE.VIOLET_HI,
         chip,
         owed: true,

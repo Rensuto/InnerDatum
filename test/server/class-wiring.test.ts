@@ -522,6 +522,7 @@ describe('every class sprite resolves to real art', () => {
       gameTurn: 1,
       engagement: 0,
       whoseTurn: [],
+      current: null,
       committed: [],
       standingBy: [],
       bellDurationMs: null,

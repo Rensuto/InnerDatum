@@ -12,6 +12,7 @@ import { pump, submitIntent } from '../../src/server/engine/scheduler.ts';
 import { createTurnEngine } from '../../src/server/turn-engine.ts';
 import { createWorld } from '../../src/server/world/world.ts';
 import { DIR_ORDER, chebyshev, step } from '../../src/shared/coords.ts';
+import { ENERGY_TO_ACT } from '../../src/shared/energy.ts';
 import { ErasedReason, TileCode } from '../../src/shared/protocol.ts';
 import type { CombatSheet } from '../../src/server/engine/combat.ts';
 import type { DownedState } from '../../src/server/engine/downed.ts';
@@ -475,6 +476,11 @@ describe('a party that owes no decision is skipped, not waited on', () => {
     fallen.hp = 0;
     fallen.alive = false;
     goDown(downed, fallen, 0);
+    // AT THE THRESHOLD, where a player with a move to make stands. The wipe
+    // stands p1 up on the clock `resetFloorParty` zeroes, so a move already
+    // waiting goes first whatever the fight's initiative says; born at zero
+    // beside p1, p2 would tie it to the tick and could wait behind it.
+    playing.energy = ENERGY_TO_ACT;
 
     // Park everybody first, so p2's move is submitted against a live barrier.
     pump(world, { nowMs: 0, barrier, downed, parties });

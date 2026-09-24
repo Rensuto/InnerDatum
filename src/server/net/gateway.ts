@@ -202,6 +202,7 @@ import { resolveItem } from '../content/resolve.ts';
  */
 import {
   Faction,
+  IntentKind,
   StandingOrder,
   cooldownOf,
   incMoney,
@@ -2938,24 +2939,9 @@ function turnKey(state: TurnState, bellArmed: boolean): string {
     state.whoseTurn.join(','),
     state.committed.join(','),
     state.standingBy.join(','),
-    /**
-     * ═════════════════════════════════════════════════════════════════════════
-     * THE SEVENTH TERM, AND WITHOUT IT THE FIELD IS NEVER SENT.
-     * ═════════════════════════════════════════════════════════════════════════
-     *
-     * The note on `PumpResult.refusals` spells out this exact failure for the
-     * refund path: an actor parks again, "EVERY term of `turnKey` (gameTurn,
-     * engagement, whoseTurn, committed, standingBy, bellArmed) is byte-identical
-     * — `broadcastTurnIfChanged` sends nothing".
-     *
-     * A MID-ROUND ACTION IS THE SAME SHAPE. The player acts, keeps their energy,
-     * and goes straight back into the blocking set they were already in: the
-     * clock has not moved, engagement has not moved, and the three arrays are
-     * unchanged. So the frame that would say "he is halfway through a plan"
-     * would be suppressed as a duplicate of the one before it, and `acting`
-     * would be a field the client was never once told about.
-     */
-    (state.acting ?? []).join(','),
+    // WHOSE TURN IT IS. Also `whoseTurn[0]`, so it moves no frame by itself;
+    // named so the key says what the client draws from.
+    state.current ?? '-',
     bellArmed ? 'bell' : '-',
   ].join('|');
 }
@@ -3246,6 +3232,8 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    */
   type Bell = {
     readonly gameTurn: number;
+    /** Whose turn the count is on. The next player in line gets a fresh one. */
+    readonly current: string | null;
     readonly durationMs: number;
     readonly deadline: number;
   };
@@ -3253,22 +3241,15 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
 
   /**
    * ═══════════════════════════════════════════════════════════════════════════
-   * ONE WAKE-UP PER REALM — FOR THE BELL, OR FOR AN OPEN ROUND'S TAIL.
+   * ONE WAKE-UP PER REALM, FOR THE BELL.
    * ═══════════════════════════════════════════════════════════════════════════
    *
-   * A realm has two deadlines that nobody's keypress will reach: the Bell
-   * (somebody absent) and the round tail (somebody present who has stopped
-   * mid-round — engine/scheduler.ts `applyRoundTails`). The engine only reads
-   * either at the head of a pump, so each needs a timer to come back for it.
-   * Until 2026-09-22 only the Bell had one, and an open round beside one idle
-   * player — two blockers, so no Bell — waited for a keypress, in one party or
-   * two.
-   *
-   * ONE TIMER, ARMED FOR THE SOONER OF THE TWO, because one suffices: when it
-   * fires the realm is pumped, the pump applies whatever is due, and the
-   * re-sync that follows arms it for whatever is next. `at` is kept so the
-   * wake can tell whether it is the Bell's (`onWake`) and so a re-sync for the
-   * same instant leaves it alone.
+   * The Bell is a deadline nobody's keypress will reach, and the engine only
+   * reads it at the head of a pump, so it needs a timer to come back for it.
+   * It was armed for the sooner of the Bell and an open round's tail until
+   * 2026-09-23, when every action started to end the turn and the open round
+   * went. `at` is kept so the wake can tell whether it is the Bell's
+   * (`onWake`) and so a re-sync for the same instant leaves it alone.
    *
    * KEYED PER REALM for the reason `bells` gives in full: a single variable
    * lets one floor's re-arm cancel another floor's timer.
@@ -5471,9 +5452,8 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    * ═══ THE WORLD'S CLOCK WAS THE PLAYERS' KEYSTROKES ═══
    * `pumpAndBroadcast`'s own note states the rule this corrects: "a realm
    * advances when somebody standing in it acts. Liveness for a realm nobody is
-   * acting in ... comes from that realm's OWN wake timer (the Bell or a round's
-   * tail, whichever is sooner — `syncWake`), and from the reap
-   * timers." A dungeon wants exactly that. A shared realm does not, and the
+   * acting in ... comes from that realm's OWN wake timer (the Bell — `syncWake`),
+   * and from the reap timers." A dungeon wants exactly that. A shared realm does not, and the
    * overworld had neither timer, so:
    *
    *   nobody moving        the map is frozen — no drift, no spawns, no regen
@@ -5574,16 +5554,16 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    * "restart the countdown every pump":
    *
    *   no Bell wanted        -> drop it.
-   *   a Bell for a NEW park -> arm it.
+   *   a Bell for a NEW park -> arm it. A park is a game turn AND whose turn it
+   *     is: the party takes its turns one at a time, and the second player in
+   *     line must not inherit what was left of the first player's count.
    *   a Bell already running for THIS park -> leave the deadline alone, so the
-   *     countdown the stragglers can see keeps counting down.
+   *     countdown the current player can see keeps counting down.
    *
-   * The one exception is a request for a LONGER Bell mid-park, which is honoured
-   * — that happens when the quorum shrinks to one (someone drops, someone goes
-   * Standing By) and the 20-second clock becomes the 120-second one. A Bell may
-   * become more generous while it runs; it may never become harsher, because
-   * shortening a visible countdown out from under someone is indistinguishable
-   * from the server cheating.
+   * The one exception is a request for a LONGER Bell mid-park, which is honoured.
+   * A Bell may become more generous while it runs; it may never become harsher,
+   * because shortening a visible countdown out from under someone is
+   * indistinguishable from the server cheating.
    *
    * `state` is the realm's snapshot (`turnState()`), and since 2026-09-22 so is
    * the countdown the engine expires, so the two agree on who is on the Bell
@@ -5594,31 +5574,29 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     const bell = bells.get(realm.id);
     if (wanted === null) {
       bells.delete(realm.id);
-    } else if (bell === undefined || bell.gameTurn !== state.gameTurn || wanted > bell.durationMs) {
+    } else if (
+      bell === undefined ||
+      bell.gameTurn !== state.gameTurn ||
+      bell.current !== state.current ||
+      wanted > bell.durationMs
+    ) {
       bells.set(realm.id, {
         gameTurn: state.gameTurn,
+        current: state.current,
         durationMs: wanted,
         deadline: Date.now() + wanted,
       });
       app.log.info({ realmId: realm.id, gameTurn: state.gameTurn, ms: wanted }, 'bell armed');
     }
-    syncWake(realm, state.roundTailInMs ?? null);
+    syncWake(realm);
   };
 
   /**
-   * ARM THE REALM'S ONE TIMER FOR THE SOONER OF THE BELL AND THE ROUND TAIL,
-   * or disarm it when there is neither. See `wakes`.
-   *
-   * The tail arrives as a duration on the engine's clock, like the Bell's, and
-   * is made a deadline here on this one. It moves every pump by however long
-   * the pump took, so a tail-only wake is re-armed on most pumps; that costs a
-   * `clearTimeout` and never pushes the moment out, because the engine's
-   * deadline does not move.
+   * ARM THE REALM'S ONE TIMER FOR THE BELL, or disarm it when there is none.
+   * See `wakes`.
    */
-  const syncWake = (realm: PumpTarget, tailInMs: number | null): void => {
-    const bellAt = bells.get(realm.id)?.deadline ?? null;
-    const tailAt = tailInMs === null ? null : Date.now() + tailInMs;
-    const at = bellAt === null ? tailAt : tailAt === null ? bellAt : Math.min(bellAt, tailAt);
+  const syncWake = (realm: PumpTarget): void => {
+    const at = bells.get(realm.id)?.deadline ?? null;
     if (at === null) {
       clearWake(realm.id);
       return;
@@ -5641,8 +5619,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
 
   /**
    * ONE REALM'S TIMER FIRED. If it was armed for the Bell, only that realm's
-   * stragglers hold; either way that realm is pumped, which is what closes a
-   * round whose tail is due (`applyRoundTails` runs at the head of the pump).
+   * current player holds; either way that realm is pumped.
    *
    * The timer closes over the realm it was armed for, so this can never ring the
    * wrong floor's barrier — which matters because `bellExpired` is the one call
@@ -5650,9 +5627,8 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    * party three rooms away would be the server playing for them.
    *
    * THE BELL'S WHEN ITS DEADLINE IS NOT AFTER THIS WAKE'S, which is exactly
-   * "the timer was armed for it": `at` is the sooner of the two deadlines, so
-   * a Bell deadline at or before it is the one it was armed for, and a later
-   * one means the tail came first and the visible countdown carries on.
+   * "the timer was armed for it". A later deadline means the Bell was re-armed
+   * for the next player after this timer was set, and that count carries on.
    */
   const onWake = (realm: PumpTarget, at: number): void => {
     wakes.delete(realm.id);
@@ -7236,8 +7212,10 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     }
   };
 
-  const pumpRealm = (realm: PumpTarget): void => {
+  const pumpRealm = (realm: PumpTarget, sender?: Session): void => {
     const { world, engine } = realm;
+    // WHO HAS A STEP WAITING ITS TURN — see `walkOnQueued` below.
+    const queued = queuedSteps(world, sender);
 
     /**
      * THE TIDE ARMS ITSELF HERE — see `armTide`, which carries the argument.
@@ -7911,6 +7889,57 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     } else if (result.playerEvents.length > 0 || result.sweep.length > 0) {
       queueSave('pump');
     }
+
+    walkOnQueued(realm, queued, result);
+  };
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * A STEP THAT WAITED ITS TURN STILL TAKES THE STAIRS.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * In a fight a party takes its turns in order (`actsWhileBlocked`,
+   * engine/scheduler.ts), so a move sent out of turn resolves later, on
+   * somebody else's command — and the stair, the exit and the site door are
+   * checked in the tail of the MOVER'S `handleMove`, which has long since run
+   * with the body still where it was. So a player whose queued step landed on
+   * the stairs stood on them and went nowhere.
+   *
+   * These are the players whose own MOVE was queued when this pump began,
+   * minus the one whose command this is (their `handleMove` runs its own tail).
+   * A body moved without asking — a swap, a floor reset, a shove — is not one of
+   * them, for the rule `PumpResult.displaced` states: somebody else putting you
+   * on the doorstep is not a decision to leave.
+   */
+  const queuedSteps = (world: World, sender: Session | undefined): Map<string, TileXY> => {
+    const out = new Map<string, TileXY>();
+    for (const body of world.allActors()) {
+      if (body.kind !== ActorKind.Player || body.pendingIntent?.kind !== IntentKind.Move) continue;
+      if (sender !== undefined && body.id === sender.actorId) continue;
+      out.set(body.id, { x: body.x, y: body.y });
+    }
+    return out;
+  };
+
+  /** The tail of `handleMove`, for each step in `queuedSteps` that resolved. */
+  const walkOnQueued = (
+    realm: PumpTarget,
+    queued: ReadonlyMap<string, TileXY>,
+    result: PumpResult,
+  ): void => {
+    for (const [id, from] of queued) {
+      const body = realm.world.getActor(id);
+      if (body === undefined || body.kind !== ActorKind.Player || body.pendingIntent !== null)
+        continue;
+      if (body.x === from.x && body.y === from.y) continue;
+      if (result.displaced?.includes(id) === true) continue;
+      const session = sessionOf(id);
+      if (session === undefined || session.realmId !== realm.id) continue;
+      const here = opts.realms?.get(realm.id);
+      if (here !== undefined) noteRegion(session, here, body.x, body.y);
+      if (leaveRealm(session)) continue;
+      crossIntoSite(session);
+    }
   };
 
   /**
@@ -7955,7 +7984,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    * WHY ONE REALM IS ENOUGH FOR AN ACTION. This is a turn-based game and a
    * realm advances when somebody standing in it acts. Liveness for a realm
    * nobody is acting in does not come from other people's keystrokes — it comes
-   * from that realm's OWN wake timer (the Bell or a round's tail, `syncWake`),
+   * from that realm's OWN wake timer (the Bell, `syncWake`),
    * which closes over the realm it was armed for, and from the reap timers.
    * Neither ever needed this loop.
    *
@@ -7971,9 +8000,9 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    * still changes turn strips and wipe scopes in every realm holding a member,
    * and none of the three is a per-keystroke verb.
    */
-  const pumpAndBroadcast = (only?: PumpTarget): void => {
+  const pumpAndBroadcast = (only?: PumpTarget, sender?: Session): void => {
     if (only !== undefined) {
-      pumpRealm(only);
+      pumpRealm(only, sender);
       drainWindUps();
       return;
     }
@@ -11561,7 +11590,8 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     // WHERE THEY WERE BEFORE IT, because the pump can move them somewhere else
     // entirely — see the guard below.
     const startedIn = session.realmId;
-    pumpAndBroadcast(realmFor(session));
+    // ITS OWN TAIL IS BELOW, so the pump's `walkOnQueued` leaves this one out.
+    pumpAndBroadcast(realmFor(session), session);
 
     /**
      * ═════════════════════════════════════════════════════════════════════════

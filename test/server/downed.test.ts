@@ -1041,11 +1041,12 @@ describe('through pump', () => {
   it('parks the survivors at their real party size once a body is on the floor', () => {
     // The Bell counts the quorum, and a downed body is out of it. This is the
     // co-op consequence game-design.md § 9 is actually about: with one of two
-    // down, the survivor is a party of one and gets the SOLO bell rather than
+    // down, the survivor is a party of one and gets no Bell at all rather than
     // twenty seconds of pressure while nobody is waiting on them.
     const table = session('quorum', 2, 1);
     const first = table.advance(0);
-    expect(first.parked).toEqual(['p1', 'p2']);
+    // THE SET, in whatever order the fight's initiative put it.
+    expect([...first.parked].sort()).toEqual(['p1', 'p2']);
     expect(first.bell.quorum).toBe(2);
 
     const dalt = table.actor('p1');

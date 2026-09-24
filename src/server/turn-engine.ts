@@ -565,8 +565,13 @@ function levelOf(world: World): BarrierLevel {
   return { engagement: world.turn.engagement, bossFloor: world.turn.bossFloor };
 }
 
+/**
+ * The players, IN TURN ORDER — `blocking[0]` of a survey over this is whose
+ * turn it is, so it must walk the order the pump takes turns in
+ * (`World.actorsInTurnOrder`: initiative in a party's fight, join order else).
+ */
 function playersOf(world: World): Actor[] {
-  return world.allActors().filter((a) => a.kind === 'player');
+  return world.actorsInTurnOrder().filter((a) => a.kind === 'player');
 }
 
 /**
@@ -2140,6 +2145,9 @@ export function createTurnEngine(opts: TurnEngineOptions): ReapingTurnEngine {
       // told (see `turnKey` in net/gateway.ts).
       engagement: level.engagement,
       whoseTurn: snapshot.blocking,
+      // THE FIRST OF THEM, because `players` is in turn order (`playersOf`) and
+      // in a fight the pump waits on exactly that player (`actsWhileBlocked`).
+      current: snapshot.blocking[0] ?? null,
       committed: snapshot.blocking.length === 0 ? [] : [],
       standingBy: snapshot.standingBy,
       /**
@@ -2167,11 +2175,8 @@ export function createTurnEngine(opts: TurnEngineOptions): ReapingTurnEngine {
        * table waiting on one person — was indistinguishable from the twenty
        * minutes of noise before it.
        *
-       * `barrier.ts` states the rule this restores, and states why it is safe to
-       * be aggressive: *"`committed >= total - 1` is the same thing as
-       * `blocking.length <= 1`: the Bell only ever rings for the LAST straggler,
-       * which is why it can be aggressive without ever hurrying somebody who has
-       * company."*
+       * `barrier.ts` states the rule: the Bell is on WHOEVER'S TURN IT IS, one
+       * player at a time, and on nobody while nobody is being waited on.
        *
        * AND A LONE PLAYER HAS NO BELL AT ALL. `bellDurationMs` answers null at a
        * quorum of one: nobody is waiting on them, and ToME never hurries a player.

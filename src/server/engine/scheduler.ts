@@ -1801,14 +1801,17 @@ export function pump(world: World, ctx: PumpCtx): PumpResult {
    * ═══════════════════════════════════════════════════════════════════════════
    *
    * `actors` stays exactly what it was and is what `makeAiCtx`,
-   * `updateEngagement`, `applyBellExpiry`, `enrolCasualties` and `partyScopes`
-   * all read: every one of them asks a question only a BODY can answer. This
-   * second array — actors first, then everything in flight, in insertion order —
-   * is handed to `tickLevel` and to nothing else.
+   * `updateEngagement`, `enrolCasualties` and `partyScopes` all read: every one
+   * of them asks a question only a BODY can answer. This second array — the
+   * bodies in turn order, then everything in flight, in insertion order — is
+   * handed to `tickLevel` and to nothing else. It is built BELOW, after the
+   * engagement check, because a party's fight starting there rolls initiative
+   * and the roll is the order (`ensureInitiative`).
    *
    * PROJECTILES GO LAST, AND THAT IS WHAT MAKES THE PHASE LOCK WORK FOR FREE.
-   * `actorsInTurnOrder` puts the party first; energy.ts:647 skips every actor
-   * after the first park unless `actsWhileBlocked`, which only a Player gets. So
+   * `actorsInTurnOrder` puts the bodies first; energy.ts:647 skips every actor
+   * after the first park unless `actsWhileBlocked`, which only a Player out of a
+   * fight gets. So
    * by the time the sweep reaches an orb, `parked` is already non-empty and the
    * orb is skipped — it hangs in the air for exactly as long as the human takes
    * to decide, and advances when the turn resolves. That freeze is the feature,
@@ -1820,8 +1823,6 @@ export function pump(world: World, ctx: PumpCtx): PumpResult {
    * :141-143). It also preserves the guarantee stated above `actors`: nothing
    * joins or leaves the sweep halfway through it.
    */
-  const ticking: readonly EnergyActor[] = [...actors, ...world.projectilesInFlight()];
-
   /**
    * Everything the resolution path needs, in one object, built once per call.
    *
@@ -1862,13 +1863,21 @@ export function pump(world: World, ctx: PumpCtx): PumpResult {
   // Engagement first: it is the only co-op-specific clause in `isBlocking`, so
   // it has to be true BEFORE anybody is asked whether they are blocking.
   updateEngagement(world, actors, ctx, sink, false);
+  // A PARTY'S FIGHT HAS JUST STARTED? Then everybody rolls, and the roll is the
+  // order from here on. See `ensureInitiative`; alone it rolls nothing.
+  ensureInitiative(world, actors);
+  // THE SAME BODIES AS `actors`, in the order this call takes turns in.
+  const order = world.actorsInTurnOrder();
+  const ticking: readonly EnergyActor[] = [...order, ...world.projectilesInFlight()];
 
   // The Bell is checked ON ENTRY, ONCE, FOR THE WHOLE REALM — the wait it
   // shortens is realm-wide (`PumpCtx.parties`), so its countdown is too. The
   // caller sets a real timer for the deadline and re-enters when it fires;
   // expiry is applied right here, which means the whole countdown is exercised
   // by calling pump twice with two different `nowMs` values and no timers.
-  applyBellExpiry(world, actors, ctx, sink);
+  // IN TURN ORDER, because the Bell is on whoever's turn it is: the first
+  // body in `order` that still owes a decision.
+  applyBellExpiry(world, order, ctx, sink);
 
   /**
    * THE GROUND UNDER EVERY BODY, for `actBase`'s air step (tome/class/Actor.lua:584).
@@ -1955,7 +1964,15 @@ export function pump(world: World, ctx: PumpCtx): PumpResult {
     // expression already answers false, but "the world freezes while a human
     // decides" is the phase-lock constraint itself and must not depend on an
     // undefined lookup happening to land the right way.
+    //
+    // ═══ AND IN A FIGHT, NOT EVEN A PLAYER ═══
+    // Engaged, the turns go in ORDER: the sweep stops at the first player who
+    // still owes a decision, and a player after them who has already sent one
+    // waits for their slot. That is ToME's own pause (GameEnergyBased.lua:
+    // 133-136) — the loop breaks on the one player it is waiting for. Out of a
+    // fight nobody blocks, so players still move freely around each other.
     actsWhileBlocked: (energyActor) =>
+      world.turn.engagement <= 0 &&
       world.getProjectile(energyActor.id) === undefined &&
       resolveActor(world, energyActor)?.kind === ActorKind.Player,
 
@@ -2087,6 +2104,11 @@ export function pump(world: World, ctx: PumpCtx): PumpResult {
       // The level-wide port of `checkStillInCombat` (Actor.lua:7648-7669).
       // Per-turn rather than per-pump, so decay counts turns and not commands.
       updateEngagement(world, actors, ctx, sink, true);
+      // A fight that starts mid-sweep rolls now; the order takes effect on the
+      // next call, because the array this sweep walks is fixed (see `ticking`).
+      // The player whose turn it is parks the moment they can act, so nothing
+      // acts out of order in between.
+      ensureInitiative(world, actors);
       // AND WHAT THE FLOOR ITSELF IS DOING. See `tickGroundZones` -- this hook
       // is upstream's once-per-game-turn modulo and the zone pass is what it
       // was written for.
@@ -2110,7 +2132,9 @@ export function pump(world: World, ctx: PumpCtx): PumpResult {
     // THE REALM'S ONE COUNTDOWN, asked of the whole realm for the reason
     // `PumpCtx.parties` gives. With parties it was the soonest of one countdown
     // per party, which disagreed with the wait once a realm held two of them.
-    bell: ctx.barrier.bell(actors, world.turn, ctx.nowMs),
+    // Read in the order as it stands NOW: a fight that started mid-sweep has
+    // rolled since `order` was taken.
+    bell: ctx.barrier.bell(world.actorsInTurnOrder(), world.turn, ctx.nowMs),
   };
 }
 
@@ -5657,6 +5681,54 @@ function applyBellExpiry(
       standingBy: pass.standingBy,
     });
   }
+}
+
+// ---------------------------------------------------------------------------
+// Initiative — who goes first when a party's fight starts. OURS.
+// ---------------------------------------------------------------------------
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * INITIATIVE: A PARTY TAKES ITS TURNS IN ORDER, AND THE ROLL SETS THE ORDER.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * NOT A PORT. ToME has no initiative ("initiative" is in neither engines/ nor
+ * modules/tome/class/): it walks a fixed entity array (GameEnergyBased.lua:
+ * 99-107) and whoever is ready acts in array order. The author ruled on
+ * 2026-09-23 that in a multiplayer fight "initiative should matter for the
+ * initial combat turn order", and alone play stays ToME's. So:
+ *
+ * - IN A REALM WITH TWO OR MORE PLAYERS, every living body — players and
+ *   monsters, each for itself — rolls when the fight starts, and the roll is
+ *   the array order (`World.actorsInTurnOrder`) for the rest of the fight.
+ *   Everybody at normal speed spends exactly one turn per action, so the order
+ *   repeats round after round; a faster or slower body still interleaves by
+ *   energy, as in ToME. A body that joins mid-fight (a summon) rolls when it
+ *   is first seen.
+ * - ALONE, NOBODY ROLLS, and the order is the party-first one it always was.
+ * - OUT OF A FIGHT, NOBODY HAS ONE. The next contact rolls fresh.
+ *
+ * 1d10 + (Dex + Cun) / 10, from a FORK per body and per fight, so the roll
+ * spends nothing from the world's stream and every seeded replay that never
+ * met a party is byte-identical.
+ */
+function ensureInitiative(world: World, actors: readonly EngineActor[]): void {
+  const party = actors.filter((actor) => actor.kind === ActorKind.Player).length;
+  if (world.turn.engagement <= 0 || party < 2) {
+    for (const actor of actors) actor.initiative = undefined;
+    return;
+  }
+  for (const actor of actors) {
+    if (actor.alive && actor.initiative === undefined)
+      actor.initiative = rollInitiative(world, actor);
+  }
+}
+
+/** One body's roll. See `ensureInitiative`. */
+export function rollInitiative(world: World, actor: EngineActor): number {
+  const rng = world.rng.fork(`initiative:${actor.id}:${String(world.turn.clock.gameTurn)}`);
+  const stats = actor.combat?.stats;
+  return rng.int('initiative.d10', 1, 10) + ((stats?.dex ?? 10) + (stats?.cun ?? 10)) / 10;
 }
 
 // ---------------------------------------------------------------------------

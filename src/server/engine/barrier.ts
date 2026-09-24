@@ -270,11 +270,14 @@ export function inQuorum(actor: BarrierActor): boolean {
  * singleton.
  *
  * MUST STAY SIDE-EFFECT FREE. `tickLevel` calls it to discover the WHOLE
- * blocking set within a single tick without taking anybody's turn. Put a
- * mutation in here and the barrier degrades into round-robin — park on player
- * 1, wait, park on player 2, wait — which is the "player 1 deliberates for 40
- * seconds and players 2-4 tab out" failure the design rejected strict
- * initiative to avoid, arrived at by accident.
+ * blocking set within a single tick without taking anybody's turn.
+ *
+ * ═══ THE TURNS DO GO ONE AT A TIME NOW — ON PURPOSE, AND NOT FROM HERE ═══
+ * The design once rejected strict order ("player 1 deliberates for 40 seconds
+ * and players 2-4 tab out"). The author ruled for it on 2026-09-23: a party
+ * takes its turns in initiative order. That order is `actsWhileBlocked` in
+ * engine/scheduler.ts and the Bell below, which is on one player at a time;
+ * this predicate still only answers who owes a decision, all at once.
  *
  * The `energy` clause is redundant when called from `tickLevel` (which only
  * asks about actors already at the threshold) and is kept anyway, because this
@@ -426,11 +429,11 @@ export function createBarrier(): Barrier {
    * ONE RUNNING COUNTDOWN PER SCOPE, keyed by `PartyScope.id` or `LEVEL_SCOPE`.
    *
    * `key` is the identity of the countdown currently running for that scope:
-   * the blocking set, joined.
+   * the player whose turn it is.
    *
    * Keyed by WHO rather than by turn number so the countdown restarts on its
-   * own whenever the answer to "who are we waiting for" changes — a new turn, a
-   * different straggler, or a refund putting somebody back on the hook. A
+   * own whenever the answer to "who are we waiting for" changes — the next
+   * player in line, a new round, or a refund putting somebody back on the hook. A
    * refunded player getting a fresh 20 seconds is correct: their first 20 were
    * spent on an intent the world invalidated underneath them.
    *
@@ -438,11 +441,9 @@ export function createBarrier(): Barrier {
    * "reset the Bell when the party changes" line in `noteCommand` / `disconnect`
    * is a bug: it hands the straggler a fresh 20 seconds every time SOMEBODY ELSE
    * queues a command, which is a clock that never runs out in a party that is
-   * chatting. The key already covers every case that matters. When a committed
-   * player drops and the quorum falls to one, the key is unchanged and the
-   * countdown carries on from where it was — against the LONGER solo duration,
-   * so the last person standing is handed the two minutes measured from when
-   * they started thinking. That is exactly right, and it is not a special case.
+   * chatting. The key already covers every case that matters. When the party
+   * falls to one, `bellDurationMs` answers null and the clock simply stops: a
+   * player alone keeps nobody waiting.
    *
    * ═══ A MAP RATHER THAN TWO VARIABLES, AND ONLY BECAUSE OF THE SCOPE ═══
    * A scoped caller gets its own start time. The engine is not one: two parties
@@ -474,14 +475,15 @@ export function createBarrier(): Barrier {
     const snapshot = surveyQuorum(actors, level, scope);
     const durationMs = bellDurationMs(snapshot.total, level);
 
-    // THE START CONDITION, written the way the design states it. Note that
-    // `committed >= total - 1` is the same thing as `blocking.length <= 1`:
-    // the Bell only ever rings for the LAST straggler, which is why it can be
-    // aggressive without ever hurrying somebody who has company.
-    const armed =
-      durationMs !== null &&
-      snapshot.blocking.length > 0 &&
-      snapshot.committed >= snapshot.total - 1;
+    // THE START CONDITION: somebody owes a decision, in company. The Bell is on
+    // WHOEVER'S TURN IT IS — the first player in turn order who has not
+    // decided — because in a fight the party takes its turns in that order
+    // (`actsWhileBlocked`, engine/scheduler.ts) and only that player is keeping
+    // the table waiting. It used to wait for the LAST straggler, which was right
+    // while everybody decided at once; one at a time, the last straggler is
+    // simply the last in line, and everyone before them would have had no clock.
+    // `actors` must be in turn order for `blocking[0]` to be that player.
+    const armed = durationMs !== null && snapshot.blocking.length > 0;
 
     if (!armed) {
       countdowns.delete(scopeId);
@@ -496,7 +498,9 @@ export function createBarrier(): Barrier {
       };
     }
 
-    const key = snapshot.blocking.join('|');
+    // ONE PLAYER: the next one in line gets a fresh count of their own.
+    const current = snapshot.blocking.slice(0, 1);
+    const key = current.join('|');
     let running = countdowns.get(scopeId);
     if (running === undefined || running.key !== key) {
       running = { key, startedMs: nowMs };
@@ -509,7 +513,7 @@ export function createBarrier(): Barrier {
       deadlineMs,
       remainingMs: Math.max(0, deadlineMs - nowMs),
       durationMs,
-      stragglers: snapshot.blocking,
+      stragglers: current,
       quorum: snapshot.total,
       committed: snapshot.committed,
     };

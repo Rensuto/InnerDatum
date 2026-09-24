@@ -9,7 +9,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { createContentTalentEngine, createTalentBook } from '../../src/server/content/classes.ts';
 import { AiProfile, HOLD_INTENT, isPlayer } from '../../src/server/engine/actor.ts';
 import { BELL_MS, createBarrier, inQuorum } from '../../src/server/engine/barrier.ts';
-import { createDownedState } from '../../src/server/engine/downed.ts';
+import { createDownedState, goDown } from '../../src/server/engine/downed.ts';
 import { createPartyState, partyIdOf } from '../../src/server/engine/party.ts';
 import { talentRuntimeFor } from '../../src/server/main.ts';
 import { wsGateway } from '../../src/server/net/gateway.ts';
@@ -20,6 +20,7 @@ import { TileCode } from '../../src/shared/protocol.ts';
 import { COMMAND_GAP_MS, PROTOCOL_VERSION } from '../../src/shared/version.ts';
 import { attachClassFor } from '../helpers/attach-class.ts';
 import type { Barrier } from '../../src/server/engine/barrier.ts';
+import type { DownedState } from '../../src/server/engine/downed.ts';
 import type { PlayerActor } from '../../src/server/engine/actor.ts';
 import type { PartyState } from '../../src/server/engine/party.ts';
 import type { World } from '../../src/server/world/world.ts';
@@ -139,6 +140,7 @@ type Harness = {
   readonly engine: ReturnType<typeof createTurnEngine>;
   readonly barrier: Barrier;
   readonly parties: PartyState;
+  readonly downed: DownedState;
   /** Added to `Date.now()` by the ENGINE's clock only. The gateway's timers do not see it. */
   readonly clock: { skewMs: number };
   /** Gives a body a real class sheet, the way production's `attachClass` does. */
@@ -187,6 +189,7 @@ async function boot(seed: string): Promise<Harness> {
     engine,
     barrier,
     parties,
+    downed,
     clock,
     attachClass: attachClassFor(talents, world),
   };
@@ -282,7 +285,16 @@ async function strangersEngaged(seed: string): Promise<{ h: Harness; a: Seat; b:
   expect(b.body.pendingIntent).toBeNull();
   expect(b.body.standingOrder).toBeNull();
 
-  // A's first step is the energy A already had, so it resolves either way.
+  // THE ORDER, SET RATHER THAN ROLLED: A then B, then the husk. A party's
+  // turns go in initiative order (`ensureInitiative`, engine/scheduler.ts),
+  // which keeps a roll it finds, so every case below is about the rule and
+  // not about which way a seed fell. The roll itself is pinned further down.
+  h.world.turn.engagement = 3;
+  a.body.initiative = 20;
+  b.body.initiative = 10;
+  for (const body of h.world.allActors()) if (!isPlayer(body)) body.initiative = 1;
+
+  // A's first step is A's turn, so it resolves.
   const y0 = a.body.y;
   await step(a, 's');
   expect(a.body.y).toBe(y0 + 1);
@@ -318,6 +330,8 @@ describe('two parties in one engaged realm', () => {
     await waitUntil(() => whoseTurnIn(a.client.latest('turn')).includes(b.id), "B on A's strip");
     const frame = a.client.latest('turn');
     expect(cards(frame)[b.id]).toBe('bell');
+    // AND NAMES IT: it is B's turn, and the frame says so in one field.
+    expect(frame?.['current']).toBe(b.id);
     expect(h.engine.turnState(a.id).whoseTurn).toEqual([b.id]);
 
     // THE REALM'S BELL: two in the quorum, so the Normal twenty seconds — on the
@@ -344,6 +358,74 @@ describe('two parties in one engaged realm', () => {
     await sleep(COMMAND_GAP_MS);
     a.client.send({ t: 'move', dir: 's' });
     await waitUntil(() => a.body.y === y1 + 1, "A's held step to resolve");
+  });
+
+  it('holds a move sent out of turn until its slot, then plays both in order', async () => {
+    const { h, a, b } = await strangersEngaged('cross-party-order');
+    await waitUntil(() => h.engine.turnState().current === b.id, "B's turn");
+    const ya = a.body.y;
+    const yb = b.body.y;
+
+    // A HAS ALREADY HAD THIS ROUND'S TURN, so A's next step waits behind B.
+    await step(a, 's');
+    expect(a.body.y).toBe(ya);
+    expect(h.engine.turnState().current).toBe(b.id);
+
+    // B takes theirs, and the queue drains in order: B, then A.
+    await step(b, 'n');
+    await waitUntil(() => b.body.y === yb - 1 && a.body.y === ya + 1, 'both steps to resolve');
+  });
+
+  it('hands the next player in line a fresh count on screen, not the rest of the last one’s', async () => {
+    const { h, a, b } = await strangersEngaged('cross-party-fresh');
+    // B holds, and the next round opens on A.
+    await waitUntil(() => h.engine.turnState().current === b.id, "B's turn");
+    await sleep(COMMAND_GAP_MS);
+    b.client.send({ t: 'hold' });
+    await waitUntil(() => h.engine.turnState().current === a.id, "A's turn again");
+
+    // A thinks for a second and a half of real time — the gateway's clock...
+    await sleep(1_500);
+    const turn = h.world.turn.clock.gameTurn;
+    await step(a, 's');
+    // ...and B, next in the SAME game turn, is handed the whole count. Keyed on
+    // the game turn alone, the gateway gave B what was left of A's.
+    await waitUntil(() => b.client.latest('turn')?.['current'] === b.id, "B's turn on B's screen");
+    expect(h.world.turn.clock.gameTurn, 'the fixture crossed a game turn').toBe(turn);
+    const bellMs = b.client.latest('turn')?.['bellMs'];
+    expect(typeof bellMs).toBe('number');
+    expect(bellMs as number).toBeGreaterThan(BELL_MS.Normal - 1_000);
+  });
+
+  it('does not strand a queued move when the party ahead of it wipes and the floor resets', async () => {
+    const { h, a, b } = await strangersEngaged('cross-party-wipe');
+    // A THIRD STRANGER, LAST IN LINE, whose command is the pump below: a downed
+    // player's own commands are refused before anything is pumped.
+    const c = await seat(h, 20, 5);
+    c.body.initiative = 5;
+    await waitUntil(() => h.engine.turnState().current === b.id, "B's turn");
+    const ya = a.body.y;
+
+    // A queues a step behind B...
+    await step(a, 's');
+    expect(a.body.pendingIntent).not.toBeNull();
+    // ...and B's party goes down in full. The next pump wipes it, stands B up
+    // at the head of the line while the realm is still flagged in a fight, and
+    // only then resets the floor and ends the fight.
+    b.body.hp = 0;
+    b.body.alive = false;
+    goDown(h.downed, b.body, h.world.turn.clock.gameTurn);
+
+    // C's hold is the pump, and it queues behind B like A's step. A must move
+    // on it without pressing anything: the wipe stands B up at the head of the
+    // line, but on a clock `resetFloorParty` zeroed, and A's queued step is at
+    // the threshold — so A goes, and the realm is never parked on a party that
+    // is about to be reset.
+    await sleep(COMMAND_GAP_MS);
+    c.client.send({ t: 'hold' });
+    await waitUntil(() => a.body.y === ya + 1, "A's queued step to resolve after the reset");
+    // THE PREMISE: B's party really did wipe and stand back up.
+    expect(b.body.alive).toBe(true);
   });
 });
 

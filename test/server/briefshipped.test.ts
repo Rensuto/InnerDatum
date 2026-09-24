@@ -251,6 +251,15 @@ describe('the objective content/briefs.ts actually ships', () => {
     const down = stairsDownOf(one);
     if (down === null) throw new Error('no stair down');
     await stepOnto(one, mate, down);
+    // A PARTY'S TURNS GO IN ORDER while a fight is on, and floor 1 can have one
+    // in sight. If the mate's step is waiting behind the lead's turn, the lead
+    // passes it so the mate's step lands — and takes them down the stair; the
+    // case after this one pins that — before the lead takes the stair too.
+    const queued = one.world.getActor(mate.actorId);
+    if (queued?.kind === 'player' && queued.pendingIntent !== null) {
+      lead.send({ t: 'hold' });
+      await sleep(320);
+    }
     await stepOnto(one, lead, down);
     const two = server.realms.realmOf(lead.actorId);
     if (two === undefined) throw new Error('never went down');
@@ -481,4 +490,43 @@ describe('the objective content/briefs.ts actually ships', () => {
     expect(again?.id, 'a different instance').toBe(two.id);
     expect(again?.brief, 'the floor offered its work a second time').toBeUndefined();
   }, 60_000);
+
+  it('takes a player down the stair on a step that waited its turn', async () => {
+    // A PARTY'S TURNS GO IN ORDER in a fight, so a step sent out of turn lands
+    // on somebody else's command — and the stair is checked in the tail of the
+    // mover's OWN command, which ran while the step was still waiting. It has
+    // to be checked again when the step lands (`walkOnQueued`, net/gateway.ts),
+    // or the mover stands on the stair and goes nowhere.
+    const lead = await connect();
+    const mate = await connect();
+    await chooseAClass(lead);
+    await chooseAClass(mate);
+    lead.send({ t: 'party', action: 'invite', targetId: mate.actorId });
+    await sleep(200);
+    mate.send({ t: 'party', action: 'accept', targetId: lead.actorId });
+    await sleep(250);
+    const one = await enterDelve(lead);
+    await enterDelve(mate);
+    const down = stairsDownOf(one);
+    if (down === null) throw new Error('no stair down');
+
+    // A FIGHT, AND THE LEAD FIRST IN IT — set, so the case is not a roll.
+    one.world.turn.engagement = 3;
+    for (const body of one.world.allActors()) {
+      body.initiative = body.id === lead.actorId ? 20 : body.id === mate.actorId ? 10 : 1;
+    }
+
+    await stepOnto(one, mate, down);
+    const queued = one.world.getActor(mate.actorId);
+    expect(
+      queued?.kind === 'player' && queued.pendingIntent !== null,
+      'the step went in turn',
+    ).toBe(true);
+    expect(server.realms.realmOf(mate.actorId)?.floor).toBe(1);
+
+    // The lead passes; the mate's step lands, on the stair, and takes them down.
+    lead.send({ t: 'hold' });
+    await sleep(320);
+    expect(server.realms.realmOf(mate.actorId)?.floor).toBe(2);
+  }, 20_000);
 });

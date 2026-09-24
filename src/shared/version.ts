@@ -662,6 +662,17 @@
  * ═══════════════════════════════════════════════════════════════════════════
 
 
+ * 30 -> 31 (A PARTY TAKES ITS TURNS IN ORDER). `TurnMsg` gains `current`,
+ * whose turn it is, and loses `acting`, which named players halfway through an
+ * open round that no longer exists. In a fight with two or more players the
+ * turns now go one at a time in initiative order, and the Bell is on the
+ * current player alone. A v30 client would still draw every undecided player
+ * as "your move", so three people would each think it was their go while the
+ * server waited on one of them. The version gate makes that a reload.
+ *
+ * `SCHEMA_VERSION` STAYS 1. Initiative is never saved; a restored fight rolls
+ * again.
+ *
  * 29 -> 30 (EVERY ACTION ENDS THE TURN). No frame changed shape; the RULE did.
  * In combat a step or a talent used to leave the round open, so the client's
  * Space sent `commit` to end it. The server now ends the turn on the action
@@ -1296,7 +1307,7 @@
  * path rather than read from disk. When that changes it will be an OPTIONAL
  * field and docs/data-schemas.md:48-49 applies unchanged.
  */
-export const PROTOCOL_VERSION = 30;
+export const PROTOCOL_VERSION = 31;
 
 /**
  * Bumped whenever a persisted save file's shape changes. Every bump needs a

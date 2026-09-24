@@ -7,6 +7,7 @@ import { createPartyState, partyIdOf } from '../../src/server/engine/party.ts';
 import { createTurnEngine } from '../../src/server/turn-engine.ts';
 import { createWorld } from '../../src/server/world/world.ts';
 import { chebyshev } from '../../src/shared/coords.ts';
+import { ENERGY_TO_ACT } from '../../src/shared/energy.ts';
 import { canWalk } from '../../src/shared/level.ts';
 import { ActorKind, ErasedReason, TileCode } from '../../src/shared/protocol.ts';
 import type { MonsterActor } from '../../src/server/engine/actor.ts';
@@ -486,6 +487,12 @@ describe('one party on the floor does not starve another', () => {
     playing.hpRegen = 0;
     playing.x = 1;
     playing.y = 11;
+    // AT THE THRESHOLD, which is where a player with a move to make stands. A
+    // party's turns go in initiative order, and the wipe stands p1 up at the
+    // head of it — but on the clock `resetFloorParty` zeroes, so a move already
+    // waiting goes first. Born at zero beside them, p2 would tie p1 to the
+    // tick and wait behind whichever rolled higher.
+    playing.energy = ENERGY_TO_ACT;
 
     world.addMonster('m_husk', {
       name: 'Index Husk',

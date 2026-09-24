@@ -5536,30 +5536,21 @@ export type LeftMsg = {
  * READ THIS BEFORE DRAWING ANYTHING FROM `TurnMsg.actors`.
  * ═══════════════════════════════════════════════════════════════════════════
  *
- * THIS IS NOT AN INITIATIVE ORDER, AND IT MUST NEVER BE DRAWN AS ONE.
+ * THE CARDS ARE NOT THE TURN ORDER, EVEN THOUGH THERE NOW IS ONE.
  *
- * Baldur's Gate 3 runs STRICT INITIATIVE: actors act one at a time in a fixed
- * order, and its portrait strip IS that order — you read it left to right to
- * learn who goes next and how long you have to wait.
+ * Since 2026-09-23 a party in a fight takes its turns ONE AT A TIME, in
+ * initiative order (the author's ruling; `ensureInitiative` in
+ * engine/scheduler.ts). The order is `whoseTurn`, and `current` names the one
+ * player the server is waiting on. A player later in line may send a move early
+ * and it waits for their slot. Alone there is no order to speak of: the one
+ * player is always `current`, and the world moves on every action, as ToME's.
  *
- * Inner Datum is PHASE-LOCKED (DECISIONS.md D1, PLAN.md § 6): a player action
- * always costs exactly one full turn of energy, so the WHOLE PARTY decides in
- * the same window, everything resolves, and then the monsters sweep as one
- * batch. There is no order among the players because there is no queue to be
- * in. Anyone in `actors` whose `state` is `waiting` can act RIGHT NOW.
- *
- * So anything built from this answers exactly one question — WHO HAS NOT
- * DECIDED YET — and the failure mode of getting it wrong is specific and bad: a
- * surface that reads as a running order makes three players sit and wait for
- * "their go" while the server is already waiting on all four. That is the
- * spinner D1 exists to prevent, arrived at through the UI instead of the engine.
- * It is why the party pane's rows are never sorted by turn state.
- *
- * WHICH IS WHY THE ORDER IS JOIN ORDER AND IS STABLE ACROSS FRAMES. It carries
- * no information at all, on purpose: nothing in it can be mistaken for a queue,
- * and a card never moves under a cursor between two frames. The server sorts
- * this list; a client that re-sorts it (by state, by hp, by name) reintroduces
- * both problems at once.
+ * `actors` IS STILL JOIN ORDER AND STABLE ACROSS FRAMES, deliberately. It is
+ * the party pane's rows, and the author's 2026-09-18 ruling puts the turn
+ * indicator there: a row is marked, and never moves under a cursor between two
+ * frames. The server sorts this list; a client that re-sorts it (by state, by
+ * hp, by name) would move cards every turn and gain nothing `current` does not
+ * already say.
  */
 
 /**
@@ -5617,7 +5608,7 @@ export const TurnActorState = {
    * not to present the strip as a live tracker at all.
    */
   Committed: 'committed',
-  /** Waiting AND the Bell is counting down on them. The last stragglers. */
+  /** Waiting AND the Bell is counting down on them: it is their turn. */
   Bell: 'bell',
   /**
    * EXCLUDED FROM THE QUORUM: two consecutive auto-passes, a disconnected body,
@@ -5786,8 +5777,8 @@ export type TurnMsg = {
   /**
    * THE TURN TRACKER: every card the strip draws, in STABLE JOIN ORDER.
    *
-   * See the essay above `TurnActorKind` — this is not an initiative order and
-   * must not be drawn as one, and a client must not re-sort it.
+   * See the essay above `TurnActorKind` — the turn order is `whoseTurn` and
+   * `current`, not this, and a client must not re-sort it.
    *
    * Every player in the world appears, always, including the downed and the
    * disconnected: a card that vanishes when somebody falls over removes the
@@ -5799,10 +5790,16 @@ export type TurnMsg = {
    */
   actors: readonly TurnActor[];
   /**
-   * THE QUORUM: everyone the barrier is parked on this turn, committed or not.
-   * Empty out of combat, where nobody blocks and movement is free.
+   * EVERYONE STILL OWED A DECISION THIS ROUND, IN TURN ORDER. Empty out of
+   * combat, where nobody blocks and movement is free.
    */
   whoseTurn: readonly string[];
+  /**
+   * WHOSE TURN IT IS — the first of `whoseTurn` — or null when the server is
+   * waiting on nobody. In a fight it is the one player whose decision the world
+   * is paused for; everybody after them in `whoseTurn` is next in line.
+   */
+  current: string | null;
   /** The subset of `whoseTurn` that has already said `commit` or `hold`. */
   committed: readonly string[];
   /**
@@ -5812,31 +5809,11 @@ export type TurnMsg = {
    */
   standingBy: readonly string[];
   /**
-   * ═══════════════════════════════════════════════════════════════════════════
-   * WHO IS MID-ROUND — a subset of `whoseTurn`, and it is NOT the same as idle.
-   * ═══════════════════════════════════════════════════════════════════════════
-   *
-   * `DECISIONS.md` D1's intra-turn budget means a player can act and STILL owe a
-   * decision: Ward Rush at 2 AP leaves 4, so they park again with the round
-   * open. `whoseTurn` says "we are waiting on this person", which is true of
-   * somebody who has not started AND of somebody halfway through a plan — and
-   * the difference is the only thing a table needs to know to tell "he is
-   * thinking" from "he has walked away from the keyboard".
-   *
-   * Without it the card for a player who has just rushed a husk looks identical
-   * to the card for one who has not touched a key, and the Bell reads as
-   * punishing somebody who is visibly playing.
-   *
-   * OPTIONAL, SO NO VERSION BUMP: an older client ignores a field it cannot
-   * name and draws exactly the two states it always drew.
-   */
-  acting?: readonly string[];
-  /**
    * MILLISECONDS LEFT ON THE BELL, or null when no Bell is running.
    *
-   * Null is the normal state: there is NO timer at all until `committed`
-   * reaches `whoseTurn.length - 1`. Only then does a countdown appear, and only
-   * on the stragglers. Sent as remaining-time rather than a deadline timestamp
+   * It runs on `current` alone, only in a fight, and only with company: a
+   * player on their own is never timed. Each player in line gets a fresh count
+   * when their turn comes. Sent as remaining-time rather than a deadline timestamp
    * because the client's clock is not the server's, and a 300 ms skew on a
    * 12-second boss Bell is visible.
    */

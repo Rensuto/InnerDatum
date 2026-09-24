@@ -249,10 +249,11 @@ describe('the barrier parks once per turn at full quorum', () => {
 // ---------------------------------------------------------------------------
 
 describe('the Bell start condition', () => {
-  it('does not start until committed >= quorum - 1', () => {
-    // NO TIMER AT ALL until everybody but the last straggler has committed.
-    // Starting one earlier is pressure with nothing to do about it: a clock on
-    // somebody while two other people are still thinking.
+  it('runs on whoever’s turn it is, whenever anybody is waited on in company', () => {
+    // THE TURNS GO ONE AT A TIME (2026-09-23), so the Bell is on the first
+    // player in turn order who has not decided — `actors` is handed over in
+    // turn order — and on nobody else. It used to wait for the last straggler,
+    // which was right while everybody decided at once.
     for (const committed of [0, 1, 2, 3, 4]) {
       const seats = atThreshold(4);
       for (let i = 0; i < committed; i += 1) {
@@ -264,49 +265,51 @@ describe('the Bell start condition', () => {
       const barrier = createBarrier();
       const state = barrier.bell(seats, IN_COMBAT, 0);
 
-      expect({ committed, running: state.running }).toEqual({
-        committed,
-        // Runs only at committed === 3: quorum - 1 with somebody still blocking.
-        running: committed === 3,
-      });
+      expect({ committed, running: state.running }).toEqual({ committed, running: committed < 4 });
+      expect(state.stragglers).toEqual(committed < 4 ? [seats[committed]?.id] : []);
       expect(state.quorum).toBe(4);
       expect(state.committed).toBe(committed);
     }
   });
 
-  it('rings for the last straggler only, and does not restart while it is running', () => {
+  it('hands the next player in line a fresh count, and does not restart while it runs', () => {
     const seats = atThreshold(3);
-    const [first, second, straggler] = seats;
-    if (first === undefined || second === undefined || straggler === undefined) {
-      throw new Error('test fixture: the party is short');
-    }
+    const [first, second] = seats;
+    if (first === undefined || second === undefined) throw new Error('test fixture: short');
     const barrier = createBarrier();
 
-    first.pendingIntent = HOLD_INTENT;
-    expect(barrier.bell(seats, IN_COMBAT, 1_000).running).toBe(false);
+    const started = barrier.bell(seats, IN_COMBAT, 1_000);
+    expect(started.stragglers).toEqual([first.id]);
+    expect(started.deadlineMs).toBe(1_000 + BELL_MS.Normal);
 
-    second.pendingIntent = HOLD_INTENT;
-    const started = barrier.bell(seats, IN_COMBAT, 2_000);
-    expect(started.running).toBe(true);
-    expect(started.stragglers).toEqual([straggler.id]);
-    expect(started.deadlineMs).toBe(2_000 + BELL_MS.Normal);
-
-    // Idempotent: asking again later does not hand the straggler a fresh clock.
-    const later = barrier.bell(seats, IN_COMBAT, 9_000);
-    expect(later.deadlineMs).toBe(2_000 + BELL_MS.Normal);
+    // Idempotent: asking again later does not hand them a fresh clock.
+    const later = barrier.bell(seats, IN_COMBAT, 8_000);
+    expect(later.deadlineMs).toBe(1_000 + BELL_MS.Normal);
     expect(later.remainingMs).toBe(BELL_MS.Normal - 7_000);
 
-    // Once they commit, the countdown is gone rather than merely ignored.
-    straggler.pendingIntent = HOLD_INTENT;
-    const finished = barrier.bell(seats, IN_COMBAT, 9_500);
-    expect(finished.running).toBe(false);
-    expect(finished.deadlineMs).toBeNull();
-    expect(finished.stragglers).toEqual([]);
+    // They decide, and the NEXT player's count starts from now — not from what
+    // was left of the first player's.
+    first.pendingIntent = HOLD_INTENT;
+    const next = barrier.bell(seats, IN_COMBAT, 9_000);
+    expect(next.stragglers).toEqual([second.id]);
+    expect(next.deadlineMs).toBe(9_000 + BELL_MS.Normal);
+  });
+
+  it('forces the pass on the current player alone when it runs out', () => {
+    const seats = atThreshold(3);
+    const [first, second, third] = seats;
+    if (first === undefined || second === undefined || third === undefined) {
+      throw new Error('test fixture: short');
+    }
+    const barrier = createBarrier();
+    barrier.bell(seats, IN_COMBAT, 0);
+    const passes = barrier.expire(seats, IN_COMBAT, BELL_MS.Normal);
+    expect(passes.map((pass) => pass.id)).toEqual([first.id]);
   });
 });
 
 describe('the Bell duration', () => {
-  it('is null out of combat, 20s normal, 12s on a boss floor, and 120s at quorum 1', () => {
+  it('is null out of combat, 20s normal, 12s on a boss floor, and null at quorum 1', () => {
     expect(bellDurationMs(4, OUT_OF_COMBAT)).toBeNull();
     expect(bellDurationMs(4, IN_COMBAT)).toBe(20_000);
     expect(bellDurationMs(4, BOSS_FLOOR)).toBe(12_000);

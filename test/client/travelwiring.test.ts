@@ -148,6 +148,8 @@ function turnFrame(inCombat: boolean, state: TurnActorState, gameTurn = 12): Tur
       },
     ],
     whoseTurn: [],
+    // A self card that owes a decision is the one being waited on.
+    current: state === TurnActorState.Waiting || state === TurnActorState.Bell ? 'self' : null,
     committed: [],
     standingBy: [],
     bellMs: null,

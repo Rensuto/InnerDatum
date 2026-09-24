@@ -196,6 +196,10 @@ const FONT_BOLD = 'bold 10px ui-monospace, Consolas, monospace';
  * every card `committed` — a true statement about the BARRIER and the opposite
  * of the truth about the PLAYER, who may act freely. A socket with no card of
  * its own (a spectator, a body still being assigned) is never "your turn".
+ *
+ * IN A FIGHT IT IS `current`, AND OWING A DECISION IS NOT ENOUGH. A party takes
+ * its turns one at a time (protocol.ts `TurnMsg.current`), so a player later in
+ * line owes a decision while somebody else is taking theirs.
  */
 export function isYourTurn(view: TurnBarView): boolean {
   const turn = view.turn;
@@ -203,7 +207,13 @@ export function isYourTurn(view: TurnBarView): boolean {
   const card = selfCard(turn);
   if (card === null) return false;
   if (!turn.inCombat) return true;
-  return card.state === TurnActorState.Waiting || card.state === TurnActorState.Bell;
+  return turn.current === card.id;
+}
+
+/** The name on the card whose turn it is, or null when nobody's is. */
+function currentName(turn: TurnMsg): string | null {
+  if (turn.current === null) return null;
+  return turn.actors.find((actor) => actor.id === turn.current)?.name ?? null;
 }
 
 /**
@@ -235,14 +245,22 @@ export function bannerFor(view: TurnBarView): string {
       ? `turn ${turn.gameTurn} — free movement`
       : 'YOUR MOVE — free movement, nothing is hunting you';
   }
-  if (card === null) return `IN COMBAT — turn ${turn.gameTurn} — waiting on ${owed}`;
+  const who = currentName(turn);
+  if (card === null) {
+    return who === null ? `IN COMBAT — turn ${turn.gameTurn}` : `IN COMBAT — ${who}'s turn`;
+  }
 
   switch (card.state) {
     case TurnActorState.Bell:
       // The table is waiting on you and the clock is running. One action ends
       // your turn, so there is nothing else to say but how long you have.
-      return `YOUR MOVE — BELL ${String(bellSeconds(view.bellMs) ?? 0)}s`;
+      return `YOUR TURN — BELL ${String(bellSeconds(view.bellMs) ?? 0)}s`;
     case TurnActorState.Waiting: {
+      // IN LINE. You owe a decision, and somebody before you is taking theirs;
+      // a move sent now waits for your slot.
+      if (turn.current !== null && turn.current !== card.id) {
+        return `IN LINE — ${who ?? 'somebody'}'s turn`;
+      }
       /**
        * ═══ ONE ACTION ENDS YOUR TURN, SO THE BANNER NAMES NO KEY ═══
        * This read "YOUR MOVE — 3/6 AP · 2/3 MP left — SPACE ends your turn",
@@ -256,15 +274,16 @@ export function bannerFor(view: TurnBarView): string {
        */
       const rest = Math.max(0, owed - 1);
       const others =
-        rest === 0 ? '' : rest === 1 ? ' — 1 other deciding' : ` — ${String(rest)} others deciding`;
-      return `YOUR MOVE${others}`;
+        rest === 0 ? '' : rest === 1 ? ' — 1 after you' : ` — ${String(rest)} after you`;
+      return `YOUR TURN${others}`;
     }
     case TurnActorState.Committed:
       // "TURN OVER" AND NOT "committed", which is the engine's word rather than
       // the player's. This is the half of the answer that was hardest to see:
       // a player who has finished needs to KNOW they have finished, or they go
-      // on pressing keys at a game that is waiting for somebody else.
-      return owed === 0 ? 'TURN OVER — resolving' : `TURN OVER — waiting on ${String(owed)}`;
+      // on pressing keys at a game that is waiting for somebody else. And it
+      // says WHO, because the turns go one at a time now.
+      return who === null ? 'TURN OVER — resolving' : `TURN OVER — waiting on ${who}`;
     case TurnActorState.StandingBy:
       return card.downed
         ? 'DOWN — you can still talk, and an ally can still reach you'

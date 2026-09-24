@@ -300,39 +300,24 @@ export type TurnState = {
    * every turn.
    */
   readonly engagement: number;
-  /** The quorum: everyone parked at the barrier this turn, committed or not. */
+  /** Everyone still owed a decision this round, IN TURN ORDER. */
   readonly whoseTurn: readonly string[];
+  /**
+   * WHOSE TURN IT IS: `whoseTurn[0]`, or null when nobody is being waited on.
+   * Named so no reader has to know that the first of a list is special.
+   */
+  readonly current: string | null;
   /** The subset of `whoseTurn` that has already committed or held. */
   readonly committed: readonly string[];
   /** Excluded from quorum: two silent turns, or a disconnected body. */
   readonly standingBy: readonly string[];
-  /** Blocking players who have already acted this round. See `TurnMsg.acting`. */
-  readonly acting?: readonly string[];
   /** How long a freshly-armed Bell should run, or null for no Bell at all. */
   readonly bellDurationMs: number | null;
-  /**
-   * ═══════════════════════════════════════════════════════════════════════════
-   * HOW LONG UNTIL THE SOONEST OPEN ROUND CLOSES ITSELF — or null for never.
-   * ═══════════════════════════════════════════════════════════════════════════
-   *
-   * Milliseconds from the moment of the snapshot, like `bellDurationMs` a
-   * duration and never a deadline, because the engine's clock is injected and
-   * the gateway's is not. The gateway arms its one wake-up timer for the sooner
-   * of this and the Bell, and pumps the realm when it fires — without it the
-   * round tail (engine/scheduler.ts `applyRoundTails`) was only ever checked
-   * when somebody pressed a key, so an open round beside one idle player, which
-   * arms no Bell, waited for one.
-   *
-   * OPTIONAL, and absent reads as null: a snapshot built by hand, or by an
-   * engine with no talent runtime, has no round that can stay open. Never on
-   * the wire — `projectTurn` copies its fields one by one.
-   */
-  readonly roundTailInMs?: number | null;
   /**
    * WHOSE CARDS THE STRIP DRAWS — a list of player ids, or absent for everybody
    * in the realm.
    *
-   * The blocking set, the Bell and `acting` above are the REALM'S in every
+   * The blocking set, the Bell and `current` above are the REALM'S in every
    * snapshot: everyone in an engaged realm waits on everyone in it, party or not
    * (`PumpCtx.parties` in engine/scheduler.ts). So in combat this is ABSENT and
    * the strip names whoever is holding the viewer, stranger or not. Out of
@@ -944,13 +929,15 @@ function playerCardState(
   blocking: ReadonlySet<string>,
   standingBy: ReadonlySet<string>,
   bellMs: number | null,
+  current: string | null,
 ): TurnActor['state'] {
   if (!actor.alive) return TurnActorState.StandingBy;
   if (standingBy.has(actor.id)) return TurnActorState.StandingBy;
   if (blocking.has(actor.id)) {
-    // The Bell only ever runs on the last straggler, so "blocking while a Bell
-    // is up" IS being the straggler. No second field needed on the wire.
-    return bellMs === null ? TurnActorState.Waiting : TurnActorState.Bell;
+    // THE BELL IS ON WHOEVER'S TURN IT IS and nobody else (engine/barrier.ts),
+    // so only that card counts down. The rest of the line owes a decision and
+    // is not yet being hurried for it.
+    return bellMs !== null && actor.id === current ? TurnActorState.Bell : TurnActorState.Waiting;
   }
   // In combat: they have submitted, held, or a standing order covers them.
   // Out of combat: nothing blocks, so the barrier is waiting on nobody — which
@@ -1011,7 +998,7 @@ function projectTurnActors(
       // four other people's screens.
       name: toDisplayName(actor.name),
       kind: TurnActorKind.Player,
-      state: playerCardState(actor, blocking, standingBy, bellMs),
+      state: playerCardState(actor, blocking, standingBy, bellMs, state.current),
       hp: actor.hp,
       maxHp: actor.maxHp,
       portrait: portraitForPlayer(actor.sprite),
@@ -1095,13 +1082,9 @@ export function projectTurn(
     inCombat: state.engagement > 0,
     actors: projectTurnActors(viewer, world, state, bellMs, downed, seen),
     whoseTurn: [...state.whoseTurn],
+    current: state.current,
     committed: [...state.committed],
     standingBy: [...state.standingBy],
-    // OMITTED WHEN EMPTY, which is the common case and the whole of the game
-    // before the intra-turn budget. See `TurnMsg.acting`.
-    ...(state.acting === undefined || state.acting.length === 0
-      ? {}
-      : { acting: [...state.acting] }),
     bellMs,
   };
 }
@@ -3497,7 +3480,7 @@ export function projectPartyState(
       // — `playerCardState` is shared rather than reimplemented, so the chip in
       // the pane and the chip on the strip can never say different things about
       // the same player on the same screen.
-      state: playerCardState(actor, blocking, standingBy, bellMs),
+      state: playerCardState(actor, blocking, standingBy, bellMs, state.current),
       isLeader: actor.id === roster.leaderId,
       // Never a Discord id on either side of the comparison: both are actor
       // ids, and `actorIdForUser` hashed the snowflake out before either was

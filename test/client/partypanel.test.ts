@@ -1734,6 +1734,11 @@ describe('the party row is what says whose turn it is', () => {
 
   /** A party of `states.length`, the first of whom is the viewer. */
   function party(states: readonly TurnActorState[], over: Partial<PartyStateMember> = {}) {
+    return partyPaneView(paneInputs(states, over));
+  }
+
+  /** `party`'s inputs, for a case that adds a field of its own (`current`). */
+  function paneInputs(states: readonly TurnActorState[], over: Partial<PartyStateMember> = {}) {
     const names = ['Dalt', 'Sam', 'Mo', 'Ren', 'Wen', 'Isa'];
     const members = states.map((turnState, i) =>
       member({
@@ -1745,7 +1750,7 @@ describe('the party row is what says whose turn it is', () => {
         ...(i === 0 ? over : {}),
       }),
     );
-    return partyPaneView({
+    return {
       state: state(members),
       invites: [],
       roster: members.map((m) => rosterRow(m.id, m.name)),
@@ -1755,7 +1760,7 @@ describe('the party row is what says whose turn it is', () => {
       resource: null,
       progress: null,
       money: null,
-    });
+    };
   }
 
   /**
@@ -1802,7 +1807,7 @@ describe('the party row is what says whose turn it is', () => {
      * the same roster row, must paint a different word when and only when the
      * server says a different thing.
      */
-    // THE VIEWER IS `waiting` IN EVERY CASE, so their own row says YOUR MOVE and
+    // THE VIEWER IS `waiting` IN EVERY CASE, so their own row says YOUR TURN and
     // the only word from the ally vocabulary on screen is the ALLY's. A `find`
     // over a party whose viewer shared that vocabulary would answer with row one
     // every time and assert nothing about row two.
@@ -1933,8 +1938,8 @@ describe('the party row is what says whose turn it is', () => {
      * the opposite of what is true.
      */
     const out = paint(party([TurnActorState.Waiting, TurnActorState.Committed]));
-    expect(out.texts).toContain('YOUR MOVE');
-    expect(out.inked.find((i) => i.text === 'YOUR MOVE')?.ink).toBe(PALETTE.GOLD);
+    expect(out.texts).toContain('YOUR TURN');
+    expect(out.inked.find((i) => i.text === 'YOUR TURN')?.ink).toBe(PALETTE.GOLD);
     // ...and a gold rail down the left of that row, which is the mark you catch
     // while looking at the map rather than at the pane.
     expect(out.rects.some((r) => r.w === 3 && r.ink === PALETTE.GOLD)).toBe(true);
@@ -1950,11 +1955,27 @@ describe('the party row is what says whose turn it is', () => {
     expect(none.texts).toContain('DONE');
   });
 
-  it('says YOUR MOVE to a party of one, which is who most needs telling', () => {
+  it('says IN LINE on your own row while somebody before you is taking their turn', () => {
+    // A PARTY'S TURNS GO ONE AT A TIME (2026-09-23). Owing a decision is not the
+    // same as it being your turn: the first in line is `current`, and a row
+    // that said YOUR TURN behind them would send you to the keyboard to queue
+    // a move that then waits.
+    const both = [TurnActorState.Waiting, TurnActorState.Bell];
+    const behind = partyPaneView({ ...paneInputs(both), current: 'actor_1' });
+    const out = paint(behind);
+    expect(out.texts).toContain('IN LINE');
+    expect(out.texts).not.toContain('YOUR TURN');
+
+    // And when it IS yours, it says so — the frame names you.
+    const yours = paint(partyPaneView({ ...paneInputs(both), current: 'actor_0' }));
+    expect(yours.texts).toContain('YOUR TURN');
+  });
+
+  it('says YOUR TURN to a party of one, which is who most needs telling', () => {
     // A solo player is a party of one (engine/party.ts) and still has to know
     // the game is waiting on them. There is nobody else's row to compare with.
     const out = paint(party([TurnActorState.Waiting]));
-    expect(out.texts).toContain('YOUR MOVE');
+    expect(out.texts).toContain('YOUR TURN');
     expect(out.blits).toContain('ui_icon_turn_waiting');
   });
 
@@ -2040,7 +2061,7 @@ describe('the party row is what says whose turn it is', () => {
     }
     // ...and the word beside each of them.
     expect(out.texts.filter((t) => t === 'WAITING')).toHaveLength(1); // Sam
-    expect(out.texts).toContain('YOUR MOVE'); // Dalt, the viewer
+    expect(out.texts).toContain('YOUR TURN'); // Dalt, the viewer
     expect(out.texts).toContain('BELL');
     expect(out.texts.filter((t) => t === 'DONE')).toHaveLength(2);
     expect(out.texts).toContain('STANDBY');
@@ -2091,7 +2112,7 @@ describe('the party row is what says whose turn it is', () => {
     const quiet: PartyPaneView = { ...view, inCombat: false };
     const out = paint(quiet, floorLayout(quiet));
     expect(out.texts).not.toContain('DONE');
-    expect(out.texts).not.toContain('YOUR MOVE');
+    expect(out.texts).not.toContain('YOUR TURN');
     expect(out.blits.filter((id) => id.startsWith('ui_icon_turn_'))).toHaveLength(0);
     // The slot the word would have used says who is in charge instead.
     expect(out.texts).toContain('LEAD');

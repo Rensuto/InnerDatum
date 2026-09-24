@@ -4052,6 +4052,8 @@ function partyView(): PartyPaneView | null {
     actors,
     effects,
     inCombat: turn?.inCombat === true,
+    // WHOSE TURN IT IS, so the self row can say IN LINE rather than YOUR TURN.
+    ...(turn === null ? {} : { current: turn.current }),
     // THE VIEWER'S OWN, and there is no other kind: `ResourceView` is
     // viewer-private, so the pane puts it on the self row.
     // See `PartyPaneView.resource`.

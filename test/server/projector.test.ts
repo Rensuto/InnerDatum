@@ -95,6 +95,8 @@ function barrier(over: Partial<TurnState> = {}): TurnState {
     gameTurn: 3,
     engagement: 0,
     whoseTurn: [],
+    // The engine's own rule (`turnState`): the first still owed is whose turn.
+    current: over.whoseTurn?.[0] ?? null,
     committed: [],
     standingBy: [],
     bellDurationMs: null,
@@ -698,8 +700,8 @@ describe('projectTurn', () => {
       'waiting',
     ]);
 
-    // A running Bell decorates `waiting` and NOTHING ELSE — it only ever rings
-    // for the last straggler, so blocking-while-a-Bell-is-up IS being them.
+    // A running Bell decorates `waiting` and NOTHING ELSE — it is on whoever's
+    // turn it is, and here that is Sam.
     const ringing = projectTurn(dalt, world, state, 12_000);
     expect(ringing.actors.map((c) => c.state)).toEqual([
       'committed',
@@ -707,6 +709,22 @@ describe('projectTurn', () => {
       'standing_by',
       'waiting',
     ]);
+  });
+
+  it('puts the Bell on the current player alone, and the rest of the line waits', () => {
+    // A PARTY'S TURNS GO ONE AT A TIME (2026-09-23): two players owe a decision,
+    // it is Sam's turn, and only Sam's card counts down. Mo is next in line and
+    // is not yet being hurried.
+    const world = room();
+    const dalt = world.addPlayer('actor_a', 'Dalt');
+    world.addPlayer('actor_b', 'Sam');
+    world.addPlayer('actor_c', 'Mo');
+
+    const state = barrier({ engagement: 5, whoseTurn: ['actor_b', 'actor_c'] });
+    expect(state.current).toBe('actor_b');
+    const msg = projectTurn(dalt, world, state, 12_000);
+    expect(msg.current).toBe('actor_b');
+    expect(msg.actors.slice(0, 3).map((c) => c.state)).toEqual(['committed', 'bell', 'waiting']);
   });
 
   it('says the monsters are ACTING once the party has stopped deciding', () => {

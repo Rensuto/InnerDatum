@@ -328,6 +328,13 @@ type ActorCommon = {
   energyMod: number;
   /** Set by `spendForAction`; the loop uses it to tell a real action from a free one. */
   energyUsed: boolean;
+  /**
+   * THIS FIGHT'S PLACE IN THE TURN ORDER, higher first. Undefined out of a
+   * fight, and always undefined in a realm with one player: initiative is how a
+   * PARTY takes turns (`ensureInitiative`, engine/scheduler.ts), and alone the
+   * order is ToME's. Runtime only — never saved; a restored fight rolls again.
+   */
+  initiative?: number;
 
   // --- vitals ---------------------------------------------------------------
   hp: number;

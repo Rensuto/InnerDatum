@@ -607,6 +607,10 @@ export type World = {
    * Ported in spirit from ToME's `Party.lua:71`, which forces the party to be
    * contiguous in the level's entity list for exactly this reason. Insertion
    * order within each group, so it is stable across a save and a reload.
+   *
+   * IN A PARTY'S FIGHT, BY INITIATIVE instead — see `ActorCommon.initiative`.
+   * That is ours, not a port: the author's ruling of 2026-09-23 that initiative
+   * orders a multiplayer fight. The party-first order is the tie-break.
    */
   actorsInTurnOrder(): Actor[];
   /** The LIVING body standing on a tile, if any. Terrain is not consulted. */
@@ -1452,7 +1456,21 @@ export function createWorld(
       if (actor.kind === ActorKind.Player) party.push(actor);
       else rest.push(actor);
     }
-    return [...party, ...rest];
+    const joined = [...party, ...rest];
+    // INITIATIVE, when a party's fight rolled it (`ActorCommon.initiative`).
+    // Highest first; a tie keeps the order above, so players still go first
+    // among equals; a body with no roll yet (a summon mid-fight) goes after
+    // every body that has one. Absent everywhere, this is the order above.
+    if (!joined.some((actor) => actor.initiative !== undefined)) return joined;
+    const place = new Map(joined.map((actor, i) => [actor.id, i]));
+    return joined.sort((a, b) => {
+      if (a.initiative === undefined || b.initiative === undefined) {
+        if (a.initiative !== b.initiative) return a.initiative === undefined ? 1 : -1;
+      } else if (a.initiative !== b.initiative) {
+        return b.initiative - a.initiative;
+      }
+      return (place.get(a.id) ?? 0) - (place.get(b.id) ?? 0);
+    });
   };
 
   const tryMove = (id: string, dir: Dir): MoveResult => {

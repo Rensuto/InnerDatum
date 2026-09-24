@@ -108,6 +108,8 @@ function barrier(over: Partial<TurnState> = {}): TurnState {
     gameTurn: 7,
     engagement: 0,
     whoseTurn: [],
+    // The engine's own rule (`turnState`): the first still owed is whose turn.
+    current: over.whoseTurn?.[0] ?? null,
     committed: [],
     standingBy: [],
     bellDurationMs: null,
@@ -199,7 +201,9 @@ describe('a turn record wears the barrier state its owner is actually in', () =>
     // "TURN OVER" AND NOT "committed" — the engine's word is not the player's, and
     // a player who has finished has to KNOW they have finished or they go on
     // pressing keys at a game that is waiting for somebody else.
-    expect(bannerFor(view(frame))).toBe('TURN OVER — waiting on 1');
+    // AND IT SAYS WHO: the turns go one at a time, so there is one person the
+    // table is waiting on, and a name is more use than a count.
+    expect(bannerFor(view(frame))).toBe('TURN OVER — waiting on Sam');
     expect(isYourTurn(view(frame))).toBe(false);
   });
 
@@ -292,12 +296,12 @@ describe('the Bell decorates the straggler and nobody else', () => {
     const state = barrier({ engagement: 3, whoseTurn: ['actor_b'], bellDurationMs: 20_000 });
 
     expect(bannerFor(view(frameFor(world, sam, state, 12_000), 12_000))).toBe(
-      'YOUR MOVE — BELL 12s',
+      'YOUR TURN — BELL 12s',
     );
     // Dalt is watching the same Bell run down on somebody else and is told about
     // the person, not about the clock.
     expect(bannerFor(view(frameFor(world, dalt, state, 12_000), 12_000))).toBe(
-      'TURN OVER — waiting on 1',
+      'TURN OVER — waiting on Sam',
     );
   });
 
@@ -313,28 +317,25 @@ describe('the Bell decorates the straggler and nobody else', () => {
     expect(bellSeconds(-500)).toBe(0);
   });
 
-  it('never tells a waiting player to wait for their go', () => {
-    // The phase-locked rule, as copy. Everyone reading `waiting` may act now,
-    // and a sentence implying a queue would produce exactly the spinner D1
-    // exists to prevent.
+  it('tells the first in line it is their turn, and the rest whose turn it is', () => {
+    // THE TURNS GO ONE AT A TIME (2026-09-23). This used to be "never tells a
+    // waiting player to wait for their go", when everyone reading `waiting`
+    // could act at once; now only the first in line can, and a player behind
+    // them needs to know they are in line rather than that it is their move.
     const { world, cast } = room();
     const sam = cast[1];
-    expect(sam).toBeDefined();
-    if (sam === undefined) return;
+    const third = cast[2];
+    if (sam === undefined || third === undefined) throw new Error('no cast');
+    const state = barrier({ engagement: 3, whoseTurn: ['actor_b', 'actor_c'] });
 
-    const frame = frameFor(
-      world,
-      sam,
-      barrier({ engagement: 3, whoseTurn: ['actor_b', 'actor_c'] }),
-    );
-    const line = bannerFor(view(frame));
+    // THE READER IS NOT ONE OF THE "OTHERS". `owedCount` counts them too.
+    const first = frameFor(world, sam, state);
+    expect(bannerFor(view(first))).toBe('YOUR TURN — 1 after you');
+    expect(isYourTurn(view(first))).toBe(true);
 
-    // THE READER IS NOT ONE OF THE "OTHERS". `owedCount` counts them too, and
-    // the old copy said "2 still deciding" to somebody who was one of the two.
-    expect(line).toBe('YOUR MOVE — 1 other deciding');
-    expect(isYourTurn(view(frame))).toBe(true);
-    expect(line.toLowerCase()).not.toContain('wait your turn');
-    expect(line.toLowerCase()).not.toContain('next up');
+    const behind = frameFor(world, third, state);
+    expect(bannerFor(view(behind))).toBe("IN LINE — Sam's turn");
+    expect(isYourTurn(view(behind))).toBe(false);
   });
 });
 
@@ -411,7 +412,7 @@ describe('out of combat the top HUD still costs one line and no more', () => {
     const frame = frameFor(world, ghost, barrier({ engagement: 3, whoseTurn: ['actor_a'] }));
     expect(selfCard(frame)).toBeNull();
     expect(isYourTurn(view(frame))).toBe(false);
-    expect(bannerFor(view(frame))).toBe('IN COMBAT — turn 7 — waiting on 1');
+    expect(bannerFor(view(frame))).toBe("IN COMBAT — Dalt's turn");
   });
 });
 
@@ -544,7 +545,7 @@ describe('the banner names no key to end the turn', () => {
     const frame = frameFor(world, sam, barrier({ engagement: 3, whoseTurn: ['actor_b'] }));
 
     const line = bannerFor(view(frame));
-    expect(line).toBe('YOUR MOVE');
+    expect(line).toBe('YOUR TURN');
     expect(line).not.toContain('SPACE');
     expect(line).not.toContain('AP');
     expect(line).not.toContain('MP');
@@ -562,6 +563,6 @@ describe('the banner names no key to end the turn', () => {
       barrier({ engagement: 3, whoseTurn: ['actor_b'], bellDurationMs: 20_000 }),
       12_000,
     );
-    expect(bannerFor(view(frame, 12_000))).toBe('YOUR MOVE — BELL 12s');
+    expect(bannerFor(view(frame, 12_000))).toBe('YOUR TURN — BELL 12s');
   });
 });

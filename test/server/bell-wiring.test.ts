@@ -39,8 +39,12 @@ import { TileCode } from '../../src/shared/protocol.ts';
  * something — everybody else is committed and the table is waiting on you — was
  * indistinguishable from the twenty minutes of noise before it.
  *
- * Solo is unaffected and always was: `quorum <= 1` arms on the first blocker,
- * because with nobody else at the table `blocking.length <= 1` is immediate.
+ * ═══ AND SINCE 2026-09-23 THE CLOCK IS ON WHOEVER'S TURN IT IS ═══
+ * A party's turns go one at a time in initiative order, so there is always
+ * exactly one person the table is waiting on: the first in line who has not
+ * decided. The Bell runs on them from the moment it is their turn, and when it
+ * runs out it passes for THEM — so it can never again reach zero with nobody to
+ * act on. A player alone has no clock at all.
  */
 
 function scene(names: readonly string[]) {
@@ -74,45 +78,55 @@ function arm(world: ReturnType<typeof createWorld>): void {
 }
 
 describe('the Bell is armed only when it is on somebody', () => {
-  it('does not arm while three people are all still deciding', () => {
-    /**
-     * THE REGRESSION. Nobody has committed, so nobody is waiting on anybody —
-     * `blocking.length` is 3 and the rule wants it at 1. The gateway arms its
-     * timer off this number, so a non-null answer here is a countdown on three
-     * screens that cannot do anything when it reaches zero.
-     */
+  it('arms on the first player in line the moment a party’s fight starts', () => {
     const { world, engine } = scene(['p1', 'p2', 'p3']);
     arm(world);
     engine.pump();
 
-    expect(engine.turnState().bellDurationMs).toBeNull();
+    const state = engine.turnState();
+    expect(state.whoseTurn).toHaveLength(3);
+    expect(state.current).toBe(state.whoseTurn[0]);
+    expect(state.bellDurationMs).toBe(BELL_MS.Normal);
   });
 
-  it('does not arm when two of three have committed', () => {
-    // Still two stragglers. The Bell is for the LAST one, and one player with
-    // company must never be hurried.
+  it('names the player the roll put first, not the first to join', () => {
+    // `whoseTurn[0]` is whose turn it is only if the survey walks the TURN
+    // order. Set so the last to join goes first.
     const { world, engine } = scene(['p1', 'p2', 'p3']);
     arm(world);
+    const order: Record<string, number> = { p1: 10, p2: 20, p3: 30 };
+    for (const body of world.allActors()) body.initiative = order[body.id] ?? 1;
     engine.pump();
-    engine.hold('p1');
 
-    expect(engine.turnState().bellDurationMs).toBeNull();
+    expect(engine.turnState().whoseTurn).toEqual(['p3', 'p2', 'p1']);
+    expect(engine.turnState().current).toBe('p3');
   });
 
-  it('ARMS when everybody but one has committed — which is the whole mechanic', () => {
-    /**
-     * The moment the countdown is supposed to appear, and the reason the three
-     * refusals above are not simply "never arm". If this assertion ever reads
-     * null the Bell has been switched off rather than fixed, and a party stalls
-     * on whoever walked away from the keyboard.
-     */
+  it('moves to the next player in line when the one before decides', () => {
     const { world, engine } = scene(['p1', 'p2', 'p3']);
     arm(world);
     engine.pump();
-    engine.hold('p1');
-    engine.hold('p2');
+    const [first, second] = engine.turnState().whoseTurn;
+    if (first === undefined || second === undefined) throw new Error('fixture: short line');
 
-    expect(engine.turnState().bellDurationMs).toBe(BELL_MS.Normal);
+    engine.hold(first);
+    const state = engine.turnState();
+    expect(state.current).toBe(second);
+    expect(state.bellDurationMs).toBe(BELL_MS.Normal);
+  });
+
+  it('does not move for a player who decides out of turn', () => {
+    // The LAST in line queues a hold. It is still the first player's turn, and
+    // the clock is still theirs.
+    const { world, engine } = scene(['p1', 'p2', 'p3']);
+    arm(world);
+    engine.pump();
+    const line = engine.turnState().whoseTurn;
+    const last = line[line.length - 1];
+    if (last === undefined) throw new Error('fixture: empty line');
+
+    engine.hold(last);
+    expect(engine.turnState().current).toBe(line[0]);
   });
 
   it('never arms for a player on their own', () => {
@@ -131,22 +145,6 @@ describe('the Bell is armed only when it is on somebody', () => {
     // Belt and braces, and `bellDurationMs` said so first: at engagement 0
     // nothing blocks, so there is nobody to ring a bell at.
     const { engine } = scene(['p1', 'p2', 'p3']);
-    engine.pump();
-
-    expect(engine.turnState().bellDurationMs).toBeNull();
-  });
-
-  it('stops arming again once the straggler acts', () => {
-    // The countdown is spent and the fight moves on; the next round starts with
-    // three people deciding again and no clock on any of them.
-    const { world, engine } = scene(['p1', 'p2', 'p3']);
-    arm(world);
-    engine.pump();
-    engine.hold('p1');
-    engine.hold('p2');
-    expect(engine.turnState().bellDurationMs).toBe(BELL_MS.Normal);
-
-    engine.hold('p3');
     engine.pump();
 
     expect(engine.turnState().bellDurationMs).toBeNull();

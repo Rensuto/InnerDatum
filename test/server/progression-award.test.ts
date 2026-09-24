@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { NO_STAIRS_GAME_TURNS, stairsLockedFor } from '../../src/shared/progression.ts';
 
-import { AiProfile, IntentKind } from '../../src/server/engine/actor.ts';
+import { AiProfile, HOLD_INTENT, IntentKind } from '../../src/server/engine/actor.ts';
 import { ActorKind } from '../../src/shared/protocol.ts';
 import { createBarrier } from '../../src/server/engine/barrier.ts';
 import { DamageType } from '../../src/server/engine/damage.ts';
@@ -223,6 +223,14 @@ function table(init: TableInit): Table {
     });
   }
 
+  // THE ORDER, SET RATHER THAN ROLLED: the party first, in join order, then
+  // the husks — the order this file was written against. A party's fight rolls
+  // initiative (`ensureInitiative`, engine/scheduler.ts) and keeps a roll it
+  // finds; what is under test here is who is paid and when, not who goes first.
+  for (const [i, body] of world.actorsInTurnOrder().entries()) {
+    body.initiative = body.kind === ActorKind.Player ? 100 - i : 0;
+  }
+
   const actor = (id: string): PlayerActor => player(world, id);
 
   const ctx = (nowMs: number): Parameters<typeof pump>[1] => ({
@@ -240,6 +248,15 @@ function table(init: TableInit): Table {
   ): PumpResult => {
     for (const [id, targetId] of orders) {
       expect(submitIntent(world, barrier, id, { kind: IntentKind.Attack, targetId })).toBe(true);
+    }
+    // THE REST OF THE PARTY PASSES. A party's turns go in initiative order
+    // (`ensureInitiative`, engine/scheduler.ts), so an order would otherwise
+    // wait behind a member who has not decided. These cases are about who is
+    // PAID, not about the order, so everyone not ordered holds.
+    const ordered = new Set(orders.map(([id]) => id));
+    for (const body of world.allActors()) {
+      if (body.kind !== ActorKind.Player || !body.alive || ordered.has(body.id)) continue;
+      if (body.pendingIntent === null) submitIntent(world, barrier, body.id, HOLD_INTENT);
     }
     return pump(world, ctx(nowMs));
   };

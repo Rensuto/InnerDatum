@@ -40,7 +40,7 @@ describe('shared constants', () => {
     expect(Math.log2(TILE_PX) % 1).toBe(0);
   });
 
-  it('pins PROTOCOL_VERSION at 28 — the zoom is gone', () => {
+  it('pins PROTOCOL_VERSION at 31 — a party takes its turns in order', () => {
     // AN EXPLICIT PIN, so the bump cannot be silently reverted by a merge.
     // Everything above only asserts the constants are positive integers, which
     // a revert would pass. THE JUSTIFICATION MOVES WITH THE NUMBER — a pin whose
@@ -237,10 +237,14 @@ describe('shared constants', () => {
     // 29 -> 30: EVERY ACTION ENDS THE TURN. No frame changed shape, the RULE
     // did — and a v29 client keeps sending `commit` after each move, which the
     // server now reads as a HOLD that silently burns the player's next turn.
-    expect(PROTOCOL_VERSION).toBe(30);
+    expect(PROTOCOL_VERSION).not.toBe(30);
+    // 30 -> 31: A PARTY TAKES ITS TURNS IN ORDER. `TurnMsg` gains `current`
+    // and loses `acting`; a v30 client would draw every undecided player as
+    // "your move" while the server waits on one of them.
+    expect(PROTOCOL_VERSION).toBe(31);
   });
 
-  it('keeps the 29 -> 30 changelog entry beside the constant, and non-empty', () => {
+  it('keeps the 30 -> 31 changelog entry beside the constant, and non-empty', () => {
     // THE PROSE IS THE DELIVERABLE HERE, NOT DECORATION. Every bump in this file
     // is argued above the constant, and the argument is the only thing that
     // tells the next person whether their change forces a bump or is an addition
@@ -268,22 +272,21 @@ describe('shared constants', () => {
     // touched — a guard that proves the discipline held LAST TIME is not a
     // guard. It moves with the constant now, and the assertions below name this
     // entry's own frame.
-    const afterHeading = source.split('29 -> 30 (EVERY ACTION ENDS THE TURN)')[1] ?? '';
+    const afterHeading = source.split('30 -> 31 (A PARTY TAKES ITS TURNS IN ORDER)')[1] ?? '';
     // The entry ends where the one before it begins. Entries are written newest
     // first ABOVE the constant, so cutting at the constant would read every
     // older entry too, and an assertion could pass on somebody else's prose.
-    const entry = afterHeading.split('28 -> 29 (SOMEBODY IS WALKING WITH YOU)')[0] ?? '';
+    const entry = afterHeading.split('29 -> 30 (EVERY ACTION ENDS THE TURN)')[0] ?? '';
 
     expect(afterHeading).not.toBe('');
     expect(entry.length, 'the entry runs on into the constant').toBeLessThan(afterHeading.length);
     expect(entry.trim().length).toBeGreaterThan(200);
-    // THE FORCING FACT, NAMED. No frame changed shape, so an entry that only
-    // said "the rule changed" would be arguing against its own bump. It has to
-    // say what an old client DOES: it sends `commit` after a move, the server
-    // reads it as a HOLD, and the player loses their next turn.
-    expect(entry).toContain('`commit`');
-    expect(entry).toContain('HOLD');
-    expect(entry).toContain('NEXT turn');
+    // THE FORCING FACT, NAMED: the frame's new field and the dropped one, and
+    // what an old client would DO with the new rule — tell every undecided
+    // player it is their move.
+    expect(entry).toContain('`current`');
+    expect(entry).toContain('`acting`');
+    expect(entry).toContain('your move');
     expect(entry).toContain('`SCHEMA_VERSION` STAYS 1');
   });
 

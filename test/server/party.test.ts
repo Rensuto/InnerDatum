@@ -456,6 +456,11 @@ function twoPlayers(seed: string): { world: World; a: Actor; b: Actor } {
   world.turn.engagement = 3;
   a.energy = ENERGY_TO_ACT;
   b.energy = ENERGY_TO_ACT;
+  // THE ORDER, SET RATHER THAN ROLLED: A, then B. Two players in one fight take
+  // their turns in initiative order (`ensureInitiative`, which keeps a roll it
+  // finds), so every case here says which of them goes first.
+  a.initiative = 20;
+  b.initiative = 10;
   return { world, a, b };
 }
 
@@ -482,7 +487,7 @@ describe('two parties on one engaged level share its barrier (D-A4)', () => {
     const barrier = createBarrier();
     const from = { x: a.x, y: a.y };
 
-    // The first move spends energy A already had, so it resolves whatever B does.
+    // The first move is A's turn — A is first in line — so it resolves.
     expect(submitIntent(world, barrier, a.id, { kind: IntentKind.Move, dir: 's' })).toBe(true);
     pump(world, { nowMs: NOW, barrier, parties });
     expect({ x: a.x, y: a.y }).toEqual({ x: from.x, y: from.y + 1 });
@@ -493,8 +498,8 @@ describe('two parties on one engaged level share its barrier (D-A4)', () => {
     expect({ x: a.x, y: a.y }).toEqual({ x: from.x, y: from.y + 1 });
     expect(held.parked).toEqual([b.id]);
 
-    // ON THE LEVEL'S BELL: a quorum of two with B the last straggler, so the
-    // Normal twenty seconds. Counted per party it was B's own two-minute Solo
+    // ON THE LEVEL'S BELL: a quorum of two and B's turn, so the Normal twenty
+    // seconds, on B. Counted per party it was B's own two-minute Solo
     // Bell, which the gateway's twenty-second timer never matched.
     expect(held.bell.quorum).toBe(2);
     expect(held.bell.stragglers).toEqual([b.id]);
@@ -516,12 +521,13 @@ describe('two parties on one engaged level share its barrier (D-A4)', () => {
 
     const scope = { id: partyIdOf(parties, a.id), members: membersOf(parties, a.id) };
     const bell = barrier.bell(world.allActors(), world.turn, NOW, scope);
-    // Two in the quorum, both blocking, so no Bell yet: it only ever rings for
-    // the LAST straggler. Somebody thirty tiles away still blocks their own
-    // party, which is the half of the old rule that had to survive.
+    // Two in the quorum, both blocking, and the clock is on the first in line:
+    // the turns go one at a time, so it is A's turn and only A is hurried.
+    // Somebody thirty tiles away still blocks their own party, which is the
+    // half of the old rule that had to survive.
     expect(bell.quorum).toBe(2);
-    expect(bell.stragglers).toEqual([a.id, b.id]);
-    expect(bell.running).toBe(false);
+    expect(bell.stragglers).toEqual([a.id]);
+    expect(bell.running).toBe(true);
   });
 });
 

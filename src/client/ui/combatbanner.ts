@@ -130,11 +130,10 @@ function hostileSide(turn: TurnMsg): string {
  * THE DETAIL LINE IS THE HALF THAT ANSWERS THE ACTUAL COMPLAINT — "there is no
  * indicator that it's turn-based once combat starts". A player who has only ever
  * walked around freely has no reason to know the rules just changed, so the
- * banner says what changed rather than only that something did. It says the
- * party decides TOGETHER, never that anyone is waiting for their go: Inner Datum
- * is phase-locked (DECISIONS.md D1), the whole party acts in the same window,
- * and prose implying a queue would invent exactly the spinner D1 exists to
- * prevent.
+ * banner says what changed rather than only that something did. In a party it
+ * says the turns go IN ORDER, because since 2026-09-23 they do: one at a time,
+ * by the initiative the fight just rolled. Alone it says nothing about order —
+ * there is none to speak of, and the world moves on every action, as ToME's.
  *
  * Exhaustive over `CombatCue` with no `default`, so a third crossing cannot ship
  * without words.
@@ -146,7 +145,10 @@ export function combatAnnouncement(cue: CombatCue, turn: TurnMsg): CombatAnnounc
       return {
         cue,
         headline: `CONTACT — ${side} have seen you`,
-        detail: 'the world thins · every move costs a turn · the party decides together',
+        detail:
+          turn.actors.filter((actor) => actor.kind === TurnActorKind.Player).length > 1
+            ? 'the world thins · every move costs a turn · you take turns in order'
+            : 'the world thins · every move costs a turn',
         record: `CONTACT — ${side} have seen you. Every move costs a turn until the Index looks away.`,
       };
     }
