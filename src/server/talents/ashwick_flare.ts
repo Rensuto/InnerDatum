@@ -136,6 +136,9 @@ export const ashwickFlare: Talent = {
   // ToME's Flame has `cooldown = 3` and no ammunition, this has ammunition and
   // no cooldown, and one gate per button is enough.
   cooldownTurns: 0,
+  // Its shape's category, spell/fire is `is_spell` (spells/spells.lua:25), so
+  // `getTalentSpeedType` gives "spell" (tome/class/Actor.lua:5798-5814).
+  speed: 'spell',
   targeting: {
     shape: TargetShape.Single,
     range: RANGE,

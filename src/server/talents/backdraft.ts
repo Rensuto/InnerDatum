@@ -112,6 +112,9 @@ export const backdraft: Talent = {
   iconId: 'icon_active_backdraft',
   cost: { resource: REAGENT_COST },
   cooldownTurns: secondsToTurns(COOLDOWN_SEC),
+  // Its shape's category, spell/fire is `is_spell` (spells/spells.lua:25), so
+  // `getTalentSpeedType` gives "spell" (tome/class/Actor.lua:5798-5814).
+  speed: 'spell',
   targeting: {
     shape: TargetShape.Single,
     range: RANGE,

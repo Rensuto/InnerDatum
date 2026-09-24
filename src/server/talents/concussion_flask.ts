@@ -199,6 +199,10 @@ export const concussionFlask: Talent = {
   iconId: 'icon_active_concussion_flask',
   cost: { resource: REAGENT_COST },
   cooldownTurns: COOLDOWN,
+  // Its shape's category, spell/explosives is `is_spell`
+  // (spells/spells.lua:44), so `getTalentSpeedType` gives "spell"
+  // (tome/class/Actor.lua:5798-5814).
+  speed: 'spell',
   targeting: {
     shape: TargetShape.Single,
     range: RANGE_LOW,

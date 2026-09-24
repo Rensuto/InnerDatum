@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Dalton Barraclough
-// SHAPE:   t-engine4 game/modules/tome/data/talents/spells/darkness.lua — a
+// SHAPE:   t-engine4 game/modules/tome/data/talents/cursed/darkness.lua — a
 //          thrown darkness ball that lands an effect on everything it covers,
 //          priced as the tree's area answer rather than its damage.
 // T-Engine4 (C) 2009-2018 Nicolas Casalini "DarkGod" -- https://te4.org/license
@@ -90,6 +90,9 @@ export const expunge: Talent = {
   iconId: 'icon_active_expunge',
   cost: { resource: INK_COST },
   cooldownTurns: COOLDOWN,
+  // Its shape's category, cursed/darkness is `is_mind` (cursed/cursed.lua:31),
+  // so `getTalentSpeedType` gives "mind" (tome/class/Actor.lua:5798-5814).
+  speed: 'mind',
   targeting: {
     shape: TargetShape.Ball,
     range: RANGE,

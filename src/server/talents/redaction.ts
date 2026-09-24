@@ -112,6 +112,10 @@ export const redaction: Talent = {
   iconId: 'icon_active_redaction',
   cost: { resource: INK_COST },
   cooldownTurns: COOLDOWN,
+  // Breach names its own: `archery` with a bow, else `weapon`
+  // (chronomancy/temporal-combat.lua:310), so `getTalentSpeedType` gives
+  // "weapon" (tome/class/Actor.lua:5798-5814).
+  speed: 'weapon',
   targeting: {
     shape: TargetShape.Single,
     range: RANGE,

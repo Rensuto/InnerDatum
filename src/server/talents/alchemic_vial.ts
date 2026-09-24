@@ -117,6 +117,10 @@ export const alchemicVial: Talent = {
   iconId: 'icon_active_alchemic_vial',
   cost: { resource: REAGENT_COST },
   cooldownTurns: secondsToTurns(COOLDOWN_SEC),
+  // Its shape's category, spell/explosives is `is_spell`
+  // (spells/spells.lua:44), so `getTalentSpeedType` gives "spell"
+  // (tome/class/Actor.lua:5798-5814).
+  speed: 'spell',
   targeting: {
     shape: TargetShape.Cross,
     range: RANGE,

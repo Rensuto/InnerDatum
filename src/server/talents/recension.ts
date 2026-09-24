@@ -92,6 +92,10 @@ export const recension: Talent = {
   iconId: 'icon_active_recension',
   cost: { resource: INK_COST },
   cooldownTurns: COOLDOWN,
+  // Its shape's category, chronomancy/spacetime-weaving is `is_spell`
+  // (chronomancy/chronomancer.lua:42), so `getTalentSpeedType` gives "spell"
+  // (tome/class/Actor.lua:5798-5814).
+  speed: 'spell',
   targeting: {
     shape: TargetShape.Tile,
     range: RANGE,

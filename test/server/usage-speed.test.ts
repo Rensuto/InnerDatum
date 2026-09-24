@@ -26,12 +26,15 @@ import { resolveItem } from '../../src/server/content/resolve.ts';
 import { UNFILED } from '../../src/server/content/origins.ts';
 import { recomposeCombat } from '../../src/server/engine/effects.ts';
 import { maxLifeOf } from '../../src/server/engine/pools.ts';
-import { talentSpeed } from '../../src/server/engine/talents.ts';
+import { talentSpeed, usageSpeedOf } from '../../src/server/engine/talents.ts';
 import { wsGateway } from '../../src/server/net/gateway.ts';
+import { ashwickFlare } from '../../src/server/talents/ashwick_flare.ts';
 import { crudeBlow } from '../../src/server/talents/crude_blow.ts';
+import { MONSTER_TALENTS } from '../../src/server/talents/monster.ts';
 import { healingInfusion } from '../../src/server/talents/healing_infusion.ts';
 import { phaseDoorRune } from '../../src/server/talents/phase_door_rune.ts';
 import { pistolWhip } from '../../src/server/talents/pistol_whip.ts';
+import { strikeOut } from '../../src/server/talents/strike_out.ts';
 import { createTurnEngine } from '../../src/server/turn-engine.ts';
 import { projectLoadout } from '../../src/server/view/projector.ts';
 import { createWorld } from '../../src/server/world/world.ts';
@@ -134,6 +137,52 @@ describe('the Usage Speed line, through the real projection', () => {
     expect(talentSpeed(fast.body, crudeBlow)).toBeCloseTo(0.8, 10);
     // …and a talent that is NOT weapon-speed does not follow the hand.
     expect(lineFor(fastWire, phaseDoorRune.id)).toBe('Spell (100% of a turn)');
+  });
+});
+
+describe('the word is the upstream category’s — is_spell, is_mind, a technique', () => {
+  /**
+   * `getTalentSpeedType` (tome/class/Actor.lua:5798-5814) names a talent's
+   * speed from its category when the talent does not: Spell, Mind, Weapon or
+   * Archery before Standard. There are no category flags here, so every port
+   * writes its word as `Talent.speed`.
+   *
+   * THE RATCHET: these are the ONLY player talents that cost a turn and read
+   * Standard, each for a reason. A new talent that costs a turn and names no
+   * speed fails here until it says which of the two it is.
+   */
+  const STANDARD_ON_PURPOSE: Readonly<Record<string, string>> = {
+    // inscriptions/infusions is `is_nature`, which names no speed (misc.lua:23).
+    'talent:regeneration_infusion': 'nature, not a speed word',
+    // cunning/dirty carries no flag (cunning/cunning.lua:27).
+    'talent:overreach': 'cunning/dirty',
+    // Ports of `no_energy` talents that still cost a turn here — labelled on each.
+    'talent:moving_target': 'Evasion, no_energy upstream',
+    'talent:downhill': 'Tumble, no_energy upstream',
+    'talent:shake_it_off': 'Adrenaline Surge, no_energy upstream',
+  };
+
+  it('names every turn-costing talent’s word, or says why it is Standard', () => {
+    // A MONSTER'S talents never print a usage line; a player's do.
+    const monsters = new Set(MONSTER_TALENTS.map((t) => t.id));
+    const standard = createContentTalentEngine()
+      .registry.all()
+      .filter(
+        (t) =>
+          !monsters.has(t.id) &&
+          t.kind !== 'passive' &&
+          t.noEnergy !== true &&
+          t.sustain === undefined &&
+          t.speed === undefined,
+      )
+      .map((t) => t.id)
+      .sort();
+    expect(standard).toEqual(Object.keys(STANDARD_ON_PURPOSE).sort());
+  });
+
+  it('a fire port reads Spell and a gloom port reads Mind', () => {
+    expect(usageSpeedText(usageSpeedOf({}, ashwickFlare))).toBe('Spell (100% of a turn)');
+    expect(usageSpeedText(usageSpeedOf({}, strikeOut))).toBe('Mind (100% of a turn)');
   });
 });
 

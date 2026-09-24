@@ -1785,9 +1785,11 @@ export function talentSpeed(
  * `getTalentSpeedType` falls back to `is_spell` → spell, `is_summon` → summon,
  * a technique → weapon or archery, and `is_mind` → mind, all copied from the
  * talent's CATEGORY (data/talents.lua:47), before it says standard. There are
- * no category flags here, so the word is `Talent.speed`, written per talent: a
- * spell or mind port with none written reads "Standard" where upstream reads
- * "Spell" or "Mind", with the same percentage (both speeds are 1 here).
+ * no category flags here, so the word is `Talent.speed`, WRITTEN PER TALENT
+ * from the category its port names — `spell` on the Alchemist's and the
+ * chronomancy-shaped ports, `mind` on the cursed-shaped ones (both price at 1
+ * here). test/server/usage-speed.test.ts pins which turn-costing talents may
+ * still read Standard, each for a reason, so a new port has to choose.
  *
  * NEVER FROM A PRICE OF ZERO. Those two are the only things that make a use
  * instant; Phase Door Rune was priced `ap: 0` for as long as talents had an AP
@@ -2125,8 +2127,10 @@ export type Talent = {
    * tome/class/interface/Archery.lua:282-284), the basic swing (`weapon`,
    * because upstream's is `T_ATTACK` and `attackTarget` charges the weapon's
    * speed), and wherever the upstream talent names one outright (Twist the
-   * Knife is `speed = "weapon"`, cunning/dirty.lua:167). A passive is never
-   * used, so none carries one.
+   * Knife is `speed = "weapon"`, cunning/dirty.lua:167). And `spell` or
+   * `mind` wherever the port's category is `is_spell` or `is_mind` upstream —
+   * a WORD for the Usage Speed line, since both price at 1 here (see
+   * `usageSpeedOf`). A passive is never used, so none carries one.
    *
    * NOR DOES A PORT OF A `no_energy` TALENT, whatever its type: upstream never
    * charges one (tome/class/Actor.lua:5862), so a speed on it names a price

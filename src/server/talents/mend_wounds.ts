@@ -142,6 +142,10 @@ export const mendWounds: Talent = {
   iconId: 'icon_active_mend_wounds',
   cost: { resource: REAGENT_COST },
   cooldownTurns: tomeCooldownToTurns(TOME_COOLDOWN),
+  // Its shape's category, celestial/light is `is_spell`
+  // (celestial/celestial.lua:24), so `getTalentSpeedType` gives "spell"
+  // (tome/class/Actor.lua:5798-5814).
+  speed: 'spell',
   targeting: {
     // Self-centred: there is nothing to point at, which also means there is no
     // way to fumble it under pressure. The one button that must never be fiddly.

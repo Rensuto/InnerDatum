@@ -141,6 +141,9 @@ export const strikeOut: Talent = {
    * the same argument `ashwick_flare.ts` makes for its Reagent.
    */
   cooldownTurns: 0,
+  // Its shape's category, cursed/gloom is `is_mind` (cursed/cursed.lua:24), so
+  // `getTalentSpeedType` gives "mind" (tome/class/Actor.lua:5798-5814).
+  speed: 'mind',
   targeting: {
     shape: TargetShape.Single,
     range: RANGE,

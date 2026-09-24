@@ -123,6 +123,10 @@ export const fieldDressing: Talent = {
   iconId: 'icon_active_field_dressing',
   cost: { resource: REAGENT_COST },
   cooldownTurns: COOLDOWN,
+  // Its cited category, spell/staff-combat is `is_spell`
+  // (spells/spells.lua:56), so `getTalentSpeedType` gives "spell"
+  // (tome/class/Actor.lua:5798-5814).
+  speed: 'spell',
   targeting: {
     shape: TargetShape.Single,
     range: MELEE_REACH,

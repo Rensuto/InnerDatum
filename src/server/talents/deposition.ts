@@ -93,6 +93,9 @@ export const deposition: Talent = {
   iconId: 'icon_active_deposition',
   cost: { resource: INK_COST },
   cooldownTurns: COOLDOWN,
+  // Its shape's category, cursed/gloom is `is_mind` (cursed/cursed.lua:24), so
+  // `getTalentSpeedType` gives "mind" (tome/class/Actor.lua:5798-5814).
+  speed: 'mind',
   targeting: {
     shape: TargetShape.Single,
     range: RANGE,
