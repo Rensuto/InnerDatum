@@ -183,8 +183,8 @@ describe('breaking on damage', () => {
     /**
      * POSITIONAL, AND THE COUNT OF `undefined`s IS LOAD-BEARING.
      *
-     * `talentRuntimeFor` takes nine parameters and this call reaches the SEVENTH
-     * by counting past six. A parameter inserted anywhere before it silently
+     * `talentRuntimeFor` takes eight parameters and this call reaches the
+     * SEVENTH by counting past six. A parameter inserted anywhere before it silently
      * re-binds this argument to its neighbour — which is exactly what happened
      * when `hasStatus` landed after `cure`: `breakOnDamage` stopped being called
      * and nothing about the call site looked wrong.
@@ -193,7 +193,6 @@ describe('breaking on damage', () => {
       createContentTalentEngine(),
       world,
       undefined, // status
-      undefined, // penaltyFor
       undefined, // cure
       undefined, // hasStatus
       undefined, // onActBase

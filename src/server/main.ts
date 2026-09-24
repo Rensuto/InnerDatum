@@ -45,7 +45,6 @@ import { seedTestEncounter } from './content/encounter.ts';
 import { createDownedState } from './engine/downed.ts';
 import { createPartyState } from './engine/party.ts';
 import {
-  budgetPenalty,
   EffectStatus,
   createEffectState,
   effectsOn,
@@ -64,7 +63,7 @@ import type {
   StatusExtend,
   StatusHas,
 } from './engine/effects.ts';
-import type { BudgetPenalty, KillNote } from './engine/talents.ts';
+import type { KillNote } from './engine/talents.ts';
 import { EffectId, MVP_EFFECTS, effectById } from './content/effects.ts';
 import {
   ResourceKind,
@@ -262,15 +261,6 @@ export function talentRuntimeFor(
    */
   status?: StatusApply,
   /**
-   * WHAT A STATUS IS TAKING OFF THIS ROUND — `budgetPenalty` from the status
-   * table, curried by whoever holds it. Absent is no penalty, which is every
-   * fixture that wires no effects.
-   *
-   * A CLOSURE RATHER THAN THE TABLE, exactly like `status` beside it: this
-   * adapter must not decide what an effect means, only forward the answer.
-   */
-  penaltyFor?: (actorId: string) => BudgetPenalty,
-  /**
    * THE CURE DOOR — `statusCurer`, the twin of `status` two parameters up. Field
    * Dressing calls it; the closure argument is identical and is written out over
    * `TalentCallCtx.cure`. Optional for the same reason: the fixtures that build
@@ -297,7 +287,7 @@ export function talentRuntimeFor(
    * The fold lives in `refreshPassives`, which is inside the server closure —
    * the one place that can see the talent registry, the world and the gateway
    * at once. This adapter cannot reach it, so the capability is passed in,
-   * exactly as `status`, `penaltyFor` and `cure` above are.
+   * exactly as `status` and `cure` above are.
    *
    * OPTIONAL: absent means passives fold only on the three occasions they
    * always did, which is every fixture that builds a runtime by hand.
@@ -306,7 +296,7 @@ export function talentRuntimeFor(
   /**
    * SOMETHING HIT THIS BODY — SHED WHATEVER CANNOT SURVIVE THAT.
    *
-   * Passed in for the same reason `status`, `penaltyFor` and `cure` above are:
+   * Passed in for the same reason `status` and `cure` above are:
    * it needs the effect catalogue, which this adapter cannot reach.
    *
    * OPTIONAL, and absent is every fixture that builds a runtime by hand — which
@@ -541,11 +531,7 @@ export function talentRuntimeFor(
      */
     activatedOf: (actorId: string): readonly string[] => talents.sheetOf(actorId)?.loadout ?? [],
     actBase: (actorId: string): void => {
-      // THE REFILL TAKES THE PENALTY. `budgetPenalty` reads the status table
-      // and answers what SLOWED is taking off this round — the caller applies it
-      // "immediately after the refill", which is exactly here, because the refill
-      // would clobber anything subtracted earlier in the turn.
-      talents.actBase(actorId, world, penaltyFor?.(actorId));
+      talents.actBase(actorId, world);
       // AFTER the refill and after the latch is cleared, so a passive reading
       // "did I move" or "how much resource is left" sees the turn it is in
       // rather than the one that just ended.
@@ -727,7 +713,6 @@ export function realmTalentRuntime(
     talentEngine,
     forWorld,
     status,
-    (actorId) => budgetPenalty(effects, actorId),
     statusCurer(effects, forWorld.rng, seamCtx()),
     statusHolder(effects),
     /**

@@ -72,7 +72,7 @@
  * Same argument engine/talents.ts makes for its own effect table, and the same
  * answer: nothing here is DUPLICATED state. It is strictly additive, keyed by
  * actor id, and `forgetActor` is called from the one place actors are removed.
- * The two exceptions — the derived `flags` on the combat sheet and a monster's
+ * The two exceptions — the derived `flags` on the combat sheet and a body's
  * `globalSpeed` — are written THROUGH this module and recomputed from a stored
  * baseline (`recomputeAttributes`), so there is still exactly one writer.
  *
@@ -81,7 +81,7 @@
  * dependency runs `content → engine` and never back.
  */
 
-import { ActorKind } from '../../shared/protocol.ts';
+import type { ActorKind } from '../../shared/protocol.ts';
 import type { DamageType } from '../../shared/damagetype.ts';
 import { reentryHealFraction } from '../../shared/progression.ts';
 import { bound, getTierDiff } from '../../shared/scale.ts';
@@ -308,25 +308,19 @@ export type EffectModifiers = {
    */
   readonly reduceDetrimentalTime?: number;
   /**
-   * MONSTERS ONLY. Added to the energy GAIN multiplier — ToME's
-   * `global_speed_add` (physical.lua:632, `-eff.power`). NEGATIVE slows.
+   * Added to the energy GAIN multiplier — ToME's `global_speed_add`
+   * (physical.lua:632, `-eff.power`). NEGATIVE slows, and it divides
+   * (`recomputeGlobalSpeed`). Every body's: a detective's clock as much as a
+   * husk's, since the party's turns went into initiative order (2026-09-24).
    *
    * ═══ THIS IS THE GAIN KNOB, NOT THE COST KNOB ═══
-   * `globalSpeed` scales what a monster GAINS per tick; `speedFactor` scales
-   * what an action COSTS it (engine/actor.ts). ToME's SLOW moves the gain,
-   * so this does too. Anyone reaching for `speedFactor` instead must ADD to it,
-   * because a smaller cost multiplier makes the monster FASTER — the exact
-   * inversion derived.ts warns about at `combatSpeed`.
-   *
-   * Players are excluded by D1: `PlayerActor.globalSpeed` is the literal type
-   * `1` and readonly. A slow on a player spends `apPenalty` / `mpPenalty`
-   * instead — see `budgetPenalty` and the asymmetry note in content/effects.ts.
+   * `globalSpeed` scales what a body GAINS per tick; `speedFactor` scales what
+   * an action COSTS it (engine/actor.ts). ToME's SLOW moves the gain, so this
+   * does too. Anyone reaching for `speedFactor` instead must ADD to it, because
+   * a smaller cost multiplier makes the body FASTER — the exact inversion
+   * derived.ts warns about at `combatSpeed`.
    */
   readonly globalSpeedAdd?: number;
-  /** PLAYERS ONLY (D1). Points removed from the AP refill each game turn. */
-  readonly apPenalty?: number;
-  /** PLAYERS ONLY (D1). Points removed from the MP refill each game turn. */
-  readonly mpPenalty?: number;
   /**
    * ToME's `movement_speed` add (physical.lua:493, `-0.5` for STUNNED).
    *
@@ -569,8 +563,8 @@ export type EffectDef = {
    * item returns.
    * ═══════════════════════════════════════════════════════════════════════════
    *
-   * `modifiers` above is a fixed set of FLAGS and budget knobs — stunned, dazed,
-   * `mpPenalty` — and every one of them was written for something being taken
+   * `modifiers` above is a fixed set of FLAGS and knobs — stunned, dazed, a
+   * slowed clock — and every one of them was written for something being taken
    * AWAY. There was no way for a timed effect to add defence, accuracy, damage
    * or a resistance, which is to say: no way to write a BUFF. Every effect this
    * game has authored is `EffectStatus.Detrimental`, and that is why.
@@ -715,12 +709,8 @@ export type EffectInstance = {
  * `TalentActor`, and for the same reason: a bare test fixture and a live
  * `EngineActor` must both be valid inputs.
  *
- * `globalSpeed` is declared MUTABLE and optional even though `PlayerActor` pins
- * it to `readonly 1`. TypeScript does not consider `readonly` when checking
- * assignability, so the compile-time proof below passes and a player really
- * could be written to from here. It never is: every writer branches on
- * `kind === ActorKind.Monster` first. D1 is enforced at the two call sites in
- * `recomputeAttributes`, and there are only two.
+ * `globalSpeed` is declared MUTABLE and optional: a bare fixture has none, and
+ * `recomputeAttributes` writes it for every body that has an effect table.
  */
 export type EffectActor = {
   readonly id: string;
@@ -733,7 +723,7 @@ export type EffectActor = {
   combat?: CombatSheet;
   /** Shared with engine/actor.ts. STUNNED's 3-talent lockout writes to it. */
   readonly cooldowns: Map<string, number>;
-  /** Monsters only. The energy GAIN multiplier; see `EffectModifiers.globalSpeedAdd`. */
+  /** The energy GAIN multiplier; see `EffectModifiers.globalSpeedAdd`. */
   globalSpeed?: number;
   /**
    * `self.is_suffocating` — set by `actBase` each base turn (tome/class/Actor.lua:578-590)
@@ -949,7 +939,7 @@ export type EffectState = {
   readonly immunities: Map<string, Map<string, number>>;
   /** The pre-effect `flags`, so `recomputeAttributes` can rebuild rather than patch. */
   readonly baseFlags: Map<string, StatusFlags | undefined>;
-  /** The pre-effect `globalSpeed`, same reason. Monsters only. */
+  /** The pre-effect `globalSpeed`, same reason. A detective's is 1. */
   readonly baseGlobalSpeed: Map<string, number>;
   /**
    * Save channel → the effect id to apply when someone is outclassed on it.
@@ -2175,8 +2165,6 @@ export function effectModifiers(state: EffectState, actorId: string): EffectModi
   let freeze = false;
   let freeResources = false;
   let globalSpeedAdd = 0;
-  let apPenalty = 0;
-  let mpPenalty = 0;
   let movementSpeedAdd = 0;
   let confusedPercent = 0;
   let infusionSaturation = 0;
@@ -2209,8 +2197,6 @@ export function effectModifiers(state: EffectState, actorId: string): EffectModi
     breached = breached || mods.breached === true;
     freeze = freeze || mods.noTalentsCooldown === true;
     globalSpeedAdd += mods.globalSpeedAdd ?? 0;
-    apPenalty += mods.apPenalty ?? 0;
-    mpPenalty += mods.mpPenalty ?? 0;
     movementSpeedAdd += mods.movementSpeedAdd ?? 0;
     /**
      * ═══════════════════════════════════════════════════════════════════════
@@ -2269,8 +2255,6 @@ export function effectModifiers(state: EffectState, actorId: string): EffectModi
     noTalentsCooldown: freeze,
     freeResources,
     globalSpeedAdd,
-    apPenalty,
-    mpPenalty,
     movementSpeedAdd,
     confusedPercent,
     infusionSaturation,
@@ -2303,30 +2287,6 @@ export function noTalentsCooldown(state: EffectState, actorId: string): boolean 
     if (state.defs.get(effectId)?.modifiers?.noTalentsCooldown === true) return true;
   }
   return false;
-}
-
-/** Points to remove from a PLAYER's per-turn budget refill. See content/effects.ts. */
-export type BudgetPenalty = {
-  readonly ap: number;
-  readonly mp: number;
-};
-
-/**
- * THE PLAYER HALF OF SLOW — D1's asymmetry, made explicit.
- *
- * A player's `globalSpeed` is the literal type `1` and readonly, because the
- * party barrier only parks once per turn at full quorum while everyone stays
- * phase-locked (engine/actor.ts). So a slow on a player CANNOT touch the clock;
- * it removes points from the intra-turn budget instead.
- *
- * The caller applies this immediately after the refill in
- * `talentEngine.actBase` (`sheet.ap = sheet.maxAp; sheet.mp = sheet.maxMp;`) —
- * a QUERY rather than a stateful subtraction, precisely because that refill
- * would clobber anything subtracted earlier in the turn.
- */
-export function budgetPenalty(state: EffectState, actorId: string): BudgetPenalty {
-  const mods = effectModifiers(state, actorId);
-  return { ap: mods.apPenalty ?? 0, mp: mods.mpPenalty ?? 0 };
 }
 
 /**
@@ -2409,12 +2369,14 @@ export function recomputeAttributes(state: EffectState, actor: EffectActor): voi
   // reason it can never silently corrupt a shared `ClassDef.combat`.
   actor.combat = { ...sheet, flags };
 
-  // --- the energy GAIN multiplier (MONSTERS ONLY — D1) ----------------------
-  // The `kind` check is the D1 enforcement. `PlayerActor.globalSpeed` is
-  // `readonly 1`, but TypeScript ignores `readonly` for assignability, so the
-  // structural `EffectActor` above would happily let this write to a player.
-  // It does not, and this is one of exactly two places that could.
-  if (actor.kind === ActorKind.Monster) {
+  // --- the energy GAIN multiplier, every body's ------------------------------
+  // IT WAS MONSTERS ONLY, and that guard was DECISIONS.md § D1: a player's clock
+  // stayed at 1 so a party stayed phase-locked under the simultaneous barrier,
+  // and a slowed player lost a movement point instead — which, once every
+  // action ended the turn, was nothing at all. A party now takes its turns in
+  // initiative order, where a slower body is simply in line less often, as in
+  // ToME (tome/class/Actor.lua:3909-3914 has no player case).
+  {
     const current = actor.globalSpeed ?? 1;
     if (!state.baseGlobalSpeed.has(actor.id)) state.baseGlobalSpeed.set(actor.id, current);
     const baseSpeed = state.baseGlobalSpeed.get(actor.id) ?? current;
@@ -2674,9 +2636,7 @@ export function recomposeCombat(
  */
 export function noteBaseline(state: EffectState, actor: EffectActor): void {
   state.baseFlags.set(actor.id, actor.combat?.flags);
-  if (actor.kind === ActorKind.Monster) {
-    state.baseGlobalSpeed.set(actor.id, actor.globalSpeed ?? 1);
-  }
+  state.baseGlobalSpeed.set(actor.id, actor.globalSpeed ?? 1);
 }
 
 // ---------------------------------------------------------------------------

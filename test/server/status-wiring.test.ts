@@ -390,14 +390,62 @@ describe('the status seam — a subsystem that existed and was reachable from no
 
 describe('SLOWED, which was a badge and nothing else', () => {
   /**
-   * ═══ SLOWED'S PLAYER HALF IS INERT UNTIL PLAYER SPEED IS PORTED ═══
-   * A Slowed player lost one of three MP-priced steps in a round. Every action
-   * ends the turn now, as ToME's does, so there is no round of steps to shorten
-   * — and ToME slows a player the way it slows anything, through
-   * `global_speed_add` (physical.lua:632), which this game still pins to 1 for
-   * players. That port is the next slice of the turn work; until it lands the
-   * badge is honest about a monster and does nothing to a detective.
+   * ═══ AND ON A DETECTIVE IT WAS NOTHING AT ALL, UNTIL 2026-09-24 ═══
+   * A Slowed player lost one of three MP-priced steps in a round, and once
+   * every action ended the turn there was no round of steps to shorten. ToME
+   * slows a player the way it slows anything, through `global_speed_add`
+   * (physical.lua:632), and so does this now: the case below is the join —
+   * the status door, the body's clock, and the real turn engine's loop.
    */
+  it('two detectives, one slowed through the real door: over ten turns she steps fewer times', () => {
+    const { world, effects } = arena('slow-join');
+    const dalt = world.addPlayer('p1', 'Dalt');
+    dalt.x = REALM_TILES.x;
+    dalt.y = REALM_TILES.y;
+    const ren = world.addPlayer('p2', 'Ren');
+    ren.x = REALM_TILES.x + 4;
+    ren.y = REALM_TILES.y;
+    const engine = createTurnEngine({ world, effects, now: () => 0 });
+    engine.join('p1');
+    engine.join('p2');
+
+    statusApplier(effects, world.rng)(dalt, EffectId.Slowed, 99, {});
+    expect(dalt.globalSpeed, 'the door did not reach her clock').toBeLessThan(1);
+
+    // Each walks back and forth on open floor; a step is an action.
+    const steps = new Map<string, number>([
+      ['p1', 0],
+      ['p2', 0],
+    ]);
+    const home = new Map([
+      ['p1', dalt.x],
+      ['p2', ren.x],
+    ]);
+    const start = world.turn.clock.gameTurn;
+    for (let pass = 0; pass < 200 && world.turn.clock.gameTurn < start + 10; pass += 1) {
+      world.turn.engagement = 3;
+      for (const body of [dalt, ren]) {
+        if (body.pendingIntent !== null) continue;
+        engine.submitMove(body.id, body.x === home.get(body.id) ? 'e' : 'w');
+      }
+      const before = new Map([
+        ['p1', dalt.x],
+        ['p2', ren.x],
+      ]);
+      engine.pump();
+      for (const body of [dalt, ren]) {
+        if (body.x !== before.get(body.id)) steps.set(body.id, (steps.get(body.id) ?? 0) + 1);
+      }
+    }
+
+    // 1/1.3 of the clock. Measured 7 to his 9 (his tenth is still owed when the
+    // loop stops). A FLOOR as well as a ceiling: an engine that took her turns
+    // away altogether would pass a ceiling alone.
+    expect(steps.get('p2')).toBeGreaterThanOrEqual(9);
+    expect(steps.get('p1')).toBeGreaterThanOrEqual(6);
+    expect(steps.get('p1')).toBeLessThanOrEqual(8);
+  });
+
   it('an Index Eidolon’s touch confuses the body it reaches', () => {
     /**
      * ═════════════════════════════════════════════════════════════════════════

@@ -1085,11 +1085,13 @@ const BLIND_TURNS = 3;
  * melee fight — which is to say, the fight the husk already gives you.
  *
  * ═══ SLOWED IS EXACTLY THE COUNTER TO THE COUNTER ═══
- * A player has 3 MP a round (4 for the Inspector) and a move costs 1, so −1 MP
- * is a THIRD of your legs. Against a creature whose entire plan is to stay four
- * tiles away, losing a third of your closing speed is the difference between
- * "walk at it" and "you need a plan". game-design.md § 7 lists Slowed as −1 MP
- * for exactly this kind of moment.
+ * A slowed detective's clock runs at 1/1.3 (physical.lua:632, divided —
+ * `recomputeGlobalSpeed`), below this creature's 0.84, so for the length of the
+ * slow the wraith gains ground on you. Against a creature whose entire plan is
+ * to stay four tiles away, that is the difference between "walk at it" and "you
+ * need a plan". (It was −1 MP a round, game-design.md § 7, until a slow reached
+ * a player's clock on 2026-09-24; a movement point stopped meaning anything once
+ * every action ended the turn.)
  *
  * AND IT CREATES A ROLE PROBLEM RATHER THAN A DAMAGE PROBLEM. The Inspector
  * barely cares — she can shoot from where she is standing. The Watchman cares

@@ -104,7 +104,7 @@ import {
 import { downedView } from '../engine/downed.ts';
 import { EffectStatus, boughtSheet, effectDef, effectsOn } from '../engine/effects.ts';
 import { composeSheet, composeWielders, wornOf } from '../engine/equipment.ts';
-import { aimTile, currentTile, turnsToImpact } from '../engine/projectile.ts';
+import { aimTile, currentTile, decisionsBeforeImpact } from '../engine/projectile.ts';
 import { DAMAGE_TYPES, damageTypeName } from '../../shared/damagetype.ts';
 import { IMMUNITY_KEYS } from '../../shared/immunity.ts';
 import {
@@ -1938,6 +1938,12 @@ export function projectProjectiles(
    * audit, and it is exactly the "parameter added, body untouched" shape.
    */
   teammate?: (actorId: string) => boolean,
+  /**
+   * THE VIEWER'S CLOCK, `globalSpeed`. `turnsToImpact` is counted in the
+   * viewer's own decisions, and a Slowed body gets fewer of them per game turn.
+   * Absent is full speed, which is what every caller without a body means.
+   */
+  viewerSpeed = 1,
 ): ProjectilesMsg {
   const projectiles: ProjectileView[] = [];
   // Resolved once rather than per orb: `sourceId` is redacted against it below.
@@ -1991,7 +1997,9 @@ export function projectProjectiles(
       // counterplay from the screen while leaving it in the engine.
       targetX: aim.x,
       targetY: aim.y,
-      turnsToImpact: turnsToImpact(proj),
+      // THE VIEWER'S decisions, not the orb's game turns: see
+      // `decisionsBeforeImpact`. Identical at full speed.
+      turnsToImpact: decisionsBeforeImpact(proj, viewerSpeed),
       // WHAT ELEMENT IT IS, AND NOTHING ELSE OUT OF `damage`. See
       // `ProjectileView.damageType`: the renderer picks one of twelve
       // `ui_fx_bolt_*` strips from it, and until it was sent every shot in the

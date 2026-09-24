@@ -19,9 +19,9 @@
  * ═══ IT IS THE FIRST THING IN THE GAME THAT MOVES YOU FURTHER ═══
  * `maxMp` came off the class table and stayed there for a whole career: a
  * level-50 character covered exactly the ground a level-1 one did. Statuses
- * could TAKE movement away — `SLOWED` has carried an `mpPenalty` since it was
- * authored — and nothing in the game could ever give it back, let alone add to
- * it. `moveMp` is a new channel on `CombatMods` and this discipline is what it
+ * could TAKE movement away — `SLOWED` carried an `mpPenalty` until a slow
+ * reached the clock instead (2026-09-24) — and nothing in the game could ever
+ * give it back, let alone add to it. `moveMp` is a new channel on `CombatMods` and this discipline is what it
  * is for.
  *
  * ═══ THREE OF THE SIX ARE MOVEMENT, AND THAT IS THE DISCIPLINE ═══

@@ -1,4 +1,11 @@
-import { recomposeCombat } from '../../src/server/engine/effects.ts';
+import {
+  hasEffect,
+  recomposeCombat,
+  removeEffect,
+  statusApplier,
+} from '../../src/server/engine/effects.ts';
+import { EffectId, createMvpEffectState } from '../../src/server/content/effects.ts';
+import { createRng } from '../../src/shared/rng.ts';
 import { resolveItem } from '../../src/server/content/resolve.ts';
 import { BIRTH_KIT } from '../../src/server/content/items.ts';
 import { setTimeout as sleep } from 'node:timers/promises';
@@ -551,6 +558,62 @@ describe('walking into the dark territory', () => {
       // that map would have no shop, no townsfolk and no monsters, which is an
       // empty street grid rather than an eerie one.
       expect(def?.kind).toBe(RealmKind.Inner);
+    }
+  });
+});
+
+describe('a status walks through a door with the body', () => {
+  it('a slowed detective is still slowed on the other side', async () => {
+    /**
+     * `carryAcross` rebuilds the body on the far side at full speed and ends in
+     * `recomposeCombat`, which re-derives the clock from the effect table — the
+     * table is the process's, keyed by the actor, so the slow is still on it.
+     * Since a slow reaches a detective's clock (2026-09-24) this is the way back
+     * that could silently drop it: a door would be a cure. Its own server,
+     * because the file's harness gives the gateway no effect table.
+     */
+    const effects = createMvpEffectState();
+    const downed = createDownedState();
+    const parties = createPartyState();
+    const realms = createRealms({
+      seed: 'redaction-crossing-slow',
+      engineFor: (world) => createTurnEngine({ world, downed, parties, effects }),
+    });
+    const app = Fastify({ logger: false });
+    await app.register(wsGateway, {
+      world: realms.overworld.world,
+      engine: realms.overworld.engine,
+      realms,
+      parties,
+      downed,
+      effects,
+    });
+    await app.listen({ host: '127.0.0.1', port: 0 });
+    try {
+      const address = app.server.address();
+      if (address === null || typeof address === 'string') throw new Error('no port was bound');
+      const { actorId, socket } = await hello(address.port);
+      const before = realms.realmOf(actorId)?.world.getActor(actorId);
+      if (before === undefined || before.kind !== 'player') throw new Error('no body');
+      statusApplier(effects, createRng('slow-door'))(before, EffectId.Slowed, 99, {});
+      const slowed = before.globalSpeed;
+      expect(slowed, 'the slow never reached the clock').toBeLessThan(1);
+
+      await stepOnto(realms, actorId, socket, doorCell(realms));
+
+      const after = realms.realmOf(actorId)?.world.getActor(actorId);
+      expect(after, 'no body on the far side').toBeDefined();
+      expect(after, 'the door did not rebuild the body').not.toBe(before);
+      expect(after?.globalSpeed, 'a door cured the slow').toBeCloseTo(slowed, 10);
+      // THE EFFECT CAME ACROSS, not just its number — a door that copied the
+      // clock and dropped the status would leave a slow that never ends.
+      expect(hasEffect(effects, actorId, EffectId.Slowed)).toBe(true);
+      // And it ENDS on the far side, back to the body's own full speed.
+      if (after === undefined) throw new Error('no body');
+      removeEffect(effects, after, EffectId.Slowed, createRng('slow-door-end'));
+      expect(after.globalSpeed).toBe(1);
+    } finally {
+      await app.close();
     }
   });
 });

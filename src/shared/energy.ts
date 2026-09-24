@@ -52,18 +52,16 @@
  * which one a bare `turn` meant.
  *
  * ===========================================================================
- * PLAYERS VS MONSTERS (DECISIONS.md § D1)
+ * PLAYERS VS MONSTERS
  * ===========================================================================
  *
- *   PLAYERS  always spend exactly ENERGY_TO_ACT, with `globalSpeed` pinned to
- *            1.0. AP/MP is an intra-turn budget spent inside one park, never a
- *            way to buy an extra park. That is what keeps a party
- *            phase-locked, so the barrier parks ONCE PER TURN AT FULL QUORUM —
- *            the condition the Bell was designed around.
- *   MONSTERS keep ToME's full variable-speed model, on both sides of the
- *            equation: `globalSpeed` scales what they GAIN, and the
- *            `costMultiplier` of `spendForAction` scales what an individual
- *            action COSTS.
+ *   BOTH     gain by `globalSpeed`, which a slow divides for a detective as
+ *            for a husk (since 2026-09-24; it was pinned to 1.0 for players by
+ *            DECISIONS.md § D1, to keep a party phase-locked under the old
+ *            simultaneous barrier — a party takes its turns in order now).
+ *   PLAYERS  still spend exactly ENERGY_TO_ACT per action, until ToME's
+ *            per-action costs (movement, weapon, talent speed) are ported.
+ *   MONSTERS spend by `costMultiplier` (`spendForAction`), their `speedFactor`.
  *
  * Those two knobs pull in OPPOSITE directions and are constantly confused:
  * `globalSpeed` 2.0 means "gains energy twice as fast", `costMultiplier` 2.0
@@ -155,7 +153,7 @@ export type EnergyActor = {
 
   /**
    * Haste. Multiplier on energy GAIN — more actions, never faster cooldowns.
-   * Pinned to 1.0 for players (D1); free for monsters.
+   * Every body's; a slow divides it (`recomputeGlobalSpeed`).
    */
   globalSpeed: number;
 
@@ -287,11 +285,10 @@ export function canAct(actor: EnergyActor, need: number = ENERGY_TO_ACT): boolea
  * 0.5 is a half-turn action, 2.0 costs two turns. Weapon speed, spell speed
  * and movement speed all arrive here.
  *
- *   PLAYERS PASS 1.0. ALWAYS. (D1.) A player's action costs exactly one turn;
- *   cheaper talents cost less AP, not less energy. The moment a player spends
- *   anything other than ENERGY_TO_ACT the party stops being phase-locked, the
- *   barrier starts parking at partial quorum, and the Bell — which exists to
- *   pressure the last straggler — starts firing on three people at once.
+ *   PLAYERS PASS 1.0 until ToME's per-action costs are ported: a player's
+ *   action costs exactly one turn. That once guarded the phase lock of the old
+ *   simultaneous barrier (D1); a party takes its turns in order now, where an
+ *   uneven cost is simply ToME, so it no longer has to.
  *
  * Clamped at MIN_ACTION_COST_MULTIPLIER, and refuses a non-finite multiplier
  * outright: a NaN cost would silently make an actor unable to ever act again.

@@ -10,15 +10,12 @@ import {
 import {
   BLEED_POWER,
   EffectId,
-  SLOW_PLAYER_AP_PENALTY,
-  SLOW_PLAYER_MP_PENALTY,
   SLOW_POWER,
   STUN_TALENT_LOCKOUT,
   createMvpEffectState,
   isStunned,
 } from '../../src/server/content/effects.ts';
 import {
-  budgetPenalty,
   effectDur,
   hasEffect,
   noTalentsCooldown,
@@ -34,11 +31,6 @@ import {
   tickLevel,
 } from '../../src/shared/energy.ts';
 import { DOWNED_TURNS, createDownedState, downedView } from '../../src/server/engine/downed.ts';
-import {
-  WATCHMAN,
-  createContentTalentEngine,
-  sheetForClass,
-} from '../../src/server/content/classes.ts';
 import { pump, submitIntent } from '../../src/server/engine/scheduler.ts';
 import { createBarrier } from '../../src/server/engine/barrier.ts';
 import { createRng } from '../../src/shared/rng.ts';
@@ -81,10 +73,10 @@ function speedWith(base: number, add: number): number {
  *   12 damage at ANY speed. The test drives a hasted and an unhasted body
  *   through the same loop and compares totals.
  *
- *   SLOW APPLIED TO A PLAYER'S CLOCK desynchronises the barrier (DECISIONS.md
- *   § D1). A player's `globalSpeed` is the literal type `1` and readonly, so the
- *   player half of SLOWED spends the intra-turn BUDGET instead. Both paths are
- *   tested, side by side, because the asymmetry is the design and not a gap.
+ *   SLOW ON A PLAYER'S CLOCK is the same slow on a husk's. It used to spend
+ *   the intra-turn budget instead (DECISIONS.md § D1, a pin for the old
+ *   simultaneous barrier); a party takes its turns in order now, and uneven
+ *   energy is simply ToME. Both bodies are tested, side by side.
  *
  * The exact integers come from the Lua and from the authored constants; every
  * one of them is stated next to its citation.
@@ -440,7 +432,7 @@ describe('BLEEDING ticks once per GAME TURN at any speed — physical.lua:149-15
 });
 
 // ===========================================================================
-// 3. SLOWED — TWO MECHANISMS, ONE EFFECT (DECISIONS.md § D1)
+// 3. SLOWED — ONE MECHANISM, THE CLOCK, FOR EVERY BODY
 // ===========================================================================
 
 describe('SLOWED slows a MONSTER`s turn rate — physical.lua:632', () => {
@@ -510,83 +502,52 @@ describe('SLOWED slows a MONSTER`s turn rate — physical.lua:632', () => {
   });
 });
 
-describe('SLOWED spends a PLAYER`s budget instead — DECISIONS.md § D1', () => {
+describe('SLOWED slows a DETECTIVE`s turn rate too — as upstream, since 2026-09-24', () => {
   /**
-   * A player's `globalSpeed` is the literal type `1` and readonly, and that is
-   * load-bearing rather than fussy: the party is phase-locked so the barrier
-   * parks ONCE PER TURN AT FULL QUORUM. Slow one player on the clock and the
-   * scheduler starts parking at quorum 1, 2, 3, 2 — and the solo-Bell exemption
-   * fires on the single-player parks while three people sit watching.
-   *
-   * So the player half is game-design.md § 7's "Slowed (−1 MP)": one fewer tile
-   * of reach, which on a 30×30 room is the difference between getting to the
-   * downed ally this turn and not.
+   * The same `global_speed_add` on the same clock. A player's `globalSpeed` was
+   * pinned at 1 (DECISIONS.md § D1) to keep a party phase-locked under the old
+   * simultaneous barrier, so a slowed player lost a movement point instead — and
+   * once every action ended the turn, a movement point was nothing, and Slowed
+   * did nothing to a player at all. A party takes its turns in initiative order
+   * now, where a slower body is simply in line less often, as in ToME.
    */
-  it('never touches the clock — same speed, same number of turns, one less MP', () => {
+  it('takes 7 turns in the 10 an unslowed detective takes', () => {
+    const state = createMvpEffectState();
     const world = createWorld('slow-player');
-    const effects = createMvpEffectState();
-    const talents = createContentTalentEngine();
-
     const dalt = world.addPlayer('p1', 'Dalt');
-    const sheet = talents.attach(dalt.id, sheetForClass(WATCHMAN));
+    const ren = world.addPlayer('p2', 'Ren');
 
-    // Long enough to outlive the ten turns driven below — the question here is
-    // whether a slow can reach a player's clock at all, not how long it lasts.
-    setEffect(effects, dalt, EffectId.Slowed, 99, {}, scriptedRng([]));
-
-    // THE PIN. Both knobs, because the two are confused in opposite directions.
-    expect(dalt.globalSpeed).toBe(1);
+    setEffect(state, dalt, EffectId.Slowed, 99, {}, scriptedRng([]));
+    expect(dalt.globalSpeed).toBeCloseTo(speedWith(1, -SLOW_POWER), 10);
+    // THE COST KNOB IS UNTOUCHED — the slow is on the gain side, as upstream.
     expect(dalt.speedFactor).toBe(1);
+    expect(ren.globalSpeed).toBe(1);
 
-    const run = runGameTurns(dalt, 10, statusPass(effects, createRng('slow-player-clock')));
-    expect(run.actions).toBe(10); // a slowed monster would have taken 7
-    expect(run.basePasses).toBe(10);
-
-    // ═══ THE PENALTY IS A QUERY APPLIED AFTER THE REFILL ═══
-    // `talentEngine.actBase` sets `ap = maxAp; mp = maxMp` every game turn, so
-    // anything subtracted when the effect LANDED is erased on the next turn.
-    // This is the exact integration content/effects.ts documents.
-    talents.actBase(dalt.id, world);
-    expect(sheet.mp).toBe(sheet.maxMp);
-
-    const penalty = budgetPenalty(effects, dalt.id);
-    expect(penalty).toEqual({ ap: SLOW_PLAYER_AP_PENALTY, mp: SLOW_PLAYER_MP_PENALTY });
-
-    sheet.ap = Math.max(0, sheet.ap - penalty.ap);
-    sheet.mp = Math.max(0, sheet.mp - penalty.mp);
-    expect(sheet.mp).toBe(sheet.maxMp - 1);
-    // AP is what talents cost. Taking a point of it would silently disable
-    // whichever talent sits at the top of the cost curve — a much larger and
-    // much less legible nerf than a tile of movement.
-    expect(sheet.ap).toBe(sheet.maxAp);
+    const pass = statusPass(state, createRng('slow-player-clock'));
+    const dragging = runGameTurns(dalt, 10, pass);
+    const brisk = runGameTurns(ren, 10, pass);
+    expect(dragging.actions).toBe(7);
+    expect(brisk.actions).toBe(10);
+    // And the BASE clock is not slowed: durations and cooldowns still tick once
+    // a game turn, for a detective as for a husk.
+    expect(dragging.basePasses).toBe(10);
   });
 
-  it('costs a point every turn the slow is live, and none after it expires', () => {
-    const world = createWorld('slow-player-turns');
-    const effects = createMvpEffectState();
-    const talents = createContentTalentEngine();
-
+  it('gives a detective full speed back on expiry', () => {
+    const state = createMvpEffectState();
+    const world = createWorld('slow-player-expiry');
     const dalt = world.addPlayer('p1', 'Dalt');
-    const sheet = talents.attach(dalt.id, sheetForClass(WATCHMAN));
-    setEffect(effects, dalt, EffectId.Slowed, 2, {}, scriptedRng([]));
 
-    const pass = statusPass(effects, createRng('slow-player-turns'));
-    const perTurn: number[] = [];
-    for (let turn = 1; turn <= 4; turn += 1) {
-      actBase(dalt, pass);
-      talents.actBase(dalt.id, world);
-      sheet.mp = Math.max(0, sheet.mp - budgetPenalty(effects, dalt.id).mp);
-      perTurn.push(sheet.mp);
-    }
+    setEffect(state, dalt, EffectId.Slowed, 2, {}, scriptedRng([]));
+    expect(dalt.globalSpeed).toBeLessThan(1);
+    // Two ticks to run the duration out, a third for the removal pass (:80-81).
+    runGameTurns(dalt, 3, statusPass(state, createRng('slow-player-expiry')));
 
-    // dur 2 → the effect is live through turns 1 and 2 and removed by the pass
-    // on turn 3 (ActorTemporaryEffects.lua:80-81), so turn 3 is already free.
-    const full = sheet.maxMp;
-    expect(perTurn).toEqual([full - 1, full - 1, full, full]);
-    expect(hasEffect(effects, dalt.id, EffectId.Slowed)).toBe(false);
+    expect(hasEffect(state, dalt.id, EffectId.Slowed)).toBe(false);
+    expect(dalt.globalSpeed).toBe(1);
   });
 
-  it('a slowed player and a slowed husk are the SAME effect with two mechanisms', () => {
+  it('a slowed detective and a slowed husk are the SAME effect with ONE mechanism', () => {
     const state = createMvpEffectState();
     const world = createWorld('slow-both');
     const dalt = world.addPlayer('p1', 'Dalt');
@@ -595,16 +556,11 @@ describe('SLOWED spends a PLAYER`s budget instead — DECISIONS.md § D1', () =>
     setEffect(state, dalt, EffectId.Slowed, 3, {}, scriptedRng([]));
     setEffect(state, beast, EffectId.Slowed, 3, {}, scriptedRng([]));
 
-    // One definition, one duration, one badge — two different consequences.
     expect(effectDur(state, dalt.id, EffectId.Slowed)).toBe(
       effectDur(state, beast.id, EffectId.Slowed),
     );
-    expect(dalt.globalSpeed).toBe(1);
-    expect(beast.globalSpeed).toBeCloseTo(speedWith(1, -SLOW_POWER), 10);
-    expect(budgetPenalty(state, dalt.id).mp).toBe(SLOW_PLAYER_MP_PENALTY);
-    // The monster carries the same modifier; nothing reads it for a monster,
-    // because a monster has no intra-turn budget to spend.
-    expect(budgetPenalty(state, beast.id).mp).toBe(SLOW_PLAYER_MP_PENALTY);
+    expect(dalt.globalSpeed).toBeCloseTo(speedWith(1, -SLOW_POWER), 10);
+    expect(beast.globalSpeed).toBeCloseTo(dalt.globalSpeed, 10);
   });
 });
 

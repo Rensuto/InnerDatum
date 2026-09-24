@@ -3490,6 +3490,16 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    * line of it here would be a second scheduler in the file that owns the only
    * `setTimeout` in the turn path.
    */
+  /**
+   * THE VIEWER'S CLOCK, for `projectProjectiles`: an orb's "N turns — move" is
+   * counted in their own decisions, and a Slowed detective gets fewer. Full
+   * speed for a socket with no body.
+   */
+  const viewerSpeedOf = (session: Session, world: World): number => {
+    const body = session.actorId === null ? undefined : world.getActor(session.actorId);
+    return body?.globalSpeed ?? 1;
+  };
+
   const broadcastProjectilesIfChanged = (realm: PumpTarget): void => {
     // ONE FRAME PER VIEWER: each orb is gated on its own tile against that
     // viewer's eyes, and a shooter that viewer cannot see is not named.
@@ -3499,6 +3509,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
         realm.world,
         eyesOf(session, realm.world),
         teammateFor(session),
+        viewerSpeedOf(session, realm.world),
       );
       const key = JSON.stringify(msg.projectiles);
       if (key === (session.lastProjectilesKey ?? NO_PROJECTILES_KEY)) continue;
@@ -3542,6 +3553,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
         realm.world,
         eyesOf(session, realm.world),
         teammateFor(session),
+        viewerSpeedOf(session, realm.world),
       );
       if (msg.projectiles.length === 0) continue;
       session.lastProjectilesKey = JSON.stringify(msg.projectiles);

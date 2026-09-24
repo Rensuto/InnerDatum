@@ -1957,10 +1957,9 @@ export type EffectView = {
    * ═══════════════════════════════════════════════════════════════════════════
    *
    * Authored on every effect in the game and, until this field, DEAD DATA: the
-   * text existed, it was specific and good — *"Dragging. Monsters act less
-   * often; detectives lose a point of movement."* — and no screen could reach
-   * it. So a player was Slowed and nothing said it cost a movement point, or
-   * Stunned and nothing said their cooldowns had stopped ticking, which is the
+   * text existed, it was specific and good, and no screen could reach it. So
+   * a player was Slowed and nothing said what it did to them, or Stunned and
+   * nothing said their cooldowns had stopped ticking, which is the
    * one a player will sit and wait out believing their abilities are coming
    * back.
    *

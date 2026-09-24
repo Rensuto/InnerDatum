@@ -1105,13 +1105,13 @@ describe('a badge says what it is doing to you', () => {
    * ═══════════════════════════════════════════════════════════════════════════
    *
    * `EffectDef.description` is authored on every effect in the game, and it is
-   * specific and good — *"Dragging. Monsters act less often; detectives lose a
-   * point of movement."* `EffectView` did not carry it, so a card could name a
+   * specific — SLOWED's is ToME's own "Reduces global action speed by 30%."
+   * `EffectView` did not carry it, so a card could name a
    * status and never say what it did. A player was Stunned and nothing told
    * them their cooldowns had stopped ticking, which is the one they will sit
    * and wait out believing their abilities are coming back.
    */
-  const SLOWED_DESC = 'Dragging. Monsters act less often; detectives lose a point of movement.';
+  const SLOWED_DESC = 'Reduces global action speed by 30%.';
 
   /** The pointer over a named member. Local, because the suite's own copy is
    *  scoped inside another block and reaching for it would be a second reason
@@ -1151,7 +1151,7 @@ describe('a badge says what it is doing to you', () => {
     const card = cardFor([SLOWED]);
     expect(card?.lines.some((l) => l.includes('Slowed'))).toBe(true);
     expect(
-      card?.lines.some((l) => l.includes('lose a point of movement')),
+      card?.lines.some((l) => l.includes('global action speed')),
       'the card named the status and never said what it does',
     ).toBe(true);
   });
@@ -1164,8 +1164,8 @@ describe('a badge says what it is doing to you', () => {
     const named = lines.findIndex((l) => l.includes('Slowed'));
     expect(named).toBeGreaterThanOrEqual(0);
     expect(lines[named]).toContain('3t');
-    expect(lines[named]).not.toContain('Dragging');
-    expect(lines[named + 1]).toContain('Dragging');
+    expect(lines[named]).not.toContain('global action speed');
+    expect(lines[named + 1]).toContain('global action speed');
   });
 
   it('draws a badge inside its box, whatever size the art arrived at', () => {

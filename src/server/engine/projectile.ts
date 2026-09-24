@@ -872,6 +872,21 @@ export function turnsToImpact(proj: Projectile): number {
 }
 
 /**
+ * THE VIEWER'S OWN DECISIONS before it lands — what the wire carries.
+ *
+ * `turnsToImpact` is GAME TURNS, and "a partial turn is still a turn the player
+ * gets to act in" is true only of a body at full speed. A body at `globalSpeed`
+ * g gains g × 100 energy a tick and acts at 1000, so over N game turns it is
+ * GUARANTEED floor(N × g) decisions whatever phase its clock is in. At full
+ * speed that is N, the figure this always sent. A Slowed detective (1/1.3) is
+ * promised fewer, because they get fewer: "3 turns — move" to somebody who will
+ * decide twice is the line that gets them hit.
+ */
+export function decisionsBeforeImpact(proj: Projectile, viewerSpeed: number): number {
+  return Math.floor(turnsToImpact(proj) * viewerSpeed);
+}
+
+/**
  * The tile it is aimed at — the last tile on the frozen line. Used by the wire
  * frame so a client can draw the orb's destination without re-deriving the path.
  */

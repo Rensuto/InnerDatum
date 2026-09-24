@@ -936,17 +936,6 @@ export function hasResource(pool: ResourcePool, amount: number): boolean {
  */
 
 /**
- * What a status is taking off this body's round.
- *
- * DECLARED HERE RATHER THAN IMPORTED from engine/effects.ts, structurally, for
- * the reason `TalentCallCtx.status` gives at length: this module runs a small
- * effect system of its own, and two modules exporting "effects" into each other
- * is how a cycle starts. The shape is two numbers, and the adapter in main.ts is
- * the one place that holds both sides.
- */
-export type BudgetPenalty = { readonly ap: number; readonly mp: number };
-
-/**
  * ═══════════════════════════════════════════════════════════════════════════
  * WHAT THE SUSTAINS THAT ARE UP ARE TAKING OFF THE POOL.
  * ═══════════════════════════════════════════════════════════════════════════
@@ -2508,11 +2497,7 @@ export type TalentEngine = {
    * refills the AP/MP budget. Nothing in here may read `globalSpeed` or
    * `speedFactor`; see this file's header for why that is the invariant.
    */
-  /**
-   * @param penalty what a status is taking off this round — SLOWED's `-1 MP`.
-   *   Absent is no penalty, which is every caller that has no status table.
-   */
-  actBase(actorId: string, world: TalentWorld, penalty?: BudgetPenalty): void;
+  actBase(actorId: string, world: TalentWorld): void;
 
   /**
    * A kill happened. Reagents are a stock and this is half of how it refills.
@@ -2600,36 +2585,17 @@ export function createTalentEngine(registry: TalentRegistry): TalentEngine {
       else effects.set(actorId, kept);
     },
 
-    actBase: (actorId: string, world: TalentWorld, penalty?: BudgetPenalty): void => {
+    actBase: (actorId: string, world: TalentWorld): void => {
       tickEffects(effects, actorId);
       const sheet = sheets.get(actorId);
       if (sheet === undefined) return;
       const actor = world.getActor(actorId);
       if (actor === undefined || !actor.alive) return;
       regenResource(engine, sheet, actor, world);
-      /**
-       * ═══════════════════════════════════════════════════════════════════════
-       * THE REFILL, MINUS WHATEVER IS BEING DONE TO THIS BODY.
-       * ═══════════════════════════════════════════════════════════════════════
-       *
-       * SLOWED's player half is `-1 MP` and it has never been subtracted from
-       * anything: `budgetPenalty` in engine/effects.ts had ZERO production
-       * callers, so a Slowed detective moved exactly as far and acted exactly as
-       * often as an unslowed one. The badge was the whole effect.
-       *
-       * HERE AND NOT EARLIER, because this line is the reason. `budgetPenalty`'s
-       * own docblock says so: *"The caller applies this immediately after the
-       * refill … a QUERY rather than a stateful subtraction, precisely because
-       * that refill would clobber anything subtracted earlier in the turn."*
-       * Anything that took MP off a Slowed player mid-round would be handed it
-       * straight back on the next base pass.
-       *
-       * FLOORED AT ZERO. A penalty larger than the pool is a body that cannot
-       * act, not a body with negative movement — and `hasAffordableAction` reads
-       * these, so a negative would answer "affordable" through a sign error.
-       */
-      sheet.ap = Math.max(0, sheet.maxAp - (penalty?.ap ?? 0));
-      sheet.mp = Math.max(0, sheet.maxMp - (penalty?.mp ?? 0));
+      // THE REFILL. SLOWED took a movement point off it until 2026-09-24; a slow
+      // is on the body's clock now (engine/effects.ts `recomputeAttributes`).
+      sheet.ap = sheet.maxAp;
+      sheet.mp = sheet.maxMp;
       sheet.movedThisTurn = false;
       /**
        * AND THE LATCH WITH IT, ON THE SAME LINE THAT CLEARS THE OTHER

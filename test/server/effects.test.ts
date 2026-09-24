@@ -11,7 +11,6 @@ import {
   SaveChannel,
   SetEffectOutcome,
   StackMode,
-  budgetPenalty,
   canBe,
   createEffectState,
   dispelChannel,
@@ -1052,15 +1051,16 @@ describe('SLOWED — two mechanisms, one effect (physical.lua:631-636 + DECISION
     expect(fast.globalSpeed).toBeCloseTo(1.4, 10);
   });
 
-  it('NEVER touches a PLAYER`s clock — it spends the budget instead (D1)', () => {
+  it('writes a PLAYER`s clock the same way, and gives it back', () => {
+    // It never touched one (DECISIONS.md § D1) and spent a movement point
+    // instead, which became nothing once every action ended the turn. ToME has
+    // no player case (tome/class/Actor.lua:3909-3914).
     const state = createMvpEffectState();
     const detective = player();
     setEffect(state, detective, EffectId.Slowed, 3, {}, scriptedRng([]));
-
-    // The pin: a player's globalSpeed stays exactly 1, or the party barrier
-    // stops parking once per turn at full quorum.
+    expect(detective.globalSpeed).toBeCloseTo(speedWith(1, -SLOW_POWER), 10);
+    removeEffect(state, detective, EffectId.Slowed, scriptedRng([]));
     expect(detective.globalSpeed).toBe(1);
-    expect(budgetPenalty(state, detective.id)).toEqual({ ap: 0, mp: 1 });
   });
 
   it('cannot stop a monster`s clock however hard the slow is', () => {
@@ -1218,7 +1218,6 @@ describe('dispel and housekeeping', () => {
     expect(mods.stunned).toBe(true);
     expect(mods.noTalentsCooldown).toBe(true);
     expect(mods.globalSpeedAdd).toBeCloseTo(-SLOW_POWER, 10);
-    expect(mods.mpPenalty).toBe(1);
   });
 
   it('recomputeAttributes is idempotent', () => {
@@ -1577,9 +1576,12 @@ describe('the status roster (game-design.md § 12)', () => {
         p.includes('without onMerge'),
       ),
     ).toBe(true);
+    // A −1 slow is legal: it halves a clock and cannot stop one (a slow
+    // divides — tome/class/Actor.lua:3911). A POSITIVE one on a debuff is not.
+    expect(validateEffect({ ...SLOWED, modifiers: { globalSpeedAdd: -1 } })).toEqual([]);
     expect(
-      validateEffect({ ...SLOWED, modifiers: { globalSpeedAdd: -1 } }).some((p) =>
-        p.includes('stop a monster'),
+      validateEffect({ ...SLOWED, modifiers: { globalSpeedAdd: 0.3 } }).some((p) =>
+        p.includes('is a haste'),
       ),
     ).toBe(true);
   });

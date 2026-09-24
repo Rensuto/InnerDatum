@@ -1230,9 +1230,8 @@ describe('paying for a talent that DID happen', () => {
  * number. A test that called `tickCooldowns` in a loop would prove only that
  * subtraction works.
  *
- * Monsters, because a PLAYER cannot be hasted at all — `PlayerActor` declares
- * `globalSpeed` as the literal type `1` (D1), so `player.globalSpeed = 1.4` is
- * a compile error rather than a balance bug.
+ * Monsters, because no effect hastes a player yet. A player's clock is not
+ * pinned any more (a slow divides it), but nothing in the game speeds one up.
  */
 function runClocks(
   globalSpeed: number,

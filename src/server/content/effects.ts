@@ -23,8 +23,8 @@
  *   STUNNED   physical save. FREEZES COOLDOWNS, ×0.4 outgoing damage, and puts
  *             three ready talents on a 1-turn cooldown that cannot tick.
  *   BLEEDING  physical save. Damage per turn on the BASE clock, no armour stage.
- *   SLOWED    physical save. Fewer actions for a monster; fewer points for a
- *             player. Those are two different mechanisms and § D1 is why.
+ *   SLOWED    physical save. Fewer actions, for a monster and a detective alike:
+ *             ToME's `global_speed_add`, divided, on the one clock both run.
  *
  * All three are `physical` because the MVP roster is a husk, a wraith and an
  * elite husk swinging and shooting. The mental and magical channels exist in
@@ -362,27 +362,6 @@ export function lockedOutPhrase(count: number): string {
 
 /** physical.lua:493 — `movement_speed`, −0.5. Carried as data; see the note below. */
 export const STUN_MOVEMENT_SPEED_ADD = -0.5;
-
-/**
- * game-design.md § 7 — "Slowed (−1 MP)", and § 8's item note: "35% slow/2 s →
- * −1 MP for 2 turns, because a percentage is illegible on a grid."
- *
- * A player cannot be slowed on the clock (D1), so this is the player-facing
- * expression of the same effect. One movement point, which on a 30×30 room is
- * the difference between reaching the downed ally this turn and not.
- */
-export const SLOW_PLAYER_MP_PENALTY = 1;
-
-/**
- * Slow costs a player NO action points by default.
- *
- * The AP budget is what a player spends on TALENTS, and taking a point of it
- * would silently disable whichever talent sits at the top of their cost curve —
- * a much larger and much less legible nerf than losing a tile of movement. The
- * knob exists (`EffectModifiers.apPenalty`) and a future effect can use it; slow
- * is not that effect.
- */
-export const SLOW_PLAYER_AP_PENALTY = 0;
 
 // ---------------------------------------------------------------------------
 // STUNNED — physical.lua:480-511
@@ -799,7 +778,7 @@ function mergeDamageOverTime(
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════
- * SLOWED. TWO MECHANISMS, ONE EFFECT, AND THE ASYMMETRY IS D1.
+ * SLOWED. ONE MECHANISM, THE CLOCK, FOR EVERY BODY — AS UPSTREAM.
  * ═══════════════════════════════════════════════════════════════════════════
  *
  * ```lua
@@ -813,12 +792,14 @@ function mergeDamageOverTime(
  * ```
  *
  * ───────────────────────────────────────────────────────────────────────────
- * MONSTERS: `global_speed_add`, WHICH IS THE GAIN KNOB
+ * `global_speed_add`, WHICH IS THE GAIN KNOB
  * ───────────────────────────────────────────────────────────────────────────
- * ToME subtracts from `global_speed`, the multiplier on energy GAINED per tick.
- * engine/actor.ts names the same thing `globalSpeed`, so the port is direct:
- * `globalSpeedAdd: -0.3` means a slowed monster accrues 70 energy per tick
- * instead of 100 and acts roughly seven times in ten game turns.
+ * ToME adds to `global_speed_add`, which scales the energy GAINED per tick, and
+ * a negative add DIVIDES (tome/class/Actor.lua:3909-3914, `recomputeGlobalSpeed`
+ * in shared/energy.ts): `globalSpeedAdd: -0.3` is 1/1.3 = 0.769, so a slowed
+ * body accrues about 77 energy a tick instead of 100 and acts about 7.7 times
+ * in ten game turns. The text is upstream's own — "Reduces global action speed
+ * by 30%." — and the number under it is the divided one.
  *
  * ═══ DO NOT REACH FOR `speedFactor` ═══
  * `speedFactor` is the ACTION COST multiplier, and it runs the OTHER WAY:
@@ -829,42 +810,20 @@ function mergeDamageOverTime(
  * reason. If a future effect must use the cost knob, it ADDS to it.
  *
  * The write goes through `recomputeAttributes`, which composes every live
- * effect's `globalSpeedAdd` on top of a snapshot of the monster's own base
- * speed and floors the result at 0.1 (mirroring Combat.lua:1409's floor) so a
- * stacked slow can never stop the clock outright. Two slows landing and one
- * expiring leaves the survivor's full value, which is exactly the case ToME's
- * `addTemporaryValue`/`removeTemporaryValue` handle pairs exist to get right.
+ * effect's `globalSpeedAdd` on top of a snapshot of the body's own base speed.
+ * Two slows landing and one expiring leaves the survivor's full value, which is
+ * exactly the case ToME's `addTemporaryValue`/`removeTemporaryValue` handle
+ * pairs exist to get right.
  *
  * ───────────────────────────────────────────────────────────────────────────
- * PLAYERS: −1 MP, BECAUSE THE CLOCK IS NOT AVAILABLE (DECISIONS.md § D1)
+ * AND DETECTIVES TOO, SINCE 2026-09-24
  * ───────────────────────────────────────────────────────────────────────────
- * A player's `globalSpeed` is the literal type `1` and readonly. That is not
- * fussiness — it is what keeps the party PHASE-LOCKED so the barrier parks once
- * per turn at full quorum. Slow a player on the clock and four people drift out
- * of phase: the scheduler starts parking with quorum 1, 2, 3, 2, 1, and the
- * solo-Bell exemption fires on the single-player parks while three people sit
- * frozen watching one person think. engine/actor.ts works the arithmetic.
- *
- * So a slowed player loses a MOVEMENT POINT instead — game-design.md § 7's
- * "Slowed (−1 MP)", and § 8's item note spelling out the reasoning: "35%
- * slow/2 s → −1 MP for 2 turns, because a percentage is illegible on a grid."
- * One fewer tile of reach on a 30×30 room is a real cost with a legible number,
- * and it costs the barrier nothing.
- *
- * ═══ THE PENALTY IS A QUERY, NOT A SUBTRACTION ═══
- * `talentEngine.actBase` refills the budget every game turn
- * (`sheet.ap = sheet.maxAp; sheet.mp = sheet.maxMp;`), so anything subtracted
- * from `sheet.mp` when the effect LANDS is erased at the start of the next turn.
- * The caller therefore applies `budgetPenalty(state, actorId)` immediately after
- * that refill. That is the one integration line this effect needs, and it is
- * stated here because it is the only place anyone will look for it:
- *
- * ```ts
- * talents.actBase(actor.id, world);
- * const { ap, mp } = budgetPenalty(effects, actor.id);
- * sheet.ap = Math.max(0, sheet.ap - ap);
- * sheet.mp = Math.max(0, sheet.mp - mp);
- * ```
+ * A player's clock was pinned at 1 (DECISIONS.md § D1) to keep a party phase-
+ * locked under the old simultaneous barrier, so a slowed player lost a movement
+ * point instead — and once every action ended the turn, a movement point was
+ * nothing, and Slowed did nothing to a player at all. A party now takes its
+ * turns in initiative order, where uneven energy is simply ToME: a slowed
+ * detective is in line less often, exactly as a slowed husk is.
  *
  * ───────────────────────────────────────────────────────────────────────────
  * NO `activate` / `deactivate` HOOKS HERE, DELIBERATELY
@@ -878,7 +837,8 @@ export const SLOWED: EffectDef = Object.freeze({
   id: EffectId.Slowed,
   badge: 'Sl',
   displayName: 'Slowed',
-  description: 'Dragging. Monsters act less often; detectives lose a point of movement.',
+  // physical.lua:624 — "Reduces global action speed by %d%%.", from the power.
+  description: `Reduces global action speed by ${String(Math.round(SLOW_POWER * 100))}%.`,
   type: SaveChannel.Physical,
   status: EffectStatus.Detrimental,
   // physical.lua declares no `on_merge` for SLOW → upstream replaces (:128).
@@ -888,12 +848,9 @@ export const SLOWED: EffectDef = Object.freeze({
   decrease: 1,
   icon: 'icon_status_slowed',
   modifiers: {
-    // :632 — `addTemporaryValue("global_speed_add", -eff.power)`. NEGATIVE.
-    // Monsters only; `recomputeAttributes` refuses to write a player's clock.
+    // :632 — `addTemporaryValue("global_speed_add", -eff.power)`. NEGATIVE,
+    // and every body's: a detective's clock as much as a husk's.
     globalSpeedAdd: -SLOW_POWER,
-    // The player half. See the asymmetry note above.
-    mpPenalty: SLOW_PLAYER_MP_PENALTY,
-    apPenalty: SLOW_PLAYER_AP_PENALTY,
   },
   // :628 — `parameters = { power = 0.1 }`. Kept so the log and the tooltip can
   // print the fraction; the modifier above is what the engine reads.
@@ -2630,9 +2587,12 @@ export function createMvpEffectState(): EffectState {
  *     which is almost never what an authored stacking effect wants;
  *   - `decrease: 0` is a PERMANENT effect (ActorTemporaryEffects.lua:91 would
  *     subtract nothing), legal for a sustain and a bug for a status;
- *   - a `globalSpeedAdd` at or below −1 would stop a monster's clock, and the
- *     0.1 floor in `recomputeAttributes` would silently absorb it instead of
- *     letting anyone notice the number was wrong.
+ *   - a POSITIVE `globalSpeedAdd` on a detrimental effect is a haste wearing a
+ *     debuff's name.
+ *
+ * There was a third — "at or below −1 stops a monster's clock" — from when a
+ * slow subtracted. It divides (tome/class/Actor.lua:3909-3914), so −1 is half
+ * speed and no negative add can reach zero; the rule guarded nothing.
  */
 /** Two characters fit the 24px box; three collide with its border. */
 /** One character at least: an empty badge is a box with nothing in it. */
@@ -2684,9 +2644,6 @@ export function validateEffect(def: EffectDef): readonly string[] {
   }
 
   const speed = def.modifiers?.globalSpeedAdd ?? 0;
-  if (speed <= -1) {
-    problems.push(`${def.id}: globalSpeedAdd ${speed} would stop a monster's clock`);
-  }
   if (speed > 0 && def.status === EffectStatus.Detrimental) {
     problems.push(`${def.id}: a detrimental effect with a POSITIVE globalSpeedAdd is a haste`);
   }

@@ -17,30 +17,24 @@
  * fall out of sync would be `hp`.
  *
  * ===========================================================================
- * THE PLAYER / MONSTER ASYMMETRY IS ENFORCED BY THE TYPE, NOT BY DISCIPLINE
+ * ONE CLOCK FOR EVERY BODY — AND THE PIN THAT USED TO BE HERE
  * ===========================================================================
  *
- * DECISIONS.md § D1, restated: a PLAYER action always costs exactly
- * ENERGY_TO_ACT and a player's `globalSpeed` is pinned to 1.0. AP is an
- * intra-turn budget spent inside one park; it is never a way to buy an extra
- * park. That is the single property that keeps a party PHASE-LOCKED, which is
- * what makes the barrier park ONCE PER TURN AT FULL QUORUM — the one condition
- * the Bell was designed around. MONSTERS keep ToME's full variable-speed model
- * on both sides: `globalSpeed` scales what they gain, `speedFactor` scales what
- * an action costs them.
+ * `globalSpeed` scales what a body GAINS per tick (tome/class/Actor.lua:
+ * 3909-3914), for a detective as for a husk: a Slowed player is in line less
+ * often, as ToME's is. It was pinned to the literal `1` for players by
+ * DECISIONS.md § D1, to keep a party PHASE-LOCKED under the old simultaneous
+ * barrier — four players drifting out of phase parked it with quorums of 1,
+ * 2, 3 and rang the Bell on one person while three watched. A party now takes
+ * its turns one at a time in initiative order (engine/scheduler.ts
+ * `ensureInitiative`), where uneven energy is simply ToME, so the pin went on
+ * 2026-09-24.
  *
- * Simulate the alternative once and the reason for the pin is obvious: four
- * players spending 2 AP / 6 AP / a move / 4 AP land on 667 / 0 / 0 / 333 energy
- * and never re-align. The scheduler then parks six times over the next ten
- * ticks with quorum sizes 1, 2, 3, 2, 1, 3, and the solo-Bell exemption — which
- * exists for the last survivor — fires on the single-player parks while three
- * people sit frozen watching one person think.
- *
- * So `PlayerActor` declares `globalSpeed` and `speedFactor` as the LITERAL type
- * `1`, readonly. `player.speedFactor = 1.4` is a compile error, not a code
- * review note. Every energy spend goes through `spendTurn`, which derives the
- * multiplier from the actor's own kind, so there is no call site left where a
- * caller could pass the wrong one.
+ * `speedFactor` — what an action COSTS — is still the literal `1` on a player:
+ * every player action costs exactly one turn until ToME's per-action costs
+ * (movement, weapon and talent speed) are ported. Every energy spend goes
+ * through `spendTurn`, which derives the multiplier from the actor's own kind,
+ * so there is no call site where a caller could pass the wrong one.
  *
  * ===========================================================================
  * THE TWO CLOCKS (src/shared/energy.ts owns the loop; this file owns actBase)
@@ -890,14 +884,16 @@ type ActorCommon = {
 /**
  * A human's body.
  *
- * `globalSpeed` and `speedFactor` are the LITERAL type `1` and readonly, so D1
- * is a compile error to violate rather than a convention to remember. If a
- * player-side haste effect ever lands, it grants AP — see the file header.
+ * `speedFactor` is the LITERAL type `1` and readonly: every player action costs
+ * exactly one turn. `globalSpeed` is not pinned any more — see the file header.
  */
 export type PlayerActor = ActorCommon & {
   readonly kind: typeof ActorKind.Player;
-  /** Pinned. Energy GAIN multiplier; see the header for why it is not free. */
-  readonly globalSpeed: 1;
+  /**
+   * Energy GAIN multiplier, 1 at birth and written only by `recomputeAttributes`
+   * (engine/effects.ts) from the body's live effects: SLOWED divides it.
+   */
+  globalSpeed: number;
   /** Pinned. Action COST multiplier; every player action costs exactly one turn. */
   readonly speedFactor: 1;
   /**
@@ -2036,7 +2032,8 @@ export function createPlayerActor(id: string, init: PlayerInit): PlayerActor {
     rank: ActorRank.Normal,
     x: init.x,
     y: init.y,
-    // Restated as literals so the TYPE is `1`, not `number`. This is the D1 pin.
+    // Full speed at birth; a slow divides it (`recomputeAttributes`). The cost
+    // multiplier is restated as a literal so its TYPE is `1`, not `number`.
     globalSpeed: 1,
     speedFactor: 1,
     hp: maxHp,
@@ -2294,9 +2291,10 @@ export function createMonsterActor(id: string, init: MonsterInit): MonsterActor 
 /**
  * What one action costs this actor, as a multiple of ENERGY_TO_ACT.
  *
- * Players: always exactly 1. Monsters: their own `speedFactor`. There is no
- * third answer, and no caller supplies this number — which is exactly why D1
- * cannot be violated by a talent that forgets.
+ * Players: always exactly 1, until ToME's per-action costs are ported.
+ * Monsters: their own `speedFactor`. No caller supplies this number, so a
+ * talent that forgets cannot get it wrong. A SLOW is not here: it is on the
+ * gain side, `globalSpeed`, for every body.
  */
 export function actionCostMultiplier(actor: EngineActor): number {
   return actor.kind === ActorKind.Player ? 1 : actor.speedFactor;

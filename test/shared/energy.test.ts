@@ -160,9 +160,8 @@ describe('the two clocks', () => {
 
 describe('actions per game turn', () => {
   it('gives an unhasted actor exactly one action per game turn', () => {
-    // The baseline every other row is measured against, and the D1 case: a
-    // player's globalSpeed is pinned to 1.0, so a party stays phase-locked and
-    // the barrier parks once per turn at full quorum.
+    // The baseline every other row is measured against: an unslowed body at
+    // speed 1.0 acts once per game turn.
     const run = runTicks(1, TEN_TURNS);
     expect(run.actions).toBe(10);
     expect(run.baseTurns).toBe(10);

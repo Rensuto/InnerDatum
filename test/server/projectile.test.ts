@@ -9,6 +9,7 @@ import {
   createProjectile,
   currentTile,
   stepProjectile,
+  decisionsBeforeImpact,
   turnsToImpact,
 } from '../../src/server/engine/projectile.ts';
 import { pump, submitIntent } from '../../src/server/engine/scheduler.ts';
@@ -620,6 +621,42 @@ describe('turnsToImpact', () => {
     const scene = arena(CORRIDOR);
     stepProjectile(shot, scene.world);
     expect(turnsToImpact(shot)).toBe(3);
+  });
+});
+
+describe('decisionsBeforeImpact — the viewer’s own turns', () => {
+  it('is the game-turn count at full speed, and fewer for a Slowed body', () => {
+    const shot = orb({ from: { x: 1, y: 1 }, to: { x: 7, y: 1 }, projSpeed: 2 });
+    expect(decisionsBeforeImpact(shot, 1)).toBe(turnsToImpact(shot));
+    expect(decisionsBeforeImpact(shot, 1 / 1.3)).toBe(2);
+  });
+
+  it('never promises a decision the clock does not deliver, whatever its phase', () => {
+    // THE GUARANTEE, CHECKED RATHER THAN ARGUED. A body gaining `speed` × 100 a
+    // tick acts each time its energy reaches 1000; over N game turns (10N ticks)
+    // count its decisions from every starting energy, and the promise must never
+    // exceed the fewest of them.
+    for (const speed of [1, 1 / 1.3, 1 / 1.6, 0.84, 1.4]) {
+      for (let turns = 1; turns <= 8; turns += 1) {
+        let fewest = Infinity;
+        for (let start = 0; start < 1000; start += 7) {
+          let energy = start;
+          let decisions = 0;
+          for (let tick = 0; tick < turns * 10; tick += 1) {
+            energy += speed * 100;
+            if (energy >= 1000) {
+              decisions += 1;
+              energy -= 1000;
+            }
+          }
+          fewest = Math.min(fewest, decisions);
+        }
+        expect(
+          Math.floor(turns * speed),
+          `speed ${String(speed)}, ${String(turns)} turns`,
+        ).toBeLessThanOrEqual(fewest);
+      }
+    }
   });
 });
 

@@ -1922,8 +1922,8 @@ export function partyPaneTipAt(
    * "Slowed 3t" tells a player something is wrong and not what. The sentence
    * has been authored on every effect in the game since the status system
    * landed and could not reach any screen until `EffectView.desc` existed —
-   * *"Dragging. Monsters act less often; detectives lose a point of
-   * movement."* is the difference between a badge and an explanation.
+   * *"Reduces global action speed by 30%."* is the difference between a badge
+   * and an explanation.
    *
    * ON ITS OWN LINE, INDENTED, rather than appended to the name: the card wraps
    * nothing, and a name plus a sentence on one line would ellipsise away the

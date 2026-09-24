@@ -382,6 +382,25 @@ describe('the projectiles frame', () => {
     ]);
   });
 
+  it('counts the turns in a Slowed viewer’s own decisions, not the orb’s', async () => {
+    // Six tiles at two a game turn is 3 game turns — and 3 of a full-speed
+    // body's decisions. A body at 1/1.3 is guaranteed floor(3 / 1.3) = 2 of
+    // its own in that time, and "3 turns — move" to somebody who will decide
+    // twice is the line that gets them hit (`decisionsBeforeImpact`).
+    const client = await connect(server.port);
+    const welcome = await client.hello();
+    const body = server.world.getActor(String(welcome?.['selfId']));
+    if (body === undefined) throw new Error('no body');
+    body.globalSpeed = 1 / 1.3;
+    client.clear();
+
+    fire({ x: 2, y: LANE_Y }, { x: 8, y: LANE_Y });
+    await client.pump();
+
+    const [orb] = orbs(client.all('projectiles')[0]) as (Record<string, unknown> | undefined)[];
+    expect(orb?.['turnsToImpact']).toBe(2);
+  });
+
   it('says nothing on a pump where the orb did not move — the memo', async () => {
     // ═══ THIS IS THE PHASE LOCK, SEEN FROM THE WIRE ═══
     // An orb freezes while the party deliberates (it is skipped the moment

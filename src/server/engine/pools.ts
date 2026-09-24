@@ -152,8 +152,8 @@ export function maxLifeOf(body: PooledBody, definition: PooledClass, rank: numbe
  * `buildServer` closure, exactly as `maxLifeOf` was.
  *
  * FLOORED AT ONE. A body that cannot move at all is a body the turn system has
- * no answer for; `mpPenalty` is how a status takes movement away, and it is
- * applied elsewhere and deliberately not here.
+ * no answer for. (A status took movement away through `mpPenalty` until a slow
+ * reached the clock instead, 2026-09-24.)
  */
 export function maxMoveOf(body: PooledBody, definition: PooledClass): number {
   return Math.max(1, definition.maxMp + (body.combat?.mods?.moveMp ?? 0));

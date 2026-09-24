@@ -1061,7 +1061,8 @@ function aroundKin(ctx: AiCtx, target: EngineActor): PassableFn {
  * `minRange` is what makes the profile a genuinely different tactical problem
  * rather than a chaser with a longer arm: you close on it, and it gives ground.
  * That its speed is below the party's (index_wraith is `globalSpeed` 0.84) is
- * what stops it giving ground forever.
+ * what stops it giving ground forever — except against a Slowed detective,
+ * whose 1/1.3 is below it, which is the wraith's own orb doing its job.
  */
 function kite(self: MonsterActor, target: EngineActor, ctx: AiCtx): Intent {
   // `combatDistance` — the same body `canAttack` refuses on, whole tiles. See

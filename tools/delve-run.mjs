@@ -652,6 +652,15 @@ export function run(site, size, seed, opts = {}) {
     let rested = 0;
     for (const { body: b, helps } of up) {
       /**
+       * A STEP STILL WAITING ITS TURN IS NOT A REFUSED ONE. The two repeat
+       * guards below read "the same order from the same tile" as "the first
+       * was refused" and hold instead — true while every body acted once per
+       * pump. A Slowed body's clock is slower than its party's (1/1.3), so its
+       * order can still be pending when the pump returns, and the guard's hold
+       * would overwrite it. Leave a waiting order alone.
+       */
+      if (b.pendingIntent !== null && b.pendingIntent !== undefined) continue;
+      /**
        * WHAT THIS BODY CAN FIRE, AS IT STANDS THIS TURN — only what it has
        * LEARNED (`learnedTalents`, fightlib.mjs, which carries the measurement),
        * and re-read every turn because a level gained mid-floor spends its
