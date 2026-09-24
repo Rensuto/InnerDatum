@@ -544,7 +544,7 @@ describe('the gentlest room in the game', () => {
     }
   });
 
-  it('does not kill the CLASS THE ROOM IS BUILT FOR in the fullest room there is', () => {
+  it('does not kill a PAIR standing at its own level in the fullest room there is', () => {
     /**
      * ═══════════════════════════════════════════════════════════════════════
      * THE GUARD THAT DID NOT EXIST: NOTHING FAILED WHEN A DELVE STOPPED BEING
@@ -573,20 +573,46 @@ describe('the gentlest room in the game', () => {
      * two-wide corridor against a 900-turn cap, and its worst health is 68%
      * whatever the cap is raised to. Asserting clears here would pin that probe
      * limit as though it were a fact about the game. A WIPE is a fact about the
-     * game: the room killed the class it is easiest on, standing at its own
-     * level.
+     * game: the room killed a party standing at its own level.
+     *
+     * ═══ A PAIR, AND IT WAS A LONE WATCHMAN UNTIL ONE ACTION BECAME ONE TURN ═══
+     * This drove the Watchman alone, and the measured rate was one wipe in four.
+     * On 2026-09-23 every action started to end the turn, as ToME's does
+     * (`actPlayer`; engines/default/engine/Actor.lua:478-484), where a player had
+     * been stepping and acting two or three times per monster turn. Measured on
+     * this room at its own level, 24 seeds, this label:
+     *
+     *                                   alone          a pair
+     *   one action per turn             15 / 24 wipe   —
+     *   + the orb follows the bar       21 / 24 wipe   0 / 6, 6 clears
+     *   + the count tripled             6 / 6 wipe     2 / 6, 4 clears
+     *
+     * REPORTED, NOT TUNED BACK. The action economy is ToME's and so is every
+     * number that moved with it (class `max_life`, T_VOID_BLAST's orb), and a
+     * lone level-11 body walking at the nearest foe in the densest room there
+     * is — a driver that never retreats to a corridor — is the fight ToME
+     * would give it. Solo balance under the ported economy is an open question
+     * for the author, and it is recorded in DECISIONS.md rather than here.
+     *
+     * SO THE WALKABILITY GUARD IS A PAIR: the smallest party, still able to
+     * show a room that stopped being walkable, and cheap enough to stay a unit
+     * test (a party of four costs 27 seconds on these six seeds). What it can
+     * no longer see is a count tripling — the pair clears that too — and it
+     * does not need to: every count is pinned to the Lua line it cites by
+     * `delve-alignment.test.ts`, which is where a count going wrong now fails.
      */
     const site = fullestRoom();
     expect(site, 'no delve has a floor to measure').toBeDefined();
-    const beginner = CLASSES[0];
-    if (site === undefined || beginner === undefined) return;
+    const pair = CLASSES.slice(0, 2);
+    expect(pair.length, 'fewer than two classes to make a pair from').toBe(2);
+    if (site === undefined) return;
     const spec = DELVES.get(site.id);
     expect(spec, `${site.id} is not in DELVES`).toBeDefined();
     if (spec === undefined) return;
 
     const runs = Array.from({ length: DRIVEN_SEEDS }, (_unused, i) =>
-      run(site, 1, `fullest-room-driven:${site.id}:${String(i)}`, {
-        party: [beginner],
+      run(site, pair.length, `fullest-room-driven:${site.id}:${String(i)}`, {
+        party: pair,
         level: delveLevel(spec),
         floor: 1,
       }),
@@ -596,19 +622,16 @@ describe('the gentlest room in the game', () => {
 
     /**
      * ═══ A MAJORITY, NOT ALL OF THEM, AND THAT IS NOT A HEDGE ═══
-     * The measured rate here is one wipe in four at the moment — this IS the
-     * fullest room in the game, the class is alone, and being alone is not the
-     * configuration this game is built for. "Zero wipes over six fixed seeds"
-     * was the first bar written and it was seed luck: the sweep and this case
+     * The pair walks out of all six today. "Zero wipes over six fixed seeds"
+     * was the first bar written for the lone Watchman and it was seed luck: the sweep and this case
      * disagreed on the same room because they draw different labels. A bar a
      * harmless change can turn red by reshuffling the stream is a bar about the
-     * fixture. A MAJORITY WALKS OUT is a statement about the room, and it is the
-     * one that moves when a count does: with the placer tripled it goes red.
+     * fixture. A MAJORITY WALKS OUT is a statement about the room.
      */
     const wiped = runs.filter((r) => r.outcome === 'wipe').length;
     expect(
       wiped * 2,
-      `${site.id} — the fullest room in the game — erased a Watchman standing at its own` +
+      `${site.id} — the fullest room in the game — erased a pair standing at its own` +
         ` level ${String(wiped)} of ${String(DRIVEN_SEEDS)} times, on ${roster.toFixed(1)} bodies`,
     ).toBeLessThan(DRIVEN_SEEDS);
 

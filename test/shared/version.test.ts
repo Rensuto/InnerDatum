@@ -233,10 +233,14 @@ describe('shared constants', () => {
     // it. That is `18 -> 19`'s rule — a client drawing a picture the server has
     // stopped believing in — and the body it draws it of is the ONE the party
     // is asked to keep alive.
-    expect(PROTOCOL_VERSION).toBe(29);
+    expect(PROTOCOL_VERSION).not.toBe(29);
+    // 29 -> 30: EVERY ACTION ENDS THE TURN. No frame changed shape, the RULE
+    // did — and a v29 client keeps sending `commit` after each move, which the
+    // server now reads as a HOLD that silently burns the player's next turn.
+    expect(PROTOCOL_VERSION).toBe(30);
   });
 
-  it('keeps the 28 -> 29 changelog entry beside the constant, and non-empty', () => {
+  it('keeps the 29 -> 30 changelog entry beside the constant, and non-empty', () => {
     // THE PROSE IS THE DELIVERABLE HERE, NOT DECORATION. Every bump in this file
     // is argued above the constant, and the argument is the only thing that
     // tells the next person whether their change forces a bump or is an addition
@@ -264,37 +268,23 @@ describe('shared constants', () => {
     // touched — a guard that proves the discipline held LAST TIME is not a
     // guard. It moves with the constant now, and the assertions below name this
     // entry's own frame.
-    const afterHeading = source.split('28 -> 29 (SOMEBODY IS WALKING WITH YOU)')[1] ?? '';
+    const afterHeading = source.split('29 -> 30 (EVERY ACTION ENDS THE TURN)')[1] ?? '';
     // The entry ends where the one before it begins. Entries are written newest
     // first ABOVE the constant, so cutting at the constant would read every
     // older entry too, and an assertion could pass on somebody else's prose.
-    const entry = afterHeading.split('27 -> 28 (THE ZOOM IS GONE)')[0] ?? '';
+    const entry = afterHeading.split('28 -> 29 (SOMEBODY IS WALKING WITH YOU)')[0] ?? '';
 
     expect(afterHeading).not.toBe('');
     expect(entry.length, 'the entry runs on into the constant').toBeLessThan(afterHeading.length);
     expect(entry.trim().length).toBeGreaterThan(200);
-    // It must name the thing that FORCES the bump, not merely list what was
-    // added — an entry that only enumerates additions is an entry arguing for
-    // NOT bumping. Here that is the new frame, the verb whose meaning changed
-    // under it, and the server-side state an older client cannot see; the half
-    // that rides the same number without forcing it has to be argued for too, or
-    // the next reader cannot tell which half did the work.
-    expect(entry).toContain('`ActorView.faction`');
-    expect(entry).toContain("'squad'");
-    // THE FORCING FACT, NAMED. This entry's hazard is that the change LOOKS
-    // additive: the field is four versions old and gained a value once already
-    // without a bump. An entry that only said "a third value" would be an entry
-    // arguing against its own bump, so it has to say what the old client DOES
-    // with a string it does not know.
-    expect(entry).toContain('DOES NOT IGNORE THE FIELD');
-    expect(entry).toContain('CONSIDERED AND NOT BUMPED FOR');
-    // AND WHY THIS VALUE IS WORSE THAN THE LAST ONE THE SAME FIELD GAINED,
-    // because "we did not bump for `'bound'`" is the first thing the next
-    // reader will reach for.
-    expect(entry).toContain('WORSE HERE THAN IT WAS');
-    // And it must say what it deliberately did NOT do to the save file, because
-    // the reflex when a protocol moves is to move both numbers.
-    expect(entry).toContain('SCHEMA_VERSION');
+    // THE FORCING FACT, NAMED. No frame changed shape, so an entry that only
+    // said "the rule changed" would be arguing against its own bump. It has to
+    // say what an old client DOES: it sends `commit` after a move, the server
+    // reads it as a HOLD, and the player loses their next turn.
+    expect(entry).toContain('`commit`');
+    expect(entry).toContain('HOLD');
+    expect(entry).toContain('NEXT turn');
+    expect(entry).toContain('`SCHEMA_VERSION` STAYS 1');
   });
 
   it('argues the changes that did NOT bump, beside the ones that did', () => {

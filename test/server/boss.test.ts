@@ -109,7 +109,8 @@ describe('the Watcher', () => {
   it('does not raise the damage ceiling, and is not meant to', () => {
     /**
      * A boss is the LONGEST fight, not the sharpest. Measured: 5.95 damage a
-     * player turn, below `INDEX_CAIRN`'s 7.00 — its threat is two hundred and
+     * player turn, below the inquisitor's 12.00 (it was `INDEX_CAIRN`'s 7.00
+     * before the cairn took its bolt's cooldown) — its threat is two hundred and
      * twenty hit points and the turns it takes away, not the number per shot.
      * Asserted as a comparison so a future retune of anything else has to come
      * past it.

@@ -319,12 +319,6 @@ function recorder(
       noteMoved: () => undefined,
       noteKill: () => atKill.push(snap()),
       noteStruck: () => undefined,
-      // The intra-turn budget's seam. A stub answers "nothing left to do", which
-      // closes every round after one action — this fixture's existing behaviour
-      // exactly. See `TalentResolution.roundOpen`.
-      roundOpen: () => false,
-      // Movement is free without a talent runtime — the game as it shipped.
-      spendMove: () => true,
       // NO MARK AND NO GUARD in this scene. 1 is the identity the seam's own
       // contract names, and a null counter is "nobody was guarding" — which is
       // the truth here: this fixture has no talent sheets at all.

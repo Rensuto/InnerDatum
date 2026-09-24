@@ -423,7 +423,10 @@ export const ACTIONS = [
   // ═══════════════════════════════════════════════════════════════════════════
   {
     id: 'commit',
-    name: 'Commit turn',
+    // "Confirm target", no longer "Commit turn": every action ends the turn by
+    // itself now (the server's `actPlayer`), so this key's one job left is to
+    // fire an aimed talent. The id stays, so saved bindings still load.
+    name: 'Confirm target',
     group: 'Turn',
     order: 9,
     effect: { kind: 'command', command: 'commit' },
@@ -454,7 +457,9 @@ export const ACTIONS = [
   },
   {
     id: 'hold',
-    name: 'Hold (pass the turn)',
+    // ToME's "wait" (`Actor.lua:1451-1461`): one action that does nothing and
+    // spends the turn. The id stays, so saved bindings still load.
+    name: 'Wait a turn',
     group: 'Turn',
     order: 10,
     effect: { kind: 'command', command: 'hold' },

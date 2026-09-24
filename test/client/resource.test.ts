@@ -83,40 +83,23 @@ function blocks(painted: Painted): number {
 
 describe('the resource row in a narrow column', () => {
   /**
-   * THE BUG, STATED AS A MEASUREMENT. Nine blocks are authored — six AP and
-   * three MP — and on one line in 187 pixels the row does not reach them all.
+   * ═══ NO AP OR MP BLOCKS — THERE IS NO OPEN ROUND TO FUEL ═══
+   * The budget rows were the open round's fuel gauge: "an empty row means the
+   * turn is about to end". Every action ends the turn now, as ToME's does
+   * (`actPlayer`), so AP and MP refill before a player could see them spent,
+   * and the strip draws the class pool alone — even when the server still
+   * sends the budget fields.
    */
-  it('cannot draw both budgets on one line at pane width', () => {
-    expect(blocks(paint(BAR_W, false)), 'the wide strip should draw all nine').toBe(9);
-    expect(
-      blocks(paint(PANE_W, false)),
-      'a flat row at pane width somehow fitted every block — the bug is unreproducible',
-    ).toBeLessThan(9);
+  it('draws no budget blocks, flat or stacked', () => {
+    expect(blocks(paint(BAR_W, false)), 'the wide strip drew budget blocks').toBe(0);
+    expect(blocks(paint(PANE_W, true)), 'the stacked strip drew budget blocks').toBe(0);
   });
 
-  /** AND THE FIX: the same nine, in the same width, on two lines. */
-  it('draws every block at pane width once it is stacked', () => {
-    expect(blocks(paint(PANE_W, true)), 'MP is still being cut off').toBe(9);
-  });
-
-  it('still names both budgets and the pool', () => {
+  it('names the pool and no budget', () => {
     const { texts } = paint(PANE_W, true);
-    expect(texts, 'the AP label went missing').toContain('AP');
-    expect(texts, 'the MP label went missing').toContain('MP');
     expect(texts, 'the pool lost its name').toContain('Reagents');
-  });
-
-  /**
-   * THE SECOND LINE IS BELOW THE FIRST, which is the whole of "stacked" and is
-   * worth an assertion because drawing it at the same `y` would look like the
-   * budgets had simply vanished under the pips.
-   */
-  it('puts the budgets on a line of their own', () => {
-    const flat = paint(BAR_W, false).rects.filter((r) => r.w === 4);
-    const two = paint(PANE_W, true).rects.filter((r) => r.w === 4);
-    const flatY = Math.min(...flat.map((r) => r.y));
-    const stackedY = Math.min(...two.map((r) => r.y));
-    expect(stackedY, 'the budgets are still on the first line').toBeGreaterThan(flatY);
+    expect(texts, 'an AP label is still drawn').not.toContain('AP');
+    expect(texts, 'an MP label is still drawn').not.toContain('MP');
   });
 
   it('reserves the taller box for the stacked shape', () => {
@@ -125,16 +108,5 @@ describe('the resource row in a narrow column', () => {
       resourceStripH(true),
       'the stacked strip claims the same height as the flat one, so it will clip',
     ).toBeGreaterThan(resourceStripH(false));
-  });
-
-  /**
-   * A POOL WITH NO BUDGETS ON THE WIRE IS AN OLDER SERVER, not a budget of
-   * zero — `ResourceView.ap` is optional so adding it forced no version bump.
-   * The stacked shape must not draw an empty second line for it.
-   */
-  it('draws no blocks at all when the server sends no budgets', () => {
-    const old: ResourceView = { kind: ResourceKind.Reagents, current: 3, max: 8, discrete: true };
-    expect(blocks(paint(PANE_W, true))).toBeGreaterThan(0);
-    expect(blocks(paint(PANE_W, true, old)), 'blocks were invented for an old server').toBe(0);
   });
 });

@@ -368,88 +368,6 @@ export function drawResource(options: ResourceOptions): void {
   }
 
   /**
-   * ═══════════════════════════════════════════════════════════════════════════
-   * THE ACTING BUDGET, ON THE SAME ROW, AFTER A GAP.
-   * ═══════════════════════════════════════════════════════════════════════════
-   *
-   * AP is what the twelve talents are priced in — Ward Rush 2, Iron Curtain 5,
-   * out of 6 — and until `ResourceView.ap` landed no frame carried it, so the
-   * hotbar printed a cost against a number the player could not see.
-   *
-   * ═══ SMALLER, DIMMER, AND SECOND ═══
-   * The class resource is the thing a player builds a plan around across a
-   * whole fight; AP is spent and refilled every single turn. Drawing them at
-   * equal weight would make the round's small change compete with the fight's
-   * big one. So these are half-height ticks in the muted ink, set after the
-   * resource label — present, countable, and never the first thing the eye
-   * lands on.
-   *
-   * ═══ TICKS AND NOT PIPS, ON PURPOSE ═══
-   * `drawPip` reaches for authored 12px art keyed by `ResourceKind`, and there
-   * is no AP art in the manifest — inventing a key here would draw the pink
-   * missing-asset square on every frame. A tick is a rectangle, needs no
-   * manifest entry, and reads correctly at six across.
-   *
-   * ABSENT MEANS AN OLDER SERVER, not a budget of zero: the field is optional
-   * so that adding it forced no version bump, so a client can outlive a server
-   * that never sends it. Drawing nothing is the honest answer.
-   */
-  /**
-   * ═════════════════════════════════════════════════════════════════════════
-   * AND THE ROUND, WHICH IS NOT SMALL CHANGE ANY MORE.
-   * ═════════════════════════════════════════════════════════════════════════
-   *
-   * THE PARAGRAPH ABOVE ARGUED FOR "SMALLER, DIMMER, AND SECOND" and it was
-   * right when it was written: one submitted action ended your turn, so AP was
-   * priced into the talents and spent nowhere the player could feel it.
-   *
-   * IT IS LOAD-BEARING NOW. The round stays open while anything is still
-   * affordable (`hasAffordableAction`), so these two numbers ARE the answer to
-   * *"can I do something else, or am I done?"* — the question a player asked in
-   * exactly those words. Half-height ticks in muted ink are the right weight for
-   * a detail and the wrong weight for the thing the turn ends on.
-   *
-   * SO: FULL-HEIGHT BLOCKS, LIT WHEN SPENDABLE, and both budgets. `drawPip`
-   * still cannot be used — it reaches for authored 12px art keyed by
-   * `ResourceKind` and there is no AP art in the manifest, so a key invented
-   * here would draw the pink missing-asset square on every frame. A rectangle
-   * needs no manifest entry.
-   *
-   * ═══ FILLED MEANS LEFT, NOT SPENT ═══
-   * The old loop lit `i < spent` where `spent` held `resource.ap` — the amount
-   * REMAINING — so the name said one thing and the arithmetic another. It drew
-   * correctly by accident. It reads as a fuel gauge now, which is what it is:
-   * blocks go out as the round is used up, and an empty row means the turn is
-   * about to end whether or not you press anything.
-   *
-   * ABSENT MEANS AN OLDER SERVER, not a budget of zero — the fields are optional
-   * so adding them forced no version bump, and a client can outlive a server
-   * that never sends them. Drawing nothing is the honest answer.
-   */
-  const budgetRow = (
-    label: string,
-    left: number | undefined,
-    max: number | undefined,
-    lit: string,
-  ): void => {
-    if (left === undefined || max === undefined || max <= 0) return;
-    cursor += PIP_GAP * 2;
-    ctx.fillStyle = PALETTE.GREY_HI;
-    if (cursor < x + width) ctx.fillText(label, cursor, lineY + PIP_PX / 2);
-    cursor += 15;
-    const blockW = 4;
-    const blockH = PIP_PX - 2;
-    const blockY = lineY + 1;
-    const remaining = Math.max(0, Math.min(max, Math.floor(left)));
-    for (let i = 0; i < max; i += 1) {
-      if (cursor + blockW > x + width) break;
-      ctx.fillStyle = i < remaining ? lit : 'rgba(255,255,255,0.14)';
-      ctx.fillRect(cursor, blockY, blockW, blockH);
-      cursor += blockW + 2;
-    }
-  };
-
-  /**
    * STACKED PUTS THE POOL'S NAME ON ITS OWN LINE AND DROPS TO THE NEXT.
    *
    * The pool and the word for it belong together -- eight vials over the word
@@ -472,11 +390,10 @@ export function drawResource(options: ResourceOptions): void {
     cursor = x;
   }
 
-  // AP FIRST AND MP SECOND, in the order the talents are priced and the order
-  // the banner says them, so a player checking one against the other never has
-  // to re-read which row is which.
-  budgetRow('AP', resource.ap, resource.maxAp, PALETTE.GOLD);
-  budgetRow('MP', resource.mp, resource.maxMp, PALETTE.SILVER);
+  // NO AP OR MP ROWS. They were the open round's fuel gauge — "an empty row
+  // means the turn is about to end" — and there is no open round now: every
+  // action ends the turn (`actPlayer`), so AP and MP refill before a player
+  // could ever see them spent. ToME has no such budget; this HUD shows none.
 
   if (stacked) {
     ctx.restore();

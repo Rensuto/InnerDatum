@@ -64,16 +64,6 @@ export const BELL_MS = {
   Normal: 20_000,
   /** Boss floors. Shorter because the party is already fully engaged and talking. */
   Boss: 12_000,
-  /**
-   * QUORUM OF ONE — the lone survivor, or the last person not Standing By.
-   *
-   * Two minutes, and it is the most important number in this file. The Bell
-   * exists to stop three people waiting on one; when there is nobody waiting it
-   * has no job, and a 20-second clock on the last person standing is the game
-   * hurrying somebody through the tensest moment it has. Never rush someone
-   * playing alone.
-   */
-  Solo: 120_000,
 } as const;
 
 /**
@@ -346,10 +336,19 @@ export function surveyQuorum(
  * Out of combat the answer is null and that is belt-and-braces rather than the
  * real defence: at `engagement === 0` nothing blocks, so there is nobody to
  * ring a bell at.
+ *
+ * ═══ AND A QUORUM OF ONE HAS NO BELL AT ALL ═══
+ * The Bell exists so a table is not kept waiting on one person, and a player
+ * alone keeps nobody waiting. This was a two-minute Solo Bell, and it was worse
+ * than no clock: with the open round it was the only thing that ever closed a
+ * lone player's turn, and two expiries benched them on Standing By — the AFK
+ * rule for a group, applied to somebody playing by themselves. ToME never
+ * hurries a player (Player.lua:400-411 pauses until they act), and neither
+ * does this.
  */
 export function bellDurationMs(quorum: number, level: BarrierLevel): number | null {
   if (level.engagement <= 0) return null;
-  if (quorum <= 1) return BELL_MS.Solo;
+  if (quorum <= 1) return null;
   return level.bossFloor ? BELL_MS.Boss : BELL_MS.Normal;
 }
 

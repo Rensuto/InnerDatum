@@ -75,7 +75,7 @@ const CURVE_POWER = 0.75;
 const powerFor = (cun: number): number =>
   Math.round(combatStatScale(cun, AT_LOW_CUN, AT_HIGH_CUN, CURVE_POWER));
 
-/** `no_energy = true` (races.lua:558). The turn goes on around it. */
+/** `no_energy = true` (races.lua:559). The turn goes on around it. */
 const AP_COST = 0;
 
 export const luckOfTheFootnoted: Talent = {
@@ -99,6 +99,8 @@ export const luckOfTheFootnoted: Talent = {
   maxLevel: 1,
   cost: { ap: AP_COST },
   cooldownTurns: tomeCooldownToTurns(TOME_COOLDOWN),
+  // Upstream's `no_energy = true`: pressed without spending the turn.
+  noEnergy: true,
   targeting: {
     shape: TargetShape.Self,
     range: 0,

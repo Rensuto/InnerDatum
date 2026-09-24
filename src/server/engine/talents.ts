@@ -934,27 +934,6 @@ export function hasResource(pool: ResourcePool, amount: number): boolean {
  * to own. Passing it keeps this module pure and keeps the number in one place.
  * Zero means a step is free, which is the game as it shipped.
  */
-/**
- * ═══════════════════════════════════════════════════════════════════════════
- * WHAT A STEP COSTS — `docs/game-design.md` § 6, authored and never charged.
- * ═══════════════════════════════════════════════════════════════════════════
- *
- * *"The 6-AP / 3-MP round (from `city_watchman.json`'s `max_ap: 6` / `max_mp:
- * 3`). **Move = 1 MP**; talents cost their authored `ap_cost`."*
- *
- * MP existed, was refilled every turn, and was spent by exactly one talent (Fog
- * Step). Nothing charged for walking, so the entire M column was decorative —
- * and so was SLOWED, whose player half is `-1 MP` and therefore subtracted from
- * a pool nothing drew on.
- *
- * ONE MP, NOT THE AP THE IMPLEMENTATION PLAN PROPOSED. The plan priced a step
- * at 2 AP; the design document prices it at 1 MP, and `city_watchman.json` is
- * where both numbers come from. When a plan and the design authority disagree
- * about an authored number, the authored number wins — and it is the better
- * mechanic here, because it keeps movement and casting on separate budgets, so
- * a Watchman cannot trade his whole round for six steps.
- */
-export const MOVE_MP_COST = 1;
 
 /**
  * What a status is taking off this body's round.
@@ -1187,33 +1166,6 @@ export function toggleSustain(
   return { ok: true, on: true };
 }
 
-export function hasAffordableAction(
-  engine: TalentEngine,
-  actor: TalentActor,
-  /**
-   * What a step costs, in MP. `MOVE_MP_COST` in play; 0 in a build where
-   * walking is free, which is every fixture that does not thread the seam.
-   */
-  moveCost: number,
-): boolean {
-  const sheet = engine.sheetOf(actor.id);
-  if (sheet === undefined) return false;
-  // A STEP IS AN ACTION. Checked first because it is the cheapest thing anybody
-  // can do and the commonest reason a round is still worth holding open.
-  if (moveCost > 0 && sheet.mp >= moveCost) return true;
-
-  for (const id of sheet.loadout) {
-    const talent = engine.registry.get(id);
-    if (talent === undefined) continue;
-    if (cooldownOf(actor, talent.id) > 0) continue;
-    if (sheet.ap < (talent.cost.ap ?? 0)) continue;
-    if (sheet.mp < (talent.cost.mp ?? 0)) continue;
-    if (!hasResource(sheet.resource, talent.cost.resource ?? 0)) continue;
-    return true;
-  }
-  return false;
-}
-
 /** Spend, or refuse and change nothing. Never goes negative. */
 export function spendResource(pool: ResourcePool, amount: number): boolean {
   if (amount <= 0) return true;
@@ -1367,6 +1319,8 @@ export type TalentActor = {
    * removed the check as dead. See `Faction` in engine/actor.ts.
    */
   readonly faction?: Faction;
+  /** Monsters only: `never_move`. `knockback` reads it; see `MonsterActor.neverMove`. */
+  readonly neverMove?: true;
   /** The ACT clock. Read-modify-written ONLY by Lockdown; see the note there. */
   energy?: number;
 };
@@ -2014,6 +1968,18 @@ export type Talent = {
   readonly scalesWith?: TalentScaling;
   /** GAME TURNS. 0 is at-will and gated by AP alone. See the conversions above. */
   readonly cooldownTurns: number;
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * USED WITHOUT SPENDING THE TURN — upstream's `no_energy = true`.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * tome/class/Actor.lua:5862-5863: `if not ab.no_energy then self:useEnergy(...)`.
+   * Every other action costs the turn; a talent carrying this is pressed and the
+   * player acts again (`TalentResolution.noEnergy`). Set it ONLY where the Lua
+   * sets it: `ap: 0` is not the same claim (Phase Door rune is `ap: 0` and costs
+   * a turn upstream).
+   */
+  readonly noEnergy?: true;
   readonly targeting: TalentTargeting;
   /** What its damage is typed as. `physical` for anything that does none. */
   readonly damageType: DamageType;
@@ -3695,7 +3661,7 @@ export function teleportRandom(
  * `knockback = function(self) return self:attr("never_move") and 100 or 100 *
  * (self:attr("knockback_immune") or 0) end`, read at :6975-6977 as
  * `resist == 0 and true or rng.percent(100 - resist)`. So a rooted body (Pinned,
- * Dazed) cannot be shoved at all, a `knockback` immunity is a chance, and a body
+ * Dazed, or a crystal's own `neverMove`) cannot be shoved at all, a `knockback` immunity is a chance, and a body
  * with none takes NO draw. Every authored shove obeys it (ruled 2026-09-23, R4),
  * as upstream's callers test `target:canBe("knockback")` first
  * (techniques/archery.lua:403).
@@ -3711,7 +3677,7 @@ export function knockback(
   rng: Rng,
 ): number {
   const resist =
-    victim.combat?.flags?.pinned === true
+    victim.combat?.flags?.pinned === true || victim.neverMove === true
       ? 100
       : Math.max(0, Math.min(100, victim.combat?.immunities?.knockback ?? 0));
   if (resist > 0 && rng.int(`talent.knockback.${victim.id}`, 1, 100) > 100 - resist) return 0;

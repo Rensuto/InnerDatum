@@ -123,6 +123,8 @@ export const shieldingRune: Talent = {
   maxLevel: 1,
   cost: { ap: AP_COST },
   cooldownTurns: tomeCooldownToTurns(TOME_COOLDOWN),
+  // Upstream's `no_energy = true`: pressed without spending the turn.
+  noEnergy: true,
   targeting: {
     // Self-centred, nothing to point at. The one button that must never be
     // fiddly — `mend_wounds`' note, and it applies to every inscription.

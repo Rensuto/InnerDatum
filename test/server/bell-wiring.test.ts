@@ -115,15 +115,16 @@ describe('the Bell is armed only when it is on somebody', () => {
     expect(engine.turnState().bellDurationMs).toBe(BELL_MS.Normal);
   });
 
-  it('arms immediately for a player on their own', () => {
-    // Unaffected and always was: with a quorum of one, `blocking.length <= 1`
-    // holds from the first moment, so the solo clock is real. It is the long
-    // one (two minutes) precisely because nobody is being kept waiting.
+  it('never arms for a player on their own', () => {
+    // Nobody is being kept waiting, so there is no clock at all — the gateway
+    // is handed null and arms no timer. This was a two-minute Solo Bell, and it
+    // was the thing that passed a lone player's open round for them and then
+    // benched them on Standing By. ToME never hurries a player.
     const { world, engine } = scene(['p1']);
     arm(world);
     engine.pump();
 
-    expect(engine.turnState().bellDurationMs).toBe(BELL_MS.Solo);
+    expect(engine.turnState().bellDurationMs).toBeNull();
   });
 
   it('never arms out of combat, however many people are standing about', () => {

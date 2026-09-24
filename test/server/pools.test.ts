@@ -166,15 +166,15 @@ describe('hit points follow the Constitution a body is standing at', () => {
 
   it('does not pay a class for the Constitution it was authored with', () => {
     /**
-     * A Watchman stands at Constitution 20 on the day he is made, and his 72 is
-     * seventy-two AT that Constitution. Handing the raw stat to `maxLifeFor`
-     * would hand him eighty hit points for existing — which is the mistake this
+     * A Watchman stands at Constitution 20 on the day he is made, and his 120 is
+     * a hundred and twenty AT that Constitution. Handing the raw stat to
+     * `maxLifeFor` would hand him forty more hit points for existing — which is the mistake this
      * subtraction exists to prevent, and it is invisible without a class whose
      * Constitution is far from `STAT_BASE`.
      */
     expect(WATCHMAN.combat.stats?.con).toBe(20);
-    expect(bare(WATCHMAN)).toBe(72);
-    expect(bare(WATCHMAN)).toBeLessThan(72 + 10 * LIFE_PER_CON);
+    expect(bare(WATCHMAN)).toBe(120);
+    expect(bare(WATCHMAN)).toBeLessThan(120 + 10 * LIFE_PER_CON);
   });
 
   it('treats a class with no authored stats as standing at the base ten', () => {

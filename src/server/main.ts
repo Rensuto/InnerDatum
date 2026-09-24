@@ -66,14 +66,12 @@ import type {
 import type { BudgetPenalty, KillNote } from './engine/talents.ts';
 import { EffectId, MVP_EFFECTS, effectById } from './content/effects.ts';
 import {
-  MOVE_MP_COST,
   ResourceKind,
   TargetShape,
   canUseTalent,
   createTalentSheet,
   RESOURCE_RULES,
   effectiveResourceMax,
-  hasAffordableAction,
   markMultiplier,
   resolveGuardCounter,
   sustainAnswer,
@@ -578,35 +576,10 @@ export function talentRuntimeFor(
       breakOnDamage?.(actorId);
     },
     /**
-     * MAY THIS ROUND STAY OPEN? See `TalentResolution.roundOpen`.
-     *
-     * `MOVE_AP` is passed rather than imported because eslint forbids
-     * `engine/** -> content/**` and the cost of a step is content's to own.
-     * ZERO TODAY — a step still costs no budget, so a round stays open only
-     * while there is a TALENT left to cast. Movement joins the budget with the
-     * rest of C4; until then answering otherwise would hold rounds open for a
-     * step nothing charges for.
+     * FREE TO PRESS? See `TalentResolution.noEnergy` — upstream's `no_energy`,
+     * read off the talent's own definition.
      */
-    roundOpen: (actorId: string): boolean => {
-      const actor = world.getActor(actorId);
-      if (actor === undefined) return false;
-      return hasAffordableAction(talents, actor, MOVE_MP_COST);
-    },
-    /**
-     * CHARGE A STEP — `docs/game-design.md` § 6, "Move = 1 MP".
-     *
-     * False means the round is over for them: they have walked as far as this
-     * round allows. `spendResource` is not used because MP is not the class
-     * resource — it is the movement half of the intra-turn budget, and it lives
-     * on the sheet beside AP.
-     */
-    spendMove: (actorId: string): boolean => {
-      const sheet = talents.sheetOf(actorId);
-      if (sheet === undefined) return true;
-      if (sheet.mp < MOVE_MP_COST) return false;
-      sheet.mp -= MOVE_MP_COST;
-      return true;
-    },
+    noEnergy: (talentId: string): boolean => talents.registry.get(talentId)?.noEnergy === true,
     /**
      * ═══════════════════════════════════════════════════════════════════════
      * THE TWO THAT MAKE A TALENT POINT VISIBLE ON THE BASIC SWING.

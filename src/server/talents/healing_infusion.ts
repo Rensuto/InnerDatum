@@ -119,6 +119,8 @@ export const healingInfusion: Talent = {
   maxLevel: 1,
   cost: { ap: AP_COST },
   cooldownTurns: tomeCooldownToTurns(TOME_COOLDOWN),
+  // Upstream's `no_energy = true`: pressed without spending the turn.
+  noEnergy: true,
   targeting: {
     // Self-centred, nothing to point at — `mend_wounds`' note applies word for
     // word: the one button that must never be fiddly.

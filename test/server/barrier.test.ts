@@ -316,25 +316,30 @@ describe('the Bell duration', () => {
     // and hurrying somebody through the tensest moment the game has is the
     // opposite of what it is for. Two minutes, and it beats the boss floor's
     // shorter clock rather than being overridden by it.
-    expect(bellDurationMs(1, IN_COMBAT)).toBe(120_000);
-    expect(bellDurationMs(1, BOSS_FLOOR)).toBe(120_000);
-    expect(bellDurationMs(0, IN_COMBAT)).toBe(120_000);
+    // NO BELL AT ALL for a quorum of one, on any floor: nobody is waiting on a
+    // player alone, and ToME never hurries one (Player.lua:400-411). This was a
+    // two-minute Solo Bell, and with the open round it was what forced a lone
+    // player through their turn and onto Standing By.
+    expect(bellDurationMs(1, IN_COMBAT)).toBeNull();
+    expect(bellDurationMs(1, BOSS_FLOOR)).toBeNull();
+    expect(bellDurationMs(0, IN_COMBAT)).toBeNull();
 
-    expect(BELL_MS).toEqual({ Normal: 20_000, Boss: 12_000, Solo: 120_000 });
+    expect(BELL_MS).toEqual({ Normal: 20_000, Boss: 12_000 });
   });
 
-  it('hands the lone survivor the full two minutes, measured from when they started thinking', () => {
-    // A party of one is `committed >= total - 1` the moment they block, so the
-    // countdown is armed immediately — with the SOLO duration.
+  it('never runs a clock on a lone player, however long they think', () => {
+    // A party of one blocks and nobody is waiting on them. No countdown, and
+    // no expiry ever passes them — so they can never be benched on Standing By.
     const seats = atThreshold(1);
     const barrier = createBarrier();
 
     const state = barrier.bell(seats, IN_COMBAT, 500);
-    expect(state.running).toBe(true);
     expect(state.quorum).toBe(1);
-    expect(state.durationMs).toBe(BELL_MS.Solo);
-    expect(state.deadlineMs).toBe(500 + BELL_MS.Solo);
-    expect(barrier.expire(seats, IN_COMBAT, 500 + BELL_MS.Normal)).toEqual([]);
+    expect(state.running).toBe(false);
+    expect(state.durationMs).toBeNull();
+    expect(state.deadlineMs).toBeNull();
+    expect(barrier.expire(seats, IN_COMBAT, 500 + 10 * 60_000)).toEqual([]);
+    expect(seats[0]?.standingBy).toBe(false);
   });
 
   it('runs the shorter clock on a boss floor', () => {
@@ -399,9 +404,9 @@ describe('Standing By', () => {
     expect(survey.standingBy).toEqual([absent.id]);
     expect(survey.blocking).toEqual([]);
 
-    // ...and the Bell for what remains is the SOLO clock, because there is now
-    // nobody waiting on the last player.
-    expect(bellDurationMs(survey.total, IN_COMBAT)).toBe(BELL_MS.Solo);
+    // ...and what remains has no Bell at all, because there is now nobody
+    // waiting on the last player.
+    expect(bellDurationMs(survey.total, IN_COMBAT)).toBeNull();
   });
 
   it('is cleared by any command at all, and the silence count restarts', () => {

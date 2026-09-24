@@ -151,7 +151,7 @@
  *   6. THE WRAITH'S `Darkness: 50` RESIST IS OURS. Upstream's losgoroth.lua:46
  *      is `ARCANE = 100` and carries no darkness row at all; we do not have
  *      Arcane and would not ship a 100 on floor one if we did.
- *   7. THE WRAITH'S ORB DAMAGE — `damageMin`/`damageMax` 12-16 — IS OURS BY
+ *   7. THE WRAITH'S ORB DAMAGE — `damageMin`/`damageMax` 22-26 — IS OURS BY
  *      ARITHMETIC, and it is a CORRECTION rather than an invention. It is
  *      derived from T_VOID_BLAST at misc/npcs.lua:739 and explicitly NOT from
  *      losgoroth.lua:30's `combat` block: that block is the creature's MELEE
@@ -517,6 +517,14 @@ export type MonsterTemplate = {
    * writes `open_door = false` outright (`crystal.lua:71`).
    */
   readonly opensDoors?: boolean;
+
+  /**
+   * `never_move = 1` — rooted where it spawns. See `MonsterActor.neverMove`.
+   *
+   * A LOOKUP, like `opensDoors`: upstream authors it on the family base, and of
+   * the families ours port only the crystals carry it (`crystal.lua:39`).
+   */
+  readonly neverMove?: true;
 
   /**
    * ═══════════════════════════════════════════════════════════════════════════
@@ -969,7 +977,7 @@ export const INDEX_HUSK: MonsterTemplate = Object.freeze({
  * ═══ THE NUMBERS THAT MAKE IT A DIFFERENT PROBLEM ═══
  *   reach 6 (a ceiling; see `attackRange`) · stand-off 4 · dead zone 2
  *   aggro 8 · globalSpeed 0.84 · orb speed 2 tiles/turn · fires on a 1-in-2
- *   orb 12-16 · 50 life
+ *   orb 22-26 · 50 life
  *
  * ═══ WHAT IT IS AND IS NOT, MEASURED ═══
  * It is a CHIP THREAT that has to be walked at, not a burst threat. Standing
@@ -996,7 +1004,7 @@ export const INDEX_HUSK: MonsterTemplate = Object.freeze({
  *   index_husk_elite    before        4.050       4.050       4.050
  *   index_husk_elite    NOW           5.888       5.888       6.332
  *   index_wraith        before        1.890       1.890       1.890
- *   index_wraith        NOW           5.880       5.880       5.880
+ *   index_wraith        NOW          10.080      10.080      10.080
  *
  * "before" is the placeholder path: `rng.int(3, 6)` with no to-hit roll, no
  * armour and no resists, × `globalSpeed`, × the 1-in-2 cadence for the wraith.
@@ -1004,18 +1012,20 @@ export const INDEX_HUSK: MonsterTemplate = Object.freeze({
  * because `combatAPR` of losgoroth.lua:30's `apr = 15` swallows every class's
  * armour whole — see the file header.
  *
- * WHAT THAT BUYS. The wraith:husk ratio goes 0.467 → 1.343: the designated
+ * WHAT THAT BUYS. The wraith:husk ratio goes 0.467 → 2.303: the designated
  * ranged threat stops being less than half as dangerous as the baseline mob and
- * becomes a third more dangerous than it. It lands one hair under the ELITE
- * (5.880 against 5.888), which is deliberate and is the top of the band rather
- * than an accident — the elite's damage is unavoidable once it has reached you
- * and it carries 60 life, while every point of the wraith's is dodgeable by
- * stepping off the line and it cannot shoot at all inside two tiles. A creature
- * whose damage is 100% positional may sit level with one whose damage is not.
+ * becomes more than twice it. It sat one hair under the ELITE (5.880 against
+ * 5.888) while the orb was 12-16 against bars at 0.6 of ToME's; the bars went
+ * verbatim on 2026-09-23 and the orb followed them (`damageMin`), so it is now
+ * T_VOID_BLAST against ToME's own bar and well over the elite. That is the
+ * port speaking, not a tune: every point of it is still dodgeable by stepping
+ * off the line, and it still cannot shoot at all inside two tiles.
  *
- * One orb is 12-16 against bars of 72 / 60 / 54, i.e. 17-22% of a Watchman,
- * 20-27% of an Inspector and 22-30% of an Alchemist: memorable, never lethal
- * from full, and four average orbs put an Alchemist on the floor. THE THREE
+ * One orb is 22-26 against bars of 120 / 110 / 90, i.e. 18-22% of a Watchman,
+ * 20-24% of an Inspector and 24-29% of an Alchemist: memorable, never lethal
+ * from full, and four average orbs put an Alchemist on the floor. (It was 12-16
+ * against 72 / 66 / 54 — the same fractions, because the orb is derived as a
+ * fraction of the bar; see `damageMin`.) THE THREE
  * STACKED NERFS this creature took when it was re-based — travel time, the
  * 1-in-2 cadence, and the stand-off moving 6 → 4 — are now paid for, and they
  * are paid for out of the orb and the life bar rather than by un-porting any of
@@ -1032,7 +1042,7 @@ export const INDEX_HUSK: MonsterTemplate = Object.freeze({
  * DERIVED NUMBERS (pinned in test/server/monsters.test.ts):
  *   accuracy 17 · defence 19 · MELEE damage 5.055 → a flat 5 · crit 1%
  *   armour 0 · darkness resist 50% · physical resist −30% (VULNERABLE)
- *   ORB damage 12-16 — a DIFFERENT FIELD; see `damageMin` and the file header
+ *   ORB damage 22-26 — a DIFFERENT FIELD; see `damageMin` and the file header
  *
  * READ THAT SECOND-TO-LAST LINE AS A MELEE WEAPON, because it is one. The 5.055
  * is `combatDamage` over losgoroth.lua:30's `combat` block, which is what
@@ -1179,43 +1189,21 @@ export const INDEX_WRAITH: MonsterTemplate = Object.freeze({
   // a frame this game supports, this number is the first one to re-argue.
   /**
    * ═══════════════════════════════════════════════════════════════════════════
-   * 80, AND IT WAS 50 — THE ORB HAS TO LAND AT LEAST ONCE.
+   * 50 — `resolvers.rngavg(40,60)`, losgoroth.lua:63. THE PORT, AGAIN.
    * ═══════════════════════════════════════════════════════════════════════════
    *
-   * This number has never been about how hard it is to kill. It is about TIME
-   * TO KILL: the orb takes 1.5 game turns to cross the stand-off, so a wraith
-   * that dies inside one party round never fires at all, and the whole kiting
-   * creature is a stationary 50 hit points. `monsters.test.ts` pins that as
-   * `maxHp / party > 1.5` and records the argument.
+   * This number is about TIME TO KILL: the orb takes 1.5 game turns to cross the
+   * stand-off, so a wraith that dies inside one party round never fires at all.
+   * `monsters.test.ts` pins that as `maxHp / party > 1.5`.
    *
-   * THE INTRA-TURN BUDGET MOVED THE DENOMINATOR. A party that can chain two
-   * at-will talents in one round deals ~51.4 instead of ~25.7 — Crude Blow and
-   * Revolver Shot are both `cooldownTurns: 0`, so the second cast is real — and
-   * at 50 the ratio fell to 0.97. The creature died before its first orb.
-   *
-   * ═══ 1.6x, NOT THE FULL 2x, AND THAT IS THE JUDGEMENT ═══
-   * Doubling would hold the designed time-to-kill exactly, for a party that
-   * chains optimally every single round. No real party does: the Alchemist's
-   * Flare is reagent-gated to about four rounds of doubles, cooldowns interrupt
-   * chains, and a new player who has not worked out that talents beat walking
-   * into things got no faster at all. Scaling the full 2x would make the game
-   * measurably harder for the person least equipped to notice why.
-   *
-   * 80 restores the invariant (80 / 51.4 = 1.56) with the least movement that
-   * does. If play shows parties chaining more reliably than this assumes, the
-   * honest next step is to raise it again — not to have guessed higher now.
-   *
-   * ═══ AND IT RE-OPENS A DEVIATION THE PORT HAD JUST CLOSED. SAID PLAINLY. ═══
-   * 50 was `resolvers.rngavg(40,60)` from losgoroth.lua:63 — a real ported
-   * number, and `monsters.test.ts` records the moment it stopped being a
-   * deviation. 80 is not upstream's. The trade is deliberate: upstream has no
-   * intra-turn budget, so its life values were never sized against a party that
-   * acts twice a round, and holding a ported number that makes the creature's
-   * own orb unreachable would be fidelity to the digit at the cost of the
-   * design. The elite went the other way in the same commit — to 95, which IS
-   * the port — so this is a judgement about one creature, not a policy.
+   * IT WAS 80 FOR THE OPEN ROUND. D1's intra-turn budget let a party chain two
+   * at-will talents a round (~51.4 damage instead of ~25.7), which put 50 below
+   * the invariant, and 80 was the smallest number that restored it — a
+   * deviation from upstream, said plainly at the time. The open round is gone:
+   * every action ends the turn, as ToME's does, so a party deals ~25.7 a round
+   * again and 50 / 25.7 = 1.95 clears the invariant with the ported number.
    */
-  maxHp: 80,
+  maxHp: 50,
   hpRegen: 0,
 
   // DEVIATION 2 OF 7, HELD AGAIN AND THIS TIME WITH THE MEASUREMENT. Upstream's
@@ -1226,7 +1214,7 @@ export const INDEX_WRAITH: MonsterTemplate = Object.freeze({
   // `movement_speed` stat; ours has none of those yet.
   //
   // PRICED, so the hold is a decision rather than an omission: 1.0 would move
-  // this creature from 5.880 to 7.000 hp per player turn — +19% — and would
+  // this creature from 10.08 to 12.00 hp per player turn — +19% — and would
   // spend the ONE property that lets a kiter fight end. The retune needed 3.99
   // more hp per turn and the orb supplied it; buying the last 1.12 by making the
   // creature un-cornerable is the worst available trade on this sheet.
@@ -1368,9 +1356,13 @@ export const INDEX_WRAITH: MonsterTemplate = Object.freeze({
   //      RAISE the anchor and therefore LOWER the orb — so this anchor is the low
   //      end and the number falling out of it is the high end.
   //   4. 24.9376 / 103.31 = 24.14% of an upstream level-1 bar. Our own median
-  //      class bar is 60 (Watchman 72, Inspector 60, Alchemist 54 —
-  //      content/classes.ts), and 24.14% of 60 is 14.48 → 14, rounded toward the
-  //      conservative side of the anchor's known omission.
+  //      class bar is 100 (Watchman 120, Inspector 110, Alchemist 90, Redactor
+  //      90 — content/classes.ts), and 24.14% of 100 is 24.14 → 24, rounded
+  //      toward the conservative side of the anchor's known omission.
+  //      IT WAS 60 AND 14 while our bars were ToME's at 0.6. They went verbatim
+  //      on 2026-09-23 and the orb followed, which is what a fraction of a bar
+  //      does: this step now multiplies by ToME's own median, so the orb is
+  //      T_VOID_BLAST's number to within the rounding.
   //   5. THE ±2 SPREAD IS OURS and is labelled as ours. Upstream's orb is a
   //      single number wrapped in `spellCrit` (npcs.lua:739); our `fire` path
   //      never rolls a crit, at the muzzle or at impact (scheduler.ts:1709), so
@@ -1396,8 +1388,8 @@ export const INDEX_WRAITH: MonsterTemplate = Object.freeze({
   // upstream's beam. And there is nothing upstream to port it FROM:
   // T_VOID_BLAST authors no radius whatsoever (npcs.lua:723-747), so it would be
   // an invention bought at the cost of four files.
-  damageMin: 12,
-  damageMax: 16,
+  damageMin: 22,
+  damageMax: 26,
 
   // THE RARE TIER, EVERY TIME. Six ids: the three class BODY items and the three
   // RINGs (content/items.ts). Chance 100 is upstream's own default — `t.chance or
@@ -2093,11 +2085,13 @@ export const INDEX_EIDOLON: MonsterTemplate = Object.freeze({
  *     combat_def = 1,
  *     never_move = 1,
  *
- * `never_move` HAS NO EQUIVALENT HERE AND NEEDS NONE. It is a `RangedKiter` at
- * 0.7 speed, and the water does upstream's job for it: a kiter on the far bank
- * cannot approach whatever it does, so the terrain supplies the behaviour that
- * upstream had to author as a flag. The deviation is the implementation, not the
- * creature.
+ * `never_move` IS PORTED, as `neverMove`. This note used to argue it away: the
+ * water did upstream's job, since a kiter on the far bank cannot approach
+ * whatever it does. That held while a player could step AND act in one open
+ * round. When every action became a turn (2026-09-23) the mobile cairn walked
+ * the bank to wherever a lone player was, and the Drowned Chapel wiped 29 of 40
+ * solo runs; rooted, 21 of 40, with class HP doing the rest. It shoots from
+ * where it stands, to its full `attackRange`, and never takes a step.
  *
  * Twenty-three hit points against a party that deals ~51 a round is deliberately
  * nothing — it survives because it cannot be reached, never because it is tough,
@@ -2111,8 +2105,8 @@ export const INDEX_CAIRN: MonsterTemplate = Object.freeze({
   id: 'index_cairn',
   displayName: 'Index Cairn',
   description:
-    'Moor stones fitted into a body, lit violet where they do not quite meet. It keeps its ' +
-    'distance, and it has never needed to hurry.',
+    'Moor stones fitted into a body, lit violet where they do not quite meet. It has not ' +
+    'moved since it was stacked, and it has never needed to.',
   sprite: 'enemy_index_cairn_s',
   rank: ActorRank.Normal,
   /**
@@ -2124,6 +2118,8 @@ export const INDEX_CAIRN: MonsterTemplate = Object.freeze({
   levelRange: [1, undefined] as const,
   // `no_breath = 1` — npcs/crystal.lua:48, on BASE_NPC_CRYSTAL. Deep water does not drown it.
   noBreath: true,
+  // `never_move = 1` — npcs/crystal.lua:39, the same base. See the note above.
+  neverMove: true,
 
   // crystal.lua:34 `max_life = resolvers.rngavg(12,34)` = 23.
   maxHp: resolveRngAvg(12, 34),
@@ -2150,6 +2146,19 @@ export const INDEX_CAIRN: MonsterTemplate = Object.freeze({
   // Slower than the wraith's orb, so the water buys real time — you can see it
   // coming across the channel and step out of the lane.
   projSpeed: 1,
+  /**
+   * 3 — T_FLAME_BOLT's `cooldown = 3` (data/talents/misc/npcs.lua:589), which
+   * is what spaces the red crystal's shots. Upstream's `talent_in = 1`
+   * (crystal.lua:30) never gates it; the cooldown does, so it fires on every
+   * third of its turns.
+   *
+   * THE GATE CARRIES THE COOLDOWN because this shot is a weapon, and a weapon
+   * has none. One in three is the same average rate with more variance. It was
+   * absent, and the cairn fired on every turn it had a line: three times
+   * upstream's rate. Rooted and at that rate it wiped a solo level-1 Watchman in
+   * the Drowned Chapel 19 runs in 40; at this one, none in 40.
+   */
+  talentIn: 3,
   damageMin: 8,
   damageMax: 12,
 
@@ -2781,7 +2790,7 @@ export const INDEX_INSPECTOR: MonsterTemplate = Object.freeze({
  * an unlabelled divergence is indistinguishable from a missed line. It moves
  * nothing today: this creature's damage is an orb.
  *
- * `rank`, THE ORB AND THE RANGES ARE OURS. `damageMin`/`damageMax` 12-16 is
+ * `rank`, THE ORB AND THE RANGES ARE OURS. `damageMin`/`damageMax` 22-26 is
  * INDEX_WRAITH's orb, taken deliberately rather than tuned: this creature is not
  * a bigger gun, it is the same gun that you cannot walk away from. What upstream
  * supplies is a robed thing with seventy-five hit points and no armour or
@@ -2905,8 +2914,8 @@ export const INDEX_INQUISITOR: MonsterTemplate = Object.freeze({
   projSpeed: 2,
   talentIn: 2,
   // INDEX_WRAITH's orb, deliberately identical. See the note above.
-  damageMin: 12,
-  damageMax: 16,
+  damageMin: 22,
+  damageMax: 26,
 
   drops: { chance: 100, pick: idsOfTier('rare') },
 
@@ -3002,41 +3011,22 @@ export const INDEX_INQUISITOR: MonsterTemplate = Object.freeze({
  * WHAT THE FIGHT ACTUALLY IS — READ OFF `ai/npc.ts`, NOT ASSUMED
  * ═══════════════════════════════════════════════════════════════════════════
  *
- * THE FIRST VERSION OF THIS PARAGRAPH CALLED IT STATIONARY THREE TIMES AND THAT
- * WAS WRONG. `never_move` is upstream's flag and is not ported here, for the
- * same reason `INDEX_CAIRN` does not port it. `kite` decides everything, and it
- * has three branches:
+ * IT IS ROOTED, AS UPSTREAM'S CRYSTAL IS: `never_move = 1` (crystal.lua:39) is
+ * `neverMove` here. It was once left out on the argument `INDEX_CAIRN`'s note
+ * used to make, and this paragraph then described mobile artillery that
+ * advanced beyond 9 tiles and backed away inside 3. Both crystals were rooted
+ * when every action became a turn (2026-09-23). `kite` gives it three outcomes:
  *
- *   beyond `preferredRange` 9   it ADVANCES — you cannot walk away from it
- *   between 3 and 9             it fires
- *   inside `minRange` 3         it BACKS AWAY, and if it cannot,
- *                               *"CORNERED. hold rather than fire a shot that
- *                               will be refused"* — it does nothing at all
+ *   beyond `attackRange` 11     it holds — walk away and it lets you
+ *   between 3 and 11            it fires, on its `talentIn` roll
+ *   inside `minRange` 3         it cannot shoot; `clear_the_altar` is its answer
  *
- * So it is mobile artillery holding a band, and the fight has a shape and a
- * counter. It moves at 0.7 against a player pinned at 1.0 by D1, so a party
- * that COMMITS closes on it; `populateDelve` puts it at the point furthest from
- * the door, which in a generated ruin is a corner, so the ground it can retreat
- * into is the ground it has already used.
+ * So the fight is a crossing. `populateDelve` puts it at the point furthest
+ * from the door, the answer is to close and stay closed, and the punishment for
+ * treating it as a ranged trade is being stunned from eleven tiles.
  *
- * ═══ "GET INSIDE THREE TILES AND IT CANNOT ACT" IS WHAT THIS SAID, AND IT IS
- *     NOT TRUE ═══
- * Driven with a player STANDING STILL inside the dead zone, it backed from
- * (32,1) to (32,4) and went on shooting for 4.7 a turn. `kite` retreats before
- * it holds, and it only holds once it has nowhere left to go — so the dead zone
- * on its own buys nothing.
- *
- * WHAT IS TRUE IS PURSUIT, and the difference is the whole fight. Measured over
- * forty turns from nine tiles, alone with it, on a real floor:
- *
- *     standing still   198 damage, six turns spent stunned, still at 9 tiles
- *     walking at it     22 damage, one turn stunned, ends adjacent
- *
- * A factor of nine. It cannot outrun a player and it cannot fight at contact,
- * so the answer is to close and keep closing — and the punishment for treating
- * it as a ranged trade is severe enough to teach that in one attempt.
- *
- * MEASURED ON A REAL FLOOR: the room generates 34x30 with the door at (2,15)
+ * MEASURED ON A REAL FLOOR, under the open round that preceded one action per
+ * turn: the room generates 34x30 with the door at (2,15)
  * and the Watcher at (32,1). The shortest path between them is 30 steps, of
  * which 12 fall inside its reach and all 12 have line of sight. At 5.95 damage
  * a player turn plus a lost turn every third, the crossing costs roughly 107
@@ -3051,7 +3041,7 @@ export const INDEX_INQUISITOR: MonsterTemplate = Object.freeze({
  *     stats = { str=1, dex=5, mag=20, con=1 },
  *     global_speed_base = 0.7,
  *     combat_def = 1,
- *     never_move = 1,       <- NOT ported; see the fight, and INDEX_CAIRN's note
+ *     never_move = 1,       <- `neverMove`; see the fight
  *     ai_state = { talent_in=1 },   <- halved; see `talentIn`
  *
  * ═══ OURS, AND SAID SO PLAINLY ═══
@@ -3107,6 +3097,8 @@ export const INDEX_WATCHER: MonsterTemplate = Object.freeze({
   rank: ActorRank.Boss,
   // `no_breath = 1` — npcs/crystal.lua:48, on BASE_NPC_CRYSTAL — INDEX_CAIRN's base too. Deep water does not drown it.
   noBreath: true,
+  // `never_move = 1` — npcs/crystal.lua:39, the same base. Rooted; see the fight.
+  neverMove: true,
 
   // OURS — see the derivation above. Upstream's crystals are all 23.
   maxHp: 220,
@@ -4556,6 +4548,8 @@ export function monsterInit(
     // actor from the day doors shipped; this line is the half that was missing,
     // and without it every template's answer was `undefined`.
     opensDoors: template.opensDoors,
+    // WHETHER IT CAN TAKE A STEP AT ALL. Named, for the same reason.
+    neverMove: template.neverMove,
     // AND WHETHER IT BREATHES. Spread, so a template that says nothing hands the
     // body nothing — upstream's `{}` and `nil`, and the carried-field guard's
     // "a field nothing sets is not covered" in the same breath.

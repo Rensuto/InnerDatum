@@ -412,14 +412,14 @@ describe('revive', () => {
     expect(downedView(state, 'p1')?.total).toBe(DOWNED_TURNS);
   });
 
-  it('rounds the Watchman up to 18 of his 72', () => {
+  it('brings the Watchman back at 30 of his 120', () => {
     const state = createDownedState();
     const dalt = player('p1', 3, 2, WATCHMAN.maxHp);
     const sam = player('p2', 4, 2);
     knockDown(state, dalt);
 
-    expect(WATCHMAN.maxHp).toBe(72);
-    expect(revive(state, dalt, sam)).toEqual({ ok: true, hp: 18, turnsSpared: 5 });
+    expect(WATCHMAN.maxHp).toBe(120);
+    expect(revive(state, dalt, sam)).toEqual({ ok: true, hp: 30, turnsSpared: 5 });
   });
 
   it('never returns somebody at 0 HP', () => {

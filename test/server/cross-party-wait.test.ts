@@ -10,7 +10,7 @@ import { createContentTalentEngine, createTalentBook } from '../../src/server/co
 import { AiProfile, HOLD_INTENT, isPlayer } from '../../src/server/engine/actor.ts';
 import { BELL_MS, createBarrier, inQuorum } from '../../src/server/engine/barrier.ts';
 import { createDownedState } from '../../src/server/engine/downed.ts';
-import { accept, createPartyState, invite, partyIdOf } from '../../src/server/engine/party.ts';
+import { createPartyState, partyIdOf } from '../../src/server/engine/party.ts';
 import { talentRuntimeFor } from '../../src/server/main.ts';
 import { wsGateway } from '../../src/server/net/gateway.ts';
 import { createTurnEngine } from '../../src/server/turn-engine.ts';
@@ -151,9 +151,8 @@ type Harness = {
  * which is what a delve instance is to the barrier.
  *
  * THE PRODUCTION TALENT SEAMS, always — `createTalentBook` and
- * `talentRuntimeFor` are what `buildServer` wires — because an open round only
- * exists where `roundOpen` asks a real sheet. A body with no class attached has
- * no sheet, and `spendMove` then answers "free", which is the game as it shipped.
+ * `talentRuntimeFor` are what `buildServer` wires — so every rule these cases
+ * drive is the one a player meets.
  */
 async function boot(seed: string): Promise<Harness> {
   const world = createWorld(seed);
@@ -348,85 +347,17 @@ describe('two parties in one engaged realm', () => {
   });
 });
 
-describe('an open round closes on the gateway’s own timer', () => {
-  it('closes a same-party round beside an idle member with nobody pressing a key', async () => {
-    const h = await boot('cross-party-tail');
-    const a = await seat(h, 5, 8);
-    const b = await seat(h, 7, 8);
-    h.attachClass(a.id, 'watchman');
-    expect(invite(h.parties, a.id, b.id, Date.now()).ok).toBe(true);
-    expect(accept(h.parties, b.id, a.id, Date.now()).ok).toBe(true);
-    husk(h, 12, 14);
-
-    // ONE PARTY.
-    expect(partyIdOf(h.parties, a.id)).toBe(partyIdOf(h.parties, b.id));
-
-    // A steps, and the step leaves A's round open: MP to spare, so A parks
-    // mid-round with a tail six seconds out.
-    await step(a, 's');
-    expect(h.world.turn.engagement).toBeGreaterThan(0);
-    expect(inQuorum(a.body)).toBe(true);
-    expect(inQuorum(b.body)).toBe(true);
-    expect(a.body.roundActions).toBe(1);
-    expect(a.body.roundTailMs).not.toBeNull();
-
-    // TWO BLOCKERS, SO NO BELL — the Bell's timer cannot be what rescues this.
-    const open = h.engine.turnState();
-    expect([...open.whoseTurn].sort()).toEqual([a.id, b.id].sort());
-    expect(open.acting).toEqual([a.id]);
-    expect(open.bellDurationMs).toBeNull();
-    expect(open.roundTailInMs ?? null).not.toBeNull();
-
-    // THE CLAIM. Nobody sends anything; the gateway's timer comes back for the
-    // tail, the pump holds A, and A's round closes.
-    const tailInMs = (a.body.roundTailMs ?? 0) - Date.now();
-    await waitUntil(() => a.body.roundActions === 0, "A's round to close", tailInMs + 4_000);
-    expect(a.body.roundTailMs).toBeNull();
-
-    // The world now waits on B alone — the last straggler, so the Bell is on.
-    const after = h.engine.turnState();
-    expect(after.whoseTurn).toEqual([b.id]);
-    expect(after.bellDurationMs).toBe(BELL_MS.Normal);
-  });
-
-  /**
-   * AND ACROSS TWO PARTIES, which is where the tail's quorum has to be the
-   * realm's. A stranger stopped mid-round beside an idle stranger is two
-   * blockers in one realm: no Bell, so only the tail can move the floor. A tail
-   * that counted each PARTY's quorum saw a party of one there and never fired,
-   * and the floor waited for a keypress (measured in review: four stalls).
-   */
-  it('closes a STRANGER’s round beside an idle stranger the same way', async () => {
-    const h = await boot('cross-party-tail-strangers');
-    const a = await seat(h, 5, 8);
-    const b = await seat(h, 7, 8);
-    h.attachClass(a.id, 'watchman');
-    husk(h, 12, 14);
-
-    // TWO PARTIES OF ONE — nobody invited anybody.
-    expect(partyIdOf(h.parties, a.id)).not.toBe(partyIdOf(h.parties, b.id));
-
-    await step(a, 's');
-    expect(h.world.turn.engagement).toBeGreaterThan(0);
-    expect(inQuorum(a.body)).toBe(true);
-    expect(inQuorum(b.body)).toBe(true);
-    expect(a.body.roundActions).toBe(1);
-    expect(a.body.roundTailMs).not.toBeNull();
-
-    const open = h.engine.turnState();
-    expect([...open.whoseTurn].sort()).toEqual([a.id, b.id].sort());
-    expect(open.bellDurationMs).toBeNull();
-    expect(open.roundTailInMs ?? null).not.toBeNull();
-
-    const tailInMs = (a.body.roundTailMs ?? 0) - Date.now();
-    await waitUntil(() => a.body.roundActions === 0, "A's round to close", tailInMs + 4_000);
-    expect(a.body.roundTailMs).toBeNull();
-    expect(h.engine.turnState().whoseTurn).toEqual([b.id]);
-  });
-});
-
 describe('one player alone', () => {
-  it('is on the two-minute Solo Bell, exactly as before', async () => {
+  it('moves the world on every step and never runs a clock — ToME`s solo loop', async () => {
+    /**
+     * ═══ ONE STEP, ONE TURN, NO PASS — `useEnergy`, engines/default/engine/Actor.lua:478-484 ═══
+     * A lone player in combat used to be parked after a step with movement
+     * points left (the open round), and only Space, a third action or a
+     * two-minute Solo Bell moved the world. Driven over the real socket: a
+     * single `move` frame spends the turn, the game clock advances, and the
+     * player owes the next decision with NO countdown on them — ten minutes
+     * later they have still not been passed or benched.
+     */
     const h = await boot('cross-party-solo');
     const a = await seat(h, 5, 8);
     husk(h, 12, 14);
@@ -434,8 +365,6 @@ describe('one player alone', () => {
     const y0 = a.body.y;
     await step(a, 's');
     expect(a.body.y).toBe(y0 + 1);
-    // The world ran on until A owed a decision again: combat armed, A in the
-    // quorum and the only one in it.
     await waitUntil(
       () => h.engine.turnState().whoseTurn.includes(a.id),
       'A to owe a decision again',
@@ -444,18 +373,22 @@ describe('one player alone', () => {
     expect(inQuorum(a.body)).toBe(true);
     expect(h.world.allActors().filter((body) => isPlayer(body))).toHaveLength(1);
 
-    expect(h.engine.turnState().bellDurationMs).toBe(BELL_MS.Solo);
-    await waitUntil(() => typeof a.client.latest('turn')?.['bellMs'] === 'number', 'the Bell');
-    expect(a.client.latest('turn')?.['bellMs'] as number).toBeGreaterThan(BELL_MS.Normal);
+    // THE STEP WAS THE TURN: the clock moved without a commit, and a second
+    // step moves it again.
+    const turnBefore = h.world.turn.clock.gameTurn;
+    await sleep(COMMAND_GAP_MS);
+    await step(a, 's');
+    expect(a.body.y).toBe(y0 + 2);
+    await waitUntil(
+      () => h.world.turn.clock.gameTurn > turnBefore,
+      'the world to move on the step alone',
+    );
 
-    // Twenty seconds is nothing to somebody playing alone...
-    h.clock.skewMs = BELL_MS.Normal + 1_000;
+    // AND NO CLOCK, EVER.
+    expect(h.engine.turnState().bellDurationMs).toBeNull();
+    h.clock.skewMs = 10 * 60_000;
     h.engine.bellExpired();
-    expect(a.body.pendingIntent).toBeNull();
-
-    // ...and two minutes holds them.
-    h.clock.skewMs = BELL_MS.Solo + 1_000;
-    h.engine.bellExpired();
-    expect(a.body.pendingIntent).toEqual(HOLD_INTENT);
+    expect(a.body.pendingIntent, 'a lone player was auto-passed').toBeNull();
+    expect(a.body.standingBy, 'a lone player was benched').toBe(false);
   });
 });

@@ -537,12 +537,22 @@ describe('a kiter that sees you round a pillar steps, rather than shooting the p
    * (its line asked from its own tile and refused, from inside `kite`). That
    * decision must not leave it inside `minRange`, and must rarely be a hold:
    * before the sidestep, on THIS test's metric — the first fire per placement —
-   * advance alone held 90 of 628 on the wide census and 9 of 42 on these two
-   * floors. (The review's 231 of 247 counts every fire while the party stands
+   * advance alone held 90 of 628 on the wide census and 9 of 42 on the two
+   * floors this census used before the crystals were rooted. (The review's 231 of 247 counts every fire while the party stands
    * still, a different metric.)
    */
   it('on generated floors it never steps inside minRange, and seldom holds', () => {
-    const sites = [...DELVES.keys()].filter((id) => SITES.get(id) !== undefined).slice(0, 2);
+    // THE FIRST TWO DELVES A MOBILE KITER CAN ROLL IN. Since the crystals were
+    // rooted (2026-09-23) the first two delves in the table hold only cairns,
+    // and a census of them fired nothing.
+    const sites = [...DELVES.entries()]
+      .filter(
+        ([id, spec]) =>
+          SITES.get(id) !== undefined &&
+          spec.roster.some((t) => t.profile === AiProfile.RangedKiter && t.neverMove !== true),
+      )
+      .map(([id]) => id)
+      .slice(0, 2);
     expect(sites.length, 'fixture: fewer than two delves').toBe(2);
     const open = (seed: string, siteId: string): World => {
       const site = SITES.get(siteId);
@@ -560,7 +570,10 @@ describe('a kiter that sees you round a pillar steps, rather than shooting the p
       const kiters = probe
         .allActors()
         .filter(isMonster)
-        .filter((m) => m.alive && m.ai.profile === AiProfile.RangedKiter);
+        .filter((m) => m.alive && m.ai.profile === AiProfile.RangedKiter)
+        // A ROOTED kiter has no sidestep to take: its guard fire is a hold by
+        // design (`MonsterActor.neverMove`), and ai.test sweeps it separately.
+        .filter((m) => m.neverMove !== true);
 
       for (const k of kiters) {
         const level = probe.level;

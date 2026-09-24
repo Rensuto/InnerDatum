@@ -731,17 +731,24 @@ describe('every kiter holds its band without freezing or pacing', () => {
   const OPEN = Array.from({ length: SIZE }, () => '.'.repeat(SIZE));
   const CENTRE = { x: 18, y: 18 } as const;
   const kiters = ALL_TEMPLATES.filter((t) => t.profile === AiProfile.RangedKiter);
+  // A ROOTED KITER HAS NO BAND: it cannot retreat or advance, so both detectors
+  // below would call its every hold a freeze. It gets its own sweep, after this
+  // one — exempted on the field production reads, never on an id.
+  const mobile = kiters.filter((t) => t.neverMove !== true);
+  const rooted = kiters.filter((t) => t.neverMove === true);
 
   it('sweeps the four kiters the roster ships', () => {
     expect(kiters.map((t) => t.id).sort()).toEqual(
       ['index_cairn', 'index_inquisitor', 'index_watcher', 'index_wraith'].sort(),
     );
+    // The crystals, `never_move = 1` (crystal.lua:39).
+    expect(rooted.map((t) => t.id).sort()).toEqual(['index_cairn', 'index_watcher']);
     // Room enough on every side: the widest sight in the sweep plus a margin,
     // so no retreat anywhere below is a wall's fault.
     for (const t of kiters) expect(t.aggroRange + 3).toBeLessThanOrEqual(CENTRE.x);
   });
 
-  for (const template of kiters) {
+  for (const template of mobile) {
     it(`${template.id}: never holds in the open, and never paces in and out`, () => {
       const ungated: MonsterTemplate = { ...template, talentIn: undefined };
       const freezes: string[] = [];
@@ -815,6 +822,56 @@ describe('every kiter holds its band without freezing or pacing', () => {
       expect(seen.attack, 'never shot').toBeGreaterThan(0);
       expect(seen.retreat, 'never retreated').toBeGreaterThan(0);
       expect(seen.advance, 'never advanced').toBeGreaterThan(0);
+    });
+  }
+
+  /**
+   * ROOTED: IT SHOOTS WHENEVER THE SHOT IS LEGAL, AND OTHERWISE HOLDS.
+   *
+   * Upstream's crystal fires any talent that `canProject` (engine/ai/
+   * talented.lua:46-52) and its step is refused (tome/class/Actor.lua:1338), so
+   * the whole rule is the refusal: `rangeRefusal` null is a shot, anything else
+   * is a hold — out to the full `attackRange`, not just the mobile band's
+   * `preferredRange`. A step here is the regression, whatever it was for.
+   */
+  for (const template of rooted) {
+    it(`${template.id}: rooted — shoots whenever it legally can, and never steps`, () => {
+      const ungated: MonsterTemplate = { ...template, talentIn: undefined };
+      const wrong: string[] = [];
+      const seen = { attack: 0, hold: 0, beyondBand: 0 };
+
+      for (let y = 0; y < SIZE; y += 1) {
+        for (let x = 0; x < SIZE; x += 1) {
+          if (x === CENTRE.x && y === CENTRE.y) continue;
+          const start = { x, y };
+          if (chebyshev(start, CENTRE) > template.aggroRange) continue;
+
+          const player = detective('p1', CENTRE);
+          const monster = createMonsterActor('m1', monsterInit(ungated, start));
+          if (monster.kind !== 'monster') throw new Error('createMonsterActor returned a player');
+          const ctx = aiCtx(OPEN, [player, monster], createRng(`rooted-sweep:${template.id}`));
+
+          const legal = rangeRefusal(monster, player) === null;
+          const first = decideNpcAction(monster, ctx);
+          const expected = legal ? IntentKind.Attack : IntentKind.Hold;
+          if (first.kind !== expected) {
+            wrong.push(
+              `(${String(x - CENTRE.x)},${String(y - CENTRE.y)}) ${first.kind}, expected ${expected}`,
+            );
+          }
+          if (first.kind === IntentKind.Attack) {
+            seen.attack += 1;
+            if (combatDistance(monster, player) > monster.ai.preferredRange) seen.beyondBand += 1;
+          }
+          if (first.kind === IntentKind.Hold) seen.hold += 1;
+        }
+      }
+
+      expect(wrong, `${template.id} did something other than shoot or hold`).toEqual([]);
+      // NOT VACUOUS: it shot, it held, and it shot from beyond the old band.
+      expect(seen.attack, 'never shot').toBeGreaterThan(0);
+      expect(seen.hold, 'never held').toBeGreaterThan(0);
+      expect(seen.beyondBand, 'never shot past preferredRange').toBeGreaterThan(0);
     });
   }
 });

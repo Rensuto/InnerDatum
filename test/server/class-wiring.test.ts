@@ -1128,6 +1128,10 @@ describe('a class resource that can only be earned in play', () => {
  * should move all four together; a class quietly dropped below upstream's floor
  * should fail here. The figures are pinned once, below, so a change to the top
  * of the scale is still visible in a diff.
+ *
+ * AND SINCE 2026-09-23 THE FIGURES ARE UPSTREAM'S TOO. They were the ladder at
+ * 0.6 — 72 / 66 / 54 / 54 — priced for an open round that let a player step and
+ * act in one turn. One action per turn took that away, and the scale with it.
  */
 describe('the level-1 hit-point ladder is upstream’s', () => {
   /** The toughest body in the game — the Bulwark's 120. */
@@ -1157,7 +1161,7 @@ describe('the level-1 hit-point ladder is upstream’s', () => {
 
   it('pins the figures themselves, so the top of the scale cannot drift unseen', () => {
     expect([WATCHMAN.maxHp, INSPECTOR.maxHp, ALCHEMIST.maxHp, REDACTOR.maxHp]).toEqual([
-      72, 66, 54, 54,
+      120, 110, 90, 90,
     ]);
   });
 

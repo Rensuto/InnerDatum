@@ -440,16 +440,13 @@ describe('the adopted ToME entries survive the port', () => {
     // losgoroth.lua:63 says. The two assertions stayed in this order on purpose:
     // the citation is one line below the number it produced.
     /**
-     * ═══ 80, AND THE PORT SAYS 50 — A DEVIATION, RE-OPENED DELIBERATELY ═══
-     * `resolvers.rngavg(40,60)` = 50 is still exactly what losgoroth.lua:63
-     * says, and the assertion below still proves this file can read it. What
-     * changed is the denominator: the intra-turn budget lets a party chain two
-     * at-will talents a round, so party damage went from ~25.7 to ~51.4 and at
-     * 50 life this creature died in 0.97 rounds — before the orb it exists to
-     * fire could cross its own stand-off. See the sizing test below, which is
-     * where the argument lives.
+     * ═══ 50 — THE PORT, AND THE DEVIATION IS CLOSED AGAIN ═══
+     * `resolvers.rngavg(40,60)` = 50, exactly what losgoroth.lua:63 says. It was
+     * 80 while the intra-turn budget let a party chain two casts a round; every
+     * action ends the turn now, as ToME's does, and the sizing test below
+     * shows the ported number clears the time-to-kill invariant on its own.
      */
-    expect(INDEX_WRAITH.maxHp).toBe(80);
+    expect(INDEX_WRAITH.maxHp).toBe(50);
     expect(resolveRngAvg(40, 60)).toBe(50);
 
     // tome/resolvers.lua:901 — the `ranged` tactic preset's `safe_range = 4` is
@@ -749,7 +746,9 @@ describe('index_wraith, derived', () => {
     // race Con and the free birth points and is therefore the low end.
     const UPSTREAM_LEVEL_1_BAR = 103.31;
     /**
-     * Ours: Watchman 72, Inspector 66, Alchemist 54, Redactor 54 — median 60.
+     * Ours: Watchman 120, Inspector 110, Alchemist 90, Redactor 90 — median
+     * 100, ToME's own since 2026-09-23. It was 72 / 66 / 54 / 54, the ladder at
+     * 0.6, median 60, and this derivation gave 14.
      *
      * ═══ THE REDACTOR WAS MISSING FROM THIS LIST AND IT MATTERED ═══
      * Three classes were named here because there were three when it was
@@ -763,25 +762,25 @@ describe('index_wraith, derived', () => {
      * `CLASSES` rather than three names, so the next class cannot repeat it.
      */
     const ourBars = CLASSES.map((c) => c.maxHp).sort((a, b) => a - b);
-    expect(ourBars).toEqual([54, 54, 66, 72]);
+    expect(ourBars).toEqual([90, 90, 110, 120]);
     // MEDIAN OF AN EVEN COUNT is the mean of the two middle values.
     const mid = ourBars.length / 2;
     const OUR_MEDIAN_BAR =
       ourBars.length % 2 === 1
         ? (ourBars[(ourBars.length - 1) / 2] ?? 0)
         : ((ourBars[mid - 1] ?? 0) + (ourBars[mid] ?? 0)) / 2;
-    expect(OUR_MEDIAN_BAR).toBe(60);
+    expect(OUR_MEDIAN_BAR).toBe(100);
     const scaled = (upstream / UPSTREAM_LEVEL_1_BAR) * OUR_MEDIAN_BAR;
-    expect(scaled).toBeCloseTo(14.48, 2);
+    expect(scaled).toBeCloseTo(24.14, 2);
 
     // Shipped: the derived integer, with a ±2 spread that is OURS — upstream's
     // orb is one number wrapped in `spellCrit`, and our `fire` path never rolls
     // a crit at all, so the band stands in for that variance. Symmetric, so the
     // mean is exactly the derived number.
     expect({ min: ORB.min, max: ORB.max, mean: ORB.mean }).toEqual({
-      min: 12,
-      max: 16,
-      mean: 14,
+      min: 22,
+      max: 26,
+      mean: 24,
     });
     expect(Math.round(scaled)).toBe(ORB.mean);
     // ...and it is nowhere near the melee block it was mistakenly taken from.
@@ -1304,7 +1303,7 @@ describe('the balance table the wraith’s retune rests on', () => {
      */
     expect(table).toEqual([
       ['index_husk', 4.378, 4.378, 4.875],
-      ['index_wraith', 5.88, 5.88, 5.88],
+      ['index_wraith', 10.08, 10.08, 10.08],
       ['index_husk_elite', 5.888, 5.888, 6.332],
       // THE TWO NEW ROWS, AND THEY SAY THE DESIGN OUT LOUD.
       //
@@ -1315,22 +1314,26 @@ describe('the balance table the wraith’s retune rests on', () => {
       ['index_eidolon', 6.169, 9.533, 10.251],
       // The cairn's row is FLAT across all three classes, for the reason the
       // test below gives about the wraith: `apr` exceeds every class's armour,
-      // so `applyArmour` removes nothing. At 23 life that is three player turns.
-      // It survives by being unreachable, never by being tough.
-      ['index_cairn', 7, 7, 7],
+      // so `applyArmour` removes nothing. It survives by being unreachable,
+      // never by being tough. 2.333 is a THIRD of what it was: its `talentIn` 3
+      // carries T_FLAME_BOLT's `cooldown = 3`, which it fired straight through
+      // until 2026-09-23 (see the field).
+      ['index_cairn', 2.333, 2.333, 2.333],
       ['index_glut', 5.527, 5.527, 6.633],
       /**
-       * THE INQUISITOR'S 7/7/7 WAS PREDICTED BEFORE IT WAS MEASURED, and the
+       * THE INQUISITOR'S ROW IS PREDICTED BEFORE IT IS MEASURED, and the
        * prediction is the reason to trust the creature rather than the number:
-       * the orb is INDEX_WRAITH's 12-16 (mean 14) at `globalSpeed` 1.0 over
+       * the orb is INDEX_WRAITH's 22-26 (mean 24) at `globalSpeed` 1.0 over
        * `talentIn` 2, and the model is `perShot * globalSpeed * (1/talentIn)`.
-       * 14 x 1.0 / 2 = 7.0, which is exactly INDEX_CAIRN's.
+       * 24 x 1.0 / 2 = 12.0.
        *
-       * THAT WAS THE POINT. A second elite must not raise the sustained-damage
-       * ceiling — it ties the existing top rather than beating it, and what
-       * makes it elite is that unlike the cairn it MOVES, at the player's own
-       * speed, with the longest reach in the game. You cannot walk away from it
-       * and you cannot walk up to it.
+       * IT WAS 7/7/7, tying the cairn's 7.00 as the sustained-damage ceiling on
+       * purpose. Both moved on 2026-09-23 for ported reasons — the orb followed
+       * the bars to ToME's own, the cairn took its bolt's cooldown — and this
+       * row is now the top of the table. What makes it elite is unchanged: it
+       * MOVES, at the player's own speed, with the longest reach in the game.
+       * Whether an elite of ours should top the table is a tuning question the
+       * port has reopened, and it is recorded rather than quietly answered.
        *
        * THE INSPECTOR IS EIDOLON-TIER AND FLAT ACROSS THE THREE CLASSES, which
        * is `apr = 15` doing exactly what the eidolon's `apr = 3` does not:
@@ -1340,10 +1343,11 @@ describe('the balance table the wraith’s retune rests on', () => {
        * points with no armour — see `bestiary`.
        */
       ['index_inspector', 9.233, 9.233, 9.422],
-      ['index_inquisitor', 7, 7, 7],
+      ['index_inquisitor', 12, 12, 12],
       /**
-       * AND THE BOSS IS BELOW BOTH KITERS, WHICH IS THE POINT. 5.95 against the
-       * cairn's 7.00: a boss is the LONGEST fight in the game, not the sharpest.
+       * AND THE BOSS IS BELOW BOTH MOBILE KITERS, WHICH IS THE POINT. 5.95
+       * against the wraith's 10.08 and the inquisitor's 12.00 (it was the
+       * cairn's 7.00): a boss is the LONGEST fight in the game, not the sharpest.
        * Its threat is two hundred and twenty hit points — more than double
        * anything else — and the turns it takes away, never the number per shot.
        * A boss that also topped this table would be a damage race with a health
@@ -1405,14 +1409,15 @@ describe('the balance table the wraith’s retune rests on', () => {
     }
   });
 
-  it('turns the ranged threat from half the husk into a third more than it', () => {
+  it('turns the ranged threat from half the husk into more than twice it', () => {
     // THE FINDING THAT STARTED THIS WORK ITEM, pinned as a ratio so it cannot
     // regress quietly. The wraith used to deal 1.890 against the husk's 4.050 —
     // the designated ranged threat was less than half as dangerous as the
     // baseline mob, because its orb was frozen at the 3-6 placeholder.
     const husk = damagePerPlayerTurn(INDEX_HUSK, WATCHMAN.combat);
     const wraith = damagePerPlayerTurn(INDEX_WRAITH, WATCHMAN.combat);
-    expect(wraith / husk).toBeCloseTo(1.343, 3);
+    // 1.343 while the orb was 12-16 against bars at 0.6 of ToME's.
+    expect(wraith / husk).toBeCloseTo(2.303, 3);
 
     // BEFORE, recomputed rather than quoted: 3-6 through the placeholder path
     // was a flat mean of 4.5 with no roll, no armour and no resists.
@@ -1421,19 +1426,21 @@ describe('the balance table the wraith’s retune rests on', () => {
     expect(before).toBeCloseTo(1.89, 3);
     expect(before / (PLACEHOLDER_MEAN * INDEX_HUSK.globalSpeed)).toBeCloseTo(0.467, 3);
 
-    // The band the retune was aimed at, stated so a future pass can argue with a
-    // number instead of a feeling.
-    expect(wraith).toBeGreaterThanOrEqual(5.5);
-    expect(wraith).toBeLessThanOrEqual(7);
+    // The band the retune was aimed at was 5.5-7, against bars at 0.6 of
+    // ToME's. The orb is derived as a fraction of the bar, so the same band
+    // against ToME's own bars is 9.2-11.7; stated so a future pass can argue
+    // with a number instead of a feeling.
+    expect(wraith).toBeGreaterThanOrEqual(5.5 / 0.6);
+    expect(wraith).toBeLessThanOrEqual(7 / 0.6);
 
-    // It sits one hair UNDER the elite, which is the top of the roster and is
-    // meant to stay the top of the roster: the elite's damage is unavoidable
-    // once it has reached you, and every point of the wraith's can be dodged.
-    expect(wraith).toBeLessThan(damagePerPlayerTurn(INDEX_HUSK_ELITE, WATCHMAN.combat));
+    // It sat one hair UNDER the elite while the bars were at 0.6. It is over
+    // it now, by the port: T_VOID_BLAST against ToME's own bar. Every point of
+    // it can still be dodged; none of the elite's can once it has reached you.
+    expect(wraith).toBeGreaterThan(damagePerPlayerTurn(INDEX_HUSK_ELITE, WATCHMAN.combat));
   });
 
   it('costs one to two orbs of a bar, never a bar', () => {
-    // "Memorable, never lethal from full." One orb against 72 / 60 / 54.
+    // "Memorable, never lethal from full." One orb against 120 / 110 / 90.
     const bars = [WATCHMAN.maxHp, INSPECTOR.maxHp, ALCHEMIST.maxHp];
     for (const bar of bars) {
       expect(ORB.max / bar).toBeLessThan(0.32);
@@ -1474,21 +1481,15 @@ describe('the balance table the wraith’s retune rests on', () => {
 
     /**
      * ═══════════════════════════════════════════════════════════════════════
-     * A ROUND, NOT A USE — and this line measured a use until the budget landed.
+     * ONE CAST A ROUND — every action ends the turn, as ToME's does.
      * ═══════════════════════════════════════════════════════════════════════
      *
-     * `DECISIONS.md` D1's intra-turn budget is real now: 6 AP a round, and the
-     * three figures above are 3-AP talents, so each class casts TWICE. Crude
-     * Blow and Revolver Shot are both `cooldownTurns: 0`, so the second cast is
-     * genuinely available rather than theoretical; Ashwick Flare is gated by
-     * reagents (1 of a stock of 8) rather than by cooldown, which is four rounds
-     * of doubles before she is dry.
-     *
-     * Summing one use each modelled a party that no longer exists, and it is
-     * exactly why the throughput change could ship without a single test
-     * failing: nothing in this file knew how many actions a round allows.
+     * This was 2 while D1's intra-turn budget let each class chain two 3-AP
+     * talents in one round. That open round is gone (`actPlayer`: an action
+     * spends the turn, `useEnergy`, engines/default/engine/Actor.lua:478-484),
+     * so a round is one use each again.
      */
-    const CASTS_PER_ROUND = 2;
+    const CASTS_PER_ROUND = 1;
     const party = (crudeBlowDpt + revolverDpt + flareDpt) * CASTS_PER_ROUND;
     // At 22 the creature died in under one party turn, while its orb needs 1.5
     // GAME turns to cross the stand-off — so it usually died before its first
@@ -1496,22 +1497,20 @@ describe('the balance table the wraith’s retune rests on', () => {
     // kill, not about how hard players hit.
     // THE INVARIANT IS THE POINT, AND THE FIGURE IS DERIVED FROM IT.
     // `> 1.5` is the rule: the orb needs 1.5 game turns to cross the stand-off,
-    // so anything at or under that dies without ever firing. The ported 50 now
-    // fails it outright against a chaining party, which is why the life moved.
-    expect(50 / party).toBeLessThan(1.5);
+    // so anything at or under that dies without ever firing. The ported 50
+    // clears it at one cast a round (it failed at 0.97 against a chaining party,
+    // which is why it was briefly 80).
     expect(INDEX_WRAITH.maxHp / party).toBeGreaterThan(1.5);
-    expect(INDEX_WRAITH.maxHp / party).toBeCloseTo(1.556, 3);
+    expect(INDEX_WRAITH.maxHp / party).toBeCloseTo(1.945, 3);
 
     // OUT OF FRAME, REPORTED ANYWAY. A solo Watchman needs 13.206 player turns,
     // during which a wraith standing off at four tiles deals more than his whole
     // bar. A lone Watchman trading shots at range LOSES; his answer is to close,
     // because the creature cannot fire inside two tiles at all.
-    // PER USE, not per round: this is the SOLO frame, and a lone Watchman
-    // chaining Crude Blow twice still spends the same two casts on the same
-    // creature. 21.1 swings at 80 life, up from 13.2 at 50 — the point of the
-    // line is unchanged and gets stronger, which is that trading shots at range
-    // with a kiter loses.
-    expect(INDEX_WRAITH.maxHp / crudeBlowDpt).toBeCloseTo(21.13, 2);
+    // PER USE, and a use is a turn: 13.2 swings at 50 life. The point of the
+    // line is unchanged, which is that trading shots at range with a kiter
+    // loses.
+    expect(INDEX_WRAITH.maxHp / crudeBlowDpt).toBeCloseTo(13.21, 2);
     const takenSolo =
       (INDEX_WRAITH.maxHp / crudeBlowDpt) * damagePerPlayerTurn(INDEX_WRAITH, WATCHMAN.combat);
     expect(takenSolo).toBeGreaterThan(WATCHMAN.maxHp);

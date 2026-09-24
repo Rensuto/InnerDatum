@@ -718,9 +718,9 @@ function projectDoStop(
        * plate does nothing about any of them.
        *
        * ═══ AND OUR OWN DERIVATION SAYS THE SAME THING ═══
-       * The wraith's 12-16 is derived in content/monsters.ts as 24.14% of an
-       * upstream level-1 life bar mapped onto our median class bar of 60 — a
-       * FRACTION OF A HEALTH BAR, with no armour term anywhere in it. The
+       * The wraith's orb is derived in content/monsters.ts as 24.14% of an
+       * upstream level-1 life bar mapped onto our median class bar (60 then,
+       * 100 now) — a FRACTION OF A HEALTH BAR, with no armour term in it. The
        * armour stage was then quietly taking that back: against a Watchman
        * (armour 6, hardiness 40) a 16-point orb landed as 10, so the orb hit
        * for 14% of his bar where the derivation asked for about 24%.

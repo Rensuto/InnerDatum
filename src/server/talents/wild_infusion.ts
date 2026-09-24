@@ -110,6 +110,8 @@ export const wildInfusion: Talent = {
   maxLevel: 1,
   cost: { ap: AP_COST },
   cooldownTurns: tomeCooldownToTurns(TOME_COOLDOWN),
+  // Upstream's `no_energy = true`: pressed without spending the turn.
+  noEnergy: true,
   targeting: {
     shape: TargetShape.Self,
     range: 0,

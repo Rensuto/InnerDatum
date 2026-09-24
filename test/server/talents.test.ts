@@ -1,5 +1,5 @@
 import { isMonsterTalent } from '../../src/server/talents/monster.ts';
-import { INDEX_WRAITH, monsterInit } from '../../src/server/content/monsters.ts';
+import { INDEX_CAIRN, INDEX_WRAITH, monsterInit } from '../../src/server/content/monsters.ts';
 import { treeById } from '../../src/server/content/talent-trees.ts';
 import { trained } from '../helpers/trained.ts';
 import { TALENTS_PER_CLASS_MAX, TALENTS_PER_CLASS_MIN } from '../../src/shared/progression.ts';
@@ -2175,6 +2175,20 @@ describe('knockback obeys never_move and knockback immunity', () => {
     Object.assign(wraith, { combat: monsterInit(INDEX_WRAITH, { x: 6, y: 5 }).combat });
     expect(knockback(f.world, wraith, { x: 5, y: 5 }, 2, scriptedRng([1]))).toBe(0);
     expect(wraith.x).toBe(6);
+  });
+
+  it('leaves a crystal where it is — its own `never_move`, crystal.lua:39', () => {
+    // The template's field, through `monsterInit`, onto a body with no pin and
+    // no immunity: the only thing that can stop this shove is `neverMove`.
+    const f = fixture();
+    const cairn = f.addMonster('cairn', 6, 5);
+    const init = monsterInit(INDEX_CAIRN, { x: 6, y: 5 });
+    expect(init.combat?.immunities?.knockback, 'the fixture is not measuring').toBeUndefined();
+    Object.assign(cairn, { neverMove: init.neverMove });
+    const rng = scriptedRng([1]);
+    expect(knockback(f.world, cairn, { x: 5, y: 5 }, 2, rng)).toBe(0);
+    expect(cairn.x).toBe(6);
+    expect(drawCount(rng)).toBe(1);
   });
 
   it('holds through the real talent: Move Along cannot shove a dazed body', () => {

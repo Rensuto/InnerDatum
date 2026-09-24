@@ -9,8 +9,6 @@ import {
 } from '../../src/server/content/classes.ts';
 import { EffectId, MVP_EFFECTS } from '../../src/server/content/effects.ts';
 import { AiProfile } from '../../src/server/engine/actor.ts';
-import { MOVE_MP_COST } from '../../src/server/engine/talents.ts';
-import { SLOW_PLAYER_MP_PENALTY, createMvpEffectState } from '../../src/server/content/effects.ts';
 import { createDownedState, isDowned } from '../../src/server/engine/downed.ts';
 import {
   INDEX_EIDOLON,
@@ -22,7 +20,6 @@ import {
 import { Slot } from '../../src/server/content/items.ts';
 import { resolveItem } from '../../src/server/content/resolve.ts';
 import {
-  budgetPenalty,
   createEffectState,
   effectDur,
   hasEffect,
@@ -393,54 +390,14 @@ describe('the status seam — a subsystem that existed and was reachable from no
 
 describe('SLOWED, which was a badge and nothing else', () => {
   /**
-   * ═══════════════════════════════════════════════════════════════════════════
-   * A CLAIM WAS ANNOUNCED TO PLAYERS AND WAS NOT TRUE FOR THREE COMMITS.
-   * ═══════════════════════════════════════════════════════════════════════════
-   *
-   * The commit that gave the Index Wraith its orb-rider shipped with *"Index
-   * Wraiths now slow you when their orbs land, so closing the gap on one costs
-   * you real ground."* It did not. SLOWED's player half is `-1 MP`
-   * (`SLOW_PLAYER_MP_PENALTY`), `budgetPenalty` had **zero production callers**,
-   * and nothing charged MP for walking — so a Slowed detective moved exactly as
-   * far and acted exactly as often as an unslowed one. The badge was the effect.
-   *
-   * Two things had to land before it could be true: a step had to cost MP
-   * (`docs/game-design.md` § 6, "Move = 1 MP", authored and never charged), and
-   * the refill had to subtract the penalty. This is the assertion that the words
-   * now match the game.
+   * ═══ SLOWED'S PLAYER HALF IS INERT UNTIL PLAYER SPEED IS PORTED ═══
+   * A Slowed player lost one of three MP-priced steps in a round. Every action
+   * ends the turn now, as ToME's does, so there is no round of steps to shorten
+   * — and ToME slows a player the way it slows anything, through
+   * `global_speed_add` (physical.lua:632), which this game still pins to 1 for
+   * players. That port is the next slice of the turn work; until it lands the
+   * badge is honest about a monster and does nothing to a detective.
    */
-  it('costs a player one step in three', () => {
-    const world = createWorld('slowed-steps');
-    const engine = createContentTalentEngine();
-    // WATCHMAN by name, not CLASSES[0]: `noUncheckedIndexedAccess` makes the
-    // index a maybe, and the class this asserts about is a 3-MP body.
-    const cls = WATCHMAN;
-    const body = world.addPlayer('p1', 'Ren', { maxHp: cls.maxHp });
-    const sheet = engine.attach('p1', trained(sheetForClass(cls)));
-    const effects = createMvpEffectState();
-
-    const stepsInARound = (penalty?: { ap: number; mp: number }): number => {
-      engine.actBase('p1', world, penalty);
-      let taken = 0;
-      while (sheet.mp >= MOVE_MP_COST) {
-        sheet.mp -= MOVE_MP_COST;
-        taken += 1;
-      }
-      return taken;
-    };
-
-    expect(stepsInARound(undefined)).toBe(3);
-
-    setEffect(effects, body, EffectId.Slowed, 3, {}, world.rng);
-    const penalty = budgetPenalty(effects, 'p1');
-    // The authored number, read off the status rather than repeated here.
-    expect(penalty.mp).toBe(SLOW_PLAYER_MP_PENALTY);
-    // ...and it is a step the player does not get. THE WHOLE POINT: a wraith
-    // holds its stand-off at range 4, so a third less closing speed is the
-    // difference between walking at it and needing a plan.
-    expect(stepsInARound(penalty)).toBe(2);
-  });
-
   it('an Index Eidolon’s touch confuses the body it reaches', () => {
     /**
      * ═════════════════════════════════════════════════════════════════════════

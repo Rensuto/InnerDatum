@@ -662,6 +662,17 @@
  * ═══════════════════════════════════════════════════════════════════════════
 
 
+ * 29 -> 30 (EVERY ACTION ENDS THE TURN). No frame changed shape; the RULE did.
+ * In combat a step or a talent used to leave the round open, so the client's
+ * Space sent `commit` to end it. The server now ends the turn on the action
+ * itself, as ToME does (`actPlayer`), and a v29 client still sends `commit`
+ * after each move out of habit — which arrives with nothing queued, becomes a
+ * HOLD, and silently burns the player's NEXT turn. Nothing errors and nothing
+ * looks wrong; the player just loses every other turn. The version gate turns
+ * that into an honest "your client is out of date" and a reload.
+ *
+ * `SCHEMA_VERSION` STAYS 1. Nothing persisted changed shape.
+ *
  * 28 -> 29 (SOMEBODY IS WALKING WITH YOU). `ActorView.faction` gains a third
  * value, `'squad'` — a temporary companion, somebody an objective on this floor
  * lent the party (`server/world/brief.ts`, `server/engine/actor.ts#Faction`).
@@ -1285,7 +1296,7 @@
  * path rather than read from disk. When that changes it will be an OPTIONAL
  * field and docs/data-schemas.md:48-49 applies unchanged.
  */
-export const PROTOCOL_VERSION = 29;
+export const PROTOCOL_VERSION = 30;
 
 /**
  * Bumped whenever a persisted save file's shape changes. Every bump needs a

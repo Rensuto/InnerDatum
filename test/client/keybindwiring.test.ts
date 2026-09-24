@@ -287,7 +287,8 @@ describe('the menu is a PANEL, and its rect is where that is decided', () => {
     const verbs = new Set([...CODE.matchAll(/\bt: '([a-z_]+)'/g)].map((match) => match[1]));
     expect([...verbs].sort()).toEqual([
       'choose_class',
-      'commit',
+      // NO `commit` ANY MORE: every action ends the turn, so the client never
+      // sends one (`TurnCommand.Commit` confirms an aim and does nothing else).
       // THE SELECT SCREEN'S, and the only destructive verb the client has. Added
       // deliberately and listed here so it stays a thing somebody had to decide:
       // the screen could hold eight characters and had no way to hold seven,
@@ -663,14 +664,15 @@ describe('the six keyboard gates', () => {
       'if (menuOpen && command === TurnCommand.Commit && menuHovered !== null) {',
     );
 
-    // ...and the commit that would otherwise go out is BELOW the gate, so a lit
-    // row genuinely wins the press.
+    // ...and the gate comes FIRST, so a lit row genuinely wins the press. What
+    // would otherwise happen is nothing: Commit sends no frame now, because
+    // every action ends the turn by itself.
     expect(at('pressMenuSelection()', command)).toBeLessThan(
-      at("socket.send({ v: PROTOCOL_VERSION, t: 'commit' });", command),
+      at('case TurnCommand.Commit:', command),
     );
   });
 
-  it('NEVER swallows Hold or Pickup, and lets an unlit Enter through to the commit', () => {
+  it('NEVER swallows Hold or Pickup', () => {
     // ═══════════════════════════════════════════════════════════════════════
     // THE CLASS-PICKER CRITICAL, REPRODUCED WITH TWO PLAYERS AND NO BACKSTOP.
     // ═══════════════════════════════════════════════════════════════════════
@@ -691,8 +693,10 @@ describe('the six keyboard gates', () => {
     expect(command).not.toMatch(/if \(menuOpen\) \{/);
     expect(command).toContain('command === TurnCommand.Commit');
 
-    // All three verbs still reach the socket below it, unconditionally.
-    expect(command).toContain("socket.send({ v: PROTOCOL_VERSION, t: 'commit' });");
+    // Hold and Pickup still reach the socket below it, unconditionally. Commit
+    // sends NOTHING outside aiming and menus: every action ends the turn, and a
+    // stray Space must never queue a hold that burns the next one.
+    expect(command).not.toContain("t: 'commit'");
     expect(command).toContain("socket.send({ v: PROTOCOL_VERSION, t: 'hold' });");
     expect(command).toContain('sendPickup();');
 

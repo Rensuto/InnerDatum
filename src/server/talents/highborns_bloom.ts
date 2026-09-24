@@ -65,7 +65,7 @@ const TOME_COOLDOWN = 47;
 
 const DURATION_TURNS = tomeCooldownToTurns(TOME_DURATION);
 
-/** `no_energy = true` (races.lua:120). The turn goes on around it. */
+/** `no_energy = true` (races.lua:121). The turn goes on around it. */
 const AP_COST = 0;
 
 export const highbornsBloom: Talent = {
@@ -93,6 +93,8 @@ export const highbornsBloom: Talent = {
   maxLevel: 1,
   cost: { ap: AP_COST },
   cooldownTurns: tomeCooldownToTurns(TOME_COOLDOWN),
+  // Upstream's `no_energy = true`: pressed without spending the turn.
+  noEnergy: true,
   targeting: {
     shape: TargetShape.Self,
     range: 0,

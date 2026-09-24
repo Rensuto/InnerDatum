@@ -91,27 +91,6 @@ export type TurnView = {
   readonly turn: TurnMsg | null;
   /** Milliseconds left on the Bell, ticked locally. Null when none is running. */
   readonly bellMs: number | null;
-  /**
-   * ═══════════════════════════════════════════════════════════════════════════
-   * WHAT THE VIEWER HAS LEFT TO SPEND THIS ROUND.
-   * ═══════════════════════════════════════════════════════════════════════════
-   *
-   * FROM `ResourceMsg` AND NOT FROM `TurnActor`, and that is not a convenience —
-   * it is the only place it may come from. `ResourceView` is viewer-private for
-   * a stated reason: another detective's remaining budget is not yours to read.
-   * Putting AP on the public per-actor record would leak every player's round to
-   * every other player.
-   *
-   * OPTIONAL, because a client can outlive a server that never sends it and
-   * because there is no budget at all before the first `resource` frame lands.
-   * Absent means the banner says what it always said.
-   */
-  readonly budget?: {
-    readonly ap: number;
-    readonly maxAp: number;
-    readonly mp: number;
-    readonly maxMp: number;
-  } | null;
 };
 
 /**
@@ -244,35 +223,6 @@ export function isYourTurn(view: TurnBarView): boolean {
  * Exhaustive over `TurnActorState` with no `default`, so a sixth state cannot
  * ship without words.
  */
-/**
- * ═══════════════════════════════════════════════════════════════════════════
- *   WHAT IS LEFT IN THE ROUND, IN THE FEWEST CHARACTERS THAT STILL SAY IT.
- * ═══════════════════════════════════════════════════════════════════════════
- *
- * THE QUESTION THIS BANNER EXISTS TO ANSWER IS "AM I DONE?", and until now it
- * could not. The engine has an honest answer — `hasAffordableAction` closes the
- * round the moment nothing is off cooldown and affordable on BOTH budgets — but
- * the player could not see either number, so acting twice and still being asked
- * for a decision read as the game ignoring them.
- *
- * BOTH BUDGETS, ALWAYS, because a round can end on either. A step costs 1 MP of
- * 3 (`MOVE_MP_COST`) and a talent costs its AP, so a Watchman holding 4 AP and
- * no MP is out of moves and full of swings — and a HUD showing only AP would
- * have him wondering why he could not walk.
- *
- * `3/6 AP` AND NOT `3 AP`: the denominator is what makes the number mean
- * something on the round a player has not memorised the maximum for, which is
- * every round for the first hour.
- */
-function budgetWords(view: TurnBarView): string | null {
-  const budget = view.budget;
-  if (budget === undefined || budget === null) return null;
-  if (budget.maxAp <= 0 && budget.maxMp <= 0) return null;
-  const ap = `${String(Math.max(0, Math.floor(budget.ap)))}/${String(budget.maxAp)} AP`;
-  const mp = `${String(Math.max(0, Math.floor(budget.mp)))}/${String(budget.maxMp)} MP`;
-  return `${ap} · ${mp}`;
-}
-
 export function bannerFor(view: TurnBarView): string {
   const turn = view.turn;
   if (turn === null) return 'waiting for the server';
@@ -288,45 +238,26 @@ export function bannerFor(view: TurnBarView): string {
   if (card === null) return `IN COMBAT — turn ${turn.gameTurn} — waiting on ${owed}`;
 
   switch (card.state) {
-    case TurnActorState.Bell: {
-      // THE BELL IS THE ONE STATE WHERE THE CLOCK OUTRANKS THE BUDGET. A player
-      // being counted down needs the seconds first and the arithmetic second.
-      const left = budgetWords(view);
-      return `YOUR MOVE — BELL ${String(bellSeconds(view.bellMs) ?? 0)}s${
-        left === null ? '' : ` — ${left}`
-      } — SPACE ends your turn`;
-    }
+    case TurnActorState.Bell:
+      // The table is waiting on you and the clock is running. One action ends
+      // your turn, so there is nothing else to say but how long you have.
+      return `YOUR MOVE — BELL ${String(bellSeconds(view.bellMs) ?? 0)}s`;
     case TurnActorState.Waiting: {
       /**
-       * NEVER "wait your turn". The party is phase-locked (DECISIONS.md D1):
-       * everyone who owes a move can make it right now, and the others are
-       * deciding beside you rather than ahead of you in a queue.
+       * ═══ ONE ACTION ENDS YOUR TURN, SO THE BANNER NAMES NO KEY ═══
+       * This read "YOUR MOVE — 3/6 AP · 2/3 MP left — SPACE ends your turn",
+       * and the Space was the complaint: the round stayed open after a step
+       * or a talent, so a player had to pass after every action. It no longer
+       * does (`actPlayer`, as ToME's `useEnergy`), and a banner that still named
+       * a key to end the turn would teach the habit that now wastes one.
        *
-       * ═══ THE ORDER OF THIS SENTENCE IS THE FIX ═══
-       * It used to read "IN COMBAT — YOUR TURN — space: commit · . : hold — 2
-       * still deciding", which answers "whose turn" and then lists keys. The
-       * question a player actually has after acting once is *"can I do anything
-       * else, or am I supposed to pass?"*, and nothing on screen answered it —
-       * the round stays open while any action is still affordable, so acting
-       * and being asked again looked like the game ignoring the input.
-       *
-       * So: whose move, WHAT IS LEFT, then how to end it. The keys come last
-       * because they are the only part a player learns once.
-       */
-      const left = budgetWords(view);
-      /**
-       * `owedCount` COUNTS THE READER TOO, and the old sentence said "2 still
-       * deciding" to a player who was one of the two. That is not wrong so much
-       * as unhelpful: the number a player wants is how many people they are
-       * keeping waiting, or being waited on by. So this subtracts the reader and
-       * says "others", and says nothing at all when there are none.
+       * `owedCount` counts the reader too, so this subtracts them and says how
+       * many OTHERS are still deciding, and nothing when there are none.
        */
       const rest = Math.max(0, owed - 1);
       const others =
         rest === 0 ? '' : rest === 1 ? ' — 1 other deciding' : ` — ${String(rest)} others deciding`;
-      return left === null
-        ? `YOUR MOVE — SPACE ends your turn${others}`
-        : `YOUR MOVE — ${left} left — SPACE ends your turn${others}`;
+      return `YOUR MOVE${others}`;
     }
     case TurnActorState.Committed:
       // "TURN OVER" AND NOT "committed", which is the engine's word rather than

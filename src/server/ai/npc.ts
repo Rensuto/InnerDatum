@@ -391,7 +391,9 @@ export function decideNpcAction(self: MonsterActor, ctx: AiCtx): Intent {
     // resumes a flank around a body that is no longer there.
     self.ai.blockedTurns = 0;
     self.ai.shoulderTurns = 0;
-    return pursueLastSeen(self, ctx);
+    // A ROOTED BODY HUNTS NOTHING. Upstream's step would be refused
+    // (tome/class/Actor.lua:1338); holding is that refusal without the noise.
+    return self.neverMove === true ? HOLD_INTENT : pursueLastSeen(self, ctx);
   }
 
   /**
@@ -1068,7 +1070,8 @@ function kite(self: MonsterActor, target: EngineActor, ctx: AiCtx): Intent {
   const distance = combatDistance(self, target);
 
   if (distance < self.ai.minRange) {
-    const retreat = backAway(self, target, ctx);
+    // ROOTED (`MonsterActor.neverMove`): no retreat, so it is always cornered.
+    const retreat = self.neverMove === true ? undefined : backAway(self, target, ctx);
     if (retreat !== undefined) {
       self.ai.blockedTurns = 0;
       return retreat;
@@ -1080,7 +1083,10 @@ function kite(self: MonsterActor, target: EngineActor, ctx: AiCtx): Intent {
     return HOLD_INTENT;
   }
 
-  if (distance > self.ai.preferredRange) {
+  // A ROOTED KITER DOES NOT CLOSE. It falls through to the reach test below and
+  // shoots from anywhere its talent reaches, as upstream's crystal does: it has
+  // no band to hold, only `canProject` (engine/ai/talented.lua:46-52).
+  if (distance > self.ai.preferredRange && self.neverMove !== true) {
     return advance(self, target, ctx, self.ai.minRange);
   }
 
@@ -1172,15 +1178,17 @@ function kite(self: MonsterActor, target: EngineActor, ctx: AiCtx): Intent {
     // what it borrows from upstream. Only when it finds no tile does `advance`
     // run, dead zone kept, and that HOLDs in turn when it cannot step.
     if (lineRefused(self, target, ctx)) {
+      if (self.neverMove === true) return HOLD_INTENT;
       return sidestep(self, target, ctx) ?? advance(self, target, ctx, self.ai.minRange);
     }
 
     return { kind: IntentKind.Attack, targetId: target.id };
   }
 
-  // Only reachable if a template set `preferredRange > attackRange`, which
-  // `validateTemplate` rejects. Kept because content is data and data can be
-  // wrong, and "it stood still" is a far better failure than "it charged".
+  // A rooted kiter whose target is out of reach, which is the fight working.
+  // Otherwise only reachable if a template set `preferredRange > attackRange`,
+  // which `validateTemplate` rejects. Kept because content is data and data can
+  // be wrong, and "it stood still" is a far better failure than "it charged".
   return HOLD_INTENT;
 }
 

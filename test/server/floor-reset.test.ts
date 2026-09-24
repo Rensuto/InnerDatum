@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { DamageType } from '../../src/server/engine/damage.ts';
 import { seedTestEncounter } from '../../src/server/content/encounter.ts';
 import { ITEMS } from '../../src/server/content/items.ts';
-import { AiProfile, IntentKind } from '../../src/server/engine/actor.ts';
+import { AiProfile, HOLD_INTENT, IntentKind } from '../../src/server/engine/actor.ts';
 import { createBarrier } from '../../src/server/engine/barrier.ts';
 import { createDownedState, goDown } from '../../src/server/engine/downed.ts';
 import { accept, createPartyState, invite } from '../../src/server/engine/party.ts';
@@ -519,26 +519,37 @@ describe('a party that owes no decision is skipped, not waited on', () => {
     // The trap in skipping: `bell` is what RETIRES a running countdown, so a
     // skip that also skipped the call would leave the old start time behind and
     // ring at somebody the instant they got up. `applyBellExpiry` still asks.
+    //
+    // TWO PLAYERS, because a lone player has no Bell at all: the countdown is
+    // on the last straggler of a group, so p2 commits and the clock is on p1.
     const world = createWorld('stalled-fresh-bell');
     const downed = createDownedState();
     const barrier = createBarrier();
-    const solo = world.addPlayer('p1', 'Solo');
-    solo.hpRegen = 0;
+    const first = world.addPlayer('p1', 'First');
+    const second = world.addPlayer('p2', 'Second');
+    first.hpRegen = 0;
+    second.hpRegen = 0;
     world.turn.engagement = 3;
 
-    // A countdown is running on the solo player at t = 0.
+    // A countdown is running on p1 at t = 0.
+    expect(submitIntent(world, barrier, 'p2', HOLD_INTENT)).toBe(true);
     const armed = pump(world, { nowMs: 0, barrier, downed });
     expect(armed.bell.running).toBe(true);
+    expect(armed.bell.stragglers).toEqual(['p1']);
     const firstDeadline = armed.bell.deadlineMs;
 
-    // They go down; the party is wiped and restored, all inside one pump.
-    solo.hp = 0;
-    solo.alive = false;
-    goDown(downed, solo, world.turn.clock.gameTurn);
+    // Both go down; the party is wiped and restored, all inside one pump.
+    for (const body of [first, second]) {
+      body.hp = 0;
+      body.alive = false;
+      goDown(downed, body, world.turn.clock.gameTurn);
+    }
     pump(world, { nowMs: 1_000, barrier, downed });
 
-    // Back on their feet and blocking again — with a deadline measured from NOW,
-    // not from before they fell.
+    // Back on their feet, p2 commits again — and p1's deadline is measured from
+    // NOW, not from before they fell.
+    world.turn.engagement = 3;
+    expect(submitIntent(world, barrier, 'p2', HOLD_INTENT)).toBe(true);
     const back = pump(world, { nowMs: 5_000, barrier, downed });
     expect(back.bell.running).toBe(true);
     expect(back.bell.deadlineMs).not.toBe(firstDeadline);

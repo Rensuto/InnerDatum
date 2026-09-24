@@ -171,16 +171,16 @@ describe('the Index Glut', () => {
 
   it('is not the wall the first draft of its own comment claimed', () => {
     // A CORRECTION MADE PERMANENT. That comment said sixty hit points was "the
-    // largest pool in the game"; the wraith has eighty and the elite ninety-five,
-    // and a level-3 party already meets the wraith. Pinned so nobody re-derives
-    // a difficulty argument from a number that was never true.
+    // largest pool in the game"; the elite has ninety-five, and so do the
+    // bosses below. (The wraith was eighty for the open round and is its ported
+    // fifty again, below the Glut.) Pinned so nobody re-derives a difficulty
+    // argument from a number that was never true.
     const glut = monsterById('index_glut');
     const bigger = MONSTER_TEMPLATES.filter((t) => t.maxHp > (glut?.maxHp ?? 0));
     expect(bigger.map((t) => t.id).sort()).toEqual([
       'index_husk_elite',
       'index_inquisitor',
       'index_watcher',
-      'index_wraith',
       // And the second boss, which is the biggest body in the game at 150
       // before a single level of `rankLifeAdjust` lands on it
       // (data/zones/reknor-escape/npcs.lua:39).

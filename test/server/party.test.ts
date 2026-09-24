@@ -421,13 +421,15 @@ describe('the barrier`s optional party filter', () => {
     const armed = barrier.bell(seats, LEVEL, NOW, mine);
     expect(armed.running).toBe(true);
 
-    // The other scope's Bell arms fifteen seconds later on ITS OWN row. (This
-    // is exactly what made per-party Bells disagree with the realm-wide wait,
-    // and why the engine now keeps one row, the level's.)
+    // The other scope is a quorum of ONE, and a lone player has no Bell at all
+    // (`bellDurationMs`). Asking for it on its own row neither arms a clock for
+    // p3 nor disturbs the other scope's. (Per-party rows are what made Bells
+    // disagree with the realm-wide wait, and why the engine keeps one, the
+    // level's.)
     const theirBell = barrier.bell(seats, LEVEL, NOW + 15_000, theirs);
-    expect(theirBell.running).toBe(true);
+    expect(theirBell.running).toBe(false);
     expect(theirBell.quorum).toBe(1);
-    expect(theirBell.remainingMs).toBe(theirBell.durationMs);
+    expect(theirBell.durationMs).toBeNull();
 
     // ...and arming theirs did not move ours.
     expect(barrier.bell(seats, LEVEL, NOW + 15_000, mine).deadlineMs).toBe(armed.deadlineMs);
@@ -629,11 +631,12 @@ describe('a stranger holds a solo player exactly when they owe the level a decis
       expect(quorum.blocking).toEqual([a.id]);
       expect(quorum.standingBy).toEqual(state.listed ? [b.id] : []);
 
-      // ...and so the countdown is the SOLO one, because nobody is waiting on A.
+      // ...and so there is no countdown at all, because nobody is waiting on A.
       const bell = barrier.bell(world.allActors(), world.turn, NOW);
       expect(bell.quorum).toBe(1);
       expect(bell.stragglers).toEqual([a.id]);
-      expect(bell.durationMs).toBe(BELL_MS.Solo);
+      expect(bell.running).toBe(false);
+      expect(bell.durationMs).toBeNull();
 
       // ...and their turn RESOLVES, with the stranger still owing whatever they
       // owe.

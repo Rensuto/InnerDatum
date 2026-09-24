@@ -653,6 +653,8 @@ export function run(site, size, seed, opts = {}) {
             }))
             .sort((x, y) => x.d - y.d)[0]?.m;
 
+    // TURNS A REST ALREADY PUMPED. See the rest below; it skips this pump.
+    let rested = 0;
     for (const { body: b, helps } of up) {
       /**
        * WHAT THIS BODY CAN FIRE, AS IT STANDS THIS TURN — only what it has
@@ -704,6 +706,30 @@ export function run(site, size, seed, opts = {}) {
         // two of the three infusions, and a driver that stopped to drink one
         // was throwing away an attack the engine never charged for.
         if (helpCost > 0) continue;
+      }
+
+      /**
+       * ═══ AND REST, WHICH THIS DRIVER NEVER DID EITHER ═══
+       * ToME's `rest` (Player.lua:983-993), through the engine's own entry point,
+       * which refuses with zero turns while anything is in sight — so this is
+       * "rest when the room is quiet", and the body fights on otherwise. Under
+       * the open round a body could step and swing in one turn and attrition
+       * never caught this driver; one action per turn (2026-09-23) made it the
+       * thing that wiped a lone Watchman in the Glass Archive after he had
+       * cleared three quarters of it.
+       *
+       * SOLO ONLY. A rest pumps the realm, and a party member with no order in
+       * would hold it at the barrier. Under HALF health, because a player who
+       * rested off every scratch would spend the turn cap sitting down.
+       */
+      if (bodies.length === 1 && b.hp < b.maxHp / 2) {
+        const r = realm.engine.rest(b.id);
+        if (r.turns > 0) {
+          rested = r.turns;
+          tally.rested = (tally.rested ?? 0) + r.turns;
+          lastVerb.set(b.id, 'rest');
+          break;
+        }
       }
 
       const living = foes.filter((f) => f.alive);
@@ -1154,6 +1180,11 @@ export function run(site, size, seed, opts = {}) {
      * The pump says so plainly — a wipe returns `erased` with reason `Wipe` —
      * so it is read here rather than inferred from the wreckage.
      */
+    if (rested > 0) {
+      // The loop's own `+= 1` is one of them.
+      turns += rested - 1;
+      continue;
+    }
     const pumped = realm.engine.pump();
     /**
      * ═══════════════════════════════════════════════════════════════════════

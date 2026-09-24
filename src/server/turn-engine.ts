@@ -88,13 +88,7 @@ import {
 } from './engine/party.ts';
 import type { PartyResult, PartyState } from './engine/party.ts';
 import type { GameEvent, SweepStep, TalentResolution } from './engine/scheduler.ts';
-import {
-  disconnectActor,
-  nextRoundTail,
-  pump,
-  reconnectActor,
-  submitIntent,
-} from './engine/scheduler.ts';
+import { disconnectActor, pump, reconnectActor, submitIntent } from './engine/scheduler.ts';
 import type {
   IntentResult,
   LevelUpNote,
@@ -2132,9 +2126,6 @@ export function createTurnEngine(opts: TurnEngineOptions): ReapingTurnEngine {
       const state = barrier.bell(players, level, now());
       return state.running ? state.durationMs : null;
     };
-    // THE SOONEST OPEN ROUND, as milliseconds from now on this engine's clock.
-    // See `TurnState.roundTailInMs` and `nextRoundTail`.
-    const tail = nextRoundTail(players);
 
     return {
       gameTurn: world.turn.clock.gameTurn,
@@ -2151,21 +2142,6 @@ export function createTurnEngine(opts: TurnEngineOptions): ReapingTurnEngine {
       whoseTurn: snapshot.blocking,
       committed: snapshot.blocking.length === 0 ? [] : [],
       standingBy: snapshot.standingBy,
-      /**
-       * WHO IS MID-ROUND. Read off the bodies rather than tracked separately,
-       * because `roundActions` is already the answer and a second copy is a
-       * second thing to keep in step — `spendTurn` clears it and nothing else
-       * has to remember to.
-       *
-       * FILTERED TO THE BLOCKING SET, so this is always a subset of
-       * `whoseTurn`: a player whose round closed is not mid-round.
-       */
-      acting: snapshot.blocking.filter((id) => {
-        const body = world.getActor(id);
-        // `isPlayer` narrows the union — `roundActions` is a player-only field,
-        // which is what keeps `BarrierActor` untouched by the whole feature.
-        return body !== undefined && isPlayer(body) && body.roundActions > 0;
-      }),
       /**
        * ═══════════════════════════════════════════════════════════════════════
        * HOW LONG TO ARM FOR — AND `null` UNLESS A BELL IS ACTUALLY RUNNING.
@@ -2197,12 +2173,10 @@ export function createTurnEngine(opts: TurnEngineOptions): ReapingTurnEngine {
        * which is why it can be aggressive without ever hurrying somebody who has
        * company."*
        *
-       * SOLO IS UNTOUCHED. At a quorum of one, `blocking.length <= 1` holds from
-       * the first blocker, so `running` is already true and the two-minute clock
-       * appears exactly when it always did.
+       * AND A LONE PLAYER HAS NO BELL AT ALL. `bellDurationMs` answers null at a
+       * quorum of one: nobody is waiting on them, and ToME never hurries a player.
        */
       bellDurationMs: bellToArm(),
-      roundTailInMs: tail === null ? null : Math.max(0, tail - now()),
       // WHOSE CARDS THE STRIP DRAWS. See `stripFor`: the arrays above are the
       // realm's either way, so a card can never be built from one barrier's
       // blocking set over another's roster.

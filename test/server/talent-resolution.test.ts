@@ -15,6 +15,7 @@ import { Refusal, submitIntent } from '../../src/server/engine/scheduler.ts';
 import {
   FOCUS_ON_HELD_GROUND,
   FOCUS_PER_TURN,
+  RESOLVE_ON_STRUCK,
   RESOLVE_PER_TURN,
   TalentEffect,
   TalentRefusal,
@@ -23,7 +24,6 @@ import {
   talentId,
   useTalent,
 } from '../../src/server/engine/talents.ts';
-import { MOVE_MP_COST, hasAffordableAction } from '../../src/server/engine/talents.ts';
 import { createTurnEngine } from '../../src/server/turn-engine.ts';
 import { createWorld } from '../../src/server/world/world.ts';
 import { TalentShape, TileCode } from '../../src/shared/protocol.ts';
@@ -109,20 +109,9 @@ function runtimeFor(talents: TalentEngine, world: World): TalentRuntime {
     },
     noteKill: (actorId: string, note: KillNote): void => talents.noteKill(actorId, note),
     noteStruck: (actorId: string): void => talents.noteStruck(actorId),
-    // THE REAL PREDICATE, because this fixture drives real talents — a stub
-    // would test the closed-round path while the file is about the open one.
-    // THE REAL CHARGE, because this fixture drives real talents and real MP.
-    spendMove: (actorId: string): boolean => {
-      const sheet = talents.sheetOf(actorId);
-      if (sheet === undefined) return true;
-      if (sheet.mp < MOVE_MP_COST) return false;
-      sheet.mp -= MOVE_MP_COST;
-      return true;
-    },
-    roundOpen: (actorId: string): boolean => {
-      const actor = world.getActor(actorId);
-      return actor === undefined ? false : hasAffordableAction(talents, actor, MOVE_MP_COST);
-    },
+    // UPSTREAM'S `no_energy`, off the talent's own definition — exactly as
+    // `talentRuntimeFor` (src/server/main.ts) answers it.
+    noEnergy: (talentId: string): boolean => talents.registry.get(talentId)?.noEnergy === true,
     // THE TWO THAT MAKE A RANK VISIBLE ON THE BASIC SWING. Forwarded exactly as
     // `talentRuntimeFor` (src/server/main.ts) forwards them, because this
     // fixture's whole purpose is to be that adapter.
@@ -274,28 +263,9 @@ function inspectorScene(seed: string): {
       sheet.resource.value = 0;
       const before = sheet.resource.value;
       act();
-      /**
-       * ═══ ONE GAME TURN, WHICH IS NO LONGER ONE PUMP ═══
-       * The intra-turn budget means an action can PARK rather than spend the
-       * turn: a step costs 1 MP of 3, so a player who walks once is still
-       * mid-round and no base pass has run. This helper's contract is "what the
-       * resource gained across one TURN", so it now pumps until the clock
-       * actually moves rather than assuming one pump did it.
-       *
-       * Bounded, because a helper that could spin forever on a bug is a test
-       * suite that hangs instead of failing.
-       */
-      const startedAt = world.turn.clock.gameTurn;
+      // ONE PUMP IS ONE TURN: every action ends it, as ToME's does, so the
+      // world runs on to this actor's next decision and the base pass lands.
       engine.pump();
-      // STILL MID-ROUND? THEN FINISH IT, which is what a player does. A step
-      // costs 1 MP of 3, so walking once leaves the round open and the world
-      // waits — more pumps change nothing, because the pump is waiting for THIS
-      // actor. A hold is not a talent and not a move, so `roundStaysOpen`
-      // refuses it and the turn is spent.
-      if (world.turn.clock.gameTurn === startedAt) {
-        engine.hold('p1');
-        engine.pump();
-      }
       return sheet.resource.value - before;
     },
   };
@@ -390,27 +360,64 @@ describe('with the runtime wired in, a talent resolves', () => {
     // naming it, instead of at a copied decimal that somebody then "fixes".
     const IRON_CURTAIN_RESOLVE = 25;
     /**
-     * ═══ ZERO NOW, AND IT WAS ONE — THE ROUND STAYED OPEN ═══
-     * Iron Curtain costs 5 of 6 AP, so a Watchman who casts it has 1 AP left and
-     * cannot afford anything — but he has 3 MP, a step costs 1, and
-     * `hasAffordableAction` therefore says the round may continue. The pump
-     * parks him rather than spending his turn, so NO base pass runs after the
-     * cast and the trickle is not paid.
-     *
-     * That is the intra-turn budget working, not a regression: a player who has
-     * acted but not finished has not had a turn yet. The count is still written
-     * out rather than folded into the figure, for the reason the note above
-     * gives — a future rate change should fail at the RATE.
+     * ═══ ONE — THE CAST IS THE TURN ═══
+     * This was zero while the round stayed open: Iron Curtain left MP for a
+     * step, so the pump parked him and no base pass ran after the cast. Every
+     * action ends the turn now, as ToME's does, so the pump runs on to his next
+     * decision and one base pass pays the trickle on the way.
      */
-    const BASE_PASSES_AFTER_THE_ACT = 0;
-    expect(table.sheet.resource.value).toBeCloseTo(
-      100 - IRON_CURTAIN_RESOLVE + RESOLVE_PER_TURN * BASE_PASSES_AFTER_THE_ACT,
-      6,
+    const BASE_PASSES_AFTER_THE_ACT = 1;
+    const struckPay = table.sheet.resource.value - (100 - IRON_CURTAIN_RESOLVE);
+    expect(
+      [
+        RESOLVE_PER_TURN * BASE_PASSES_AFTER_THE_ACT,
+        RESOLVE_PER_TURN * BASE_PASSES_AFTER_THE_ACT + RESOLVE_ON_STRUCK,
+      ].some((paid) => Math.abs(struckPay - paid) < 1e-6),
+      `the spend was not 25 Resolve plus one trickle (and at most one blow): paid back ${String(struckPay)}`,
+    ).toBe(true);
+    // AND THE HUSK BESIDE HIM SWUNG. The cast ended his turn, so the world ran
+    // on and the monster acted — each blow that lands pays `RESOLVE_ON_STRUCK`.
+    // Counted off the resource rather than assumed: whatever landed, the spend
+    // and the trickle are what is left underneath it.
+    const struck = Math.round(
+      (table.sheet.resource.value -
+        (100 - IRON_CURTAIN_RESOLVE + RESOLVE_PER_TURN * BASE_PASSES_AFTER_THE_ACT)) /
+        RESOLVE_ON_STRUCK,
     );
-    // …and no blow landed on him this pump, which is the other thing that could
-    // have moved this number (`RESOLVE_ON_STRUCK` is ten times the trickle).
-    expect(table.sheet.resource.value).toBeLessThan(100 - IRON_CURTAIN_RESOLVE + 1);
+    expect(struck).toBeGreaterThanOrEqual(0);
+    expect(struck).toBeLessThanOrEqual(1);
     expect(table.world.getActor('p1')?.cooldowns.get(IRON_CURTAIN)).toBeGreaterThan(0);
+  });
+
+  it('does not end the turn on a `no_energy` talent — tome/class/Actor.lua:5862-5863', () => {
+    /**
+     * Upstream skips `useEnergy` for a `no_energy` talent, so the world does not
+     * move and the player chooses again. `actPlayer` parks on it; without that
+     * branch a free infusion costs the turn a swing does.
+     */
+    const table = scene('seam-no-energy');
+    const HEALING_INFUSION = talentId('healing_infusion');
+    expect(table.talents.registry.get(HEALING_INFUSION)?.noEnergy, 'the fixture is not free').toBe(
+      true,
+    );
+    const ren = table.world.getActor('p1');
+    if (ren === undefined) throw new Error('fixture: no p1');
+    ren.hp = ren.maxHp - 60;
+    const hurt = ren.hp;
+    // Up to his first decision, so the baseline is the turn he chooses on.
+    table.engine.pump();
+    const turn = table.world.turn.clock.gameTurn;
+
+    table.cast(HEALING_INFUSION);
+    table.engine.pump();
+    expect(ren.hp, 'the infusion did not resolve').toBeGreaterThan(hurt);
+    expect(table.world.turn.clock.gameTurn, 'a free talent moved the world').toBe(turn);
+
+    // THE CONTROL: the same body, a talent that is not free, and the world goes.
+    table.sheet.resource.value = 100;
+    table.cast(IRON_CURTAIN);
+    table.engine.pump();
+    expect(table.world.turn.clock.gameTurn).toBeGreaterThan(turn);
   });
 
   it('REFUNDS with zero energy when it goes illegal between submission and resolution', () => {

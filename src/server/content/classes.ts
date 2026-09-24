@@ -384,7 +384,11 @@ export const WATCHMAN: ClassDef = {
     'Walks into the swarm so the people behind him do not have to.',
   sprite: 'chr_player_watchman_s',
   downedSprite: 'chr_player_watchman_downed_s',
-  maxHp: 72,
+  // `max_life = 120` — warrior.lua:41, the Warrior metaclass, VERBATIM. It was
+  // 72, ToME's ladder at 0.6, priced for an open round in which a player could
+  // step and act in one turn. One action per turn (2026-09-23) took that away,
+  // and the scale went with it. See INSPECTOR.maxHp for the whole ladder.
+  maxHp: 120,
   // Bulwark 16 — he is the one standing in the doorway.
   lifeRating: 16,
   hpRegen: 0.5,
@@ -528,7 +532,7 @@ export const INSPECTOR: ClassDef = {
   downedSprite: 'chr_player_inspector_downed_s',
   /**
    * ═══════════════════════════════════════════════════════════════════════════
-   * 66, AND IT WAS 60 — THE ARCHER IS 110 OF THE BULWARK'S 120, NOT 100 OF IT.
+   * 110, THE ARCHER'S OWN — AND BEFORE THAT 66, AND BEFORE THAT 60.
    * ═══════════════════════════════════════════════════════════════════════════
    *
    * ToME's level-1 `max_life` takes exactly four values and every class in the
@@ -544,6 +548,14 @@ export const INSPECTOR: ClassDef = {
    * Inspector was a whole step low — she was wearing the Arcane Blade's fraction
    * while citing the Archer everywhere else, including `lifeRating` below.
    *
+   * ═══ AND THEN THE WHOLE LADDER WENT VERBATIM (2026-09-23) ═══
+   * All four were ToME's figures at 0.6 of scale — 72 / 66 / 54 / 54 — priced
+   * for an open round that let a player step and act in one turn. When every
+   * action became a turn the scale lost its reason, and a solo Watchman in the
+   * Drowned Chapel wiped 21 of 40 runs at 72 against 7 of 40 at 120. The
+   * fractions below survive; the 0.6 does not.
+   *
+   * WHAT FOLLOWS IS THE 2026-09 CORRECTION, KEPT FOR ITS ARITHMETIC:
    * 72 × 110/120 = 66. A PORT CORRECTION, NOT A BUFF: the number comes from
    * upstream's own spread applied to our own top of scale, the same arithmetic
    * that produced 54 for the Alchemist and produces 54 for the Redactor. It is
@@ -551,7 +563,8 @@ export const INSPECTOR: ClassDef = {
    * above for that — but a class cited as the Archer should have the Archer's
    * fraction.
    */
-  maxHp: 66,
+  // warrior.lua:225, VERBATIM.
+  maxHp: 110,
   // Archer 10 — upstream's ranged baseline. No `life_rating` override in
   // warrior.lua:188-258, so she takes tome/class/Actor.lua:187's default of 10.
   lifeRating: 10,
@@ -709,7 +722,8 @@ export const ALCHEMIST: ClassDef = {
     'Carries eight vials and a field kit, and counts both.',
   sprite: 'chr_player_alchemist_s',
   downedSprite: 'chr_player_alchemist_downed_s',
-  maxHp: 54,
+  // `max_life = 90` — mage.lua:101, the Alchemist's own block, VERBATIM.
+  maxHp: 90,
   // Alchemist 9 — upstream's own value for the same profession.
   lifeRating: 9,
   hpRegen: 0.5,
@@ -799,7 +813,7 @@ export const ALCHEMIST: ClassDef = {
  * have no reason to stand anywhere else.
  *
  * THIS HEADING SAID "THE FRAILEST BODY THAT SHIPS" AND THAT IS NO LONGER TRUE.
- * She is 54 hit points, tied with the Alchemist, and carries the HIGHER
+ * She is 90 hit points, tied with the Alchemist, and carries the HIGHER
  * `lifeRating` of the two (10 against 9), so from level 2 up she is strictly the
  * tougher. Both figures are upstream's — the Doomed and the Alchemist share
  * `max_life = 90`, and the Doomed takes tome/class/Actor.lua:187's default life
@@ -830,7 +844,7 @@ export const REDACTOR: ClassDef = {
   downedSprite: 'chr_player_redactor_downed_s',
   /**
    * ═══════════════════════════════════════════════════════════════════════════
-   * 54, AND IT WAS 48 — NOTHING IN ToME SITS UNDER 0.75 OF THE TOUGHEST BODY.
+   * 90, THE DOOMED'S OWN — AND BEFORE THAT 54, AND BEFORE THAT 48.
    * ═══════════════════════════════════════════════════════════════════════════
    *
    * The Doomed is `max_life = 90` (afflicted.lua:150) against the Warrior
@@ -838,6 +852,8 @@ export const REDACTOR: ClassDef = {
    * of ToME's twenty-two classes shares. The Archmage (mage.lua:229) and the
    * Alchemist (mage.lua:101) are on that same 90. There is no frailer class.
    *
+   * Since 2026-09-23 it is the 90 verbatim; see INSPECTOR.maxHp for why the
+   * scale went. What follows is the earlier correction, at the old scale:
    * 72 × 90/120 = 54. Ours was 48, which is 0.667 — a fraction upstream never
    * uses for anything, arrived at by counting down from the Alchemist rather
    * than by reading the ladder. See INSPECTOR.maxHp for the whole spread.
@@ -849,7 +865,8 @@ export const REDACTOR: ClassDef = {
    * fix and it is not the answer; the answer is what she can DO with a turn,
    * which is `strikeOut`'s own note.
    */
-  maxHp: 54,
+  // afflicted.lua:150, VERBATIM.
+  maxHp: 90,
   /**
    * 10, AND IT WAS 8. The Doomed block (afflicted.lua:105-161) sets no
    * `life_rating` at all, so it takes tome/class/Actor.lua:187's

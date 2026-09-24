@@ -3508,30 +3508,6 @@ function turnView(): TurnView {
   return {
     turn,
     bellMs: bellRemainingMs(),
-    /**
-     * v19 — WHAT IS LEFT IN THE ROUND, so the banner can answer "am I done?".
-     *
-     * FROM `resource`, WHICH IS VIEWER-PRIVATE, and never from the public
-     * per-actor turn record — another detective's remaining budget is not yours
-     * to read, and `TurnView.budget` says so at its declaration.
-     *
-     * NULL UNTIL ALL FOUR NUMBERS ARE PRESENT. A server that predates the MP
-     * fields sends two of them, and half a budget on screen is worse than none:
-     * a player reading "3/6 AP" with no MP beside it cannot tell whether the
-     * round ended because the legs ran out.
-     */
-    budget:
-      resource?.ap === undefined ||
-      resource.maxAp === undefined ||
-      resource.mp === undefined ||
-      resource.maxMp === undefined
-        ? null
-        : {
-            ap: resource.ap,
-            maxAp: resource.maxAp,
-            mp: resource.mp,
-            maxMp: resource.maxMp,
-          },
   };
 }
 
@@ -11855,7 +11831,15 @@ async function boot(): Promise<void> {
       // verb breaks here instead of producing a frame no server understands.
       switch (command) {
         case TurnCommand.Commit:
-          socket.send({ v: PROTOCOL_VERSION, t: 'commit' });
+          /**
+           * ═══ NOTHING TO COMMIT: EVERY ACTION ENDS THE TURN ═══
+           * Space used to end an open round, and a round stayed open after a
+           * step or a talent — so a player had to press it after every action.
+           * The server ends the turn on the action now, as ToME does, and a
+           * Space sent anyway would queue a HOLD that burns the NEXT turn. So
+           * outside aiming and menus (both handled above) it does nothing.
+           * Waiting a turn is '.' (`TurnCommand.Hold`).
+           */
           return;
         case TurnCommand.Hold:
           socket.send({ v: PROTOCOL_VERSION, t: 'hold' });
