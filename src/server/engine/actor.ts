@@ -920,8 +920,8 @@ export type PlayerActor = ActorCommon & {
    *
    * ═══ SOFT ON PURPOSE — A PLAIN STRING, NOT `ClassId` ═══
    * The AUTHORITATIVE record of what a class can DO is the `TalentSheet` held by
-   * `engine/talents.ts`, keyed by actor id: the loadout, the resource pool, the
-   * AP/MP budget and every rule that reads them. This field decides nothing and
+   * `engine/talents.ts`, keyed by actor id: the loadout, the resource pool and
+   * every rule that reads them. This field decides nothing and
    * must never be branched on for a rule. It exists for exactly one reason:
    * `snapshotPlayers` (persist/saves.ts:239-244, which persists "name + class +
    * position") runs in a layer that cannot reach the talent engine, and a save

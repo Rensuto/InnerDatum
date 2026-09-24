@@ -110,7 +110,7 @@ function sampleCharacter(overrides: Partial<CharacterFile> = {}): CharacterFile 
       ownerId: OWNER,
       name: 'Sergeant Vell',
       classId: 'watchman',
-      resources: { hp: 61, ap: 4, mp: 2, special: { kind: 'resolve', value: 3 } },
+      resources: { hp: 61, special: { kind: 'resolve', value: 3 } },
       talentCooldowns: { 'talent:lockdown': 3, 'talent:crude_blow': 1 },
       effects: [{ effectId: 'effect:bleeding', turnsRemaining: 2, magnitude: 6 }],
       position: { zoneId: 'alderbrook', depth: 1, cell: [12, 7] },
@@ -1014,8 +1014,6 @@ function sheetFrom(talentPoints: Readonly<Record<string, number>> | undefined) {
     classId: ClassId.Watchman,
     loadout: [...WATCHMAN_LOADOUT],
     resource: ResourceKind.Resolve,
-    maxAp: 6,
-    maxMp: 3,
     points: new Map(Object.entries(talentPoints ?? {})),
   });
 }
@@ -1087,7 +1085,7 @@ describe('character files: level, xp, unspent points and raw talent points', () 
       // so a rounded xp field would shave a fifth off every early award.
       xp: 123.5,
       talentPoints: spread,
-      resources: { hp: 61, ap: 4, mp: 2, special: { kind: 'resolve', value: 3 } },
+      resources: { hp: 61, special: { kind: 'resolve', value: 3 } },
       createdAt: '2026-08-15T00:00:00.000Z',
     });
 
@@ -1139,7 +1137,7 @@ describe('character files: level, xp, unspent points and raw talent points', () 
       level: 4,
       xp: 12.8,
       talentPoints: { 'talent:lockdown': 3, 'talent:crude_blow': 2 },
-      resources: { hp: 61, ap: 4, mp: 2, special: { kind: 'resolve', value: 3 } },
+      resources: { hp: 61, special: { kind: 'resolve', value: 3 } },
       createdAt: '2026-08-15T00:00:00.000Z',
     });
 
@@ -1462,7 +1460,7 @@ describe('character files: the bag and the paper doll', () => {
       hotbar: ['talent:crude_blow', null, 'talent:ward_rush'],
       unlockedTrees: ['generic/leverage'],
       deepenedTrees: ['watch/discipline'],
-      resources: { hp: 61, ap: 4, mp: 2, special: { kind: 'resolve', value: 3 } },
+      resources: { hp: 61, special: { kind: 'resolve', value: 3 } },
       createdAt: '2026-08-15T00:00:00.000Z',
     });
 
@@ -1637,7 +1635,7 @@ describe('character files: the bag and the paper doll', () => {
       name: 'Sergeant Vell',
       classId: 'watchman',
       money: 240,
-      resources: { hp: 61, ap: 4, mp: 2, special: { kind: 'resolve', value: 3 } },
+      resources: { hp: 61, special: { kind: 'resolve', value: 3 } },
     });
     expect(created.money).toBe(240);
 
@@ -2368,6 +2366,88 @@ describe('the character bridge carries progression in both directions', () => {
     expect(reopened?.talentPoints).toEqual({ 'talent:crude_blow': 1 });
 
     await store.close();
+  });
+});
+
+// ===========================================================================
+// saves.ts — NO `ap` OR `mp`. The per-turn budget they held is retired.
+// ===========================================================================
+
+describe('a character file carries no AP/MP budget', () => {
+  it('a character file written without ap/mp loads with no problems', async () => {
+    /**
+     * THROUGH THE REAL PRODUCER, TO DISK, AND BACK. The bridge writes no `ap`
+     * or `mp` now, so their absence is the normal case — and `parseResources`
+     * used to push a problem for each missing one, which `loadCharacter` logs
+     * as a REPAIRED file. Left in, every save this build writes would have been
+     * reported as damaged on its next load.
+     */
+    const logger = recordingLogger();
+    const store = createSaveStore({
+      root,
+      logger,
+      debounceMs: 5,
+      now: () => '2026-08-15T12:00:00.000Z',
+    });
+    const bridge = createCharacterBridge({ store, logger, now: () => '2026-08-15T12:00:00.000Z' });
+    expect(await bridge.openCharacter?.(OWNER, 'act_ren')).toBe(null);
+    // A WHOLE snapshot, the ledger included, so the only thing a repair could
+    // be about is the two fields this is here for.
+    bridge.savePlayersNow?.(
+      [
+        {
+          actorId: 'act_ren',
+          name: 'Ren',
+          hp: 44,
+          cooldowns: {},
+          x: 12,
+          y: 7,
+          classId: 'watchman',
+          level: 1,
+          xp: 0,
+          unspentPoints: totalPointsAtLevel(1),
+          talentPoints: {},
+        },
+      ],
+      'disconnect',
+    );
+    await store.flush();
+
+    const [header] = await store.listCharacters(OWNER);
+    expect(header, 'the bridge wrote no file').toBeDefined();
+    if (header === undefined) return;
+    const path = characterPath(root, OWNER, header.id);
+    expect(path).not.toBeNull();
+    if (path === null) return;
+    const onDisk = JSON.parse(await readFile(path, 'utf8')) as {
+      readonly resources: Record<string, unknown>;
+    };
+    expect(Object.keys(onDisk.resources).sort()).toEqual(['hp', 'special']);
+
+    const loaded = await store.loadCharacter(OWNER, header.id);
+    expect(loaded.outcome).toBe(LoadOutcome.Loaded);
+    expect(loaded.outcome === LoadOutcome.Loaded && loaded.problems).toEqual([]);
+    expect(logger.lines.filter((line) => line.level !== 'info')).toEqual([]);
+    await store.close();
+  });
+
+  it('an old file with ap/mp still loads', () => {
+    /**
+     * EVERY FILE WRITTEN BEFORE THE BUDGET WAS RETIRED CARRIES BOTH. They are
+     * accepted and dropped: the parse is clean, the resources hold only what
+     * is current, and the next write leaves them out — no `SCHEMA_VERSION`
+     * bump, because nothing about the file needs converting.
+     */
+    const base = JSON.parse(serialiseCharacter(sampleCharacter())) as Record<string, unknown>;
+    const parsed = parseCharacterFile({
+      ...base,
+      resources: { hp: 61, ap: 4, mp: 2, special: { kind: 'resolve', value: 3 } },
+    });
+    expect(parsed.ok, 'an old file was refused').toBe(true);
+    if (!parsed.ok) return;
+    expect(parsed.problems).toEqual([]);
+    expect(parsed.file.resources).toEqual({ hp: 61, special: { kind: 'resolve', value: 3 } });
+    expect(serialiseCharacter(parsed.file)).toBe(serialiseCharacter(sampleCharacter()));
   });
 });
 

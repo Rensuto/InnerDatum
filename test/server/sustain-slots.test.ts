@@ -76,10 +76,6 @@ function bench(talents: readonly Talent[], max: number) {
     sustained: new Set<string>(),
     points: new Map(talents.map((t) => [t.id, 1])),
     resource: { kind: 'resolve', value: max, max, min: 0 },
-    ap: 6,
-    maxAp: 6,
-    mp: 6,
-    maxMp: 6,
     movedThisTurn: false,
     turnProcs: { once: () => true, seen: () => false, clear: () => undefined },
   } as unknown as TalentSheet;

@@ -65,11 +65,12 @@ import {
 import type { Talent } from '../engine/talents.ts';
 
 /**
- * `ap: 0` IS WHAT `no_energy` MEANS IN THIS ENGINE (healing_infusion.ts says
- * so, and every other free talent carries 0): a free action shares its
- * decision's budget, so three points here would take the Watchman's Lockdown
- * off him for the turn he whistled in. Blinding Speed costs stamina and nothing
- * else of the turn; the Resolve is that price.
+ * `ap: 0`, THE CONVENTION EVERY `no_energy` TALENT CARRIES (healing_infusion.ts
+ * says so). It mattered while a free action shared its decision's AP budget:
+ * three points here would have taken the Watchman's Lockdown off him for the
+ * turn he whistled in. That budget is retired, so the figure is a price nothing
+ * spends. Blinding Speed costs stamina and nothing else of the turn; the
+ * Resolve is that price.
  */
 const AP_COST = 0;
 const RESOLVE_COST = 2;

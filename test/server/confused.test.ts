@@ -256,11 +256,11 @@ function brawl(name: string) {
  * Swing `times`, and report how many swings actually resolved.
  *
  * ═══ A HOLD BETWEEN SWINGS, AND IT IS NOT PADDING ═══
- * `crude_blow` costs 3 AP against a budget of 6, so a Watchman gets exactly two
- * per game turn and the third comes back `no_resource` — the first version of
- * this helper counted that refusal as a confused fizzle and made the whole test
- * a measurement of the AP budget. Passing the turn puts every attempt on a full
- * budget, so the only thing that can stop one is the status.
+ * Each attempt gets a decision of its own. It was written for the AP budget —
+ * `crude_blow` cost 3 of 6, so a third swing in one game turn came back
+ * `no_resource` and the first version of this helper counted that as a
+ * confused fizzle — and the budget is retired (Slice C), but a decision per
+ * attempt is still what makes the status the only thing that can stop one.
  *
  * COUNTS `talent` EVENTS, which is what a resolved talent emits. (`used` is what
  * this looked for first, and it does not exist: the count came back zero for the
@@ -274,7 +274,7 @@ function swing(scene: ReturnType<typeof brawl>, times: number): number {
     for (const ev of scene.engine.pump().playerEvents) {
       if (ev.k === 'talent') landed += 1;
     }
-    // AND PASS THE TURN, so the next attempt starts with its AP back.
+    // AND PASS THE TURN, so the next attempt is a decision of its own.
     scene.engine.hold('p1');
     scene.engine.commit('p1');
     scene.engine.pump();
@@ -300,9 +300,9 @@ describe('a confused talent fails, and the turn goes with it', () => {
      * ═══ AND THE TURN IS STILL SPENT — `self:useEnergy()` ═══
      * That half is asserted at the movement site ("spends the turn when the
      * stumble goes nowhere"), because both fizzles return the same
-     * `{ kind: 'hold' }` and the clock is legible there: a swing chains inside
-     * its own turn while AP lasts, so counting game turns around one would
-     * measure the AP budget rather than the refund rule. The reason it must not
+     * `{ kind: 'hold' }` and the clock is legible there: counting game turns
+     * around a swing measured the AP budget (retired since) rather than the
+     * refund rule. The reason it must not
      * be a refusal is the same in both places — `submitTalent` is free and
      * re-prompts, so a roll checked there would be a roll you could press again.
      */

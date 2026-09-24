@@ -972,7 +972,7 @@ describe('projectClassOptions', () => {
 
   it('puts nothing on a card that the picker did not ask for', () => {
     // The same key check `projectTurn` carries, and for the same reason: a
-    // `ClassDef` holds the combat sheet, the AP/MP budget, the downed sprite and
+    // `ClassDef` holds the combat sheet, the resource rules, the downed sprite and
     // twelve talent CLOSURES, and a spread would put the lot on the wire the day
     // somebody stops copying field by field.
     const [option] = projectClassOptions().options;
@@ -1715,7 +1715,7 @@ describe('the loadout projection loses no field', () => {
  *
  * `projectResource` rebuilds its payload FIELD BY FIELD, deliberately — its own
  * comment argues the explicit copy is what makes it "the ONE place that decides
- * what a viewer is told about their own budgets", and that a spread "would
+ * what a viewer is told about their own pool", and that a spread "would
  * forward whatever a future `ResourceView` happens to gain, which is how a
  * server-only field ends up on a wire nobody audited". That reasoning is right
  * and the copy should stay.
@@ -1723,76 +1723,32 @@ describe('the loadout projection loses no field', () => {
  * It also states the cost in advance: *"a new field is two edits, and the second
  * one is easy to forget. A live probe is what catches it."*
  *
- * IT HAS NOW BEEN FORGOTTEN TWICE. `ap` was added to `ResourceView` and to
+ * IT WAS FORGOTTEN TWICE. `ap` was added to `ResourceView` and to
  * `toResourceView` and reached no socket at all. Then `mp` was added the same
  * way, and a live probe printed `{"ap":6,"maxAp":6}` with no MP in it — for a
- * HUD whose whole job is to say whether the round can continue.
+ * HUD whose whole job was to say whether the round could continue. (Both were
+ * the per-turn AP/MP budget, retired since, and their two tests went with them.)
  *
  * So this is the audit the comment asks for, done by a test instead of by hand:
- * every optional budget field a `ResourceView` carries must come out the other
- * side. It does not forbid the explicit copy — it just refuses to let one be
- * silently dropped a third time.
+ * every field a `ResourceView` carries must come out the other side. It does
+ * not forbid the explicit copy — it just refuses to let one be silently dropped
+ * a third time.
  */
-describe('the viewer gets every budget the server knows about', () => {
+describe('the viewer gets every field the server knows about', () => {
   const VIEWER = { id: 'actor_a' } as unknown as Parameters<typeof projectResource>[0];
-
-  it('forwards ap, maxAp, mp and maxMp', () => {
-    const frame = projectResource(VIEWER, {
-      kind: ResourceKind.Resolve,
-      current: 40,
-      max: 100,
-      discrete: false,
-      ap: 4,
-      maxAp: 6,
-      mp: 2,
-      maxMp: 3,
-    });
-    expect(frame).not.toBeNull();
-    // ═══ THE ASSERTION THAT WAS FAILING ═══
-    // Before the second edit: mp and maxMp were simply absent from the frame.
-    expect(frame?.resource.ap).toBe(4);
-    expect(frame?.resource.maxAp).toBe(6);
-    expect(frame?.resource.mp).toBe(2);
-    expect(frame?.resource.maxMp).toBe(3);
-  });
-
-  it('drops every budget key when the server has nothing to say', () => {
-    /**
-     * THE HALF THAT MUST NOT MOVE. The fields are optional so that adding them
-     * forced no protocol bump, which means a client can outlive a server that
-     * never sends them — and `ResourceView.ap` says absent must mean "an older
-     * server", never "a budget of zero". Emitting `ap: 0` would tell a player
-     * their round is spent when nobody has said anything about it.
-     */
-    const frame = projectResource(VIEWER, {
-      kind: ResourceKind.Resolve,
-      current: 40,
-      max: 100,
-      discrete: false,
-    });
-    const keys = Object.keys(frame?.resource ?? {});
-    expect(keys).not.toContain('ap');
-    expect(keys).not.toContain('maxAp');
-    expect(keys).not.toContain('mp');
-    expect(keys).not.toContain('maxMp');
-  });
 
   it('carries the whole of ResourceView, so a third field cannot be dropped', () => {
     /**
-     * THE GUARD THAT GENERALISES. The two tests above name four fields; this one
-     * names none. It builds a view with every optional budget key set to a
-     * distinguishable value and asserts each one survives — so the next field
-     * added to `ResourceView` fails here rather than on somebody's screen.
+     * THE GUARD THAT GENERALISES. It names no field: it builds a view with
+     * every key set to a distinguishable value and asserts each one survives —
+     * so the next field added to `ResourceView` fails here rather than on
+     * somebody's screen, as `ap` and `mp` once did.
      */
     const view = {
       kind: ResourceKind.Resolve,
       current: 40,
       max: 100,
       discrete: false,
-      ap: 4,
-      maxAp: 6,
-      mp: 2,
-      maxMp: 3,
     };
     const out = projectResource(VIEWER, view)?.resource ?? {};
     for (const [key, value] of Object.entries(view)) {

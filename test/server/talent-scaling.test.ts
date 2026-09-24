@@ -175,7 +175,7 @@ type Fixture = {
   addMonster(id: string, x: number, y: number, hp?: number): TalentActor;
   /** Buy this talent up to `level` — the spend path's effect, without the path. */
   setLevel(actorId: string, bare: string, level: number): void;
-  /** Full AP, full MP, full resource. Stands in for the once-a-turn refill. */
+  /** A full resource pool, so every cast in a case can pay. */
   refill(actorId: string): void;
 };
 
@@ -343,8 +343,6 @@ function fixture(): Fixture {
     refill: (actorId) => {
       const sheet = engine.sheetOf(actorId);
       if (sheet === undefined) throw new Error(`no sheet for ${actorId}`);
-      sheet.ap = sheet.maxAp;
-      sheet.mp = sheet.maxMp;
       sheet.resource.value = sheet.resource.max;
     },
   };
@@ -1317,7 +1315,7 @@ describe('THE FROZEN NUMBERS — a rank buys damage, never a discount or a solut
     }
   });
 
-  it.each(CASES)('$bare: costs the same AP, MP and resource at rank 1 and rank 5', (entry) => {
+  it.each(CASES)('$bare: costs the same resource and cooldown at rank 1 and rank 5', (entry) => {
     // Freezing the costs is what keeps `canUseTalent` a PURE PREDICATE OVER
     // STATIC DATA: the projector greys a hotbar slot out from the catalogue, and
     // a cost that depended on the caster's rank would mean the button the client
@@ -1329,14 +1327,12 @@ describe('THE FROZEN NUMBERS — a rank buys damage, never a discount or a solut
     expect(high.result.ok).toBe(true);
     if (!low.result.ok || !high.result.ok) return;
 
+    // (AP and MP were in this too, spent from the per-turn budget, until it
+    // was retired; nothing spends them now.)
     expect({
-      ap: high.result.apSpent,
-      mp: high.result.mpSpent,
       resource: high.result.resourceSpent,
       cooldown: high.result.cooldownTurns,
     }).toEqual({
-      ap: low.result.apSpent,
-      mp: low.result.mpSpent,
       resource: low.result.resourceSpent,
       cooldown: low.result.cooldownTurns,
     });

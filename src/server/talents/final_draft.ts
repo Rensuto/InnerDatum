@@ -53,11 +53,12 @@ import type { Talent } from '../engine/talents.ts';
  * applied to range instead of to area.
  *
  * ═══ THE MOST EXPENSIVE BUTTON IN THE CLASS, AND DELIBERATELY SO ═══
- * `class-wiring.test.ts` asserts that the most expensive button in every class
- * fits inside the smallest budget that class can have. At 34 Ink this is that
- * button, and a Redactor cannot open a fight with it: the well starts full but
- * the cooldown and the price mean it is a thing you EARN mid-fight by marking,
- * which is the class's whole shape expressed as its best talent.
+ * At 34 Ink this is the class's dearest price, and a Redactor cannot open a
+ * fight with it: the well starts full but the cooldown and the price mean it is
+ * a thing you EARN mid-fight by marking, which is the class's whole shape
+ * expressed as its best talent. (It was also the dearest AP price, pinned to fit
+ * the smallest budget by a class-wiring test; the budget and that test went in
+ * Slice C.)
  */
 
 const RANGE = 6;

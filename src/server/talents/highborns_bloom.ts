@@ -21,9 +21,10 @@
  * `engine/` learning what an effect is.
  *
  * ═══ THE RESOURCE, NOT THE TURN ═══
- * Upstream waives the resource and still spends energy. AP and MP here are the
- * TURN rather than a pool, so waiving them would let a body act without end —
- * this is a discount on the pool your class spends, and nothing else.
+ * Upstream waives the resource and still spends energy. The turn is still
+ * charged (`spendTurn`, in the scheduler), and a talent that cost no time would
+ * let a body act without end — so this is a discount on the pool your class
+ * spends, and nothing else.
  *
  * ═══ AND IT DOES NOT MAKE ANYTHING AFFORDABLE ═══
  * *"Your resources must still be high enough to initially power the talent"*

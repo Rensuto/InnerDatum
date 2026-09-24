@@ -198,8 +198,6 @@ describe('talentAffordable — the grey, driven rather than read', () => {
     kind: ResourceKind.Focus,
     current: 50,
     max: 50,
-    ap: 12,
-    maxAp: 12,
     discrete: false,
   };
 
@@ -212,9 +210,13 @@ describe('talentAffordable — the grey, driven rather than read', () => {
     expect(talentAffordable(gunless, null)).toBe(false);
   });
 
-  it('still refuses rank 0 and still reads the budgets', () => {
+  it('still refuses rank 0 and still reads the pool', () => {
     expect(talentAffordable(talent({ level: 0 }), full)).toBe(false);
-    expect(talentAffordable(talent({ cost: { ap: 20, mp: 0, resource: 0 } }), full)).toBe(false);
+    expect(talentAffordable(talent({ cost: { ap: 4, mp: 0, resource: 51 } }), full)).toBe(false);
+    expect(talentAffordable(talent({ cost: { ap: 4, mp: 0, resource: 50 } }), full)).toBe(true);
+    // AND NOTHING ELSE: this read an AP price against the per-turn AP budget
+    // until the budget was retired. A price no frame can compare is no grey.
+    expect(talentAffordable(talent({ cost: { ap: 20, mp: 0, resource: 0 } }), full)).toBe(true);
   });
 });
 

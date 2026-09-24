@@ -1735,9 +1735,9 @@ export const EMPOWERED_HEALING: EffectDef = Object.freeze({
  * a resource is deducted.
  *
  * ═══ THE RESOURCE, NOT THE TURN ═══
- * AP and MP are the turn rather than a pool, and a talent that cost no time
- * would let a body act without end. Upstream spends energy either way; only the
- * class resource is waived.
+ * The turn is still charged, and a talent that cost no time would let a body
+ * act without end. Upstream spends energy either way; only the class resource
+ * is waived.
  *
  * SHORT AND EXPENSIVE. One turn at rank 1 against a 24-turn cooldown, which is
  * upstream's shape: it is a window to spend a pool you have already emptied,
@@ -1934,8 +1934,9 @@ export const FOOTNOTED_LUCK: EffectDef = Object.freeze({
  * So an infusion costs no turn AND the cooldowns are long AND every use makes
  * every infusion's next cooldown longer. Take the first two without the third
  * and a character with three infusions fires all three the moment they are up,
- * every time, for free — which `tools/round-live.mjs` has been reporting as
- * *"OPEN ROUND: two casts inside one turn"* to nobody.
+ * every time, for free — which `tools/round-live.mjs` (a budget probe, since
+ * deleted) had been reporting as *"OPEN ROUND: two casts inside one turn"* to
+ * nobody.
  *
  * ═══ THE MERGE IS THE MECHANIC ═══
  * `on_merge` (other.lua:106-110) REFRESHES the duration and ADDS the power, so

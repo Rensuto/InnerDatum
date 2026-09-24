@@ -1275,23 +1275,24 @@ export const TalentShape = {
 export type TalentShape = (typeof TalentShape)[keyof typeof TalentShape];
 
 /**
- * What one use costs. Three budgets, because the game has three.
+ * What one use costs.
  *
- * AP and MP are the INTRA-TURN budget (PLAN.md § 6: AP/MP is what is spent
- * inside a turn; the turn's own energy is ToME's price for the action, which
- * the server charges); `resource` is the class pool named by
- * `ResourceView.kind`. Every talent uses two of the three and the unused ones
- * are 0 rather than absent, so the hotbar never has to write `?? 0` at four
- * call sites.
+ * `resource` is the class pool named by `ResourceView.kind`, and it is the one
+ * price anything spends. AP and MP were the intra-turn budget (PLAN.md § 6)
+ * until Slice C retired it: every action ends the turn and pays ToME's energy
+ * price for it, which the server charges. The two fields are still projected
+ * as a displayed price that nothing spends, until the commit that removes them
+ * with a protocol bump. 0 rather than absent, so the hotbar never has to write
+ * `?? 0` at four call sites.
  *
  * ONE OBJECT RATHER THAN THREE TOP-LEVEL FIELDS because they are one concept —
  * "what this costs" — and because the server's `TalentCost` is already shaped
  * this way, so projecting it is filling in defaults rather than flattening.
  */
 export type TalentCostView = {
-  /** Action points. "AP 5" in the class tables of game-design.md § 2. */
+  /** Action points — a displayed price; nothing spends them any more. */
   ap: number;
-  /** Movement points. Only Fog Step spends any in M3. */
+  /** Movement points — Fog Step's 1, displayed; nothing spends them any more. */
   mp: number;
   /** Resolve / Focus / Reagents, per `ResourceView.kind`. */
   resource: number;
@@ -1593,7 +1594,7 @@ export type LoadoutTalent = {
    * hand — is the only part a player can act on.
    *
    * ═══ ONLY A RULE ABOUT THE BODY, NEVER ONE ABOUT THE TURN OR THE AIM ═══
-   * Cooldowns and budgets already grey the button from their own frames
+   * Cooldowns and the pool already grey the button from their own frames
    * (`cooldowns`, `resource`) on every turn; range and sight depend on a tile
    * nobody has picked yet. This is for what holds until the body changes, and
    * the loadout is re-sent when the hand does (`gateKeyFor`, net/gateway.ts).
@@ -1733,58 +1734,13 @@ export type ResourceView = {
   kind: ResourceKind;
   current: number;
   max: number;
-  /**
-   * ═══════════════════════════════════════════════════════════════════════════
-   * THE ACTING BUDGET — and for four milestones no frame carried it.
-   * ═══════════════════════════════════════════════════════════════════════════
-   *
-   * `DECISIONS.md` D1 is **Accepted** and its table reads *"Intra-turn budget:
-   * 6 AP / 3 MP, spendable across several talents in one park"*. Every one of
-   * the twelve talents is priced against it — Ward Rush at 2 is called "the
-   * cheapest engage in the game" and `ward_rush.ts` derives its own cooldown
-   * from *"an Inner Datum turn holds ~2 actions from a 6 AP budget"*.
-   *
-   * The CONTENT was priced for that round. The ENGINE was not: one submitted
-   * action ends the actor's turn, so Ward Rush at 2 and Iron Curtain at 5 cost
-   * a player exactly the same thing. And with no frame carrying the budget, the
-   * client could not even show the number — `affordable()` in client/main.ts
-   * says so in its own docblock: *"a talent that is unaffordable purely on AP
-   * shows as ready and is refused by the server with a sentence."*
-   *
-   * This is the frame that note is waiting for. It makes the number VISIBLE and
-   * TRUE; it does not yet make the round open — that is the engine change, and
-   * it lands separately so a deploy is never half-tuned.
-   *
-   * ═══ OPTIONAL, SO NO VERSION BUMP ═══
-   * An old client ignores a field it cannot name, which this file's history
-   * calls *"textbook… precisely what does NOT force a bump"*. That matters more
-   * than tidiness here: a bump forces every player to reload, and there is no
-   * reason to interrupt a session in progress to show them a pip row.
-   *
-   * VIEWER-PRIVATE, like the rest of `ResourceView`. Another detective's AP is
-   * not yours to see, and the party pane has never claimed otherwise.
+  /*
+   * NO `ap`/`maxAp`/`mp`/`maxMp` ANY MORE. They carried D1's per-turn AP/MP
+   * budget, which could never run short once every action ended the turn, and
+   * Slice C retired it. They were OPTIONAL, so dropping them needs no version
+   * bump: a client that still reads `ap` finds it absent, which it already took
+   * to mean an older server with no budget to gate on.
    */
-  ap?: number;
-  maxAp?: number;
-  /**
-   * ═══════════════════════════════════════════════════════════════════════════
-   * THE OTHER HALF OF THE ROUND, AND WALKING IS PAID OUT OF IT.
-   * ═══════════════════════════════════════════════════════════════════════════
-   *
-   * `MOVE_MP_COST` is 1: a step costs one MP out of three, which is what keeps
-   * a Watchman from trading his whole round for six steps. So MP is not a
-   * secondary curiosity beside AP — it is HALF the answer to the only question
-   * this HUD exists to answer, which is *"can I do anything else, or am I
-   * done?"*. The engine already answers it honestly across all three budgets
-   * (`hasAffordableAction`); until now the wire carried two of them.
-   *
-   * OPTIONAL AND VIEWER-PRIVATE, exactly like `ap` above and for both of the
-   * same reasons: an old client ignores a field it cannot name, so no version
-   * bump and nobody is forced to reload mid-session — and another detective's
-   * remaining budget is not yours to read.
-   */
-  mp?: number;
-  maxMp?: number;
   /**
    * Draw PIPS, not a bar.
    *
@@ -5318,7 +5274,7 @@ export type EffectExpiredEvent = {
  * is the whole mechanic.
  *
  * At 0 hp a player is *Unfiled*: prone, still able to talk in the log, and
- * revivable by any ally who reaches them for 4 AP.
+ * revivable by any ally who reaches them and spends a turn on it.
  *
  * THEIR `ActorView` IS INDISTINGUISHABLE FROM A CORPSE'S — `alive: false`,
  * `hp: 0` — because the engine uses that flag to stop ticking them and to stop

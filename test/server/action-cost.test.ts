@@ -352,8 +352,6 @@ describe('On My Whistle hands a friend ToME’s SPEED — Blinding Speed’s num
     expect(ren.globalSpeed).toBeCloseTo(1 + speedGivenAt(1), 10);
     expect(speedGivenAt(1)).toBeCloseTo(0.14, 10);
     expect(scene.body.globalSpeed, 'the Watchman whistled himself').toBe(1);
-    // AND IT TOOK NO ACTION POINTS: a free action shares its decision's budget.
-    expect(sheet.ap).toBe(sheet.maxAp);
   });
 
   it('will not whistle the Watchman himself, nor a shopkeeper who is on nobody’s side', () => {
@@ -395,13 +393,15 @@ describe('On My Whistle hands a friend ToME’s SPEED — Blinding Speed’s num
 });
 
 describe('every decision a hasted body gets is a whole one', () => {
-  it('two costly talents on two decisions inside one game turn — the budget refills per decision', () => {
+  it('two costly talents on two decisions inside one game turn — there is no budget to run short', () => {
     /**
-     * "AP and MP are the TURN", and a turn is a decision. The budget refilled
-     * only on the game turn's `actBase`, so a hasted body's second decision in
-     * one game turn found the first one's points spent: Crude Blow (3) then
-     * Iron Curtain (5) on a budget of 6 was refused. At a clock of 10 the body
-     * decides every tick, so both land inside one game turn by construction.
+     * A turn is a decision, and there is no budget beyond it. There was one: a
+     * per-turn AP/MP budget that refilled only on the game turn's `actBase`, so
+     * a hasted body's second decision in one game turn found the first one's
+     * points spent — Crude Blow (3) then Iron Curtain (5) on a budget of 6 was
+     * refused. It was refilled per decision for a commit, then retired, and
+     * this pins that nothing took its place. At a clock of 10 the body decides
+     * every tick, so both land inside one game turn by construction.
      */
     const scene = room('cost-hasted-budget', { husk: true });
     setEffect(scene.effects, scene.body, EffectId.Speed, 99, { power: 9 }, scene.world.rng);
@@ -423,6 +423,48 @@ describe('every decision a hasted body gets is a whole one', () => {
       scene.body.cooldowns.get(talentId('iron_curtain')) ?? 0,
       'Iron Curtain was refunded rather than used',
     ).toBeGreaterThan(0);
+  });
+});
+
+describe('Highborn’s Bloom waives the resource, never the turn', () => {
+  it('a talent the bloom pays for costs the same energy as one paid in Resolve', () => {
+    /**
+     * "All active talents will be used without resource cost" (other.lua:1576),
+     * and upstream still spends energy either way: a talent that cost no time
+     * would let a body act without end. talents.test.ts pins the resource half
+     * at `useTalent`, which spends no energy at all — the turn is the
+     * scheduler's to charge — so this half is measured here, off the clock, with
+     * the real effect through the real status door. It read the AP budget
+     * until that was retired, and "the budget went down" was never the turn.
+     */
+    const at = { x: HOME.x + 1, y: HOME.y };
+    const cast = (scene: Room): { readonly price: number; readonly drop: number } => {
+      const sheet = scene.talents.sheetOf('p1');
+      if (sheet === undefined) throw new Error('fixture: no sheet');
+      sheet.resource.value = 100;
+      const price = spent(scene, () => {
+        const sent = scene.engine.submitTalent('p1', talentId('iron_curtain'), at);
+        expect(sent.ok, JSON.stringify(sent)).toBe(true);
+      });
+      expect(
+        scene.body.cooldowns.get(talentId('iron_curtain')) ?? 0,
+        'Iron Curtain was refunded rather than used',
+      ).toBeGreaterThan(0);
+      // NET of the trickle and of being struck, which only ever ADD Resolve.
+      return { price, drop: 100 - sheet.resource.value };
+    };
+
+    const paid = cast(room('cost-bloom-paid', { husk: true }));
+    const bloomed = room('cost-bloom-free', { husk: true });
+    setEffect(bloomed.effects, bloomed.body, EffectId.HighbornsBloom, 99, {}, bloomed.world.rng);
+    expect(hasEffect(bloomed.effects, 'p1', EffectId.HighbornsBloom)).toBe(true);
+    const free = cast(bloomed);
+
+    // THE CONTROL: the paid cast did pay, so the free one's zero means something.
+    expect(paid.drop, 'the paid cast spent no Resolve').toBeGreaterThan(0);
+    expect(free.drop, 'the bloom did not waive the Resolve').toBeLessThanOrEqual(0);
+    expect(free.price, 'a free talent must still cost the turn').toBe(paid.price);
+    expect(free.price).toBeGreaterThan(0);
   });
 });
 
@@ -498,7 +540,7 @@ describe('a talent costs the talent speed', () => {
       }),
     ).toBe(800);
 
-    // A SCENE OF ITS OWN, so the swing's AP spend cannot refuse it.
+    // A SCENE OF ITS OWN, so nothing the swing spent can refuse it.
     const infusion = armed('cost-talent-standard');
     infusion.body.hp = infusion.body.maxHp - 60;
     expect(

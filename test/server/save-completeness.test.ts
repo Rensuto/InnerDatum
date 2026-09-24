@@ -117,7 +117,7 @@ const FULL = {
   exploredElsewhere: { 'realm:site:redaction': 'CCCCDDDD' },
   filed: ['site:underworks', 'site:cairnfoot'],
   money: 137,
-  resources: { hp: 41, ap: 0, mp: 0, special: { kind: '', value: 0 } },
+  resources: { hp: 41, special: { kind: '', value: 0 } },
   talentCooldowns: { 'talent:lockdown': 2 },
   effects: [{ effectId: 'effect:bleeding', turnsRemaining: 2, magnitude: 3 }],
   position: { zoneId: 'zone:test_level', depth: 0, cell: [5, 5] },
@@ -182,7 +182,7 @@ describe('fog belongs to the map it was walked on', () => {
     explored: 'AAAABBBBCCCC',
     // The producer requires these; `FULL` above is the reference for what a
     // whole character carries and this is the smallest file that parses.
-    resources: { hp: 30, ap: 0, mp: 0, special: { kind: '', value: 0 } },
+    resources: { hp: 30, special: { kind: '', value: 0 } },
     position: { zoneId: 'zone:test_level', depth: 0, cell: [5, 5] },
     createdAt: '2026-01-01T00:00:00.000Z',
   } as const;

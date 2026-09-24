@@ -3,7 +3,6 @@ import { describe, expect, it } from 'vitest';
 
 import {
   ALCHEMIST,
-  CLASSES,
   INSPECTOR,
   WATCHMAN,
   createContentTalentEngine,
@@ -288,26 +287,25 @@ describe('with no runtime wired in, nothing changed', () => {
     expect(result.refusals).toEqual([{ id: 'p1', reason: Refusal.NoTalentEffect }]);
     // The refund rule: zero energy, cleared, re-prompt. Nothing was spent —
     // which is the reason the resource and the cooldown are charged at
-    // RESOLUTION and not when the packet arrives.
+    // RESOLUTION and not when the packet arrives — and the turn is still owed.
     expect(table.sheet.resource.value).toBe(100);
-    expect(table.sheet.ap).toBe(table.sheet.maxAp);
     expect(table.world.getActor('p1')?.cooldowns.size).toBe(0);
+    expect(result.turn.whoseTurn).toEqual(['p1']);
     // And nothing drawable happened at all.
     expect(result.playerEvents).toEqual([]);
   });
 
-  it('does not touch the AP budget or movedThisTurn on the base clock either', () => {
+  it('does not touch movedThisTurn on the base clock either', () => {
     // The whole seam is one `?.` in three places. If the absent case ever starts
     // calling `actBase`, a server with no talents wired in would begin drawing
     // for a resource regeneration nobody asked for and every replay would shift.
+    // (This watched the AP budget too, until the budget was retired.)
     const table = scene('seam-absent-base', { wired: false });
-    table.sheet.ap = 2;
     table.sheet.movedThisTurn = true;
 
     expect(table.engine.submitMove('p1', 'w').ok).toBe(true);
     table.engine.pump();
 
-    expect(table.sheet.ap).toBe(2);
     expect(table.sheet.movedThisTurn).toBe(true);
   });
 });
@@ -341,7 +339,7 @@ describe('with the runtime wired in, a talent resolves', () => {
     expect(swing?.k === 'attack' ? swing.targetId : undefined).toBe('m_husk');
   });
 
-  it('spends the resource, spends the AP, and sets the cooldown', () => {
+  it('spends the resource and sets the cooldown', () => {
     const table = scene('seam-costs');
     table.sheet.resource.value = 100;
 
@@ -351,7 +349,7 @@ describe('with the runtime wired in, a talent resolves', () => {
     // ═══════════════════════════════════════════════════════════════════════
     // THE SPEND, PLUS THE ONE BASE TURN THE PUMP RAN AFTER IT. BOTH PINNED.
     // ═══════════════════════════════════════════════════════════════════════
-    // Iron Curtain: 5 AP, 25 Resolve, and ToME's ten-action cooldown converted
+    // Iron Curtain: 25 Resolve, and ToME's ten-action cooldown converted
     // to game turns (talents.ts `tomeCooldownToTurns`).
     //
     // This used to read `.toBe(75)` and was silent about how many base turns the
@@ -444,10 +442,9 @@ describe('with the runtime wired in, a talent resolves', () => {
     const result = table.engine.pump();
 
     expect(result.refusals).toEqual([{ id: 'p1', reason: Refusal.NoTalentEffect }]);
-    // Nothing half-applied: no cooldown from a cast that never happened, no AP
-    // taken, and the actor still owes a decision.
+    // Nothing half-applied: no cooldown from a cast that never happened, and
+    // the actor still owes a decision.
     expect(table.world.getActor('p1')?.cooldowns.size).toBe(0);
-    expect(table.sheet.ap).toBe(table.sheet.maxAp);
     expect(result.turn.whoseTurn).toEqual(['p1']);
   });
 
@@ -697,65 +694,7 @@ describe('the party’s only heal is not narrated as an attack', () => {
   });
 });
 
-describe('the AP budget can never be structurally short', () => {
-  it('no talent costs more AP than the smallest class budget', () => {
-    // ═══════════════════════════════════════════════════════════════════════
-    // THE HOTBAR MUST NOT BE ABLE TO LIE, AND THIS IS WHERE THAT IS ENFORCED.
-    // ═══════════════════════════════════════════════════════════════════════
-    //
-    // AP and MP are deliberately NOT on the wire. That is only honest while
-    // they are structurally incapable of being short at the moment of use:
-    // DECISIONS.md D1 pins a player to one action per turn, `actBase` refills
-    // every base turn, and nothing else decrements `sheet.ap` — Lockdown's
-    // `drainActionBudget` writes the VICTIM'S ENERGY, not their AP, and says so
-    // (talents/lockdown.ts:31).
-    //
-    // So the invariant is simply "the most expensive button fits in the
-    // smallest budget". The day somebody authors a 7-AP talent, the BUILD
-    // fails here instead of the hotbar quietly greying a button out with no
-    // explanation on the wire for why.
-    const budgets = CLASSES.map((definition) => definition.maxAp);
-    const costs = CLASSES.flatMap((definition) =>
-      definition.loadout.map((talent) => talent.cost.ap ?? 0),
-    );
-
-    expect(Math.max(...costs)).toBeLessThanOrEqual(Math.min(...budgets));
-    // ...and the MP side of the same claim.
-    const mpBudgets = CLASSES.map((definition) => definition.maxMp);
-    const mpCosts = CLASSES.flatMap((definition) =>
-      definition.loadout.map((talent) => talent.cost.mp ?? 0),
-    );
-    expect(Math.max(...mpCosts)).toBeLessThanOrEqual(Math.min(...mpBudgets));
-  });
-});
-
 describe('the base-clock pass', () => {
-  it('refills AP and MP every game turn', () => {
-    // ═══════════════════════════════════════════════════════════════════════
-    // NOT OPTIONAL, AND THE FAILURE IS SILENT.
-    // ═══════════════════════════════════════════════════════════════════════
-    //
-    // Sheets are created FULL (talents.ts:744-747) and are only ever
-    // decremented, so a class attached WITHOUT this call drains AP monotonically
-    // from the first cast and never refills. Nothing throws; the hotbar simply
-    // stops working three fights in.
-    //
-    // The budget is drained by hand rather than by casting, because a cast and
-    // its refill land inside the SAME pump — the actor acts, and the pump then
-    // runs on to the next park, which is where the next base turn fires. That is
-    // correct behaviour (a player is never asked for a decision with an empty
-    // budget) and it is exactly what makes the drain invisible from outside.
-    const table = scene('seam-refill');
-    table.sheet.ap = 0;
-    table.sheet.mp = 0;
-
-    expect(table.engine.hold('p1').ok).toBe(true);
-    table.engine.pump();
-
-    expect(table.sheet.ap).toBe(table.sheet.maxAp);
-    expect(table.sheet.mp).toBe(table.sheet.maxMp);
-  });
-
   it('a MOVE suppresses the Inspector’s Focus, and holding ground earns it', () => {
     // ═══════════════════════════════════════════════════════════════════════
     // `movedThisTurn` HAD NO WRITER ANYWHERE IN src/ BEFORE THIS SEAM.
@@ -799,7 +738,7 @@ describe('the base-clock pass', () => {
     expect(settled).toBeCloseTo(FOCUS_ON_HELD_GROUND + FOCUS_PER_TURN, 6);
   });
 
-  it('leaves the talent budget alone when the sheet belongs to nobody in the world', () => {
+  it('forgets the sheet when it belongs to nobody in the world', () => {
     // `leave` and `reap` both call `forget`, and a stale sheet outliving its
     // body would keep regenerating a resource for a character nobody is playing.
     const table = scene('seam-forget');

@@ -248,7 +248,7 @@ async function start(): Promise<Harness> {
       talentPoints: { [BOUGHT_TALENT]: 2 },
       unlockedTrees: [BOUGHT_TREE],
       deepenedTrees: [DEEPENED_TREE],
-      resources: { hp: 100, ap: 1, mp: 0, special: { kind: 'resolve', value: 10 } },
+      resources: { hp: 100, special: { kind: 'resolve', value: 10 } },
     }),
     SaveReason.Manual,
   );

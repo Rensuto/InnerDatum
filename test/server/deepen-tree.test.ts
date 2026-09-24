@@ -303,7 +303,10 @@ describe('what the body did NOT just buy survives the rebuild', () => {
     }
   });
 
-  it('carries every rank, every stance and the three pools across', () => {
+  it('carries every rank, every stance and the pool across', () => {
+    // THE POOL, SINGULAR. This carried "the three pools" while the sheet held
+    // the per-turn AP/MP budget beside the class resource; the budget is
+    // retired, and the class resource is the one pool a rebuild could lose.
     const definition = anyClass();
     const body = { origin: INDEXED.id };
     const previous = sheetForBody(definition, body);
@@ -312,13 +315,11 @@ describe('what the body did NOT just buy survives the rebuild', () => {
     previous.points.set(raised, 3);
     previous.sustained.add(raised);
     previous.resource.value = 7;
-    previous.ap = 2;
-    previous.mp = 1;
 
     const next = sheetAfterPurchase(previous, definition, body, [locked()], []);
     expect(next.points.get(raised)).toBe(3);
     expect(next.sustained.has(raised)).toBe(true);
-    expect([next.resource.value, next.ap, next.mp]).toEqual([7, 2, 1]);
+    expect(next.resource.value).toBe(7);
   });
 
   it('is what both category spends in main.ts rebuild with, and they hand it the body', () => {

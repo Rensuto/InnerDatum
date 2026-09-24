@@ -1380,8 +1380,8 @@ export const UI_SCALE_MAX = 2;
  * ENERGY_TO_ACT; every other action spends it times that action's own price,
  * as ToME's `useEnergy` calls do — a step at the body's movement speed, a
  * swing at its weapon's, a talent at the talent's (`actionCost`,
- * server/engine/actor.ts). Action points are an intra-turn budget, never a way
- * to buy extra turns.
+ * server/engine/actor.ts). (Action points were an intra-turn budget, never a
+ * way to buy extra turns; the budget is retired.)
  *
  * Players always spent exactly ENERGY_TO_ACT, once, to keep a party
  * phase-locked under a simultaneous barrier; a party takes its turns in

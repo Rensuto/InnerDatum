@@ -396,7 +396,7 @@ describe('the gate composes rather than competing', () => {
 
   it('defers ENTIRELY to the authoritative checker when one is supplied', () => {
     // `canUseTalent` in engine/talents.ts knows things this adapter cannot see —
-    // the AP and MP budgets, whether the body under the cursor is hostile,
+    // the talent's rank and pool, whether the body under the cursor is hostile,
     // whether a Fog Step destination is occupied. When it is wired in, it is the
     // only opinion that counts: the fallback below would have said `ok` for this
     // frame, and it must not get a vote.

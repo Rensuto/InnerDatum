@@ -64,8 +64,9 @@
  *   1. `canUseTalent` — a PURE predicate. Mutates nothing.
  *   2. `onUse` — may still refuse (no free tile to be shoved into, the ally
  *      died between the check and now). A refusal here also costs nothing.
- *   3. ONLY on success: spend AP, spend MP, spend the resource, set the
- *      cooldown. Four mutations, one place, after the last thing that can fail.
+ *   3. ONLY on success: spend the resource and set the cooldown. The
+ *      mutations sit in one place, after the last thing that can fail. (AP and
+ *      MP were spent here too, from the per-turn budget Slice C retired.)
  *
  * That ordering is why a player never hesitates: pressing a button that turns
  * out to be illegal is free. Spend first and refund later and you have two code
@@ -104,10 +105,11 @@
  *  - SUSTAINS. `mode: 'sustained'` needs cooldown-on-DEACTIVATE
  *    (docs/tome-mechanics.md § 9) and a passive-value stack. None of the twelve
  *    is a sustain.
- *  - ENERGY. DECISIONS.md § D1: a player action costs exactly ENERGY_TO_ACT and
- *    the scheduler's `spendTurn` is the only spender. AP is the intra-turn
- *    budget; a talent spends AP and never energy. A second energy spender is
- *    exactly how a party falls out of phase lock.
+ *  - ENERGY. The scheduler's `spendTurn` is the only spender, and it charges
+ *    the talent's own price (`Resolution.charge`). A talent body never spends
+ *    energy. D1's intra-turn AP budget, which a talent used to spend instead,
+ *    is gone. A second energy spender is exactly how a party falls out of
+ *    phase lock.
  *  - EVENTS. `useTalent` returns a value. The scheduler turns values into
  *    `GameEvent`s, because only the scheduler knows whether this was a player
  *    action or part of a batched monster sweep.
@@ -124,7 +126,6 @@ import type { BoundHooks, PassiveView, TalentHooks, TurnProcs } from './hooks.ts
 import { DIR_ORDER, DIR_VECTORS, chebyshev } from '../../shared/coords.ts';
 import { tileDistance } from '../../shared/distance.ts';
 import { ballCentre, ballTiles as shadowcastBall, blocksProjection } from '../../shared/ball.ts';
-import { ENERGY_TO_ACT } from '../../shared/version.ts';
 import { MIN_ACTION_COST_MULTIPLIER } from '../../shared/energy.ts';
 import { bound, combatTalentScale, rescaleDamage } from '../../shared/scale.ts';
 import { hasLineOfSight } from '../../shared/sight.ts';
@@ -920,30 +921,6 @@ export function hasResource(pool: ResourcePool, amount: number): boolean {
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════
- * IS THERE ANYTHING LEFT THIS BODY COULD ACTUALLY DO THIS ROUND?
- * ═══════════════════════════════════════════════════════════════════════════
- *
- * The question `roundStaysOpen` asks after every action. If the answer is no,
- * the round closes and the world moves; if it is yes, the player is parked and
- * owed another decision.
- *
- * ═══ IT HAS TO BE HONEST ABOUT ALL THREE BUDGETS, NOT JUST AP ═══
- * Answering on `sheet.ap` alone is the tempting version and it strands people:
- * a Watchman sitting on 5 AP with Lockdown cooling and 12 Resolve has budget and
- * NOTHING TO SPEND IT ON. He would be parked with every button grey, waiting for
- * a Tail he has no reason to wait out, wondering what the game wants. So a
- * talent counts only if it is off cooldown AND affordable on AP AND affordable
- * on the class resource — the same three questions `canUseTalent` asks, in the
- * same order, for the same reason.
- *
- * ═══ `moveCost` IS A PARAMETER, NOT AN IMPORT ═══
- * eslint forbids `engine/** -> content/**`, and the cost of a step is content's
- * to own. Passing it keeps this module pure and keeps the number in one place.
- * Zero means a step is free, which is the game as it shipped.
- */
-
-/**
- * ═══════════════════════════════════════════════════════════════════════════
  * WHAT THE SUSTAINS THAT ARE UP ARE TAKING OFF THE POOL.
  * ═══════════════════════════════════════════════════════════════════════════
  *
@@ -1276,7 +1253,8 @@ export type TalentEffectInstance = {
  *
  * `ai` and `energy` are optional because only monsters have the first and the
  * scheduler owns the second; the two talents that touch them (Iron Curtain's
- * aggro pull and Lockdown's action-budget drain) narrow before writing.
+ * aggro pull and Lockdown, whose action-budget drain became a stun) narrow
+ * before writing.
  */
 export type TalentActor = {
   readonly id: string;
@@ -1400,9 +1378,14 @@ const _worldShapeCheck = (world: World): TalentWorld => world;
 
 /** What a use costs. Every field optional; most talents use two of the four. */
 export type TalentCost = {
-  /** Action points, out of the 6 a player gets per round (game-design.md § 6). */
+  /**
+   * Action points. NOTHING SPENDS THEM: the per-turn budget this was a share of
+   * (6 AP a round, game-design.md § 6) was retired with the open round, and a
+   * talent's time is its `speed` now. The figure still reaches the wire in
+   * `TalentCostView` until the price itself goes.
+   */
   readonly ap?: number;
-  /** Movement points, out of 3. Move = 1 MP. */
+  /** Movement points, which nothing spends either. Fog Step is the only talent that sets it. */
   readonly mp?: number;
   /** The class resource. Kind is implied by the class; amount is authored. */
   readonly resource?: number;
@@ -1467,8 +1450,8 @@ export type TalentTarget = {
  * What a CALLER of `useTalent` supplies. Notably NOT `talentLevel`.
  *
  * The level is not the caller's to know: `useTalent` reads the sheet anyway (it
- * has to, to spend AP), the talent id is already in its hand, and computing the
- * level in one place is what stops the scheduler, the GM console and a test
+ * has to, to spend the resource), the talent id is already in its hand, and
+ * computing the level in one place is what stops the scheduler, the GM console and a test
  * fixture from each having their own opinion about what level somebody's talent
  * is. src/server/main.ts's `talentRuntimeFor` passes exactly these three.
  */
@@ -1613,7 +1596,7 @@ export const TalentRefusal = {
    * IT HAS NO BODY TO RUN — a passive. Pressing one is a mistake a player can
    * make (a stale hotbar, a rebound key, a click on the panel row), so the
    * answer is a sentence rather than a throw, and it is refused BEFORE anything
-   * is charged: a passive that ate the turn's action points would be the worst
+   * is charged: a passive that ate the turn would be the worst
    * possible reading of "always on".
    */
   Passive: 'passive',
@@ -1621,8 +1604,6 @@ export const TalentRefusal = {
   NotLearned: 'not_learned',
   Dead: 'dead',
   OnCooldown: 'on_cooldown',
-  NoAp: 'no_ap',
-  NoMp: 'no_mp',
   NoResource: 'no_resource',
   /** No actor there, or the one that was there is a corpse. */
   NoTarget: 'no_target',
@@ -2048,7 +2029,7 @@ export type Talent = {
    * See `TalentScaling` in engine/derived.ts for why there are two halves.
    */
   readonly scalesWith?: TalentScaling;
-  /** GAME TURNS. 0 is at-will and gated by AP alone. See the conversions above. */
+  /** GAME TURNS. 0 is at-will: nothing but the turn it costs. See the conversions above. */
   readonly cooldownTurns: number;
   /**
    * ═══════════════════════════════════════════════════════════════════════════
@@ -2058,8 +2039,8 @@ export type Talent = {
    * tome/class/Actor.lua:5862-5863: `if not ab.no_energy then self:useEnergy(...)`.
    * Every other action costs the turn; a talent carrying this is pressed and the
    * player acts again (`TalentResolution.noEnergy`). Set it ONLY where the Lua
-   * sets it: `ap: 0` is not the same claim (Phase Door rune is `ap: 0` and costs
-   * a turn upstream).
+   * sets it: a price of `ap: 0` is not the same claim (Phase Door rune is
+   * `ap: 0` and costs a turn upstream).
    */
   readonly noEnergy?: true;
   /**
@@ -2216,8 +2197,9 @@ export function createTalentRegistry(): TalentRegistry {
 // ---------------------------------------------------------------------------
 
 /**
- * A player's class state: the loadout, the RAW talent points, the resource pool
- * and the intra-turn budget.
+ * A player's class state: the loadout, the RAW talent points and the resource
+ * pool. (It also held D1's intra-turn AP/MP budget, until Slice C retired it:
+ * every action ends the turn now, so there was nothing left for it to ration.)
  *
  * ═══════════════════════════════════════════════════════════════════════════
  * THE SHEET OWNS RAW POINTS. IT DOES NOT OWN LEVEL, XP OR UNSPENT POINTS.
@@ -2299,16 +2281,6 @@ export type TalentSheet = {
    */
   readonly points: Map<string, number>;
   readonly resource: ResourcePool;
-  ap: number;
-  readonly maxAp: number;
-  mp: number;
-  /**
-   * THE MOVEMENT CEILING — the class's authored figure, set when the sheet is
-   * built. `refreshPassives` raised it for Long Stride until that talent became
-   * ToME's movement SPEED (2026-09-24), which prices a step instead of counting
-   * them; nothing writes it now, and the budget itself is Slice C's to retire.
-   */
-  maxMp: number;
   /**
    * Did this actor change tiles since its last base turn? Focus regen reads it
    * ("Focus builds ... by not moving"). Set by whoever moves an actor; cleared
@@ -2386,8 +2358,6 @@ export type TalentSheetInit = {
   readonly mastery?: ReadonlyMap<string, number>;
   readonly loadout: readonly string[];
   readonly resource: ResourceKind;
-  readonly maxAp: number;
-  readonly maxMp: number;
   /**
    * A RESTORED point spread. Omit it for a fresh character.
    *
@@ -2463,10 +2433,6 @@ export function createTalentSheet(init: TalentSheetInit): TalentSheet {
     sustained: new Set<string>(),
     points,
     resource: createResourcePool(init.resource),
-    ap: init.maxAp,
-    maxAp: init.maxAp,
-    mp: init.maxMp,
-    maxMp: init.maxMp,
     movedThisTurn: false,
     turnProcs: createTurnProcs(),
     mastery: init.mastery ?? new Map(),
@@ -2609,9 +2575,10 @@ export type TalentEngine = {
   /**
    * ONCE PER GAME TURN PER ACTOR, from `actBase` and never from `act`.
    *
-   * Ticks the talent-owned durations, regenerates the class resource and
-   * refills the AP/MP budget. Nothing in here may read `globalSpeed` or
-   * `speedFactor`; see this file's header for why that is the invariant.
+   * Ticks the talent-owned durations and regenerates the class resource. (It
+   * refilled the AP/MP budget too, until that was retired.) Nothing in here
+   * may read `globalSpeed` or `speedFactor`; see this file's header for why
+   * that is the invariant.
    */
   actBase(actorId: string, world: TalentWorld): void;
 
@@ -2708,10 +2675,6 @@ export function createTalentEngine(registry: TalentRegistry): TalentEngine {
       const actor = world.getActor(actorId);
       if (actor === undefined || !actor.alive) return;
       regenResource(engine, sheet, actor, world);
-      // THE REFILL. SLOWED took a movement point off it until 2026-09-24; a slow
-      // is on the body's clock now (engine/effects.ts `recomputeAttributes`).
-      sheet.ap = sheet.maxAp;
-      sheet.mp = sheet.maxMp;
       sheet.movedThisTurn = false;
       /**
        * AND THE LATCH WITH IT, ON THE SAME LINE THAT CLEARS THE OTHER
@@ -2733,8 +2696,8 @@ export function createTalentEngine(registry: TalentRegistry): TalentEngine {
        * promises *"you recover N hit points at the start of each turn"*. Nobody
        * has ever recovered one.
        *
-       * This is the same failure the paragraph above records about
-       * `budgetPenalty` — *"ZERO production callers, so a Slowed detective moved
+       * This is the same failure `budgetPenalty` had before Slice C deleted
+       * it — *"ZERO production callers, so a Slowed detective moved
        * exactly as far and acted exactly as often as an unslowed one. The badge
        * was the whole effect."* Same shape, same file, one system along.
        *
@@ -3062,7 +3025,7 @@ export const NO_SHOOTER_REASON = 'fired from your own gun — empty your weapon 
  * ═══ NOTHING GREYS A HOTBAR SLOT WITH IT — THIS SAID THE PROJECTOR DID ═══
  * No code in view/ ever called it. It cannot be the grey: it wants a TARGET,
  * and a button is drawn before anyone has aimed. The client greys on the
- * clauses it can see every turn — rank, AP and the class pool from the
+ * clauses it can see every turn — rank and the class pool from the
  * `loadout` and `resource` frames (`talentAffordable`, client/ui/hotbar.ts), the
  * cooldown from the `cooldowns` frame (`isSlotDisabled`, same file).
  * The ONE clause about the body it cannot see is the gun, and that travels as
@@ -3074,7 +3037,7 @@ export const NO_SHOOTER_REASON = 'fired from your own gun — empty your weapon 
  * (tome/class/Actor.lua:5547) that refuses the use.
  *
  * ("Reads the sheet" is not new; it has read it since the `NotLearned` check
- * below, and the AP/MP/resource checks are three more reads. It is restated
+ * below, and the resource check is one more read. It is restated
  * because the sheet now also carries the TALENT POINTS, and the range it
  * resolves for Fog Step is therefore per-actor rather than per-talent — a
  * caller holding a `Talent` alone can no longer reproduce this answer.)
@@ -3101,7 +3064,7 @@ export function canUseTalent(
    *
    * `combatTalentScale` maps a talent level of 0 to 0.1 (src/shared/scale.ts),
    * so a talent pressed at rank 0 does not refuse — it quietly resolves for a
-   * tenth of its damage, spends the AP, and starts its cooldown. That was
+   * tenth of its damage, spends the turn, and starts its cooldown. That was
    * unreachable while every talent was born at 1; it is reachable the moment a
    * class stops being born knowing everything, and it would look exactly like
    * a balance problem rather than a missing check.
@@ -3109,10 +3072,7 @@ export function canUseTalent(
   if (getTalentLevelRaw(sheet, talent.id) < 1) return TalentRefusal.NotLearned; // RAW: has a point been spent here at all — a mastery multiplier cannot turn "never learned" into "learned".
   if (cooldownOf(actor, talent.id) > 0) return TalentRefusal.OnCooldown;
 
-  const cost = talent.cost;
-  if (sheet.ap < (cost.ap ?? 0)) return TalentRefusal.NoAp;
-  if (sheet.mp < (cost.mp ?? 0)) return TalentRefusal.NoMp;
-  if (!hasResource(sheet.resource, cost.resource ?? 0)) return TalentRefusal.NoResource;
+  if (!hasResource(sheet.resource, talent.cost.resource ?? 0)) return TalentRefusal.NoResource;
 
   // `on_pre_use`, IN UPSTREAM'S PLACE: tome/class/Actor.lua:5547 asks it after
   // the costs and before anything is spent, and a `false` there costs nothing.
@@ -3203,8 +3163,6 @@ export type TalentUseResult =
        * it costs nothing.
        */
       readonly moved: readonly ActorMove[];
-      readonly apSpent: number;
-      readonly mpSpent: number;
       readonly resourceSpent: number;
       readonly cooldownTurns: number;
     };
@@ -3286,7 +3244,7 @@ function netMoves(recorded: Map<string, ActorMove>): readonly ActorMove[] {
  *
  * THE ORDER BELOW IS THE REFUND RULE AND IT IS LOAD-BEARING:
  *
- *   check (pure) → body (may refuse) → THEN spend AP/MP/resource/cooldown
+ *   check (pure) → body (may refuse) → THEN spend resource/cooldown
  *
  * Nothing is deducted until after the last thing that can fail, so an intent
  * that went illegal between submission and resolution — the target died, you
@@ -3353,16 +3311,15 @@ export function useTalent(
   if (!outcome.ok) return { ok: false, reason: outcome.reason };
 
   // --- past this line nothing can fail, so now we pay -----------------------
-  const apSpent = talent.cost.ap ?? 0;
-  const mpSpent = talent.cost.mp ?? 0;
   /**
    * ═══════════════════════════════════════════════════════════════════════════
    * …UNLESS SOMETHING IS PAYING FOR IT — `EFF_HIGHBORN_S_BLOOM`, other.lua:1576.
    * ═══════════════════════════════════════════════════════════════════════════
    *
    * "All active talents will be used without resource cost." THE RESOURCE ONLY:
-   * AP and MP are the TURN, not a pool, and a talent that cost no time at all
-   * would let a body act without end. Upstream spends energy either way.
+   * the turn is still charged (`spendTurn`, in the scheduler, whatever this
+   * line says), and a talent that cost no time at all would let a body act
+   * without end. Upstream spends energy either way.
    *
    * READ AS A FLAG rather than by asking for an effect by id: `engine/` may not
    * import `content/`, and `content/effects.ts` already imports this file. The
@@ -3375,8 +3332,6 @@ export function useTalent(
    */
   const resourceSpent =
     actor.combat?.flags?.freeResources === true ? 0 : (talent.cost.resource ?? 0);
-  sheet.ap -= apSpent;
-  sheet.mp -= mpSpent;
   spendResource(sheet.resource, resourceSpent);
   /**
    * ═══════════════════════════════════════════════════════════════════════════
@@ -3434,8 +3389,6 @@ export function useTalent(
     hits: outcome.hits,
     notes: outcome.notes,
     moved: netMoves(recorded),
-    apSpent,
-    mpSpent,
     resourceSpent,
     cooldownTurns: talent.cooldownTurns,
   };
@@ -4213,27 +4166,4 @@ export function resolveGuardCounter(
     };
   }
   return null;
-}
-
-/**
- * Strip a slice of a target's action budget — the authored `debuff_ap` effect
- * (`content/skills/lockdown.json`, `{ type: "debuff_ap", value: 2 }`).
- *
- * MONSTERS HAVE NO AP. They run ToME's variable-speed model on the act clock
- * (engine/actor.ts's player/monster asymmetry), so "two action points" has to
- * be expressed in the currency they actually spend: `ENERGY_TO_ACT * ap /
- * maxAp`. Two of six AP is a third of a turn, and stacking it delays the next
- * monster action by exactly that much.
- *
- * It touches the ACT clock and never `energyBase`. Draining the base clock
- * would shorten the target's cooldowns and debuffs, which is the same class of
- * bug as letting haste do it — see this file's header.
- */
-export function drainActionBudget(target: TalentActor, apPoints: number, maxAp: number): number {
-  const energy = target.energy;
-  if (typeof energy !== 'number' || apPoints <= 0 || maxAp <= 0) return 0;
-  const cost = (ENERGY_TO_ACT * apPoints) / maxAp;
-  const drained = Math.min(energy, cost);
-  target.energy = energy - drained;
-  return drained;
 }

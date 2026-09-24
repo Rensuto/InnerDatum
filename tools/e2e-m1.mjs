@@ -34,7 +34,7 @@ const ok = (label, cond, detail = '') => {
 /**
  * A CHECK THE HARNESS COULD NOT REACH IS NOT A FAILURE.
  *
- * `round-live.mjs` learned this the expensive way: it reported "CLOSED: each
+ * `round-live.mjs` (since deleted) learned this the expensive way: it reported "CLOSED: each
  * cast still cost a whole turn" for a run in which the chain was never
  * attempted, and that reads as a regression rather than as a setup that did not
  * fire. A red line has to mean the GAME is wrong.

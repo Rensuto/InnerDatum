@@ -166,18 +166,6 @@ export const DOWNED_TURNS = 5;
 export const REVIVE_HP_FRACTION = 0.25;
 
 /**
- * game-design.md § 9: *"Any ally reaching you **spends 4 AP** to restore you"*.
- *
- * CARRIED AS DATA, NOT SPENT HERE. The AP budget lives on the talent sheet
- * (engine/talents.ts `TalentSheet.ap`) and this module has no access to it by
- * design — the engine-level cost of a revive is the whole TURN, which the
- * scheduler charges through `spendTurn` exactly as it charges a move or a blow.
- * The day revive becomes an AP-priced action rather than a turn-priced one, this
- * is the number it reads.
- */
-export const REVIVE_AP = 4;
-
-/**
  * CHEBYSHEV reach — the Moore neighbourhood, and 0 (standing on the body) counts.
  *
  * The same metric `attackRange` and bump-attack use, deliberately: *"any ally

@@ -42,9 +42,11 @@
  * ───────────────────────────────────────────────────────────────────────────
  * STORE THE ROLL, DERIVE THE STATS (docs/data-schemas.md § 3)
  * ───────────────────────────────────────────────────────────────────────────
- * Only CURRENT values are persisted: `hp`, `ap`, `mp`, the special resource's
- * value, cooldown turns, effect durations, position. Every `max*` pool is
- * DERIVED from the class at load and is deliberately absent from this file.
+ * Only CURRENT values are persisted: `hp`, the special resource's value,
+ * cooldown turns, effect durations, position. Every `max*` pool is DERIVED from
+ * the class at load and is deliberately absent from this file. (`ap` and `mp`
+ * were persisted too, until the per-turn budget they belonged to was retired;
+ * an old file that still carries them loads and drops them.)
  *
  * That is a KNOWING DEVIATION from the `CharacterFile` interface sketched at
  * docs/data-schemas.md:106-111, which lists `maxHp` / `maxAp` / `maxMp`
@@ -357,8 +359,6 @@ export type SavedPosition = {
 /** CURRENT values only. Every maximum is derived from the class at load. */
 export type SavedResources = {
   readonly hp: number;
-  readonly ap: number;
-  readonly mp: number;
   /**
    * The class resource. `kind` is stored as a redundant cross-check so a human
    * reading the file can see what the number means; the CLASS is authoritative
@@ -1296,10 +1296,15 @@ function parseResources(value: unknown, problems: string[]): SavedResources | nu
     problems.push('resources.hp: missing or not a finite number');
     return null;
   }
-  const ap = asFinite(value.ap);
-  const mp = asFinite(value.mp);
-  if (ap === null) problems.push('resources.ap: missing — defaulted to 0, refilled from the class');
-  if (mp === null) problems.push('resources.mp: missing — defaulted to 0, refilled from the class');
+  /**
+   * NO `ap` OR `mp`, AND AN OLD FILE THAT HAS THEM IS NOT A PROBLEM.
+   *
+   * Every file written before Slice C carries both — the per-turn budget they
+   * belonged to is gone, and this reads NAMED fields only, so the two are
+   * dropped here and gone from the next write. Their absence is not a
+   * repair either: this used to push a problem for a missing `ap`, and with the
+   * producer no longer writing one, every load would have logged as repaired.
+   */
 
   const rawSpecial = value.special;
   const special = isRecord(rawSpecial)
@@ -1309,7 +1314,7 @@ function parseResources(value: unknown, problems: string[]): SavedResources | nu
     problems.push('resources.special: missing — the class resource is refilled from the class');
   }
 
-  return { hp: Math.max(0, hp), ap: Math.max(0, ap ?? 0), mp: Math.max(0, mp ?? 0), special };
+  return { hp: Math.max(0, hp), special };
 }
 
 function parseCooldowns(value: unknown, problems: string[]): Record<string, number> {
@@ -2499,8 +2504,6 @@ export function serialiseCharacter(file: CharacterFile): string {
     filed: file.filed,
     resources: {
       hp: file.resources.hp,
-      ap: file.resources.ap,
-      mp: file.resources.mp,
       special: { kind: file.resources.special.kind, value: file.resources.special.value },
     },
     talentCooldowns: cooldowns,
@@ -3821,10 +3824,8 @@ export function createCharacterBridge(options: CharacterBridgeOptions): PersistP
       // can be re-walked in a minute, and a closed case is a session's work.
       filed: snapshot.filed ?? binding.filed,
       // CURRENT VALUES ONLY — every `max*` pool is derived from the class at
-      // load (docs/data-schemas.md § 3, and this file's own header). AP and MP
-      // are intra-turn budgets refilled from the class every turn, so a stored
-      // figure would be a number that is wrong by the time anybody reads it.
-      resources: { hp: snapshot.hp, ap: 0, mp: 0, special: { kind: '', value: 0 } },
+      // load (docs/data-schemas.md § 3, and this file's own header).
+      resources: { hp: snapshot.hp, special: { kind: '', value: 0 } },
       talentCooldowns: snapshot.cooldowns,
       // Statuses are a fight's state, measured in single-figure turns, and a
       // save is a session boundary. Same reasoning as the two energy clocks.

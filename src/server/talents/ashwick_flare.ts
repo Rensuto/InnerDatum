@@ -87,12 +87,12 @@ import type { Talent } from '../engine/talents.ts';
  * mixed round, and a defensive round. That is the decision arriving, rather than
  * the mechanism arriving and the decision not.
  *
- * ═══ IT COSTS NOTHING TODAY, WHICH IS WHY IT LANDS FIRST ═══
- * One submitted action still ends the actor's turn and `actBase` refills the bar
- * before anyone can observe it, so this deduction is currently unobservable.
- * That is the point of landing the CONTENT before the ENGINE: no deploy is ever
- * half-tuned, and if the numbers are wrong they are wrong while nobody can feel
- * them.
+ * ═══ AND THE ENGINE NEVER CAME — THE BUDGET WAS RETIRED INSTEAD ═══
+ * This landed the content before the engine, while one submitted action ended
+ * the actor's turn and `actBase` refilled the bar before anyone could observe
+ * the deduction. The two-talent round never shipped: every action ends the
+ * turn now, as ToME's does, and Slice C retired the budget (2026-09-24). The
+ * 3 stands as a displayed price until the commit that removes AP prices.
  */
 const AP_COST = 3;
 /**

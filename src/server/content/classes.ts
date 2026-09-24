@@ -39,7 +39,8 @@
  * Every class gets the same four roles, so the hotbar reads the same way for
  * everyone and nobody has to learn three layouts:
  *
- *   1  reliable    at-will, cheap, gated by AP alone
+ *   1  reliable    at-will and cheap (it was "gated by AP alone" while there
+ *                  was an AP budget)
  *   2  signature   the class fantasy in one button
  *   3  defensive / mobility / control
  *   4  ALLY UTILITY — *"that last slot is what makes this co-op rather than
@@ -222,18 +223,6 @@ import type {
 } from '../engine/talents.ts';
 import type { Actor, World } from '../world/world.ts';
 
-/**
- * The 6-AP / 3-MP round, from `city_watchman.json`'s `max_ap: 6` / `max_mp: 3`
- * (game-design.md § 6). Move = 1 MP; talents cost their authored `ap_cost`.
- *
- * The Inspector gets the fourth MP that `rogue_inspector.json` authors — it is
- * the calibration anchor for a ranged body, and a class that cannot shoot
- * inside three tiles needs one more step of legwork than everyone else.
- */
-const BASE_MAX_AP = 6;
-const BASE_MAX_MP = 3;
-const INSPECTOR_MAX_MP = 4;
-
 export type ClassDef = {
   readonly id: ClassId;
   readonly name: string;
@@ -271,8 +260,6 @@ export type ClassDef = {
   /** Per GAME TURN, on the base clock. Deliberately small: this is not a heal. */
   readonly hpRegen: number;
   readonly resource: ResourceKind;
-  readonly maxAp: number;
-  readonly maxMp: number;
   /** Stats, gear-equivalent mods and the class weapon. Fed to derived.ts. */
   readonly combat: CombatSheet;
   /** The class's actives, in hotbar order: reliable, signature, defensive, ally. */
@@ -393,8 +380,6 @@ export const WATCHMAN: ClassDef = {
   lifeRating: 16,
   hpRegen: 0.5,
   resource: ResourceKind.Resolve,
-  maxAp: BASE_MAX_AP,
-  maxMp: BASE_MAX_MP,
   combat: {
     stats: { str: 24, dex: 14, con: 20, cun: 12, wil: 14, mag: 10 },
     mods: { armour: 6, armourHardiness: 10, def: 3 },
@@ -570,8 +555,6 @@ export const INSPECTOR: ClassDef = {
   lifeRating: 10,
   hpRegen: 0.5,
   resource: ResourceKind.Focus,
-  maxAp: BASE_MAX_AP,
-  maxMp: INSPECTOR_MAX_MP,
   combat: {
     stats: { dex: 24, cun: 20, str: 12, con: 12, wil: 12, mag: 10 },
     mods: { atk: 4, physCrit: 4, apr: 3 },
@@ -728,8 +711,6 @@ export const ALCHEMIST: ClassDef = {
   lifeRating: 9,
   hpRegen: 0.5,
   resource: ResourceKind.Reagents,
-  maxAp: BASE_MAX_AP,
-  maxMp: BASE_MAX_MP,
   combat: {
     stats: { mag: 22, cun: 18, wil: 14, con: 12, str: 10, dex: 12 },
     mods: { spellPower: 4 },
@@ -877,8 +858,6 @@ export const REDACTOR: ClassDef = {
   lifeRating: 10,
   hpRegen: 0.5,
   resource: ResourceKind.Ink,
-  maxAp: BASE_MAX_AP,
-  maxMp: BASE_MAX_MP,
   combat: {
     /** Will first, Cunning close behind -- the 0.7/0.4 weighting, as stats. */
     stats: { wil: 22, cun: 20, con: 13, dex: 12, mag: 10, str: 10 },
@@ -1182,8 +1161,8 @@ export function createContentTalentEngine(): TalentEngine {
 }
 
 /**
- * The per-actor sheet for a class: the fixed loadout, an empty (or full)
- * resource pool, and the AP/MP budget.
+ * The per-actor sheet for a class: the fixed loadout and an empty (or full)
+ * resource pool.
  *
  * The caller attaches it: `engine.attach(actor.id, sheetForClass(WATCHMAN))`.
  * That is the one line character creation needs.
@@ -1611,8 +1590,6 @@ export function sheetAfterPurchase(
     if (sheet.points.has(id)) sheet.sustained.add(id);
   }
   sheet.resource.value = previous.resource.value;
-  sheet.ap = previous.ap;
-  sheet.mp = previous.mp;
   return sheet;
 }
 
@@ -1745,8 +1722,6 @@ export function sheetForClass(
       ...originTalents(origin),
     ].map((talent) => talent.id),
     resource: definition.resource,
-    maxAp: definition.maxAp,
-    maxMp: definition.maxMp,
     /**
      * THE GRANT BECOMES A LOOKUP. Joined here for the same reason the passives
      * above are: the class definition says what this class IS, and the sheet is
@@ -2011,7 +1986,7 @@ export function toLoadoutView(
      *
      * ═══ NOT `canUseTalent` ITSELF, WHICH WOULD ANSWER MORE THAN THIS MEANS ═══
      * It needs a TARGET, for range and sight, and it would fold the cooldown and
-     * the three budgets into a frame that is only re-sent when a gate moves —
+     * the pool into a frame that is only re-sent when a gate moves —
      * while the client already greys on those from `cooldowns` and `resource`,
      * which arrive every turn. The gun is the one clause about the body that
      * outlasts a turn, so it is the one clause that belongs on the loadout.
@@ -2182,16 +2157,9 @@ export function toResourceView(sheet: TalentSheet): ResourceView {
     current: sheet.resource.value,
     max: sheet.resource.max,
     discrete: RESOURCE_RULES[sheet.resource.kind].discrete,
-    // THE ACTING BUDGET. See `ResourceView.ap` — the twelve talents have always
-    // been priced against it and no frame ever carried it, so the client could
-    // not draw the number its own hotbar was printing a cost for.
-    ap: sheet.ap,
-    maxAp: sheet.maxAp,
-    // AND MOVEMENT'S HALF OF IT. A step costs 1 MP (`MOVE_MP_COST`), so a round
-    // can end because the legs ran out rather than the arms — and a HUD showing
-    // only AP would leave a player with 4 AP wondering why the turn closed.
-    mp: sheet.mp,
-    maxMp: sheet.maxMp,
+    // NO AP OR MP. This view carried the per-turn budget until Slice C retired
+    // it; a client that still reads `ap` finds it absent, which it already
+    // took to mean "no budget to gate on" (see `ResourceView`).
   };
 }
 
@@ -2223,7 +2191,7 @@ type RefusalCode = Extract<
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════
- * THE ENGINE'S REFUSAL VOCABULARY -> THE CLIENT'S. SEVENTEEN INTO NINE.
+ * THE ENGINE'S REFUSAL VOCABULARY -> THE CLIENT'S. FIFTEEN INTO NINE.
  * ═══════════════════════════════════════════════════════════════════════════
  *
  * `TalentRefusal` (engine/talents.ts) is about the RULE that said no;
@@ -2239,11 +2207,10 @@ type RefusalCode = Extract<
  *   game-design.md § 2 makes `min_range 3` the single most important number in
  *   the Inspector; this row is what keeps it legible.
  *
- *   THE THREE BUDGETS COLLAPSE. `no_ap`, `no_mp` and `no_resource` are one
- *   sentence to a player: you cannot pay for that yet. AP and MP are
- *   deliberately not on the wire (they are structurally incapable of being
- *   short — see test/server/talent-resolution.ts's AP-cap guard), so a distinct
- *   code would name a bar the client cannot draw.
+ *   `no_resource` IS THE ONLY BUDGET LEFT. `no_ap` and `no_mp` collapsed into
+ *   it while the per-turn AP/MP budget existed, as one sentence to a player —
+ *   you cannot pay for that yet. That budget could never actually run short
+ *   and Slice C retired it, so both refusals are gone.
  *
  *   "YOU DO NOT HAVE THAT TALENT" IS A BAD FRAME, NOT A GAME RULE. M3 loadouts
  *   are FIXED, so a frame naming a talent that is not in your four — or one no
@@ -2262,8 +2229,6 @@ const REFUSAL_TO_CODE: Readonly<Record<TalentRefusal, RefusalCode>> = {
   [TalentRefusal.OutOfRange]: ErrorCode.OutOfRange,
   [TalentRefusal.NoLineOfSight]: ErrorCode.NoLos,
   [TalentRefusal.OnCooldown]: ErrorCode.OnCooldown,
-  [TalentRefusal.NoAp]: ErrorCode.NoResource,
-  [TalentRefusal.NoMp]: ErrorCode.NoResource,
   [TalentRefusal.NoResource]: ErrorCode.NoResource,
   [TalentRefusal.NotLearned]: ErrorCode.BadMessage,
   /**
@@ -2329,7 +2294,7 @@ const REFUSAL_TO_CODE: Readonly<Record<TalentRefusal, RefusalCode>> = {
  * still covers it through a book with no `check`, which is exactly the shape a
  * server with a hand-written two-talent book has.
  *
- * IT IS READ-ONLY. Nothing here spends AP, a resource or a cooldown: an intent
+ * IT IS READ-ONLY. Nothing here spends a resource or a cooldown: an intent
  * that goes illegal between submission and resolution must cost ZERO (the
  * refund rule, docs/architecture.md § 2), so the deduction happens at
  * RESOLUTION and `canUseTalent` is a pure predicate over the world.

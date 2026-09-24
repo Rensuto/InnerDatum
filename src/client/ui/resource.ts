@@ -53,17 +53,15 @@ import type { SpriteSource } from '../render/assets.ts';
 /** The authored pip size. Every pip PNG in the manifest is 12x12. */
 export const PIP_PX = 12;
 const PIP_GAP = 2;
-/** Pip row plus the breathing room that keeps it off the hotbar frame. */
-export const RESOURCE_H = PIP_PX + 6;
-
 /**
- * How tall the row is in each shape, so a caller reserving space for it does not
- * have to know that `stacked` means two lines. `partypanel.ts` sizes the self
- * row from this.
+ * Pip row plus the breathing room that keeps it off the hotbar frame. The whole
+ * height of the row: `partypanel.ts` sizes the self row from this.
+ *
+ * (There was a second, taller shape — `stacked`, which dropped D1's AP and MP
+ * rows to a second line in the narrow party pane. The rows went with the
+ * budget, the second line was left reserved and empty, and the shape went too.)
  */
-export function resourceStripH(stacked: boolean): number {
-  return stacked ? RESOURCE_H + PIP_PX + PIP_GAP : RESOURCE_H;
-}
+export const RESOURCE_H = PIP_PX + 6;
 
 /**
  * How many pips a CONTINUOUS pool is drawn as.
@@ -98,10 +96,9 @@ const CHAR_W = 6;
 /**
  * JUST ENOUGH OF A POOL TO SAY HOW WIDE ITS LINE IS.
  *
- * `ResourceView`'s four budget fields are drawn on the SECOND line when the row
- * is `stacked`, so they are no part of this question; taking a `Pick` rather
- * than the whole view is what lets a caller ask about a pool SHAPE that no
- * frame has sent — which is exactly what `WIDEST_POOL_LINE_W` below does.
+ * Taking a `Pick` rather than the whole view is what lets a caller ask about a
+ * pool SHAPE that no frame has sent — which is exactly what
+ * `WIDEST_POOL_LINE_W` below does.
  */
 export type PoolShape = Pick<ResourceView, 'kind' | 'current' | 'max' | 'discrete'>;
 
@@ -115,27 +112,6 @@ export type ResourceOptions = {
   readonly y: number;
   /** How much width the row may use. The row is left-aligned inside it. */
   readonly width: number;
-  /**
-   * ════════════════════════════════════════════════════════════════════════════
-   * TWO LINES INSTEAD OF ONE, for a column that is not as wide as the screen.
-   * ════════════════════════════════════════════════════════════════════════════
-   * This row was written for the full-width strip along the bottom, where 256
-   * pixels of pips, budgets and a label are nothing. The party pane is 208 wide
-   * and gives it 187, so everything past the AP blocks ran off the end —
-   * reported as *"it looks like the MP is cut off in the player hud"*, with a
-   * screenshot showing the `MP` label and no blocks after it.
-   *
-   * WIDENING THE PANE WOULD NOT HAVE FIXED IT. `MAX_PIPS` is 16, so a discrete
-   * pool alone can want 224 pixels before a budget is drawn; any pane width is a
-   * number the content can exceed. Breaking the line is the fix that holds.
-   *
-   * ONE IMPLEMENTATION, TWO SHAPES. The alternative was a second painter for the
-   * pane, and a second copy of "what a lit block means" is how two surfaces come
-   * to disagree about whether a block is spent or left — which this file has
-   * already had happen once, in the loop that lit `i < spent` against a variable
-   * holding the amount remaining.
-   */
-  readonly stacked?: boolean;
 };
 
 /**
@@ -204,15 +180,14 @@ export function pipCount(resource: PoolShape): { total: number; filled: number }
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════
- * WHAT THIS ROW PRINTS BESIDE THE PIPS. One producer, three readers.
+ * WHAT THIS ROW PRINTS BESIDE THE PIPS. One producer, two readers.
  * ═══════════════════════════════════════════════════════════════════════════
  *
- * `drawResource` built this string TWICE — once in `poolLabel` for the stacked
- * shape and once in the tail for the flat one — with the `bare` test spelled
- * out in both. Identical today, and the kind of pair that stops being identical
- * the first time somebody changes one of them. The third reader is the one that
- * made it worth extracting: `poolLineW` has to measure the string the painter
- * will actually draw, not a string that looks like it.
+ * `drawResource` built this string TWICE — once for a stacked shape it no
+ * longer has and once for the flat one — with the `bare` test spelled out in
+ * both. The reader that made it worth extracting is the other one:
+ * `poolLineW` has to measure the string the painter will actually draw, not a
+ * string that looks like it.
  *
  * NO FIGURE BESIDE A DISCRETE POOL THE ROW COULD DRAW. "3/8" next to eight
  * countable vials says the same thing twice and re-frames the pips as
@@ -234,7 +209,7 @@ export function poolText(pool: PoolShape): string {
  * ═══════════════════════════════════════════════════════════════════════════
  *
  * THE ARITHMETIC IS `drawResource`'s OWN, not a second estimate of it. The pip
- * loop advances `PIP_PX + PIP_GAP` per pip, `poolLabel` then adds `PIP_GAP * 2`
+ * loop advances `PIP_PX + PIP_GAP` per pip, the painter then adds `PIP_GAP * 2`
  * before the text, and the text is drawn from there. Any other answer here
  * would be a box sized against a row nobody draws.
  *
@@ -352,59 +327,26 @@ export function drawResource(options: ResourceOptions): void {
 
   const { total, filled } = pipCount(resource);
   const art = pipArt(resource.kind);
-  const stacked = options.stacked === true;
-  // THE LINE THE CURSOR IS ON. One line unless `stacked`, in which case the
-  // budgets drop to a second one -- so every `y` below reads this and not the
-  // parameter, or the second line would draw on top of the first.
-  let lineY = y;
-  const midY = lineY + PIP_PX / 2;
+  const midY = y + PIP_PX / 2;
 
   let cursor = x;
   for (let i = 0; i < total; i += 1) {
     if (cursor + PIP_PX > x + width) break;
     const isFull = i < filled;
-    drawPip(ctx, sprites, isFull ? art.full : art.empty, cursor, lineY, isFull);
+    drawPip(ctx, sprites, isFull ? art.full : art.empty, cursor, y, isFull);
     cursor += PIP_PX + PIP_GAP;
-  }
-
-  /**
-   * STACKED PUTS THE POOL'S NAME ON ITS OWN LINE AND DROPS TO THE NEXT.
-   *
-   * The pool and the word for it belong together -- eight vials over the word
-   * `Reagents` is one statement -- and the budgets are the round's small change,
-   * which is what the paragraph above already argues about their weight. So the
-   * break goes between those two groups rather than anywhere else.
-   */
-  const poolLabel = (): void => {
-    cursor += PIP_GAP * 2;
-    ctx.fillStyle = PALETTE.BONE;
-    // THROUGH `poolText`, which is also what `poolLineW` measures — see its
-    // note. A second copy of the `bare` test here is how the box comes to be
-    // sized against a string the painter does not draw.
-    if (cursor < x + width) ctx.fillText(poolText(resource), cursor, lineY + PIP_PX / 2);
-  };
-
-  if (stacked) {
-    poolLabel();
-    lineY += PIP_PX + PIP_GAP;
-    cursor = x;
   }
 
   // NO AP OR MP ROWS. They were the open round's fuel gauge — "an empty row
   // means the turn is about to end" — and there is no open round now: every
-  // action ends the turn (`actPlayer`), so AP and MP refill before a player
-  // could ever see them spent. ToME has no such budget; this HUD shows none.
-
-  if (stacked) {
-    ctx.restore();
-    return;
-  }
+  // action ends the turn (`actPlayer`), and the budget itself is retired. ToME
+  // has no such budget; this HUD shows none.
 
   cursor += PIP_GAP * 2;
   ctx.fillStyle = PALETTE.BONE;
   // The figure is printed unless the pips ARE the figure — `poolText` owns that
-  // rule for both shapes of this row, and owning it once is what lets
-  // `poolLineW` measure the string that is actually drawn.
+  // rule, and owning it once is what lets `poolLineW` measure the string that
+  // is actually drawn.
   if (cursor < x + width) ctx.fillText(poolText(resource), cursor, midY);
 
   ctx.restore();

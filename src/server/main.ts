@@ -198,7 +198,7 @@ const startedAt = hrtime.bigint();
  * monster sweep).
  *
  * EXPORTED FOR ONE REASON: so that test/server/class-wiring.test.ts asserts the
- * AP/MP refill and the Inspector's Focus rule against THE ADAPTER THAT SHIPS,
+ * Inspector's Focus rule against THE ADAPTER THAT SHIPS,
  * rather than against a copy of it written in a test file. A copy would keep
  * passing on the day this one stopped calling `actBase`.
  */
@@ -340,30 +340,18 @@ export function talentRuntimeFor(
    * IS its loadout, at rank 1, which is what `createTalentSheet` does with no
    * `birth` argument — the same default every fixture in the tree relies on.
    *
-   * NO RESOURCE POOL WORTH THE NAME. A creature is given the Watchman's budget
+   * NO RESOURCE POOL WORTH THE NAME. A creature is given the Watchman's pool
    * because `TalentSheetInit` requires one and a monster talent must not cost a
    * resource: there is nothing in the game that refills a monster's pool, so a
    * talent priced in one would fire once per creature per lifetime and then
    * look broken. Monster talents are priced in COOLDOWN, which the sheet ticks
    * for everybody.
-   */
-  /**
-   * WHAT A CREATURE'S SHEET IS GIVEN TO SPEND.
    *
-   * ═══ THE SAME SIX AP A PLAYER HAS, ON PURPOSE ═══
-   * A monster talent has to cost something a player can reason about, and "two
-   * of its six" is a sentence that means the same thing on both sides of a
-   * fight. Giving creatures their own budget would make every monster talent's
-   * AP cost a number with no referent.
-   *
-   * MOVEMENT IS ZERO AND THAT IS NOT AN OVERSIGHT. The AI moves through
-   * `IntentKind.Move`, which spends the ACTOR's budget and never the sheet's —
-   * a creature's sheet exists to gate talents. An `maxMp` here would be a pool
-   * nothing draws from.
+   * (IT WAS ALSO GIVEN SIX AP, "the same six AP a player has", when a sheet
+   * carried a per-turn AP/MP budget. No monster talent cost more than five and
+   * each ended the creature's turn, so the budget never refused one; Slice C
+   * retired it for players and creatures together.)
    */
-  const MONSTER_AP = 6;
-  const MONSTER_MP = 0;
-
   const ensureMonsterSheet = (actor: EngineActor): TalentSheet | undefined => {
     const known = 'talents' in actor ? actor.talents : undefined;
     if (known === undefined || known.length === 0) return undefined;
@@ -374,8 +362,6 @@ export function talentRuntimeFor(
       createTalentSheet({
         loadout: [...known],
         resource: ResourceKind.Resolve,
-        maxAp: MONSTER_AP,
-        maxMp: MONSTER_MP,
       }),
     );
   };
@@ -533,7 +519,7 @@ export function talentRuntimeFor(
     activatedOf: (actorId: string): readonly string[] => talents.sheetOf(actorId)?.loadout ?? [],
     actBase: (actorId: string): void => {
       talents.actBase(actorId, world);
-      // AFTER the refill and after the latch is cleared, so a passive reading
+      // AFTER the regen and after the latch is cleared, so a passive reading
       // "did I move" or "how much resource is left" sees the turn it is in
       // rather than the one that just ended.
       onActBase?.(actorId);
@@ -541,14 +527,6 @@ export function talentRuntimeFor(
     noteMoved: (actorId: string): void => {
       const sheet = talents.sheetOf(actorId);
       if (sheet !== undefined) sheet.movedThisTurn = true;
-    },
-    // THE BUDGET ALONE — not the latch or the moved flag, which are the GAME
-    // turn's and stay with `actBase`. See `TalentResolution.refillBudget`.
-    refillBudget: (actorId: string): void => {
-      const sheet = talents.sheetOf(actorId);
-      if (sheet === undefined) return;
-      sheet.ap = sheet.maxAp;
-      sheet.mp = sheet.maxMp;
     },
     // The two class-resource hooks, forwarded verbatim. Both are no-ops for a
     // body with no sheet and for the two resources they do not own, so the
@@ -1209,8 +1187,8 @@ export function buildServer() {
    * That is why the resolution seam is a prerequisite rather than a follow-up.
    *
    * It is a lifetime this file owns, exactly like the world, the survival table,
-   * the party table and the save store: the sheets live across pumps (AP refills
-   * on the base clock, a resource regenerates, cooldowns tick), and an engine
+   * the party table and the save store: the sheets live across pumps (a
+   * resource regenerates on the base clock, cooldowns tick), and an engine
    * that built its own each time would hand every player a full Resolve bar on
    * every frame.
    */

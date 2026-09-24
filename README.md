@@ -62,13 +62,13 @@ blocks and movement feels like ordinary grid movement. Towns and the overworld c
 contain a hostile — an assertion in code, not a convention — so they are shared, and
 anywhere with combat in it is instanced per party.
 
-**Your whole round costs exactly one turn.** Inside it you have a budget: 6 action points,
-3 movement points (4 for the Inspector), at most three actions. It buys a combo within
-your own turn, never an
-extra turn between everyone else's. Players are pinned to speed 1.0 in the literal type
-system — `globalSpeed` has the type `1` — so breaking the pin is a compile error rather
-than a code-review note. Monsters keep ToME's full variable-speed model, so speed stays
-something you play around. You just cannot buy it for yourself.
+**Every action ends your turn, and pays ToME's price for it.** A step costs a turn at
+your movement speed, a swing at your weapon's, a talent at its own speed — a stunned
+character's step costs two turns, and a few talents cost no time at all. Alone, the world
+moves each time you act, exactly as it does in ToME. In a party, a fight runs in
+initiative order: the turn passes the moment you act, and the Bell keeps it moving when
+somebody stops answering. Speed is ToME's model for everyone — slows, hastes and movement
+speed change how often you are asked, players and monsters alike.
 
 Then there is everything that actually happens on a Friday night.
 

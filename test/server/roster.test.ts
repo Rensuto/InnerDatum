@@ -76,7 +76,7 @@ function character(id: string, name: string, over: Partial<CharacterFile> = {}):
       explored,
       exploredElsewhere,
       spentStats,
-      resources: { hp: 60, ap: 4, mp: 0, special: { kind: 'resolve', value: 0 } },
+      resources: { hp: 60, special: { kind: 'resolve', value: 0 } },
       talentCooldowns: {},
       effects: [],
       position: null,

@@ -283,18 +283,16 @@ function fixture(
 const PLENTY = new Array<number>(64).fill(1);
 
 /**
- * Top the actor's budgets back up.
+ * Top the actor's pool back up.
  *
  * `canUseTalent` checks affordability BEFORE it checks targeting — the cheap,
  * world-free tests first — so a test that wants to see `min_range` has to be
- * able to pay for the shot, and a test that fires twice has to stand in for the
- * once-per-game-turn AP refill that `engine.actBase` normally does.
+ * able to pay for the shot. (It refilled the per-turn AP budget too, standing
+ * in for `engine.actBase`, until the budget was retired.)
  */
 function refill(engine: TalentEngine, actorId: string): void {
   const sheet = engine.sheetOf(actorId);
   if (sheet === undefined) throw new Error(`no sheet for ${actorId}`);
-  sheet.ap = sheet.maxAp;
-  sheet.mp = sheet.maxMp;
   sheet.resource.value = sheet.resource.max;
 }
 
@@ -1012,7 +1010,7 @@ describe('THE DEAD ZONE — the Inspector cannot shoot adjacent', () => {
 });
 
 describe('THE REFUND RULE — an illegal intent costs nothing at all', () => {
-  it('spends no AP, no resource, no cooldown and NO RNG DRAW', () => {
+  it('spends no resource, no cooldown and NO RNG DRAW', () => {
     const f = fixture(PLENTY);
     const inspector = f.add(INSPECTOR, 'sam', 5, 5);
     const sheet = f.engine.sheetOf('sam');
@@ -1021,7 +1019,7 @@ describe('THE REFUND RULE — an illegal intent costs nothing at all', () => {
     sheet.resource.value = sheet.resource.max;
     const husk = f.addMonster('husk', 6, 5); // inside the dead zone
 
-    const before = { ap: sheet.ap, focus: sheet.resource.value, draws: drawCount(f.rng) };
+    const before = { focus: sheet.resource.value, draws: drawCount(f.rng) };
     const result = useTalent(
       f.engine,
       inspector,
@@ -1033,7 +1031,6 @@ describe('THE REFUND RULE — an illegal intent costs nothing at all', () => {
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.reason).toBe(TalentRefusal.MinRange);
-    expect(sheet.ap).toBe(before.ap);
     expect(sheet.resource.value).toBe(before.focus);
     expect(inspector.cooldowns.size).toBe(0);
     // The one a code review cannot see: a refusal that consumed a draw would
@@ -1060,7 +1057,6 @@ describe('THE REFUND RULE — an illegal intent costs nothing at all', () => {
     );
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.reason).toBe(TalentRefusal.NoTarget);
-    expect(sheet.ap).toBe(sheet.maxAp);
     expect(drawCount(f.rng)).toBe(0);
   });
 
@@ -1099,7 +1095,7 @@ describe('THE REFUND RULE — an illegal intent costs nothing at all', () => {
 });
 
 describe('paying for a talent that DID happen', () => {
-  it('spends AP and the resource and starts the cooldown, exactly once', () => {
+  it('spends the resource and starts the cooldown, exactly once', () => {
     const f = fixture(PLENTY);
     const inspector = f.add(INSPECTOR, 'sam', 5, 5);
     const sheet = f.engine.sheetOf('sam');
@@ -1118,9 +1114,7 @@ describe('paying for a talent that DID happen', () => {
 
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    expect(result.apSpent).toBe(5);
     expect(result.resourceSpent).toBe(35);
-    expect(sheet.ap).toBe(sheet.maxAp - 5);
     expect(sheet.resource.value).toBe(65);
     expect(inspector.cooldowns.get(talentId('snipers_mark'))).toBe(5);
   });
@@ -1128,7 +1122,7 @@ describe('paying for a talent that DID happen', () => {
   it('NO talent — none of the twelve — can be pressed while it is cooling', () => {
     // Swept rather than spot-checked: `canUseTalent` tests the cooldown before
     // cost and before targeting, so this must hold for the three at-will
-    // talents too. They author `cooldownTurns: 0` and are gated by AP alone —
+    // talents too. They author `cooldownTurns: 0` and are gated by nothing else —
     // but if something ever writes a cooldown onto one (a future effect, a
     // debuff), the gate has to bite there as well.
     const f = fixture(PLENTY);
@@ -1153,11 +1147,10 @@ describe('paying for a talent that DID happen', () => {
     }
   });
 
-  it('NO talent can be pressed on an empty resource, or an empty AP budget', () => {
-    // The other two gates, swept the same way. Order inside `canUseTalent` is
-    // cooldown -> AP -> MP -> resource, so each is tested with the earlier ones
-    // satisfied; otherwise a test for the resource gate would silently be a
-    // second test for the AP gate.
+  it('NO talent can be pressed on an empty resource', () => {
+    // The other gate, swept the same way. Order inside `canUseTalent` is
+    // cooldown -> resource, so it is tested with the cooldown satisfied. (It
+    // swept an empty AP budget too, until that budget was retired.)
     const f = fixture(PLENTY);
     for (const definition of CLASSES) {
       const actor = f.add(
@@ -1192,13 +1185,6 @@ describe('paying for a talent that DID happen', () => {
             refusal: TalentRefusal.NoResource,
           });
         }
-
-        refill(f.engine, actor.id);
-        sheet.ap = (talent.cost.ap ?? 0) - 1;
-        expect({
-          id: talent.id,
-          refusal: canUseTalent(f.engine, actor, talent, here, f.world),
-        }).toEqual({ id: talent.id, refusal: TalentRefusal.NoAp });
       }
     }
   });
@@ -2781,7 +2767,10 @@ describe("Highborn's Bloom waives the resource and nothing else", () => {
    * `StatusFlags.freeResources` is how the effect reaches `useTalent` without
    * `engine/` importing `content/` — the shape `noTalentsCooldown` already uses
    * one site over. Both halves need asserting: the flag has to STOP the
-   * deduction, and it must not stop the turn.
+   * deduction, and it must not stop the turn. The turn is the scheduler's to
+   * charge, not `useTalent`'s, so that half is measured in energy through the
+   * real engine — `action-cost.test.ts`, "Highborn's Bloom waives the resource,
+   * never the turn".
    */
   function armed(free: boolean) {
     const f = fixture(PLENTY);
@@ -2819,7 +2808,7 @@ describe("Highborn's Bloom waives the resource and nothing else", () => {
   it('spends none of it when the bloom is up', () => {
     const { f, inspector, sheet } = armed(true);
     const husk = f.addMonster('husk', 5 + 4, 5);
-    const before = { focus: sheet.resource.value, ap: sheet.ap };
+    const before = { focus: sheet.resource.value };
     const out = useTalent(
       f.engine,
       inspector,
@@ -2830,12 +2819,8 @@ describe("Highborn's Bloom waives the resource and nothing else", () => {
 
     expect(out.ok).toBe(true);
     expect(sheet.resource.value, 'the bloom did not reach the payment site').toBe(before.focus);
-    /**
-     * …AND THE TURN IS STILL SPENT. Upstream waives the resource and still
-     * spends energy; AP here IS the turn, and a talent that cost no time would
-     * let a body act without end.
-     */
-    expect(sheet.ap, 'a free talent must still cost the turn').toBeLessThan(before.ap);
+    // …AND THE TALENT STILL GOES ON COOLDOWN. The turn it costs is measured in
+    // energy in action-cost.test.ts; this used to read it off the AP budget.
     expect(inspector.cooldowns.size, 'and still go on cooldown').toBeGreaterThan(0);
   });
 });

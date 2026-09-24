@@ -53,10 +53,12 @@
  *   about a mental save: "a resistance to a channel no content produces can
  *   only ever be decoration".
  *
- *   A PLACEHOLDER THAT SAYS SO. `REVIVE_AP` is documented as "CARRIED AS DATA,
- *   NOT SPENT HERE", with the reason and the day it will be read. `noteBaseline`
- *   says it exists "so the intent is expressible at the call site". Both are
- *   deliberate and both explain themselves where they are declared.
+ *   A PLACEHOLDER THAT SAYS SO. `REVIVE_AP` was documented as "CARRIED AS DATA,
+ *   NOT SPENT HERE", with the reason and the day it would be read; that day
+ *   never came, and it went with the AP budget it was waiting for (Slice C).
+ *   `noteBaseline` says it exists "so the intent is expressible at the call
+ *   site". Both were deliberate and both explained themselves where they were
+ *   declared.
  *
  *   A CUMULATIVE TWIN OF A LIVE FUNCTION. `totalCategoryPointsAtLevel` looks
  *   alarming — if nothing granted category points, no locked tree could ever be
@@ -94,11 +96,12 @@ const testFiles = walk('test', []);
 /**
  * ITSELF EXCLUDED, AND IT HAD TO LEARN THAT THE HARD WAY.
  *
- * The header above NAMES the symbols this tool has already triaged — `REVIVE_AP`,
- * `noteBaseline`, `grantImmunity`. Those are prose, and a text search cannot tell
- * prose from a call: writing down that `REVIVE_AP` is dead made it stop counting
- * as dead, and the run after that documentation reported three fewer than the run
- * before it, with no code changed.
+ * The header above NAMES the symbols this tool has already triaged —
+ * `noteBaseline`, `grantImmunity`, and `REVIVE_AP` while it existed. Those are
+ * prose, and a text search cannot tell prose from a call: writing down that
+ * `REVIVE_AP` was dead made it stop counting as dead, and the run after that
+ * documentation reported three fewer than the run before it, with no code
+ * changed.
  *
  * A measuring instrument that moves its own reading is worse than no instrument,
  * so this file is not one of the files it reads.
@@ -194,7 +197,7 @@ for (const [name, homes] of declaredIn) {
  * allowlisted HERE with a reason, or the tool fails.
  *
  * ═══ AND AN ENTRY THAT IS NO LONGER DEAD FAILS TOO ═══
- * The reverse rot is the same rot. If something starts calling `REVIVE_AP`, the
+ * The reverse rot is the same rot. If something starts calling `noteBaseline`, the
  * note below saying nothing does becomes a lie, and a lie in an allowlist is
  * worse than a missing entry because it reads as considered. Wiring one up
  * means deleting its line, and the tool says so by name.
@@ -214,11 +217,6 @@ const ALLOWED_DEAD = new Map([
   [
     'src/server/engine/downed.ts downedRecord',
     'single-record accessor beside the live DownedState surface.',
-  ],
-  [
-    'src/server/engine/downed.ts REVIVE_AP',
-    'documented placeholder -- "CARRIED AS DATA, NOT SPENT HERE". A revive costs ' +
-      'the whole TURN today; this is the number it reads if it ever becomes AP-priced.',
   ],
   [
     'src/server/engine/effects.ts noteBaseline',
@@ -243,8 +241,9 @@ const ALLOWED_DEAD = new Map([
       'Ours cannot: every area talent selects through actorsInShape(..., ' +
       'Affinity.Hostile) and isEnemy now answers false between a Redactor and ' +
       'her shadow, so there is no such blow to reduce. Kept, with its curve ' +
-      '(combatTalentScale(t, 5, 85)), for the day friendly fire exists -- the ' +
-      'same shape as REVIVE_AP above.',
+      '(combatTalentScale(t, 5, 85)), for the day friendly fire exists -- a ' +
+      'placeholder for a rule that does not exist yet, as REVIVE_AP was for an ' +
+      'AP-priced revive until the AP budget was retired.',
   ],
   [
     'src/shared/progression.ts STAT_MIN',

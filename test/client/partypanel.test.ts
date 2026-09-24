@@ -4,10 +4,10 @@ import { describe, expect, it } from 'vitest';
 
 import { createContextMenu } from '../../src/client/ui/contextmenu.ts';
 import {
+  RESOURCE_H,
   WIDEST_POOL_LINE_W,
   poolLineW,
   poolText,
-  resourceStripH,
 } from '../../src/client/ui/resource.ts';
 import {
   PARTY_PANE_COMPACT_W,
@@ -1258,10 +1258,6 @@ describe('the viewer’s own pools on the pane', () => {
     current: 3,
     max: 8,
     discrete: true,
-    ap: 4,
-    maxAp: 6,
-    mp: 2,
-    maxMp: 3,
   } as const;
 
   /** Every `drawImage`/`fillRect` y, so a strip can be told from a row. */
@@ -1301,10 +1297,10 @@ describe('the viewer’s own pools on the pane', () => {
       partyPaneHeight(withPools, PartyPaneMode.Rows) - partyPaneHeight(without, PartyPaneMode.Rows);
     // EXACTLY ONE STRIP. Three members in the fixture and only one of them is
     // the viewer, so a per-row implementation would show up here as 3x.
-    // THE STACKED HEIGHT, because the pane draws the two-line shape -- see
-    // `RESOURCE_STRIP_H`. Naming the flat one here would pass while the pane
-    // reserved a line less than it draws, which is the clipping this fixed.
-    expect(grew, 'the pane grew by something other than one strip').toBe(resourceStripH(true));
+    // ONE LINE HIGH: this was the STACKED height while the AP/MP budget rows
+    // dropped to a second line; the budget is retired, and a second line
+    // reserved for nothing is a blank band under the pips (`RESOURCE_STRIP_H`).
+    expect(grew, 'the pane grew by something other than one strip').toBe(RESOURCE_H);
   });
 
   it('draws pips once the frame has arrived and none before it', () => {
@@ -1588,7 +1584,7 @@ describe('the pane is wide enough for every class to read its own pool', () => {
         },
       ) as unknown as CanvasRenderingContext2D;
 
-      const view = { ...trio(), resource: { ...pool, ap: 6, maxAp: 6, mp: 3, maxMp: 3 } };
+      const view = { ...trio(), resource: pool };
       const layout = partyPaneLayout({
         view,
         width: 900,

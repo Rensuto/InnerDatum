@@ -188,7 +188,7 @@ function seeded(): Parameters<typeof createCharacterFile>[0] {
     deepenedTrees: [DEEPENED_TREE],
     spentStats: { str: 3, con: 2 },
     lastLearnt: { class: [CLASS_TALENT], generic: [BOUGHT_TALENT], stat: [...STAT_WINDOW] },
-    resources: { hp: 100, ap: 1, mp: 0, special: { kind: 'resolve', value: 10 } },
+    resources: { hp: 100, special: { kind: 'resolve', value: 10 } },
   };
 }
 
@@ -884,7 +884,7 @@ describe('the save round trip keeps every point kind', () => {
       name: 'Ren',
       classId: CLASS_ID,
       level: LEVEL,
-      resources: { hp: 100, ap: 1, mp: 0, special: { kind: 'resolve', value: 10 } },
+      resources: { hp: 100, special: { kind: 'resolve', value: 10 } },
     });
     const result = parseCharacterFile(JSON.parse(serialiseCharacter(bare)));
     expect(result.ok).toBe(true);
@@ -1024,7 +1024,7 @@ describe('a file written before a class changed its four', () => {
         'talent:open_ledger': 1,
         'talent:issued_kit': 1,
       },
-      resources: { hp: 100, ap: 1, mp: 0, special: { kind: 'ink', value: 10 } },
+      resources: { hp: 100, special: { kind: 'ink', value: 10 } },
     };
   }
 
@@ -1154,7 +1154,7 @@ describe('a file saved before the birth points existed', () => {
       unlockedTrees: [BOUGHT_TREE],
       // Twelve attribute points, both stats under the level-5 ceiling of 27.
       spentStats: { con: 6, wil: 6 },
-      resources: { hp: 100, ap: 1, mp: 0, special: { kind: 'resolve', value: 10 } },
+      resources: { hp: 100, special: { kind: 'resolve', value: 10 } },
     };
   }
 

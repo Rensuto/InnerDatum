@@ -156,7 +156,7 @@ import type { SpriteSource } from '../render/assets.ts';
 import type { PanelRect } from './panel.ts';
 import type { PanelSize } from './drag.ts';
 import { HP_LOW } from '../../shared/vitals.ts';
-import { RESOURCE_H, WIDEST_POOL_LINE_W, drawResource, resourceStripH } from './resource.ts';
+import { RESOURCE_H, WIDEST_POOL_LINE_W, drawResource } from './resource.ts';
 import { PURSE_GAP, drawPurse } from './purse.ts';
 import { drawXpBar, xpBarGeometry } from './xpbar.ts';
 import { drawAirBar } from './air.ts';
@@ -194,9 +194,9 @@ const ROW_TOKEN_DX = 5;
  * accomodate."*
  *
  * ═══ IT WAS 208, A NUMBER, AND THREE CLASSES OF FOUR WERE CUT ═══
- * MEASURED against the row this pane actually draws — `drawResource` at
- * `stacked`, starting at `token.x` with `x + w - token.x` to run in, which is
- * 187 pixels at 208:
+ * MEASURED against the row this pane actually draws — `drawResource`
+ * (then at `stacked`), starting at `token.x` with `x + w - token.x` to run in,
+ * which is 187 pixels at 208:
  *
  *   Resolve   10 pips, `Resolve 100/100`   wants 234   CUT by 47
  *   Focus     10 pips, `Focus 100/100`     wants 222   CUT by 35
@@ -422,16 +422,18 @@ function rowHeightFor(row: PartyPaneRow, view: PartyPaneView, compact: boolean):
 /**
  * The band under the self row's name that holds the pools.
  *
- * `resourceStripH` is `ui/resource.ts`'s own answer, so this grows if the pips
- * ever do rather than being a number remembered in two files. TRUE is passed
- * because the pane draws the STACKED shape: the row was written for the
+ * `RESOURCE_H` is `ui/resource.ts`'s own answer, so this grows if the pips
+ * ever do rather than being a number remembered in two files.
+ *
+ * ONE LINE. It was the STACKED shape's two: the row was written for the
  * full-width strip along the bottom, so on one line everything past the AP
  * blocks ran off the end -- reported as "it looks like the MP is cut off in the
- * player hud". The pane was 208 wide when that was written and the width is
- * derived now (`PARTY_PANE_W`), which answers the POOL line; this answers the
- * BUDGET line, and the two are separate faults with separate fixes.
+ * player hud" -- and the budget rows dropped to a second line here. The width
+ * is derived now (`PARTY_PANE_W`), which answers the POOL line, and the AP/MP
+ * budget is retired, so the second line had nothing left to hold and was a
+ * blank band under the pips.
  */
-const RESOURCE_STRIP_H = resourceStripH(true);
+const RESOURCE_STRIP_H = RESOURCE_H;
 
 /**
  * The band under the pools that holds the level, the xp track and the purse.
@@ -511,10 +513,10 @@ export type PartyPaneView = {
    * 'party' at the top left."*
    *
    * ONE FIELD ON THE VIEW AND NOT ONE PER ROW, because there is only ever one
-   * of these to draw. `ResourceView` is VIEWER-PRIVATE by protocol
-   * (protocol.ts:1311, *"Another detective's AP is not yours to see, and the
-   * party pane has never claimed otherwise"*) and the wire carries no teammate's
-   * pool at all, so a per-row field would be six nulls and an invitation to fill
+   * of these to draw. `ResourceView` is VIEWER-PRIVATE by protocol (the
+   * `resource` frame is a `ViewerMsg`, shared/protocol.ts) and the wire
+   * carries no teammate's pool at all, so a per-row field would be six nulls
+   * and an invitation to fill
    * them from somewhere they cannot honestly come from.
    *
    * It is drawn on the SELF row, which is the row it is about.
@@ -1461,19 +1463,18 @@ function drawRow(
       ctx,
       sprites,
       resource: self.resource,
-      stacked: true,
       x: token.x,
       y: y + PARTY_ROW_H - 1,
       // FROM THE TOKEN TO THE ROW'S EDGE. It starts under the portrait rather
       // than under the name so the pips have the full width of the row to run
-      // in -- twelve reagents plus a budget does not fit beside a 32px face.
+      // in -- twelve reagents do not fit beside a 32px face.
       //
       // ═══ AND THE PANE IS NOW SIZED SO THIS IS ENOUGH ═══
       // This said *"187 pixels against the 256 the flat row wants, which is why
       // `stacked` is set rather than the pane being widened: `MAX_PIPS` is 16,
       // so a discrete pool alone can want 224 and NO pane width is safe."* Both
-      // halves were true and the conclusion did not follow. `stacked` answers
-      // the BUDGET row, which is the 256; it does nothing for the POOL line,
+      // halves were true and the conclusion did not follow. `stacked` answered
+      // the BUDGET row, which was the 256; it did nothing for the POOL line,
       // which is pips plus the figure and stayed on line one — and three of the
       // four classes had that line cut at the frame. `PARTY_PANE_W` is derived
       // from `WIDEST_POOL_LINE_W` now, so this is 240 against the 234 the

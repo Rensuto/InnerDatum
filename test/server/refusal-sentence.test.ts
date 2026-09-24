@@ -35,7 +35,7 @@ import { TileCode } from '../../src/shared/protocol.ts';
  *
  *     Ward Rush: bad_message
  *
- * MEASURED by `tools/round-live.mjs`, which reported `casts landed: 0` with
+ * MEASURED by `tools/round-live.mjs` (since deleted), which reported `casts landed: 0` with
  * three of those errors — and then concluded from zero casts that the
  * multi-action round was "CLOSED", which is the vacuous green a probe reports
  * when the thing it was measuring never happened.

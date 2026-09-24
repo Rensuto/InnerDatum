@@ -653,7 +653,7 @@ describe('a character file', () => {
       ownerId: '284739201847583744',
       name: 'Sergeant Vell',
       classId: 'watchman',
-      resources: { hp: 61, ap: 4, mp: 2, special: { kind: 'resolve', value: 3 } },
+      resources: { hp: 61, special: { kind: 'resolve', value: 3 } },
       effects: [
         { effectId: EffectId.ZoneAuraUnderwater, turnsRemaining: 1 },
         { effectId: 'effect:bleeding', turnsRemaining: 2, magnitude: 6 },

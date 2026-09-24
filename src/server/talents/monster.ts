@@ -23,17 +23,18 @@
  * every number in a player talent was tuned against a resource pool the
  * creature does not have.
  *
- * ═══ PRICED IN COOLDOWN AND AP, NEVER IN A RESOURCE ═══
- * A creature's sheet is given six action points and no class resource worth the
- * name, because NOTHING IN THE GAME REFILLS A MONSTER'S POOL. A talent priced
- * in Resolve would fire once per creature per lifetime and then look broken.
- * Cooldowns tick for everybody — `actBase` runs for every resolved actor with
- * no player filter — so a cooldown is a price a monster can actually pay.
+ * ═══ PRICED IN COOLDOWN, NEVER IN A RESOURCE ═══
+ * A creature's sheet has no class resource worth the name, because NOTHING IN
+ * THE GAME REFILLS A MONSTER'S POOL. A talent priced in Resolve would fire once
+ * per creature per lifetime and then look broken. Cooldowns tick for everybody
+ * — `actBase` runs for every resolved actor with no player filter — so a
+ * cooldown is a price a monster can actually pay.
  *
- * ═══ AND THE COSTS MEAN THE SAME THING ON BOTH SIDES OF A FIGHT ═══
- * Six AP is a player's round too, so "two of its six" is a sentence with one
- * meaning. A separate creature budget would make every number here a figure
- * with no referent.
+ * ═══ THE AP FIGURES ARE A PRICE NOTHING SPENDS ═══
+ * A creature's sheet was given six action points, "a player's round too", so
+ * "two of its six" meant the same thing on both sides of a fight. That budget
+ * is retired, for players and creatures together; every one of these talents
+ * ends the creature's turn, which is what it always cost in practice.
  */
 
 /**

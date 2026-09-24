@@ -282,7 +282,7 @@ describe('the ledger survives the disk', () => {
     ownerId: '111111111111111111',
     name: 'Ren',
     classId: 'class:watchman',
-    resources: { hp: 30, ap: 0, mp: 0, special: { kind: '', value: 0 } },
+    resources: { hp: 30, special: { kind: '', value: 0 } },
     createdAt: '2026-01-01T00:00:00.000Z',
   } as const;
 

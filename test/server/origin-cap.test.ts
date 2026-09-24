@@ -356,7 +356,7 @@ async function writeWatchman(
       level,
       talentPoints: {},
       ...(spentStats === undefined ? {} : { spentStats }),
-      resources: { hp: 1000, ap: 1, mp: 0, special: { kind: 'resolve', value: 10 } },
+      resources: { hp: 1000, special: { kind: 'resolve', value: 10 } },
     }),
     SaveReason.Manual,
   );

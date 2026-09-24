@@ -184,8 +184,8 @@ export type TalentBook = {
    *
    * OPTIONAL, AND THE REASON IS WORTH THE PARAGRAPH. `canUseTalent` in
    * src/server/engine/talents.ts is the function the SCHEDULER calls at
-   * resolution, and it knows things this adapter cannot see: the AP and MP
-   * budgets, whether the body under the cursor is hostile, whether a Fog Step
+   * resolution, and it knows things this adapter cannot see: the talent's
+   * rank, whether the body under the cursor is hostile, whether a Fog Step
    * destination is occupied. When it is wired through here, `submitTalent`
    * defers to it completely and there is exactly ONE implementation of
    * "may this be used" in the process — which is the only way submission and
@@ -253,7 +253,7 @@ const WIPE_CHURN_TURNS = 2;
  * THE TALENT RUNTIME, from this layer's side.
  *
  * `TalentResolution` is the three callbacks the SCHEDULER needs (resolve a cast,
- * refill the budget on the base clock, note a move). `forget` is the fourth, and
+ * run the base clock's pass, note a move). `forget` is the fourth, and
  * it belongs to this file rather than to the scheduler because the two callers
  * are both here: a player genuinely leaving (`leave`) and a reaped monster
  * (`reap`). engine/talents.ts's own note — *"`forget()` is called from the one
@@ -346,8 +346,8 @@ export type TurnEngineOptions = {
   /**
    * THE TALENT RUNTIME (see `TalentRuntime` and `TalentResolution`).
    *
-   * Present → `IntentKind.Talent` resolves for real inside the pump, the AP/MP
-   * budget refills on the base clock, `movedThisTurn` gets its writer, and a
+   * Present → `IntentKind.Talent` resolves for real inside the pump, the class
+   * resource regenerates on the base clock, `movedThisTurn` gets its writer, and a
    * body that leaves the world takes its sheet with it.
    *
    * ABSENT → M3 exactly: every talent intent is refused with `no_talent_effect`
@@ -2486,7 +2486,7 @@ export function createTurnEngine(opts: TurnEngineOptions): ReapingTurnEngine {
          * not written one, so a player pressing a hotbar button they have not
          * learned yet was told, verbatim, `Ward Rush: bad_message`.
          *
-         * MEASURED with `tools/round-live.mjs`, which reported `casts landed: 0`
+         * MEASURED with `tools/round-live.mjs` (since deleted), which reported `casts landed: 0`
          * and three of those errors — and then concluded from zero casts that
          * the multi-action round was "CLOSED".
          *
@@ -2643,7 +2643,7 @@ export function createTurnEngine(opts: TurnEngineOptions): ReapingTurnEngine {
      * THE ENGINE SAYS AN ID because of the refund rule. An intent submitted now
      * resolves later, and between the two the party moves: a direction re-read at
      * resolution would pick up whoever has since STEPPED INTO that tile, which is
-     * how you spend 4 AP standing up the wrong person — or the person who was
+     * how you spend a turn standing up the wrong person — or the person who was
      * never down. The subject of a revive has to be fixed at the moment the
      * player pointed at it, and an id is what fixes it.
      *
@@ -2651,8 +2651,8 @@ export function createTurnEngine(opts: TurnEngineOptions): ReapingTurnEngine {
      * that conversion happens.
      *
      * IT CHECKS EXACTLY ONE THING: that there is a body on that tile. Everything
-     * else — is that body Downed, is it in reach, can the rescuer afford the 4 AP
-     * (game-design.md § 9) — belongs to `revive` in engine/downed.ts, which the
+     * else — is that body Downed, is it in reach (game-design.md § 9) —
+     * belongs to `revive` in engine/downed.ts, which the
      * scheduler calls at RESOLUTION, and the scheduler's own comment says why:
      * one definition of "reaching you", so the rule and the log line cannot
      * drift. A refusal there costs zero and re-prompts, which is what makes the

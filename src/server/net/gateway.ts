@@ -107,8 +107,8 @@ import {
  *
  * `classForJoin` decides which of the three classes a joining body gets and
  * `classById` says whether a saved id still names one. Nothing else about a
- * class is read here — the SHEET (the loadout, the resource pool, the AP/MP
- * budget) is attached through `TurnEngine.attachClass`, injected exactly like
+ * class is read here — the SHEET (the loadout and the resource pool) is
+ * attached through `TurnEngine.attachClass`, injected exactly like
  * every other engine capability, because `engine/talents.ts` is on the far side
  * of a boundary this file may not reach across.
  */
@@ -1418,7 +1418,7 @@ export type TurnEngine = {
   join(actorId: string): void;
   /**
    * ═════════════════════════════════════════════════════════════════════════
-   * GIVE THIS BODY A CLASS — the loadout, the resource pool, the AP/MP budget.
+   * GIVE THIS BODY A CLASS — the loadout and the resource pool.
    * ═════════════════════════════════════════════════════════════════════════
    *
    * INJECTED, NOT IMPORTED, and this one is worth stating plainly because the
@@ -1735,7 +1735,7 @@ export type TurnEngine = {
    *
    * OPTIONAL, AND THAT IS A SEAM RATHER THAN A SHRUG. Revive is meaningless
    * until the engine has a Downed state to revive FROM — a 5-turn timer, a body
-   * at 0 hp that is *Unfiled* rather than dead, and the AP to spend on standing
+   * at 0 hp that is *Unfiled* rather than dead, and a turn to spend on standing
    * it back up. Until that lands, an engine simply does not offer the method and
    * the gateway answers the frame with a sentence that says exactly that.
    *
@@ -6065,14 +6065,11 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
       resource === null
         ? '-'
         : `${resource.resource.kind}:${Math.floor(resource.resource.current)}/${resource.resource.max}` +
-          // ═══ AP IS PART OF THE KEY OR THE ROW NEVER MOVES ═══
+          // ═══ EVERY FIELD THE FRAME CARRIES IS PART OF THE KEY ═══
           // This memo is what suppresses a duplicate `resource` frame, so a
           // field that is not in the key is a field the client is never told
-          // changed. AP is spent and refilled every single turn; leaving it out
-          // would ship the pip row and leave it frozen at whatever it happened
-          // to hold the first time somebody's class resource moved.
-          `|ap:${String(resource.resource.ap ?? -1)}/${String(resource.resource.maxAp ?? -1)}` +
-          // AND THE LUNGS, for the same reason: a key without air is a bar
+          // changed. (AP was in it too, while the frame carried the budget.)
+          // AND THE LUNGS: a key without air is a bar
           // that never moves while a body drowns. Already floored on the wire.
           `|air:${String(resource.air?.cur ?? -1)}`,
     ].join('|');

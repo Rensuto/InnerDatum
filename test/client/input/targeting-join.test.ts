@@ -78,8 +78,6 @@ const BEFORE_TARGETING: ReadonlySet<string> = new Set([
   TalentRefusal.Dead,
   TalentRefusal.NotLearned,
   TalentRefusal.OnCooldown,
-  TalentRefusal.NoAp,
-  TalentRefusal.NoMp,
   TalentRefusal.NoResource,
   TalentRefusal.NoShooter,
 ]);
@@ -156,8 +154,6 @@ describe('the targeting ring and canUseTalent agree on reach and the hole', () =
         const sheet = createTalentSheet({
           loadout: [talent.id],
           resource: ResourceKind.Focus,
-          maxAp: 99,
-          maxMp: 99,
           points: new Map([[talent.id, rank]]),
         });
         sheet.resource.value = Number.MAX_SAFE_INTEGER;

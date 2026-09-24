@@ -460,7 +460,7 @@ describe('a hostile id never becomes a path', () => {
           ownerId: hostile,
           name: 'Ren',
           classId: 'unassigned',
-          resources: { hp: 1, ap: 0, mp: 0, special: { kind: '', value: 0 } },
+          resources: { hp: 1, special: { kind: '', value: 0 } },
           createdAt: FIXED_NOW,
         }),
         SaveReason.Manual,
@@ -474,7 +474,7 @@ describe('a hostile id never becomes a path', () => {
           ownerId: REN_ID,
           name: 'Ren',
           classId: 'unassigned',
-          resources: { hp: 1, ap: 0, mp: 0, special: { kind: '', value: 0 } },
+          resources: { hp: 1, special: { kind: '', value: 0 } },
           createdAt: FIXED_NOW,
         }),
       );

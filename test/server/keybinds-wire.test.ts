@@ -984,7 +984,7 @@ describe('set_keybinds, over a real socket', () => {
       ownerId: REN_ID,
       name: 'Ren',
       classId: 'watchman',
-      resources: { hp: 30, ap: 0, mp: 0, special: { kind: '', value: 0 } },
+      resources: { hp: 30, special: { kind: '', value: 0 } },
       createdAt: '2026-01-01T00:00:00.000Z',
     });
     const doc = JSON.parse(JSON.stringify(old)) as Record<string, unknown>;
@@ -1199,7 +1199,7 @@ describe('the disk caps are never tighter than the wire caps', () => {
       name: 'Ren',
       classId: 'watchman',
       keybinds: binds,
-      resources: { hp: 30, ap: 0, mp: 0, special: { kind: '', value: 0 } },
+      resources: { hp: 30, special: { kind: '', value: 0 } },
       createdAt: '2026-01-01T00:00:00.000Z',
     });
 

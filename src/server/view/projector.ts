@@ -1352,18 +1352,18 @@ export function projectResource(
     t: 'resource',
     /**
      * ═══════════════════════════════════════════════════════════════════════
-     * REBUILT FIELD BY FIELD, WHICH IS WHY `ap` HAD TO BE ADDED HERE TOO.
+     * REBUILT FIELD BY FIELD, AND THE COPY IS THE POINT.
      * ═══════════════════════════════════════════════════════════════════════
      *
-     * `toResourceView` was taught to carry the acting budget and the gateway's
-     * memo key was taught to notice it change — and the number still never
-     * reached a socket, because this function copies four named fields and
-     * silently drops everything else. `tools/status-live.mjs` said so in one
-     * line: "NO `resource` frame carried `ap`".
+     * This function copies four named fields and silently drops everything
+     * else. That bit once: `toResourceView` was taught to carry the AP budget
+     * (retired since) and the number never reached a socket until it was added
+     * here too — `tools/status-live.mjs` said so in one line: "NO `resource`
+     * frame carried `ap`".
      *
      * The explicit copy stays rather than becoming a spread: it is what makes
      * this the ONE place that decides what a viewer is told about their own
-     * budgets, and a spread would forward whatever a future `ResourceView`
+     * pool, and a spread would forward whatever a future `ResourceView`
      * happens to gain — which is how a server-only field ends up on a wire
      * nobody audited. The cost is exactly this: a new field is two edits, and
      * the second one is easy to forget. A live probe is what catches it.
@@ -1373,15 +1373,6 @@ export function projectResource(
       current: resource.current,
       max: resource.max,
       discrete: resource.discrete,
-      ...(resource.ap === undefined ? {} : { ap: resource.ap }),
-      ...(resource.maxAp === undefined ? {} : { maxAp: resource.maxAp }),
-      // AND MOVEMENT'S HALF, WHICH THIS FUNCTION'S OWN COMMENT PREDICTED I
-      // WOULD FORGET: *"a new field is two edits, and the second one is easy to
-      // forget. A live probe is what catches it."* It did — `mp` was added to
-      // `ResourceView` and to `toResourceView`, and the socket carried
-      // `ap: 6, maxAp: 6` and no MP at all. There is a test below this time.
-      ...(resource.mp === undefined ? {} : { mp: resource.mp }),
-      ...(resource.maxMp === undefined ? {} : { maxMp: resource.maxMp }),
     },
     // AND THE LUNGS, ONLY WHILE THEY ARE SHORT. See `ResourceMsg.air` and `airViewOf`.
     ...airFieldOf(viewer),
@@ -1417,7 +1408,7 @@ function airFieldOf(viewer: Actor): { air?: AirView } {
  * WHY THIS IS A PROJECTION AND NOT A CONSTANT.
  *
  * `CLASSES` is authored content and every field on it is server-side: the
- * combat sheet, the `Talent` closures, the AP/MP budget, the downed sprite. A
+ * combat sheet, the `Talent` closures, the downed sprite. A
  * picker needs six of those fields and none of the rest, so the frame is built
  * by the same field-by-field copy `toActorView` is — see its note. The day a
  * `ClassDef` grows a `secretUnlockCondition` or an `aiHints`, the compiler stops

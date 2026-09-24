@@ -515,7 +515,7 @@ function fileOnDisk(discordUserId: string, classId: string): void {
       ownerId: discordUserId,
       name: 'Ren',
       classId,
-      resources: { hp: 30, ap: 0, mp: 0, special: { kind: '', value: 0 } },
+      resources: { hp: 30, special: { kind: '', value: 0 } },
       position: { zoneId: 'zone:test_level', depth: 0, cell: [5, 5] },
       createdAt: FIXED_NOW,
     }),

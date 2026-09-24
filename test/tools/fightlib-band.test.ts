@@ -59,8 +59,6 @@ describe('fightlib `reachable` picks a foe exactly when Revolver Shot is legal',
     const sheet = createTalentSheet({
       loadout: [revolverShot.id],
       resource: ResourceKind.Focus,
-      maxAp: 99,
-      maxMp: 99,
     });
     sheet.resource.value = Number.MAX_SAFE_INTEGER;
     engine.attach(self.id, sheet);

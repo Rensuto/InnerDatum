@@ -821,7 +821,7 @@ export type TalentResolutionResult =
  * ═══ ABSENT IS BYTE-FOR-BYTE TODAY'S BEHAVIOUR ═══
  * Gated identically to `downed` and `parties`: with no seam wired in, a `talent`
  * intent takes `Refusal.NoTalentEffect` — the refund path, zero energy, cleared,
- * re-prompt — no AP is refilled, no resource regenerates, and not one draw moves
+ * re-prompt — no resource regenerates, and not one draw moves
  * in the stream. `pump(world, { nowMs, barrier })` is unchanged to the byte.
  */
 /**
@@ -900,14 +900,13 @@ export type TalentResolution = {
    */
   activatedOf?(actorId: string): readonly string[];
   /**
-   * ONCE PER GAME TURN PER ACTOR, on the BASE clock — the AP/MP refill and the
-   * class resource's regeneration.
+   * ONCE PER GAME TURN PER ACTOR, on the BASE clock — the class resource's
+   * regeneration, the talent-owned durations and the per-turn latches.
    *
-   * NOT OPTIONAL WHEN A SHEET EXISTS, and the failure mode is silent: sheets are
-   * created FULL (talents.ts:744-747) and are only ever decremented, so a class
-   * attached without this call drains AP monotonically from the first cast and
-   * never refills. The Inspector's Focus — her entire class mechanic — never
-   * regenerates at all.
+   * NOT OPTIONAL WHEN A SHEET EXISTS, and the failure mode is silent: a class
+   * attached without this call never regenerates. The Inspector's Focus — her
+   * entire class mechanic — would stay where the last cast left it. (The AP/MP
+   * budget refilled here too, until Slice C retired it.)
    */
   actBase(actorId: string): void;
   /**
@@ -917,23 +916,6 @@ export type TalentResolution = {
    * Focus every turn whatever she did.
    */
   noteMoved(actorId: string): void;
-  /**
-   * ═══════════════════════════════════════════════════════════════════════════
-   * A DECISION WAS SPENT: FILL THE AP/MP BUDGET FOR THE NEXT ONE.
-   * ═══════════════════════════════════════════════════════════════════════════
-   *
-   * "AP and MP are the TURN, not a pool" (`useTalent`), and a turn is a
-   * decision — every action ends one, and upstream has no budget beyond it.
-   * `actBase` refills once a GAME turn, which was the same thing while every
-   * body decided once a game turn. A hasted one decides more often (at SPEED
-   * 0.45, three game turns in seven hold two decisions), and its second found
-   * the first one's budget spent: the extra turn could not afford a talent.
-   *
-   * Only for an action that SPENT its turn (`spendDecision`); a `no_energy`
-   * action parks for nothing and shares its decision's budget, as it should.
-   * OPTIONAL: a runtime without it keeps the once-a-game-turn refill alone.
-   */
-  refillBudget?(actorId: string): void;
   /**
    * THIS ACTOR JUST KILLED SOMETHING. Reagents are a stock and this is how it
    * refills.
@@ -1403,8 +1385,8 @@ export type PumpCtx = {
   /**
    * THE TALENT RESOLUTION SEAM (see `TalentResolution`).
    *
-   * Present → `IntentKind.Talent` resolves for real, the AP/MP budget refills on
-   * the base clock and `movedThisTurn` gets its writer.
+   * Present → `IntentKind.Talent` resolves for real, the class resource
+   * regenerates on the base clock and `movedThisTurn` gets its writer.
    *
    * ABSENT → M3 exactly: every talent intent is refused with
    * `Refusal.NoTalentEffect` and nothing else in this file behaves differently.
@@ -2050,9 +2032,9 @@ export function pump(world: World, ctx: PumpCtx): PumpResult {
       if (actor === undefined) return;
       actBase(actor, ctx.statusPass, terrain);
       // THE TALENT HALF OF THE SAME PASS, and it goes here rather than anywhere
-      // else for the reason `actBase` itself does: it is the AP/MP refill and
-      // the class resource's regeneration, both of which must fire exactly ONCE
-      // PER GAME TURN AT ANY SPEED. On the act clock a hasted body would refill
+      // else for the reason `actBase` itself does: it is the class resource's
+      // regeneration and the talent durations, which must fire exactly ONCE
+      // PER GAME TURN AT ANY SPEED. On the act clock a hasted body would regen
       // more often, which is a haste that shortens cooldowns by another name.
       // Absent seam → not called, and nothing about this pass changes.
       ctx.talents?.actBase(actor.id);
@@ -2360,14 +2342,14 @@ function actPlayer(actor: PlayerActor, run: Run): ActResult {
     ) {
       return ActResult.Park;
     }
-    spendDecision(actor, outcome.charge, run);
+    spendTurn(actor, outcome.charge);
     return ActResult.Done;
   }
 
   // No intent, and the loop only gets here when this actor is NOT blocking.
   if (world.turn.engagement > 0) {
-    if (actor.standingBy) return autoHold(actor, HoldReason.StandingBy, sink, run);
-    if (actor.standingOrder !== null) return autoHold(actor, HoldReason.StandingOrder, sink, run);
+    if (actor.standingBy) return autoHold(actor, HoldReason.StandingBy, sink);
+    if (actor.standingOrder !== null) return autoHold(actor, HoldReason.StandingOrder, sink);
   }
 
   // OUT OF COMBAT, THE FIXED POINT. Nobody blocks, so everyone sits at
@@ -2379,20 +2361,10 @@ function actPlayer(actor: PlayerActor, run: Run): ActResult {
 }
 
 /** Brace in place and spend the turn — a wait, so one flat turn. */
-function autoHold(actor: PlayerActor, reason: HoldReason, sink: EventSink, run: Run): ActResult {
+function autoHold(actor: PlayerActor, reason: HoldReason, sink: EventSink): ActResult {
   sink.push({ t: 'held', id: actor.id, reason });
-  spendDecision(actor, FLAT_CHARGE, run);
+  spendTurn(actor, FLAT_CHARGE);
   return ActResult.Done;
-}
-
-/**
- * A DECISION, PAID FOR — `spendTurn`, and the budget refilled for the next one
- * (`TalentResolution.refillBudget`). Every site that ends a body's turn goes
- * through here, so a spend without its refill cannot be written by accident.
- */
-function spendDecision(actor: EngineActor, charge: ActionCharge, run: Run): void {
-  spendTurn(actor, charge);
-  run.ctx.talents?.refillBudget?.(actor.id);
 }
 
 /**
@@ -2542,7 +2514,7 @@ function actMonster(actor: MonsterActor, run: Run): ActResult {
     noteTrap(outcome.effect, run, gameTurn, actor.id);
   }
 
-  spendDecision(actor, charge, run);
+  spendTurn(actor, charge);
   return ActResult.Done;
 }
 
@@ -3407,7 +3379,7 @@ function attackRefusalToRefusal(reason: AttackRefusal): Refusal {
  * The rows that carry an INSTRUCTION are kept apart — out of range says close
  * in, too close says back off, no line of sight says move — and everything that
  * is really "this build cannot do that with this talent right now" (cooldown,
- * budget, resource, an unknown id, a blocked destination) collapses onto
+ * resource, an unknown id, a blocked destination) collapses onto
  * `NoTalentEffect`, which is the refund path either way.
  */
 function talentRefusalToRefusal(reason: TalentRefusal): Refusal {
@@ -3430,12 +3402,10 @@ function talentRefusalToRefusal(reason: TalentRefusal): Refusal {
     case TalentRefusal.UnknownTalent:
     case TalentRefusal.NotLearned:
     case TalentRefusal.OnCooldown:
-    case TalentRefusal.NoAp:
-    case TalentRefusal.NoMp:
     case TalentRefusal.NoResource:
     case TalentRefusal.NoShooter:
     /* falls through — NOTHING IN THE HAND TO FIRE (`NoShooter`, `archerPreUse`)
-       is the build and not the aim, so it is here with the budgets. A PASSIVE
+       is the build and not the aim, so it is here with the resource. A PASSIVE
        HAS NOTHING TO FIRE, which from the turn's point of view is the same
        outcome as a cooldown: the intent produced no effect and cost no energy.
        It joins the group rather than taking a `Refusal` of its own, because
@@ -3958,7 +3928,7 @@ function emitPlayerEffect(actor: PlayerActor, effect: Effect, sink: EventSink): 
        * NOTHING TOLD THE CLIENT. The stamp is drawn and then explicitly changes
        * no state; there is no client-initiated resync in the protocol; and
        * `needsFullResync` fires only on downed/revived/erased. So an Inspector
-       * who spent her turn, her AP, her MP and a ten-turn cooldown on Fog Step
+       * who spent her turn and a ten-turn cooldown on Fog Step
        * was drawn on the tile she had left — with the camera, the targeting
        * cursor and travel pathing all anchored there — until the party wiped.
        *

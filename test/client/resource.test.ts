@@ -3,7 +3,7 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { RESOURCE_H, drawResource, resourceStripH } from '../../src/client/ui/resource.ts';
+import { drawResource } from '../../src/client/ui/resource.ts';
 import { ResourceKind } from '../../src/shared/protocol.ts';
 import type { ResourceView } from '../../src/shared/protocol.ts';
 
@@ -32,10 +32,6 @@ const ALCHEMIST: ResourceView = {
   current: 3,
   max: 8,
   discrete: true,
-  ap: 4,
-  maxAp: 6,
-  mp: 2,
-  maxMp: 3,
 };
 
 /** What the party pane actually hands it: 208 wide, less the insets and token. */
@@ -49,7 +45,7 @@ type Painted = {
   readonly rects: readonly { x: number; y: number; w: number; h: number }[];
 };
 
-function paint(width: number, stacked: boolean, resource: ResourceView = ALCHEMIST): Painted {
+function paint(width: number, resource: ResourceView = ALCHEMIST): Painted {
   const texts: string[] = [];
   const rects: { x: number; y: number; w: number; h: number }[] = [];
   const ctx = new Proxy(
@@ -72,7 +68,7 @@ function paint(width: number, stacked: boolean, resource: ResourceView = ALCHEMI
     },
   ) as unknown as CanvasRenderingContext2D;
 
-  drawResource({ ctx, sprites: { sprite: () => undefined }, resource, x: 0, y: 0, width, stacked });
+  drawResource({ ctx, sprites: { sprite: () => undefined }, resource, x: 0, y: 0, width });
   return { texts, rects };
 }
 
@@ -86,27 +82,21 @@ describe('the resource row in a narrow column', () => {
    * ═══ NO AP OR MP BLOCKS — THERE IS NO OPEN ROUND TO FUEL ═══
    * The budget rows were the open round's fuel gauge: "an empty row means the
    * turn is about to end". Every action ends the turn now, as ToME's does
-   * (`actPlayer`), so AP and MP refill before a player could see them spent,
-   * and the strip draws the class pool alone — even when the server still
-   * sends the budget fields.
+   * (`actPlayer`), the AP/MP budget is retired and no frame carries it, and
+   * the strip draws the class pool alone.
+   *
+   * (The pane drew a second, `stacked` shape for those rows; it and its test
+   * that the stacked box was taller went with them.)
    */
-  it('draws no budget blocks, flat or stacked', () => {
-    expect(blocks(paint(BAR_W, false)), 'the wide strip drew budget blocks').toBe(0);
-    expect(blocks(paint(PANE_W, true)), 'the stacked strip drew budget blocks').toBe(0);
+  it('draws no budget blocks, wide or narrow', () => {
+    expect(blocks(paint(BAR_W)), 'the wide strip drew budget blocks').toBe(0);
+    expect(blocks(paint(PANE_W)), 'the narrow strip drew budget blocks').toBe(0);
   });
 
   it('names the pool and no budget', () => {
-    const { texts } = paint(PANE_W, true);
+    const { texts } = paint(PANE_W);
     expect(texts, 'the pool lost its name').toContain('Reagents');
     expect(texts, 'an AP label is still drawn').not.toContain('AP');
     expect(texts, 'an MP label is still drawn').not.toContain('MP');
-  });
-
-  it('reserves the taller box for the stacked shape', () => {
-    expect(resourceStripH(false)).toBe(RESOURCE_H);
-    expect(
-      resourceStripH(true),
-      'the stacked strip claims the same height as the flat one, so it will clip',
-    ).toBeGreaterThan(resourceStripH(false));
   });
 });

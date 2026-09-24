@@ -16,21 +16,22 @@
  * "A crushing tackle that pins the target and disrupts their rhythm — a
  * Watchman's favourite, when no one is looking."
  *
- * ═══ `debuff_ap: 2` AGAINST SOMETHING THAT HAS NO AP ═══
- * The authored effect strips two action points. Monsters do not have action
- * points: engine/actor.ts's player/monster asymmetry gives players a flat
- * ENERGY_TO_ACT per action plus a 6-AP intra-turn budget, and gives monsters
- * ToME's full variable-speed model on the act clock instead.
+ * ═══ `debuff_ap: 2` AGAINST SOMETHING THAT HAS NO AP — AND WHAT IT BECAME ═══
+ * The authored effect strips two action points. Monsters never had action
+ * points: players carried a 6-AP intra-turn budget (retired since) and monsters
+ * ran ToME's variable-speed model on the act clock.
  *
- * So "two AP" is converted into the currency the target actually spends:
+ * So "two AP" was converted into the currency the target actually spends:
  * `ENERGY_TO_ACT * 2 / 6` — a third of a turn — subtracted from its ACT clock
- * by `drainActionBudget`. The visible effect is what the name promises: the
- * thing you tackled acts later than it was going to.
+ * by `drainActionBudget` (deleted with the budget). It is a stun now; see "THE
+ * STUN THIS TALENT SPENT THREE MILESTONES NOT BEING" below. The visible effect
+ * is still what the name promises: the thing you tackled acts later than it
+ * was going to.
  *
  * ═══ IT MUST NOT TOUCH `energyBase` ═══
- * `drainActionBudget` writes the act clock only. Draining the BASE clock would
- * shorten the target's cooldowns and status durations, which is the same class
- * of bug as letting haste do it and is invisible until balance feels wrong
+ * The drain wrote the act clock only. Draining the BASE clock would shorten the
+ * target's cooldowns and status durations, which is the same class of bug as
+ * letting haste do it and is invisible until balance feels wrong
  * (game-design.md § 3's "single most important invariant").
  *
  * ═══ WHY THIS IS THE *ALLY* SLOT ═══
@@ -117,7 +118,8 @@ function damageMult(talentLevel: number): number {
  *
  * What stood here was `AP_STRIPPED = 2` — `{ type: "debuff_ap", value: 2 }`
  * from the donor content, an integer out of six, converted by
- * `drainActionBudget` as `ENERGY_TO_ACT * 2 / 6`: a third of a monster's turn.
+ * `drainActionBudget` (since deleted) as `ENERGY_TO_ACT * 2 / 6`: a third of a
+ * monster's turn.
  * Its note explained at length why it was not simply scaled to six:
  *
  * > Scaled to 6 it would delete a whole monster turn outright, which is not a

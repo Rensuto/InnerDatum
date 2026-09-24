@@ -74,10 +74,12 @@ import type { World } from '../../src/server/world/world.ts';
  *   from that key (the `_downed_s` variant and the turn card's portrait) both
  *   resolve for all three classes.
  *
- *   THE HOTBAR CANNOT LIE ABOUT WHAT IT COSTS. AP and MP are deliberately not on
- *   the wire, which is only honest while they are structurally incapable of
- *   being short — so the most expensive button must fit in the smallest budget,
- *   and the budget must actually refill.
+ *   THE PICKER PREVIEWS AT RANK 1, AND THE SHIPPED ADAPTER IS THE ONE TESTED.
+ *   A class nobody has chosen has no sheet to read a rank from, so the picker
+ *   states one; and the Inspector's Focus rule is asserted through
+ *   `talentRuntimeFor`, the adapter main.ts hands the turn engine. (This
+ *   section also proved the per-turn AP/MP budget could never run short, and
+ *   that it refilled, until the budget was retired.)
  *
  * ═══ WHY THIS FILE DRIVES A REAL SOCKET ═══
  * The class decision lives inside the gateway's `resolveActor`, between reading
@@ -604,54 +606,10 @@ describe('every class sprite resolves to real art', () => {
 });
 
 // ===========================================================================
-// 3. THE BUDGET THE HOTBAR SPENDS
+// 3. THE PICKER'S PREVIEW, AND THE ADAPTER MAIN.TS SHIPS
 // ===========================================================================
 
-describe('AP and MP are structurally incapable of being short', () => {
-  it('keeps the most expensive button inside the smallest budget', () => {
-    // ═══════════════════════════════════════════════════════════════════════
-    // THE ASSERTION THAT KEEPS THE HOTBAR HONEST WITHOUT AN AP/MP WIRE FRAME.
-    // ═══════════════════════════════════════════════════════════════════════
-    //
-    // AP and MP are deliberately NOT on the wire: DECISIONS.md D1 pins a player
-    // to one action per turn, `actBase` refills every base turn, and nothing
-    // else decrements `sheet.ap` — Lockdown's `drainActionBudget` writes the
-    // VICTIM'S ENERGY and says so. So a cost can never be unaffordable at the
-    // moment of use, and the client needs no bar to draw.
-    //
-    // That is only true while this holds. The day somebody authors a 7-AP
-    // talent the BUILD fails here, instead of a button greying out in play with
-    // nothing on the wire to explain why.
-    //
-    // ═══════════════════════════════════════════════════════════════════════
-    // TALENT POINTS DO NOT REACH THIS GUARD, AND THAT IS A DESIGN RULE.
-    // ═══════════════════════════════════════════════════════════════════════
-    //
-    // A rank buys ONE scaled number per talent and never a cost: every `AP_COST`
-    // and `MP_COST` in src/server/talents/ is a module constant, several of them
-    // labelled FROZEN in their own file with the reason (fog_step.ts: "a rank
-    // that made it cheaper would make it the first button pressed"). So
-    // `TalentCost` stays a property of the CATALOGUE while `range` and `desc`
-    // became properties of the ACTOR, which is why this guard can still be
-    // asked of a `ClassDef` rather than of a per-actor `LoadoutTalent` view.
-    //
-    // The day somebody scales a cost, this assertion stops being sufficient
-    // rather than stops being true: it would prove the RANK-1 cost fits the
-    // budget while a rank-5 Fog Step at 7 AP quietly did not. Whoever writes
-    // that curve owes this test a loop over 1..TALENT_MAX_LEVEL.
-    const apCosts = CLASSES.flatMap((c) => c.loadout.map((talent) => talent.cost.ap ?? 0));
-    const mpCosts = CLASSES.flatMap((c) => c.loadout.map((talent) => talent.cost.mp ?? 0));
-
-    expect(Math.max(...apCosts)).toBeLessThanOrEqual(Math.min(...CLASSES.map((c) => c.maxAp)));
-    expect(Math.max(...mpCosts)).toBeLessThanOrEqual(Math.min(...CLASSES.map((c) => c.maxMp)));
-
-    // And the wire view a PICKER builds agrees with the authored numbers it was
-    // built from, at every one of the twelve, so a future `toLoadoutView` that
-    // scaled a cost would fail here rather than three screens away.
-    const viewCosts = CLASSES.flatMap((c) => loadoutViewFor(c).map((talent) => talent.cost.ap));
-    expect(viewCosts).toEqual(apCosts);
-  });
-
+describe('the picker preview and the shipped talent adapter', () => {
   it('previews an unlearned class at level 1, on every talent of every class', () => {
     // ═══════════════════════════════════════════════════════════════════════
     // THE PICKER HAS NO ACTOR, SO IT HAS NO RANK TO READ — IT STATES ONE.
@@ -696,53 +654,6 @@ describe('AP and MP are structurally incapable of being short', () => {
     const inspectorView = loadoutViewFor(INSPECTOR);
     const fogStep = inspectorView.find((talent) => talent.id === 'talent:fog_step');
     expect(fogStep?.range).toBe(3);
-  });
-
-  it('refills both on the next base turn, through the adapter main.ts ships', async () => {
-    // ═══ NOT OPTIONAL, AND THE FAILURE IS SILENT ═══
-    // Sheets are created FULL and are only ever decremented, so a class attached
-    // WITHOUT this call drains AP monotonically from the first cast and never
-    // refills. Nothing throws; the hotbar simply stops working three fights in.
-    //
-    // Driven through `talentRuntimeFor` — the adapter src/server/main.ts hands
-    // to `createTurnEngine` — rather than a copy written here, because a copy
-    // would go on passing on the day the shipped one stopped calling `actBase`.
-    server = await boot('class-refill');
-
-    const world = createWorld('class-refill-world');
-    world.level.tiles.fill(TileCode.FLOOR);
-    const ren = world.addPlayer('p1', 'Ren', { maxHp: WATCHMAN.maxHp });
-    ren.x = 10;
-    ren.y = 10;
-    ren.hpRegen = 0;
-    // Far enough away to keep the fight armed without ever reaching anybody, so
-    // the barrier parks every turn and nothing interrupts the measurement.
-    world.addMonster('m_husk', {
-      name: 'Index Husk',
-      sprite: 'enemy_index_husk_s',
-      x: 24,
-      y: 10,
-      profile: AiProfile.MeleeChaser,
-      maxHp: 500,
-    });
-
-    const talents = createContentTalentEngine();
-    const sheet = talents.attach('p1', sheetForClass(WATCHMAN));
-    const engine = createTurnEngine({
-      world,
-      now: () => 0,
-      talentRuntime: talentRuntimeFor(talents, world),
-    });
-    engine.join('p1');
-    world.turn.engagement = 3;
-
-    sheet.ap = 0;
-    sheet.mp = 0;
-    expect(engine.hold('p1').ok).toBe(true);
-    engine.pump();
-
-    expect(sheet.ap).toBe(sheet.maxAp);
-    expect(sheet.mp).toBe(sheet.maxMp);
   });
 
   it('suppresses the Inspector’s Focus on a turn she MOVED', async () => {
