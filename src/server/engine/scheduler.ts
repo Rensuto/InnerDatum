@@ -918,6 +918,23 @@ export type TalentResolution = {
    */
   noteMoved(actorId: string): void;
   /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * A DECISION WAS SPENT: FILL THE AP/MP BUDGET FOR THE NEXT ONE.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * "AP and MP are the TURN, not a pool" (`useTalent`), and a turn is a
+   * decision — every action ends one, and upstream has no budget beyond it.
+   * `actBase` refills once a GAME turn, which was the same thing while every
+   * body decided once a game turn. A hasted one decides more often (at SPEED
+   * 0.45, three game turns in seven hold two decisions), and its second found
+   * the first one's budget spent: the extra turn could not afford a talent.
+   *
+   * Only for an action that SPENT its turn (`spendDecision`); a `no_energy`
+   * action parks for nothing and shares its decision's budget, as it should.
+   * OPTIONAL: a runtime without it keeps the once-a-game-turn refill alone.
+   */
+  refillBudget?(actorId: string): void;
+  /**
    * THIS ACTOR JUST KILLED SOMETHING. Reagents are a stock and this is how it
    * refills.
    *
@@ -2343,14 +2360,14 @@ function actPlayer(actor: PlayerActor, run: Run): ActResult {
     ) {
       return ActResult.Park;
     }
-    spendTurn(actor, outcome.charge);
+    spendDecision(actor, outcome.charge, run);
     return ActResult.Done;
   }
 
   // No intent, and the loop only gets here when this actor is NOT blocking.
   if (world.turn.engagement > 0) {
-    if (actor.standingBy) return autoHold(actor, HoldReason.StandingBy, sink);
-    if (actor.standingOrder !== null) return autoHold(actor, HoldReason.StandingOrder, sink);
+    if (actor.standingBy) return autoHold(actor, HoldReason.StandingBy, sink, run);
+    if (actor.standingOrder !== null) return autoHold(actor, HoldReason.StandingOrder, sink, run);
   }
 
   // OUT OF COMBAT, THE FIXED POINT. Nobody blocks, so everyone sits at
@@ -2362,10 +2379,20 @@ function actPlayer(actor: PlayerActor, run: Run): ActResult {
 }
 
 /** Brace in place and spend the turn — a wait, so one flat turn. */
-function autoHold(actor: PlayerActor, reason: HoldReason, sink: EventSink): ActResult {
+function autoHold(actor: PlayerActor, reason: HoldReason, sink: EventSink, run: Run): ActResult {
   sink.push({ t: 'held', id: actor.id, reason });
-  spendTurn(actor, FLAT_CHARGE);
+  spendDecision(actor, FLAT_CHARGE, run);
   return ActResult.Done;
+}
+
+/**
+ * A DECISION, PAID FOR — `spendTurn`, and the budget refilled for the next one
+ * (`TalentResolution.refillBudget`). Every site that ends a body's turn goes
+ * through here, so a spend without its refill cannot be written by accident.
+ */
+function spendDecision(actor: EngineActor, charge: ActionCharge, run: Run): void {
+  spendTurn(actor, charge);
+  run.ctx.talents?.refillBudget?.(actor.id);
 }
 
 /**
@@ -2515,7 +2542,7 @@ function actMonster(actor: MonsterActor, run: Run): ActResult {
     noteTrap(outcome.effect, run, gameTurn, actor.id);
   }
 
-  spendTurn(actor, charge);
+  spendDecision(actor, charge, run);
   return ActResult.Done;
 }
 

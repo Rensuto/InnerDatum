@@ -11,6 +11,8 @@ import {
   BLEED_POWER,
   EffectId,
   SLOW_POWER,
+  SPEED,
+  SPEED_POWER,
   STUN_TALENT_LOCKOUT,
   createMvpEffectState,
   isStunned,
@@ -561,6 +563,66 @@ describe('SLOWED slows a DETECTIVE`s turn rate too — as upstream, since 2026-0
     );
     expect(dalt.globalSpeed).toBeCloseTo(speedWith(1, -SLOW_POWER), 10);
     expect(beast.globalSpeed).toBeCloseTo(dalt.globalSpeed, 10);
+  });
+});
+
+describe('SPEED is SLOW’s mirror, and both read the instance’s power', () => {
+  /**
+   * physical.lua:603-637. The two differ only in the sign of
+   * `global_speed_add`, and the magnitude is each instance's own `power`. The
+   * sign is the DEFINITION's (`globalSpeedPerPower`): read as the add itself,
+   * SLOWED's merged `power: 0.3` would have made every slow a haste.
+   */
+  it('a detective at SPEED 0.45 takes 14 turns in the 10 a steady one takes', () => {
+    const state = createMvpEffectState();
+    const world = createWorld('speed-player');
+    const dalt = world.addPlayer('p1', 'Dalt');
+    const ren = world.addPlayer('p2', 'Ren');
+
+    setEffect(state, dalt, EffectId.Speed, 99, { power: 0.45 }, scriptedRng([]));
+    expect(dalt.globalSpeed).toBeCloseTo(speedWith(1, 0.45), 10);
+    expect(dalt.speedFactor).toBe(1);
+
+    const pass = statusPass(state, createRng('speed-player-clock'));
+    const quick = runGameTurns(dalt, 10, pass);
+    const steady = runGameTurns(ren, 10, pass);
+    expect(quick.actions).toBe(14);
+    expect(steady.actions).toBe(10);
+    // The BASE clock is not hastened: durations still tick once a game turn.
+    expect(quick.basePasses).toBe(10);
+  });
+
+  it('SLOWED still divides, at its default and at a power an applier names', () => {
+    const state = createMvpEffectState();
+    const world = createWorld('slow-power');
+    const dalt = world.addPlayer('p1', 'Dalt');
+    const ren = world.addPlayer('p2', 'Ren');
+    setEffect(state, dalt, EffectId.Slowed, 9, {}, scriptedRng([]));
+    setEffect(state, ren, EffectId.Slowed, 9, { power: 0.5 }, scriptedRng([]));
+    expect(dalt.globalSpeed).toBeCloseTo(speedWith(1, -SLOW_POWER), 10);
+    expect(ren.globalSpeed).toBeCloseTo(1 / 1.5, 10);
+  });
+
+  it('SPEED at its default is 10%, and a SPEED and a SLOW of one power cancel', () => {
+    const state = createMvpEffectState();
+    const world = createWorld('speed-cancel');
+    const dalt = world.addPlayer('p1', 'Dalt');
+    const ren = world.addPlayer('p2', 'Ren');
+    setEffect(state, dalt, EffectId.Speed, 9, {}, scriptedRng([]));
+    expect(dalt.globalSpeed).toBeCloseTo(1 + SPEED_POWER, 10);
+    setEffect(state, ren, EffectId.Speed, 9, { power: SLOW_POWER }, scriptedRng([]));
+    setEffect(state, ren, EffectId.Slowed, 9, {}, scriptedRng([]));
+    expect(ren.globalSpeed).toBeCloseTo(1, 10);
+  });
+
+  it('reads its own power in its badge sentence, truncated as upstream’s %d is', () => {
+    const state = createMvpEffectState();
+    const world = createWorld('speed-text');
+    const dalt = world.addPlayer('p1', 'Dalt');
+    setEffect(state, dalt, EffectId.Speed, 9, { power: 0.3092 }, scriptedRng([]));
+    const instance = state.byActor.get(dalt.id)?.get(EffectId.Speed);
+    if (instance === undefined) throw new Error('the speed did not land');
+    expect(SPEED.describe?.(instance)).toBe('Increases global action speed by 30%.');
   });
 });
 

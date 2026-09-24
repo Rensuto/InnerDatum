@@ -542,6 +542,14 @@ export function talentRuntimeFor(
       const sheet = talents.sheetOf(actorId);
       if (sheet !== undefined) sheet.movedThisTurn = true;
     },
+    // THE BUDGET ALONE — not the latch or the moved flag, which are the GAME
+    // turn's and stay with `actBase`. See `TalentResolution.refillBudget`.
+    refillBudget: (actorId: string): void => {
+      const sheet = talents.sheetOf(actorId);
+      if (sheet === undefined) return;
+      sheet.ap = sheet.maxAp;
+      sheet.mp = sheet.maxMp;
+    },
     // The two class-resource hooks, forwarded verbatim. Both are no-ops for a
     // body with no sheet and for the two resources they do not own, so the
     // scheduler may call them on every blow without asking who anybody is.

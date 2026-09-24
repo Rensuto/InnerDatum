@@ -282,6 +282,11 @@ export const EffectId = {
    * CUT's twin, ticking as fire from its source; see `BURNING`.
    */
   Burning: 'effect:burning',
+  /**
+   * SPEED — physical.lua:603-619, SLOW's mirror: the one mechanism ToME has
+   * for giving a body more turns. On My Whistle lands it on a friend.
+   */
+  Speed: 'effect:speed',
 } as const;
 export type EffectId = (typeof EffectId)[keyof typeof EffectId];
 
@@ -859,14 +864,78 @@ export const SLOWED: EffectDef = Object.freeze({
   subtypes: ['slow'],
   decrease: 1,
   icon: 'icon_status_slowed',
+  // :624's `long_desc`, from the instance's own power.
+  describe: (instance: EffectInstance): string =>
+    `Reduces global action speed by ${speedPercent(instance.params.power ?? SLOW_POWER)}%.`,
   modifiers: {
     // :632 — `addTemporaryValue("global_speed_add", -eff.power)`. NEGATIVE,
-    // and every body's: a detective's clock as much as a husk's.
-    globalSpeedAdd: -SLOW_POWER,
+    // and every body's: a detective's clock as much as a husk's. THE POWER IS
+    // THE INSTANCE'S (see `globalSpeedPerPower`); it was the constant until
+    // SPEED shared the rule, and no applier names another power today.
+    globalSpeedPerPower: -1,
   },
-  // :628 — `parameters = { power = 0.1 }`. Kept so the log and the tooltip can
-  // print the fraction; the modifier above is what the engine reads.
+  // :628 — `parameters = { power = 0.1 }`: ours is `SLOW_POWER`, the power an
+  // applier that names none gets.
   parameters: { power: SLOW_POWER },
+} satisfies EffectDef);
+
+/**
+ * `%d%%` of `eff.power * 100` — both speed effects' `long_desc`. TRUNCATED, as
+ * `%d` truncates in upstream's LuaJIT.
+ */
+function speedPercent(power: number): string {
+  return String(Math.floor(power * 100));
+}
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * SPEED — physical.lua:603-619. THE STATUS THAT GIVES A BODY TURNS.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * ```lua
+ * long_desc = function(self, eff)
+ *   return ("Increases global action speed by %d%%."):format(eff.power * 100) end,
+ * type = "physical", subtype = { speed=true }, status = "beneficial",
+ * parameters = { power=0.1 },
+ * activate = function(self, eff)
+ *   eff.tmpid = self:addTemporaryValue("global_speed_add", eff.power) end,
+ * ```
+ *
+ * SLOW's mirror and ToME's generic haste. The clock fills faster
+ * (`recomputeGlobalSpeed`, tome/class/Actor.lua:3909-3914), so a hasted body
+ * is asked more often than game turns pass. On My Whistle is the talent that
+ * lands it on a friend.
+ *
+ * NO `on_merge`, so a second application replaces the first
+ * (ActorTemporaryEffects.lua:128) — Refresh. NO SAVE: a buff has none.
+ */
+export const SPEED_POWER = 0.1;
+
+export const SPEED: EffectDef = Object.freeze({
+  id: EffectId.Speed,
+  // :611 — `"+Fast"`, the word upstream floats over the body.
+  badge: 'Fa',
+  // :605 — `desc = "Speed"`.
+  displayName: 'Speed',
+  description: `Increases global action speed by ${speedPercent(SPEED_POWER)}%.`,
+  // :606's `long_desc`, from the instance's own power.
+  describe: (instance: EffectInstance): string =>
+    `Increases global action speed by ${speedPercent(instance.params.power ?? SPEED_POWER)}%.`,
+  // :607 — `type = "physical"`.
+  type: SaveChannel.Physical,
+  // :609.
+  status: EffectStatus.Beneficial,
+  stackMode: StackMode.Refresh,
+  // :608 — `subtype = { speed=true }`.
+  subtypes: ['speed'],
+  decrease: 1,
+  // DRAWN BEFORE IT WAS WIRED: the commission painted a "hasted" badge while a
+  // player's clock was still pinned (ASSETS-REQUIRED.md kept it as a spare).
+  icon: 'icon_status_hasted',
+  // :614 — `addTemporaryValue("global_speed_add", eff.power)`. POSITIVE.
+  modifiers: { globalSpeedPerPower: 1 },
+  // :610 — `parameters = { power=0.1 }`.
+  parameters: { power: SPEED_POWER },
 } satisfies EffectDef);
 
 /**
@@ -2569,6 +2638,7 @@ export const MVP_EFFECTS: readonly EffectDef[] = Object.freeze([
   // index it already has.
   ELSEWHERE,
   BURNING,
+  SPEED,
 ]);
 
 /** Effect ids, for a content-completeness check and for the client's badge atlas. */
@@ -2658,6 +2728,19 @@ export function validateEffect(def: EffectDef): readonly string[] {
   const speed = def.modifiers?.globalSpeedAdd ?? 0;
   if (speed > 0 && def.status === EffectStatus.Detrimental) {
     problems.push(`${def.id}: a detrimental effect with a POSITIVE globalSpeedAdd is a haste`);
+  }
+  // THE SAME RULE FOR THE SIGN, both ways, and the power it multiplies must
+  // exist: a per-power speed with no default power is inert for every applier
+  // that names none.
+  const perPower = def.modifiers?.globalSpeedPerPower;
+  if (perPower === 1 && def.status === EffectStatus.Detrimental) {
+    problems.push(`${def.id}: a detrimental effect with a POSITIVE globalSpeedPerPower is a haste`);
+  }
+  if (perPower === -1 && def.status === EffectStatus.Beneficial) {
+    problems.push(`${def.id}: a beneficial effect with a NEGATIVE globalSpeedPerPower is a slow`);
+  }
+  if (perPower !== undefined && typeof def.parameters?.['power'] !== 'number') {
+    problems.push(`${def.id}: globalSpeedPerPower reads a power the definition never defaults`);
   }
 
   return problems;

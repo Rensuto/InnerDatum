@@ -3164,7 +3164,7 @@ export function createTurnEngine(opts: TurnEngineOptions): ReapingTurnEngine {
          * consulted (`handleRest` refuses in combat) and a refusal here would
          * leave the loop with a turn it asked for and did not get.
          */
-        const beforeTurn = world.turn.clock.gameTurn;
+        const beforeTick = world.turn.clock.tick;
         self.pendingIntent = HOLD_INTENT;
         const outcome = api.pump();
 
@@ -3224,8 +3224,16 @@ export function createTurnEngine(opts: TurnEngineOptions): ReapingTurnEngine {
          * would otherwise spin two hundred times doing nothing. It is reported
          * as `Budget` because that is what it is: the loop stopped because it
          * could not make progress, and the player is told so.
+         *
+         * ═══ THE TICK, NOT THE GAME TURN ═══
+         * This read the game turn, and a hasted body's hold can fit inside one:
+         * at SPEED 0.45 a turn's energy comes back in seven ticks of a game
+         * turn's ten, so the second hold of a rest often did not cross a turn
+         * and the rest stopped on `Budget` having made progress. A spent hold
+         * always costs at least a tick — energy accrues only up to one turn, so
+         * after paying one the body is short — so the tick is the proof.
          */
-        if (world.turn.clock.gameTurn === beforeTurn) return done(RestStop.Budget);
+        if (world.turn.clock.tick === beforeTick) return done(RestStop.Budget);
         turns += 1;
 
         /**

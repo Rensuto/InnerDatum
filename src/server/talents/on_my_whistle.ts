@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Dalton Barraclough
 // SHAPE:   t-engine4 game/modules/tome/data/talents/techniques/warcries.lua
-//          -- Battle Shout / Second Wind, the warcry tree's give-a-resource-back
-//          shouts. Upstream's restore stamina and life to the SHOUTER.
-// NUMBERS: authored. Ours gives action points to somebody ELSE, which is the
-//          whole reason it exists -- see the header.
+//          -- the warcry tree's shouts. Upstream's buff the shouter (Battle
+//          Shout, warcries.lua:92); ours is heard by a friend.
+// NUMBERS: Blinding Speed's, whole -- techniques/combat-techniques.lua:148-170:
+//          EFF_SPEED at combatTalentScale(t, 0.14, 0.45, 0.75) for 5 turns,
+//          cooldown 55, no_energy. Ours lands it on a FRIEND; the range and the
+//          Resolve are authored.
 // T-Engine4 (C) 2009-2018 Nicolas Casalini "DarkGod" -- https://te4.org/license
 
 /**
@@ -13,93 +15,112 @@
  * "You are not tired. Go."
  *
  * ═══════════════════════════════════════════════════════════════════════════
- *   THE FIRST TALENT IN THIS GAME THAT GIVES A FRIEND A TURN.
+ *   THE ONE TALENT IN THIS GAME THAT GIVES A FRIEND MORE TURNS.
  * ═══════════════════════════════════════════════════════════════════════════
  *
- * Three classes, forty-eight talents, and every single one of them acted on the
- * caster, on an enemy, or on an ally's HEALTH. Nothing could hand somebody else
- * the thing this game is actually made of, which is action points.
+ * That is the strongest co-op verb a turn-based game has: the Watchman's best
+ * move can be the Inspector's shot, and deciding that is a more interesting
+ * decision than any amount of damage on his own bar.
  *
- * That is the strongest co-op verb a turn-based game has. It is what turns four
- * people taking turns into a party: the Watchman's best move can be the
- * Inspector's shot, and deciding that is a more interesting decision than any
- * amount of damage on his own bar.
+ * IT HANDED OUT ACTION POINTS, and a point is only worth something inside the
+ * decision it is spent in — every action ends the turn (2026-09-23) — so the
+ * whistle bought a friend nothing. ToME gives a body more turns with a faster
+ * clock (`global_speed_add`), and EFF_SPEED is its generic haste
+ * (physical.lua:603-619; HASTE and QUICKNESS add the same attribute). Nothing
+ * in it hands another body energy directly — every energy grant under
+ * data/talents targets its caster — but EFF_SPEED IS landed on others
+ * (Temporal Vigour on its hounds, chronomancy/temporal-hounds.lua:340). So this
+ * is EFF_SPEED, landed on the friend.
  *
- * ═══ WHY IT IS CAPPED AT THE ALLY'S OWN MAXIMUM ═══
- * `Math.min(maxAp, ...)` rather than an uncapped grant, and the reason is not
- * tidiness. AP above maximum would be bankable: a party could stack whistles
- * before a door and open it with one character taking four turns in a row,
- * which is not a combo, it is the end of the turn system. Topping somebody UP
- * is a support talent; letting them exceed their own ceiling is a different
- * game.
+ * ═══ THE NUMBERS ARE BLINDING SPEED'S, WHOLE ═══
+ * The one technique that grants EFF_SPEED (combat-techniques.lua:148-170):
+ * 14% at rank 1 and 45% at rank 5, for five turns, on a 55-turn cooldown, and
+ * FREE — `no_energy`, so the whistle is a word and not a turn. Taking one of
+ * those numbers and authoring the rest is how a tuned pipeline stops being
+ * ToME's, so they come together. The duration and cooldown go through
+ * `tomeCooldownToTurns` like every other port's.
  *
  * ═══ AND WHY IT CANNOT TARGET THE CASTER ═══
  * `Affinity.Ally` includes yourself in this engine's targeting, so the refusal
- * is explicit below. A Watchman who could whistle himself would spend 2 AP to
- * gain 3 and never stop, and the loop would be the only thing anybody played.
+ * is explicit below. Blinding Speed is the self-cast; this is the one you give
+ * away, and a Watchman who could keep it would never give it.
  */
 
 import { combatTalentScale } from '../../shared/scale.ts';
+import { EffectId } from '../content/effects.ts';
 import { DamageType } from '../engine/damage.ts';
 import {
   Affinity,
   ClassId,
+  TalentKind,
   TalentRefusal,
   TargetShape,
+  isFriend,
   talentDone,
   talentId,
   talentRefused,
   targetActor,
-  TalentKind,
+  tomeCooldownToTurns,
 } from '../engine/talents.ts';
 import type { Talent } from '../engine/talents.ts';
 
 /**
- * FROZEN, AND IT COSTS MORE THAN IT GIVES AT RANK 1.
- *
- * 3 AP for 1 is a bad trade and it is meant to be: the talent is not an AP pump,
- * it is a way to move a turn to where it is worth more. It only becomes an
- * outright gain at the ranks a player has paid several points for, and even
- * then the Resolve keeps it occasional.
+ * `ap: 0` IS WHAT `no_energy` MEANS IN THIS ENGINE (healing_infusion.ts says
+ * so, and every other free talent carries 0): a free action shares its
+ * decision's budget, so three points here would take the Watchman's Lockdown
+ * off him for the turn he whistled in. Blinding Speed costs stamina and nothing
+ * else of the turn; the Resolve is that price.
  */
-const AP_COST = 3;
+const AP_COST = 0;
 const RESOLVE_COST = 2;
-const COOLDOWN_TURNS = 4;
+
+/** combat-techniques.lua:153 — Blinding Speed's `cooldown = 55`. */
+const TOME_COOLDOWN = 55;
+/** combat-techniques.lua:165 — `setEffect(self.EFF_SPEED, 5, ...)`. */
+const TOME_DURATION = 5;
+const DURATION_TURNS = tomeCooldownToTurns(TOME_DURATION);
+
+/** combat-techniques.lua:163 — `combatTalentScale(t, 0.14, 0.45, 0.75)`. */
+const SPEED_LOW = 0.14;
+const SPEED_HIGH = 0.45;
+const SPEED_CURVE = 0.75;
+/** A formatting factor for the tooltip's truncated percent, not a tunable. */
+const PER_CENT = 100;
+
+/** EFF_SPEED's `power` — the friend's `global_speed_add` — at a rank. */
+export function speedGivenAt(level: number): number {
+  return combatTalentScale(level, SPEED_LOW, SPEED_HIGH, SPEED_CURVE);
+}
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════
- * HOW FAR A WHISTLE CARRIES, AND ITS RANK MOVES THIS AS WELL AS THE POINTS.
+ * HOW FAR A WHISTLE CARRIES, AND ITS RANK MOVES THIS AS WELL AS THE SPEED.
  * ═══════════════════════════════════════════════════════════════════════════
  *
- * TWO NUMBERS BECAUSE ONE WAS NOT ENOUGH TO BE HONEST. The action points are a
- * small integer band, and `combatTalentScale` rounds ranks 3 and 4 to the same
- * figure — so a point spent there bought a player NOTHING they could see, and
- * `talent-scaling.test.ts`'s consecutive-rank check caught it. The options were
- * to widen the points until every rank differed, which would have ended at five
- * of a six-point budget and made this the best talent in the game, or to give
- * the rank a second thing to move.
+ * Ours, not Blinding Speed's, which is a self-cast and has no range. A shout
+ * that carries further is what "authority" means, and it is worth something
+ * specific: a Watchman holding a doorway and an Inspector shooting from the
+ * back of the room are eight tiles apart, and at rank 1 he cannot reach her.
+ * Buying the rank is buying the party's shape.
  *
- * THE SECOND THING IS THE RIGHT ONE ANYWAY. A shout that carries further is
- * what "authority" means, it is what the tree is about, and it is worth
- * something specific: a Watchman holding a doorway and an Inspector shooting
- * from the back of the room are eight tiles apart, and at rank 1 he cannot
- * reach her. Buying the rank is buying the party's shape.
+ * ═══ THE PRECEDENT call_shadows.ts CITES ═══
+ * The range was given to the rank as a SECOND thing to move when the old
+ * action-point band rounded ranks 3 and 4 to one figure, so a point spent
+ * there bought nothing a player could see (talent-scaling.test.ts caught it).
+ * The answer was not to widen the band until it differed — it was to give the
+ * rank something else to move that means what the talent means. The speed
+ * differs at every rank now; the range stays for the reason above.
  */
 const RANGE_LOW = 3;
 const RANGE_HIGH = 8;
+const RANGE_CURVE = 0.75;
 
 /** How far the whistle carries, at a rank. */
 export function rangeAt(level: number): number {
-  return Math.max(RANGE_LOW, Math.round(combatTalentScale(level, RANGE_LOW, RANGE_HIGH, CURVE)));
-}
-
-const AP_LOW = 1;
-const AP_HIGH = 4;
-const CURVE = 0.75;
-
-/** Action points handed to the ally, at a rank. */
-export function apGivenAt(level: number): number {
-  return Math.max(1, Math.round(combatTalentScale(level, AP_LOW, AP_HIGH, CURVE)));
+  return Math.max(
+    RANGE_LOW,
+    Math.round(combatTalentScale(level, RANGE_LOW, RANGE_HIGH, RANGE_CURVE)),
+  );
 }
 
 export const onMyWhistle: Talent = {
@@ -114,9 +135,10 @@ export const onMyWhistle: Talent = {
   kind: TalentKind.Active,
   iconId: 'icon_active_on_my_whistle',
   cost: { ap: AP_COST, resource: RESOLVE_COST },
-  cooldownTurns: COOLDOWN_TURNS,
-  // `technique/warcries` upstream, so `weapon` (tome/class/Actor.lua:5807-5808).
-  speed: 'weapon',
+  cooldownTurns: tomeCooldownToTurns(TOME_COOLDOWN),
+  // combat-techniques.lua:155 — Blinding Speed is `no_energy = true`. So no
+  // `speed` either: upstream never charges one (tome/class/Actor.lua:5862).
+  noEnergy: true,
   targeting: {
     shape: TargetShape.Single,
     // The level-1 range is a FLOOR, not the answer: `rangeAt` is what
@@ -137,40 +159,40 @@ export const onMyWhistle: Talent = {
   onUse: (ctx, self, target) => {
     const friend = targetActor(ctx.world, target);
     if (friend === undefined) return talentRefused(TalentRefusal.NoTarget);
-    // SEE THE HEADER. `Affinity.Ally` includes the caster, and a Watchman who
-    // could whistle himself would do nothing else.
+    // SEE THE HEADER. `Affinity.Ally` includes the caster.
     if (friend.id === self.id) return talentRefused(TalentRefusal.Self);
+    /**
+     * AND A TOWNSFOLK IS NOBODY'S FRIEND. The targeting gate asks only "not an
+     * enemy", and a shopkeeper is neither side (`isFriend`); the old action-
+     * point grant was kept off her by her having no sheet, and a status needs
+     * none. A Bound companion is on the caster's side and still hears it.
+     */
+    if (!isFriend(self, friend)) return talentRefused(TalentRefusal.NotAlly);
 
     /**
-     * A BODY WITH NO SHEET CANNOT BE GIVEN A TURN, and that is a refusal rather
-     * than a silent no-op. Every player has one; a summoned or scripted ally
-     * may not, and "the whistle did nothing and cost 3 AP" is the worst
-     * possible reading of a support talent.
+     * THROUGH THE STATUS DOOR, like every effect a talent lands. A runtime
+     * with no status table is a fixture, never anything a player can produce,
+     * and "the whistle did nothing and cost the Resolve" is refused rather than
+     * reported as a success.
      */
-    const sheet = ctx.engine.sheetOf(friend.id);
-    if (sheet === undefined) return talentRefused(TalentRefusal.NotAlly);
+    const power = speedGivenAt(ctx.talentLevel);
+    const landed = ctx.status?.(friend, EffectId.Speed, DURATION_TURNS, {
+      power,
+      srcId: self.id,
+    });
+    if (landed === undefined) return talentRefused(TalentRefusal.NoTarget);
 
-    const wanted = apGivenAt(ctx.talentLevel);
-    // CAPPED AT THEIR OWN MAXIMUM -- see the header on why bankable AP would
-    // end the turn system.
-    const before = sheet.ap;
-    sheet.ap = Math.min(sheet.maxAp, sheet.ap + wanted);
-    const given = sheet.ap - before;
-
-    if (given <= 0) {
-      // ALREADY FULL. Reported honestly rather than dressed up: the player
-      // spent the AP and the Resolve, and a log line saying otherwise would
-      // teach them to keep doing it.
-      return talentDone([], [`${friend.name} has not stopped to need it.`]);
-    }
-
+    // TRUNCATED, as the tooltip and the Speed badge both are (`%d`).
     return talentDone(
       [],
-      [`${friend.name} gets ${String(given)} more action${given === 1 ? '' : 's'} out of it.`],
+      [`${friend.name} picks up the pace: ${String(Math.floor(power * PER_CENT))}% faster.`],
     );
   },
 
+  // Blinding Speed's info — "increasing your speed by %d%% for 5 turns" — for a
+  // friend, and `%d` truncates.
   describe: (_self, level) =>
-    `Give a friend within ${String(rangeAt(level))} tiles ${String(apGivenAt(level))} action points, ` +
-    `up to their own maximum.`,
+    `A friend within ${String(rangeAt(level))} tiles acts ` +
+    `${String(Math.floor(speedGivenAt(level) * PER_CENT))}% faster for ` +
+    `${String(DURATION_TURNS)} turns. Whistling takes no time.`,
 };

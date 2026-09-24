@@ -154,11 +154,12 @@ the two unconsumed humanoid sheets there are a red-hooded herbalist and a
 monocled office manager, both green-keyed in a way the magenta bake cannot
 strip.
 
-## Three status icons that are drawn and wired to nothing
+## Two status icons that are drawn and wired to nothing
 
-`icon_status_hasted`, `icon_status_off_guard` and `icon_status_shielded` are on
-disk and referenced by no source file. None of the three is a missing wiring
-job, so do not treat them as one, and do not redraw them.
+`icon_status_off_guard` and `icon_status_shielded` are on disk and referenced
+by no source file. Neither is a missing wiring job, so do not treat them as
+one, and do not redraw them. (`icon_status_hasted` was the third, and is SPEED's
+badge since 2026-09-24 — see below.)
 
 - **`off_guard`** is an ORPHANED NAME, not a missing effect. The mechanic ships
   as **Off-balance** (`content/effects.ts`, ported from `physical.lua:1858`,
@@ -167,14 +168,11 @@ job, so do not treat them as one, and do not redraw them.
   the code follows upstream instead, which is the name a player reads on the
   badge. Delete it, or keep it as a spare — there is nothing to wire.
 
-- **`hasted`** is architecturally refused for a PLAYER and has no monster
-  content. A player's `globalSpeed` is the literal type `1` and readonly, and
-  `content/effects.ts` argues at length why: it is what keeps the party
-  phase-locked so the barrier parks once per turn at full quorum. Slowing a
-  player costs a movement point instead of clock speed (DECISIONS.md § D1), and
-  hasting one would break the same invariant from the other side. Monsters DO
-  carry a variable `globalSpeed`, so a hasted MONSTER is possible — it is
-  content nobody has authored, not a system that is missing.
+- **`hasted`** WAS architecturally refused for a player — a player's
+  `globalSpeed` was pinned at 1 to keep the old simultaneous barrier
+  phase-locked. A party takes its turns in initiative order now, the pin went
+  on 2026-09-24, and the icon is the badge of ToME's SPEED (physical.lua:603),
+  which On My Whistle lands on a friend. Wired; nothing to draw.
 
 - **`shielded`** is art ahead of a mechanic. ToME's damage shield absorbs a
   pool of damage before hit points; nothing in this game does that. Iron

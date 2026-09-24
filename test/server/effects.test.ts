@@ -42,6 +42,7 @@ import {
   MVP_EFFECTS,
   SLOWED,
   SLOW_POWER,
+  SPEED,
   STUNNED,
   OFF_BALANCE_NUMBED,
   SPELLSHOCK_RESIST,
@@ -1345,6 +1346,8 @@ describe('the status roster (game-design.md § 12)', () => {
       EffectId.Elsewhere,
       // ON FIRE — physical.lua:420-443, laid by FIREBURN. Appended, as ever.
       EffectId.Burning,
+      // SPEED — physical.lua:603-619, SLOW's mirror; On My Whistle lands it.
+      EffectId.Speed,
     ]);
     expect(MVP_EFFECTS.map((def) => def.icon)).toEqual([
       'icon_status_stunned',
@@ -1375,6 +1378,7 @@ describe('the status roster (game-design.md § 12)', () => {
       'icon_status_zone_aura_underwater',
       'icon_status_elsewhere',
       'icon_status_burning',
+      'icon_status_hasted',
     ]);
   });
 
@@ -1461,6 +1465,8 @@ describe('the status roster (game-design.md § 12)', () => {
       // physical.lua:424 — `EFF_BURNING` is physical, subtype fire. A label
       // here too: FIREBURN passes no `apply_power`, so no save is ever rolled.
       [EffectId.Burning]: SaveChannel.Physical,
+      // physical.lua:607 — `EFF_SPEED` is physical. A label: a buff has no save.
+      [EffectId.Speed]: SaveChannel.Physical,
       /**
        * physical.lua's `EFF_EVASION`. THE CHANNEL IS A LABEL HERE, NOT A GATE:
        * nothing resists a buff, because `canBe` only consults immunities for a
@@ -1583,6 +1589,23 @@ describe('the status roster (game-design.md § 12)', () => {
       validateEffect({ ...SLOWED, modifiers: { globalSpeedAdd: 0.3 } }).some((p) =>
         p.includes('is a haste'),
       ),
+    ).toBe(true);
+    // THE PER-POWER SIGN, both ways, and the default it multiplies. SPEED and
+    // SLOWED as shipped are clean; each mistake is named.
+    expect(validateEffect(SPEED)).toEqual([]);
+    expect(validateEffect(SLOWED)).toEqual([]);
+    expect(
+      validateEffect({ ...SLOWED, modifiers: { globalSpeedPerPower: 1 } }).some((p) =>
+        p.includes('is a haste'),
+      ),
+    ).toBe(true);
+    expect(
+      validateEffect({ ...SPEED, modifiers: { globalSpeedPerPower: -1 } }).some((p) =>
+        p.includes('is a slow'),
+      ),
+    ).toBe(true);
+    expect(
+      validateEffect({ ...SPEED, parameters: {} }).some((p) => p.includes('never defaults')),
     ).toBe(true);
   });
 });

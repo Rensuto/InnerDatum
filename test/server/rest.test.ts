@@ -22,7 +22,7 @@ import { chebyshev } from '../../src/shared/coords.ts';
 import { REST_MAX_TURNS, RestStop, restStopText } from '../../src/shared/rest.ts';
 import { RESOLVE_PER_TURN } from '../../src/server/engine/talents.ts';
 import { createEffectState, setEffect } from '../../src/server/engine/effects.ts';
-import { BLEEDING } from '../../src/server/content/effects.ts';
+import { BLEEDING, SPEED } from '../../src/server/content/effects.ts';
 import { DamageType } from '../../src/server/engine/damage.ts';
 import { createRng } from '../../src/shared/rng.ts';
 import { TileCode } from '../../src/shared/protocol.ts';
@@ -57,7 +57,7 @@ function scene(name: string) {
   const parties = createPartyState();
   // The catalogue the rest's own affliction arm reads, and what lets a bleed
   // actually tick during a rest — see the damage stop below.
-  const effects = createEffectState([BLEEDING]);
+  const effects = createEffectState([BLEEDING, SPEED]);
   const engine = createTurnEngine({
     world,
     downed,
@@ -100,6 +100,27 @@ describe('rest passes turns the way holding would, without the hundred keys', ()
     expect(result.stop, 'nothing threatened, so it ran to Done').toBe(RestStop.Done);
     expect(result.turns, 'a rest that did nothing would be the bug').toBeGreaterThan(0);
     expect(body.hp).toBe(body.maxHp);
+  });
+
+  it('rests a HASTED body to the end, though two of its holds fit in one game turn', () => {
+    /**
+     * At SPEED 0.45 a turn's energy comes back in seven ticks of a game turn's
+     * ten, so consecutive holds often share a game turn. The loop read an
+     * unmoved game turn as "no progress" and stopped on `Budget` a hold or two
+     * in; the tick is its proof now, and a spent hold always costs one.
+     */
+    const { engine, body, effects, world } = scene('rest-hasted');
+    setEffect(effects, body, SPEED.id, 999, { power: 0.45 }, createRng('rest-hasted'));
+    expect(body.globalSpeed).toBeCloseTo(1.45, 10);
+    body.hp = 10;
+    const turn = world.turn.clock.gameTurn;
+
+    const result = engine.rest('p1');
+
+    expect(result.stop).toBe(RestStop.Done);
+    expect(body.hp).toBe(body.maxHp);
+    // MORE HOLDS THAN GAME TURNS, which is what being hasted means.
+    expect(result.turns).toBeGreaterThan(world.turn.clock.gameTurn - turn);
   });
 
   it('advances the world clock, which is the whole difference from a heal', () => {

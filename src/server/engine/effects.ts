@@ -327,6 +327,19 @@ export type EffectModifiers = {
    */
   readonly globalSpeedAdd?: number;
   /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * `global_speed_add` OF `±eff.power` — SPEED and SLOW (physical.lua:614, :632).
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * THE SIGN IS THE DEFINITION'S, THE MAGNITUDE THE INSTANCE'S `power` — the
+   * definition's `parameters.power` when the applier named none, by the
+   * parameter merge in `setEffect`. A SIGN, not a value, because a `power` is
+   * always a positive magnitude: read as the add itself, SLOWED's merged
+   * `power: 0.3` would turn a slow into a haste. Summed into `globalSpeedAdd`,
+   * so a SPEED and a SLOW on one body cancel as upstream's temporary values do.
+   */
+  readonly globalSpeedPerPower?: 1 | -1;
+  /**
    * ToME's `movement_speed` add (physical.lua:493, `-0.5` for STUNNED).
    *
    * READ BY `recomputeAttributes`, which writes `1 + Σ add` onto the body's
@@ -2211,6 +2224,11 @@ export function effectModifiers(state: EffectState, actorId: string): EffectModi
     breached = breached || mods.breached === true;
     freeze = freeze || mods.noTalentsCooldown === true;
     globalSpeedAdd += mods.globalSpeedAdd ?? 0;
+    // ±eff.power, the sign from the definition — see `globalSpeedPerPower`.
+    if (mods.globalSpeedPerPower !== undefined) {
+      const own = live.params['power'];
+      globalSpeedAdd += mods.globalSpeedPerPower * (typeof own === 'number' ? own : 0);
+    }
     movementSpeedAdd += mods.movementSpeedAdd ?? 0;
     /**
      * ═══════════════════════════════════════════════════════════════════════

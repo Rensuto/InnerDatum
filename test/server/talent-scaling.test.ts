@@ -27,6 +27,7 @@ import {
   getTalentLevelRaw,
   resolveGuardCounter,
   talentId,
+  tomeCooldownToTurns,
   useTalent,
 } from '../../src/server/engine/talents.ts';
 import { counterMult } from '../../src/server/talents/iron_curtain.ts';
@@ -776,24 +777,20 @@ const CASES: readonly ScalingCase[] = [
   },
   {
     /**
-     * THE WHISTLE. Its rank moves how many action points a friend is handed,
-     * and the friend is drained first so the grant has somewhere to go —
-     * `Math.min(maxAp, ...)` means a full ally would measure zero at every rank
-     * and the case would pass by being uniformly useless.
+     * THE WHISTLE. Its rank moves the SPEED a friend is handed — EFF_SPEED's
+     * `power`, Blinding Speed's curve — read off the request the talent made,
+     * and off the friend's clock, which is where the power has to arrive: a
+     * request the status table dropped would measure 0 at every rank.
      */
     bare: 'on_my_whistle',
-    moves: 'action points given',
-    authored: '3 tiles 1 action points',
+    moves: 'speed given',
+    authored: '3 tiles acts 14% faster for 3 turns',
     cast: (level) => {
       const f = fixture();
       const watchman = f.add(WATCHMAN, 'caster', 5, 5);
       const friend = f.add(INSPECTOR, 'friend', 6, 5);
       f.setLevel('caster', 'on_my_whistle', level);
       f.refill('caster');
-      f.refill('friend');
-      const sheet = f.engine.sheetOf(friend.id);
-      if (sheet === undefined) throw new Error('the friend has no sheet');
-      sheet.ap = 0;
       const result = useTalent(
         f.engine,
         watchman,
@@ -801,7 +798,17 @@ const CASES: readonly ScalingCase[] = [
         { x: 6, y: 5 },
         f.ctx,
       );
-      return { observed: sheet.ap, result, fixture: f };
+      const asked = f.statusCalls[0]?.power;
+      // FIVE TOME TURNS, as Blinding Speed lasts (combat-techniques.lua:165).
+      expect(f.statusCalls[0]?.duration).toBe(tomeCooldownToTurns(5));
+      // THE BODY'S CLOCK. `TalentActor` is the talent's structural view and
+      // does not name it; the object underneath is the world's own body.
+      const gained = ((friend as { readonly globalSpeed?: number }).globalSpeed ?? 1) - 1;
+      expect(gained, 'the speed never reached the friend').toBeCloseTo(
+        typeof asked === 'number' ? asked : 0,
+        10,
+      );
+      return { observed: gained, result, fixture: f };
     },
   },
   {

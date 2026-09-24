@@ -18,7 +18,7 @@ import {
   sheetForClass,
 } from '../../src/server/content/classes.ts';
 import { EffectId, createMvpEffectState } from '../../src/server/content/effects.ts';
-import { AiProfile, FLAT_CHARGE, actionCost } from '../../src/server/engine/actor.ts';
+import { AiProfile, FLAT_CHARGE, Faction, actionCost } from '../../src/server/engine/actor.ts';
 import { MELEE_REACH } from '../../src/server/engine/combat.ts';
 import { createDownedState } from '../../src/server/engine/downed.ts';
 import {
@@ -34,8 +34,9 @@ import {
 import { EMPTY_PASSIVE_VIEW } from '../../src/server/engine/hooks.ts';
 import { resolveItem } from '../../src/server/content/resolve.ts';
 import { longStride } from '../../src/server/talents/legwork.ts';
+import { onMyWhistle, speedGivenAt } from '../../src/server/talents/on_my_whistle.ts';
 import { createPartyState } from '../../src/server/engine/party.ts';
-import { talentId } from '../../src/server/engine/talents.ts';
+import { talentId, tomeCooldownToTurns } from '../../src/server/engine/talents.ts';
 import { realmTalentRuntime } from '../../src/server/main.ts';
 import { createTurnEngine } from '../../src/server/turn-engine.ts';
 import { createWorld } from '../../src/server/world/world.ts';
@@ -317,6 +318,111 @@ describe('Long Stride makes a step cheaper — Lightning Speed’s passive', () 
     stun(scene.world, scene.effects, scene.body);
     expect(scene.body.movementSpeed).toBeCloseTo(0.58, 10);
     expect(actionCost(scene.body, { kind: 'move' })).toBeCloseTo(1 / 0.58, 10);
+  });
+});
+
+describe('On My Whistle hands a friend ToME’s SPEED — Blinding Speed’s numbers', () => {
+  it('costs the Watchman no turn, and the friend’s clock fills 14% faster at rank 1', () => {
+    /**
+     * `no_energy`, as Blinding Speed is (combat-techniques.lua:155): the world
+     * does not move for the whistle. And the power is the one the rank asks
+     * for, through the real status door to the friend's own `globalSpeed` —
+     * which is what makes them asked more often than game turns pass.
+     */
+    const scene = room('cost-whistle');
+    const ren = scene.world.addPlayer('p2', 'Ren', { maxHp: 500 });
+    ren.x = HOME.x + 2;
+    ren.y = HOME.y;
+    scene.engine.join('p2');
+    scene.engine.setConnected('p2', true);
+    scene.engine.pump();
+    const sheet = scene.talents.sheetOf('p1');
+    if (sheet === undefined) throw new Error('fixture: no sheet');
+    sheet.resource.value = 100;
+
+    const tick = scene.world.turn.clock.tick;
+    const sent = scene.engine.submitTalent('p1', talentId('on_my_whistle'), {
+      x: ren.x,
+      y: ren.y,
+    });
+    expect(sent.ok, JSON.stringify(sent)).toBe(true);
+    scene.engine.pump();
+    expect(scene.world.turn.clock.tick, 'the whistle cost a turn').toBe(tick);
+    expect(hasEffect(scene.effects, 'p2', EffectId.Speed)).toBe(true);
+    expect(ren.globalSpeed).toBeCloseTo(1 + speedGivenAt(1), 10);
+    expect(speedGivenAt(1)).toBeCloseTo(0.14, 10);
+    expect(scene.body.globalSpeed, 'the Watchman whistled himself').toBe(1);
+    // AND IT TOOK NO ACTION POINTS: a free action shares its decision's budget.
+    expect(sheet.ap).toBe(sheet.maxAp);
+  });
+
+  it('will not whistle the Watchman himself, nor a shopkeeper who is on nobody’s side', () => {
+    const scene = room('cost-whistle-refused');
+    const sheet = scene.talents.sheetOf('p1');
+    if (sheet === undefined) throw new Error('fixture: no sheet');
+    sheet.resource.value = 100;
+    const self = scene.engine.submitTalent('p1', talentId('on_my_whistle'), HOME);
+    scene.engine.pump();
+    expect(self.ok && hasEffect(scene.effects, 'p1', EffectId.Speed), 'whistled himself').toBe(
+      false,
+    );
+
+    const merrow = scene.world.addMonster('m_shop', {
+      name: 'Merrow Stitch',
+      sprite: HUSK_SPRITE,
+      x: HOME.x + 2,
+      y: HOME.y,
+      profile: AiProfile.MeleeChaser,
+      faction: Faction.Townsfolk,
+      maxHp: 500,
+    });
+    scene.engine.submitTalent('p1', talentId('on_my_whistle'), { x: merrow.x, y: merrow.y });
+    scene.engine.pump();
+    expect(hasEffect(scene.effects, merrow.id, EffectId.Speed), 'the shopkeeper sped up').toBe(
+      false,
+    );
+    expect(merrow.globalSpeed).toBe(1);
+  });
+
+  it('pins Blinding Speed’s numbers: the curve, three of our turns, and the text', () => {
+    // combat-techniques.lua:163 — 0.14 to 0.45 on a 0.75 curve; rank 3 is where
+    // the exponent shows. And `%d` truncates, so rank 3's 30.92% reads 30.
+    expect(speedGivenAt(3)).toBeCloseTo(0.30924, 4);
+    expect(speedGivenAt(5)).toBeCloseTo(0.45, 10);
+    expect(onMyWhistle.describe({} as never, 3)).toContain('30% faster for 3 turns');
+    expect(onMyWhistle.cooldownTurns).toBe(tomeCooldownToTurns(55));
+  });
+});
+
+describe('every decision a hasted body gets is a whole one', () => {
+  it('two costly talents on two decisions inside one game turn — the budget refills per decision', () => {
+    /**
+     * "AP and MP are the TURN", and a turn is a decision. The budget refilled
+     * only on the game turn's `actBase`, so a hasted body's second decision in
+     * one game turn found the first one's points spent: Crude Blow (3) then
+     * Iron Curtain (5) on a budget of 6 was refused. At a clock of 10 the body
+     * decides every tick, so both land inside one game turn by construction.
+     */
+    const scene = room('cost-hasted-budget', { husk: true });
+    setEffect(scene.effects, scene.body, EffectId.Speed, 99, { power: 9 }, scene.world.rng);
+    expect(scene.body.globalSpeed).toBeCloseTo(10, 10);
+    const sheet = scene.talents.sheetOf('p1');
+    if (sheet === undefined) throw new Error('fixture: no sheet');
+    sheet.resource.value = 100;
+    const at = { x: HOME.x + 1, y: HOME.y };
+    const turn = scene.world.turn.clock.gameTurn;
+
+    expect(scene.engine.submitTalent('p1', talentId('crude_blow'), at).ok).toBe(true);
+    scene.engine.pump();
+    expect(scene.body.energy, 'not asked again').toBeGreaterThanOrEqual(ENERGY_TO_ACT);
+    const second = scene.engine.submitTalent('p1', talentId('iron_curtain'), at);
+    expect(second.ok, JSON.stringify(second)).toBe(true);
+    scene.engine.pump();
+    expect(scene.world.turn.clock.gameTurn, 'the fixture crossed a game turn').toBe(turn);
+    expect(
+      scene.body.cooldowns.get(talentId('iron_curtain')) ?? 0,
+      'Iron Curtain was refunded rather than used',
+    ).toBeGreaterThan(0);
   });
 });
 
