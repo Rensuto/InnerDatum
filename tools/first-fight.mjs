@@ -88,7 +88,7 @@ import {
   createTalentBook,
   sheetForClass,
 } from '../src/server/content/classes.ts';
-import { talentRuntimeFor } from '../src/server/main.ts';
+import { realmTalentRuntime } from '../src/server/main.ts';
 import { canRoute, canWalk, Ground } from '../src/shared/level.ts';
 import { ErasedReason } from '../src/shared/protocol.ts';
 import { firstStep } from './walk.mjs';
@@ -173,7 +173,9 @@ function fight(cls, seed) {
         downed,
         effects,
         talents: createTalentBook(talentEngine, world),
-        talentRuntime: talentRuntimeFor(talentEngine, world),
+        // THE SERVER'S OWN ASSEMBLY, every status door wired (`realmTalentRuntime`).
+        // With none, no talent's status ever landed in a measured fight.
+        talentRuntime: realmTalentRuntime(talentEngine, effects, world, () => undefined),
       }),
   });
   const arena = realms.open(ENCOUNTER_SITE, seed, { level: LEVEL, size: 1 }, GROUND);

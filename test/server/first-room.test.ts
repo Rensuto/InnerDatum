@@ -646,7 +646,10 @@ describe('the gentlest room in the game', () => {
       cleared,
       `${site.id} was never finished in ${String(DRIVEN_SEEDS)} runs`,
     ).toBeGreaterThan(0);
-  });
+    // SLOW BY DESIGN: six driven fights for a pair, and since the probe
+    // lands statuses (`realmTalentRuntime`) they run longer. Measured 12-14 s
+    // alone, past the suite's 20 s under load.
+  }, 60_000);
 
   it('leaves a beginner a real margin for walking in, not a coin flip', () => {
     /**

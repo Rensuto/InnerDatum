@@ -58,3 +58,16 @@ export function takeShot(
   onRefusal?: (talentId: string, shot: unknown) => void,
   level?: unknown,
 ): { fired: boolean; gap: number | null };
+
+/** A button the probe presses when hurt: its id, and whether it is `no_energy`. */
+export type ProbeHelp = { readonly id: string; readonly free: boolean };
+
+/**
+ * What a class may press on itself when hurt. test/tools/fightlib-help.test.ts
+ * holds `free` to the talent's own `noEnergy` — the price the engine charges.
+ */
+export function selfHelp(
+  cls: unknown,
+  known: ReadonlySet<string> | undefined,
+  inscribed: readonly unknown[],
+): ProbeHelp[];

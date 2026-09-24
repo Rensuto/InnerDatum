@@ -649,10 +649,12 @@ export function selfHelp(cls, known, inscribed) {
        */
       .filter((t) => t.kind !== 'sustained')
       .filter((t) => t.targeting?.affinity === 'ally' && t.targeting?.shape === 'self')
-      // THE PRICE COMES WITH IT, because `no_energy` is the difference between a
-      // button you press WHILE fighting and one you spend your turn on. See
-      // `takeHelp`, which returns it so the caller can decide whether to swing.
-      .map((t) => ({ id: t.id, ap: t.cost?.ap ?? 0 }))
+      // WHETHER IT IS FREE COMES WITH IT, because `no_energy` is the difference
+      // between a button you press WHILE fighting and one you spend your turn on.
+      // It read the AP price, and Phase Door Rune costs no AP and a whole turn
+      // (tome/class/Actor.lua:5862-5863 charges every talent that is not
+      // `no_energy`), so the driver pressed it and then swung for free.
+      .map((t) => ({ id: t.id, free: t.noEnergy === true }))
   );
 }
 
@@ -671,7 +673,7 @@ export function selfHelp(cls, known, inscribed) {
  * this walks the list rather than giving up on the first no.
  *
  * ═══════════════════════════════════════════════════════════════════════════
- * IT RETURNS THE AP THE PRESS COST, AND null FOR "NOTHING PRESSED".
+ * IT RETURNS WHETHER THE PRESS WAS FREE, AND null FOR "NOTHING PRESSED".
  * ═══════════════════════════════════════════════════════════════════════════
  * NOT A BOOLEAN, and the first version was — which quietly wrecked the table it
  * was written to fix. The caller ended its turn on any success, so a body below
@@ -690,7 +692,7 @@ export function takeHelp(engine, actorId, helps, body, threshold = 0.6) {
   if (body.maxHp <= 0 || body.hp / body.maxHp > threshold) return null;
   for (const help of helps) {
     const out = engine.submitTalent(actorId, help.id, { x: body.x, y: body.y });
-    if (out?.ok !== false) return help.ap;
+    if (out?.ok !== false) return help.free;
   }
   return null;
 }

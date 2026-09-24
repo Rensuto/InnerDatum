@@ -44,7 +44,7 @@ import {
   createTalentBook,
   sheetForClass,
 } from '../src/server/content/classes.ts';
-import { talentRuntimeFor } from '../src/server/main.ts';
+import { realmTalentRuntime } from '../src/server/main.ts';
 import { ActorKind, ErasedReason } from '../src/shared/protocol.ts';
 import { canRoute, canWalk } from '../src/shared/level.ts';
 import {
@@ -280,15 +280,10 @@ export function run(site, size, seed, opts = {}) {
         ...(parties === undefined ? {} : { parties }),
         onSheetDirty: refreshBody,
         talents: createTalentBook(talentEngine, world),
-        talentRuntime: talentRuntimeFor(
-          talentEngine,
-          world,
-          undefined,
-          undefined,
-          undefined,
-          undefined,
-          refreshBody,
-        ),
+        // THE SERVER'S OWN ASSEMBLY, every status door wired. This passed
+        // `undefined` for all of them, so no talent's status ever landed in a
+        // measured fight — Lockdown stunned nothing. See `realmTalentRuntime`.
+        talentRuntime: realmTalentRuntime(talentEngine, effects, world, refreshBody),
       }),
   });
   /**
@@ -698,14 +693,14 @@ export function run(site, size, seed, opts = {}) {
        * BEFORE the shot, because a heal that costs no turn and a heal that costs
        * one are both worth more than a swing you take at 30% health.
        */
-      const helpCost = takeHelp(realm.engine, b.id, helps, b);
-      if (helpCost !== null) lastVerb.set(b.id, 'help');
-      if (helpCost !== null) {
+      const free = takeHelp(realm.engine, b.id, helps, b);
+      if (free !== null) lastVerb.set(b.id, 'help');
+      if (free !== null) {
         tally.helped = (tally.helped ?? 0) + 1;
         // ONLY A PRESS THAT COST A TURN ENDS THE TURN. `no_energy = true` is
         // two of the three infusions, and a driver that stopped to drink one
         // was throwing away an attack the engine never charged for.
-        if (helpCost > 0) continue;
+        if (!free) continue;
       }
 
       /**

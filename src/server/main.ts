@@ -58,6 +58,7 @@ import {
 } from './engine/effects.ts';
 import type {
   EffectCtx,
+  EffectState,
   StatusApply,
   StatusCure,
   StatusExtend,
@@ -677,6 +678,81 @@ export function talentRuntimeFor(
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════
+ * THE RUNTIME A REALM RUNS, WITH EVERY STATUS DOOR WIRED.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * What `buildServer`'s `engineFor` hands each world, and exported so a probe
+ * runs THIS assembly rather than a copy of it: tools/delve-run.mjs built its
+ * runtime with `undefined` for every door, so in every measured fight no
+ * talent's status ever landed — a Watchman's Lockdown stunned nothing, and the
+ * readings were of a game nobody plays.
+ *
+ * ONE APPLIER PER REALM, because the rng is per-realm. The status TABLE is
+ * global — one `effects` for the whole process. The DOOR is not: it folds in
+ * the world's seeded stream, and the Overworld's stream is not the Hollow
+ * Mine's, so a stun rolled in a delve draws from that delve's stream.
+ *
+ * ═══ APPLY A STATUS — AND TELL THE PERSON WHO CAUSED IT THAT IT LANDED ═══
+ * `statusApplier` is the engine's half and knows nothing about resources;
+ * `talentEngine` owns the bars and cannot see an effect land. This is the only
+ * place both are in scope. The rule is `creditForLanding`'s (engine/effects.ts):
+ * on landing, not on applying; once, not every turn; detrimental only, and
+ * never the caster's own. See that function for why each is a decision.
+ *
+ * `cure` takes the same per-realm stream because removing runs the effect's own
+ * `onRemove`. `hasStatus` reads the table and draws nothing. `extend` rolls
+ * nothing either — upstream does not make a body save twice for one affliction.
+ *
+ * @param refresh fold a body's passives again — `buildServer`'s
+ *   `refreshPassives`, a probe's own recompose. It is the effects' `sheetDirty`
+ *   and the once-per-base-turn fold both.
+ */
+export function realmTalentRuntime(
+  talentEngine: TalentEngine,
+  effects: EffectState,
+  forWorld: World,
+  refresh: (actorId: string) => void,
+): TalentRuntime {
+  // See `talentEffectCtx`: the talent seams' own context, one per world.
+  const seamCtx = (): EffectCtx =>
+    talentEffectCtx(forWorld, createTalentBook(talentEngine, forWorld), refresh);
+  const apply = statusApplier(effects, forWorld.rng, seamCtx());
+  const status: StatusApply = (target, effectId, duration, params = {}) => {
+    const landed = apply(target, effectId, duration, params);
+    const credit = creditForLanding(target.id, landed, params.srcId, effectById(effectId)?.status);
+    if (credit !== null) talentEngine.noteAfflicted(credit);
+    return landed;
+  };
+  return talentRuntimeFor(
+    talentEngine,
+    forWorld,
+    status,
+    (actorId) => budgetPenalty(effects, actorId),
+    statusCurer(effects, forWorld.rng, seamCtx()),
+    statusHolder(effects),
+    /**
+     * ONCE PER BASE TURN, THE PASSIVES ARE FOLDED AGAIN.
+     *
+     * This is what makes a board-reading passive real rather than a number
+     * frozen at the moment somebody spent a point. Upstream does NOT do this —
+     * ToME refreshes on learn, unlearn and mastery change only, and six of its
+     * talents work around that with callbacks — so this is a deliberate
+     * divergence, affordable here because the fold is a handful of talents over
+     * a handful of players, resolving synchronously.
+     */
+    refresh,
+    // See `breakOnDamage` on `talentRuntimeFor`. `effects` is in scope here and
+    // in no layer below, which is the whole reason these are seams.
+    (id: string) => {
+      const body = forWorld.getActor(id);
+      if (body !== undefined) breakDamageSensitive(effects, body, forWorld.rng, seamCtx());
+    },
+    statusExtender(effects),
+  );
+}
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
  * THE THREE TALENT-LEDGER SEAMS, LIFTED OUT OF `buildServer` SO A TEST CAN
  * REACH THE ONES PRODUCTION USES.
  * ═══════════════════════════════════════════════════════════════════════════
@@ -1168,83 +1244,8 @@ export function buildServer() {
    *   the BARRIER is per realm, built inside `createTurnEngine` — two realms
    *             sharing one would collide on its level-wide countdown key.
    */
-  /**
-   * ONE APPLIER PER REALM, because the rng is per-realm.
-   *
-   * The status TABLE is global — one `effects` for the whole process, for the
-   * reason `downed` states. The DOOR is not: it folds in the world's seeded
-   * stream, and the Overworld's stream is not the Hollow Mine's. Building it
-   * here, inside `engineFor`'s neighbourhood, is what keeps a stun rolled in a
-   * delve drawing from that delve's stream.
-   */
-  /**
-   * ═══════════════════════════════════════════════════════════════════════════
-   * APPLY A STATUS — AND TELL THE PERSON WHO CAUSED IT THAT IT LANDED.
-   * ═══════════════════════════════════════════════════════════════════════════
-   *
-   * `statusApplier` is the engine's half and knows nothing about resources.
-   * `talentEngine` owns the bars and cannot see an effect land. This wrapper is
-   * the only place both are in scope, which is the same reason `status`,
-   * `cure` and `breakOnDamage` are all assembled here.
-   *
-   * ═══ ON LANDING, NOT ON APPLYING ═══
-   * A save the target MADE pays nothing. Paying on the attempt would make Ink a
-   * flat tax on pressing buttons and would reward a Redactor for spraying marks
-   * at things that shrug them off, which is the opposite of the class.
-   *
-   * ═══ AND ONCE, NOT EVERY TURN THE EFFECT RUNS ═══
-   * Per-tick income would make DURATION the only stat worth having and would
-   * pay a long slow twice over. One mark, one payment.
-   *
-   * DETRIMENTAL ONLY, and the caster must not be the victim: a Redactor who
-   * bandages an ally is not writing anything down, and one who is bleeding does
-   * not get paid for it.
-   */
-  // See `talentEffectCtx`: the talent seams' own context, one per world.
-  const seamCtx = (forWorld: World): EffectCtx =>
-    talentEffectCtx(forWorld, createTalentBook(talentEngine, forWorld), (id: string) => {
-      refreshPassives(id);
-    });
-  const statusFor = (forWorld: World): StatusApply => {
-    const apply = statusApplier(effects, forWorld.rng, seamCtx(forWorld));
-    return (target, effectId, duration, params = {}) => {
-      const landed = apply(target, effectId, duration, params);
-      /**
-       * THE RULE IS `creditForLanding`'S; THE WIRING IS THIS FILE'S.
-       *
-       * It used to be four conditions written out here, which meant the only
-       * path by which `ResourceKind.Ink` could ever be earned had no test of its
-       * own — nothing can reach a closure in `main.ts` without booting a server.
-       * See engine/effects.ts for the four conditions and why each one is a real
-       * decision rather than a guard.
-       */
-      const credit = creditForLanding(
-        target.id,
-        landed,
-        params.srcId,
-        effectById(effectId)?.status,
-      );
-      if (credit !== null) talentEngine.noteAfflicted(credit);
-      return landed;
-    };
-  };
-  /** The same per-realm rng, for the same reason. See `statusFor` above. */
-  const cureFor = (forWorld: World): StatusCure =>
-    statusCurer(effects, forWorld.rng, seamCtx(forWorld));
-  /**
-   * NO WORLD AND NO RNG. Asking whether an effect is on a body reads the table
-   * and draws nothing, so unlike its three neighbours this one is not per-world
-   * — but it is built here beside them so the four doors stay in one place.
-   */
-  const hasStatusFor = (): StatusHas => statusHolder(effects);
-  /**
-   * NO RNG, UNLIKE ITS TWO NEIGHBOURS. `statusFor` and `cureFor` both take the
-   * per-realm stream because applying rolls a save and removing runs the
-   * effect's own `onRemove`. Lengthening rolls nothing — upstream does not make
-   * a body save twice for one affliction, the save was made and lost when it
-   * landed — so there is no draw to keep deterministic and no realm to key on.
-   */
-  const extendFor = (): StatusExtend => statusExtender(effects);
+  // THE STATUS DOORS: see `realmTalentRuntime`, which assembles them for each
+  // world and is what a probe runs too.
   /**
    * ═══════════════════════════════════════════════════════════════════════════
    * THE ONE ABSORBER, SHARED BY EVERY BODY IN THE GAME.
@@ -1276,43 +1277,16 @@ export function buildServer() {
       downed,
       parties,
       talents: createTalentBook(talentEngine, forWorld),
-      talentRuntime: talentRuntimeFor(
-        talentEngine,
-        forWorld,
-        statusFor(forWorld),
-        (actorId) => budgetPenalty(effects, actorId),
-        cureFor(forWorld),
-        hasStatusFor(),
-        /**
-         * ONCE PER BASE TURN, THE PASSIVES ARE FOLDED AGAIN.
-         *
-         * This is what makes a board-reading passive real rather than a number
-         * frozen at the moment somebody spent a point. Upstream does NOT do this
-         * — ToME refreshes on learn, unlearn and mastery change only, and six of
-         * its talents work around that with callbacks — so this is a deliberate
-         * divergence, affordable here because the fold is a handful of talents
-         * over a handful of players — and a plain recompose for every other
-         * body with a base sheet — resolving synchronously.
-         *
-         * WRAPPED IN A CLOSURE, NOT PASSED BY NAME. `refreshPassives` is a `const`
-         * declared a hundred lines below this call, and `engineFor` runs during
-         * `buildServer` — so naming it directly is a temporal dead zone and the
-         * server refuses to boot with "Cannot access before initialization". The
-         * arrow defers the lookup to call time, by which point it exists.
-         */
-        (id: string) => {
-          refreshPassives(id);
-        },
-        // See `breakOnDamage` on the signature. `effects` is in scope here and
-        // in no layer below, which is the whole reason these are seams.
-        (id: string) => {
-          const body = forWorld.getActor(id);
-          if (body !== undefined) {
-            breakDamageSensitive(effects, body, forWorld.rng, seamCtx(forWorld));
-          }
-        },
-        extendFor(),
-      ),
+      /**
+       * WRAPPED IN A CLOSURE, NOT PASSED BY NAME. `refreshPassives` is a `const`
+       * declared a hundred lines below this call, and `engineFor` runs during
+       * `buildServer` — so naming it directly is a temporal dead zone and the
+       * server refuses to boot with "Cannot access before initialization". The
+       * arrow defers the lookup to call time, by which point it exists.
+       */
+      talentRuntime: realmTalentRuntime(talentEngine, effects, forWorld, (id: string) => {
+        refreshPassives(id);
+      }),
       // THE OTHER HALF OF THE STATUS SEAM. `turn-engine.ts` builds
       // `PumpCtx.statusPass` from this, the world's rng and the talent book —
       // it is the only place that holds all three, which is why the seam sat
