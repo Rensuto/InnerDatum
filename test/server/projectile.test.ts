@@ -627,19 +627,34 @@ describe('turnsToImpact', () => {
 describe('decisionsBeforeImpact — the viewer’s own turns', () => {
   it('is the game-turn count at full speed, and fewer for a Slowed body', () => {
     const shot = orb({ from: { x: 1, y: 1 }, to: { x: 7, y: 1 }, projSpeed: 2 });
-    expect(decisionsBeforeImpact(shot, 1)).toBe(turnsToImpact(shot));
-    expect(decisionsBeforeImpact(shot, 1 / 1.3)).toBe(2);
+    expect(decisionsBeforeImpact(shot, { speed: 1, energy: 0 })).toBe(turnsToImpact(shot));
+    expect(decisionsBeforeImpact(shot, { speed: 1 / 1.3, energy: 0 })).toBe(2);
   });
 
-  it('never promises a decision the clock does not deliver, whatever its phase', () => {
+  it('takes a debt off first, and a clock that owes nothing keeps its number', () => {
+    // 3 game turns. Owing a whole turn — a stunned step's second half — is 2;
+    // owing half a turn is floor(2.5) = 2; owing three is none at all, not −0.
+    const shot = orb({ from: { x: 1, y: 1 }, to: { x: 7, y: 1 }, projSpeed: 2 });
+    expect(turnsToImpact(shot)).toBe(3);
+    expect(decisionsBeforeImpact(shot, { speed: 1, energy: -1000 })).toBe(2);
+    expect(decisionsBeforeImpact(shot, { speed: 1, energy: -500 })).toBe(2);
+    expect(decisionsBeforeImpact(shot, { speed: 1, energy: -3000 })).toBe(0);
+    // READY, OR PART-FILLED, IS NOT A BONUS: the number is a guarantee.
+    expect(decisionsBeforeImpact(shot, { speed: 1, energy: 1000 })).toBe(3);
+    expect(decisionsBeforeImpact(shot, { speed: 1, energy: 600 })).toBe(3);
+  });
+
+  it('never promises a decision the clock does not deliver, from any energy it can hold', () => {
     // THE GUARANTEE, CHECKED RATHER THAN ARGUED. A body gaining `speed` × 100 a
     // tick acts each time its energy reaches 1000; over N game turns (10N ticks)
-    // count its decisions from every starting energy, and the promise must never
-    // exceed the fewest of them.
+    // count its decisions from every starting energy — a whole turn in DEBT up
+    // to just short of ready — and the promise from that energy must never
+    // exceed them. Each orb is N tiles at one a turn, so it lands in N.
     for (const speed of [1, 1 / 1.3, 1 / 1.6, 0.84, 1.4]) {
       for (let turns = 1; turns <= 8; turns += 1) {
-        let fewest = Infinity;
-        for (let start = 0; start < 1000; start += 7) {
+        const shot = orb({ from: { x: 1, y: 1 }, to: { x: 1 + turns, y: 1 }, projSpeed: 1 });
+        expect(turnsToImpact(shot)).toBe(turns);
+        for (let start = -1000; start < 1000; start += 7) {
           let energy = start;
           let decisions = 0;
           for (let tick = 0; tick < turns * 10; tick += 1) {
@@ -649,12 +664,11 @@ describe('decisionsBeforeImpact — the viewer’s own turns', () => {
               energy -= 1000;
             }
           }
-          fewest = Math.min(fewest, decisions);
+          expect(
+            decisionsBeforeImpact(shot, { speed, energy: start }),
+            `speed ${String(speed)}, ${String(turns)} turns, from ${String(start)}`,
+          ).toBeLessThanOrEqual(decisions);
         }
-        expect(
-          Math.floor(turns * speed),
-          `speed ${String(speed)}, ${String(turns)} turns`,
-        ).toBeLessThanOrEqual(fewest);
       }
     }
   });

@@ -115,6 +115,8 @@ export const onMyWhistle: Talent = {
   iconId: 'icon_active_on_my_whistle',
   cost: { ap: AP_COST, resource: RESOLVE_COST },
   cooldownTurns: COOLDOWN_TURNS,
+  // `technique/warcries` upstream, so `weapon` (tome/class/Actor.lua:5807-5808).
+  speed: 'weapon',
   targeting: {
     shape: TargetShape.Single,
     // The level-1 range is a FLOOR, not the answer: `rangeAt` is what

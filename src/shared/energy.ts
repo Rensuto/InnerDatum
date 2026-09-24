@@ -59,9 +59,10 @@
  *            for a husk (since 2026-09-24; it was pinned to 1.0 for players by
  *            DECISIONS.md § D1, to keep a party phase-locked under the old
  *            simultaneous barrier — a party takes its turns in order now).
- *   PLAYERS  still spend exactly ENERGY_TO_ACT per action, until ToME's
- *            per-action costs (movement, weapon, talent speed) are ported.
- *   MONSTERS spend by `costMultiplier` (`spendForAction`), their `speedFactor`.
+ *   BOTH     spend by `costMultiplier` (`spendForAction`), which is ToME's
+ *            price for the action taken — movement, weapon or talent speed,
+ *            or one flat turn (`actionCost`, server/engine/actor.ts). Players
+ *            spent exactly ENERGY_TO_ACT per action until 2026-09-24.
  *
  * Those two knobs pull in OPPOSITE directions and are constantly confused:
  * `globalSpeed` 2.0 means "gains energy twice as fast", `costMultiplier` 2.0
@@ -282,13 +283,12 @@ export function canAct(actor: EnergyActor, need: number = ENERGY_TO_ACT): boolea
  * (`useEnergy(getTalentSpeed(ab) * game.energy_to_act)`).
  *
  * `costMultiplier` is a COST scale, the opposite direction from `globalSpeed`:
- * 0.5 is a half-turn action, 2.0 costs two turns. Weapon speed, spell speed
- * and movement speed all arrive here.
- *
- *   PLAYERS PASS 1.0 until ToME's per-action costs are ported: a player's
- *   action costs exactly one turn. That once guarded the phase lock of the old
- *   simultaneous barrier (D1); a party takes its turns in order now, where an
- *   uneven cost is simply ToME, so it no longer has to.
+ * 0.5 is a half-turn action, 2.0 costs two turns. Weapon speed, talent speed
+ * and movement speed all arrive here, for players and monsters alike, priced by
+ * `actionCost` (server/engine/actor.ts) — a stunned step is 2.0. Players passed
+ * exactly 1.0 until 2026-09-24, to guard the phase lock of the old
+ * simultaneous barrier (D1); a party takes its turns in order now, where an
+ * uneven cost is simply ToME.
  *
  * Clamped at MIN_ACTION_COST_MULTIPLIER, and refuses a non-finite multiplier
  * outright: a NaN cost would silently make an actor unable to ever act again.

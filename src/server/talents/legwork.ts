@@ -197,6 +197,9 @@ export const movingTarget: Talent = {
   iconId: 'icon_active_moving_target',
   cost: { ap: MOVING_TARGET_AP },
   cooldownTurns: MOVING_TARGET_COOLDOWN,
+  // NO `speed`. Evasion names `speed = "combat"` (techniques/mobility.lua:222)
+  // but is `no_energy = true` (:214), so upstream never charges it. Ours costs
+  // a standard turn, the header's deliberate choice.
   targeting: {
     shape: TargetShape.Self,
     range: 0,
@@ -314,6 +317,8 @@ export const kickOff: Talent = {
   iconId: 'icon_active_kick_off',
   cost: { ap: KICK_AP },
   cooldownTurns: KICK_COOLDOWN,
+  // Disengage is `technique/mobility`, so `weapon` (tome/class/Actor.lua:5807-5808).
+  speed: 'weapon',
   targeting: {
     shape: TargetShape.Single,
     range: KICK_RANGE,
@@ -493,6 +498,9 @@ export const downhill: Talent = {
   iconId: 'icon_active_downhill',
   cost: { ap: DOWNHILL_AP },
   cooldownTurns: DOWNHILL_COOLDOWN,
+  // NO `speed`: Tumble is `no_energy = true` (techniques/mobility.lua:246), so
+  // upstream never charges one. Ours still costs a standard turn — a departure
+  // not yet ported.
   targeting: {
     shape: TargetShape.Tile,
     range: DOWNHILL_RANGE,
@@ -594,6 +602,8 @@ export const secondExit: Talent = {
    */
   cost: { ap: 0 },
   cooldownTurns: 0,
+  // NO `speed`: a sustain toggles without spending a turn here, as Trained
+  // Reactions does upstream (`no_energy = true`, techniques/mobility.lua:292).
   /**
    * A SHARE OF THE POOL, NOT A FLAT NUMBER, and this is the first talent that
    * needs one. See `Talent.sustain.reserveFraction`: four classes may buy this

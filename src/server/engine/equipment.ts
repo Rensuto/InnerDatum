@@ -144,11 +144,13 @@ const WIELDER_STAT_KEYS: readonly (keyof AdditiveStats)[] = Object.freeze([
 /**
  * The `combat_*` mods a `wielder` may move, in a FIXED order.
  *
- * THE THREE DEAD FIELDS ARE ABSENT FROM THIS LIST AS WELL AS FROM THE TYPE, and
+ * THE REFUSED FIELD IS ABSENT FROM THIS LIST AS WELL AS FROM THE TYPE, and
  * that is the belt to the type's braces: an item that reached the fold through a
  * cast with `physSpeed: 4` on it would contribute nothing here, because nothing
  * here reads a key it was not told about. Together with content/items.ts's
  * import-time check that is three independent refusals of the same mistake.
+ * (It was three dead fields; it is one refused one — `baseMod` below adds onto
+ * zero, and `physSpeed` is a divisor whose absent value is one. See `CombatMods`.)
  */
 const WIELDER_MOD_KEYS: readonly (keyof AdditiveMods)[] = Object.freeze([
   // ADDITIVE, which is upstream's: two sources of `numbed` stack into one attr.

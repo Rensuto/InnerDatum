@@ -216,6 +216,9 @@ export const lockdown: Talent = {
   iconId: 'icon_active_lockdown',
   cost: { ap: AP_COST, resource: RESOLVE_COST },
   cooldownTurns: tomeCooldownToTurns(TOME_COOLDOWN),
+  // Taunt, its shape, is `technique/other` (gifts/summon-utility.lua:22), so
+  // `weapon` (tome/class/Actor.lua:5807-5808).
+  speed: 'weapon',
   targeting: {
     shape: TargetShape.Single,
     range: RANGE,

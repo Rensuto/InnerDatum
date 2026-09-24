@@ -125,13 +125,20 @@ import { DIR_ORDER, DIR_VECTORS, chebyshev } from '../../shared/coords.ts';
 import { tileDistance } from '../../shared/distance.ts';
 import { ballCentre, ballTiles as shadowcastBall, blocksProjection } from '../../shared/ball.ts';
 import { ENERGY_TO_ACT } from '../../shared/version.ts';
+import { MIN_ACTION_COST_MULTIPLIER } from '../../shared/energy.ts';
 import { bound, combatTalentScale, rescaleDamage } from '../../shared/scale.ts';
 import { hasLineOfSight } from '../../shared/sight.ts';
 import { areEnemies, cooldownOf, sameSide, setCooldown } from './actor.ts';
 import type { Faction, Sided } from './actor.ts';
 import { attackTarget, combatDistance } from './combat.ts';
 import { DamageType, applyDamage, splitBurn } from './damage.ts';
-import { combatCrit, combatCritPower, combatDamage } from './derived.ts';
+import {
+  combatCrit,
+  combatCritPower,
+  combatDamage,
+  combatMovementSpeed,
+  combatSpeed,
+} from './derived.ts';
 import type { Dir, TileXY } from '../../shared/coords.ts';
 import type { ActorKind, ActorRank, LevelView } from '../../shared/protocol.ts';
 import { RANK_VALUE } from '../../shared/leveling.ts';
@@ -1682,6 +1689,92 @@ export function talentRefused(reason: TalentRefusal): TalentOutcome {
  */
 export type InscriptionKind = 'infusion' | 'rune';
 
+/**
+ * The speed names `getSpeed` understands — tome/class/Actor.lua:352-429. See
+ * `Talent.speed` for which talent carries which, and `talentSpeed` for the price.
+ */
+export type TalentSpeedType =
+  | 'weapon'
+  | 'mainhand'
+  | 'offhand'
+  | 'combat'
+  | 'archery'
+  | 'shield'
+  | 'throwing'
+  | 'spell'
+  | 'mind'
+  | 'summon'
+  | 'movement'
+  | 'standard';
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * WHAT A TALENT COSTS TO USE, AS A MULTIPLE OF A TURN — `getTalentSpeed`,
+ * tome/class/Actor.lua:5816-5830, over `getSpeed`, :352-429.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `postUseTalent` charges `getTalentSpeed(ab) * energy_to_act` unless the
+ * talent is `no_energy` (:5862-5863). The scheduler asks this through
+ * `TalentResolution.talentSpeed`, after the talent resolved, as upstream does.
+ *
+ *   a number                  itself (`getSpeed`'s first line, :353).
+ *   `weapon` `mainhand` `offhand` `combat` `archery` `shield`
+ *                             `combatSpeed` of the body's sheet. Upstream reads
+ *                             the mainhand, the offhand, the launcher or the
+ *                             shield's `special_combat` and takes the largest
+ *                             (:356-414); a sheet here holds exactly one weapon,
+ *                             so all six are that weapon's speed — which is also
+ *                             upstream's own fallback, `self:combatSpeed()`.
+ *   `movement`                `combatMovementSpeed` (:421), so a stun doubles it.
+ *   `throwing`                1 (:415-417). Quickdraw is not ported.
+ *   `spell` `mind` `summon`   1 — A LABELLED DEVIATION. Upstream divides by
+ *                             `combat_spellspeed` / `combat_mindspeed` or takes
+ *                             `fast_summons` off (Combat.lua:1854-1866); none of
+ *                             the three is ported, and at their defaults each
+ *                             is exactly 1, which is every body in this game.
+ *   `standard`                1 (:422).
+ *
+ * THEN FLOORED AT 0.1 — `speed = math.max(0.1, speed) -- speed limit` (:5828).
+ * `t.getEnergy` (:5820) and Quicken (:5822-5825) are not ported; no talent here
+ * has either.
+ *
+ * STRUCTURAL in the actor, like every actor type in this file: a sheet and a
+ * movement speed are all it reads, and a bare fixture has both at ToME's
+ * defaults.
+ */
+export function talentSpeed(
+  actor: { readonly combat?: CombatSheet; readonly movementSpeed?: number },
+  talent: { readonly speed?: TalentSpeedType | number },
+): number {
+  const type = talent.speed ?? 'standard';
+  let speed: number;
+  if (typeof type === 'number') {
+    speed = type;
+  } else {
+    switch (type) {
+      case 'weapon':
+      case 'mainhand':
+      case 'offhand':
+      case 'combat':
+      case 'archery':
+      case 'shield':
+        speed = combatSpeed(actor.combat ?? {});
+        break;
+      case 'movement':
+        speed = combatMovementSpeed(actor);
+        break;
+      case 'throwing':
+      case 'spell':
+      case 'mind':
+      case 'summon':
+      case 'standard':
+        speed = 1;
+        break;
+    }
+  }
+  return Math.max(MIN_ACTION_COST_MULTIPLIER, speed);
+}
+
 export type Talent = {
   readonly id: string;
   readonly name: string;
@@ -1969,6 +2062,35 @@ export type Talent = {
    * a turn upstream).
    */
   readonly noEnergy?: true;
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * WHAT USING IT COSTS — upstream's `t.speed`, read by `getTalentSpeedType`
+   * (tome/class/Actor.lua:5798-5814) and priced by `talentSpeed` below.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * A NAME OF A SPEED, OR A NUMBER. Upstream derives it when a talent does not
+   * say: a `technique/archery*` talent is `archery`, any other `technique/` one
+   * is `weapon`, a spell `spell`, a summon `summon`, a mind talent `mind`, and
+   * the rest `standard`. We have no talent-type strings to derive it from, so
+   * it is WRITTEN ON THE TALENT, and ABSENT IS `standard` — one turn.
+   *
+   * WHERE IT IS WRITTEN: every talent with a button whose upstream counterpart
+   * is a technique, by its file or by its `type` (`weapon`), every one that
+   * fires the shooter (`archery` —
+   * upstream's shots pay the launcher's speed themselves,
+   * tome/class/interface/Archery.lua:282-284), the basic swing (`weapon`,
+   * because upstream's is `T_ATTACK` and `attackTarget` charges the weapon's
+   * speed), and wherever the upstream talent names one outright (Twist the
+   * Knife is `speed = "weapon"`, cunning/dirty.lua:167). A passive is never
+   * used, so none carries one.
+   *
+   * NOR DOES A PORT OF A `no_energy` TALENT, whatever its type: upstream never
+   * charges one (tome/class/Actor.lua:5862), so a speed on it names a price
+   * nobody pays. Downhill, Moving Target and Shake It Off are ports of three
+   * such talents and still cost a standard turn here — a departure, labelled
+   * on each.
+   */
+  readonly speed?: TalentSpeedType | number;
   readonly targeting: TalentTargeting;
   /** What its damage is typed as. `physical` for anything that does none. */
   readonly damageType: DamageType;

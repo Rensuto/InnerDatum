@@ -132,6 +132,9 @@ export const scattershot: Talent = {
   iconId: 'icon_active_scattershot',
   cost: { ap: AP_COST, resource: FOCUS_COST },
   cooldownTurns: COOLDOWN,
+  // IT FIRES THE SHOOTER, so it pays the shooter's speed, as every upstream shot
+  // does (tome/class/interface/Archery.lua:282-284).
+  speed: 'archery',
   // FIRED FROM THE REVOLVER: Fragmentation Shot's `on_pre_use = archerPreUse`
   // (techniques/archery.lua:334). See `Talent.archery`.
   archery: true,

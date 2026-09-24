@@ -306,9 +306,13 @@ export type AdditiveStats = Omit<PrimaryStats, 'lck'>;
  * since those shipped; forbidding the TARGETED field while allowing the
  * blanket one was the inconsistency, not the fix.
  *
- * `physSpeed` STAYS. `combatSpeed` has zero references in `src/` outside its
- * own definition — checked with comments stripped, which is the check the
- * original paste could not survive.
+ * `physSpeed` STAYS, AND NOT FOR THE REASON IT WAS FIRST GIVEN. `combatSpeed`
+ * had zero references outside its own definition until 2026-09-24; it is now
+ * what every swing costs (engine/scheduler.ts charges it). The refusal is about
+ * the FOLD: this field is a DIVISOR whose absent value is 1
+ * (tome/class/Actor.lua:152), `composeWielders` adds onto an absent 0, and so
+ * ToME's `combat_physspeed = 0.1` would land as 0.1 rather than 1.1 — a swing ten
+ * turns long. `CombatMods` in engine/derived.ts has the whole argument.
  *
  * NOTE: `mods.armourHardiness` is ADDITIVE onto a base of 30 (Combat.lua:1336),
  * not a percentage of anything, so it belongs in an additive fold like the rest.
@@ -2090,10 +2094,13 @@ export const DEAD_MOD_KEYS: readonly string[] = Object.freeze([
    * `moveMp` IS DELIBERATELY NOT ON THIS LIST, AND IT WAS FOR ONE COMMIT.
    * ═══════════════════════════════════════════════════════════════════════════
    *
-   * This list and the `Omit` it braces exist for fields NOTHING IN THE GAME
-   * READS — `combatSpeed`, `combatSpellpower` and `combatMindpower` have zero
-   * call sites, so an item granting one would type-check, persist, draw a
-   * tooltip and change no number a player can see.
+   * This list and the `Omit` it braces exist for fields an ITEM CANNOT MOVE
+   * HONESTLY. They were fields nothing read — `combatSpeed`, `combatSpellpower`
+   * and `combatMindpower` had zero call sites, so an item granting one would
+   * type-check, persist, draw a tooltip and change no number a player can see.
+   * The last one left, `physSpeed`, is read now (it is what a swing costs) and
+   * is here because the additive fold would get it WRONG rather than ignore it:
+   * see `CombatMods` in engine/derived.ts.
    *
    * `moveMp` is the opposite: `refreshPassives` folds it into the movement
    * ceiling and it works. Excluding it here would have been using a guard about

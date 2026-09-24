@@ -423,10 +423,13 @@ export type MonsterTemplate = {
   /** Per GAME TURN, on the base clock. 0 for everything in this roster. */
   readonly hpRegen: number;
 
-  // --- speed (both directions of ToME's model; D1 pins only players) ---------
+  // --- speed (both directions of the energy model) ---------------------------
   /** Energy GAIN multiplier — `global_speed_base` (ant.lua:58). */
   readonly globalSpeed: number;
-  /** Action COST multiplier. 1 for everything in M3. */
+  /**
+   * An extra action COST multiplier, on top of the price ToME puts on each
+   * action (`actionCost`, engine/actor.ts). 1 on every template.
+   */
   readonly speedFactor: number;
 
   // --- AI -------------------------------------------------------------------
@@ -1213,7 +1216,8 @@ export const INDEX_WRAITH: MonsterTemplate = Object.freeze({
   // the party. Ours stays at 0.84 for a structural reason: an equal-speed kiter
   // retreats forever and the fight is a treadmill with no end state. ToME can
   // afford 1.0 because its player has movement talents, teleports and a
-  // `movement_speed` stat; ours has none of those yet.
+  // `movement_speed` stat gear raises; ours reads the stat (a stun lowers it)
+  // and nothing raises it yet.
   //
   // PRICED, so the hold is a decision rather than an omission: 1.0 would move
   // this creature from 10.08 to 12.00 hp per player turn — +19% — and would
@@ -2326,9 +2330,12 @@ export const INDEX_CAIRN: MonsterTemplate = Object.freeze({
  * `physspeed = 2` IS THE ONE THING NOT PORTED, and it is worth saying why
  * rather than leaving it as an omission. ToME separates PHYSICAL speed from
  * GLOBAL speed: upstream's troll walks at full pace and swings at half. This
- * engine has one `speedFactor` for what an action costs, and every monster in
- * the file leaves it at 1 — slowness is expressed through `globalSpeed`, which
- * scales moving and swinging together (see `actor.ts`, the two clocks).
+ * engine had one price for every action when this was written, so slowness was
+ * expressed through `globalSpeed`, which scales moving and swinging together
+ * (see `actor.ts`, the two clocks). It prices a swing by `combatSpeed` now
+ * (2026-09-24), so `physSpeed: 2` on this weapon WOULD be upstream's troll;
+ * authoring it is a balance change for the monster plan, not for the commit
+ * that wired the charge.
  *
  * Spending `globalSpeed` on it was tried in the head and rejected: at half rate
  * this creature cannot corner anybody, and a wall you can simply walk away from
@@ -3787,8 +3794,10 @@ export const UNDERMOST_PICKET: MonsterTemplate = Object.freeze({
     mods: { armour: 0, def: 0 },
     /**
      * orc.lua:28 — `combat = { dam=resolvers.rngavg(5,12), atk=2, apr=6 }`.
-     * `physspeed=2` is a cadence this engine spends differently and is not
-     * ported; every other number on that line is upstream's.
+     * `physspeed=2` is not ported — a swing is priced by `combatSpeed` now,
+     * so authoring it would halve this body's attacks, a balance change
+     * INDEX_GLUT's note argues against. Every other number on that line is
+     * upstream's.
      *
      * ═══ AND THE TEN THAT COMES WITH BEING AN ORC ═══
      * `atk` here is upstream's `weapon.atk`, which is ONE TERM of

@@ -115,6 +115,9 @@ export const lineOfEnquiry: Talent = {
   iconId: 'icon_active_line_of_enquiry',
   cost: { ap: AP_COST, resource: FOCUS_COST },
   cooldownTurns: COOLDOWN_TURNS,
+  // IT FIRES THE SHOOTER, so it pays the shooter's speed, as every upstream shot
+  // does (tome/class/interface/Archery.lua:282-284).
+  speed: 'archery',
   // FIRED FROM THE REVOLVER: Crippling Shot's `on_pre_use = archerPreUse`
   // (techniques/archery.lua:802). See `Talent.archery`.
   archery: true,

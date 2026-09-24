@@ -240,6 +240,9 @@ export const shakeItOff: Talent = {
   iconId: 'icon_active_shake_it_off',
   cost: { ap: SHAKE_AP },
   cooldownTurns: SHAKE_COOLDOWN,
+  // NO `speed`: Adrenaline Surge is `no_energy = true`
+  // (techniques/conditioning.lua:160), so upstream never charges one. Ours
+  // still costs a standard turn — a departure not yet ported.
   targeting: {
     // YOURSELF, which is the whole difference from Field Dressing.
     shape: TargetShape.Self,

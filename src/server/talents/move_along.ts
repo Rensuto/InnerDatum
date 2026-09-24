@@ -121,6 +121,8 @@ export const moveAlong: Talent = {
   iconId: 'icon_active_move_along',
   cost: { ap: AP_COST, resource: RESOLVE_COST },
   cooldownTurns: COOLDOWN_TURNS,
+  // `technique/warcries` upstream, so `weapon` (tome/class/Actor.lua:5807-5808).
+  speed: 'weapon',
   targeting: {
     shape: TargetShape.Single,
     range: MELEE_REACH,

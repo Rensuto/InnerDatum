@@ -137,6 +137,9 @@ export const snipersMark: Talent = {
   iconId: 'icon_active_sniper_mark',
   cost: { ap: AP_COST, resource: FOCUS_COST },
   cooldownTurns: tomeCooldownToTurns(TOME_COOLDOWN),
+  // IT FIRES THE SHOOTER, so it pays the shooter's speed, as every upstream shot
+  // does (tome/class/interface/Archery.lua:282-284).
+  speed: 'archery',
   // FIRED FROM THE REVOLVER: Snipe's `on_pre_use = archerPreUse`
   // (techniques/sniper.lua:272). See `Talent.archery`.
   archery: true,

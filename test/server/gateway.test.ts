@@ -401,6 +401,31 @@ describe('the projectiles frame', () => {
     expect(orb?.['turnsToImpact']).toBe(2);
   });
 
+  it('and a viewer still paying off a step waits the debt out first; the other does not', async () => {
+    // THE SAME ORB ON TWO SCREENS. A stunned step costs two turns, and a party
+    // fight parks on the next player the moment the stepper has paid, so she
+    // sees this frame owing a turn: 3 game turns is 2 of her decisions. Her
+    // friend, owing nothing, is promised all 3. Each socket reads its OWN body.
+    const debtor = await connect(server.port);
+    const debtorId = String((await debtor.hello())?.['selfId']);
+    const friend = await connect(server.port);
+    await friend.hello();
+    const body = server.world.getActor(debtorId);
+    if (body === undefined) throw new Error('no body');
+    body.energy = -1000;
+    debtor.clear();
+    friend.clear();
+
+    fire({ x: 2, y: LANE_Y }, { x: 8, y: LANE_Y });
+    await debtor.pump();
+    await friend.pump();
+
+    const [owed] = orbs(debtor.all('projectiles')[0]) as (Record<string, unknown> | undefined)[];
+    const [free] = orbs(friend.all('projectiles')[0]) as (Record<string, unknown> | undefined)[];
+    expect(owed?.['turnsToImpact'], 'the debt was not counted').toBe(2);
+    expect(free?.['turnsToImpact'], 'the debt leaked onto the other screen').toBe(3);
+  });
+
   it('says nothing on a pump where the orb did not move — the memo', async () => {
     // ═══ THIS IS THE PHASE LOCK, SEEN FROM THE WIRE ═══
     // An orb freezes while the party deliberates (it is skipped the moment

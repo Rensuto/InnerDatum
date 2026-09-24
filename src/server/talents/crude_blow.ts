@@ -106,6 +106,9 @@ export const crudeBlow: Talent = {
   cost: { ap: AP_COST },
   // At-will. See the header — the donor's 2.0 s is declined on purpose.
   cooldownTurns: 0,
+  // THE BASIC SWING, priced as upstream's `T_ATTACK` is: `attackTarget` charges
+  // the swung weapon's `combatSpeed` itself (Combat.lua:234-236).
+  speed: 'weapon',
   targeting: {
     shape: TargetShape.Single,
     range: RANGE,

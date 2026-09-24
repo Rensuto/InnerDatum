@@ -130,6 +130,9 @@ export const bearDown: Talent = {
   iconId: 'icon_monster_bear_down',
   cost: { ap: BEAR_DOWN_AP },
   cooldownTurns: BEAR_DOWN_COOLDOWN,
+  // Stun is `technique/other` (misc/npcs.lua:193), so `weapon`
+  // (tome/class/Actor.lua:5807-5808).
+  speed: 'weapon',
   targeting: {
     // MELEE, exactly as upstream's `is_melee = true` (:200). 1.5 is this
     // game's adjacent reach -- the same figure `grasping_hold` uses.

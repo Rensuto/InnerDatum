@@ -1277,11 +1277,12 @@ export type TalentShape = (typeof TalentShape)[keyof typeof TalentShape];
 /**
  * What one use costs. Three budgets, because the game has three.
  *
- * AP and MP are the INTRA-TURN budget (PLAN.md § 6: a player action always
- * costs exactly one turn of energy, and AP/MP is what is spent inside that
- * turn); `resource` is the class pool named by `ResourceView.kind`. Every
- * talent uses two of the three and the unused ones are 0 rather than absent, so
- * the hotbar never has to write `?? 0` at four call sites.
+ * AP and MP are the INTRA-TURN budget (PLAN.md § 6: AP/MP is what is spent
+ * inside a turn; the turn's own energy is ToME's price for the action, which
+ * the server charges); `resource` is the class pool named by
+ * `ResourceView.kind`. Every talent uses two of the three and the unused ones
+ * are 0 rather than absent, so the hotbar never has to write `?? 0` at four
+ * call sites.
  *
  * ONE OBJECT RATHER THAN THREE TOP-LEVEL FIELDS because they are one concept —
  * "what this costs" — and because the server's `TalentCost` is already shaped

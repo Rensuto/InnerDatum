@@ -125,6 +125,8 @@ export const clearTheStreet: Talent = {
   iconId: 'icon_active_clear_the_street',
   cost: { ap: AP_COST, resource: RESOLVE_COST },
   cooldownTurns: COOLDOWN_TURNS,
+  // `technique/warcries` upstream, so `weapon` (tome/class/Actor.lua:5807-5808).
+  speed: 'weapon',
   targeting: {
     // CENTRED ON THE CASTER. See the header — this happens around you, which is
     // what makes it the answer to being surrounded.

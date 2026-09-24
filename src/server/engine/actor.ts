@@ -30,11 +30,13 @@
  * `ensureInitiative`), where uneven energy is simply ToME, so the pin went on
  * 2026-09-24.
  *
- * `speedFactor` — what an action COSTS — is still the literal `1` on a player:
- * every player action costs exactly one turn until ToME's per-action costs
- * (movement, weapon and talent speed) are ported. Every energy spend goes
- * through `spendTurn`, which derives the multiplier from the actor's own kind,
- * so there is no call site where a caller could pass the wrong one.
+ * WHAT AN ACTION COSTS is ToME's per-action charge, for every body: a step at
+ * its movement speed, a swing at its weapon speed, a talent at its talent speed,
+ * anything else one flat turn (`ActionCharge`, `actionCost`). Every energy spend
+ * goes through `spendTurn`, whose charge is a REQUIRED argument, so a new call
+ * site that forgets to say what the action was does not compile. `speedFactor`
+ * is a monster's extra cost multiplier on top, 1 on every template, and still
+ * the literal `1` on a player.
  *
  * ===========================================================================
  * THE TWO CLOCKS (src/shared/energy.ts owns the loop; this file owns actBase)
@@ -56,9 +58,15 @@ import type { DamageType as DamageTypeValue } from './damage.ts';
 import type { PassiveContribution } from './equipment.ts';
 import type { BoundHooks, TurnProcs } from './hooks.ts';
 import { bound } from '../../shared/scale.ts';
-import { HEAL_FACTOR_MAX, HEAL_FACTOR_MIN, healingFactor } from './derived.ts';
+import {
+  DEFAULT_MOVEMENT_SPEED,
+  HEAL_FACTOR_MAX,
+  HEAL_FACTOR_MIN,
+  combatMovementSpeed,
+  healingFactor,
+} from './derived.ts';
 import { createEnergyActor } from '../../shared/energy.ts';
-import { spendForAction } from '../../shared/energy.ts';
+import { MIN_ACTION_COST_MULTIPLIER, spendForAction } from '../../shared/energy.ts';
 import { ActorKind, ActorRank } from '../../shared/protocol.ts';
 import type { PanelLayoutView } from '../../shared/protocol.ts';
 import { breathes } from '../../shared/terrain.ts';
@@ -329,6 +337,16 @@ type ActorCommon = {
    * order is ToME's. Runtime only — never saved; a restored fight rolls again.
    */
   initiative?: number;
+  /**
+   * ToME's `movement_speed` — 1 at birth (tome/class/Actor.lua:150), and what a
+   * STEP costs is its inverse (`combatMovementSpeed`, engine/derived.ts).
+   *
+   * DERIVED, AND WRITTEN ONLY BY `recomputeAttributes` (engine/effects.ts), from
+   * the body's live effects: a stun takes half of it off. Runtime only — never
+   * saved and never carried through a door; a rebuilt body re-derives it from
+   * the effect table, which is keyed by the actor and so walks through with it.
+   */
+  movementSpeed: number;
 
   // --- vitals ---------------------------------------------------------------
   hp: number;
@@ -884,8 +902,9 @@ type ActorCommon = {
 /**
  * A human's body.
  *
- * `speedFactor` is the LITERAL type `1` and readonly: every player action costs
- * exactly one turn. `globalSpeed` is not pinned any more — see the file header.
+ * `speedFactor` is the LITERAL type `1` and readonly: a player pays exactly what
+ * ToME charges the action (`actionCost`) and nothing on top. `globalSpeed` is not
+ * pinned any more — see the file header.
  */
 export type PlayerActor = ActorCommon & {
   readonly kind: typeof ActorKind.Player;
@@ -894,7 +913,7 @@ export type PlayerActor = ActorCommon & {
    * (engine/effects.ts) from the body's live effects: SLOWED divides it.
    */
   globalSpeed: number;
-  /** Pinned. Action COST multiplier; every player action costs exactly one turn. */
+  /** Pinned. The extra COST multiplier a monster may carry; a player's is 1. */
   readonly speedFactor: 1;
   /**
    * WHICH CLASS THIS BODY IS, AS A LABEL. Absent for a classless body.
@@ -1247,7 +1266,12 @@ export type MonsterActor = ActorCommon & {
   talents?: readonly string[];
   /** Energy GAIN multiplier. 1.4 means it acts 14 times per 10 game turns. */
   globalSpeed: number;
-  /** Action COST multiplier (Actor.lua:5863). 0.5 is a half-turn action. */
+  /**
+   * An extra action COST multiplier, on top of what the action itself costs
+   * (`actionCost`). 0.5 halves every action. OURS, not a ToME field: upstream
+   * prices each action by its own speed and has no blanket one. 1 on every
+   * template in the game, so it changes nothing today.
+   */
   speedFactor: number;
   /**
    * How fast this creature's ranged attack TRAVELS, in TILES PER GAME TURN.
@@ -1958,7 +1982,7 @@ export type MonsterInit = {
   readonly hpRegen?: number;
   /** Energy GAIN multiplier. The haste knob. */
   readonly globalSpeed?: number;
-  /** Action COST multiplier. The opposite knob — see the file header. */
+  /** Extra action COST multiplier, on top of `actionCost`. See `MonsterActor.speedFactor`. */
   readonly speedFactor?: number;
   readonly attackRange?: number;
   readonly damageMin?: number;
@@ -2036,6 +2060,8 @@ export function createPlayerActor(id: string, init: PlayerInit): PlayerActor {
     // multiplier is restated as a literal so its TYPE is `1`, not `number`.
     globalSpeed: 1,
     speedFactor: 1,
+    // Upstream's birth value; a stun halves it (`recomputeAttributes`).
+    movementSpeed: DEFAULT_MOVEMENT_SPEED,
     hp: maxHp,
     maxHp,
     hpRegen: init.hpRegen ?? DEFAULT_PLAYER_HP_REGEN,
@@ -2201,6 +2227,9 @@ export function createMonsterActor(id: string, init: MonsterInit): MonsterActor 
     x: init.x,
     y: init.y,
     speedFactor: init.speedFactor ?? 1,
+    // NOT A TEMPLATE FIELD: no creature this game ports authors a
+    // `movement_speed`, so every body starts at upstream's birth value.
+    movementSpeed: DEFAULT_MOVEMENT_SPEED,
     hp: maxHp,
     maxHp,
     hpRegen: init.hpRegen ?? DEFAULT_MONSTER_HP_REGEN,
@@ -2285,32 +2314,94 @@ export function createMonsterActor(id: string, init: MonsterInit): MonsterActor 
 }
 
 // ---------------------------------------------------------------------------
-// Energy — the D1 pin, in one function
+// Energy — what an action costs, in one function
 // ---------------------------------------------------------------------------
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * WHAT THE ACTION WAS, AS FAR AS ITS PRICE IS CONCERNED.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * ToME never charges "a turn". Each action calls `useEnergy` with its own
+ * price, and there are four shapes of price:
+ *
+ *   `move`    `energy_to_act * combatMovementSpeed()`, and only when the tile
+ *             actually changed (tome/class/Actor.lua:1346, :1353-1360). A swap
+ *             with a friend is priced the same way (Combat.lua:66-71).
+ *   `attack`  `energy_to_act * speed`, where `speed` is the largest
+ *             `combatSpeed` among the swings made (Combat.lua:185, :211, :226,
+ *             :234-236). The resolution that swung carries it here.
+ *   `talent`  `getTalentSpeed(ab) * energy_to_act`, charged at
+ *             tome/class/Actor.lua:5862-5863. The talent runtime works it out
+ *             (`talentSpeed`, engine/talents.ts); a `no_energy` talent is
+ *             never charged it.
+ *   `flat`    a bare `useEnergy()`, which is `energy_to_act`: a wait
+ *             (`waitTurn`, tome/class/Actor.lua:1451-1461), a talent that
+ *             failed on a confusion roll (:5499-5504), an NPC whose turn spent
+ *             nothing (tome/class/NPC.lua:87-92). Ours as well: a revive, and a
+ *             monster's orb, which upstream casts as Void Blast — a spell
+ *             (`spell/other`, misc/npcs.lua:723-725), and spell speed is 1 at
+ *             every stat this game has.
+ *
+ * THE SPEED TRAVELS WITH THE CHARGE, the movement speed does not: a step is
+ * priced off the body at the moment it is paid for, and a swing's speed is a
+ * fact about the weapon that was swung, which only the swing knows.
+ */
+export type ActionCharge =
+  | { readonly kind: 'move' }
+  | { readonly kind: 'attack'; readonly speed: number }
+  | { readonly kind: 'talent'; readonly speed: number }
+  | { readonly kind: 'flat' };
+
+/** The one-turn charge. A constant so the flat cases do not allocate. */
+export const FLAT_CHARGE: ActionCharge = Object.freeze({ kind: 'flat' });
 
 /**
  * What one action costs this actor, as a multiple of ENERGY_TO_ACT.
  *
- * Players: always exactly 1, until ToME's per-action costs are ported.
- * Monsters: their own `speedFactor`. No caller supplies this number, so a
- * talent that forgets cannot get it wrong. A SLOW is not here: it is on the
- * gain side, `globalSpeed`, for every body.
+ * The charge's own speed (see `ActionCharge`), FLOORED AT 0.1 — upstream's
+ * `math.max(0.1, speed) -- speed limit` on a talent (tome/class/Actor.lua:5828),
+ * applied to every kind here because a cost near zero is an action the
+ * synchronous loop can repeat forever. Then multiplied by `speedFactor`, which
+ * is 1 on every body in the game (a player's is the literal 1; every monster
+ * template authors 1).
+ *
+ * A SLOW IS NOT HERE: it is on the gain side, `globalSpeed`, for every body. A
+ * STUN IS: it takes half the body's movement speed away, so its steps cost two
+ * turns and its swings and waits cost one, as upstream's do.
  */
-export function actionCostMultiplier(actor: EngineActor): number {
-  return actor.kind === ActorKind.Player ? 1 : actor.speedFactor;
+export function actionCost(actor: EngineActor, charge: ActionCharge): number {
+  let speed: number;
+  switch (charge.kind) {
+    case 'move':
+      speed = combatMovementSpeed(actor);
+      break;
+    case 'attack':
+    case 'talent':
+      speed = charge.speed;
+      break;
+    case 'flat':
+      speed = 1;
+      break;
+  }
+  return Math.max(MIN_ACTION_COST_MULTIPLIER, speed) * actor.speedFactor;
 }
 
 /**
  * Spend one action's worth of act-energy — engine/Actor.lua:479-485
- * (`useEnergy`), with the cost shape of tome/class/Actor.lua:5863.
+ * (`useEnergy`), priced by `actionCost`.
  *
  * THE ONLY sanctioned way for the engine to spend energy. It also sets
  * `energyUsed`, which is how `tickLevel` distinguishes a real action from a
  * free one and therefore how "the world did not change" stays decidable.
  *
+ * `charge` IS REQUIRED, with no default. A default of one turn would let a call
+ * site that forgot to say what its action was pay the old flat price in
+ * silence, which is the whole bug this replaced. It does not compile instead.
+ *
  * @returns the energy actually deducted.
  */
-export function spendTurn(actor: EngineActor): number {
+export function spendTurn(actor: EngineActor, charge: ActionCharge): number {
   /**
    * ═══════════════════════════════════════════════════════════════════════════
    * AND THE SHOVE MARK, WHICH ONLY EVER MEANT "NOT AS YOUR VERY NEXT ACT".
@@ -2334,7 +2425,7 @@ export function spendTurn(actor: EngineActor): number {
    * reset the fourth forgets.
    */
   actor.shovedBy = undefined;
-  return spendForAction(actor, actionCostMultiplier(actor));
+  return spendForAction(actor, actionCost(actor, charge));
 }
 
 // ---------------------------------------------------------------------------

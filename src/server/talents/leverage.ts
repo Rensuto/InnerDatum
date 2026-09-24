@@ -511,6 +511,8 @@ export const fullSwing: Talent = {
   iconId: 'icon_active_full_swing',
   cost: { ap: TWIST_AP },
   cooldownTurns: TWIST_COOLDOWN,
+  // Twist the Knife names its own: `speed = "weapon"` (cunning/dirty.lua:167).
+  speed: 'weapon',
   targeting: {
     shape: TargetShape.Single,
     range: TWIST_RANGE,

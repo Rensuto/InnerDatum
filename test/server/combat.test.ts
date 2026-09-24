@@ -700,6 +700,9 @@ describe('attackTarget — the resolution order, Combat.lua:505-546', () => {
       // sheet grants none, so the field is present and zero — which is the whole
       // point of asserting the SHAPE here rather than picking fields off it.
       brandDamage: 0,
+      // WHAT THE SWING COSTS — `combatSpeed` of the weapon swung (Combat.lua:677).
+      // This sheet authors no `physspeed`, so it is one turn.
+      speed: 1,
     });
     expect(target.hp).toBe(16);
     expect(drawCount(rng)).toBe(2);

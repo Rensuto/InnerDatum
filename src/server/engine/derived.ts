@@ -14,6 +14,7 @@
 //                                                                  1886-1951 (physicalCrit power)
 //                                                                  2056-2084 (combatMindpower)
 //                                                                  2122-2204 (the three saves)
+//                                                                  2280-2293 (combatMovementSpeed)
 //             t-engine4 game/modules/tome/class/Actor.lua:141-162 (the zero defaults)
 //             t-engine4 game/modules/tome/load.lua:182-189 (primary stat defaults)
 //             t-engine4 game/engines/default/engine/interface/ActorStats.lua:120-142 (getStat)
@@ -111,15 +112,20 @@ export type PrimaryStats = {
  * rescales per item has already lost.
  *
  * ═══════════════════════════════════════════════════════════════════════════
- * THIS TYPE IS THE ITEM VOCABULARY, AND ONE OF ITS FIELDS IS INERT
+ * THIS TYPE IS THE ITEM VOCABULARY, AND ONE OF ITS FIELDS IS REFUSED TO ITEMS
  * ═══════════════════════════════════════════════════════════════════════════
  *
  * `content/items.ts` defines `AdditiveMods` as this type with `physSpeed`
- * removed, so an item cannot grant it. Nothing in this game reads attack speed:
- * `combatSpeed` has zero references in `src/` outside its own definition. An
- * item granting it would type-check, persist, draw a tooltip and change no
- * number a player can see — the worst failure an item system has, because it is
- * invisible.
+ * removed, so an item cannot grant it. IT WAS INERT, AND IT IS NOT ANY MORE:
+ * `combatSpeed` is what every swing costs since the per-action charges landed
+ * (2026-09-24). What keeps it off the item vocabulary now is the FOLD. Every
+ * other field here is absent-is-zero and `composeWielders` adds onto zero
+ * (`baseMod`, engine/equipment.ts); this one is absent-is-ONE, because it is a
+ * divisor (`combat_physspeed = 1`, tome/class/Actor.lua:152). ToME's own gear
+ * grants `combat_physspeed = 0.1` (data/general/objects/egos/amulets.lua:387),
+ * which is 1.1 upstream and would be 0.1 through that fold — a swing costing
+ * ten turns instead of 0.91 of one. The day an item grants attack speed, the
+ * fold learns the base in the same commit.
  *
  * ═══════════════════════════════════════════════════════════════════════════
  * IT SAID THREE FIELDS, AND THE PROOF IT OFFERED HAD EXPIRED.
@@ -140,9 +146,10 @@ export type PrimaryStats = {
  *
  * IF YOU ADD A FIELD TO THIS TYPE, decide in the same commit whether an item may
  * grant it, and if not, add it to the `Omit` in content/items.ts. If you add a
- * CALL SITE for a field on that list, deleting its name is the whole change —
- * and `test/server/live-mods.test.ts` now fails when you forget, so the next
- * one cannot go stale the way this did.
+ * CALL SITE for a field on that list, deleting its name is usually the whole
+ * change — `physSpeed` above is the exception, because its reader arrived
+ * before a fold that could carry it — and `test/server/live-mods.test.ts` now
+ * fails when you forget, so the next one cannot go stale the way this did.
  */
 export type CombatMods = {
   /** `combat_atk` — flat accuracy. */
@@ -667,9 +674,52 @@ export function combatAPR(c: Combatant): number {
  * failing test, and a symptom ("combat feels bad") that takes weeks to trace.
  *
  * The `0.1` floor stops a stacked debuff from producing a division by zero.
+ *
+ * ═══ READ BY THE TURN, NOT ONLY BY A SHEET ═══
+ * It is what a swing costs: `attackTarget` returns it beside the blow, as
+ * upstream's `attackTargetWith` does (Combat.lua:677), and the scheduler charges
+ * `ENERGY_TO_ACT` times it (Combat.lua:234-236). A weapon-speed talent pays it
+ * too (`talentSpeed`, engine/talents.ts). No weapon here authors a `physSpeed`
+ * yet, so every swing still costs one turn.
  */
 export function combatSpeed(c: Combatant, add = 0): number {
   return (c.weapon?.physSpeed ?? 1) / Math.max((c.mods?.physSpeed ?? 1) + add, 0.1);
+}
+
+/**
+ * `movement_speed` at birth — tome/class/Actor.lua:150 (`self.movement_speed = 1`).
+ *
+ * A BODY'S, NOT A SHEET'S. Upstream keeps it on the actor beside `global_speed`
+ * and stacks every source onto it by plain addition (tome/class/Actor.lua:105,
+ * `movement_speed = "add"`), which is exactly how `recomputeAttributes`
+ * (engine/effects.ts) rebuilds it.
+ */
+export const DEFAULT_MOVEMENT_SPEED = 1;
+
+/**
+ * WHAT A STEP COSTS — Combat.lua:2280-2293 (`combatMovementSpeed`).
+ *
+ * ```lua
+ * local movement_speed = self.movement_speed
+ * movement_speed = math.max(movement_speed, 0.1)
+ * return mult * (self.base_movement_speed or 1) / movement_speed
+ * ```
+ *
+ * A COST MULTIPLIER, like `combatSpeed` above and for the same reason: the
+ * speed is the DIVISOR. A stun's −0.5 leaves 0.5 and a step costs two turns;
+ * a pile of −5 floors at 0.1 and a step costs ten, never a division by zero.
+ *
+ * ═══ THREE TERMS NOT PORTED, EACH WORTH ONE LINE ═══
+ * `mult` is 3 only on a `zero_gravity` level (:2282-2284), and no floor here
+ * is one. `base_movement_speed` is read at :2292 and set by nothing anywhere in
+ * ToME, so it is always 1. The Dark Vision term (:2287-2290) needs creeping
+ * darkness and the talent, and this game has neither.
+ *
+ * STRUCTURAL, so a bare fixture with no `movementSpeed` reads as a body at
+ * upstream's default.
+ */
+export function combatMovementSpeed(actor: { readonly movementSpeed?: number }): number {
+  return 1 / Math.max(actor.movementSpeed ?? DEFAULT_MOVEMENT_SPEED, 0.1);
 }
 
 /**

@@ -276,6 +276,9 @@ export const ironCurtain: Talent = {
   iconId: 'icon_active_iron_curtain',
   cost: { ap: AP_COST, resource: RESOLVE_COST },
   cooldownTurns: tomeCooldownToTurns(TOME_COOLDOWN),
+  // Taunt, its shape, is `technique/other` (gifts/summon-utility.lua:22), so
+  // `weapon` (tome/class/Actor.lua:5807-5808).
+  speed: 'weapon',
   targeting: {
     // SELF — no targeting mode, no aiming step. game-design.md § 2's table
     // lists this talent as "AP 5, self" and protocol.ts's `TalentShape.Self`

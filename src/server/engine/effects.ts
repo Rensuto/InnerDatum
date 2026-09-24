@@ -87,7 +87,12 @@ import { reentryHealFraction } from '../../shared/progression.ts';
 import { bound, getTierDiff } from '../../shared/scale.ts';
 import { recomputeGlobalSpeed } from '../../shared/energy.ts';
 import { checkHitOld } from '../../shared/checkhit.ts';
-import { combatMentalResist, combatPhysicalResist, combatSpellResist } from './derived.ts';
+import {
+  DEFAULT_MOVEMENT_SPEED,
+  combatMentalResist,
+  combatPhysicalResist,
+  combatSpellResist,
+} from './derived.ts';
 import type { CombatMods } from './derived.ts';
 import { composeSheet, composeWielders, wornOf } from './equipment.ts';
 import type { PassiveContribution } from './equipment.ts';
@@ -324,11 +329,14 @@ export type EffectModifiers = {
   /**
    * ToME's `movement_speed` add (physical.lua:493, `-0.5` for STUNNED).
    *
-   * CARRIED AS DATA AND NOT YET READ BY ANYTHING. There is no separate movement
-   * cost in this engine — a move is one action — so there is nothing to
-   * multiply. It is declared because the number is part of the ported effect
-   * and dropping it would make the port silently incomplete; the day movement
-   * gets its own cost, this is where it reads from.
+   * READ BY `recomputeAttributes`, which writes `1 + Σ add` onto the body's
+   * `movementSpeed` — plain addition, as upstream stacks it
+   * (tome/class/Actor.lua:105). A step costs the inverse (`combatMovementSpeed`,
+   * engine/derived.ts), so a stunned body's steps cost two turns and nothing
+   * else it does costs more.
+   *
+   * IT WAS CARRIED AND NOT READ until 2026-09-24, while every action cost one
+   * turn and there was no movement cost to scale.
    */
   readonly movementSpeedAdd?: number;
   /**
@@ -725,6 +733,12 @@ export type EffectActor = {
   readonly cooldowns: Map<string, number>;
   /** The energy GAIN multiplier; see `EffectModifiers.globalSpeedAdd`. */
   globalSpeed?: number;
+  /**
+   * ToME's `movement_speed`, what a step is priced off; see
+   * `EffectModifiers.movementSpeedAdd`. Optional and mutable for `globalSpeed`'s
+   * reason: a bare fixture has none, and `recomputeAttributes` writes it.
+   */
+  movementSpeed?: number;
   /**
    * `self.is_suffocating` — set by `actBase` each base turn (tome/class/Actor.lua:578-590)
    * BEFORE `timedEffects` runs, and read by `EFF_SUFFOCATING`'s `on_timeout`
@@ -2413,6 +2427,24 @@ export function recomputeAttributes(state: EffectState, actor: EffectActor): voi
      */
     actor.globalSpeed = recomputeGlobalSpeed(baseSpeed, mods.globalSpeedAdd ?? 0);
   }
+
+  // --- movement speed, every body's -----------------------------------------
+  /**
+   * `movement_speed` — 1 at birth (tome/class/Actor.lua:150) plus every live
+   * add, summed (:105 makes it `add`). A stun's −0.5 leaves 0.5, and a step is
+   * priced at the inverse (`combatMovementSpeed`), so it costs two turns.
+   *
+   * ═══ THE BASE IS THE CONSTANT, NOT A SNAPSHOT, AND THAT IS DELIBERATE ═══
+   * `globalSpeed` above snapshots its baseline per body because templates
+   * author one (a losgoroth is 0.84). Nothing in this game authors a movement
+   * speed, so the base is upstream's 1 for every body, and there is nothing to
+   * snapshot and nothing to go stale. It is also what makes a door safe: a
+   * crossing builds a fresh body at 1 and ends in `recomposeCombat`, which lands
+   * here and re-derives it from the effect table — keyed by the actor, so a stun
+   * that walked through the door is still in it, and still halves the step.
+   * Unclamped here; `combatMovementSpeed` floors it at 0.1 where it is divided.
+   */
+  actor.movementSpeed = DEFAULT_MOVEMENT_SPEED + (mods.movementSpeedAdd ?? 0);
 }
 
 /**

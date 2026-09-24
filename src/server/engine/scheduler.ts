@@ -78,6 +78,7 @@ import { decideNpcAction, decideSquadAction, followStep } from '../ai/npc.ts';
 import type { MonsterCast } from '../ai/npc.ts';
 import { fieldOfView } from '../../shared/sight.ts';
 import {
+  FLAT_CHARGE,
   Faction,
   HOLD_INTENT,
   IntentKind,
@@ -107,7 +108,7 @@ import {
   tickDowned,
 } from './downed.ts';
 import { membersOf, partyIdOf } from './party.ts';
-import { combatAPR, combatMindpower } from './derived.ts';
+import { combatAPR, combatMindpower, combatSpeed } from './derived.ts';
 import { applyDamage, combatGetAffinity, combatGetResist, splitBurn } from './damage.ts';
 import { teleportRandom } from './talents.ts';
 import { canOpenDoors } from './doors.ts';
@@ -132,6 +133,7 @@ import type { AiCtx } from '../ai/npc.ts';
 import { MoveBlock } from '../world/world.ts';
 import type { World } from '../world/world.ts';
 import type {
+  ActionCharge,
   EngineActor,
   Intent,
   MonsterActor,
@@ -961,8 +963,28 @@ export type TalentResolution = {
    *
    * OPTIONAL, AND ABSENT IS "EVERY TALENT COSTS A TURN", which is what a
    * scheduler built without a talent runtime has always done.
+   *
+   * ALSO READ BEFORE THE CONFUSION ROLL, which upstream skips for a free talent
+   * (tome/class/Actor.lua:5499, `no_energy ~= true`) — see the talent branch
+   * of `resolveIntent`.
    */
   noEnergy?(talentId: string): boolean;
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * WHAT THIS TALENT COSTS, AS A MULTIPLE OF A TURN — `getTalentSpeed`,
+   * tome/class/Actor.lua:5816-5830, charged at :5862-5863.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * A weapon technique costs what the weapon's swing costs, a step-shaped
+   * talent what a step costs, and everything else one turn — `talentSpeed` in
+   * engine/talents.ts is the rule, and it needs the registry, which is why it
+   * arrives as a seam beside `noEnergy`. Asked after the talent resolved, as
+   * `postUseTalent` asks it, and only for a talent that is not `noEnergy`.
+   *
+   * OPTIONAL, AND ABSENT IS 1: a runtime that knows no speeds prices every
+   * talent at one turn, which is what they all cost before this existed.
+   */
+  talentSpeed?(actor: EngineActor, talentId: string): number;
   /**
    * ═══════════════════════════════════════════════════════════════════════════
    * HOW MUCH HARDER A MARKED BODY IS HIT — the Inspector's Sigil, on the swing
@@ -2284,7 +2306,8 @@ function actPlayer(actor: PlayerActor, run: Run): ActResult {
     noteTrap(outcome.effect, run, null, actor.id);
     /**
      * ═════════════════════════════════════════════════════════════════════════
-     * ONE ACTION IS ONE TURN — as ToME's is, for everybody, in combat or out.
+     * ONE ACTION ENDS THE TURN — as ToME's does, for everybody, in combat or out
+     * — AND COSTS WHAT ToME CHARGES FOR IT.
      * ═════════════════════════════════════════════════════════════════════════
      *
      * ```lua
@@ -2297,6 +2320,12 @@ function actPlayer(actor: PlayerActor, run: Run): ActResult {
      * engines/default/engine/Actor.lua:478-484. A step, a swing or a talent
      * spends the turn and the world runs until the player can act again. There
      * is no "end turn" in ToME, and there is none here.
+     *
+     * `val` IS THE ACTION'S OWN PRICE, and the resolution carries it
+     * (`Resolution.charge`): a step at the body's movement speed, a swing at its
+     * weapon's, a talent at the talent's, a wait at one turn. A stunned
+     * detective's step is two turns, and the world runs two turns before she
+     * is asked again.
      *
      * THIS WAS AN OPEN ROUND. D1's intra-turn budget (6 AP / 3 MP) parked a
      * player after a step or a talent until they pressed Space, took a third
@@ -2314,9 +2343,7 @@ function actPlayer(actor: PlayerActor, run: Run): ActResult {
     ) {
       return ActResult.Park;
     }
-    // D1: exactly ENERGY_TO_ACT, always. `spendTurn` derives that from the
-    // actor's kind so no call site can get it wrong.
-    spendTurn(actor);
+    spendTurn(actor, outcome.charge);
     return ActResult.Done;
   }
 
@@ -2334,10 +2361,10 @@ function actPlayer(actor: PlayerActor, run: Run): ActResult {
   return ActResult.Done;
 }
 
-/** Brace in place and spend the turn. */
+/** Brace in place and spend the turn — a wait, so one flat turn. */
 function autoHold(actor: PlayerActor, reason: HoldReason, sink: EventSink): ActResult {
   sink.push({ t: 'held', id: actor.id, reason });
-  spendTurn(actor);
+  spendTurn(actor, FLAT_CHARGE);
   return ActResult.Done;
 }
 
@@ -2417,6 +2444,28 @@ function actMonster(actor: MonsterActor, run: Run): ActResult {
 
   const gameTurn = world.turn.clock.gameTurn;
   const outcome = resolveIntent(actor, intent, run);
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * WHAT THIS TURN COSTS — the action's own price, or one flat turn.
+   * ═══════════════════════════════════════════════════════════════════════════
+   *
+   * A resolved action pays what `resolveIntent` priced it at, exactly as a
+   * player's does: a stunned husk's step costs it two turns. A REFUSAL pays
+   * the FLAT turn instead — upstream's `waitTurn`, which `NPC:act` charges any
+   * NPC whose AI spent no energy (tome/class/NPC.lua:87-92). A monster does not
+   * get to think again; it bumped into something, and the turn is gone.
+   *
+   * ═══ A `no_energy` TALENT IS NOT SPECIAL HERE, AND UPSTREAM'S IS ═══
+   * Upstream's AIs mark a used instant talent as `energy.used = true` so it
+   * skips that `waitTurn`, and `dumb_talented_simple` runs its move AI in the
+   * same act (engine/ai/talented.lua:126-129): the talent is free and the
+   * creature still walks. Porting that needs the `last_tid` guard and the
+   * unchanged-energy break (NPC.lua:95) too, or a creature that keeps picking a
+   * free talent loops inside one tick. No monster carries a `noEnergy` talent,
+   * so none of it is reachable; until one does, such a talent pays its own
+   * price like any other.
+   */
+  const charge: ActionCharge = outcome.ok ? outcome.charge : FLAT_CHARGE;
 
   if (!outcome.ok) {
     sink.sweep(gameTurn, { t: 'blocked', id: actor.id, reason: outcome.reason });
@@ -2466,8 +2515,7 @@ function actMonster(actor: MonsterActor, run: Run): ActResult {
     noteTrap(outcome.effect, run, gameTurn, actor.id);
   }
 
-  // ToME-native cost: ENERGY_TO_ACT * speedFactor (Actor.lua:1353-1360, 5863).
-  spendTurn(actor);
+  spendTurn(actor, charge);
   return ActResult.Done;
 }
 
@@ -2572,7 +2620,24 @@ type Effect =
     };
 
 type Resolution =
-  | { readonly ok: true; readonly effect: Effect }
+  | {
+      readonly ok: true;
+      readonly effect: Effect;
+      /**
+       * ═══════════════════════════════════════════════════════════════════════
+       * WHAT THE ACTION COSTS — see `ActionCharge` in engine/actor.ts.
+       * ═══════════════════════════════════════════════════════════════════════
+       *
+       * ON THE RESOLUTION AND NOT ON THE EFFECT, because the effect does not
+       * know. An `attack` effect is built by a swing, but also by an orb's
+       * impact, a guard's counter, a trap, a retaliation and burning ground —
+       * none of which is anybody's action — and a `hold` is a wait, a confused
+       * stumble and a confused talent alike. The branch that resolved the
+       * intent is the one place that knows what was done, so it says what it
+       * cost, once.
+       */
+      readonly charge: ActionCharge;
+    }
   | {
       readonly ok: false;
       readonly reason: Refusal;
@@ -2637,14 +2702,21 @@ function confusionTakes(actor: EngineActor, world: World, label: string): boolea
  * ```
  *
  * TWO INDEPENDENT AXES, not a pick from eight names, which is why the ninth
- * outcome exists at all: both offsets can come up zero, and upstream's `move`
- * then walks the body onto its own tile — moved, energy spent, nowhere gained.
- * That is returned here as `null`, and the caller turns it into a HOLD, which is
- * this engine's existing word for "the turn is spent and the board did not
- * change". Collapsing it into a seventh direction would quietly delete an
- * eleventh of the mechanic; making it a REFUSAL would be worse, because a
- * refusal refunds the turn and re-prompts — confusion would become a free
- * re-roll, which is the opposite of what it is for.
+ * outcome exists at all: both offsets can come up zero. That is returned here
+ * as `null`, and the caller turns it into a HOLD — the turn is spent and the
+ * board did not change. Collapsing it into a seventh direction would quietly
+ * delete an eleventh of the mechanic.
+ *
+ * ═══ THE HOLD IS OURS, AND UPSTREAM'S STUMBLE IS FREE ═══
+ * This said upstream "walks the body onto its own tile — moved, energy spent".
+ * It does not. `engine.Actor.move` onto its own tile is stopped by the
+ * self-bump guard (engine/Actor.lua:243, interface/ActorLife.lua:39-45) and
+ * returns without moving, and tome/class/Actor.lua:1346 charges a step only
+ * when the tile changed — so a confused PLAYER who stumbles in place pays
+ * nothing and is asked again, exactly as for a wall. A monster pays the flat
+ * `waitTurn` (NPC.lua:87-92), which is what the hold costs it here. The
+ * player's half is not ported: it wants a refusal that re-prompts without the
+ * "refused at resolution" toast a wall gets, and that is its own change.
  *
  * AND THE SCRAMBLED STEP KEEPS EVERY OTHER RULE. Upstream substitutes the
  * destination at the TOP of `move` and lets the rest of it run, so a confused
@@ -2663,8 +2735,9 @@ function confusedStep(actor: EngineActor, dir: Dir, run: Run): Dir | null {
 function resolveIntent(actor: EngineActor, intent: Intent, run: Run): Resolution {
   const { world } = run;
   switch (intent.kind) {
+    // A WAIT IS ONE FLAT TURN — `waitTurn`, tome/class/Actor.lua:1451-1461.
     case IntentKind.Hold:
-      return { ok: true, effect: { kind: 'hold' } };
+      return { ok: true, effect: { kind: 'hold' }, charge: FLAT_CHARGE };
 
     /**
      * GET TO THEM — game-design.md § 9, engine/downed.ts.
@@ -2697,6 +2770,9 @@ function resolveIntent(actor: EngineActor, intent: Intent, run: Run): Resolution
           hp: result.hp,
           turnsSpared: result.turnsSpared,
         },
+        // OURS — upstream has no revive — so it is priced as the plain action
+        // it is, one flat turn.
+        charge: FLAT_CHARGE,
       };
     }
 
@@ -2744,12 +2820,22 @@ function resolveIntent(actor: EngineActor, intent: Intent, run: Run): Resolution
        *
        * A HOLD, so the turn is spent and the board does not change — this
        * engine's existing word for exactly upstream's `useEnergy(); return
-       * false`. The Confused badge on the caster's own HUD is what explains it;
-       * a dedicated log line would be a new wire variant, and the badge carries
-       * its own sentence already (`EffectView.desc`).
+       * false`, and priced as that bare `useEnergy()` is: one FLAT turn, not
+       * the talent's own speed. The Confused badge on the caster's own HUD is
+       * what explains it; a dedicated log line would be a new wire variant, and
+       * the badge carries its own sentence already (`EffectView.desc`).
+       *
+       * ═══ AND NEVER FOR A TALENT THAT COSTS NO TURN — `no_energy ~= true` ═══
+       * The guard at :5499 includes `util.getval(ab.no_energy, self, ab) ~=
+       * true`, so upstream does not roll at all for a free talent. This rolled
+       * for every talent and `actPlayer` then parked the free one for zero
+       * energy — which made a confused infusion a FREE RE-ROLL: press it, fail,
+       * keep the turn, press it again. Not rolling is upstream's answer and it
+       * also keeps the stream: a free talent takes no confusion draw.
        */
-      if (confusionTakes(actor, world, `confused.talent.${actor.id}`)) {
-        return { ok: true, effect: { kind: 'hold' } };
+      const free = talents.noEnergy?.(intent.talentId) === true;
+      if (!free && confusionTakes(actor, world, `confused.talent.${actor.id}`)) {
+        return { ok: true, effect: { kind: 'hold' }, charge: FLAT_CHARGE };
       }
 
       const used = talents.use(actor, intent.talentId, intent.target);
@@ -2801,7 +2887,18 @@ function resolveIntent(actor: EngineActor, intent: Intent, run: Run): Resolution
         if (victim !== undefined) raiseAlarm(world, victim, actor);
       }
 
-      return { ok: true, effect: { kind: 'talent', landing: used.landing, blows } };
+      /**
+       * PRICED AT THE TALENT'S OWN SPEED — `getTalentSpeed(ab) * energy_to_act`
+       * (tome/class/Actor.lua:5862-5863), asked AFTER the talent ran, as
+       * `postUseTalent` asks it. A `no_energy` talent carries this too and never
+       * pays it: `actPlayer` parks it and `actMonster` charges a flat turn.
+       * ABSENT SEAM IS 1, a runtime that knows no speeds.
+       */
+      return {
+        ok: true,
+        effect: { kind: 'talent', landing: used.landing, blows },
+        charge: { kind: 'talent', speed: talents.talentSpeed?.(actor, intent.talentId) ?? 1 },
+      };
     }
 
     case IntentKind.Attack: {
@@ -2839,9 +2936,14 @@ function resolveIntent(actor: EngineActor, intent: Intent, run: Run): Resolution
        * the fired branch is reachable from the monster lane alone.
        */
       if (actor.kind === ActorKind.Monster && actor.projSpeed !== undefined) {
-        return { ok: true, effect: fire(actor, target, actor.projSpeed, world) };
+        // ONE FLAT TURN: upstream's orb is a spell, and see `ActionCharge`.
+        return {
+          ok: true,
+          effect: fire(actor, target, actor.projSpeed, world),
+          charge: FLAT_CHARGE,
+        };
       }
-      return { ok: true, effect: strike(actor, target, run) };
+      return swingResolution(strike(actor, target, run));
     }
 
     case IntentKind.Move: {
@@ -2860,7 +2962,7 @@ function resolveIntent(actor: EngineActor, intent: Intent, run: Run): Resolution
        * and not a refusal.
        */
       const dir = confusedStep(actor, intent.dir, run);
-      if (dir === null) return { ok: true, effect: { kind: 'hold' } };
+      if (dir === null) return { ok: true, effect: { kind: 'hold' }, charge: FLAT_CHARGE };
       const to = step(actor, dir);
 
       // BUMP-ATTACK. Walking into a hostile IS the attack input in M2, and it
@@ -2918,7 +3020,9 @@ function resolveIntent(actor: EngineActor, intent: Intent, run: Run): Resolution
          */
         const refusal = canAttack(actor, occupant, world);
         if (refusal !== null) return { ok: false, reason: attackRefusalToRefusal(refusal) };
-        return { ok: true, effect: strike(actor, occupant, run) };
+        // A BUMP IS PRICED AS THE SWING IT IS, not as the step it looked like:
+        // upstream's `bumpInto` hands it to `T_ATTACK` (Combat.lua:37).
+        return swingResolution(strike(actor, occupant, run));
       }
 
       /**
@@ -3142,7 +3246,14 @@ function resolveIntent(actor: EngineActor, intent: Intent, run: Run): Resolution
           // deliberately swaps with B, A is no longer mid-exchange with anyone.
           actor.shovedBy = undefined;
           run.ctx.talents?.noteMoved(actor.id);
-          return { ok: true, effect: { kind: 'swapped', from, to: theirs, otherId: occupant.id } };
+          // THE MOVER PAYS ONE STEP AT HER OWN MOVEMENT SPEED, and the body she
+          // moved pays nothing — `energy_to_act * self:combatMovementSpeed(x, y)`
+          // (Combat.lua:66-71). `bump_swap_speed_divide` is not ported.
+          return {
+            ok: true,
+            effect: { kind: 'swapped', from, to: theirs, otherId: occupant.id },
+            charge: { kind: 'move' },
+          };
         }
       }
 
@@ -3210,9 +3321,32 @@ function resolveIntent(actor: EngineActor, intent: Intent, run: Run): Resolution
       // one place in the process where an actor's tile actually changes. Cleared
       // by the talent `actBase` pass at the top of the next game turn.
       run.ctx.talents?.noteMoved(actor.id);
-      return { ok: true, effect: { kind: 'move', from, to: { x: moved.x, y: moved.y } } };
+      /**
+       * A STEP THAT LANDED IS PRICED AT THE BODY'S MOVEMENT SPEED —
+       * tome/class/Actor.lua:1346 and :1353-1360, which charge only when the
+       * tile actually changed. Every step that did not is a refusal above: a
+       * player's is refunded and re-prompted (`actPlayer`), a monster's is the
+       * flat turn upstream's `waitTurn` charges it (`actMonster`). The one
+       * exception is a confused stumble onto its own tile, a flat HOLD here and
+       * free to an upstream player — see `confusedStep`.
+       */
+      return {
+        ok: true,
+        effect: { kind: 'move', from, to: { x: moved.x, y: moved.y } },
+        charge: { kind: 'move' },
+      };
     }
   }
+}
+
+/**
+ * A SWING, AS A RESOLUTION: the blow, priced at the speed it was swung at.
+ *
+ * Both callers of `strike` return through here, so the swing's speed cannot be
+ * dropped on one of the two paths into it.
+ */
+function swingResolution(swing: Swing): Resolution {
+  return { ok: true, effect: swing.effect, charge: { kind: 'attack', speed: swing.speed } };
 }
 
 /**
@@ -3321,8 +3455,16 @@ function talentRefusalToRefusal(reason: TalentRefusal): Refusal {
  * one basic-attack site in the process, it serves both the `Attack` intent and
  * the move bump, and until this line existed the Inspector's Sigil moved nothing
  * on the party's most-used source of damage while her panel promised it did.
+ *
+ * ═══ AND WHAT THE SWING COST, BESIDE WHAT IT DID ═══
+ * `speed` is the swung weapon's `combatSpeed` — or the gesture's, when one
+ * replaced the swing (gestures.lua:185) — which upstream's `attackTarget`
+ * charges at Combat.lua:234-236. It is returned rather than spent: `spendTurn`
+ * is the only spender, and `swingResolution` is what hands it to it.
  */
-function strike(attacker: EngineActor, target: EngineActor, run: Run): Effect {
+type Swing = { readonly effect: Effect; readonly speed: number };
+
+function strike(attacker: EngineActor, target: EngineActor, run: Run): Swing {
   const { world } = run;
 
   /**
@@ -3461,15 +3603,19 @@ function strike(attacker: EngineActor, target: EngineActor, run: Run): Effect {
   // to "the swing did not happen" is a swing that did nothing.
   if (!outcome.ok) {
     return {
-      kind: 'attack',
-      targetId: target.id,
-      hit: false,
-      crit: false,
-      damage: 0,
-      killed: false,
-      hp: target.hp,
-      maxHp: target.maxHp,
-      at: { x: target.x, y: target.y },
+      effect: {
+        kind: 'attack',
+        targetId: target.id,
+        hit: false,
+        crit: false,
+        damage: 0,
+        killed: false,
+        hp: target.hp,
+        maxHp: target.maxHp,
+        at: { x: target.x, y: target.y },
+      },
+      // The swing that did nothing is still priced as the weapon's swing.
+      speed: combatSpeed(attacker.combat ?? {}),
     };
   }
 
@@ -3479,21 +3625,24 @@ function strike(attacker: EngineActor, target: EngineActor, run: Run): Effect {
   // floor reset later in the same pump rewrites the first to full and walks the
   // body to the spawn cluster — see `GameEvent.attacked`.
   return {
-    kind: 'attack',
-    targetId: target.id,
-    hit: outcome.hit,
-    crit: outcome.crit,
-    // CARRIED, NOT DROPPED — the same note `healed` earned on the talent map
-    // below. `combat.ts` has computed this since M3 and nothing passed it on.
-    type: outcome.type,
-    atk: outcome.atk,
-    def: outcome.def,
-    chance: outcome.chance,
-    damage: outcome.damage,
-    killed: outcome.killed,
-    hp: target.hp,
-    maxHp: target.maxHp,
-    at: { x: target.x, y: target.y },
+    effect: {
+      kind: 'attack',
+      targetId: target.id,
+      hit: outcome.hit,
+      crit: outcome.crit,
+      // CARRIED, NOT DROPPED — the same note `healed` earned on the talent map
+      // below. `combat.ts` has computed this since M3 and nothing passed it on.
+      type: outcome.type,
+      atk: outcome.atk,
+      def: outcome.def,
+      chance: outcome.chance,
+      damage: outcome.damage,
+      killed: outcome.killed,
+      hp: target.hp,
+      maxHp: target.maxHp,
+      at: { x: target.x, y: target.y },
+    },
+    speed: outcome.speed,
   };
 }
 

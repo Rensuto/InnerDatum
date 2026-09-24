@@ -96,7 +96,12 @@ import {
   genericPointsForLevel,
   categoryPointsForLevel,
 } from '../../shared/progression.ts';
-import { COMMAND_BURST, COMMAND_RATE_PER_SEC, PROTOCOL_VERSION } from '../../shared/version.ts';
+import {
+  COMMAND_BURST,
+  COMMAND_RATE_PER_SEC,
+  ENERGY_TO_ACT,
+  PROTOCOL_VERSION,
+} from '../../shared/version.ts';
 /**
  * THE ONE CONTENT IMPORT IN THIS FILE, AND IT IS DATA ONLY.
  *
@@ -422,6 +427,8 @@ import type { ClassDef } from '../content/classes.ts';
 import type { Item, ItemElsewhereUse, Slot } from '../content/items.ts';
 import type { EngineActor, PlayerActor } from '../engine/actor.ts';
 import type { PartyState } from '../engine/party.ts';
+import { FULL_CLOCK } from '../engine/projectile.ts';
+import type { ViewerClock } from '../engine/projectile.ts';
 import type { AwayMember, PartyOffer, TalentBadgeSource, TurnState } from '../view/projector.ts';
 import type { Realm, Realms, SiteDef } from '../world/realms.ts';
 import type { Actor, PlayerOverlay, World } from '../world/world.ts';
@@ -3492,12 +3499,13 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    */
   /**
    * THE VIEWER'S CLOCK, for `projectProjectiles`: an orb's "N turns — move" is
-   * counted in their own decisions, and a Slowed detective gets fewer. Full
-   * speed for a socket with no body.
+   * counted in their own decisions, and a Slowed detective gets fewer — as does
+   * one still paying off a stunned step. Full speed owing nothing for a socket
+   * with no body.
    */
-  const viewerSpeedOf = (session: Session, world: World): number => {
+  const viewerClockOf = (session: Session, world: World): ViewerClock => {
     const body = session.actorId === null ? undefined : world.getActor(session.actorId);
-    return body?.globalSpeed ?? 1;
+    return body === undefined ? FULL_CLOCK : { speed: body.globalSpeed, energy: body.energy };
   };
 
   const broadcastProjectilesIfChanged = (realm: PumpTarget): void => {
@@ -3509,7 +3517,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
         realm.world,
         eyesOf(session, realm.world),
         teammateFor(session),
-        viewerSpeedOf(session, realm.world),
+        viewerClockOf(session, realm.world),
       );
       const key = JSON.stringify(msg.projectiles);
       if (key === (session.lastProjectilesKey ?? NO_PROJECTILES_KEY)) continue;
@@ -3553,7 +3561,7 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
         realm.world,
         eyesOf(session, realm.world),
         teammateFor(session),
-        viewerSpeedOf(session, realm.world),
+        viewerClockOf(session, realm.world),
       );
       if (msg.projectiles.length === 0) continue;
       session.lastProjectilesKey = JSON.stringify(msg.projectiles);
@@ -11697,14 +11705,16 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    * `sheets.set` and would hand the crosser a full resource pool for free.
    *
    * ═══ WHAT IS DELIBERATELY NOT CARRIED, AND IT IS THE SAME LIST TWICE ═══
-   * `pendingIntent`, `standingOrder`, `standingBy`, energy: every one of them is
+   * `pendingIntent`, `standingOrder`, `standingBy`: every one of them is
    * a fact about a BARRIER, and world/realms.ts:266-289 already ruled on this in
    * writing — per-actor barrier bookkeeping does not follow a body across a
    * boundary, because "Standing By means this person has stopped answering on
    * this floor, and walking through a door is the loudest possible evidence that
    * they have started again". The old realm's barrier keeps a row for an id that
    * is no longer in its world; the quorum is surveyed from the actor table, so
-   * that row can never block anybody again.
+   * that row can never block anybody again. ENERGY IS NOT ON THAT LIST: it is
+   * the body's own clock, and it walks through capped at one turn — see the line
+   * that carries it, below.
    */
   const carryAcross = (from: PlayerActor, to: Actor): void => {
     if (to.kind !== 'player') return;
@@ -11784,6 +11794,31 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
     // AIR IS A PROPERTY OF THE BODY, as upstream's actor object keeps it across a
     // zone change. Unclamped: `actBase` bounds it on the next base turn.
     to.air = from.air;
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * AND THE BODY'S CLOCK — ITS DEBT, AND ITS READINESS, BUT NEVER A BANK.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * ToME keeps the SAME actor across a level change and never writes its
+     * energy. It takes the stairs only from a ready body (`CHANGE_LEVEL` asks
+     * `enoughEnergy()`, tome/class/Game.lua:2146), and says why it does not
+     * unpause: "the player is allowed first move on next level" (:2158). So a
+     * crossing costs the step onto the stairs and nothing more.
+     *
+     * This built the far body fresh at 0 (`createEnergyActor`), which charged
+     * every crossing a SECOND turn: alone, the old floor runs until the crosser
+     * is ready again, so she left at a full turn and the far floor ran another
+     * before she was asked. And once an action could cost more than a turn — a
+     * stunned step is two (`actionCost`, engine/actor.ts) — a party member owing
+     * a decision parks the old floor before the price is worked off, and the 0
+     * FORGAVE the rest.
+     *
+     * So the value comes across, debt and all, CAPPED AT ONE TURN: a body can
+     * bank energy here that upstream's cannot (idle out of combat while the
+     * world runs on for others), and a bank carried through a door is a turn
+     * nobody lived on the far side.
+     */
+    to.energy = Math.min(ENERGY_TO_ACT, from.energy);
     to.cooldowns.clear();
     for (const [talentId, turns] of from.cooldowns) {
       if (turns > 0) to.cooldowns.set(talentId, turns);

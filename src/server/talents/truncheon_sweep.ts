@@ -117,6 +117,8 @@ export const truncheonSweep: Talent = {
   iconId: 'icon_active_truncheon_sweep',
   cost: { ap: AP_COST, resource: RESOLVE_COST },
   cooldownTurns: COOLDOWN,
+  // `technique/2hweapon-offense` upstream, so `weapon` (tome/class/Actor.lua:5807-5808).
+  speed: 'weapon',
   targeting: {
     shape: TargetShape.Self,
     range: 0,

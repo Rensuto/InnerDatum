@@ -175,6 +175,9 @@ export const shinCrack: Talent = {
   iconId: 'icon_active_shin_crack',
   cost: { ap: AP_COST, resource: RESOLVE_COST },
   cooldownTurns: COOLDOWN,
+  // Crippling Shot is `technique/other` (techniques/archery.lua:792), so
+  // `weapon` rather than `archery` (tome/class/Actor.lua:5805-5808); ours swings.
+  speed: 'weapon',
   targeting: {
     shape: TargetShape.Single,
     range: MELEE_REACH,

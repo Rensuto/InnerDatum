@@ -99,6 +99,7 @@ import {
   combatCritPower,
   combatMentalResist,
   combatMindpower,
+  combatSpeed,
 } from '../engine/derived.ts';
 import { Slot } from '../content/items.ts';
 import {
@@ -283,6 +284,8 @@ export function gestureOfPainBlow(
       killed: false,
       type: DamageType.Mind,
       brandDamage: 0,
+      // gestures.lua:185 — `return self:combatSpeed(), hit`, a miss included.
+      speed: combatSpeed(combatOf(attacker)),
     };
   }
 
@@ -334,6 +337,9 @@ export function gestureOfPainBlow(
     killed: outcome.killed,
     type: DamageType.Mind,
     brandDamage: 0,
+    // WHAT THE BLOW COSTS — gestures.lua:185, the body's own `combatSpeed`, which
+    // `attackTarget` then charges exactly as it charges a weapon's.
+    speed: combatSpeed(combatOf(attacker)),
   };
 }
 

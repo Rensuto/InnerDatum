@@ -1376,13 +1376,16 @@ export const UI_SCALE_MAX = 2;
 /**
  * Energy required before an actor may act, and the energy granted per game tick.
  *
- * Ported from T-Engine4's energy scheduler. Players always spend exactly
- * ENERGY_TO_ACT — action points are an intra-turn budget, never a way to buy
- * extra turns — which is what keeps a co-op party phase-locked instead of
- * drifting until three people are waiting on one.
+ * Ported from T-Engine4's energy scheduler. A wait spends exactly
+ * ENERGY_TO_ACT; every other action spends it times that action's own price,
+ * as ToME's `useEnergy` calls do — a step at the body's movement speed, a
+ * swing at its weapon's, a talent at the talent's (`actionCost`,
+ * server/engine/actor.ts). Action points are an intra-turn budget, never a way
+ * to buy extra turns.
  *
- * Monsters keep the full variable-speed model: their cost is
- * ENERGY_TO_ACT * speedFactor.
+ * Players always spent exactly ENERGY_TO_ACT, once, to keep a party
+ * phase-locked under a simultaneous barrier; a party takes its turns in
+ * initiative order now, where an uneven price is simply ToME.
  */
 export const ENERGY_TO_ACT = 1000;
 export const ENERGY_PER_TICK = 100;

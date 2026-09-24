@@ -76,6 +76,7 @@ import {
   resolveGuardCounter,
   sustainAnswer,
   talentLevelOf,
+  talentSpeed,
   toggleSustain,
   tomeCooldownToTurns,
   useTalent,
@@ -567,6 +568,15 @@ export function talentRuntimeFor(
      * read off the talent's own definition.
      */
     noEnergy: (talentId: string): boolean => talents.registry.get(talentId)?.noEnergy === true,
+    /**
+     * AND WHAT IT COSTS WHEN IT IS NOT FREE — `getTalentSpeed`, off the same
+     * definition. See `TalentResolution.talentSpeed`. An id the registry does not
+     * know is one turn, which is what `use` has already refused it for anyway.
+     */
+    talentSpeed: (actor: EngineActor, talentId: string): number => {
+      const talent = talents.registry.get(talentId);
+      return talent === undefined ? 1 : talentSpeed(actor, talent);
+    },
     /**
      * ═══════════════════════════════════════════════════════════════════════
      * THE TWO THAT MAKE A TALENT POINT VISIBLE ON THE BASIC SWING.

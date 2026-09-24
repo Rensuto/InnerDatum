@@ -97,9 +97,10 @@
  * ═══════════════════════════════════════════════════════════════════════════
  *
  *  - IT DOES NOT SPEND ENERGY. Combat.lua:234-236 does (`useEnergy(energy_to_act
- *    * speed)`), but DECISIONS.md § D1 pins a player action to exactly one turn
- *    and the scheduler's `spendTurn` is the only sanctioned spender. A second
- *    spender is how the party falls out of phase lock.
+ *    * speed)`); here the swing REPORTS its speed (`AttackResult.speed`) and
+ *    the scheduler's `spendTurn` charges it, because that is the only
+ *    sanctioned spender. A talent that swings through here is priced by its
+ *    own speed instead, exactly as upstream's pass `noenergy` to this call.
  *  - IT DOES NOT EMIT EVENTS. It returns a value; the scheduler turns that into
  *    `GameEvent`s, because only the scheduler knows whether this was a player
  *    action or part of a batched monster sweep.
@@ -146,6 +147,7 @@ import {
   combatDamage,
   combatDamageRange,
   combatDefense,
+  combatSpeed,
 } from './derived.ts';
 // TYPE-ONLY, so this is erased at runtime and cannot make a cycle with
 // actor.ts — which imports `CombatSheet` from here. `OnHitStatus` lives there
@@ -332,6 +334,15 @@ export type AttackResult =
        * log — that exists to tell a party what is actually hurting things.
        */
       readonly brandDamage: number;
+      /**
+       * WHAT THE SWING COSTS, as a multiple of a turn — `combatSpeed` of the
+       * weapon actually swung. Upstream's `attackTargetWith` returns exactly this
+       * first (`return self:combatSpeed(weapon), hitted, dam`, Combat.lua:677),
+       * hit or miss, and `attackTarget` charges the largest of them
+       * (Combat.lua:185, :211, :226, :234-236). The scheduler is the one that
+       * spends it; this file only reports it.
+       */
+      readonly speed: number;
     };
 
 /** Everything a template can leave unsaid. */
@@ -747,6 +758,9 @@ export function attackTarget(
       // required member of `AttackResult` is a compile error on every exit
       // instead of a silent zero on one of them.
       brandDamage: 0,
+      // A MISS COSTS THE SAME AS A HIT — Combat.lua:677 returns the speed on
+      // both. `self` is the sheet actually swung, fist included.
+      speed: combatSpeed(self),
     };
   }
 
@@ -873,5 +887,6 @@ export function attackTarget(
     killed: outcome.killed || killedByBrand,
     type,
     brandDamage,
+    speed: combatSpeed(self),
   };
 }

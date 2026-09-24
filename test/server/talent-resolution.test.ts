@@ -22,6 +22,7 @@ import {
   markMultiplier,
   resolveGuardCounter,
   talentId,
+  talentSpeed,
   useTalent,
 } from '../../src/server/engine/talents.ts';
 import { createTurnEngine } from '../../src/server/turn-engine.ts';
@@ -112,6 +113,11 @@ function runtimeFor(talents: TalentEngine, world: World): TalentRuntime {
     // UPSTREAM'S `no_energy`, off the talent's own definition — exactly as
     // `talentRuntimeFor` (src/server/main.ts) answers it.
     noEnergy: (talentId: string): boolean => talents.registry.get(talentId)?.noEnergy === true,
+    // AND WHAT A TALENT THAT IS NOT FREE COSTS, off the same definition.
+    talentSpeed: (actor: EngineActor, talentId: string): number => {
+      const talent = talents.registry.get(talentId);
+      return talent === undefined ? 1 : talentSpeed(actor, talent);
+    },
     // THE TWO THAT MAKE A RANK VISIBLE ON THE BASIC SWING. Forwarded exactly as
     // `talentRuntimeFor` (src/server/main.ts) forwards them, because this
     // fixture's whole purpose is to be that adapter.

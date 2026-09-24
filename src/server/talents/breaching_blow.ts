@@ -94,6 +94,9 @@ export const breachingBlow: Talent = {
   iconId: 'icon_monster_breaching_blow',
   cost: { ap: BREACH_AP },
   cooldownTurns: BREACH_COOLDOWN,
+  // Breach names its own: `archery` with a bow, else `weapon`
+  // (chronomancy/temporal-combat.lua:310). Ours is the melee swing.
+  speed: 'weapon',
   targeting: {
     shape: TargetShape.Single,
     range: 1.5,

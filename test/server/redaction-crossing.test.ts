@@ -19,8 +19,11 @@ import { wsGateway } from '../../src/server/net/gateway.ts';
 import { createTurnEngine } from '../../src/server/turn-engine.ts';
 import { RealmKind, SITES, createRealms } from '../../src/server/world/realms.ts';
 import { REDACTION_SITE_ID } from '../../src/shared/level.ts';
-import { PROTOCOL_VERSION } from '../../src/shared/version.ts';
+import { ENERGY_PER_TICK, ENERGY_TO_ACT, PROTOCOL_VERSION } from '../../src/shared/version.ts';
 import type { Realms } from '../../src/server/world/realms.ts';
+import type { PlayerActor } from '../../src/server/engine/actor.ts';
+import type { EffectState } from '../../src/server/engine/effects.ts';
+import type { Actor } from '../../src/server/world/world.ts';
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════
@@ -615,5 +618,151 @@ describe('a status walks through a door with the body', () => {
     } finally {
       await app.close();
     }
+  });
+});
+
+describe('what a body owes walks through a door with it', () => {
+  /**
+   * The body's clock crosses with it, CAPPED AT ONE TURN (`carryAcross`): ToME
+   * takes the stairs only from a ready body and lets it move first on the next
+   * level (tome/class/Game.lua:2146, :2158), so a crossing costs the step onto
+   * the door and nothing more — neither a turn forgiven nor a turn added.
+   *
+   * WITH A FRIEND IN A FIGHT, the stepper first in the order, the old floor's
+   * loop parks on the friend the moment she has paid, so she crosses still
+   * owing whatever the step cost past one turn. ALONE, the old floor runs on
+   * until she is ready again, so she crosses ready.
+   *
+   * `prime` sets the stepper's body up before she steps; the result is the body
+   * she left, the body she arrived in, and how many ticks the FAR side ran
+   * before she was asked again — which is what the door charged her.
+   */
+  async function cross(
+    seed: string,
+    withFriend: boolean,
+    prime: (body: PlayerActor, effects: EffectState) => void,
+  ): Promise<{ before: PlayerActor; after: Actor | undefined; farTicks: number }> {
+    const effects = createMvpEffectState();
+    const downed = createDownedState();
+    const parties = createPartyState();
+    const realms = createRealms({
+      seed,
+      engineFor: (world) => createTurnEngine({ world, downed, parties, effects }),
+    });
+    const app = Fastify({ logger: false });
+    await app.register(wsGateway, {
+      world: realms.overworld.world,
+      engine: realms.overworld.engine,
+      realms,
+      parties,
+      downed,
+      effects,
+      // NO TIDE, so nothing ticks the far realm between the crossing and the read.
+      tideMs: 0,
+    });
+    await app.listen({ host: '127.0.0.1', port: 0 });
+    try {
+      const address = app.server.address();
+      if (address === null || typeof address === 'string') throw new Error('no port was bound');
+      const stepper = await hello(address.port);
+      const world = realms.overworld.world;
+      const before = world.getActor(stepper.actorId);
+      if (before?.kind !== 'player') throw new Error('no body');
+      if (withFriend) {
+        const friend = await hello(address.port);
+        const waiting = world.getActor(friend.actorId);
+        if (waiting?.kind !== 'player') throw new Error('no friend');
+        /**
+         * HER FIRST TURN VERB, so she is PLAYING. A fresh joiner is parked on a
+         * standing hold until they send one (`parkForClassChoice`), and a body
+         * on a standing order never owes the barrier a decision — she would
+         * never stop the loop, which is this shape's whole premise.
+         */
+        friend.socket.send(JSON.stringify({ v: PROTOCOL_VERSION, t: 'hold' }));
+        await sleep(200);
+        expect(waiting.standingOrder, 'she is still parked on the class-choice hold').toBeNull();
+        // A FIGHT, with the stepper first in it and her friend owing a decision.
+        world.turn.engagement = 3;
+        before.initiative = 99;
+        waiting.initiative = 0;
+        expect(waiting.energy).toBe(ENERGY_TO_ACT);
+      }
+      expect(before.energy).toBe(ENERGY_TO_ACT);
+      prime(before, effects);
+
+      // THE FAR SIDE'S CLOCK, which is where a debt is paid: the crossing pumps
+      // the realm it lands in, and that pump runs until she can act.
+      const far = realms.get(`realm:${REDACTION_SITE_ID}`);
+      if (far === undefined) throw new Error('no Redaction realm to cross into');
+      const farTick = far.world.turn.clock.tick;
+
+      await stepOnto(realms, stepper.actorId, stepper.socket, doorCell(realms));
+
+      const after = far.world.getActor(stepper.actorId);
+      expect(after, 'no body on the far side').toBeDefined();
+      expect(after, 'the door did not rebuild the body').not.toBe(before);
+      expect(after?.energy, 'she arrived holding more than one turn').toBe(ENERGY_TO_ACT);
+      return { before, after, farTicks: far.world.turn.clock.tick - farTick };
+    } finally {
+      await app.close();
+    }
+  }
+
+  it('a lone detective arrives ready: the step onto the door is the whole price', async () => {
+    /**
+     * THIS COST A SECOND TURN. The far body was built fresh at 0, so after the
+     * old floor ran until she was ready, the far floor ran a whole turn more
+     * before she was asked — every creature by the door swung first. ToME
+     * gives the arriving player the first move (Game.lua:2158).
+     */
+    const { before, farTicks } = await cross('redaction-crossing-ready', false, () => undefined);
+    expect(before.energy, 'the old floor did not run her back to ready').toBe(ENERGY_TO_ACT);
+    expect(farTicks, 'the far floor ran before she was asked').toBe(0);
+  });
+
+  it('a stunned detective who steps onto a door arrives still owing the step', async () => {
+    /**
+     * ═══════════════════════════════════════════════════════════════════════
+     * A STUNNED STEP IS TWO TURNS, AND THE DOOR USED TO FORGIVE ONE OF THEM.
+     * ═══════════════════════════════════════════════════════════════════════
+     *
+     * The step that crosses is paid in the realm being LEFT. When the old
+     * floor's loop stops before the price is worked off — which it does
+     * whenever somebody else in the fight owes a decision, because the barrier
+     * parks the realm on them — a fresh 0 on the far side wrote the rest of the
+     * debt off. ToME keeps the SAME actor across a level change, so it arrives
+     * owing.
+     */
+    const { before, after, farTicks } = await cross(
+      'redaction-crossing-debt',
+      true,
+      (body, effects) => {
+        statusApplier(effects, createRng('stun-door'))(body, EffectId.Stunned, 99, {});
+        expect(body.movementSpeed, 'the stun never reached the step').toBe(0.5);
+      },
+    );
+    // HELD 1000, CHARGED 2000, AND THE OLD FLOOR PARKED ON HER FRIEND AT ONCE:
+    // she left owing a whole turn.
+    expect(before.energy, 'the old floor worked the debt off first').toBe(-ENERGY_TO_ACT);
+    // SO THE FAR SIDE RAN TWO TURNS BEFORE SHE WAS ASKED AGAIN — the whole
+    // price of a stunned step. A door that forgave the debt runs one.
+    expect(farTicks, 'the door forgave the debt').toBe((2 * ENERGY_TO_ACT) / ENERGY_PER_TICK);
+    // AND THE STUN CAME ACROSS TOO, still halving the step on the far side.
+    expect(after?.movementSpeed).toBe(0.5);
+  });
+
+  it('and a banked surplus stays behind: nobody arrives holding two turns', async () => {
+    /**
+     * THE CAP. A body here can BANK energy that upstream's cannot — a player
+     * idle out of combat while the world runs on for others — and carrying a
+     * bank through a door is a turn nobody lived on the far side. She steps
+     * from two and a half turns, leaves holding one and a half, and arrives
+     * holding exactly one: asked at once, and only once.
+     */
+    const { before, farTicks } = await cross('redaction-crossing-surplus', true, (body) => {
+      body.energy = 2.5 * ENERGY_TO_ACT;
+    });
+    expect(before.energy, 'she left without the bank').toBe(1.5 * ENERGY_TO_ACT);
+    expect(farTicks).toBe(0);
   });
 });

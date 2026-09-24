@@ -119,6 +119,9 @@ export const rush: Talent = {
   iconId: 'icon_monster_rush',
   cost: { ap: RUSH_AP },
   cooldownTurns: RUSH_COOLDOWN,
+  // `technique/combat-techniques-active` upstream, so `weapon`
+  // (tome/class/Actor.lua:5807-5808) — the charge is priced as the blow, not the run.
+  speed: 'weapon',
   targeting: {
     shape: TargetShape.Single,
     /**

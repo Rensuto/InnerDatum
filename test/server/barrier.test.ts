@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  FLAT_CHARGE,
   HOLD_INTENT,
   StandingOrder,
   createPlayerActor,
@@ -158,8 +159,10 @@ function driver(seats: readonly PlayerActor[], clock: TurnClock, level: BarrierL
         const actor = byId.get(energyActor.id);
         if (actor === undefined || actor.pendingIntent === null) return ActResult.Done;
         actor.pendingIntent = null;
-        // D1: a player's action costs exactly ENERGY_TO_ACT, always.
-        spendTurn(actor);
+        // ONE FLAT TURN. This driver models a commit and nothing about what was
+        // committed, so it pays a wait's price; `spendTurn` takes the charge as
+        // a required argument since ToME's per-action costs were ported.
+        spendTurn(actor, FLAT_CHARGE);
         return ActResult.Done;
       },
       maxTicks: 500,

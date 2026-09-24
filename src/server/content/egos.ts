@@ -1225,11 +1225,15 @@ export function validateEgos(egos: readonly Ego[]): readonly Ego[] {
 }
 
 /**
- * The one dead `CombatMods` field, by name. Mirrors items.ts's own list.
+ * The one refused `CombatMods` field, by name. Mirrors items.ts's own list.
  *
  * IT WAS THREE. `spellPower` and `mindPower` are read by eleven talents and two
  * readouts — see `AdditiveMods` in content/items.ts for how a grep pasted into
  * a docblock kept them looking dead long after they were not.
+ *
+ * AND THE ONE LEFT IS NOT DEAD EITHER: `physSpeed` is what a swing costs now.
+ * It stays refused because the additive fold would move it the wrong way, not
+ * because nothing reads it — `CombatMods` in engine/derived.ts has the argument.
  */
 const DEAD_GRANT_KEYS: readonly string[] = Object.freeze(['physSpeed']);
 

@@ -114,6 +114,7 @@ import {
   isHostile,
 } from '../engine/actor.ts';
 import { combatDistance, rangeRefusal } from '../engine/combat.ts';
+import { combatMovementSpeed } from '../engine/derived.ts';
 import type { Dir, TileXY } from '../../shared/coords.ts';
 import type { PassableFn } from '../../shared/path.ts';
 import type { Rng } from '../../shared/rng.ts';
@@ -1517,6 +1518,10 @@ type SafeGrid = {
  *   Every other tile then has to beat that score, as it does upstream.
  * - `dist_weight` IS 1 IN COMBAT AND 0.1 OUT OF IT (:734), times the move cost,
  *   so a creature with nobody to fight will walk ten times further for air.
+ * - THE MOVE COST IS `combatMovementSpeed() / global_speed` (:730), upstream's
+ *   own since a step is priced at the body's movement speed (engine/derived.ts):
+ *   a stunned body weighs distance twice as heavily. It was `1 / globalSpeed`
+ *   while movement speed was not ported.
  * - `want_closer` IS 0.5 IN COMBAT (:740): among grids equally safe, the one
  *   nearer its target, so it comes up for air on the side it was fighting.
  * - A TILE IS SCORED ON THE STRAIGHT DISTANCE FIRST (:772-777), and only one
@@ -1545,9 +1550,8 @@ type SafeGrid = {
  *   target is out of sight (engine/interface/ActorAI.lua:218-275). Ours is the
  *   target itself when this body can see it and `ai.lastSeen` when it cannot,
  *   which is the stand-in `pursueLastSeen` already uses, and it draws nothing.
- * - MOVE COST. `combatMovementSpeed() / global_speed`, and movement speed is not
- *   ported, so it is `1 / globalSpeed`. `never_move` is not asked: a pinned
- *   body's move is refused at resolution like any other.
+ * - `never_move` IS NOT ASKED: a pinned body's move is refused at resolution
+ *   like any other.
  */
 function aiFindSafeGrid(
   self: MonsterActor,
@@ -1556,7 +1560,7 @@ function aiFindSafeGrid(
   inCombat: boolean,
 ): SafeGrid {
   const hazard = aiGridHazard(self, self.x, self.y, terrainAt, ctx);
-  const moveCost = 1 / self.globalSpeed;
+  const moveCost = combatMovementSpeed(self) / self.globalSpeed;
   const distWeight = (inCombat ? 1 : 0.1) * moveCost;
   const aim = inCombat ? targetPosition(self, ctx) : undefined;
   const wantCloser = aim === undefined ? 0 : 0.5;

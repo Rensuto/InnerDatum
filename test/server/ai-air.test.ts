@@ -563,6 +563,24 @@ describe('aiFindSafeGrid — tome/class/interface/ActorAI.lua:726-801', () => {
     expect(moveOf(decideNpcAction(monster, ctx)).dx).toBe(1);
   });
 
+  it('a stunned body pays more a step: `combatMovementSpeed()` is the move cost (:730)', () => {
+    // Out of combat, lava beside it burning 0.6 and dry floor five tiles off. At
+    // movement speed 1 a step weighs 0.1: lava 0.7 against floor 0.5, so floor.
+    // Stunned, speed 0.5, a step weighs 0.2: lava 0.8 against floor 1.0, so lava.
+    const rows = ['#########', '#L~~~~~.#', '#########'];
+    const burns: AiCtx['gridDamage'] = (self, x, y) =>
+      rows[y]?.charAt(x) === 'L' ? 0.006 * self.hp : 0;
+    const choice = (movementSpeed: number): number => {
+      const monster = husk({ x: 2, y: 1 });
+      monster.movementSpeed = movementSpeed;
+      monster.air = 0;
+      const ctx = ctxFor(rows, [monster], scriptedRng([99]), { gridDamage: burns });
+      return moveOf(decideNpcAction(monster, ctx)).dx;
+    };
+    expect(choice(1), 'the steady husk should walk to the floor').toBe(1);
+    expect(choice(0.5), 'the stunned husk should take the lava beside it').toBe(-1);
+  });
+
   it('want_closer is 0.5 exactly, not merely something positive', () => {
     // Shores 2 west and 3 east; last seen at x = 7. At 0.5: west 2 + 2 = 4, east
     // 3 + 0.5 = 3.5, east. At 0.25: west 3, east 3.25, west.

@@ -360,7 +360,10 @@ export function lockedOutPhrase(count: number): string {
   return count === 1 ? 'One ready talent is' : `${String(count)} ready talents are`;
 }
 
-/** physical.lua:493 — `movement_speed`, −0.5. Carried as data; see the note below. */
+/**
+ * physical.lua:493 — `movement_speed`, −0.5. Taken off the body's movement speed
+ * by `recomputeAttributes`, so a stunned step costs two turns; see the note below.
+ */
 export const STUN_MOVEMENT_SPEED_ADD = -0.5;
 
 // ---------------------------------------------------------------------------
@@ -426,13 +429,18 @@ export const STUN_MOVEMENT_SPEED_ADD = -0.5;
  * derived.ts's `StatusFlags` was wired at M3 for precisely this moment.
  *
  * ───────────────────────────────────────────────────────────────────────────
- * NOT PORTED: `movement_speed`, and it is declared anyway
+ * `movement_speed` — line 493, and a step is where it bites
  * ───────────────────────────────────────────────────────────────────────────
- * :493's −50% movement speed has nothing to multiply here — a move is one
- * action, and there is no separate movement cost to halve. The number is
- * carried as `movementSpeedAdd` so the port is complete on paper and so the day
- * movement gets its own cost, the value is already sitting where it belongs.
- * Deleting it would make the omission invisible.
+ * :493's −50% arrives as `movementSpeedAdd`, and `recomputeAttributes` takes it
+ * off the body's `movementSpeed`: 1 becomes 0.5. A step is priced at the
+ * inverse (`combatMovementSpeed`, Combat.lua:2280-2293), so a stunned body's
+ * step costs TWO turns while its swing, its talents and its wait cost what they
+ * always did, as upstream's do.
+ *
+ * IT WAS CARRIED AND NOT READ until 2026-09-24. Every action cost one turn and
+ * there was no movement cost to halve; the number sat here declared so the
+ * omission stayed visible, and it is the line that made porting the cost a
+ * one-line read.
  */
 export const STUNNED: EffectDef = Object.freeze({
   id: EffectId.Stunned,
@@ -442,8 +450,12 @@ export const STUNNED: EffectDef = Object.freeze({
   // a bare numeral here and as `0.4` in engine/damage.ts, and the three lived
   // here and as `STUN_TALENT_LOCKOUT` a hundred lines up. A player-facing
   // sentence is a promise; two copies of a number is how a promise goes stale.
+  //
+  // AND THE STEP, IN UPSTREAM'S OWN WORDS — physical.lua:483's `long_desc`,
+  // *"reducing movement speed by 50%"*, composed from the add it describes.
   description:
-    `Reeling. Deals ${String(Math.round(STUNNED_DAMAGE_MULT * 100))}% damage, and talent ` +
+    `Reeling, reducing movement speed by ${String(Math.round(-STUN_MOVEMENT_SPEED_ADD * 100))}%. ` +
+    `Deals ${String(Math.round(STUNNED_DAMAGE_MULT * 100))}% damage, and talent ` +
     'cooldowns do not tick while it lasts. ' +
     `${lockedOutPhrase(STUN_TALENT_LOCKOUT)} ` +
     'locked out for the duration.',
@@ -463,7 +475,7 @@ export const STUNNED: EffectDef = Object.freeze({
     stunned: true,
     // :492 — THE FREEZE. tome/class/Actor.lua:606.
     noTalentsCooldown: true,
-    // :493 — carried, not yet read. See the header.
+    // :493 — a step costs two turns. See the header.
     movementSpeedAdd: STUN_MOVEMENT_SPEED_ADD,
   },
   parameters: {},

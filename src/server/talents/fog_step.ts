@@ -125,6 +125,8 @@ export const fogStep: Talent = {
   iconId: 'icon_active_fog_step',
   cost: { ap: AP_COST, mp: MP_COST },
   cooldownTurns: tomeCooldownToTurns(TOME_COOLDOWN),
+  // Disengage is `technique/mobility`, so `weapon` (tome/class/Actor.lua:5807-5808).
+  speed: 'weapon',
   targeting: {
     shape: TargetShape.Tile,
     range: RANGE_LOW,

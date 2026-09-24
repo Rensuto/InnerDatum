@@ -178,6 +178,9 @@ export const pistolWhip: Talent = {
   iconId: 'icon_active_pistol_whip',
   cost: { ap: AP_COST, resource: FOCUS_COST },
   cooldownTurns: COOLDOWN,
+  // Stunning Blow is `technique/2hweapon-cripple`, so `weapon`
+  // (tome/class/Actor.lua:5807-5808): the club costs what its swing costs.
+  speed: 'weapon',
   targeting: {
     shape: TargetShape.Single,
     range: MELEE_REACH,

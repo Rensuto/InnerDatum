@@ -181,6 +181,8 @@ export const wardRush: Talent = {
   // 6 ToME actions -> 3 Inner Datum turns (an Inner Datum turn holds ~2
   // actions from a 6 AP budget). See engine/talents.ts's cooldown header.
   cooldownTurns: tomeCooldownToTurns(TOME_COOLDOWN),
+  // `technique/shield-offense` upstream, so `weapon` (tome/class/Actor.lua:5807-5808).
+  speed: 'weapon',
   targeting: {
     shape: TargetShape.Single,
     range: RANGE,

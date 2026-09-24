@@ -124,6 +124,9 @@ export const grab: Talent = {
   iconId: 'icon_monster_grab',
   cost: { ap: GRAB_AP },
   cooldownTurns: tomeCooldownToTurns(TOME_COOLDOWN),
+  // Grab is `technique/other` (misc/npcs.lua:819), so `weapon`
+  // (tome/class/Actor.lua:5807-5808).
+  speed: 'weapon',
   targeting: {
     // `range = 1` and `type="hit"` (:826-827): the body next to it, diagonals
     // included. 1.5 is this game's adjacent reach -- the figure `bear_down` and

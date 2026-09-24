@@ -108,6 +108,9 @@ export const closedFile: Talent = {
   iconId: 'icon_active_closed_file',
   cost: { ap: AP_COST, resource: FOCUS_COST },
   cooldownTurns: COOLDOWN_TURNS,
+  // IT FIRES THE SHOOTER, so it pays the shooter's speed, as every upstream shot
+  // does (tome/class/interface/Archery.lua:282-284).
+  speed: 'archery',
   // FIRED FROM THE REVOLVER, and the flag is OURS. The SHAPE is Execution, a
   // melee execute whose own `on_pre_use` asks for a two-handed weapon
   // (2h-assault.lua:171); this talent is authored as a shot — six tiles and the

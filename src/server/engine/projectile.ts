@@ -872,18 +872,42 @@ export function turnsToImpact(proj: Projectile): number {
 }
 
 /**
+ * THE VIEWER'S CLOCK: how fast it fills (`globalSpeed`) and where it stands
+ * (`energy`). See `decisionsBeforeImpact`.
+ */
+export type ViewerClock = { readonly speed: number; readonly energy: number };
+
+/** Full speed and owing nothing — what every caller without a body means. */
+export const FULL_CLOCK: ViewerClock = Object.freeze({ speed: 1, energy: 0 });
+
+/**
  * THE VIEWER'S OWN DECISIONS before it lands — what the wire carries.
  *
  * `turnsToImpact` is GAME TURNS, and "a partial turn is still a turn the player
  * gets to act in" is true only of a body at full speed. A body at `globalSpeed`
  * g gains g × 100 energy a tick and acts at 1000, so over N game turns it is
- * GUARANTEED floor(N × g) decisions whatever phase its clock is in. At full
- * speed that is N, the figure this always sent. A Slowed detective (1/1.3) is
- * promised fewer, because they get fewer: "3 turns — move" to somebody who will
- * decide twice is the line that gets them hit.
+ * GUARANTEED floor(N × g) decisions whatever phase its clock is in — FROM A
+ * CLOCK THAT OWES NOTHING. At full speed that is N, the figure this always
+ * sent. A Slowed detective (1/1.3) is promised fewer, because they get fewer:
+ * "3 turns — move" to somebody who will decide twice is the line that gets
+ * them hit.
+ *
+ * ═══ AND A DEBT COMES OFF FIRST ═══
+ * An action can cost more than a turn (a stunned step is two, `actionCost`),
+ * so a body can stand below zero — and a party fight parks on the next player
+ * the moment the stepper has paid, which is exactly when this frame is built.
+ * From energy e < 0 the first decision is |e| / 1000 turns further off, so the
+ * promise is floor(N × g + e / 1000), never below 0. Every clock at or above
+ * zero keeps the number it always had.
+ *
+ * DECISIONS, NOT STEPS: a stunned body's second step comes two turns after its
+ * first. But the step that dodges is the first one, and it lands at once — a
+ * step moves the body before its price is paid (tome/class/Actor.lua:1344-1360)
+ * — so the count of decisions is the one that says whether moving is possible.
  */
-export function decisionsBeforeImpact(proj: Projectile, viewerSpeed: number): number {
-  return Math.floor(turnsToImpact(proj) * viewerSpeed);
+export function decisionsBeforeImpact(proj: Projectile, viewer: ViewerClock): number {
+  const debt = Math.min(0, viewer.energy) / ENERGY_TO_ACT;
+  return Math.max(0, Math.floor(turnsToImpact(proj) * viewer.speed + debt));
 }
 
 /**

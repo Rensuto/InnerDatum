@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Dalton Barraclough
 // The rule under test is this codebase's own, not a port: an item may grant any
-// `CombatMods` field that something reads, and only those.
+// `CombatMods` field that something reads and the additive fold can carry, and
+// only those.
 
 import { readFileSync, readdirSync } from 'node:fs';
 
@@ -13,7 +14,7 @@ import { composeWielders } from '../../src/server/engine/equipment.ts';
 import { resolveItem } from '../../src/server/content/resolve.ts';
 import { rollLoot } from '../../src/server/content/loot.ts';
 import { createRng } from '../../src/shared/rng.ts';
-import { combatMindpower, combatSpellpower } from '../../src/server/engine/derived.ts';
+import { combatMindpower, combatSpeed, combatSpellpower } from '../../src/server/engine/derived.ts';
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════
@@ -71,7 +72,18 @@ function usersOf(symbol: string, definedIn: string): string[] {
 }
 
 describe('the dead-mod list is still true', () => {
-  it('every field it names really has no reader', () => {
+  /**
+   * ═══ ONE ENTRY IS READ NOW, AND IT IS ON THE LIST FOR A DIFFERENT REASON ═══
+   * `combatSpeed` prices every swing since the per-action charges landed
+   * (2026-09-24), so `physSpeed` is no longer dead. It stays refused because
+   * the fold would get it WRONG — it is a divisor whose absent value is 1, and
+   * `composeWielders` adds onto an absent 0. That reason is pinned by its own
+   * case below; this set is the only way past the no-reader rule, and an entry
+   * in it without that case would be a refusal nobody can check.
+   */
+  const refusedForTheFold: ReadonlySet<string> = new Set(['physSpeed']);
+
+  it('every field it names really has no reader, or is refused for the fold', () => {
     /**
      * THE DIRECTION THAT MATTERS. A field on this list is forbidden to items and
      * to egos, so a stale entry is a silent refusal of something that works —
@@ -89,12 +101,37 @@ describe('the dead-mod list is still true', () => {
       const getter = getterFor[key];
       expect(getter, `no getter is mapped for the dead mod '${key}'`).toBeDefined();
       if (getter === undefined) continue;
+      if (refusedForTheFold.has(key)) continue;
       expect(
         usersOf(getter, 'engine/derived.ts'),
         `'${key}' is on DEAD_MOD_KEYS but ${getter} has readers — take it off the list ` +
           `and off the Omit in content/items.ts`,
       ).toEqual([]);
     }
+  });
+
+  it('and physSpeed is read, and a grant of it can never land inverted', () => {
+    /**
+     * READ: the swing's charge. If this ever goes back to zero readers, the set
+     * above is wrong and the ordinary rule applies again.
+     */
+    expect(usersOf('combatSpeed', 'engine/derived.ts').length).toBeGreaterThan(0);
+    expect(DEAD_MOD_KEYS).toContain('physSpeed');
+    /**
+     * THE FOLD'S ANSWER TO ToME'S OWN GRANT — `combat_physspeed = 0.1`
+     * (data/general/objects/egos/amulets.lua:387), which upstream adds to a base
+     * of 1. Refused, it moves nothing and a swing is one turn; carried properly
+     * it is 1/1.1 of one. What it may NEVER be is 1/0.1 — ten turns — which is
+     * what adding onto the fold's absent zero produces. Cast, because the type
+     * refuses the field and this is the case where something got past the type.
+     */
+    const bare = { stats: { str: 10, dex: 10, con: 10, wil: 10, cun: 10 } };
+    const grant = { mods: { physSpeed: 0.1 } } as unknown as Parameters<
+      typeof composeWielders
+    >[1][number];
+    const speed = combatSpeed(composeWielders(bare, [grant]));
+    const acceptable = [1, 1 / 1.1].some((ok) => Math.abs(speed - ok) < 1e-9);
+    expect(acceptable, `a physSpeed grant priced a swing at ${String(speed)} turns`).toBe(true);
   });
 
   it('and the two that came off it are genuinely read', () => {

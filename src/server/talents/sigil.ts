@@ -143,6 +143,9 @@ export const sigil: Talent = {
   iconId: 'icon_active_sigil',
   cost: { ap: AP_COST, resource: FOCUS_COST },
   cooldownTurns: secondsToTurns(COOLDOWN_SEC),
+  // IT FIRES THE SHOOTER, so it pays the shooter's speed, as every upstream shot
+  // does (tome/class/interface/Archery.lua:282-284).
+  speed: 'archery',
   // A MARKED ROUND, FIRED FROM THE REVOLVER (`talentAttack` swings the sheet's
   // weapon), so it takes Shoot's precondition — techniques/archery.lua:82,
   // `wardenPreUse` -> `archerPreUse`. See `Talent.archery`.
