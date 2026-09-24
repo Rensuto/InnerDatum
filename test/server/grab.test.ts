@@ -58,9 +58,13 @@ describe('Grab, npcs.lua:817-849 — the numbers', () => {
     expect(grabMult(5)).toBeCloseTo(1.4, 10);
   });
 
-  it('cools down for `cooldown = 6` (:821), through `tomeCooldownToTurns`', () => {
-    expect(grab.cooldownTurns).toBe(tomeCooldownToTurns(6));
-    expect(grab.cooldownTurns).toBe(3);
+  it('cools down for `cooldown = 6` (:821), unconverted: a creature acts once a game turn', () => {
+    // NOT `tomeCooldownToTurns(6)`, which halves for a player's old two-talent
+    // turn — a budget no monster ever had.
+    expect(grab.cooldownTurns).toBe(6);
+    expect(grab.cooldownTurns).not.toBe(tomeCooldownToTurns(6));
+    // BEAR DOWN'S COOLDOWN TOO: upstream's Stun carries the same `cooldown = 6`.
+    expect(bearDown.cooldownTurns).toBe(grab.cooldownTurns);
     // Bear Down's price, because upstream's Stun carries the same cooldown and
     // stamina (npcs.lua:195-196) — see the note on `grab.cooldownTurns`. It was
     // pinned as `{ ap: 5 }` while talents carried an AP price; the price now is

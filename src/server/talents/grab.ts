@@ -26,12 +26,17 @@ import {
   talentId,
   talentRefused,
   targetActor,
-  tomeCooldownToTurns,
 } from '../engine/talents.ts';
 import type { SetEffectResult } from '../engine/effects.ts';
 import type { Talent } from '../engine/talents.ts';
 
-/** `npcs.lua:821` -- `cooldown = 6`, in ToME actions. See `tomeCooldownToTurns`. */
+/**
+ * `npcs.lua:821` -- `cooldown = 6`, in ToME actions, and a creature's actions
+ * are its turns: UNCONVERTED. `tomeCooldownToTurns` halves a cooldown for the
+ * two talents a player's six-AP turn once held; a monster never had that
+ * budget and acts once a game turn at speed 1, as upstream's does, so six is
+ * six (INDEX_CAIRN's T_FLAME_BOLT `cooldown = 3` was always taken as 3).
+ */
 const TOME_COOLDOWN = 6;
 
 /** `npcs.lua:833` -- `combatTalentWeaponDamage(t, 0.8, 1.4)`. */
@@ -122,7 +127,7 @@ export const grab: Talent = {
    * decision rather than two. (Both were 5 AP while talents carried an AP
    * price.)
    */
-  cooldownTurns: tomeCooldownToTurns(TOME_COOLDOWN),
+  cooldownTurns: TOME_COOLDOWN,
   // Grab is `technique/other` (misc/npcs.lua:819), so `weapon`
   // (tome/class/Actor.lua:5807-5808).
   speed: 'weapon',

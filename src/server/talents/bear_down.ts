@@ -49,11 +49,12 @@ import type { SetEffectResult } from '../engine/effects.ts';
  * never acts again -- so the duration has to stay strictly under the cadence"*.
  * One against three is strictly under. Two was not.
  *
- * WHY THE DURATION MOVED AND NOT THE COOLDOWN: three is upstream's
- * `cooldown = 6` through `tomeCooldownToTurns`, ported exactly. The duration
- * was already ours, because upstream's 3-to-7 is unusable here -- so the
- * deviation belongs on the number that was deviating anyway, and the ported
- * one stays ported.
+ * WHY THE DURATION MOVED AND NOT THE COOLDOWN: three was upstream's
+ * `cooldown = 6` through `tomeCooldownToTurns`, and the duration was already
+ * ours, because upstream's 3-to-7 was unusable against it -- so the deviation
+ * belonged on the number that was deviating anyway. The cooldown is upstream's
+ * 6 UNCONVERTED now (see `BEAR_DOWN_COOLDOWN`): one stunned turn in six, where
+ * it was one in three.
  *
  * It is the cairn's stun exactly now: one turn, from a creature that applies it
  * about every third. Two stuns in this game, one rule for both.
@@ -69,8 +70,14 @@ const STUN_TURNS = 1;
 const BLOW_LOW = 0.5;
 const BLOW_HIGH = 1;
 
-/** `npcs.lua:195` `cooldown = 6`, through `tomeCooldownToTurns` -- ceil(6/2). */
-const BEAR_DOWN_COOLDOWN = 3;
+/**
+ * `npcs.lua:195` `cooldown = 6`, UNCONVERTED. It went through
+ * `tomeCooldownToTurns` -- ceil(6/2) = 3 -- which halves a cooldown for the two
+ * talents a player's six-AP turn once held. A creature never had that budget:
+ * it acts once a game turn at speed 1, as upstream's does, so upstream's six
+ * actions are six turns. `grab.ts` makes the same correction to the same price.
+ */
+const BEAR_DOWN_COOLDOWN = 6;
 
 /** The swing's multiplier at a rank. */
 export function blowMult(level: number): number {
@@ -104,9 +111,8 @@ function stunLine(name: string, landed: SetEffectResult | undefined): string[] {
  * A rider fires on every landed blow. A melee creature adjacent to you lands
  * one most turns, so a stunning rider on a bruiser IS the failure the cairn's
  * note describes -- you would be stunned, hit while stunned, and stunned again.
- * A talent on a three-turn cooldown fires once per engagement, which is what
- * upstream's `cooldown = 6` buys and what makes this a spike rather than a
- * lock.
+ * A talent on upstream's six-turn cooldown fires about twice an engagement's
+ * length apart, and that gap is what makes this a spike rather than a lock.
  *
  * IT RESPECTS `canBe` BY CONSTRUCTION, through `ctx.status`. Upstream tests
  * `target:canBe("stun")` explicitly at :211; ours cannot skip it, because the
