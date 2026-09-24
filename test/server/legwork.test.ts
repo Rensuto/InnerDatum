@@ -5,7 +5,13 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { DEAD_MOD_KEYS } from '../../src/server/content/items.ts';
+import {
+  DEAD_MOD_KEYS,
+  ITEMS,
+  PASSIVE_ONLY_MOD_KEYS,
+  validateItems,
+} from '../../src/server/content/items.ts';
+import { EGO_FORBIDDEN_MOD_KEYS } from '../../src/server/content/egos.ts';
 import { EMPTY_PASSIVE_VIEW } from '../../src/server/engine/hooks.ts';
 import {
   LEGWORK,
@@ -29,55 +35,61 @@ const viewOf = (over: Partial<Record<keyof PassiveView, unknown>>): PassiveView 
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════
- *   THE ONE BUDGET IN THIS GAME NOTHING COULD CHANGE.
+ *   MOVEMENT SPEED — ToME's `movement_speed`, and Legwork is where it comes from.
  * ═══════════════════════════════════════════════════════════════════════════
  *
- * `maxMp` came off the class table and stayed there for a whole career: a
- * level-50 character covered exactly the ground a level-1 one did. Statuses
- * could TAKE movement away — `SLOWED` has carried an `mpPenalty` since it was
- * authored — and nothing could ever give it back, let alone add to it.
+ * A step costs a turn at the body's movement speed (`combatMovementSpeed`), a
+ * stun takes half of it, and Long Stride gives some back at Lightning Speed's
+ * passive rate (gifts/storm-drake.lua:33, :39). What a step actually costs is
+ * measured through the scheduler in action-cost.test.ts; this is the talent.
  */
 
-describe('the movement channel', () => {
+describe('the movement-speed channel', () => {
   it('is granted by this tree and by nothing else in the game', () => {
     const movers = LEGWORK.filter(
-      (talent) => (talent.passive?.(3, viewOf({}))?.mods?.moveMp ?? 0) > 0,
+      (talent) => (talent.passive?.(3, viewOf({}))?.mods?.movementSpeed ?? 0) > 0,
     );
-    expect(movers.length, 'no talent in Legwork moves you').toBeGreaterThan(0);
+    expect(movers.map((talent) => talent.id)).toEqual([longStride.id]);
   });
 
-  it('is small, because a step is worth more than ten damage', () => {
-    /**
-     * ═══ THE BALANCE ASSERTION, AND IT IS THE ONE THAT MATTERS HERE ═══
-     * A class has three or four movement points. Three extra would be nearly
-     * double, at which point a party stops having to think about where it
-     * stands — and `one_at_a_time`, `braced`, `riot_line` and `cold_case` all
-     * pay for a POSITION, so a character who can walk out of any position has
-     * quietly turned four talents off.
-     */
-    for (const talent of LEGWORK) {
-      const granted =
-        talent.passive?.(
-          TALENT_MAX_LEVEL,
-          viewOf({ adjacentEnemies: () => 1, hpFraction: () => 0 }),
-        )?.mods?.moveMp ?? 0;
-      expect(granted, `${talent.id} at the cap`).toBeLessThanOrEqual(2);
-    }
+  it('is Lightning Speed’s passive: 8% at rank 1, 40% at rank 5', () => {
+    // `combatTalentScale(t, 0.08, 0.4, 0.7)`: the two ends are the numbers
+    // upstream wrote down, and the curve between them is its 0.7.
+    const at = (level: number): number =>
+      longStride.passive?.(level, viewOf({}))?.mods?.movementSpeed ?? 0;
+    expect(at(1)).toBeCloseTo(0.08, 10);
+    expect(at(5)).toBeCloseTo(0.4, 10);
+    // Rank 3 is where the exponent shows: 0.7 puts it at 0.2577, and the
+    // default 0.5 would put it at 0.2695.
+    expect(at(3)).toBeCloseTo(0.25766, 4);
+    expect(at(TALENT_MAX_LEVEL)).toBeGreaterThanOrEqual(at(5));
   });
 
-  it('may be granted by an item, and no item does', () => {
+  it('says what it does in upstream’s words: the percent truncated, and the price of a step', () => {
+    // `%d%%` of `getPassiveSpeed * 100` truncates (storm-drake.lua's info), so
+    // rank 3's 25.77% reads 25%, and the step it buys is 1 / 1.2577 of a turn.
+    expect(longStride.describe({} as never, 1)).toBe(
+      'Always on. Increases your movement speed by 8%: a step costs 93% of a turn.',
+    );
+    expect(longStride.describe({} as never, 3)).toContain('by 25%: a step costs 80% of a turn');
+  });
+
+  it('may not be granted by an item, and says why rather than tripping on the integer rule', () => {
     /**
-     * `AdditiveMods` omits fields NOTHING READS, so an item cannot grant a
-     * number a player could never see. `moveMp` is live, so excluding it there
-     * would be using a dead-field guard to express a content decision — and it
-     * would have blocked TALENTS too, because `passiveCombat` is typed
-     * `Partial<AdditiveMods>`. That is how the mistake announced itself while
-     * this tree was being written.
-     *
-     * Boots that move you an extra tile are a good idea and a loot-balance
-     * change. Authoring one belongs to a commit about the loot table.
+     * A fraction, and every wielder value is an integer, so the only grant an
+     * item could make is a whole 1 — a step at half a turn, which is what boots
+     * authored in the old "+1 movement point" sense would silently become.
+     * `DEAD_MOD_KEYS` is the wrong list for it (it is read, and a passive grants
+     * it); `PASSIVE_ONLY_MOD_KEYS` is the right one.
      */
-    expect(DEAD_MOD_KEYS).not.toContain('moveMp');
+    expect(DEAD_MOD_KEYS).not.toContain('movementSpeed');
+    expect(PASSIVE_ONLY_MOD_KEYS).toContain('movementSpeed');
+    const boots = ITEMS.find((item) => item.wielder !== undefined);
+    if (boots === undefined) throw new Error('fixture: no wielder item in the catalogue');
+    expect(() => validateItems([{ ...boots, wielder: { mods: { movementSpeed: 1 } } }])).toThrow(
+      /only a passive may grant/,
+    );
+    expect(EGO_FORBIDDEN_MOD_KEYS).toContain('movementSpeed');
   });
 });
 
@@ -86,7 +98,7 @@ describe('the movement talents', () => {
     // A locked tree has to be worth its category point on the day it is bought,
     // and a wall of conditions is worth nothing until a player has learned what
     // triggers them.
-    expect(longStride.passive?.(1, viewOf({}))?.mods?.moveMp ?? 0).toBeGreaterThan(0);
+    expect(longStride.passive?.(1, viewOf({}))?.mods?.movementSpeed ?? 0).toBeGreaterThan(0);
   });
 
   it('Kick Off is a BUTTON, which is what upstream spends on this', () => {

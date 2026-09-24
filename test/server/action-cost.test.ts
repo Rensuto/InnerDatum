@@ -27,9 +27,13 @@ import {
   StackMode,
   hasEffect,
   registerEffect,
+  recomposeCombat,
   removeEffect,
   setEffect,
 } from '../../src/server/engine/effects.ts';
+import { EMPTY_PASSIVE_VIEW } from '../../src/server/engine/hooks.ts';
+import { resolveItem } from '../../src/server/content/resolve.ts';
+import { longStride } from '../../src/server/talents/legwork.ts';
 import { createPartyState } from '../../src/server/engine/party.ts';
 import { talentId } from '../../src/server/engine/talents.ts';
 import { realmTalentRuntime } from '../../src/server/main.ts';
@@ -270,6 +274,49 @@ describe('a step costs the body its movement speed', () => {
 
     expect(actionCost(scene.body, { kind: 'move' })).toBe(10);
     expect(spent(scene, () => scene.engine.submitMove('p1', 'e'))).toBe(10 * ENERGY_TO_ACT);
+  });
+});
+
+describe('Long Stride makes a step cheaper — Lightning Speed’s passive', () => {
+  /**
+   * THE PASSIVE AS PRODUCTION LANDS IT: `refreshPassives` (main.ts) writes the
+   * talent's block onto `passiveCombat` and calls `recomposeCombat`, which folds
+   * it through `WIELDER_MOD_KEYS` and ends in `recomputeAttributes`. The same
+   * two steps here, so a key the fold drops or a sum that forgets the sheet
+   * shows up as the price of a step.
+   */
+  function stride(scene: Room, level: number): void {
+    scene.body.passiveCombat = longStride.passive?.(level, EMPTY_PASSIVE_VIEW);
+    recomposeCombat(scene.body, scene.effects, resolveItem);
+  }
+
+  it('rank 1 is 8% faster: a step costs 1/1.08 of a turn', () => {
+    /**
+     * Not a whole number of ticks, so it is read off what is left rather than
+     * off the clock: from a full turn, pay 1000 / 1.08 and gain 100 a tick
+     * until ready again — ten ticks, and 1000 − 925.9 + 1000 left over.
+     */
+    const scene = room('cost-stride');
+    stride(scene, 1);
+    expect(scene.body.movementSpeed).toBeCloseTo(1.08, 10);
+    expect(scene.body.energy).toBe(ENERGY_TO_ACT);
+    const before = scene.world.turn.clock.tick;
+    scene.engine.submitMove('p1', 'e');
+    scene.engine.pump();
+    expect(scene.body.x, 'the step did not land').toBe(HOME.x + 1);
+    expect(scene.world.turn.clock.tick - before).toBe(10);
+    expect(scene.body.energy).toBeCloseTo(2 * ENERGY_TO_ACT - ENERGY_TO_ACT / 1.08, 6);
+  });
+
+  it('and adds to a stun rather than replacing it: 1 + 0.08 − 0.5', () => {
+    // Upstream sums every source into the one attribute (`movement_speed =
+    // "add"`, tome/class/Actor.lua:105), so a stunned Long Strider is slowed
+    // from where the talent put them.
+    const scene = room('cost-stride-stunned');
+    stride(scene, 1);
+    stun(scene.world, scene.effects, scene.body);
+    expect(scene.body.movementSpeed).toBeCloseTo(0.58, 10);
+    expect(actionCost(scene.body, { kind: 'move' })).toBeCloseTo(1 / 0.58, 10);
   });
 });
 

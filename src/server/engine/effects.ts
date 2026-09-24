@@ -2443,8 +2443,18 @@ export function recomputeAttributes(state: EffectState, actor: EffectActor): voi
    * here and re-derives it from the effect table — keyed by the actor, so a stun
    * that walked through the door is still in it, and still halves the step.
    * Unclamped here; `combatMovementSpeed` floors it at 0.1 where it is divided.
+   *
+   * ═══ AND THE SHEET'S OWN, SUMMED WITH IT — Long Stride ═══
+   * A passive's `movement_speed` arrives on the COMPOSED sheet
+   * (`combat.mods.movementSpeed`, folded by `recomposeCombat` before it calls
+   * this), and upstream adds every source into the one attribute. So a stunned
+   * Long Strider at rank 1 walks at 1 + 0.08 − 0.5. Read off `actor.combat`
+   * here, after the flags above replaced it, which carries the mods through.
    */
-  actor.movementSpeed = DEFAULT_MOVEMENT_SPEED + (mods.movementSpeedAdd ?? 0);
+  actor.movementSpeed =
+    DEFAULT_MOVEMENT_SPEED +
+    (mods.movementSpeedAdd ?? 0) +
+    (actor.combat?.mods?.movementSpeed ?? 0);
 }
 
 /**

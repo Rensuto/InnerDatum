@@ -18592,9 +18592,10 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    * ═════════════════════════════════════════════════════════════════════════
    *
    * `recomposeCombat` rebuilds `actor.combat`. It does NOT resize the pools that
-   * are DERIVED from that sheet — the hit-point ceiling and the movement pool
-   * live behind `TurnEngine.refreshBody`, because computing them needs the class
-   * table and `net/**` may not import it.
+   * are DERIVED from that sheet — the hit-point ceiling lives behind
+   * `TurnEngine.refreshBody`, because computing it needs the class table and
+   * `net/**` may not import it. (The movement pool did too, until Long Stride
+   * became movement speed on 2026-09-24.)
    *
    * `handleSpendStat` already knew this and said so:
    *

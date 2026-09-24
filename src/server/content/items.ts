@@ -2090,10 +2090,6 @@ export const MAX_ITEM_AFFINITY = 25;
 
 export const DEAD_MOD_KEYS: readonly string[] = Object.freeze([
   /**
-   * ═══════════════════════════════════════════════════════════════════════════
-   * `moveMp` IS DELIBERATELY NOT ON THIS LIST, AND IT WAS FOR ONE COMMIT.
-   * ═══════════════════════════════════════════════════════════════════════════
-   *
    * This list and the `Omit` it braces exist for fields an ITEM CANNOT MOVE
    * HONESTLY. They were fields nothing read — `combatSpeed`, `combatSpellpower`
    * and `combatMindpower` had zero call sites, so an item granting one would
@@ -2102,21 +2098,32 @@ export const DEAD_MOD_KEYS: readonly string[] = Object.freeze([
    * is here because the additive fold would get it WRONG rather than ignore it:
    * see `CombatMods` in engine/derived.ts.
    *
-   * `moveMp` is the opposite: `refreshPassives` folds it into the movement
-   * ceiling and it works. Excluding it here would have been using a guard about
-   * DEAD fields to express a decision about CONTENT — and it would have blocked
-   * talents too, since `passiveCombat` is typed `Partial<AdditiveMods>`, which
-   * is how the mistake announced itself.
-   *
-   * SO AN ITEM MAY GRANT IT AND NONE DOES. Boots that move you an extra tile
-   * are a good idea and a loot-balance change; authoring one is a content
-   * decision for a commit that is about the loot table, not this one.
+   * `movementSpeed` IS NOT HERE: it is read, and a passive grants it, which the
+   * `Omit` would forbid too (`passiveCombat` is `Partial<AdditiveMods>`). It is
+   * refused to items by `PASSIVE_ONLY_MOD_KEYS` below instead.
    */
   'physSpeed',
   // `spellPower` and `mindPower` CAME OFF THIS LIST. Both are read — see the
   // note on `AdditiveMods` — and listing them here refused an item that would
   // have worked perfectly.
 ]);
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * READ, GRANTED BY A PASSIVE, AND REFUSED TO AN ITEM — ToME's FRACTIONS.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `movementSpeed` is ToME's `movement_speed` add, a fraction (0.08 is a step
+ * 8% faster). Every wielder value here must be a non-negative INTEGER (the
+ * check below says why), so the only grant an item could make is a whole 1 —
+ * a step at HALF a turn, which is what a pair of boots authored in the old
+ * "+1 movement point" sense would silently become. Refused by name, with a
+ * reason, rather than left to that accident.
+ *
+ * The day an item grants movement speed, the grant learns a unit (a percent,
+ * as `healMod` would need) in the same commit.
+ */
+export const PASSIVE_ONLY_MOD_KEYS: readonly string[] = Object.freeze(['movementSpeed']);
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════
@@ -2192,6 +2199,12 @@ export function validateItems(items: readonly Item[]): readonly Item[] {
         throw new Error(
           `items: ${item.id} grants '${key}', which has ZERO call sites in src/ — ` +
             `it would be an item that changes no number a player can see`,
+        );
+      }
+      if (PASSIVE_ONLY_MOD_KEYS.includes(key)) {
+        throw new Error(
+          `items: ${item.id} grants '${key}', a fraction only a passive may grant — ` +
+            `see PASSIVE_ONLY_MOD_KEYS`,
         );
       }
       if (value === undefined) continue;

@@ -249,30 +249,25 @@ export type CombatMods = {
   readonly mentalResist?: number;
   /**
    * ═══════════════════════════════════════════════════════════════════════════
-   *   HOW FAR THIS BODY GETS IN A TURN — extra MOVEMENT POINTS.
+   *   `movement_speed` — HOW MUCH CHEAPER A STEP IS. tome/class/Actor.lua:105.
    * ═══════════════════════════════════════════════════════════════════════════
    *
-   * Movement was the one budget in this game nothing could change. `maxMp` came
-   * off the class table and stayed there for a career: a level-50 character
-   * covered exactly the ground a level-1 one did, and no talent, no item and no
-   * decision moved it. Statuses could take it away (`mpPenalty`) and nothing
-   * could ever give it back.
+   * ToME's add, a FRACTION: 0.08 is a step 8% faster, priced at 1/1.08 of a
+   * turn (`combatMovementSpeed`). Summed as upstream sums it (`movement_speed =
+   * "add"`, :105) with every live effect's `movementSpeedAdd`, onto the body's
+   * own `movementSpeed`, by `recomputeAttributes` (engine/effects.ts) — read
+   * there, not in a getter, because the body's field is what a step is priced
+   * off.
    *
-   * ═══ READ IN `refreshPassives`, NOT IN A GETTER ═══
-   * Every other field here feeds a `combatX` function that composes on demand.
-   * MP is a POOL — it is refilled once per turn against a ceiling — so this is
-   * folded into `TalentSheet.maxMp` by the same pass that already derives
-   * `maxHp`, and the refill reads the ceiling it always read.
+   * PASSIVE-ONLY. Long Stride grants it, at Lightning Speed's passive rate
+   * (gifts/storm-drake.lua:33, :39). An item may not: the value is a fraction,
+   * and `validateItems`' integer rule is what keeps a wielder grant exact, so
+   * items refuse it by name (`PASSIVE_ONLY_MOD_KEYS`, content/items.ts).
    *
-   * ═══ AN ITEM MAY GRANT IT, AND THIS PARAGRAPH SAID OTHERWISE FOR MONTHS ═══
-   * It read *"AN ITEM MAY NOT GRANT IT, THIS COMMIT — `AdditiveMods` omits
-   * it"*. `AdditiveMods` is `Omit<CombatMods, 'physSpeed'>`, so it has never
-   * omitted this, and `moveMp` joined `WIELDER_MOD_KEYS` when the fold's own
-   * docblock worked out that the type permitted a grant the fold then dropped.
-   * The sentence was a deferral that outlived its deferral — the thing it named
-   * shipped, in a commit that had no reason to be reading this file.
+   * IT WAS `moveMp`, a whole movement POINT on a per-turn budget, until
+   * 2026-09-24, when a step started paying ToME's price.
    */
-  readonly moveMp?: number;
+  readonly movementSpeed?: number;
   /**
    * ═══════════════════════════════════════════════════════════════════════════
    * `max_life` — FLAT HIT POINTS FROM WHAT YOU ARE WEARING.
@@ -282,12 +277,11 @@ export type CombatMods = {
    * granted by 39 items in `tome/data`, which makes it one of the most common
    * things a piece of gear does upstream and one this game could not express.
    *
-   * ═══ A POOL, SO IT IS READ WHERE `moveMp` IS READ ═══
+   * ═══ A POOL, SO IT IS READ BY THE POOL ═══
    * `maxLifeOf` (engine/pools.ts) composes the ceiling out of the class figure,
    * the life rating, the level, the rank and the Constitution bought — and now
-   * this, added last. It is NOT a getter in this file for the reason `moveMp`'s
-   * note gives: a ceiling is refilled against once per turn, not composed on
-   * demand, so folding it in a getter would leave `actor.maxHp` disagreeing
+   * this, added last. It is NOT a getter in this file: a ceiling is refilled
+   * against once per turn, not composed on demand, so folding it in a getter would leave `actor.maxHp` disagreeing
    * with the getter and the health bar reading one of the two at random.
    */
   readonly maxHp?: number;

@@ -13,7 +13,7 @@
  */
 
 import { creditForLanding, recomposeCombat } from './engine/effects.ts';
-import { maxLifeOf, maxMoveOf } from './engine/pools.ts';
+import { maxLifeOf } from './engine/pools.ts';
 import { resolveItem } from './content/resolve.ts';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
@@ -1438,7 +1438,7 @@ export function buildServer() {
      * one more thing on top of this; see `summonPass` in `talentRuntimeFor`.
      *
      * RECOMPOSED, AND NOTHING ELSE. Everything else below reads the sheet (the
-     * passive fold, the hooks, the proc latch, `maxMp`) or is the damage-shield
+     * passive fold, the hooks, the proc latch) or is the damage-shield
      * closure, and the only shield in the game is the
      * Shielding Rune a caster puts on itself. So a body with no sheet has none
      * of it to contribute. No sheet is minted here to get past the guard: a
@@ -1760,52 +1760,6 @@ export function buildServer() {
           PLAYER_RANK,
         );
         actor.hp = Math.min(actor.hp, actor.maxHp);
-
-        /**
-         * ═══════════════════════════════════════════════════════════════════
-         *   AND HOW FAR IT GETS IN A TURN. The other pool nothing could move.
-         * ═══════════════════════════════════════════════════════════════════
-         *
-         * `maxMp` came off the class table and stayed there for a whole career:
-         * a level-50 character covered exactly the ground a level-1 one did.
-         * Statuses could take movement away (`mpPenalty`) and nothing in the
-         * game could ever give it back.
-         *
-         * DERIVED HERE FOR `maxHp`'s REASONS, ALL OF THEM. This function runs on
-         * every occasion the inputs can move — class chosen, point spent,
-         * discipline bought, character restored, once per base turn — and a
-         * second site would be a second answer to "how far does this body go".
-         *
-         * ═══ THE CEILING MOVES; THE POOL IS LEFT WHERE IT IS ═══
-         * `sheet.mp` is refilled against `maxMp` once per turn (engine/talents.ts)
-         * and that refill is the only thing that should hand a player movement.
-         * Raising the current pool here would give a step back mid-turn to
-         * anybody who spent a point, which is a free move the turn system never
-         * agreed to. Clamped downward only, for the reason the hit points above
-         * are: a pool reading 4/3 is a number nothing else in this game can
-         * draw.
-         */
-        const sheet = talentEngine.sheetOf(actorId);
-        if (sheet !== undefined) {
-          /**
-           * ═══════════════════════════════════════════════════════════════════
-           * FROM THE COMPOSED SHEET, NOT FROM `passiveCombat`.
-           * ═══════════════════════════════════════════════════════════════════
-           *
-           * This read `actor.passiveCombat?.mods?.moveMp` — the passive layer
-           * alone — which is the same shape as the bug that started this whole
-           * pass: a derived pool reaching past `recomposeCombat` to one of the
-           * layers underneath it. A `moveMp` from gear or from a timed effect
-           * paid nothing, and `equipment.ts` was dropping the gear one anyway.
-           *
-           * BOTH HALVES HAD TO LAND TOGETHER. Adding `moveMp` to
-           * `WIELDER_MOD_KEYS` without this line changes nothing; changing this
-           * line without the allow-list would have made the `legwork` passive
-           * vanish, because the fold would not have carried it into `combat`.
-           */
-          sheet.maxMp = maxMoveOf(actor, definition);
-          sheet.mp = Math.min(sheet.mp, sheet.maxMp);
-        }
       }
     }
   };

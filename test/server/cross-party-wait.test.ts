@@ -15,7 +15,7 @@ import { talentRuntimeFor } from '../../src/server/main.ts';
 import { wsGateway } from '../../src/server/net/gateway.ts';
 import { createTurnEngine } from '../../src/server/turn-engine.ts';
 import { createWorld } from '../../src/server/world/world.ts';
-import { ENERGY_TO_ACT } from '../../src/shared/energy.ts';
+import { ENERGY_PER_TICK, ENERGY_TO_ACT } from '../../src/shared/energy.ts';
 import { TileCode } from '../../src/shared/protocol.ts';
 import { COMMAND_GAP_MS, PROTOCOL_VERSION } from '../../src/shared/version.ts';
 import { attachClassFor } from '../helpers/attach-class.ts';
@@ -439,6 +439,47 @@ describe('two parties in one engaged realm', () => {
     // A frame goes out for the fresh count, and it carries the whole of it.
     await waitUntil(() => b.client.latestSince('turn', mark) !== undefined, 'a turn frame');
     const bellMs = b.client.latestSince('turn', mark)?.['bellMs'];
+    expect(typeof bellMs).toBe('number');
+    expect(bellMs as number).toBeGreaterThan(BELL_MS.Normal - 1_000);
+  });
+
+  it('gives a player asked again with nobody between a fresh count — a step at half a turn', async () => {
+    /**
+     * THE FIRST CONTENT THAT ASKS A PLAYER TWICE IN A ROW. A step costs a turn at
+     * the body's movement speed, and Long Stride makes it less, so A can be back
+     * on the hook before anybody else is. Here movement speed 2, half a turn:
+     * A, at exactly one turn, is ready again 5 ticks after the step, and B, six
+     * ticks short, is not — at full price A would need 10 and B would go first.
+     * The countdown is keyed on WHO is current, and nobody else was, so what
+     * restarts it is that A stopped owing a decision in between. A re-park on
+     * the rest of the old count would hand A a Bell already half gone.
+     *
+     * THE SPEED IS WRITTEN ON THE BODY because this harness has no status
+     * table, so no recompute runs to overwrite it; the passive's own path to
+     * `movementSpeed` is action-cost.test.ts's.
+     */
+    const { h, a, b } = await strangersEngaged('cross-party-cheap-step');
+    await waitUntil(() => h.engine.turnState().current === b.id, "B's turn");
+    await sleep(COMMAND_GAP_MS);
+    b.client.send({ t: 'hold' });
+    await waitUntil(() => h.engine.turnState().current === a.id, "A's turn again");
+    // BOTH CLOCKS PINNED, so the step's price alone decides who is next.
+    a.body.energy = ENERGY_TO_ACT;
+    b.body.energy = ENERGY_TO_ACT - 6 * ENERGY_PER_TICK;
+    a.body.movementSpeed = 2;
+    const first = h.engine.turnState().bellDeadlineMs;
+    expect(first, 'no Bell on A to begin with').toBeTypeOf('number');
+
+    await sleep(1_500);
+    const mark = a.client.count();
+    await step(a, 's');
+    await waitUntil(
+      () => h.engine.turnState().current === a.id && h.engine.turnState().bellDeadlineMs !== first,
+      'A asked again on a count of their own',
+    );
+    expect(b.body.energy, 'B was ready in between').toBe(ENERGY_TO_ACT - ENERGY_PER_TICK);
+    await waitUntil(() => a.client.latestSince('turn', mark) !== undefined, 'a turn frame');
+    const bellMs = a.client.latestSince('turn', mark)?.['bellMs'];
     expect(typeof bellMs).toBe('number');
     expect(bellMs as number).toBeGreaterThan(BELL_MS.Normal - 1_000);
   });

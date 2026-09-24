@@ -14,9 +14,8 @@
  * damage. This file answers the other question a composed sheet implies: "how
  * much of this body IS there".
  *
- * IT SAID "one function today; `maxMp` belongs here the day anything other than
- * a passive can move it." That day arrived when `moveMp` joined the gear fold,
- * and `maxMoveOf` is below.
+ * `maxMoveOf` lived here too, for the movement-point ceiling, until Long Stride
+ * became movement SPEED (2026-09-24): a step is priced now, not counted.
  *
  * ═══════════════════════════════════════════════════════════════════════════
  * WHY THIS IS A FILE AND NOT THE THREE LINES IT REPLACES
@@ -77,7 +76,6 @@ export type PooledBody = {
 export type PooledClass = {
   readonly maxHp: number;
   readonly lifeRating: number;
-  readonly maxMp: number;
   readonly combat: CombatSheet;
 };
 
@@ -119,42 +117,11 @@ export function maxLifeOf(body: PooledBody, definition: PooledClass, rank: numbe
    * folding a flat grant in before the rating multiplied it would make the same
    * coat worth four times as much at level 20 as at level 1.
    *
-   * `body.combat` is the RECOMPOSED sheet — the same field `maxMoveOf` reads
-   * for `moveMp` — so this is gear, egos, passives and live effects together,
-   * and it moves the moment `refreshBody` runs.
+   * `body.combat` is the RECOMPOSED sheet, so this is gear, egos, passives and
+   * live effects together, and it moves the moment `refreshBody` runs.
    */
   const worn = body.combat?.mods?.maxHp ?? 0;
   return (
     maxLifeFor(definition.maxHp, definition.lifeRating, body.level, rank, liveCon - classCon) + worn
   );
-}
-
-/**
- * ═══════════════════════════════════════════════════════════════════════════
- * HOW FAR THIS BODY GETS IN A TURN.
- * ═══════════════════════════════════════════════════════════════════════════
- *
- * The class's authored figure plus whatever `mods.moveMp` the composed sheet
- * carries — a `legwork` passive, and now a worn item or a timed effect, because
- * `moveMp` joined `WIELDER_MOD_KEYS`.
- *
- * ═══ IT READ `passiveCombat` AND THAT WAS THE SAME BUG AS ALL THE OTHERS ═══
- * `main.ts` computed this as `definition.maxMp + actor.passiveCombat?.mods
- * ?.moveMp`, which is a derived pool reaching past `recomposeCombat` to one of
- * the layers underneath it — the shape that cost this project a whole day: max
- * hit points off the points ledger, the compare panel off `baseCombat`, two
- * clamps off a level-1 ceiling.
- *
- * ═══ AND IT WAS COMPLETELY UNTESTED, WHICH IS WHY IT IS HERE NOW ═══
- * Removing `moveMp` from the fold's allow-list — which would have silently
- * deleted the `legwork` passive's whole effect — failed NOTHING in a suite of
- * four thousand tests. It was unreachable where it lived, inside the
- * `buildServer` closure, exactly as `maxLifeOf` was.
- *
- * FLOORED AT ONE. A body that cannot move at all is a body the turn system has
- * no answer for. (A status took movement away through `mpPenalty` until a slow
- * reached the clock instead, 2026-09-24.)
- */
-export function maxMoveOf(body: PooledBody, definition: PooledClass): number {
-  return Math.max(1, definition.maxMp + (body.combat?.mods?.moveMp ?? 0));
 }

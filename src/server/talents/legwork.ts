@@ -3,7 +3,8 @@
 // SHAPE:   t-engine4 game/modules/tome/data/talents/cunning/survival.lua -- the
 //          generic category a class does NOT open with, bought with a category
 //          point, and the one upstream fills with getting-about talents.
-// NUMBERS: authored.
+// NUMBERS: authored, except Long Stride's — Lightning Speed's passive,
+//          gifts/storm-drake.lua:33, :39.
 // T-Engine4 (C) 2009-2018 Nicolas Casalini "DarkGod" -- https://te4.org/license
 
 /**
@@ -16,13 +17,11 @@
  * spend one on — see `generic/leverage` for the first and for the whole
  * argument about why the locked trees are generic.
  *
- * ═══ IT IS THE FIRST THING IN THE GAME THAT MOVES YOU FURTHER ═══
- * `maxMp` came off the class table and stayed there for a whole career: a
- * level-50 character covered exactly the ground a level-1 one did. Statuses
- * could TAKE movement away — `SLOWED` carried an `mpPenalty` until a slow
- * reached the clock instead (2026-09-24) — and nothing in the game could ever
- * give it back, let alone add to it. `moveMp` is a new channel on `CombatMods` and this discipline is what it
- * is for.
+ * ═══ IT IS THE FIRST THING IN THE GAME THAT MAKES YOU FASTER ON YOUR FEET ═══
+ * A step costs a turn at ToME's movement speed (`combatMovementSpeed`), and a
+ * stun can take half of it away. Long Stride is what gives some back: ToME's
+ * `movement_speed`, on `CombatMods.movementSpeed`, which this discipline is
+ * the only thing in the game to grant.
  *
  * ═══ THREE OF THE SIX ARE MOVEMENT, AND THAT IS THE DISCIPLINE ═══
  * A flat one, one for being crowded and one for being hurt — which is to say:
@@ -46,6 +45,7 @@ import {
   TalentKind,
   TalentRefusal,
   TargetShape,
+  percent,
   stepToward,
   talentDone,
   talentId,
@@ -78,35 +78,36 @@ const SHARED = {
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════
- * WHY EVERY MOVEMENT BAND IN THIS FILE IS SMALL.
+ * LONG STRIDE'S NUMBERS ARE UPSTREAM'S — LIGHTNING SPEED'S PASSIVE.
  * ═══════════════════════════════════════════════════════════════════════════
  *
- * A class has three or four movement points. One extra is a QUARTER more
- * ground, and three would be nearly double — at which point a party stops
- * having to think about where it stands, which is most of what this game's
- * tactical layer is made of. `one_at_a_time`, `braced`, `riot_line` and
- * `cold_case` all pay for a POSITION, and a character who can simply walk out
- * of any position has quietly turned all four of them off.
- *
- * So the numbers here look timid beside the damage bands elsewhere and are not:
- * one point of movement is worth more than ten of damage in the fights this
- * discipline is for.
+ * ```lua
+ * getPassiveSpeed = function(self, t) return self:combatTalentScale(t, 0.08, 0.4, 0.7) end,
+ * passives = function(self, t, p)
+ *   self:talentTemporaryValue(p, "movement_speed", t.getPassiveSpeed(self, t))
+ * end,
+ * ```
+ * (gifts/storm-drake.lua:33, :39.) The nearest thing ToME has to a talent that
+ * only makes you walk faster: 8% at rank 1 and 40% at rank 5, a step at 1/1.4
+ * of a turn. It was a whole extra movement POINT on a per-turn budget — 1 to
+ * 2, authored — until a step started paying ToME's price (2026-09-24).
  */
-const MP_LOW = 1;
-const MP_HIGH = 2;
-
-/** Extra movement, at a rank. Small on purpose — see above. */
-function movementAt(level: number): number {
-  return Math.max(1, Math.round(combatTalentScale(level, MP_LOW, MP_HIGH, CURVE)));
-}
+const STRIDE_LOW = 0.08;
+const STRIDE_HIGH = 0.4;
+const STRIDE_CURVE = 0.7;
+/**
+ * A formatting factor, not a tunable. Not `percent()`, which rounds: upstream's
+ * `%d%%` truncates (storm-drake.lua's info), and 0.2577 reads 25% there.
+ */
+const PER_CENT = 100;
 
 // ---------------------------------------------------------------------------
-// LONG STRIDE — the door, and the first talent that moves you further
+// LONG STRIDE — the door, and the first talent that makes you faster
 // ---------------------------------------------------------------------------
 
-/** Extra movement points, always, at a rank. */
+/** ToME's `movement_speed` add, always, at a rank. */
 export function strideAt(level: number): number {
-  return movementAt(level);
+  return combatTalentScale(level, STRIDE_LOW, STRIDE_HIGH, STRIDE_CURVE);
 }
 
 /**
@@ -118,6 +119,9 @@ export function strideAt(level: number): number {
  * `weak_points.ts`'s reason exactly: a locked tree has to be worth its category
  * point on the day it is bought, and a wall of conditions is worth nothing
  * until a player has learned what triggers them. One of the six is the door.
+ *
+ * THE TEXT IS UPSTREAM'S ARITHMETIC: `%d%%` of `getPassiveSpeed * 100`, which
+ * truncates, and the price that follows from it.
  */
 export const longStride: Talent = {
   ...SHARED,
@@ -126,10 +130,11 @@ export const longStride: Talent = {
   /** Tier 1 of its tree. See `src/shared/tiers.ts`. */
   tier: 1,
   iconId: 'icon_passive_long_stride',
-  passive: (level) => ({ mods: { moveMp: strideAt(level) } }),
+  passive: (level) => ({ mods: { movementSpeed: strideAt(level) } }),
   describe: (_self, level) =>
-    `Always on. ${String(strideAt(level))} more movement each turn — the first thing in the ` +
-    `game that covers more ground than the class you picked.`,
+    `Always on. Increases your movement speed by ` +
+    `${String(Math.floor(strideAt(level) * PER_CENT))}%: a step costs ` +
+    `${percent(1 / (1 + strideAt(level)))} of a turn.`,
 };
 
 // ---------------------------------------------------------------------------
@@ -295,7 +300,7 @@ const KICK_COOLDOWN = tomeCooldownToTurns(DISENGAGE_COOLDOWN_ACTIONS);
  *
  * ═══ AND A PASSIVE COULD NOT EXPRESS WHAT DISENGAGE DOES ANYWAY ═══
  * Upstream's Disengage names a body and throws you away from it NOW. A trickle
- * of `moveMp` is a different thing wearing the same words: it helps on the turn
+ * of movement points was a different thing wearing the same words: it helps on the turn
  * after you already decided to walk, it cannot cross the gap in one action, and
  * it is worth nothing at all if the thing on you also took your movement. The
  * escape a player wants is the one they can spend on the turn they are grabbed.

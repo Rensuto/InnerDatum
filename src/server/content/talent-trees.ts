@@ -720,9 +720,9 @@ export const TALENT_TREES: readonly TalentTree[] = Object.freeze([
      * THE SECOND LOCKED DISCIPLINE. See `TalentTree.locked`.
      *
      * Where Leverage is about hitting something that is resisting you, this is
-     * about not being where it swings. It is also the first thing in the game
-     * that moves a character further than the class they picked — `maxMp` came
-     * off the class table and stayed there for a whole career.
+     * about not being where it swings. It is also the only thing in the game
+     * that makes a character faster on their feet: Long Stride is ToME's
+     * `movement_speed`, at Lightning Speed's passive rate.
      */
     id: 'generic/legwork',
     mastery: 1,

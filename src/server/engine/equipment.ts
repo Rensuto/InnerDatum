@@ -183,8 +183,8 @@ const WIELDER_MOD_KEYS: readonly (keyof AdditiveMods)[] = Object.freeze([
    * IT IS ON THIS LIST BECAUSE THE LIST IS THE FOLD. `CombatMods.senses` is
    * read, `AdditiveMods` permits it and `cold_reading.ts` grants it — and
    * without this line every one of those would be true while the number never
-   * reached a sheet. That is the `moveMp` shape below, and it has now been the
-   * shape of enough bugs in this file to be worth naming twice.
+   * reached a sheet. That is the `movementSpeed` shape below, and it has now
+   * been the shape of enough bugs in this file to be worth naming twice.
    */
   'senses',
   'genericCrit',
@@ -193,10 +193,10 @@ const WIELDER_MOD_KEYS: readonly (keyof AdditiveMods)[] = Object.freeze([
   'genericPower',
   /**
    * ═══════════════════════════════════════════════════════════════════════════
-   * AND THE TWO TARGETED POWERS — THE `moveMp` MISTAKE, MADE A SECOND TIME.
+   * AND THE TWO TARGETED POWERS — THE MISSING-KEY MISTAKE, MADE A SECOND TIME.
    * ═══════════════════════════════════════════════════════════════════════════
    *
-   * The note below on `moveMp` says it exactly: a field `content/items.ts` says
+   * The note below on `movementSpeed` says it: a field `content/items.ts` says
    * an item may grant, missing from THIS list, is an item that type-checks,
    * persists, prints a tooltip and changes nothing.
    *
@@ -215,27 +215,20 @@ const WIELDER_MOD_KEYS: readonly (keyof AdditiveMods)[] = Object.freeze([
   'mentalResist',
   /**
    * ═══════════════════════════════════════════════════════════════════════════
-   * `moveMp` WAS MISSING, AND content/items.ts SAID AN ITEM COULD GRANT IT.
+   * `movementSpeed` — PASSIVE-ONLY, AND ON THIS LIST BECAUSE THIS LIST IS THE FOLD.
    * ═══════════════════════════════════════════════════════════════════════════
    *
-   * `DEAD_MOD_KEYS`'s own note argues at length that `moveMp` is NOT a dead
-   * field — *"`refreshPassives` folds it into the movement ceiling and it
-   * works"* — and closes with *"SO AN ITEM MAY GRANT IT AND NONE DOES."*
+   * Long Stride's passive reaches the sheet through `composeWielders` like any
+   * worn thing, so without this line the talent would be ranked and described
+   * and never move a step's price. Items are refused it by name
+   * (`PASSIVE_ONLY_MOD_KEYS`, content/items.ts): it is a fraction.
    *
-   * An item could not. The type permitted one (`AdditiveMods` omits only the
-   * three genuinely dead fields), so a pair of boots granting `moveMp` would
-   * type-check, pass the import-time check, persist, draw a tooltip — and be
-   * dropped right here, because this list is the belt to that type's braces and
-   * nothing in the fold reads a key it was not told about. Exactly the "item
-   * that changes no number a player can see" those two guards exist to prevent,
-   * arriving through the door neither was watching.
-   *
-   * Five of the six lenses in the 2026-08-31 stat audit flagged it independently
-   * and every one was refuted as latent, because nothing grants it today. It is
-   * fixed now rather than when somebody authors the boots, since the day it
-   * bites is the day it is hardest to see.
+   * THIS KEY WAS MISSING ONCE, as `moveMp`: an item the type permitted would
+   * have been dropped right here, with a tooltip promising it. Five of six
+   * lenses in the 2026-08-31 stat audit flagged it before anybody authored the
+   * boots.
    */
-  'moveMp',
+  'movementSpeed',
   /**
    * ═══════════════════════════════════════════════════════════════════════════
    * AND THE TWO VITALS — the most common thing gear does upstream that gear
@@ -247,7 +240,7 @@ const WIELDER_MOD_KEYS: readonly (keyof AdditiveMods)[] = Object.freeze([
    * `actBase` ticks a drip, both ported with citations — and neither had a
    * channel an item could reach them through.
    *
-   * THEY ARE READ WHERE `moveMp` IS READ, not in a getter: a pool is refilled
+   * THEY ARE READ BY THE POOLS, not in a getter: a pool is refilled
    * against a ceiling once per turn, so a getter would leave `actor.maxHp`
    * disagreeing with the composed answer. See `CombatMods.maxHp`.
    */

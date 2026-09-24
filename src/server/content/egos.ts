@@ -1258,7 +1258,12 @@ const DEAD_GRANT_KEYS: readonly string[] = Object.freeze(['physSpeed']);
  * A class sheet may still set it: classes.ts authors 1.1 / 1.2 / 1.15 directly,
  * in the units the formula wants. No authored ITEM grants it either.
  */
-export const EGO_FORBIDDEN_MOD_KEYS: readonly string[] = Object.freeze(['damRange']);
+export const EGO_FORBIDDEN_MOD_KEYS: readonly string[] = Object.freeze([
+  'damRange',
+  // ToME's `movement_speed`, a fraction a passive grants — see
+  // `PASSIVE_ONLY_MOD_KEYS` in content/items.ts.
+  'movementSpeed',
+]);
 
 /** Every tier, for the corner check below. */
 const ALL_TIERS: readonly ItemTier[] = Object.freeze(['common', 'uncommon', 'rare']);

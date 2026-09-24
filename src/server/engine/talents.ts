@@ -2303,16 +2303,10 @@ export type TalentSheet = {
   readonly maxAp: number;
   mp: number;
   /**
-   * THE MOVEMENT CEILING, AND IT IS NO LONGER `readonly`.
-   *
-   * It was, for as long as it came off the class table and stayed there — a
-   * level-50 character covered exactly the ground a level-1 one did. The
-   * `generic/legwork` discipline is the first thing that moves it, folded in by
-   * `refreshPassives` beside the hit-point ceiling it already derives.
-   *
-   * WRITTEN BY THAT FOLD AND BY NOTHING ELSE. It is derived from the class base
-   * plus `moveMp` contributions on every occasion those can change, so a second
-   * writer would be a second answer to how far a body gets in a turn.
+   * THE MOVEMENT CEILING — the class's authored figure, set when the sheet is
+   * built. `refreshPassives` raised it for Long Stride until that talent became
+   * ToME's movement SPEED (2026-09-24), which prices a step instead of counting
+   * them; nothing writes it now, and the budget itself is Slice C's to retire.
    */
   maxMp: number;
   /**
