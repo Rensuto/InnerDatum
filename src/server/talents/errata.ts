@@ -61,7 +61,6 @@ import type { Talent } from '../engine/talents.ts';
  */
 const STEPS_LOW = 2;
 const STEPS_HIGH = 6;
-const AP_COST = 2;
 const INK_COST = 6;
 const COOLDOWN = 3;
 /** How far away the destination may be named. */
@@ -80,7 +79,7 @@ export const errata: Talent = {
   statGate: 'cun',
   kind: TalentKind.Active,
   iconId: 'icon_active_errata',
-  cost: { ap: AP_COST, resource: INK_COST },
+  cost: { resource: INK_COST },
   cooldownTurns: COOLDOWN,
   targeting: {
     shape: TargetShape.Tile,

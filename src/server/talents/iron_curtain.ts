@@ -76,8 +76,6 @@ import {
 } from '../engine/talents.ts';
 import type { Talent, TalentActor, TalentHit, TalentWorld } from '../engine/talents.ts';
 
-/** FROZEN. 5 of 6 AP: raising the curtain is the round, not part of one. */
-const AP_COST = 5;
 /**
  * FROZEN. Resolve accrues at 6 per blow taken and 3 per adjacent ally per turn,
  * so 25 is roughly three turns of doing the job. A cost that fell with rank
@@ -147,7 +145,7 @@ const DAMAGE_MULT_HIGH = 2.4;
  *
  * TUNED HIGH, not ported: ToME has no guard-counter talent to copy. 0.7 -> 1.2
  * is tuned to stay below the Watchman's own at-will swing at every rank (1.0 ->
- * 1.8), because the counter is FREE — it costs no AP, no turn and no resource,
+ * 1.8), because the counter is FREE — it costs no turn and no resource,
  * and it can fire once per incoming blow. A free swing that outdamages a paid
  * one turns the guard into the highest-DPS button in the game and deletes the
  * reason to ever press Crude Blow.
@@ -274,7 +272,7 @@ export const ironCurtain: Talent = {
   statGate: 'con',
   kind: TalentKind.Active,
   iconId: 'icon_active_iron_curtain',
-  cost: { ap: AP_COST, resource: RESOLVE_COST },
+  cost: { resource: RESOLVE_COST },
   cooldownTurns: tomeCooldownToTurns(TOME_COOLDOWN),
   // Taunt, its shape, is `technique/other` (gifts/summon-utility.lua:22), so
   // `weapon` (tome/class/Actor.lua:5807-5808).

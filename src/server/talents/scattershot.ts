@@ -73,7 +73,6 @@ import type { Talent, TalentHit } from '../engine/talents.ts';
  * Upstream's own number, transcribed — `archery.lua:324`. See the header's ruling.
  */
 const FOCUS_COST = 12;
-const AP_COST = 4;
 /**
  * ═══ DIVERGES FROM THE CITED TALENT, AND THE REASON IS NOT RECORDED ═══
  * Upstream is `cooldown = 10` in ACTIONS, which `tomeCooldownToTurns` converts
@@ -98,7 +97,7 @@ const RADIUS = 1;
  * ═══ UNDER THE REVOLVER, FOR `pistol_whip.ts`'s REASON ═══
  * Upstream's Fragmentation Shot is `combatTalentWeaponDamage(t, 1.0, 1.5)` —
  * 122% at rank 1 rising to 150%. Ours is the same 0.5 -> 0.9 band `pistol_whip`
- * carries, and for the same stated reason: what the player pays four AP and a
+ * carries, and for the same stated reason: what the player pays a turn and a
  * cooldown for is the EFFECT, not the hit.
  *
  * The Inspector's ladder, which this sits inside:
@@ -130,7 +129,7 @@ export const scattershot: Talent = {
   statGate: 'dex',
   kind: TalentKind.Active,
   iconId: 'icon_active_scattershot',
-  cost: { ap: AP_COST, resource: FOCUS_COST },
+  cost: { resource: FOCUS_COST },
   cooldownTurns: COOLDOWN,
   // IT FIRES THE SHOOTER, so it pays the shooter's speed, as every upstream shot
   // does (tome/class/interface/Archery.lua:282-284).

@@ -67,11 +67,10 @@ const SHARED = {
   kind: TalentKind.Sustained,
   /**
    * FREE TO PRESS, for the reason `careful_method.ts` states: a stance pays in
-   * its reserve and pays nothing else, because charging AP as well would mean
-   * changing stance costs a turn's action and nobody would ever do it mid-fight
+   * its reserve and pays nothing else, because charging the turn as well would
+   * mean changing stance costs a turn's action and nobody would ever do it mid-fight
    * — which is the one moment the choice is interesting.
    */
-  cost: { ap: 0 },
   cooldownTurns: 0,
   sustain: { reserve: RESERVE },
   sustainSlot: LEDGER_SLOT,

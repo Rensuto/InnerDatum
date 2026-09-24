@@ -42,7 +42,6 @@ const base = {
   tree: 'test/stances',
   kind: TalentKind.Sustained,
   iconId: 'icon_passive_test',
-  cost: { ap: 0 },
   cooldownTurns: 0,
   targeting: {
     shape: TargetShape.Self,
@@ -308,7 +307,6 @@ describe('a cast is not a stance', () => {
       tree: 'watch/discipline',
       kind: TalentKind.Active,
       iconId: 'icon_active_plain',
-      cost: { ap: 1 },
       cooldownTurns: 0,
       targeting: {
         shape: TargetShape.Single,

@@ -372,7 +372,6 @@ export const gestureOfPain: Talent = {
   iconId: 'icon_sustain_gesture_of_pain',
   // FREE TO PRESS — `no_energy = true` (:70). See `ledger_stances.ts` for the
   // argument that a stance pays in its reserve and pays nothing else.
-  cost: { ap: 0 },
   cooldownTurns: 0,
   sustain: {},
   targeting: {

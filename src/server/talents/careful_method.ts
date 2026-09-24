@@ -91,11 +91,12 @@ export const carefulMethod: Talent = {
   iconId: 'icon_sustain_careful_method',
   /**
    * FREE TO PRESS. A stance pays in `sustain.reserve` and pays nothing else --
-   * charging AP as well would mean putting one up costs a turn's action, and a
-   * player would simply never change stance mid-fight, which is the one moment
-   * the choice is interesting.
+   * charging the turn as well would mean putting one up costs a turn's action,
+   * and a player would simply never change stance mid-fight, which is the one
+   * moment the choice is interesting. The toggle never reaches the scheduler
+   * (the gateway's `handleTalent`), and the tooltip says "Instant (0% of a
+   * turn)". (It was priced `ap: 0` while talents carried an AP price.)
    */
-  cost: { ap: 0 },
   cooldownTurns: 0,
   /** PRESENT IS WHAT MAKES IT A STANCE. See `Talent.sustain`. */
   sustain: { reserve: RESERVE },

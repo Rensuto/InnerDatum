@@ -61,7 +61,6 @@ import type { Talent } from '../engine/talents.ts';
 const RANGE = 5;
 /** Nine tiles. See the header on why the effect is a slow and not a stun. */
 const RADIUS = 1;
-const AP_COST = 5;
 const INK_COST = 26;
 const COOLDOWN = 6;
 
@@ -89,7 +88,7 @@ export const expunge: Talent = {
   statGate: 'cun',
   kind: TalentKind.Active,
   iconId: 'icon_active_expunge',
-  cost: { ap: AP_COST, resource: INK_COST },
+  cost: { resource: INK_COST },
   cooldownTurns: COOLDOWN,
   targeting: {
     shape: TargetShape.Ball,

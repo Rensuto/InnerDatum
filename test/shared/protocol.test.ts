@@ -951,7 +951,8 @@ describe('LoadoutTalent carries a rank the client cannot invent', () => {
     id: 'talent:fog_step',
     name: 'Fog Step',
     icon: 'icon_talent_fog_step',
-    cost: { ap: 0, mp: 3, resource: 10 },
+    cost: { resource: 10 },
+    usage: { type: 'standard', speed: 1 },
     cooldownTurns: 6,
     // PER-ACTOR FROM v9, and the narrowing that forced the bump. `combatTalentLimit
     // (t, 10, 3, 7)` (mobility.lua:40-62) floors to 3/4/5/6/7, so a rank-3
@@ -1009,7 +1010,7 @@ describe('LoadoutTalent carries a rank the client cannot invent', () => {
       id: 'talent:crude_blow',
       name: 'Crude Blow',
       icon: 'icon_talent_crude_blow',
-      cost: { ap: 5, mp: 0, resource: 0 },
+      cost: { resource: 0 },
       cooldownTurns: 0,
       range: 1,
       minRange: 0,
@@ -1051,6 +1052,7 @@ describe('LoadoutTalent carries a rank the client cannot invent', () => {
       name: fogStep.name,
       icon: fogStep.icon,
       cost: fogStep.cost,
+      usage: fogStep.usage,
       cooldownTurns: fogStep.cooldownTurns,
       range: fogStep.range,
       minRange: fogStep.minRange,

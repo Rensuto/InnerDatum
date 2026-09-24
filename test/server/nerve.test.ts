@@ -98,8 +98,8 @@ describe('the answer to a lock chain is a BUTTON now', () => {
     expect(shakeItOff.passive).toBeUndefined();
     expect(shakeItOff.onUse).toBeTypeOf('function');
     expect(shakeItOff.kind).toBe('active');
-    // AP ONLY: four classes may buy this tree and they spend four resources.
-    expect(shakeItOff.cost.resource ?? 0).toBe(0);
+    // THE TURN ONLY: four classes may buy this tree and they spend four resources.
+    expect(shakeItOff.cost?.resource ?? 0).toBe(0);
   });
 
   it('cannot make a character immune, which is the bound the old note set', () => {

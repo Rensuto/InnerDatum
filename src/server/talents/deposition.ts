@@ -55,7 +55,6 @@ import type { Talent } from '../engine/talents.ts';
  */
 
 const RANGE = 6;
-const AP_COST = 4;
 const INK_COST = 16;
 const COOLDOWN = 5;
 
@@ -92,7 +91,7 @@ export const deposition: Talent = {
   statGate: 'wil',
   kind: TalentKind.Active,
   iconId: 'icon_active_deposition',
-  cost: { ap: AP_COST, resource: INK_COST },
+  cost: { resource: INK_COST },
   cooldownTurns: COOLDOWN,
   targeting: {
     shape: TargetShape.Single,

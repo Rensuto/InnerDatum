@@ -56,8 +56,6 @@ import {
 } from '../engine/talents.ts';
 import type { Talent } from '../engine/talents.ts';
 
-/** FROZEN. One shot of a six-AP round, leaving room to step afterwards. */
-const AP_COST = 3;
 const FOCUS_COST = 12;
 const COOLDOWN_TURNS = 3;
 
@@ -113,7 +111,7 @@ export const lineOfEnquiry: Talent = {
   statGate: 'wil',
   kind: TalentKind.Active,
   iconId: 'icon_active_line_of_enquiry',
-  cost: { ap: AP_COST, resource: FOCUS_COST },
+  cost: { resource: FOCUS_COST },
   cooldownTurns: COOLDOWN_TURNS,
   // IT FIRES THE SHOOTER, so it pays the shooter's speed, as every upstream shot
   // does (tome/class/interface/Archery.lua:282-284).

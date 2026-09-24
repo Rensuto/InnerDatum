@@ -166,6 +166,7 @@ import type {
 } from '../../shared/protocol.ts';
 import type { SpriteSource } from '../render/assets.ts';
 import { resourceLabel } from './resource.ts';
+import { usageSpeedText } from '../../shared/usage-speed.ts';
 import type { PanelRect } from './panel.ts';
 
 // ---------------------------------------------------------------------------
@@ -763,10 +764,10 @@ export type TalentCell = {
    * pool until it is toggled off (engine/talents.ts on `TalentKind`).
    *
    * This card split on `passive` alone, so all five sustains printed the
-   * activated meta line -- an AP cost, a cooldown and a reach -- with nothing
-   * saying the press is a TOGGLE. The hotbar has known the difference since
-   * stances shipped (`LoadoutTalent.sustained` is its lit state); the panel
-   * you actually read to decide what to learn did not.
+   * activated meta line -- an AP cost (as talents had then), a cooldown and a
+   * reach -- with nothing saying the press is a TOGGLE. The hotbar has known
+   * the difference since stances shipped (`LoadoutTalent.sustained` is its lit
+   * state); the panel you actually read to decide what to learn did not.
    */
   readonly sustain: boolean;
   /** What it does now, and one point from now. Shown in the detail strip. */
@@ -774,6 +775,8 @@ export type TalentCell = {
   readonly descNext: string | null;
   /** Cost and reach, for the detail strip's meta line. */
   readonly cost: LoadoutTalent['cost'];
+  /** What a use costs in time — the `Usage Speed:` line. See `LoadoutTalent.usage`. */
+  readonly usage: LoadoutTalent['usage'];
   readonly cooldownTurns: number;
   /**
    * WHICH POOL THE COST IS IN. Carried on the CELL rather than read off the
@@ -1196,6 +1199,7 @@ export function talentPanelRows(view: TalentPanelView): readonly TalentRow[] {
     desc: talent.desc,
     descNext: talent.descNext,
     cost: talent.cost,
+    usage: talent.usage,
     cooldownTurns: talent.cooldownTurns,
     ...(view.pool === undefined ? {} : { pool: view.pool }),
     range: talent.range,
@@ -1381,6 +1385,7 @@ export function talentPanelRows(view: TalentPanelView): readonly TalentRow[] {
         desc: talent.desc,
         descNext: talent.descNext,
         cost: talent.cost,
+        usage: talent.usage,
         cooldownTurns: talent.cooldownTurns,
         ...(view.pool === undefined ? {} : { pool: view.pool }),
         range: talent.range,
@@ -3867,9 +3872,9 @@ function diffRuns(now: string, next: string, ink: string): TextRun[] {
  *                    or `Current talent level: 5` at the cap (:956-977);
  *   requirements     one line each, met or not (ActorTalents.lua:744-798);
  *   the rest         `getTalentFullDescription` (tome/class/Actor.lua:6200-6342):
- *                    effective level, use mode, costs, range, cooldown and
- *                    `Description:`, diffed against the next rank so what one
- *                    point changes is printed inline.
+ *                    effective level, use mode, costs, range, cooldown, usage
+ *                    speed and `Description:`, diffed against the next rank so
+ *                    what one point changes is printed inline.
  *
  * AN UNLEARNED TALENT IS DESCRIBED AT RANK ONE (:962): the talent a player is
  * deciding to buy, not the zero it does today.
@@ -3880,9 +3885,14 @@ function diffRuns(now: string, next: string, ink: string): TextRun[] {
  * description printed a second time underneath. The unmet requirement lines ARE
  * the refusal, as upstream's red ones are.
  *
+ * ═══ WHAT WAS OURS, AND WENT ═══
+ *   - `AP cost`, printed where upstream prints `Usage Speed`. It named the
+ *     action points a talent was priced in, and nothing had spent one since
+ *     Slice C retired the budget; v32 took the price off the wire and this pane
+ *     prints upstream's line in upstream's place, after the cooldown
+ *     (tome/class/Actor.lua:6276-6294), through `usageSpeedText`.
+ *
  * ═══ WHAT IS OURS ═══
- *   - `AP cost`. Upstream prices a talent in time; this game prices it in action
- *     points, so the line names what a player spends.
  *   - What it scales with closes the description as a sentence. Upstream's own
  *     descriptions say it in their prose; ours are authored without it, and the
  *     server renders the phrase (`LoadoutTalent.scales`).
@@ -3947,7 +3957,6 @@ export function talentDescRuns(cell: TalentCell): TextRun[] {
 
   field('Use mode: ', cell.passive ? 'Passive' : cell.sustain ? 'Sustained' : 'Activated');
   if (!cell.passive) {
-    field('AP cost: ', String(cell.cost.ap));
     if (cell.cost.resource > 0 && cell.pool !== undefined) {
       const pool = resourceLabel(cell.pool);
       // A SUSTAIN RESERVES, and upstream says so: `Sustain %s cost`.
@@ -3959,6 +3968,9 @@ export function talentDescRuns(cell: TalentCell): TextRun[] {
     field('Range: ', cell.range >= 2 ? String(Math.floor(cell.range)) : 'melee/personal');
   }
   if (cell.cooldownTurns > 0) field('Cooldown: ', String(cell.cooldownTurns));
+  // LAST, AFTER THE COOLDOWN, AND NEVER ON A PASSIVE — upstream's order and its
+  // `t.mode ~= "passive"` guard (tome/class/Actor.lua:6265-6294).
+  if (!cell.passive) field('Usage Speed: ', usageSpeedText(cell.usage));
 
   add('Description: ', PALETTE.GREY_HI);
   const scales =

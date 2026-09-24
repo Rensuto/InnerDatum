@@ -58,7 +58,8 @@ function talent(id: string, name: string): LoadoutTalent {
     id,
     name,
     icon: `icon_active_${id}`,
-    cost: { ap: 5, mp: 0, resource: 10 },
+    cost: { resource: 10 },
+    usage: { type: 'standard', speed: 1 },
     cooldownTurns: 3,
     range: 4,
     minRange: 0,
@@ -348,9 +349,7 @@ describe('what a talent is, in the width a card has', () => {
 
   it('calls the diagonal-inclusive adjacency melee, not "1.5 tiles"', () => {
     // Crude Blow, Ward Rush, Iron Curtain and Lockdown are all range 1.5.
-    expect(
-      talentShorthand(shaped({ range: 1.5, minRange: 0, cost: { ap: 3, mp: 0, resource: 0 } })),
-    ).toBe('3 AP · melee');
+    expect(talentShorthand(shaped({ range: 1.5, minRange: 0 }))).toBe('melee');
   });
 
   it('shows the dead zone as a band, because it is the thing to know', () => {
@@ -360,26 +359,28 @@ describe('what a talent is, in the width a card has', () => {
      * player who finds that out after choosing was told too late, and it fits
      * in three characters.
      */
-    expect(
-      talentShorthand(shaped({ range: 5, minRange: 3, cost: { ap: 3, mp: 0, resource: 0 } })),
-    ).toBe('3 AP · 3-5');
-    expect(
-      talentShorthand(shaped({ range: 7, minRange: 3, cost: { ap: 5, mp: 0, resource: 0 } })),
-    ).toBe('5 AP · 3-7');
+    expect(talentShorthand(shaped({ range: 5, minRange: 3 }))).toBe('3-5');
+    expect(talentShorthand(shaped({ range: 7, minRange: 3 }))).toBe('3-7');
   });
 
   it('gives a plain reach when there is no hole in it', () => {
     // Fog Step, Ashwick Flare, Backdraft — range with minRange 0.
-    expect(
-      talentShorthand(shaped({ range: 3, minRange: 0, cost: { ap: 4, mp: 0, resource: 0 } })),
-    ).toBe('4 AP · 3 tiles');
+    expect(talentShorthand(shaped({ range: 3, minRange: 0 }))).toBe('3 tiles');
   });
 
   it('calls a self-centred talent self rather than melee', () => {
     // Mend Wounds is range 0 and heals everybody within two tiles of YOU.
-    expect(
-      talentShorthand(shaped({ range: 0, minRange: 0, cost: { ap: 3, mp: 0, resource: 0 } })),
-    ).toBe('3 AP · self');
+    expect(talentShorthand(shaped({ range: 0, minRange: 0 }))).toBe('self');
+  });
+
+  it('prints the reach alone — the AP price it led with is gone', () => {
+    // `3 AP · melee` until v32. Nothing had spent an action point since the
+    // budget was retired, so the number told a player choosing a class nothing.
+    // A pool price does not take its place here: the card has one short field
+    // per talent, and the reach is the fact the dead zone makes decisive.
+    const card = talentShorthand(shaped({ range: 1.5, minRange: 0, cost: { resource: 30 } }));
+    expect(card).toBe('melee');
+    expect(card).not.toMatch(/AP|undefined/);
   });
 });
 

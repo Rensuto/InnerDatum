@@ -77,7 +77,6 @@ import type { Talent } from '../engine/talents.ts';
  * both legal at once. Nothing does yet, and building it now would be one more
  * finished system with no content pointed at it.
  */
-const ALTAR_AP = 4;
 const ALTAR_COOLDOWN = 6;
 
 /**
@@ -113,7 +112,6 @@ export const clearTheAltar: Talent = {
   tree: 'monster/index',
   kind: TalentKind.Active,
   iconId: 'icon_monster_clear_the_altar',
-  cost: { ap: ALTAR_AP },
   cooldownTurns: ALTAR_COOLDOWN,
   targeting: {
     shape: TargetShape.Ball,

@@ -34,16 +34,6 @@ import type { Talent } from '../engine/talents.ts';
 /** `npcs.lua:821` -- `cooldown = 6`, in ToME actions. See `tomeCooldownToTurns`. */
 const TOME_COOLDOWN = 6;
 
-/**
- * A CREATURE PAYS AP AND NOTHING ELSE, AND THIS IS BEAR DOWN'S PRICE.
- *
- * Upstream's Grab and upstream's Stun (`npcs.lua:191-217`, which is
- * `bear_down.ts`) are priced identically -- `cooldown = 6`, `stamina = 8` -- and
- * both are one weapon blow with a physical disable behind it. The same upstream
- * price gets the same price here, so the two are one decision rather than two.
- */
-const GRAB_AP = 5;
-
 /** `npcs.lua:833` -- `combatTalentWeaponDamage(t, 0.8, 1.4)`. */
 const BLOW_BASE = 0.8;
 const BLOW_MAX = 1.4;
@@ -122,7 +112,16 @@ export const grab: Talent = {
   kind: TalentKind.Active,
   /** ITS OWN ICON, UNDRAWN FOR NOW -- `Talent.iconId` states the rule. */
   iconId: 'icon_monster_grab',
-  cost: { ap: GRAB_AP },
+  /**
+   * NO `cost`: A CREATURE PAYS THE TURN AND NOTHING ELSE, AND THIS IS BEAR
+   * DOWN'S PRICE. Upstream's Grab and upstream's Stun (`npcs.lua:191-217`,
+   * which is `bear_down.ts`) are priced identically -- `cooldown = 6`,
+   * `stamina = 8` -- and both are one weapon blow with a physical disable
+   * behind it. The same upstream price gets the same price here: the same
+   * cooldown, the same weapon-speed turn, and no pool, so the two are one
+   * decision rather than two. (Both were 5 AP while talents carried an AP
+   * price.)
+   */
   cooldownTurns: tomeCooldownToTurns(TOME_COOLDOWN),
   // Grab is `technique/other` (misc/npcs.lua:819), so `weapon`
   // (tome/class/Actor.lua:5807-5808).

@@ -52,7 +52,6 @@ import type { Talent } from '../engine/talents.ts';
  */
 
 const RANGE = 4;
-const AP_COST = 4;
 const INK_COST = 14;
 const COOLDOWN = 5;
 
@@ -88,7 +87,7 @@ export const excise: Talent = {
   statGate: 'cun',
   kind: TalentKind.Active,
   iconId: 'icon_active_excise',
-  cost: { ap: AP_COST, resource: INK_COST },
+  cost: { resource: INK_COST },
   cooldownTurns: COOLDOWN,
   targeting: {
     shape: TargetShape.Single,

@@ -67,7 +67,6 @@ export const sealedRecord: Talent = {
   statGate: 'wil',
   kind: TalentKind.Passive,
   iconId: 'icon_passive_sealed_record',
-  cost: { ap: 0, resource: 0 },
   cooldownTurns: 0,
   targeting: {
     shape: TargetShape.Self,

@@ -1275,27 +1275,85 @@ export const TalentShape = {
 export type TalentShape = (typeof TalentShape)[keyof typeof TalentShape];
 
 /**
- * What one use costs.
+ * What one use costs the pool.
  *
  * `resource` is the class pool named by `ResourceView.kind`, and it is the one
- * price anything spends. AP and MP were the intra-turn budget (PLAN.md § 6)
- * until Slice C retired it: every action ends the turn and pays ToME's energy
- * price for it, which the server charges. The two fields are still projected
- * as a displayed price that nothing spends, until the commit that removes them
- * with a protocol bump. 0 rather than absent, so the hotbar never has to write
+ * price anything spends. 0 rather than absent, so the hotbar never has to write
  * `?? 0` at four call sites.
  *
- * ONE OBJECT RATHER THAN THREE TOP-LEVEL FIELDS because they are one concept —
- * "what this costs" — and because the server's `TalentCost` is already shaped
- * this way, so projecting it is filling in defaults rather than flattening.
+ * ═══ IT CARRIED `ap` AND `mp` UNTIL v32 ═══
+ * Action and movement points were the intra-turn budget (PLAN.md § 6), and every
+ * talent was priced in them. Slice C retired the budget — every action ends the
+ * turn and pays ToME's energy price, which the server charges — and the two
+ * figures rode this type for one more version as a price nothing spent. They
+ * went with the 31 -> 32 bump, and what a use costs in TIME is `usage` on
+ * `LoadoutTalent`, in ToME's own words.
+ *
+ * STILL ONE OBJECT RATHER THAN A TOP-LEVEL FIELD, because the server's
+ * `TalentCost` is shaped this way and a second pool price (a sustain's upkeep,
+ * say) belongs beside this one rather than loose on the talent.
  */
 export type TalentCostView = {
-  /** Action points — a displayed price; nothing spends them any more. */
-  ap: number;
-  /** Movement points — Fog Step's 1, displayed; nothing spends them any more. */
-  mp: number;
   /** Resolve / Focus / Reagents, per `ResourceView.kind`. */
   resource: number;
+};
+
+/**
+ * WHAT `getTalentSpeedType` ANSWERS, plus the two words the tooltip prints in
+ * its place — tome/class/Actor.lua:6276-6294.
+ *
+ *   `instant`   a `no_energy` talent: "Instant (0% of a turn)". A stance too,
+ *               whose toggle this engine never charges (`usageSpeedOf`).
+ *   `special`   a talent whose `speed` is a NUMBER — `type(speed_type)` is not a
+ *               string, so upstream prints `'Special'`.
+ *   the rest    the speed names `getSpeed` understands (:352-429), which a
+ *               talent names or upstream derives from its type (:5798-5814).
+ *
+ * MEMBER-FOR-MEMBER THE SERVER'S `TalentSpeedType` (engine/talents.ts) PLUS
+ * THE FIRST TWO, by the rule `TalentShape` states: src/shared/ may not reach
+ * into src/server/, so the names are written twice, and `usageSpeedOf` returns
+ * the engine's value as this type — a speed name added on one side only is a
+ * compile error there, not a tooltip reading `undefined`.
+ */
+export type UsageSpeedType =
+  | 'instant'
+  | 'special'
+  | 'weapon'
+  | 'mainhand'
+  | 'offhand'
+  | 'combat'
+  | 'archery'
+  | 'shield'
+  | 'throwing'
+  | 'spell'
+  | 'mind'
+  | 'summon'
+  | 'movement'
+  | 'standard';
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * WHAT ONE USE COSTS IN TIME — ToME's "Usage Speed", for THIS body.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * `speed` is `getTalentSpeed` (tome/class/Actor.lua:5816-5830): the fraction of
+ * a turn the server charges, `talentSpeed` in engine/talents.ts. 0 for an
+ * instant talent, which the server does not charge at all (:5862-5863).
+ *
+ * PER-ACTOR, LIKE `range`. A weapon-speed talent costs what the hand in THIS
+ * body's sheet costs, so two Watchmen holding different weapons receive
+ * different numbers, and the loadout is re-sent when the hand changes
+ * (`gateKeyFor`, net/gateway.ts).
+ *
+ * DATA, NOT THE SENTENCE. `usageSpeedText` (shared/usage-speed.ts) is the one
+ * sentence-maker, and the client and the server's tests both call it; a
+ * pre-rendered string here would be a second copy of upstream's format the
+ * first time anything else wanted the number.
+ */
+export type UsageSpeedView = {
+  type: UsageSpeedType;
+  /** Fraction of a turn: 1 is a whole turn, 0.8 a weapon at 80%, 0 instant. */
+  speed: number;
 };
 
 /**
@@ -1312,7 +1370,7 @@ export type TalentCostView = {
  * of a server-side talent, so adding a field here is a deliberate decision to
  * let a client know something. The test is "does the hotbar or the ring need it
  * to draw?" — cost and cooldownTurns for the button, range/minRange/shape/radius
- * for the overlay.
+ * for the overlay, usage for the tooltip.
  */
 export type LoadoutTalent = {
   /** Namespaced `talent:<id>` (docs/data-schemas.md § 5 rule R6). Stable forever. */
@@ -1321,11 +1379,18 @@ export type LoadoutTalent = {
   /** An asset key, never a path — the client owns the manifest. */
   icon: string;
   /**
-   * What one use costs. The client greys the button when a budget is short; the
-   * SERVER refuses the frame with `no_resource` regardless of what the button
-   * looked like, because the button is a picture and the server is the rule.
+   * What one use costs the pool. The client greys the button when the pool is
+   * short; the SERVER refuses the frame with `no_resource` regardless of what
+   * the button looked like, because the button is a picture and the server is
+   * the rule.
    */
   cost: TalentCostView;
+  /**
+   * WHAT ONE USE COSTS IN TIME — the tooltip's `Usage Speed:` line. See
+   * `UsageSpeedView`. REQUIRED, and it is half of why v32 is a bump: it
+   * replaced the AP price as the thing a talent is said to cost.
+   */
+  usage: UsageSpeedView;
   /**
    * GAME TURNS, never ticks. ToME's own `game.turn` counts ticks and mixing the
    * two is a factor-of-ten bug that reads as "cooldowns feel instant".

@@ -30,11 +30,12 @@
  * — `actBase` runs for every resolved actor with no player filter — so a
  * cooldown is a price a monster can actually pay.
  *
- * ═══ THE AP FIGURES ARE A PRICE NOTHING SPENDS ═══
+ * ═══ THE AP FIGURES WERE A PRICE NOTHING SPENT, AND THEY ARE GONE ═══
  * A creature's sheet was given six action points, "a player's round too", so
  * "two of its six" meant the same thing on both sides of a fight. That budget
- * is retired, for players and creatures together; every one of these talents
- * ends the creature's turn, which is what it always cost in practice.
+ * was retired, for players and creatures together, and the AP prices went
+ * after it; every one of these talents ends the creature's turn, which is what
+ * it always cost in practice, and a `speed` says how much of one.
  */
 
 /**

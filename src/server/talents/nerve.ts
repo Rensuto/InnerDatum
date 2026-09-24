@@ -68,7 +68,6 @@ const SHARED = {
   classId: null,
   tree: 'generic/nerve',
   kind: TalentKind.Passive,
-  cost: { ap: 0 },
   cooldownTurns: 0,
   targeting: {
     shape: TargetShape.Self,
@@ -188,8 +187,6 @@ export function breathAt(level: number): number {
   return combatTalentScale(level, BREATH_LOW, BREATH_HIGH);
 }
 
-/** Two of six: shrugging is quick, and it is the turn you had a bad one. */
-const SHAKE_AP = 2;
 /** Ported from conditioning.lua:152 — Adrenaline Surge's `cooldown = 24`. */
 const SURGE_COOLDOWN_ACTIONS = 24;
 const SHAKE_COOLDOWN = tomeCooldownToTurns(SURGE_COOLDOWN_ACTIONS);
@@ -238,7 +235,6 @@ export const shakeItOff: Talent = {
   tier: 1,
   kind: TalentKind.Active,
   iconId: 'icon_active_shake_it_off',
-  cost: { ap: SHAKE_AP },
   cooldownTurns: SHAKE_COOLDOWN,
   // NO `speed`: Adrenaline Surge is `no_energy = true`
   // (techniques/conditioning.lua:160), so upstream never charges one. Ours

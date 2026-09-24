@@ -59,8 +59,6 @@ import {
 import { INSPECTOR_MIN_RANGE } from './revolver_shot.ts';
 import type { Talent } from '../engine/talents.ts';
 
-/** FROZEN. Expensive, and a long cooldown: this is the shot that ends it. */
-const AP_COST = 4;
 const FOCUS_COST = 25;
 const COOLDOWN_TURNS = 6;
 const RANGE = 6;
@@ -106,7 +104,7 @@ export const closedFile: Talent = {
   statGate: 'wil',
   kind: TalentKind.Active,
   iconId: 'icon_active_closed_file',
-  cost: { ap: AP_COST, resource: FOCUS_COST },
+  cost: { resource: FOCUS_COST },
   cooldownTurns: COOLDOWN_TURNS,
   // IT FIRES THE SHOOTER, so it pays the shooter's speed, as every upstream shot
   // does (tome/class/interface/Archery.lua:282-284).

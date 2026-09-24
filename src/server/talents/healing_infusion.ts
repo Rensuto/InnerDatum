@@ -29,8 +29,10 @@
  * ═══ IT COSTS NO TURN, AND THAT IS THE WHOLE TUNING ═══
  * `no_energy = true` (:104). An infusion is not a move traded for a move; it is
  * the thing you do WHILE the fight goes on, which is why upstream's cooldown is
- * long and its heal is flat. `ap: 0` is what `no_energy` means in this engine,
- * and a heal costing 3 of 6 AP would be a different mechanic wearing the name.
+ * long and its heal is flat. `noEnergy` is what `no_energy` means in this
+ * engine — the scheduler parks the player for zero energy — and a heal that
+ * cost the turn would be a different mechanic wearing the name. (It was also
+ * priced `ap: 0` while talents carried an AP price.)
  *
  * ═══ FIFTY, VERBATIM, AND THE LOCAL ARITHMETIC THAT SAYS IT FITS ═══
  * `heal = 50` is upstream's birth number, ported unchanged — safe only because
@@ -80,9 +82,6 @@ const HEAL = 50;
  */
 const TOME_COOLDOWN = 12;
 
-/** `no_energy = true` (inscriptions.lua:104): the turn goes on around it. */
-const AP_COST = 0;
-
 export const healingInfusion: Talent = {
   id: talentId('healing_infusion'),
   name: 'Healing Infusion',
@@ -117,9 +116,8 @@ export const healingInfusion: Talent = {
    * before it reached anybody.
    */
   maxLevel: 1,
-  cost: { ap: AP_COST },
   cooldownTurns: tomeCooldownToTurns(TOME_COOLDOWN),
-  // Upstream's `no_energy = true`: pressed without spending the turn.
+  // Upstream's `no_energy = true` (inscriptions.lua:104): pressed without spending the turn.
   noEnergy: true,
   targeting: {
     // Self-centred, nothing to point at — `mend_wounds`' note applies word for

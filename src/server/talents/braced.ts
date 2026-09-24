@@ -73,7 +73,6 @@ export const braced: Talent = {
   tier: 1,
   kind: TalentKind.Passive,
   iconId: 'icon_passive_braced',
-  cost: { ap: 0 },
   cooldownTurns: 0,
   targeting: {
     shape: TargetShape.Self,

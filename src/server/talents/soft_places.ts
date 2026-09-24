@@ -52,7 +52,6 @@ export const softPlaces: Talent = {
   kind: TalentKind.Passive,
   iconId: 'icon_passive_soft_places',
   // A PASSIVE COSTS NOTHING TO HAVE -- `cold_reading.ts` carries the whole note.
-  cost: { ap: 0 },
   cooldownTurns: 0,
   /** Never aimed. See `cold_reading.ts` for the argument behind these fields. */
   targeting: {

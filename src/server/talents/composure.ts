@@ -52,7 +52,6 @@ const SHARED = {
   classId: null,
   tree: 'generic/composure',
   kind: TalentKind.Passive,
-  cost: { ap: 0 },
   cooldownTurns: 0,
   targeting: {
     shape: TargetShape.Self,

@@ -75,7 +75,6 @@ import { percent } from '../engine/talents.ts';
  * Upstream's own number, transcribed — `2hweapon.lua:28`. See the header's ruling.
  */
 const RESOLVE_COST = 30;
-const AP_COST = 4;
 /**
  * ═══ DIVERGES FROM THE CITED TALENT, AND THE REASON IS NOT RECORDED ═══
  * Upstream is `cooldown = 10` in ACTIONS, which `tomeCooldownToTurns` converts
@@ -115,7 +114,7 @@ export const truncheonSweep: Talent = {
   statGate: 'str',
   kind: TalentKind.Active,
   iconId: 'icon_active_truncheon_sweep',
-  cost: { ap: AP_COST, resource: RESOLVE_COST },
+  cost: { resource: RESOLVE_COST },
   cooldownTurns: COOLDOWN,
   // `technique/2hweapon-offense` upstream, so `weapon` (tome/class/Actor.lua:5807-5808).
   speed: 'weapon',
@@ -143,7 +142,7 @@ export const truncheonSweep: Talent = {
       hits.push(talentAttack(ctx, self, victim, { mult }));
     }
 
-    // An arc through empty air still costs the AP and still goes on cooldown --
+    // An arc through empty air still costs the turn and still goes on cooldown --
     // the refund rule covers intents that went ILLEGAL, not bets that went bad.
     return talentDone(hits, [`Sweep. ${String(hits.length)} caught.`]);
   },

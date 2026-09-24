@@ -123,11 +123,14 @@ describe('the movement talents', () => {
     expect(kickOff.passive).toBeUndefined();
     expect(kickOff.onUse).toBeTypeOf('function');
     expect(kickOff.kind).toBe('active');
-    // AP ONLY, NO RESOURCE. Four classes may buy this tree and they spend four
-    // different resources; charging one would be free for a Watchman and
-    // expensive for a Redactor for no reason a player could read.
-    expect(kickOff.cost.resource ?? 0).toBe(0);
-    expect(kickOff.cost.ap ?? 0).toBeGreaterThan(0);
+    // THE TURN ONLY, NO RESOURCE. Four classes may buy this tree and they spend
+    // four different resources; charging one would be free for a Watchman and
+    // expensive for a Redactor for no reason a player could read. It was priced
+    // in AP while talents had an AP price; what it costs now is the turn, and
+    // `noEnergy` absent is what says so (the engine charges every talent
+    // without it, tome/class/Actor.lua:5862-5863).
+    expect(kickOff.cost?.resource ?? 0).toBe(0);
+    expect(kickOff.noEnergy, 'a step away must cost the turn').toBeUndefined();
     // And it scales every rank, which 3..5 did not — see `disengageAt`.
     const steps = [1, 2, 3, 4, 5].map((rank) => disengageAt(rank));
     expect(new Set(steps).size, steps.join(',')).toBe(steps.length);
@@ -156,8 +159,8 @@ describe('the movement talents', () => {
     expect(downhill.passive).toBeUndefined();
     expect(downhill.onUse).toBeTypeOf('function');
     expect(downhill.kind).toBe('active');
-    // AP ONLY: four classes may buy this tree and they spend four resources.
-    expect(downhill.cost.resource ?? 0).toBe(0);
+    // THE TURN ONLY: four classes may buy this tree and they spend four resources.
+    expect(downhill.cost?.resource ?? 0).toBe(0);
     // Every rank moves the distance, which 2..4 did not — see `flightAt`.
     const steps = [1, 2, 3, 4, 5].map((rank) => flightAt(rank));
     expect(new Set(steps).size, steps.join(',')).toBe(steps.length);
@@ -188,8 +191,8 @@ describe('Moving Target is upstream\u2019s Evasion', () => {
     expect(movingTarget.passive).toBeUndefined();
     expect(movingTarget.onUse).toBeTypeOf('function');
     expect(movingTarget.kind).toBe('active');
-    // AP only: four classes may buy this tree and they spend four resources.
-    expect(movingTarget.cost.resource ?? 0).toBe(0);
+    // The turn only: four classes may buy this tree and they spend four resources.
+    expect(movingTarget.cost?.resource ?? 0).toBe(0);
   });
 
   it('asks for the defence its rank bought, and every rank differs', () => {

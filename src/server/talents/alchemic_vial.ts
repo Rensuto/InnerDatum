@@ -63,8 +63,6 @@ import {
 } from '../engine/talents.ts';
 import type { Talent, TalentHit } from '../engine/talents.ts';
 
-/** FROZEN. 5 of 6 AP — the signature is the round. */
-const AP_COST = 5;
 /** FROZEN AT 2. A quarter of the whole stock for one throw is what makes an AoE
  * a decision rather than the default opener; see Ashwick Flare on the gate. */
 const REAGENT_COST = 2;
@@ -117,7 +115,7 @@ export const alchemicVial: Talent = {
   statGate: 'mag',
   kind: TalentKind.Active,
   iconId: 'icon_active_alchemic_vial',
-  cost: { ap: AP_COST, resource: REAGENT_COST },
+  cost: { resource: REAGENT_COST },
   cooldownTurns: secondsToTurns(COOLDOWN_SEC),
   targeting: {
     shape: TargetShape.Cross,

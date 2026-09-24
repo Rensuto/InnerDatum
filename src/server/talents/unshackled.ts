@@ -57,7 +57,6 @@ export const unshackled: Talent = {
   // A PASSIVE IS NEVER PRESSED, so every one of these is the shape the type
   // demands rather than a decision — `overseer_of_nations.ts` carries the
   // identical block for the identical reason.
-  cost: { ap: 0 },
   cooldownTurns: 0,
   targeting: {
     shape: TargetShape.Self,

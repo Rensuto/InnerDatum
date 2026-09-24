@@ -84,9 +84,6 @@ const REGEN_PER_WIL = 0.5;
  */
 const HEAL_MOD_PCT = 10;
 
-/** `no_energy = true` (races.lua:45). The turn goes on around it. */
-const AP_COST = 0;
-
 /**
  * THE TOTAL HEALING, PRESERVED ACROSS THE CONVERSION.
  *
@@ -117,9 +114,8 @@ export const higherHeal: Talent = {
   iconId: 'icon_active_higher_heal',
   /** ONE RANK — the tree that would raise it is not ported. See the header. */
   maxLevel: 1,
-  cost: { ap: AP_COST },
   cooldownTurns: tomeCooldownToTurns(TOME_COOLDOWN),
-  // Upstream's `no_energy = true`: pressed without spending the turn.
+  // Upstream's `no_energy = true` (races.lua:45): pressed without spending the turn.
   noEnergy: true,
   targeting: {
     shape: TargetShape.Self,

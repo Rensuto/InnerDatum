@@ -11,7 +11,8 @@ import {
   createContentTalentEngine,
   sheetForClass,
 } from '../../src/server/content/classes.ts';
-import { toggleSustain } from '../../src/server/engine/talents.ts';
+import { toggleSustain, usageSpeedOf } from '../../src/server/engine/talents.ts';
+import { usageSpeedText } from '../../src/shared/usage-speed.ts';
 import { carefulMethod } from '../../src/server/talents/careful_method.ts';
 import { corroboration } from '../../src/server/talents/corroboration.ts';
 import { workingFast } from '../../src/server/talents/working_fast.ts';
@@ -166,11 +167,16 @@ describe('a stance is a passive you can switch off', () => {
     }
   });
 
-  it('costs no action points, so changing stance mid-fight is possible', () => {
-    // Charging AP would mean putting one up costs a turn's action, and a player
-    // would simply never change stance during the one moment it is interesting.
+  it('costs nothing to press and says so, so changing stance mid-fight is possible', () => {
+    // Charging the turn would mean putting one up costs a turn's action, and a
+    // player would simply never change stance during the one moment it is
+    // interesting. This pinned a price of 0 AP while talents carried one; the
+    // toggle never reaches the scheduler (the gateway's `handleTalent`), so
+    // what is pinned now is that the press takes nothing from the pool beyond
+    // its reserve, and that the tooltip calls it instant.
     for (const stance of [carefulMethod, workingFast]) {
-      expect(stance.cost.ap ?? 0, stance.name).toBe(0);
+      expect(stance.cost?.resource ?? 0, stance.name).toBe(0);
+      expect(usageSpeedText(usageSpeedOf({}, stance)), stance.name).toBe('Instant (0% of a turn)');
     }
   });
 });

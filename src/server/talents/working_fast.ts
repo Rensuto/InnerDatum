@@ -73,7 +73,6 @@ export const workingFast: Talent = {
   kind: TalentKind.Sustained,
   iconId: 'icon_sustain_working_fast',
   // FREE TO PRESS — `careful_method.ts` carries the reason.
-  cost: { ap: 0 },
   cooldownTurns: 0,
   sustain: { reserve: RESERVE },
   sustainSlot: METHOD_SLOT,

@@ -51,7 +51,6 @@ export const betweenTheLines: Talent = {
   statGate: 'cun',
   kind: TalentKind.Passive,
   iconId: 'icon_passive_between_the_lines',
-  cost: { ap: 0, resource: 0 },
   cooldownTurns: 0,
   targeting: {
     shape: TargetShape.Self,

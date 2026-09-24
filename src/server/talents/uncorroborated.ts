@@ -71,7 +71,6 @@ import type { Talent } from '../engine/talents.ts';
  * the profile are one decision — see the roster note in monster.ts for the
  * afternoon that lesson cost.
  */
-const UNCORROBORATED_AP = 3;
 const UNCORROBORATED_COOLDOWN = 6;
 
 /** The base swing, before anybody counts who is standing about. */
@@ -137,7 +136,6 @@ export const uncorroborated: Talent = {
   tree: 'monster/index',
   kind: TalentKind.Active,
   iconId: 'icon_monster_uncorroborated',
-  cost: { ap: UNCORROBORATED_AP },
   cooldownTurns: UNCORROBORATED_COOLDOWN,
   targeting: {
     shape: TargetShape.Single,

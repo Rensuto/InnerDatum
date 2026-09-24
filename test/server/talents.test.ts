@@ -706,7 +706,10 @@ describe('the loadout cap — PLAN.md § 5', () => {
     expect(mark.minRange).toBe(3);
     expect(mark.range).toBe(7);
     expect(mark.shape).toBe(TargetShape.Single);
-    expect(mark.cost).toEqual({ ap: 5, mp: 0, resource: 35 });
+    expect(mark.cost).toEqual({ resource: 35 });
+    // AND WHAT IT COSTS IN TIME: a shot pays the launcher's speed, and the
+    // preview's launcher is her own revolver at upstream's default of one turn.
+    expect(mark.usage).toEqual({ type: 'archery', speed: 1 });
   });
 });
 
@@ -1165,7 +1168,7 @@ describe('paying for a talent that DID happen', () => {
 
       const here = { x: actor.x, y: actor.y };
       for (const talent of definition.loadout) {
-        const cost = talent.cost.resource ?? 0;
+        const cost = talent.cost?.resource ?? 0;
         refill(f.engine, actor.id);
         // One short of the price, or empty for a talent that charges nothing.
         sheet.resource.value = cost > 0 ? cost - 1 : 0;
@@ -2659,7 +2662,6 @@ describe('a stance you can put up and take down', () => {
       classId: WATCHMAN.id,
       kind: TalentKind.Sustained,
       iconId: 'icon_active_iron_curtain',
-      cost: { ap: 0, mp: 0, resource: 0 },
       sustain: { reserve },
       cooldownTurns: 0,
       targeting: {

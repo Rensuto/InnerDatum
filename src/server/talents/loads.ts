@@ -124,9 +124,8 @@ function load(
     statGate: 'cun',
     kind: TalentKind.Sustained,
     iconId,
-    // FREE TO PRESS. `careful_method.ts` carries the argument: charging AP means
-    // nobody ever changes stance in the one moment it is interesting.
-    cost: { ap: 0 },
+    // FREE TO PRESS. `careful_method.ts` carries the argument: charging the turn
+    // means nobody ever changes stance in the one moment it is interesting.
     cooldownTurns: 0,
     sustain: { reserve: RESERVE },
     sustainSlot: LOAD_SLOT,

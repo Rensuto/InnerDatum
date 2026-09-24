@@ -77,7 +77,6 @@ export const riotLine: Talent = {
   statGate: 'wil',
   kind: TalentKind.Passive,
   iconId: 'icon_passive_riot_line',
-  cost: { ap: 0 },
   cooldownTurns: 0,
   targeting: {
     shape: TargetShape.Self,

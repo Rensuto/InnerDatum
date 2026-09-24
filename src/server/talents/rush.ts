@@ -66,7 +66,6 @@ import type { Talent } from '../engine/talents.ts';
  * `ensureMonsterSheet`), so the curve has one point on it and a literal is the
  * honest way to write a number with no second value.
  */
-const RUSH_AP = 4;
 const RUSH_COOLDOWN = 7;
 
 /** combat-techniques.lua:36 — `floor(combatTalentScale(t, 6, 10))`. */
@@ -117,7 +116,6 @@ export const rush: Talent = {
    */
   closesIn: true,
   iconId: 'icon_monster_rush',
-  cost: { ap: RUSH_AP },
   cooldownTurns: RUSH_COOLDOWN,
   // `technique/combat-techniques-active` upstream, so `weapon`
   // (tome/class/Actor.lua:5807-5808) — the charge is priced as the blow, not the run.
@@ -185,7 +183,7 @@ export const rush: Talent = {
     /**
      * AND IF IT DID NOT GET THERE, IT SPENT ITS TURN GETTING CLOSER.
      *
-     * NOT A REFUSAL. A refusal refunds the AP and the cooldown, which would make
+     * NOT A REFUSAL. A refusal refunds the turn and the cooldown, which would make
      * this a free probe for whether the lane is clear — press it, see nothing
      * happen, press it again next turn. The creature committed to a charge and
      * ran into something; the ground it gained is what it got.

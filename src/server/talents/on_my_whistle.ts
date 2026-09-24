@@ -65,14 +65,13 @@ import {
 import type { Talent } from '../engine/talents.ts';
 
 /**
- * `ap: 0`, THE CONVENTION EVERY `no_energy` TALENT CARRIES (healing_infusion.ts
- * says so). It mattered while a free action shared its decision's AP budget:
- * three points here would have taken the Watchman's Lockdown off him for the
- * turn he whistled in. That budget is retired, so the figure is a price nothing
- * spends. Blinding Speed costs stamina and nothing else of the turn; the
- * Resolve is that price.
+ * THE WHOLE PRICE. Blinding Speed costs stamina and nothing else of the turn;
+ * the Resolve is that price. (It also carried `ap: 0`, the convention every
+ * `no_energy` talent kept while talents had an AP price: three points would
+ * have taken the Watchman's Lockdown off him for the turn he whistled in, while
+ * a free action shared its decision's AP budget. That budget, and then the
+ * price, were retired.)
  */
-const AP_COST = 0;
 const RESOLVE_COST = 2;
 
 /** combat-techniques.lua:153 — Blinding Speed's `cooldown = 55`. */
@@ -135,7 +134,7 @@ export const onMyWhistle: Talent = {
   statGate: 'wil',
   kind: TalentKind.Active,
   iconId: 'icon_active_on_my_whistle',
-  cost: { ap: AP_COST, resource: RESOLVE_COST },
+  cost: { resource: RESOLVE_COST },
   cooldownTurns: tomeCooldownToTurns(TOME_COOLDOWN),
   // combat-techniques.lua:155 — Blinding Speed is `no_energy = true`. So no
   // `speed` either: upstream never charges one (tome/class/Actor.lua:5862).

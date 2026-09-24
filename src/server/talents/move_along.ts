@@ -30,7 +30,8 @@
  * pattern is fine and it has a cost: a control talent that also does damage is
  * always worth pressing, so it is never a decision. This one is worth pressing
  * only when the position is wrong, which makes reading the room the skill it
- * pays for. It is priced to match -- cheap in AP, cheap in Resolve.
+ * pays for. It is priced to match -- cheap in Resolve, and it was cheap in AP
+ * while talents carried an AP price.
  *
  * ═══ WHY WILLPOWER ═══
  * `watch/authority` is gated on Will and the other two Watchman trees are not,
@@ -60,8 +61,6 @@ import {
 } from '../engine/talents.ts';
 import type { Talent } from '../engine/talents.ts';
 
-/** FROZEN. Cheap on purpose -- see the header on why this must stay optional. */
-const AP_COST = 2;
 const RESOLVE_COST = 1;
 const COOLDOWN_TURNS = 2;
 
@@ -119,7 +118,7 @@ export const moveAlong: Talent = {
   statGate: 'wil',
   kind: TalentKind.Active,
   iconId: 'icon_active_move_along',
-  cost: { ap: AP_COST, resource: RESOLVE_COST },
+  cost: { resource: RESOLVE_COST },
   cooldownTurns: COOLDOWN_TURNS,
   // `technique/warcries` upstream, so `weapon` (tome/class/Actor.lua:5807-5808).
   speed: 'weapon',
@@ -143,7 +142,7 @@ export const moveAlong: Talent = {
      *
      * `knockback` walks one tile at a time and stops at the first blocked step,
      * so a body pinned against a wall moves nothing -- and that is a REAL
-     * OUTCOME rather than an error. Refusing would refund the AP and turn this
+     * OUTCOME rather than an error. Refusing would refund the turn and make this
      * into a free "is there room behind it?" probe, which is a worse talent and
      * a worse thing to have to explain. The slow still lands, so the turn was
      * not wasted; a Watchman who wanted the shove has learned to check the wall.

@@ -67,7 +67,6 @@ export const oneAtATime: Talent = {
   tier: 2,
   kind: TalentKind.Passive,
   iconId: 'icon_passive_one_at_a_time',
-  cost: { ap: 0 },
   cooldownTurns: 0,
   targeting: {
     shape: TargetShape.Self,

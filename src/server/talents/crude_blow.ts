@@ -22,10 +22,12 @@
  *      both directories with incompatible schemas and this is one of them.
  *   2. The same doc, two paragraphs later: "skills/*.json have NO cooldown
  *      field — verified, 0 of 33 ... Default `cooldownTurns: 0` and do not
- *      fabricate cooldowns on import." AP is the limiter.
+ *      fabricate cooldowns on import." The turn is the limiter.
  *
- * A reliable attack on a two-turn cooldown is not a reliable attack. At 3 AP
- * out of 6 this is exactly two swings a round, which is the intended rhythm.
+ * A reliable attack on a two-turn cooldown is not a reliable attack. It is one
+ * swing a turn, at the weapon's speed. (It was priced 3 AP out of 6 — "two
+ * swings a round" — while a round held several actions and talents carried an
+ * AP price; every action has ended the turn since Slice C.)
  */
 
 import { combatTalentScale } from '../../shared/scale.ts';
@@ -47,8 +49,6 @@ import {
 } from '../engine/talents.ts';
 import type { Talent } from '../engine/talents.ts';
 
-/** FROZEN. 3 of 6 AP is exactly two swings a round — see the header's rhythm. */
-const AP_COST = 3;
 /**
  * MELEE REACH — 1.5, WHICH ON ToME'S ROUNDED DISTANCE IS UPSTREAM'S 1.
  *
@@ -78,8 +78,8 @@ const DAMAGE_MULT_LOW = 1;
  * `SHAPE:` citation above is `attackTarget` itself, which carries no numbers.
  *
  * 1.8 is tuned against the two numbers that ARE authored in this class: Ward
- * Rush's 0.8 (the cheap engage) and Iron Curtain's 1.4 (the heavy, 5 AP and 25
- * Resolve). A fully-trained reliable swing landing at 1.8 sits ABOVE the
+ * Rush's 0.8 (the cheap engage) and Iron Curtain's 1.4 (the heavy, 25 Resolve,
+ * and 5 AP while talents carried an AP price). A fully-trained reliable swing landing at 1.8 sits ABOVE the
  * untrained heavy and BELOW the trained one (2.4), which keeps the at-will
  * button worth pressing all evening without letting it replace the two that
  * cost a resource. Doubling the low would have put it at 2.0 and done exactly
@@ -103,7 +103,6 @@ export const crudeBlow: Talent = {
   statGate: 'str',
   kind: TalentKind.Active,
   iconId: 'icon_active_basic_attack',
-  cost: { ap: AP_COST },
   // At-will. See the header — the donor's 2.0 s is declined on purpose.
   cooldownTurns: 0,
   // THE BASIC SWING, priced as upstream's `T_ATTACK` is: `attackTarget` charges

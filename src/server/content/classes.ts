@@ -184,6 +184,7 @@ import {
   effectiveTalentRange,
   getTalentLevelRaw,
   talentLevelOf,
+  usageSpeedOf,
 } from '../engine/talents.ts';
 import { scalingText } from '../engine/derived.ts';
 import { alchemicVial } from '../talents/alchemic_vial.ts';
@@ -1872,11 +1873,17 @@ export function toLoadoutView(
     id: talent.id,
     name: talent.name,
     icon: talent.iconId,
-    cost: {
-      ap: talent.cost.ap ?? 0,
-      mp: talent.cost.mp ?? 0,
-      resource: talent.cost.resource ?? 0,
-    },
+    // THE POOL PRICE ALONE. The AP and MP figures that rode beside it were a
+    // price nothing spent once Slice C retired the budget, and went at v32.
+    cost: { resource: talent.cost?.resource ?? 0 },
+    /**
+     * ═══ AND WHAT IT COSTS IN TIME, FOR THIS BODY — "Usage Speed" ═══
+     * `usageSpeedOf` reads `self`, the same composed sheet `talentSpeed`
+     * charges against when the talent resolves, so a weapon-speed talent reads
+     * the weapon in THIS hand and the line and the charge are one answer. The
+     * gateway re-sends the loadout when that hand changes (`gateKeyFor`).
+     */
+    usage: usageSpeedOf(self, talent),
     cooldownTurns: talent.cooldownTurns,
     // AT THIS RANK. See the invariant above — never `talent.targeting.range`.
     range: effectiveTalentRange(talent.targeting, effective),

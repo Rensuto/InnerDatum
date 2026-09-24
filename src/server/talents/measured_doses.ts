@@ -53,7 +53,6 @@ export const measuredDoses: Talent = {
   kind: TalentKind.Passive,
   iconId: 'icon_passive_measured_doses',
   // A PASSIVE COSTS NOTHING TO HAVE — see `cold_reading.ts` for the whole note.
-  cost: { ap: 0 },
   cooldownTurns: 0,
   /** Never aimed. `cold_reading.ts` carries the argument for these fields. */
   targeting: {

@@ -105,9 +105,6 @@ const SAVE_CURVE_POWER = 0.75;
 const saveFor = (con: number): number =>
   Math.round(combatStatScale(con, SAVE_AT_LOW_CON, SAVE_AT_HIGH_CON, SAVE_CURVE_POWER));
 
-/** `no_energy = true` (races.lua:457). The turn goes on around it. */
-const AP_COST = 0;
-
 export const resilienceOfTheArchived: Talent = {
   id: talentId('resilience_of_the_archived'),
   /**
@@ -126,9 +123,8 @@ export const resilienceOfTheArchived: Talent = {
   iconId: 'icon_active_resilience_of_the_archived',
   /** ONE RANK — see the header, and the tripwire in `talent-trees.test.ts`. */
   maxLevel: 1,
-  cost: { ap: AP_COST },
   cooldownTurns: tomeCooldownToTurns(TOME_COOLDOWN),
-  // Upstream's `no_energy = true`: pressed without spending the turn.
+  // Upstream's `no_energy = true` (races.lua:457): pressed without spending the turn.
   noEnergy: true,
   targeting: {
     shape: TargetShape.Self,

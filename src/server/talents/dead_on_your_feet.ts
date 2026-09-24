@@ -86,7 +86,6 @@ export const deadOnYourFeet: Talent = {
   tier: 2,
   kind: TalentKind.Passive,
   iconId: 'icon_passive_dead_on_your_feet',
-  cost: { ap: 0 },
   cooldownTurns: 0,
   targeting: {
     shape: TargetShape.Self,

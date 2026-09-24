@@ -68,7 +68,6 @@ const SHARED = {
   classId: null,
   tree: 'generic/leverage',
   kind: TalentKind.Passive,
-  cost: { ap: 0 },
   cooldownTurns: 0,
   targeting: {
     shape: TargetShape.Self,
@@ -249,8 +248,6 @@ export function damageAt(level: number): number {
 /** Ported from dirty.lua:122 — Blinding Powder's `cooldown = 12`. */
 const POWDER_COOLDOWN_ACTIONS = 12;
 const OVERREACH_COOLDOWN = tomeCooldownToTurns(POWDER_COOLDOWN_ACTIONS);
-/** Three of six. An area debuff is most of a turn, not all of it. */
-const OVERREACH_AP = 3;
 
 /**
  * OVERREACH.
@@ -283,7 +280,6 @@ export const overreach: Talent = {
   tier: 2,
   kind: TalentKind.Active,
   iconId: 'icon_active_overreach',
-  cost: { ap: OVERREACH_AP },
   cooldownTurns: OVERREACH_COOLDOWN,
   targeting: {
     // CENTRED ON THE CASTER, `clear_the_street.ts`'s shape and its reason: this
@@ -318,7 +314,7 @@ export const overreach: Talent = {
     }
 
     /**
-     * A HANDFUL OF GRIT THROWN AT AN EMPTY ROOM STILL COSTS ITS AP AND STILL
+     * A HANDFUL OF GRIT THROWN AT AN EMPTY ROOM STILL COSTS ITS TURN AND STILL
      * GOES ON COOLDOWN — `clear_the_street.ts` states the rule and the reason:
      * the player made a read and it was wrong, which is a legible outcome. The
      * refund rule is for intents that went ILLEGAL, not for ones that missed.
@@ -475,8 +471,6 @@ export function twistReachAt(level: number): number {
  * engine/combat.ts). test/server/full-swing-reach.test.ts holds either way.
  */
 const TWIST_RANGE = MELEE_REACH;
-/** Four of six. Upstream's is a weapon-speed attack; ours is most of a turn. */
-const TWIST_AP = 4;
 /** Ported from dirty.lua:156-157 — `cooldown = 15`, and `fixed_cooldown = true`. */
 const TWIST_COOLDOWN_ACTIONS = 15;
 const TWIST_COOLDOWN = tomeCooldownToTurns(TWIST_COOLDOWN_ACTIONS);
@@ -509,7 +503,6 @@ export const fullSwing: Talent = {
   tier: 3,
   kind: TalentKind.Active,
   iconId: 'icon_active_full_swing',
-  cost: { ap: TWIST_AP },
   cooldownTurns: TWIST_COOLDOWN,
   // Twist the Knife names its own: `speed = "weapon"` (cunning/dirty.lua:167).
   speed: 'weapon',

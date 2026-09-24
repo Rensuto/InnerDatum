@@ -61,13 +61,6 @@ import {
 import type { Talent } from '../engine/talents.ts';
 
 /**
- * FROZEN. 4 AP plus 1 MP is a whole round minus a step: escaping costs you the
- * turn you would have shot in, which is what stops the escape from being an
- * opener. A rank that made it cheaper would make it the first button pressed.
- */
-const AP_COST = 4;
-const MP_COST = 1;
-/**
  * ═══════════════════════════════════════════════════════════════════════════
  * THE ONLY TALENT IN THE TWELVE WHOSE LEVEL BUYS DISTANCE INSTEAD OF DAMAGE.
  * ═══════════════════════════════════════════════════════════════════════════
@@ -123,9 +116,14 @@ export const fogStep: Talent = {
   statGate: 'cun',
   kind: TalentKind.Active,
   iconId: 'icon_active_fog_step',
-  cost: { ap: AP_COST, mp: MP_COST },
   cooldownTurns: tomeCooldownToTurns(TOME_COOLDOWN),
   // Disengage is `technique/mobility`, so `weapon` (tome/class/Actor.lua:5807-5808).
+  //
+  // THE WHOLE TURN, AND ONLY THE TURN. It was priced 4 AP and 1 MP — "a whole
+  // round minus a step" — so that escaping cost the turn you would have shot
+  // in, which is what stops the escape from being an opener. The turn is still
+  // the price, and no rank makes it cheaper, or it would be the first button
+  // pressed.
   speed: 'weapon',
   targeting: {
     shape: TargetShape.Tile,

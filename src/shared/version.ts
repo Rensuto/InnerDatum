@@ -662,6 +662,25 @@
  * ═══════════════════════════════════════════════════════════════════════════
 
 
+ * 31 -> 32 (A TALENT COSTS TIME, AND SAYS SO). `TalentCostView` loses `ap`
+ * and `mp`, and `LoadoutTalent` gains a required `usage` — ToME's "Usage
+ * Speed" (tome/class/Actor.lua:6276-6294) as a speed type and a fraction of a
+ * turn, which the client prints through `usageSpeedText`
+ * (shared/usage-speed.ts).
+ *
+ * ═══ WHY THIS ONE IS A BUMP ═══
+ * Every talent carried an action-point price, and every surface that shows a
+ * talent printed it: the hotbar corner, the tooltip's `AP cost:` row, the
+ * talent panel, the character sheet and the class picker. Slice C retired the
+ * budget those points came out of, so the figure had been a price nothing
+ * spent. Removing a field a v31 client READS is the case this file has bumped
+ * for since v5: a v31 client handed a v32 loadout computes `cost.ap > 0` on
+ * `undefined`, prints `undefined AP` on every class card and `AP cost:
+ * undefined` in the talent panel, and reads nothing from `usage`. The version
+ * gate turns that into a reload.
+ *
+ * `SCHEMA_VERSION` STAYS 1. A talent's price was never saved.
+ *
  * 30 -> 31 (A PARTY TAKES ITS TURNS IN ORDER). `TurnMsg` gains `current`,
  * whose turn it is, and loses `acting`, which named players halfway through an
  * open round that no longer exists. In a fight with two or more players the
@@ -1307,7 +1326,7 @@
  * path rather than read from disk. When that changes it will be an OPTIONAL
  * field and docs/data-schemas.md:48-49 applies unchanged.
  */
-export const PROTOCOL_VERSION = 31;
+export const PROTOCOL_VERSION = 32;
 
 /**
  * Bumped whenever a persisted save file's shape changes. Every bump needs a

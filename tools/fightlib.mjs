@@ -651,9 +651,10 @@ export function selfHelp(cls, known, inscribed) {
       .filter((t) => t.targeting?.affinity === 'ally' && t.targeting?.shape === 'self')
       // WHETHER IT IS FREE COMES WITH IT, because `no_energy` is the difference
       // between a button you press WHILE fighting and one you spend your turn on.
-      // It read the AP price, and Phase Door Rune costs no AP and a whole turn
-      // (tome/class/Actor.lua:5862-5863 charges every talent that is not
-      // `no_energy`), so the driver pressed it and then swung for free.
+      // It read the AP price while talents had one, and Phase Door Rune was
+      // priced at no AP and cost a whole turn (tome/class/Actor.lua:5862-5863
+      // charges every talent that is not `no_energy`), so the driver pressed
+      // it and then swung for free.
       .map((t) => ({ id: t.id, free: t.noEnergy === true }))
   );
 }

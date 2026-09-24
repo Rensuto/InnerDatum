@@ -267,9 +267,17 @@ const FIELD_GUTTER = CHAR_W;
  * ═══ A MINIMUM WIDTH PER COLUMN, DERIVED FROM THE WIDEST ROW ═══
  * A narrow window must fall back to fewer columns rather than four unreadable
  * slivers, and the floor is not a taste: this file already states it two
- * paragraphs down. `AP 5 · melee/personal · ready` needs 29 monospace
+ * paragraphs down. `30 Resolve · self · 10 turns` needs 28 monospace
  * characters AND THE COLUMN MUST HOLD THAT AFTER THE ICON — a talent row is an
  * 18-pixel icon and then the text.
+ *
+ * ═══ RE-MEASURED WHEN THE AP PRICE WENT, AND IT WAS 29 ═══
+ * The row this was sized for was `AP 5 · melee/personal · ready`, and AP was
+ * on every row. v32 took the price off the wire, so the widest row a real
+ * talent can print is now a two-digit pool price, the longest reach and a
+ * two-digit countdown — `30 Resolve · self · 10 turns`, Truncheon Sweep's price
+ * and reach, the widest that shape takes over every active talent in the
+ * registry. None of them reads `melee/personal`; the melee reach is 1.5.
  *
  * THE FIRST ATTEMPT HERE WAS 26 CHARACTERS AND FORGOT THE ICON, which let four
  * columns open at 772 wide and cost two of the four talent rows their cooldown
@@ -278,7 +286,7 @@ const FIELD_GUTTER = CHAR_W;
  * what stops it happening again.
  */
 const SHEET_MAX_COLS = 4;
-const TALENT_META_CHARS = 29;
+const TALENT_META_CHARS = 28;
 const COL_MIN_W = TALENT_ICON + TALENT_META_CHARS * CHAR_W + COL_GAP;
 
 /**
@@ -289,9 +297,10 @@ const COL_MIN_W = TALENT_ICON + TALENT_META_CHARS * CHAR_W + COL_GAP;
  * A fixed width is not "consistent", it is ignoring the window: the same sheet
  * on a 1280 viewport as on a 640 one, with the same 151-pixel columns, and no
  * way for a bigger screen to help a line that does not fit. It did not fit --
- * `AP 5 · melee/personal · ready` needs 29 monospace characters and a column of
- * 151 pixels holds 21 after the icon, so every talent row on this sheet lost
- * its cooldown word at EVERY size, including the largest.
+ * `AP 5 · melee/personal · ready`, as a row read while talents carried an AP
+ * price, needed 29 monospace characters and a column of 151 pixels held 21
+ * after the icon, so every talent row on this sheet lost its cooldown word at
+ * EVERY size, including the largest.
  *
  * ═══ WHY A FRACTION AND NOT JUST THE WHOLE WINDOW ═══
  * This panel opens over a live map that other players are still moving on, and
@@ -722,7 +731,7 @@ export type SheetRow =
       readonly name: string;
       /** An asset KEY off the wire, never derived from the name. */
       readonly icon: string;
-      /** "AP 5 · 2 Focus", or "free". Composed here — see the header. */
+      /** "20 Resolve", or '' when it takes nothing from the pool. See `costText`. */
       readonly cost: string;
       /** "3–7", "melee/personal" or "self". ToME's own wording where it has one. */
       readonly range: string;
@@ -812,25 +821,36 @@ export type CharSheetView = {
 };
 
 /**
- * What one use costs, as one string.
+ * What one use costs the pool, as one string — and NOTHING when it costs none.
  *
  * ToME lists every non-zero resource on its own line and omits the zeros
- * entirely (Actor.lua:6236-6243: `if cost ~= 0 then ... end`). Same rule, one
- * line: a talent that costs nothing says "free" rather than showing three zeros,
- * because three zeros read as "unknown" at a glance.
+ * entirely (tome/class/Actor.lua:6236-6243: `if cost ~= 0 then ... end`). Same
+ * rule: a talent that takes nothing from the pool has no cost field, and the
+ * row reads its reach and its cooldown.
+ *
+ * ═══ IT SAID "free" WHILE THERE WERE THREE PRICES ═══
+ * AP, MP and the pool each printed when non-zero, and a talent costing none of
+ * them said "free" rather than showing three zeros. AP and MP went at v32 —
+ * nothing had spent either since Slice C — and with one price left "free"
+ * would claim more than it knows: a talent that takes no Resolve still takes
+ * the turn. What it costs in time is the talent panel's `Usage Speed` line.
  */
 function costText(talent: LoadoutTalent, resource: ResourceView | null): string {
-  const parts: string[] = [];
-  if (talent.cost.ap > 0) parts.push(`AP ${talent.cost.ap}`);
-  if (talent.cost.mp > 0) parts.push(`MP ${talent.cost.mp}`);
-  if (talent.cost.resource > 0) {
-    // The POOL'S NAME when we know it, the bare number when we do not. The
-    // `resource` frame is unicast and arrives beside the loadout, so the null is
-    // a one-frame window on connect rather than a state anybody sits in.
-    const named = resource === null ? '' : ` ${resourceLabel(resource.kind)}`;
-    parts.push(`${talent.cost.resource}${named}`);
-  }
-  return parts.length === 0 ? 'free' : parts.join(' · ');
+  if (talent.cost.resource <= 0) return '';
+  // The POOL'S NAME when we know it, the bare number when we do not. The
+  // `resource` frame is unicast and arrives beside the loadout, so the null is
+  // a one-frame window on connect rather than a state anybody sits in.
+  const named = resource === null ? '' : ` ${resourceLabel(resource.kind)}`;
+  return `${talent.cost.resource}${named}`;
+}
+
+/**
+ * THE META FIELDS THAT HAVE SOMETHING TO SAY, JOINED. The cost is the one that
+ * may be empty (`costText`), and an empty field must not leave a dangling
+ * separator — ` · melee/personal · ready` reads as a value that failed to load.
+ */
+function metaOf(...fields: readonly string[]): string {
+  return fields.filter((field) => field !== '').join(' · ');
 }
 
 /**
@@ -1178,7 +1198,7 @@ export function charSheetRows(
        * while the hotbar greyed the same button, and for a rank-0 talent too.
        * `unpressableReason` is the hotbar's own answer, so the two surfaces
        * cannot disagree. "unusable" and not upstream's word: the column is
-       * sized for `AP 5 · melee/personal · ready` (TALENT_META_CHARS above),
+       * sized for `30 Resolve · self · 10 turns` (TALENT_META_CHARS above),
        * and eleven letters would lose the word at the sizes that barely fit.
        */
       const unpressable = unpressableReason(talent) !== null;
@@ -2102,8 +2122,9 @@ function drawRow(ctx: CanvasRenderingContext2D, sprites: SpriteSource, placed: P
  * `fitText` cuts the TAIL, and the tail is the cooldown. So the one field a
  * player is reading this row for -- can I press this, this turn -- was the first
  * thing thrown away, to keep a range they can also see as a ring on the map when
- * they aim. `AP 5 · melee/personal · ready` became `AP 5 · melee/persona…`,
- * which is the cost they did not ask about and half a word.
+ * they aim. `AP 5 · melee/personal · ready` (a row from when talents carried
+ * an AP price) became `AP 5 · melee/persona…`, which is the cost they did not
+ * ask about and half a word.
  *
  * ═══ THE ORDER, AND WHY IT IS THIS ORDER ═══
  *   1. cost · range · cooldown -- everything, and what almost every case gets.
@@ -2116,12 +2137,15 @@ function drawRow(ctx: CanvasRenderingContext2D, sprites: SpriteSource, placed: P
  *                                 pathological width degrades instead of
  *                                 overflowing into the next column.
  *
+ * A talent that takes nothing from the pool has no cost field (`costText`), so
+ * its first rung is `range · cooldown` and its second is the third.
+ *
  * A DROPPED FIELD IS NOT SIGNALLED, unlike a dropped SECTION. `ui/caselog.ts`'s
  * rule is that a surface which stopped showing everything says so in words --
  * and it applies to a surface which has silently stopped, not to one that shows
- * a SHORTER TRUE thing. "AP 5 · ready" is complete on its own terms; a "…" after
- * it would claim there was more and give no way to get at it. The talent panel
- * has the full description, and the hover card carries it.
+ * a SHORTER TRUE thing. "20 Resolve · ready" is complete on its own terms; a "…"
+ * after it would claim there was more and give no way to get at it. The talent
+ * panel has the full description, and the hover card carries it.
  */
 function talentMeta(
   ctx: CanvasRenderingContext2D,
@@ -2129,8 +2153,8 @@ function talentMeta(
   maxW: number,
 ): string {
   const rungs = [
-    `${row.cost} · ${row.range} · ${row.cooldown}`,
-    `${row.cost} · ${row.cooldown}`,
+    metaOf(row.cost, row.range, row.cooldown),
+    metaOf(row.cost, row.cooldown),
     row.cooldown,
   ];
   for (const rung of rungs) {
@@ -2348,7 +2372,7 @@ export function charSheetTipAt(
     // THE FULL META, INCLUDING THE FIELDS THE ROW CONCEDED. `talentMeta` drops
     // the range on a narrow column; the card is sized to its own content and
     // never has to.
-    const meta = `${row.cost} · ${row.range} · ${row.cooldown}`;
+    const meta = metaOf(row.cost, row.range, row.cooldown);
     return {
       title: `${row.name}  ${row.rank}`,
       meta,

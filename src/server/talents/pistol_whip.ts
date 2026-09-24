@@ -22,7 +22,7 @@
  * The damage band sits UNDER Crude Blow, which is a Watchman's at-will swing,
  * because the Inspector holding a revolver by the barrel should not be
  * competing with a guard holding a truncheon properly. What the player is paying
- * four AP and a long cooldown for is `EFF_STUNNED` -- and `STUNNED.type` is the
+ * a turn and a long cooldown for is `EFF_STUNNED` -- and `STUNNED.type` is the
  * PHYSICAL save, so this checks against the stat the Inspector is worst at,
  * which is the honest price of a melee talent on a ranged class.
  */
@@ -91,7 +91,6 @@ import type { Talent } from '../engine/talents.ts';
  * Upstream's own number, transcribed — `2hweapon.lua:219`. See the header's ruling.
  */
 const FOCUS_COST = 8;
-const AP_COST = 4;
 /**
  * ═══ DIVERGES FROM THE CITED TALENT, AND THE REASON IS NOT RECORDED ═══
  * Upstream is `cooldown = 6` in ACTIONS, which `tomeCooldownToTurns` converts
@@ -176,7 +175,7 @@ export const pistolWhip: Talent = {
   statGate: 'cun',
   kind: TalentKind.Active,
   iconId: 'icon_active_pistol_whip',
-  cost: { ap: AP_COST, resource: FOCUS_COST },
+  cost: { resource: FOCUS_COST },
   cooldownTurns: COOLDOWN,
   // Stunning Blow is `technique/2hweapon-cripple`, so `weapon`
   // (tome/class/Actor.lua:5807-5808): the club costs what its swing costs.

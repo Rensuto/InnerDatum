@@ -66,7 +66,6 @@ import { MELEE_REACH } from '../engine/combat.ts';
 import { healActor } from '../engine/damage.ts';
 import type { Talent } from '../engine/talents.ts';
 
-const AP_COST = 3;
 const COOLDOWN = 4;
 const REAGENT_COST = 1;
 /**
@@ -122,7 +121,7 @@ export const fieldDressing: Talent = {
   statGate: 'wil',
   kind: TalentKind.Active,
   iconId: 'icon_active_field_dressing',
-  cost: { ap: AP_COST, resource: REAGENT_COST },
+  cost: { resource: REAGENT_COST },
   cooldownTurns: COOLDOWN,
   targeting: {
     shape: TargetShape.Single,

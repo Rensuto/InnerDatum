@@ -31,14 +31,17 @@
  * new afflictions land 15% shorter. Distance alone buys a turn; the phase is
  * what stops the turn you bought being spent on the stun that follows you.
  *
- * ═══ IT COSTS NO TURN — and this one is NOT `no_energy` upstream ═══
+ * ═══ IT COSTS THE TURN, BECAUSE IT IS NOT `no_energy` UPSTREAM ═══
  * `inscriptions.lua:1313-1344` declares `is_spell` and `is_teleport` but no
- * `no_energy`, unlike every other inscription in that file. It is offered here
- * at `ap: 0` anyway, because in THIS engine an inscription is defined by being
- * the thing you do while the fight goes on (`healing_infusion.ts` carries the
- * argument) and a single rune that cost a turn where its three siblings do not
- * would read as a bug rather than as a cost. The seven-turn cooldown — the
- * shortest of any inscription here — is upstream's own price for it.
+ * `no_energy`, unlike every other inscription in that file, so upstream charges
+ * the turn for it (tome/class/Actor.lua:5862-5863) and so does this engine:
+ * there is no `noEnergy` below, and its tooltip reads "Spell (100% of a
+ * turn)" — `is_spell` names the word. It was priced `ap: 0` while talents carried an AP price, on the
+ * argument that an inscription is the thing you do while the fight goes on
+ * (`healing_infusion.ts`) and a rune costing a turn where its siblings do not
+ * would read as a bug. Once every action ended the turn that price was only a
+ * label, and it went with the rest. The seven-turn cooldown — the shortest of
+ * any inscription here — is upstream's own price on top.
  */
 
 import { DamageType } from '../engine/damage.ts';
@@ -93,9 +96,6 @@ const TOME_DURATION = 5;
  */
 const TOME_COOLDOWN = 7;
 
-/** See the header: `ap: 0` is a stated divergence, not an omission. */
-const AP_COST = 0;
-
 export const phaseDoorRune: Talent = {
   id: talentId('phase_door_rune'),
   name: 'Phase Door Rune',
@@ -110,8 +110,10 @@ export const phaseDoorRune: Talent = {
   iconId: 'icon_active_phase_door_rune',
   /** ONE RANK — `points = 1` on every `newInscription`. */
   maxLevel: 1,
-  cost: { ap: AP_COST },
   cooldownTurns: tomeCooldownToTurns(TOME_COOLDOWN),
+  // inscriptions.lua:1318 — `is_spell = true`, so `getTalentSpeedType` gives
+  // "spell" (tome/class/Actor.lua:5800). Spell speed is 1 at every stat here.
+  speed: 'spell',
   targeting: {
     /**
      * SELF, AND NOT A POINT YOU CHOOSE. Upstream's is `teleportRandom(self.x,

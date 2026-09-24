@@ -56,7 +56,6 @@ import type { Talent } from '../engine/talents.ts';
  */
 
 const RANGE = 6;
-const AP_COST = 5;
 const INK_COST = 28;
 const COOLDOWN = 10;
 /** One tile: nine squares around where you land. See `expunge` on why not more. */
@@ -91,7 +90,7 @@ export const recension: Talent = {
   statGate: 'cun',
   kind: TalentKind.Active,
   iconId: 'icon_active_recension',
-  cost: { ap: AP_COST, resource: INK_COST },
+  cost: { resource: INK_COST },
   cooldownTurns: COOLDOWN,
   targeting: {
     shape: TargetShape.Tile,

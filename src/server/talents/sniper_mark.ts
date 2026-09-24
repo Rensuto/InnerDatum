@@ -20,7 +20,7 @@
  * game-design.md § 2 calls "the single most important number here". A player
  * who is being crowded cannot reach for the big button, which is precisely why
  * the Watchman standing in the doorway is worth something. `canUseTalent`
- * refuses with `MinRange` before a single AP is spent, so being crowded is free
+ * refuses with `MinRange` before anything is spent, so being crowded is free
  * rather than punishing (the refund rule).
  *
  * ═══ IT PAYS OFF A SIGIL ═══
@@ -58,10 +58,6 @@ import {
 import type { Talent } from '../engine/talents.ts';
 import { INSPECTOR_MIN_RANGE } from './revolver_shot.ts';
 
-/** FROZEN. 5 of 6 AP — the deliberate shot IS the round, exactly as upstream's
- * "this effectively takes 2 turns" (sniper.lua:273, the trailing comment on
- * the `getDamage` line) intends. */
-const AP_COST = 5;
 /**
  * FROZEN. Focus accrues at 12 for holding ground plus 8 for watching your own
  * sigil, so 35 is two patient turns. That patience is the class; a rank that
@@ -135,7 +131,7 @@ export const snipersMark: Talent = {
   statGate: 'dex',
   kind: TalentKind.Active,
   iconId: 'icon_active_sniper_mark',
-  cost: { ap: AP_COST, resource: FOCUS_COST },
+  cost: { resource: FOCUS_COST },
   cooldownTurns: tomeCooldownToTurns(TOME_COOLDOWN),
   // IT FIRES THE SHOOTER, so it pays the shooter's speed, as every upstream shot
   // does (tome/class/interface/Archery.lua:282-284).

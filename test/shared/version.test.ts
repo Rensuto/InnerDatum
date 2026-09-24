@@ -241,10 +241,15 @@ describe('shared constants', () => {
     // 30 -> 31: A PARTY TAKES ITS TURNS IN ORDER. `TurnMsg` gains `current`
     // and loses `acting`; a v30 client would draw every undecided player as
     // "your move" while the server waits on one of them.
-    expect(PROTOCOL_VERSION).toBe(31);
+    expect(PROTOCOL_VERSION).not.toBe(31);
+    // 31 -> 32: A TALENT COSTS TIME, AND SAYS SO. `TalentCostView` loses the
+    // `ap`/`mp` price nothing spent and `LoadoutTalent` gains a required
+    // `usage`; a v31 client reads `cost.ap` off every talent it draws and
+    // would print `undefined AP` on the class cards.
+    expect(PROTOCOL_VERSION).toBe(32);
   });
 
-  it('keeps the 30 -> 31 changelog entry beside the constant, and non-empty', () => {
+  it('keeps the 31 -> 32 changelog entry beside the constant, and non-empty', () => {
     // THE PROSE IS THE DELIVERABLE HERE, NOT DECORATION. Every bump in this file
     // is argued above the constant, and the argument is the only thing that
     // tells the next person whether their change forces a bump or is an addition
@@ -272,21 +277,20 @@ describe('shared constants', () => {
     // touched — a guard that proves the discipline held LAST TIME is not a
     // guard. It moves with the constant now, and the assertions below name this
     // entry's own frame.
-    const afterHeading = source.split('30 -> 31 (A PARTY TAKES ITS TURNS IN ORDER)')[1] ?? '';
+    const afterHeading = source.split('31 -> 32 (A TALENT COSTS TIME, AND SAYS SO)')[1] ?? '';
     // The entry ends where the one before it begins. Entries are written newest
     // first ABOVE the constant, so cutting at the constant would read every
     // older entry too, and an assertion could pass on somebody else's prose.
-    const entry = afterHeading.split('29 -> 30 (EVERY ACTION ENDS THE TURN)')[0] ?? '';
+    const entry = afterHeading.split('30 -> 31 (A PARTY TAKES ITS TURNS IN ORDER)')[0] ?? '';
 
     expect(afterHeading).not.toBe('');
     expect(entry.length, 'the entry runs on into the constant').toBeLessThan(afterHeading.length);
     expect(entry.trim().length).toBeGreaterThan(200);
-    // THE FORCING FACT, NAMED: the frame's new field and the dropped one, and
-    // what an old client would DO with the new rule — tell every undecided
-    // player it is their move.
-    expect(entry).toContain('`current`');
-    expect(entry).toContain('`acting`');
-    expect(entry).toContain('your move');
+    // THE FORCING FACT, NAMED: the dropped fields and the new one, and what an
+    // old client would DO with the new frame — print a price that is not there.
+    expect(entry).toContain('`ap`');
+    expect(entry).toContain('`usage`');
+    expect(entry).toContain('undefined AP');
     expect(entry).toContain('`SCHEMA_VERSION` STAYS 1');
   });
 

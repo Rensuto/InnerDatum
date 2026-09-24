@@ -72,13 +72,6 @@ const BLOW_HIGH = 1;
 /** `npcs.lua:195` `cooldown = 6`, through `tomeCooldownToTurns` -- ceil(6/2). */
 const BEAR_DOWN_COOLDOWN = 3;
 
-/**
- * A CREATURE PAYS AP AND NOTHING ELSE. Upstream charges `stamina = 8` (:196)
- * and a monster here has no pool to charge -- see the header note in
- * `grasping_hold.ts`, which prices the same way for the same reason.
- */
-const BEAR_DOWN_AP = 5;
-
 /** The swing's multiplier at a rank. */
 export function blowMult(level: number): number {
   return combatTalentScale(level, BLOW_LOW, BLOW_HIGH);
@@ -128,7 +121,10 @@ export const bearDown: Talent = {
   tree: 'monster/index',
   kind: TalentKind.Active,
   iconId: 'icon_monster_bear_down',
-  cost: { ap: BEAR_DOWN_AP },
+  // NO `cost`: A CREATURE PAYS THE TURN AND NOTHING ELSE. Upstream charges
+  // `stamina = 8` (:196) and a monster here has no pool to charge -- see the
+  // header note in `grasping_hold.ts`, which prices the same way for the same
+  // reason. (It was priced 5 AP while talents carried an AP price.)
   cooldownTurns: BEAR_DOWN_COOLDOWN,
   // Stun is `technique/other` (misc/npcs.lua:193), so `weapon`
   // (tome/class/Actor.lua:5807-5808).

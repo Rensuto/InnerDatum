@@ -63,7 +63,6 @@ const SHARED = {
   classId: null,
   tree: 'generic/legwork',
   kind: TalentKind.Passive,
-  cost: { ap: 0 },
   cooldownTurns: 0,
   targeting: {
     shape: TargetShape.Self,
@@ -152,8 +151,6 @@ export function defenceAt(level: number): number {
 /** Ported from mobility.lua:211 — Evasion's `combatTalentLimit(t, 10, 28, 15)`. */
 const EVASION_COOLDOWN_ACTIONS = 28;
 const MOVING_TARGET_COOLDOWN = tomeCooldownToTurns(EVASION_COOLDOWN_ACTIONS);
-/** Three of six. Upstream is `speed = "combat"`; ours is most of a turn. */
-const MOVING_TARGET_AP = 3;
 /** mobility.lua:215 — `getDur = function(self, t) return 4 end`. Flat, upstream's. */
 const EVASION_TURNS = 4;
 
@@ -200,7 +197,6 @@ export const movingTarget: Talent = {
   tier: 1,
   kind: TalentKind.Active,
   iconId: 'icon_active_moving_target',
-  cost: { ap: MOVING_TARGET_AP },
   cooldownTurns: MOVING_TARGET_COOLDOWN,
   // NO `speed`. Evasion names `speed = "combat"` (techniques/mobility.lua:222)
   // but is `no_energy = true` (:214), so upstream never charges it. Ours costs
@@ -267,8 +263,6 @@ export function disengageAt(level: number): number {
 
 /** How far off you may name the body you are pushing away from. */
 const KICK_RANGE = 4;
-/** Two of six: it is a step, not the round. */
-const KICK_AP = 2;
 /**
  * Ported from mobility.lua:46 — Disengage's `cooldown = 10`.
  *
@@ -306,7 +300,8 @@ const KICK_COOLDOWN = tomeCooldownToTurns(DISENGAGE_COOLDOWN_ACTIONS);
  * escape a player wants is the one they can spend on the turn they are grabbed.
  *
  * ═══ THE MARK OF A GENERIC TREE: NO RESOURCE COST ═══
- * `SHARED.cost` is AP only and stays that way. Four classes may buy this and
+ * No `cost` on any of them, and it stays that way — each one's price is its
+ * turn (it was AP only while talents carried an AP price). Four classes may buy this and
  * they spend four different resources; a talent that charged Ink would be free
  * for a Watchman and expensive for a Redactor for no reason a player could read.
  * Upstream charges stamina here because `technique/*` belongs to stamina users;
@@ -320,7 +315,6 @@ export const kickOff: Talent = {
   tier: 2,
   kind: TalentKind.Active,
   iconId: 'icon_active_kick_off',
-  cost: { ap: KICK_AP },
   cooldownTurns: KICK_COOLDOWN,
   // Disengage is `technique/mobility`, so `weapon` (tome/class/Actor.lua:5807-5808).
   speed: 'weapon',
@@ -356,7 +350,7 @@ export const kickOff: Talent = {
     /**
      * NOTHING MOVED IS A REFUSAL, NOT A SPENT TURN — `errata.ts`'s rule, and it
      * matters more here: this is the escape, so a player cornered against a wall
-     * must not be charged the AP and the cooldown for having tried. A PARTIAL
+     * must not be charged the turn and the cooldown for having tried. A PARTIAL
      * retreat is a real outcome and keeps its cost.
      */
     if (moved === 0) return talentRefused(TalentRefusal.NoTarget);
@@ -461,8 +455,6 @@ export function flightAt(level: number): number {
 
 /** How far off the destination may be named. */
 const DOWNHILL_RANGE = 6;
-/** Two of six: a tumble is a step, not the round. */
-const DOWNHILL_AP = 2;
 /**
  * Ported from mobility.lua:245 — `cooldown = combatTalentLimit(t, 4, 11, 5)`.
  *
@@ -501,7 +493,6 @@ export const downhill: Talent = {
   tier: 3,
   kind: TalentKind.Active,
   iconId: 'icon_active_downhill',
-  cost: { ap: DOWNHILL_AP },
   cooldownTurns: DOWNHILL_COOLDOWN,
   // NO `speed`: Tumble is `no_energy = true` (techniques/mobility.lua:246), so
   // upstream never charges one. Ours still costs a standard turn — a departure
@@ -526,7 +517,7 @@ export const downhill: Talent = {
     const moved = stepToward(ctx.world, self, target, steps);
     // NOTHING MOVED IS A REFUSAL, NOT A SPENT TURN. `errata.ts`'s rule, and it
     // matters more on the tier-3 escape: a body cornered against a wall must not
-    // be charged the AP and the cooldown for having tried.
+    // be charged the turn and the cooldown for having tried.
     if (moved === 0) return talentRefused(TalentRefusal.NoTarget);
     return talentDone(
       [],
@@ -601,11 +592,10 @@ export const secondExit: Talent = {
   iconId: 'icon_sustain_second_exit',
   /**
    * FREE TO PRESS, `careful_method.ts`'s rule: a stance pays in its reservation
-   * and pays nothing else. Charging AP as well would mean putting one up costs a
-   * turn's action, so nobody would ever change stance mid-fight — the one moment
+   * and pays nothing else. Charging the turn as well would mean putting one up
+   * costs a turn's action, so nobody would ever change stance mid-fight — the one moment
    * the choice is interesting.
    */
-  cost: { ap: 0 },
   cooldownTurns: 0,
   // NO `speed`: a sustain toggles without spending a turn here, as Trained
   // Reactions does upstream (`no_energy = true`, techniques/mobility.lua:292).

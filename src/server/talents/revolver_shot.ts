@@ -34,7 +34,7 @@
  *
  * The refusal is `TalentRefusal.MinRange`, never a miss, so the log can say
  * "too close" instead of quietly eating the turn — and `canUseTalent` runs
- * before anything is spent, so being crowded costs zero AP.
+ * before anything is spent, so being crowded costs nothing.
  */
 
 import { combatTalentScale } from '../../shared/scale.ts';
@@ -55,8 +55,6 @@ import {
 } from '../engine/talents.ts';
 import type { Talent } from '../engine/talents.ts';
 
-/** FROZEN. Two shots a round out of 6 AP, matching the Watchman's rhythm. */
-const AP_COST = 3;
 /**
  * FROZEN, and it is the number the dead zone is measured against.
  *
@@ -77,8 +75,10 @@ const DAMAGE_MULT_LOW = 0.9;
  * 1.6 is tuned to hold the gap this talent was authored with: 0.9 against
  * Sniper's Mark's 1.65 is 55%, and 1.6 against its 3.5 is 46%. The reliable
  * shot therefore stays the cheap option rather than converging on the signature
- * — the trade a fully-trained Inspector makes is still "twice for 6 AP, or once
- * for 5 AP and 35 Focus", which is the decision the class is built on.
+ * — the trade a fully-trained Inspector makes is still a free shot or a dearer
+ * one for 35 Focus, which is the decision the class is built on. (It was
+ * written as "twice for 6 AP, or once for 5 AP and 35 Focus" while talents
+ * carried an AP price and a round held two cheap actions.)
  */
 const DAMAGE_MULT_HIGH = 1.6;
 
@@ -98,9 +98,9 @@ export const revolverShot: Talent = {
   statGate: 'dex',
   kind: TalentKind.Active,
   iconId: 'icon_active_revolver_shot',
-  cost: { ap: AP_COST },
   // At-will, like every reliable slot: skills/*.json carry no cooldown field
-  // (0 of 33, docs/data-schemas.md § 5) and AP is the limiter.
+  // (0 of 33, docs/data-schemas.md § 5), and the turn is the limiter (it was
+  // the AP price while talents carried one).
   cooldownTurns: 0,
   // Upstream's Shoot is `speed = 'archery'` (techniques/archery.lua:68).
   speed: 'archery',

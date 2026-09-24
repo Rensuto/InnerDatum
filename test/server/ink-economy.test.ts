@@ -285,7 +285,7 @@ describe('a kill pays Ink — hate_per_kill, tome/class/Actor.lua:253', () => {
    * deliberately moved (8 -> 5) was pinned by nothing at all.
    */
   it('costs what Willful Strike costs — cursed/force-of-will.lua:27', () => {
-    expect(strikeOut.cost.resource).toBe(5);
+    expect(strikeOut.cost?.resource).toBe(5);
   });
 
   it('buys a Strike Out outright, which is the whole point of the number', () => {
@@ -295,6 +295,6 @@ describe('a kill pays Ink — hate_per_kill, tome/class/Actor.lua:253', () => {
     // `?? NaN` RATHER THAN `?? 0`: an absent cost must FAIL this, not sail
     // through it. Every comparison against NaN is false, so deleting the field
     // goes red here as well as in the case above.
-    expect(INK_PER_KILL).toBeGreaterThan(strikeOut.cost.resource ?? Number.NaN);
+    expect(INK_PER_KILL).toBeGreaterThan(strikeOut.cost?.resource ?? Number.NaN);
   });
 });

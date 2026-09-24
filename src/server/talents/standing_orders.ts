@@ -65,7 +65,6 @@ export const standingOrders: Talent = {
   // nobody decided: there is no moment at which this is paid for, which is what
   // the word means. `canUseTalent` never runs against it — `submitTalent` refuses
   // it above the payment block.
-  cost: { ap: 0 },
   cooldownTurns: 0,
   /**
    * NEVER AIMED. `TargetShape.Self` at range 0, and `Affinity.Ally` because the

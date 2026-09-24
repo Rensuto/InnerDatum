@@ -52,7 +52,6 @@ import {
 } from '../engine/talents.ts';
 import type { Talent } from '../engine/talents.ts';
 
-const AP_COST = 4;
 /**
  * ═══ DIVERGES FROM THE CITED TALENT, AND THE REASON IS NOT RECORDED ═══
  * Upstream is `cooldown = 10` in ACTIONS, which `tomeCooldownToTurns` converts
@@ -198,7 +197,7 @@ export const concussionFlask: Talent = {
   statGate: 'mag',
   kind: TalentKind.Active,
   iconId: 'icon_active_concussion_flask',
-  cost: { ap: AP_COST, resource: REAGENT_COST },
+  cost: { resource: REAGENT_COST },
   cooldownTurns: COOLDOWN,
   targeting: {
     shape: TargetShape.Single,

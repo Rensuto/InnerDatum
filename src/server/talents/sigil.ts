@@ -61,8 +61,6 @@ import {
 import type { Talent } from '../engine/talents.ts';
 import { INSPECTOR_MIN_RANGE } from './revolver_shot.ts';
 
-/** FROZEN. 4 AP leaves 2 — enough to reposition, never enough to also shoot. */
-const AP_COST = 4;
 /** FROZEN. Sigil (20) then Sniper's Mark (35) is 55 Focus: the class's whole
  * economy is that the setup and the payoff cannot both be afforded in one bar,
  * so the sigil has to land a turn early. A cheaper rank collapses that. */
@@ -141,7 +139,7 @@ export const sigil: Talent = {
   statGate: 'cun',
   kind: TalentKind.Active,
   iconId: 'icon_active_sigil',
-  cost: { ap: AP_COST, resource: FOCUS_COST },
+  cost: { resource: FOCUS_COST },
   cooldownTurns: secondsToTurns(COOLDOWN_SEC),
   // IT FIRES THE SHOOTER, so it pays the shooter's speed, as every upstream shot
   // does (tome/class/interface/Archery.lua:282-284).

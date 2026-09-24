@@ -1193,6 +1193,9 @@ function toLoadoutTalent(talent: LoadoutTalent): LoadoutTalent {
     name: talent.name,
     icon: talent.icon,
     cost: talent.cost,
+    // PER-ACTOR FROM v32, like `range` below: the weapon in this body's hand
+    // sets a weapon-speed talent's fraction. Copied verbatim for that reason.
+    usage: talent.usage,
     cooldownTurns: talent.cooldownTurns,
     // PER-ACTOR FROM v9 — `toLoadoutView` (content/classes.ts) resolved this at
     // the caster's own rank. Copied verbatim: this function decides WHAT a

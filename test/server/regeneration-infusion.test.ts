@@ -71,11 +71,13 @@ describe('the regeneration infusion asks for sixty life, spread', () => {
   /**
    * ═══ IT COSTS AN ACTION, AND THAT IS THE POINT OF IT ═══
    * Upstream gives `no_energy = true` to Healing and Wild and withholds it here
-   * (inscriptions.lua:104, :137, and its absence at :66-80). A 0 would make this
-   * strictly better than the healing infusion in every situation.
+   * (inscriptions.lua:104, :137, and its absence at :66-80). A free press would
+   * make this strictly better than the healing infusion in every situation.
+   * It was pinned as a price of 3 AP while talents had one; the flag is what
+   * the scheduler charges on, so the flag is what is pinned.
    */
   it('costs an action, unlike the other two infusions', () => {
-    expect(regenerationInfusion.cost.ap).toBe(3);
+    expect(regenerationInfusion.noEnergy).toBeUndefined();
   });
 });
 

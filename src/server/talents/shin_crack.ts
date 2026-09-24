@@ -85,7 +85,6 @@ import { percent } from '../engine/talents.ts';
  * Upstream's own number, transcribed — `archery.lua:797`. See the header's ruling.
  */
 const RESOLVE_COST = 15;
-const AP_COST = 3;
 /**
  * ═══ DIVERGES FROM THE CITED TALENT, AND THE REASON IS NOT RECORDED ═══
  * Upstream is `cooldown = 10` in ACTIONS, which `tomeCooldownToTurns` converts
@@ -110,7 +109,7 @@ const COOLDOWN = 3;
  * replace it."* The Watchman's bands read as one ladder:
  *
  *     crude_blow       1.0 -> 1.8   the at-will swing
- *     lockdown         1.0 -> 1.8   tackle, and it pays 5 AP
+ *     lockdown         1.0 -> 1.8   tackle, and it pays 30 Resolve
  *     ward_rush        0.8 -> 1.5   the cheap engage
  *     shin_crack       0.8 -> 1.2   this: the SLOW is what you buy
  *     truncheon_sweep  0.6 -> 1.0   pays off past two bodies
@@ -173,7 +172,7 @@ export const shinCrack: Talent = {
   statGate: 'con',
   kind: TalentKind.Active,
   iconId: 'icon_active_shin_crack',
-  cost: { ap: AP_COST, resource: RESOLVE_COST },
+  cost: { resource: RESOLVE_COST },
   cooldownTurns: COOLDOWN,
   // Crippling Shot is `technique/other` (techniques/archery.lua:792), so
   // `weapon` rather than `archery` (tome/class/Actor.lua:5805-5808); ours swings.

@@ -114,7 +114,8 @@ function talent(over: Partial<LoadoutTalent> = {}): LoadoutTalent {
     id: 'talent:fog_step',
     name: 'Fog Step',
     icon: 'icon_active_fog_step',
-    cost: { ap: 5, mp: 0, resource: 0 },
+    cost: { resource: 0 },
+    usage: { type: 'standard', speed: 1 },
     cooldownTurns: 4,
     range: 5,
     minRange: 0,
@@ -189,11 +190,13 @@ function barSlots(items: readonly HotbarSlot[] = []): HotbarSlot[] {
         talent: talent({
           id: `talent:t${String(i)}`,
           name: `Talent ${String(i)}`,
-          // TWO DIGITS, DELIBERATELY. The cost readout draws `${ap}` in the same
-          // corner family as the key digit, so a single-digit cost would be
-          // indistinguishable from a key in the recorded text and the "no digit
-          // on an item slot" assertion would be reading the wrong number.
-          cost: { ap: 10, mp: 0, resource: 0 },
+          // NO POOL PRICE, DELIBERATELY. The cost readout draws in the same
+          // corner family as the key digit, and draws nothing for a talent that
+          // takes nothing from the pool — so these slots put no digit in the
+          // recorded text for the key assertion to mistake for a key. (This was
+          // `ap: 10`, two digits for the same reason, while the corner drew the
+          // AP price.)
+          cost: { resource: 0 },
         }),
       }),
     );
@@ -990,8 +993,10 @@ describe('hotbarTipAt', () => {
     expect(card).not.toBeNull();
     expect(card?.title.length).toBeGreaterThan(0);
     // A LABELLED ROW IN `lines`, not a clause in `meta`: `meta` carries what
-    // is true this instant, the rows carry what the talent costs.
-    expect((card?.lines ?? []).join('\n')).toContain('AP cost:');
+    // is true this instant, the rows carry what the talent costs. What it costs
+    // in TIME is upstream's `Usage Speed:` row, where `AP cost:` was until v32.
+    expect((card?.lines ?? []).join('\n')).toContain('Usage Speed: Standard (100% of a turn)');
+    expect((card?.lines ?? []).join('\n')).not.toContain('AP cost');
   });
 
   it('names the pool the body actually spends, not always Resolve', () => {
@@ -1008,7 +1013,7 @@ describe('hotbarTipAt', () => {
       talent: talent({
         id: 'talent:costed',
         name: 'Costed',
-        cost: { ap: 10, mp: 0, resource: 2 },
+        cost: { resource: 2 },
       }),
     });
     const rect = slotRect(rectFor(W), 0, slots.length);
@@ -1292,7 +1297,7 @@ describe('a stance that is up says so', () => {
     expect(card?.meta ?? '').not.toContain('press to raise');
     expect(card?.meta ?? '').not.toContain('UP');
     // ...and it still says the ordinary things.
-    expect((card?.lines ?? []).join('\n')).toContain('AP cost:');
+    expect((card?.lines ?? []).join('\n')).toContain('Usage Speed:');
   });
 });
 

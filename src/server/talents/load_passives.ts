@@ -69,7 +69,6 @@ export const steadyPour: Talent = {
   statGate: 'cun',
   kind: TalentKind.Passive,
   iconId: 'icon_passive_steady_pour',
-  cost: { ap: 0 },
   cooldownTurns: 0,
   targeting: {
     shape: TargetShape.Self,
@@ -133,7 +132,6 @@ export const fullBandolier: Talent = {
   statGate: 'cun',
   kind: TalentKind.Passive,
   iconId: 'icon_passive_full_bandolier',
-  cost: { ap: 0 },
   cooldownTurns: 0,
   targeting: {
     shape: TargetShape.Self,
@@ -210,7 +208,6 @@ export const practisedHands: Talent = {
   statGate: 'cun',
   kind: TalentKind.Passive,
   iconId: 'icon_passive_practised_hands',
-  cost: { ap: 0 },
   cooldownTurns: 0,
   targeting: {
     shape: TargetShape.Self,

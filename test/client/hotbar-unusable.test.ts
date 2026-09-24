@@ -45,7 +45,8 @@ function talent(over: Partial<LoadoutTalent> = {}): LoadoutTalent {
     id: 'talent:revolver_shot',
     name: 'Revolver Shot',
     icon: 'icon_active_revolver_shot',
-    cost: { ap: 4, mp: 0, resource: 0 },
+    cost: { resource: 0 },
+    usage: { type: 'standard', speed: 1 },
     cooldownTurns: 0,
     range: 5,
     minRange: 3,
@@ -212,11 +213,12 @@ describe('talentAffordable — the grey, driven rather than read', () => {
 
   it('still refuses rank 0 and still reads the pool', () => {
     expect(talentAffordable(talent({ level: 0 }), full)).toBe(false);
-    expect(talentAffordable(talent({ cost: { ap: 4, mp: 0, resource: 51 } }), full)).toBe(false);
-    expect(talentAffordable(talent({ cost: { ap: 4, mp: 0, resource: 50 } }), full)).toBe(true);
-    // AND NOTHING ELSE: this read an AP price against the per-turn AP budget
-    // until the budget was retired. A price no frame can compare is no grey.
-    expect(talentAffordable(talent({ cost: { ap: 20, mp: 0, resource: 0 } }), full)).toBe(true);
+    expect(talentAffordable(talent({ cost: { resource: 51 } }), full)).toBe(false);
+    expect(talentAffordable(talent({ cost: { resource: 50 } }), full)).toBe(true);
+    // AND NOTHING ELSE: this read an AP price (`ap: 20`) against the per-turn
+    // AP budget until the budget was retired, and the price left the wire at
+    // v32. A talent that takes nothing from the pool is never greyed by it.
+    expect(talentAffordable(talent({ cost: { resource: 0 } }), full)).toBe(true);
   });
 });
 

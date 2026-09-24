@@ -179,7 +179,6 @@ export const coldReading: Talent = {
   // A PASSIVE COSTS NOTHING TO HAVE. There is no moment at which it is paid for,
   // which is what the word means; `submitTalent` refuses it above the payment
   // block, so `canUseTalent` never runs against these zeroes.
-  cost: { ap: 0 },
   cooldownTurns: 0,
   /**
    * NEVER AIMED. `TargetShape.Self` at range 0, and `Affinity.Ally` because the

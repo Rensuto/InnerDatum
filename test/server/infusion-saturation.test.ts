@@ -6,8 +6,9 @@
  * INFUSION SATURATION — Actor.lua:5850-5859 and :6356-6358, both halves.
  * ═══════════════════════════════════════════════════════════════════════════
  *
- * Every infusion in this game costs `ap: 0`, faithfully, because upstream's are
- * `no_energy = true`. The tuning that makes that safe is the OTHER half, and it
+ * The healing and wild infusions are free to press (`noEnergy`), faithfully,
+ * because upstream's are `no_energy = true` (both were priced `ap: 0` while
+ * talents carried an AP price). The tuning that makes that safe is the OTHER half, and it
  * shipped without it: each use adds a stacking effect, and that effect's power
  * is added to every infusion's cooldown. Take the free button without the tax
  * and a character with three infusions fires all three the moment they are up,

@@ -75,9 +75,6 @@ const POWER_AT_HIGH_WIL = 20;
 const powerFor = (wil: number): number =>
   Math.round(combatStatScale(wil, POWER_AT_LOW_WIL, POWER_AT_HIGH_WIL));
 
-/** `no_energy = true` (races.lua:317). The turn goes on around it. */
-const AP_COST = 0;
-
 export const wrathOfTheWoods: Talent = {
   id: talentId('wrath_of_the_woods'),
   name: 'Wrath of the Woods',
@@ -90,9 +87,8 @@ export const wrathOfTheWoods: Talent = {
   iconId: 'icon_active_wrath_of_the_woods',
   /** ONE RANK — see the header, and the tripwire in `talent-trees.test.ts`. */
   maxLevel: 1,
-  cost: { ap: AP_COST },
   cooldownTurns: tomeCooldownToTurns(TOME_COOLDOWN),
-  // Upstream's `no_energy = true`: pressed without spending the turn.
+  // Upstream's `no_energy = true` (races.lua:317): pressed without spending the turn.
   noEnergy: true,
   targeting: {
     shape: TargetShape.Self,

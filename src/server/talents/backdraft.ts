@@ -60,8 +60,6 @@ import {
 } from '../engine/talents.ts';
 import type { Talent } from '../engine/talents.ts';
 
-/** FROZEN. See Ashwick Flare: 4 of 6 AP is one cast plus a step. */
-const AP_COST = 4;
 /** FROZEN AT 1. The Reagent is the gate; see Ashwick Flare's note. */
 const REAGENT_COST = 1;
 /** FROZEN, and SHORTER than the flare's 5 on purpose: the control button makes
@@ -112,7 +110,7 @@ export const backdraft: Talent = {
   statGate: 'wil',
   kind: TalentKind.Active,
   iconId: 'icon_active_backdraft',
-  cost: { ap: AP_COST, resource: REAGENT_COST },
+  cost: { resource: REAGENT_COST },
   cooldownTurns: secondsToTurns(COOLDOWN_SEC),
   targeting: {
     shape: TargetShape.Single,

@@ -66,9 +66,6 @@ const TOME_COOLDOWN = 47;
 
 const DURATION_TURNS = tomeCooldownToTurns(TOME_DURATION);
 
-/** `no_energy = true` (races.lua:121). The turn goes on around it. */
-const AP_COST = 0;
-
 export const highbornsBloom: Talent = {
   id: talentId('highborns_bloom'),
   name: "Highborn's Bloom",
@@ -92,9 +89,8 @@ export const highbornsBloom: Talent = {
   iconId: 'icon_active_highborns_bloom',
   /** ONE RANK — see `higher_heal.ts` and the tripwire in `talent-trees.test.ts`. */
   maxLevel: 1,
-  cost: { ap: AP_COST },
   cooldownTurns: tomeCooldownToTurns(TOME_COOLDOWN),
-  // Upstream's `no_energy = true`: pressed without spending the turn.
+  // Upstream's `no_energy = true` (races.lua:121): pressed without spending the turn.
   noEnergy: true,
   targeting: {
     shape: TargetShape.Self,

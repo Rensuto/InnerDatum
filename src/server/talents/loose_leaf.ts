@@ -49,7 +49,6 @@ export const looseLeaf: Talent = {
   statGate: 'cun',
   kind: TalentKind.Passive,
   iconId: 'icon_passive_loose_leaf',
-  cost: { ap: 0, resource: 0 },
   cooldownTurns: 0,
   targeting: {
     shape: TargetShape.Self,

@@ -691,15 +691,19 @@ export function talentShorthand(talent: LoadoutTalent): string {
    * Watchman talent. RANGE 0 IS SELF, and that same version called Mend Wounds,
    * which heals every ally within two tiles, "melee".
    */
-  const reach =
-    talent.range <= 0
-      ? 'self'
-      : talent.range < 2
-        ? 'melee'
-        : talent.minRange > 0
-          ? `${String(talent.minRange)}-${String(talent.range)}`
-          : `${String(talent.range)} tiles`;
-  return `${String(talent.cost.ap)} AP · ${reach}`;
+  /**
+   * THE REACH ALONE. It led with the AP price (`3 AP · melee`) until v32, when
+   * that price left the wire: nothing had spent an action point since Slice C
+   * retired the budget, so the number told a player choosing a class nothing
+   * about the class.
+   */
+  return talent.range <= 0
+    ? 'self'
+    : talent.range < 2
+      ? 'melee'
+      : talent.minRange > 0
+        ? `${String(talent.minRange)}-${String(talent.range)}`
+        : `${String(talent.range)} tiles`;
 }
 
 function drawCard(

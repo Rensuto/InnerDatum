@@ -30,8 +30,9 @@ describe('the probe’s self-help list', () => {
     expect(free.get('talent:regeneration_infusion')).toBe(false);
   });
 
-  it('does not call Phase Door Rune free for costing no AP — it costs the turn', () => {
-    // The case that went wrong: `ap: 0` and no `noEnergy` (phase_door_rune.ts).
+  it('does not call Phase Door Rune free for having been priced at no AP — it costs the turn', () => {
+    // The case that went wrong: it was priced `ap: 0`, with no `noEnergy`
+    // (phase_door_rune.ts), while talents carried an AP price.
     const [rune] = selfHelp(WATCHMAN, new Set([phaseDoorRune.id]), [phaseDoorRune]);
     expect(rune?.id).toBe(phaseDoorRune.id);
     expect(rune?.free).toBe(false);

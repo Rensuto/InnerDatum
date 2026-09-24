@@ -86,9 +86,6 @@ const TOME_COOLDOWN = 12;
  */
 const DURATION_TURNS = tomeCooldownToTurns(TOME_DURATION);
 
-/** `no_energy = true` (inscriptions.lua:137). See `healing_infusion.ts`. */
-const AP_COST = 0;
-
 export const wildInfusion: Talent = {
   id: talentId('wild_infusion'),
   name: 'Wild Infusion',
@@ -108,9 +105,8 @@ export const wildInfusion: Talent = {
   iconId: 'icon_active_wild_infusion',
   /** ONE RANK — `points = 1` on every `newInscription`. See `healing_infusion.ts`. */
   maxLevel: 1,
-  cost: { ap: AP_COST },
   cooldownTurns: tomeCooldownToTurns(TOME_COOLDOWN),
-  // Upstream's `no_energy = true`: pressed without spending the turn.
+  // Upstream's `no_energy = true` (inscriptions.lua:137): pressed without spending the turn.
   noEnergy: true,
   targeting: {
     shape: TargetShape.Self,

@@ -69,7 +69,6 @@ import type { Talent } from '../engine/talents.ts';
 
 /** Tiles. Short for a ranged class — a clerk works at desk distance. */
 const RANGE = 6;
-const AP_COST = 4;
 /**
  * ═══════════════════════════════════════════════════════════════════════════
  * 5, AND IT WAS 8 — force-of-will.lua:27, the archetype's own opening attack.
@@ -136,7 +135,7 @@ export const strikeOut: Talent = {
   statGate: 'cun',
   kind: TalentKind.Active,
   iconId: 'icon_active_strike_out',
-  cost: { ap: AP_COST, resource: INK_COST },
+  cost: { resource: INK_COST },
   /**
    * AT WILL. The Ink price is the gate, and one gate per button is enough —
    * the same argument `ashwick_flare.ts` makes for its Reagent.

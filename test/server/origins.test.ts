@@ -287,9 +287,13 @@ describe('the Indexed carry a gift no class teaches', () => {
     expect(higherHeal.maxLevel).toBe(1);
   });
 
-  /** `no_energy = true` (races.lua:45) — the turn goes on around it. */
+  /**
+   * `no_energy = true` (races.lua:45) — the turn goes on around it. It read a
+   * price of `ap: 0` while talents carried one, which was never the claim:
+   * `noEnergy` is what the scheduler parks on (tome/class/Actor.lua:5862-5863).
+   */
   it('costs no time at all', () => {
-    expect(higherHeal.cost.ap).toBe(0);
+    expect(higherHeal.noEnergy).toBe(true);
   });
 });
 

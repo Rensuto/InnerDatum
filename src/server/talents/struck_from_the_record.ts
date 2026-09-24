@@ -65,7 +65,6 @@ import type { Talent } from '../engine/talents.ts';
  */
 
 const RANGE = 6;
-const AP_COST = 6;
 const INK_COST = 30;
 const COOLDOWN = 10;
 
@@ -102,7 +101,7 @@ export const struckFromTheRecord: Talent = {
   statGate: 'wil',
   kind: TalentKind.Active,
   iconId: 'icon_active_struck_from_the_record',
-  cost: { ap: AP_COST, resource: INK_COST },
+  cost: { resource: INK_COST },
   cooldownTurns: COOLDOWN,
   targeting: {
     shape: TargetShape.Single,

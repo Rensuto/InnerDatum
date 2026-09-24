@@ -100,9 +100,6 @@ const TOME_DURATION = 4;
  */
 const TOME_COOLDOWN = 16;
 
-/** `no_energy = true` (inscriptions.lua:327): the turn goes on around it. */
-const AP_COST = 0;
-
 export const shieldingRune: Talent = {
   id: talentId('shielding_rune'),
   name: 'Shielding Rune',
@@ -121,9 +118,8 @@ export const shieldingRune: Talent = {
   iconId: 'icon_active_shielding_rune',
   /** ONE RANK — `points = 1` on every `newInscription`. See the infusion's note. */
   maxLevel: 1,
-  cost: { ap: AP_COST },
   cooldownTurns: tomeCooldownToTurns(TOME_COOLDOWN),
-  // Upstream's `no_energy = true`: pressed without spending the turn.
+  // Upstream's `no_energy = true` (inscriptions.lua:327): pressed without spending the turn.
   noEnergy: true,
   targeting: {
     // Self-centred, nothing to point at. The one button that must never be

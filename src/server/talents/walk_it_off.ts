@@ -71,7 +71,6 @@ export const walkItOff: Talent = {
   tier: 3,
   kind: TalentKind.Passive,
   iconId: 'icon_passive_walk_it_off',
-  cost: { ap: 0 },
   cooldownTurns: 0,
   targeting: {
     shape: TargetShape.Self,

@@ -65,8 +65,6 @@ import {
 } from '../engine/talents.ts';
 import type { Talent } from '../engine/talents.ts';
 
-/** FROZEN. 5 of 6 AP — the tackle is the round. See Iron Curtain's note. */
-const AP_COST = 5;
 /**
  * FROZEN, and it is the most expensive thing a Watchman can buy. Lockdown and
  * Iron Curtain together are 55 Resolve, which is more than the bar holds at
@@ -99,8 +97,8 @@ const DAMAGE_MULT_LOW = 1;
  *
  * 1.8 is deliberately IDENTICAL to Crude Blow's trained high, because the two
  * shipped identical at 1.0 and the difference between them is what you pay for:
- * this one costs 5 AP and 30 Resolve and comes with a stripped action and a
- * taunt. Giving it a bigger multiplier as well would make the at-will swing
+ * this one costs 30 Resolve (and cost 5 AP, while talents carried an AP price)
+ * and comes with a stripped action and a taunt. Giving it a bigger multiplier as well would make the at-will swing
  * pointless the moment the Watchman had Resolve in the bank; keeping them equal
  * means the tackle is bought for its CONTROL, which is the slot it fills.
  */
@@ -216,7 +214,7 @@ export const lockdown: Talent = {
   statGate: 'con',
   kind: TalentKind.Active,
   iconId: 'icon_active_lockdown',
-  cost: { ap: AP_COST, resource: RESOLVE_COST },
+  cost: { resource: RESOLVE_COST },
   cooldownTurns: tomeCooldownToTurns(TOME_COOLDOWN),
   // Taunt, its shape, is `technique/other` (gifts/summon-utility.lua:22), so
   // `weapon` (tome/class/Actor.lua:5807-5808).

@@ -30,11 +30,13 @@
  * is the one you press BEFORE the fight, or in the gap after it, because it asks
  * for a turn and pays back over three.
  *
- * So `AP_COST` is 3 and not 0: a ToME action is `BUDGET / TOME_ACTIONS_PER_TURN`
- * = 6 / 2, which is what `field_dressing` — the other heal that costs a turn —
- * charges. A 0 here would have made this strictly better than the healing
- * infusion in every situation and collapsed a fifteen-year-old choice into one
- * obvious answer.
+ * So there is no `noEnergy` below, and a press costs the standard turn — what
+ * `field_dressing`, the other heal that costs a turn, pays; the tooltip reads
+ * "Standard (100% of a turn)" where the healing infusion's reads "Instant". (It
+ * was priced 3 AP while talents carried an AP price: a ToME action as
+ * `BUDGET / TOME_ACTIONS_PER_TURN` = 6 / 2.) A free press here would have made
+ * this strictly better than the healing infusion in every situation and
+ * collapsed a fifteen-year-old choice into one obvious answer.
  *
  * ═══ SIXTY OVER THE WHOLE EFFECT, NOT SIXTY PER TURN ═══
  * `power = (heal + inc_stat) / dur` (:74) — upstream divides the pool across the
@@ -105,12 +107,6 @@ const DURATION_TURNS = tomeCooldownToTurns(TOME_DURATION);
  */
 const POWER_PER_TURN = TOTAL_HEAL / DURATION_TURNS;
 
-/**
- * ONE ACTION. `BUDGET / TOME_ACTIONS_PER_TURN` — the price `field_dressing`
- * pays, and the whole difference between this and the healing infusion.
- */
-const AP_COST = 3;
-
 export const regenerationInfusion: Talent = {
   id: talentId('regeneration_infusion'),
   name: 'Regeneration Infusion',
@@ -130,7 +126,6 @@ export const regenerationInfusion: Talent = {
   iconId: 'icon_active_regeneration_infusion',
   /** ONE RANK — `points = 1` on every `newInscription`. See `healing_infusion.ts`. */
   maxLevel: 1,
-  cost: { ap: AP_COST },
   cooldownTurns: tomeCooldownToTurns(TOME_COOLDOWN),
   targeting: {
     // Self-centred, nothing to point at — `mend_wounds`' note applies word for

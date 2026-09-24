@@ -187,7 +187,8 @@ function progressFrame(over: Partial<ProgressMsg> = {}): ProgressMsg {
 function talent(over: Partial<LoadoutTalent> & { id: string; name: string }): LoadoutTalent {
   return {
     icon: 'icon_active_ward_rush',
-    cost: { ap: 5, mp: 0, resource: 0 },
+    cost: { resource: 0 },
+    usage: { type: 'standard', speed: 1 },
     cooldownTurns: 3,
     range: 1,
     minRange: 0,
@@ -211,21 +212,21 @@ const LOADOUT: readonly LoadoutTalent[] = [
     name: 'Iron Curtain',
     shape: TalentShape.Self,
     range: 0,
-    cost: { ap: 3, mp: 0, resource: 20 },
+    cost: { resource: 20 },
   }),
   talent({
     id: 'talent:long_shot',
     name: 'Long Shot',
     range: 7,
     minRange: 3,
-    cost: { ap: 4, mp: 0, resource: 10 },
+    cost: { resource: 10 },
   }),
   talent({
     id: 'talent:fog_step',
     name: 'Fog Step',
     shape: TalentShape.Tile,
     range: 4,
-    cost: { ap: 0, mp: 0, resource: 0 },
+    cost: { resource: 0 },
   }),
 ];
 
@@ -813,19 +814,62 @@ describe('the talent rows', () => {
     expect(talentRows(sheet())[1]?.range).toBe('self');
   });
 
-  it('names the pool in the cost, and omits every zero budget', () => {
-    // Actor.lua:6236-6243 lists only non-zero costs. Three zeros read as
-    // "unknown" at a glance, so a free talent says so in a word.
+  it('names the pool in the cost, and omits a zero one', () => {
+    // tome/class/Actor.lua:6236-6243 lists only non-zero costs. The pool price
+    // is the only one left since v32 took AP and MP off the wire, and a talent
+    // that takes nothing from the pool has no cost field at all — "free" would
+    // say more than the row knows, because it still costs the turn.
     expect(talentRows(sheet()).map((row) => row.cost)).toEqual([
-      'AP 5',
-      'AP 3 · 20 Resolve',
-      'AP 4 · 10 Resolve',
-      'free',
+      '',
+      '20 Resolve',
+      '10 Resolve',
+      '',
     ]);
   });
 
+  it('prints no dangling separator for a talent that costs the pool nothing', () => {
+    // The row a painter draws is the fields that have something to say. A
+    // leading ` · ` would read as a value that failed to load.
+    const paints: string[] = [];
+    const stub = new Proxy(
+      {},
+      {
+        get: (_target, prop: string) => {
+          if (prop === 'measureText') return (text: string) => ({ width: text.length * 6 });
+          if (prop === 'fillText')
+            return (text: string) => {
+              paints.push(text);
+            };
+          if (prop === 'canvas') return undefined;
+          return () => {};
+        },
+        set: () => true,
+      },
+    ) as unknown as CanvasRenderingContext2D;
+    const rows = charSheetRows(sheet(), SheetTab.Talents);
+    const rect = charSheetRect({
+      width: 1280,
+      height: 720,
+      top: 20,
+      bottom: 680,
+      pages: pages(),
+    });
+    if (rect === null) throw new Error('no rect at 1280x720');
+    drawCharSheet({
+      tab: SheetTab.Talents,
+      ctx: stub,
+      sprites: { sprite: () => undefined },
+      rect,
+      rows,
+      hoveredClose: false,
+    });
+    expect(paints).toContain('melee/personal · ready');
+    expect(paints).toContain('20 Resolve · self · ready');
+    expect(paints.filter((text) => text.startsWith(' · ') || text.startsWith('·'))).toEqual([]);
+  });
+
   it('falls back to a bare number when the resource frame has not arrived', () => {
-    expect(talentRows(sheet({ resource: null }))[1]?.cost).toBe('AP 3 · 20');
+    expect(talentRows(sheet({ resource: null }))[1]?.cost).toBe('20');
   });
 });
 
@@ -1300,9 +1344,9 @@ describe('the sheet shows what it says it shows', () => {
       const texts = painted(w, h, {}, SheetTab.Talents);
       // A meta line is the only thing on this sheet with the middot separator
       // -- except the `[G·2]` button, which no case here arms and which is
-      // excluded by shape rather than by hoping. NOT `startsWith('AP ')`: a
-      // talent costing nothing reads `free`, and matching on the cost would
-      // have silently skipped it.
+      // excluded by shape rather than by hoping. NOT by the cost (it was
+      // `startsWith('AP ')` once): a talent costing the pool nothing prints no
+      // cost at all, and matching on it would have silently skipped the row.
       const metas = texts.filter((text) => text.includes(' · ') && !text.startsWith('['));
       expect(metas.length, `${String(w)}x${String(h)} meta count`).toBe(LOADOUT.length);
       for (const meta of metas) {
@@ -1632,7 +1676,15 @@ describe('the character sheet card', () => {
     // own content and never has to, so this is the one place all three fields
     // are always present.
     const { card } = talentPoint(charSheetRows(sheet(), SheetTab.Talents));
-    expect(card.meta?.split(' · ').length).toBe(3);
+    // WARD RUSH TAKES NOTHING FROM THE POOL, so its cost field is omitted
+    // rather than blank (`costText`) and its full meta is the other two.
+    expect(card.meta).toBe('melee/personal · ready');
+    // …and a talent that does spend the pool carries all three.
+    const pooled = LOADOUT.filter((entry) => entry.cost.resource > 0).slice(0, 1);
+    const { card: priced } = talentPoint(
+      charSheetRows(sheet({ loadout: pooled }), SheetTab.Talents),
+    );
+    expect(priced.meta?.split(' · ')).toEqual(['20 Resolve', 'self', 'ready']);
   });
 
   it('shows the NEXT rank too, which is the decision being made', () => {

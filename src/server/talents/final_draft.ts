@@ -62,7 +62,6 @@ import type { Talent } from '../engine/talents.ts';
  */
 
 const RANGE = 6;
-const AP_COST = 6;
 /** The most expensive in the class. See the header. */
 const INK_COST = 34;
 const COOLDOWN = 12;
@@ -100,7 +99,7 @@ export const finalDraft: Talent = {
   statGate: 'cun',
   kind: TalentKind.Active,
   iconId: 'icon_active_final_draft',
-  cost: { ap: AP_COST, resource: INK_COST },
+  cost: { resource: INK_COST },
   cooldownTurns: COOLDOWN,
   targeting: {
     shape: TargetShape.Single,

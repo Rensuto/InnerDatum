@@ -18,7 +18,7 @@
  * `dam` FEEDS EVERY BLOW, not just the talents. It is added before the weapon
  * and before the stat multiplier (Combat.lua:1684), so it improves the plain
  * attack the player makes eight times a fight rather than the one they spend
- * AP on -- the difference between a passive that is felt and a passive that
+ * a talent on -- the difference between a passive that is felt and a passive that
  * is read off a sheet.
  *
  * IT HAS NO `onUse`, AND THAT IS THE DECLARATION. See `Talent.onUse` -- the
@@ -52,7 +52,6 @@ export const weightOfOffice: Talent = {
   kind: TalentKind.Passive,
   iconId: 'icon_passive_weight_of_office',
   // A PASSIVE COSTS NOTHING TO HAVE -- `cold_reading.ts` carries the whole note.
-  cost: { ap: 0 },
   cooldownTurns: 0,
   /** Never aimed. See `cold_reading.ts` for the argument behind these fields. */
   targeting: {

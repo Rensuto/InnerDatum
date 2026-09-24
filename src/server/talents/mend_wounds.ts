@@ -70,20 +70,6 @@ import {
 import type { Talent, TalentHit } from '../engine/talents.ts';
 
 /**
- * 3 OF 6, AND IT WAS 4.
- *
- * The heal is still the turn you did not spend killing anything — a 6-AP round
- * buys two Mends or nothing else worth having beside one. What it is NOT any
- * more is the turn you did not spend doing ANYTHING else: at 3 it pairs with
- * Ashwick Flare, so an Alchemist can answer a hurt friend and still contribute
- * to the fight in the same round.
- *
- * That pairing is the whole reason this moved. See `ashwick_flare.ts` for the
- * arithmetic — at 4 and 4 her cheapest pair was 8 against a budget of 6, so the
- * Alchemist was the one class the intra-turn budget could never reach.
- */
-const AP_COST = 3;
-/**
  * FROZEN AT 3 — the most expensive thing in the Alchemist's book, and it is
  * three-eighths of the whole stock. That price is what makes the party's only
  * real heal a genuine choice rather than a reflex, and a rank that discounted
@@ -154,7 +140,7 @@ export const mendWounds: Talent = {
   statGate: 'wil',
   kind: TalentKind.Active,
   iconId: 'icon_active_mend_wounds',
-  cost: { ap: AP_COST, resource: REAGENT_COST },
+  cost: { resource: REAGENT_COST },
   cooldownTurns: tomeCooldownToTurns(TOME_COOLDOWN),
   targeting: {
     // Self-centred: there is nothing to point at, which also means there is no

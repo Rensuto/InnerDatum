@@ -107,6 +107,11 @@ describe('a gate that has just opened is reported', () => {
     const key = code(lines.slice(at, at + 4).join('\n'));
     expect(key).toContain('level');
     expect(key).toContain('STAT_ORDER');
+    // AND THE SHEET'S WEAPON SPEED, which `LoadoutTalent.usage` prints for a
+    // weapon-speed talent. The mainhand id moves with a swap; a `physSpeed`
+    // modifier on the body never touches a slot. usage-speed.test.ts drives
+    // the swap over a socket; this pins the half no authored item reaches yet.
+    expect(key, 'the usage line would go stale on a haste').toContain('combatSpeed(');
     expect(key, 'experience would resend the hotbar on every kill').not.toContain('xp');
   });
 

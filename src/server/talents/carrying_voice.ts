@@ -24,7 +24,7 @@
  * numbers all rise and the LANDING RATE falls faster.
  *
  * ═══ AND IT IS A PASSIVE, DELIBERATELY, IN A TREE OF SHOUTS ═══
- * A tree of nothing but actives is a tree that competes with itself for AP: one
+ * A tree of nothing but actives is a tree that competes with itself for turns: one
  * button a turn, so the fourth shout is worth nothing while the first exists.
  * The two passives here are what let a player buy INTO the tree rather than
  * choosing between its buttons -- and this one is worth more the more of the
@@ -79,7 +79,6 @@ export const carryingVoice: Talent = {
   statGate: 'wil',
   kind: TalentKind.Passive,
   iconId: 'icon_passive_carrying_voice',
-  cost: { ap: 0 },
   cooldownTurns: 0,
   targeting: {
     shape: TargetShape.Self,

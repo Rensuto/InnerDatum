@@ -75,7 +75,6 @@ export const longNights: Talent = {
   tier: 3,
   kind: TalentKind.Passive,
   iconId: 'icon_passive_long_nights',
-  cost: { ap: 0 },
   cooldownTurns: 0,
   targeting: {
     shape: TargetShape.Self,

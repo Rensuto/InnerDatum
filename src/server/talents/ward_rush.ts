@@ -15,8 +15,9 @@
  *
  * ═══ WHAT IT IS FOR ═══
  * game-design.md § 2: *"signature — the cheapest engage in the game; seizes
- * chokes."* At 2 AP it is the only talent a player can fire three times in one
- * round, and what it buys is not damage (0.8x, the lowest multiplier any
+ * chokes."* It was priced at 2 AP, the only talent a player could fire three
+ * times in one round while a round held several actions; every action ends
+ * the turn now. What it buys is not damage (0.8x, the lowest multiplier any
  * Watchman talent has) but GROUND: the target is shoved one tile and the
  * Watchman steps into the square it vacated.
  *
@@ -58,16 +59,6 @@ import {
 import type { Talent } from '../engine/talents.ts';
 
 /**
- * FROZEN AT 2, and it is the entire identity of the talent.
- *
- * game-design.md § 2 calls this "the cheapest engage in the game". 2 of 6 AP is
- * the only cost in the twelve that lets a player fire three times in one round;
- * at 3 it is Crude Blow with a shove and the Watchman loses his opening move.
- * A talent point buys damage, never a discount — a scaling cost would make the
- * spend path a rebate, and `canUseTalent` would stop being a pure predicate
- * over static data.
- */
-/**
  * ═══ UPSTREAM CHARGES Resolve FOR THIS, AND SO DO WE NOW ═══
  * `weaponshield.lua:23-45, Shield Pummel` carries ``stamina = 8``. The header above cites that
  * talent for its cooldown and its damage; the resource line was not carried
@@ -92,7 +83,6 @@ import type { Talent } from '../engine/talents.ts';
  * Upstream's own number, transcribed — `weaponshield.lua:31`. See the header's ruling.
  */
 const RESOLVE_COST = 8;
-const AP_COST = 2;
 /**
  * MELEE REACH — 1.5, WHICH ON ToME'S ROUNDED DISTANCE IS UPSTREAM'S 1.
  *
@@ -177,7 +167,7 @@ export const wardRush: Talent = {
   statGate: 'str',
   kind: TalentKind.Active,
   iconId: 'icon_active_shield_bash',
-  cost: { ap: AP_COST, resource: RESOLVE_COST },
+  cost: { resource: RESOLVE_COST },
   // 6 ToME actions -> 3 Inner Datum turns (an Inner Datum turn holds ~2
   // actions from a 6 AP budget). See engine/talents.ts's cooldown header.
   cooldownTurns: tomeCooldownToTurns(TOME_COOLDOWN),

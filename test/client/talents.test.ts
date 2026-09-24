@@ -86,7 +86,8 @@ import type { LoadoutTalent, ProgressMsg } from '../../src/shared/protocol.ts';
 function talent(over: Partial<LoadoutTalent> & { id: string; name: string }): LoadoutTalent {
   return {
     icon: 'icon_active_basic_attack',
-    cost: { ap: 3, mp: 0, resource: 0 },
+    cost: { resource: 0 },
+    usage: { type: 'standard', speed: 1 },
     cooldownTurns: 0,
     range: 1.5,
     minRange: 0,
@@ -117,7 +118,7 @@ function view(over: Partial<TalentPanelView> = {}): TalentPanelView {
         id: 'talent:standing_orders',
         name: 'Standing Orders',
         kind: 'passive',
-        cost: { ap: 0, mp: 0, resource: 0 },
+        cost: { resource: 0 },
         range: 0,
         desc: 'Always on. Your coat is worth 1 armour, on top of anything you wear.',
         descNext: null,
@@ -561,7 +562,7 @@ describe('hovering an icon explains it', () => {
           id: 'talent:crude_blow',
           name: 'Crude Blow',
           ...DISCIPLINE,
-          cost: { ap: 4, mp: 0, resource: 2 },
+          cost: { resource: 2 },
         }),
       ],
     });
@@ -602,6 +603,9 @@ describe('hovering an icon explains it', () => {
     const card = talentTipAt(rect, rows, box.x + 2, box.y + 2, NO_SCROLL);
     expect(card?.lines).toContain('Use mode: Passive');
     expect(card?.lines.join(' ')).not.toContain('AP cost');
+    // Upstream prints no `Usage Speed` for a passive either (`t.mode ~=
+    // "passive"`, tome/class/Actor.lua:6265): it is never pressed.
+    expect(card?.lines.join(' ')).not.toContain('Usage Speed');
   });
 
   it('says a sustain is a toggle rather than pricing it like an attack', () => {
@@ -610,8 +614,9 @@ describe('hovering an icon explains it', () => {
      * `Actor.lua:6219-6223` prints `Use mode: Passive / Sustained / Activated`
      * on every talent upstream, because the three behave differently. This card
      * split on `passive` alone, so all five of the game's sustains printed the
-     * ACTIVATED meta — an AP cost, a cooldown, a reach — with nothing saying the
-     * press is a toggle that stays on and reserves part of the pool.
+     * ACTIVATED meta — an AP cost (as talents had then), a cooldown, a reach —
+     * with nothing saying the press is a toggle that stays on and reserves part
+     * of the pool.
      *
      * The hotbar has known the difference since stances shipped; the panel a
      * player reads to decide what to LEARN did not.
@@ -622,6 +627,9 @@ describe('hovering an icon explains it', () => {
           id: 'talent:ledger_stances',
           name: 'Ledger Stances',
           kind: 'sustained',
+          // What the server sends for a stance: the toggle never reaches the
+          // scheduler, so it is instant (`usageSpeedOf`, engine/talents.ts).
+          usage: { type: 'instant', speed: 0 },
           ...DISCIPLINE,
         }),
       ],
@@ -636,9 +644,12 @@ describe('hovering an icon explains it', () => {
 
     const card = talentTipAt(rect, stanceRows, box.x + 2, box.y + 2, NO_SCROLL);
     expect(card?.lines, 'a sustain must say it is one').toContain('Use mode: Sustained');
-    // AND IT STILL PRINTS THE PRICE. A toggle is not free; what changed is that
-    // the card leads with what the press DOES.
-    expect(card?.lines).toContain('AP cost: 3');
+    // AND IT STILL SAYS WHAT A PRESS COSTS; what changed is that the card leads
+    // with what the press DOES. It printed `AP cost: 3` until v32 — a price
+    // nothing spent. A toggle here costs no time at all; its price is the
+    // reservation, which the pool row above says when there is one.
+    expect(card?.lines).toContain('Usage Speed: Instant (0% of a turn)');
+    expect(card?.lines.join(' ')).not.toContain('AP cost');
   });
 
   it('is null when the pointer is not on an icon', () => {
@@ -3234,14 +3245,24 @@ describe('a talent is described as upstream describes it', () => {
       .join('');
 
   it('reads in upstream’s order and words, with the next rank inline', () => {
-    expect(textOf(cellOf({ requires: [{ text: 'Strength 18', met: true }] }))).toBe(
+    // `Usage Speed` LAST, after the range (and the cooldown, when there is one)
+    // — tome/class/Actor.lua:6265-6294. It replaced this pane's `AP cost: 3`,
+    // which sat second and priced the talent in points nothing spent.
+    expect(
+      textOf(
+        cellOf({
+          requires: [{ text: 'Strength 18', met: true }],
+          usage: { type: 'weapon', speed: 1 },
+        }),
+      ),
+    ).toBe(
       [
         'Current talent level: 1 [-> 2]',
         '- Strength 18',
         'Effective talent level: 1.0 [->2.0]',
         'Use mode: Activated',
-        'AP cost: 3',
         'Range: melee/personal',
+        'Usage Speed: Weapon (100% of a turn)',
         'Description: Slam an adjacent enemy for 110% [->130%] weapon damage and drive it back a tile.',
       ].join('\n'),
     );
@@ -3264,18 +3285,17 @@ describe('a talent is described as upstream describes it', () => {
   });
 
   it('prices a passive in nothing and names its mode', () => {
-    const text = textOf(
-      cellOf({ kind: 'passive', cost: { ap: 0, mp: 0, resource: 0 }, range: 0 }, true),
-    );
+    const text = textOf(cellOf({ kind: 'passive', cost: { resource: 0 }, range: 0 }, true));
     expect(text).toContain('Use mode: Passive\n');
     expect(text).not.toContain('AP cost');
     expect(text).not.toContain('Range:');
+    expect(text).not.toContain('Usage Speed');
   });
 
   it('names the pool, and a sustain’s cost as a reservation, as upstream does', () => {
     const pooled = (kind: LoadoutTalent['kind']): string =>
       textOf({
-        ...cellOf({ kind, cost: { ap: 3, mp: 0, resource: 2 } }),
+        ...cellOf({ kind, cost: { resource: 2 } }),
         pool: ResourceKind.Reagents,
       });
     expect(pooled('active')).toContain('Reagents cost: 2\n');
@@ -3286,6 +3306,8 @@ describe('a talent is described as upstream describes it', () => {
     const text = textOf(cellOf({ range: 6, cooldownTurns: 8 }));
     expect(text).toContain('Range: 6\n');
     expect(text).toContain('Cooldown: 8\n');
+    // …and the usage speed straight after the cooldown, upstream's order.
+    expect(text).toContain('Cooldown: 8\nUsage Speed: Standard (100% of a turn)\n');
   });
 
   it('marks an unmet requirement with a mark as well as a colour', () => {

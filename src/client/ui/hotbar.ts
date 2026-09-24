@@ -140,6 +140,7 @@ import type { HoverCard, PanelRect } from './panel.ts';
 import { TALENTS_PER_CLASS_MAX } from '../../shared/progression.ts';
 import { PALETTE } from '../render/canvas.ts';
 import { SLOT_ORDER } from '../../shared/protocol.ts';
+import { usageSpeedText } from '../../shared/usage-speed.ts';
 import { DragKind } from './drag.ts';
 import { PANEL_PAD, PanelSkin, drawPanel } from './panel.ts';
 import { resourceLabel } from './resource.ts';
@@ -1669,12 +1670,13 @@ function paintSlot(
       // worded signal beside the hatched frame, for the same reason the turn chips
       // carry names.
       //
-      // AP IS THE NUMBER SHOWN, and the class resource only when the talent
-      // spends no AP. game-design.md § 2 writes every talent as "AP 5" or
-      // "AP 4, MP 1", so AP is the cost a player has learned to look for; the
-      // resource pips under the row already answer "can I afford the reagent".
-      // Two numbers in a 32-pixel corner is unreadable at any font size.
-      const shown = slot.talent.cost.ap > 0 ? slot.talent.cost.ap : slot.talent.cost.resource;
+      // THE POOL PRICE, AND NOTHING WHEN THERE IS NONE. This corner showed the
+      // AP price first (game-design.md § 2 wrote every talent as "AP 5"), and
+      // the resource only when a talent spent no AP. Nothing has spent AP since
+      // Slice C, so the number was a price that bought nothing, and v32 took it
+      // off the wire. What a press costs in TIME is the tooltip's `Usage Speed`
+      // line — a sentence, which a 32-pixel corner has no room for.
+      const shown = slot.talent.cost.resource;
       if (shown > 0) {
         ctx.font = FONT_COST;
         ctx.textAlign = 'right';
@@ -2022,6 +2024,12 @@ export function hotbarTipAt(
      * `engine/talents.ts` on `addProjectile`: the only shooter in the game is a
      * monster, so every player talent would read "instantaneous" — a row that
      * is furniture on all of them.
+     *
+     * ═══ `Usage Speed:` WHERE `AP cost:` WAS, AND IN UPSTREAM'S PLACE ═══
+     * The second row was `AP cost: N` until v32, a price nothing had spent since
+     * Slice C retired the budget. What a press costs is its TIME, and upstream
+     * says so last, after the cooldown (tome/class/Actor.lua:6276-6294):
+     * `usageSpeedText` is that sentence, shared with the talent panel.
      */
     const useMode = passive
       ? 'Passive'
@@ -2029,22 +2037,23 @@ export function hotbarTipAt(
         ? 'Activated'
         : 'Sustained';
     /**
-     * A PASSIVE GETS ITS MODE AND NOTHING ELSE. It is never pressed, so an
-     * `AP cost: 0` and a `Range: melee` off a range field it does not use are
-     * both answers to questions nobody asked — and `Range: melee` is worse than
-     * noise, because it reads as a claim the talent reaches something.
+     * A PASSIVE GETS ITS MODE AND NOTHING ELSE. It is never pressed, so a
+     * `Usage Speed:` and a `Range: melee` off fields it does not use are both
+     * answers to questions nobody asked — and `Range: melee` is worse than
+     * noise, because it reads as a claim the talent reaches something. Upstream
+     * prints neither for a passive either (`t.mode ~= "passive"`, :6265).
      */
     const rows = (
       passive
         ? [`Use mode: ${useMode}`]
         : [
             `Use mode: ${useMode}`,
-            talent.cost.ap > 0 ? `AP cost: ${String(talent.cost.ap)}` : null,
             talent.cost.resource > 0 && view.pool !== undefined
               ? `${resourceLabel(view.pool)} cost: ${String(talent.cost.resource)}`
               : null,
             `Range: ${talent.range >= 2 ? String(talent.range) : 'melee'}`,
             talent.cooldownTurns > 0 ? `Cooldown: ${String(talent.cooldownTurns)}` : null,
+            `Usage Speed: ${usageSpeedText(talent.usage)}`,
           ]
     ).filter((row) => row !== null);
 

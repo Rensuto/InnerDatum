@@ -31,6 +31,7 @@ import type { SetEffectResult, StatusApply } from '../../src/server/engine/effec
 import { Refusal, pump, submitIntent } from '../../src/server/engine/scheduler.ts';
 import { Affinity, dirToward, tomeCooldownToTurns } from '../../src/server/engine/talents.ts';
 import { talentRuntimeFor } from '../../src/server/main.ts';
+import { bearDown } from '../../src/server/talents/bear_down.ts';
 import { grab, grabDuration, grabMult } from '../../src/server/talents/grab.ts';
 import { MONSTER_TALENTS } from '../../src/server/talents/monster.ts';
 import { createWorld } from '../../src/server/world/world.ts';
@@ -61,8 +62,14 @@ describe('Grab, npcs.lua:817-849 — the numbers', () => {
     expect(grab.cooldownTurns).toBe(tomeCooldownToTurns(6));
     expect(grab.cooldownTurns).toBe(3);
     // Bear Down's price, because upstream's Stun carries the same cooldown and
-    // stamina (npcs.lua:195-196) — see `GRAB_AP`.
-    expect(grab.cost).toEqual({ ap: 5 });
+    // stamina (npcs.lua:195-196) — see the note on `grab.cooldownTurns`. It was
+    // pinned as `{ ap: 5 }` while talents carried an AP price; the price now is
+    // the weapon-speed turn and no pool, and it is pinned against Bear Down's
+    // rather than restated, so the two stay one decision.
+    expect(grab.cost).toBeUndefined();
+    expect(grab.cost).toEqual(bearDown.cost);
+    expect(grab.speed).toBe(bearDown.speed);
+    expect(grab.cooldownTurns).toBe(bearDown.cooldownTurns);
   });
 
   it('reaches the adjacent body only, `range = 1` (:826)', () => {

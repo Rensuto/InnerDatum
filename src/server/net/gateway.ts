@@ -236,7 +236,7 @@ import {
  * player wearing a coat that changes no number — Trap 1, arriving through the
  * one door the type system cannot close.
  */
-import { combatArmor, stat as statValue } from '../engine/derived.ts';
+import { combatArmor, combatSpeed, stat as statValue } from '../engine/derived.ts';
 import {
   SetEffectOutcome,
   recomposeCombat,
@@ -6256,12 +6256,29 @@ export const wsGateway: FastifyPluginAsync<WsGatewayOptions> = async (app, opts)
    * It also refreshes `scales`, which reads the same hand's `damMod` and was
    * stale across a weapon swap for the same reason.
    *
+   * ═══ AND THE SHEET'S WEAPON SPEED, WHICH `usage` PRINTS ═══
+   * `LoadoutTalent.usage` is `usageSpeedOf(self, talent)`, and for a weapon-
+   * speed talent that is `combatSpeed` of this sheet — the weapon's
+   * `physSpeed` over the body's. The mainhand id above already moves when the
+   * weapon does, but the speed has a second input the id never sees: a
+   * `physSpeed` modifier on the body, which nothing grants today and upstream
+   * hands out (`combat_physspeed`) from effects that never touch a slot. So the
+   * number the line prints is in the key itself, and a haste that lands later
+   * re-sends the loadout without having to know it reads the hand. `derived.ts`
+   * is the formula's home and net/** may import it; the id's argument about
+   * `archerPreUse` is about engine/talents.ts, which it may not.
+   *
+   * NOT THE MOVEMENT SPEED. `usageSpeedOf` reads it for a `movement` talent and
+   * none exists; it moves on every stun and slow, so keying on it would re-send
+   * the largest private frame there is for a line no talent prints. The first
+   * `speed: 'movement'` talent brings `combatMovementSpeed` into this key.
+   *
    * Cheap to be broad: a hand changes a handful of times a delve, never per turn.
    */
   const gateKeyFor = (viewer: { level: number; combat?: Combatant; equipped?: Worn }): string =>
     `${String(viewer.level)}|${STAT_ORDER.map((which) =>
       String(statValue(viewer.combat ?? {}, which)),
-    ).join(',')}|${viewer.equipped?.mainhand ?? ''}`;
+    ).join(',')}|${viewer.equipped?.mainhand ?? ''}|${String(combatSpeed(viewer.combat ?? {}))}`;
 
   /**
    * Resend the hotbar when — and only when — a gate could have opened or shut.

@@ -57,7 +57,8 @@ function talent(id: string, over: Partial<LoadoutTalent> = {}): LoadoutTalent {
     id,
     name: id,
     icon: `icon_ability_${id}`,
-    cost: { ap: 0, mp: 0, resource: 0 },
+    cost: { resource: 0 },
+    usage: { type: 'standard', speed: 1 },
     cooldownTurns: 0,
     range: 5,
     minRange: 0,
@@ -84,7 +85,7 @@ const REVOLVER_SHOT = talent('talent:revolver_shot', { range: 5 });
 const IRON_CURTAIN = talent('talent:iron_curtain', { shape: TalentShape.Self, range: 0 });
 const MEND_WOUNDS = talent('talent:mend_wounds', {
   range: 2,
-  cost: { ap: 4, mp: 0, resource: 3 },
+  cost: { resource: 3 },
   cooldownTurns: 5,
 });
 

@@ -74,7 +74,6 @@ export const coldCase: Talent = {
   statGate: 'wil',
   kind: TalentKind.Passive,
   iconId: 'icon_passive_cold_case',
-  cost: { ap: 0 },
   cooldownTurns: 0,
   targeting: {
     shape: TargetShape.Self,

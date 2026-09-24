@@ -57,7 +57,6 @@ import type { Talent } from '../engine/talents.ts';
  * reach — offered every turn, refused on range every turn, silently. A talent's
  * range and its creature's profile are one decision, not two.
  */
-const BREACH_AP = 3;
 const BREACH_COOLDOWN = 8;
 
 /** temporal-combat.lua:312 — `combatTalentWeaponDamage(t, 1, 1.5)`. */
@@ -92,7 +91,6 @@ export const breachingBlow: Talent = {
   tree: 'monster/index',
   kind: TalentKind.Active,
   iconId: 'icon_monster_breaching_blow',
-  cost: { ap: BREACH_AP },
   cooldownTurns: BREACH_COOLDOWN,
   // Breach names its own: `archery` with a bow, else `weapon`
   // (chronomancy/temporal-combat.lua:310). Ours is the melee swing.

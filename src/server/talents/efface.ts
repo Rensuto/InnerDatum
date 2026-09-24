@@ -57,7 +57,6 @@ import type { Talent } from '../engine/talents.ts';
  * (physical.lua:31, this is an acid effect there); the power is the
  * Inquisitor's own, because what it is doing is reading you.
  */
-const EFFACE_AP = 4;
 const EFFACE_COOLDOWN = 10;
 const EFFACE_RANGE = 7;
 
@@ -85,7 +84,6 @@ export const efface: Talent = {
   tree: 'monster/index',
   kind: TalentKind.Active,
   iconId: 'icon_monster_efface',
-  cost: { ap: EFFACE_AP },
   cooldownTurns: EFFACE_COOLDOWN,
   targeting: {
     shape: TargetShape.Single,

@@ -59,8 +59,6 @@ import {
 } from '../engine/talents.ts';
 import type { Talent } from '../engine/talents.ts';
 
-/** FROZEN. A fight-turning decision once, not a rhythm. See the header. */
-const AP_COST = 5;
 const RESOLVE_COST = 4;
 const COOLDOWN_TURNS = 8;
 
@@ -123,7 +121,7 @@ export const clearTheStreet: Talent = {
   statGate: 'wil',
   kind: TalentKind.Active,
   iconId: 'icon_active_clear_the_street',
-  cost: { ap: AP_COST, resource: RESOLVE_COST },
+  cost: { resource: RESOLVE_COST },
   cooldownTurns: COOLDOWN_TURNS,
   // `technique/warcries` upstream, so `weapon` (tome/class/Actor.lua:5807-5808).
   speed: 'weapon',
@@ -148,7 +146,7 @@ export const clearTheStreet: Talent = {
     const victims = actorsInShape(ctx.world, self, tiles, Affinity.Hostile);
 
     /**
-     * A SHOUT INTO AN EMPTY STREET STILL COSTS ITS AP AND STILL GOES ON
+     * A SHOUT INTO AN EMPTY STREET STILL COSTS ITS TURN AND STILL GOES ON
      * COOLDOWN, exactly as a vial thrown at an empty crossroads does. That is
      * not a refusal — the player made a read and it was wrong, which is a
      * legible outcome. The refund rule covers intents that went ILLEGAL.

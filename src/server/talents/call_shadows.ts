@@ -708,7 +708,6 @@ export const callShadows: Talent = {
   statGate: 'cun',
   kind: TalentKind.Sustained,
   iconId: 'icon_sustain_call_shadows',
-  cost: { ap: 0 },
   cooldownTurns: 0,
   sustain: {},
   targeting: {

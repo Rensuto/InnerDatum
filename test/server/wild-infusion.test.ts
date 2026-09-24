@@ -174,7 +174,7 @@ describe('the cure picks the right debuffs off', () => {
 describe('the talent itself', () => {
   /** `no_energy = true` (:137) — the same free press the healing infusion gets. */
   it('costs no time at all', () => {
-    expect(wildInfusion.cost.ap).toBe(0);
+    expect(wildInfusion.noEnergy).toBe(true);
   });
 
   /** One rank, like every inscription — see `healing_infusion.ts`. */

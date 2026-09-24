@@ -200,7 +200,6 @@ export const indelible: Talent = {
   statGate: 'cun',
   kind: TalentKind.Passive,
   iconId: 'icon_passive_indelible',
-  cost: { ap: 0, resource: 0 },
   cooldownTurns: 0,
   targeting: {
     shape: TargetShape.Self,

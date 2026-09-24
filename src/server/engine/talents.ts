@@ -141,7 +141,7 @@ import {
   combatSpeed,
 } from './derived.ts';
 import type { Dir, TileXY } from '../../shared/coords.ts';
-import type { ActorKind, ActorRank, LevelView } from '../../shared/protocol.ts';
+import type { ActorKind, ActorRank, LevelView, UsageSpeedView } from '../../shared/protocol.ts';
 import { RANK_VALUE } from '../../shared/leveling.ts';
 import { canWalk } from '../../shared/level.ts';
 import type { Rng } from '../../shared/rng.ts';
@@ -1376,17 +1376,20 @@ const _worldShapeCheck = (world: World): TalentWorld => world;
 // The talent
 // ---------------------------------------------------------------------------
 
-/** What a use costs. Every field optional; most talents use two of the four. */
+/**
+ * What a use costs the POOL. What it costs in TIME is `Talent.speed` and
+ * `Talent.noEnergy`, priced by `talentSpeed` and shown by `usageSpeedOf`.
+ *
+ * ═══ IT CARRIED `ap` AND `mp` TOO, UNTIL PROTOCOL v32 ═══
+ * Every talent was priced in action points (and Fog Step in one movement point)
+ * against D1's per-turn budget of 6 AP / 3 MP (game-design.md § 6). Slice C
+ * retired the budget, so the figures became a price nothing spent, printed on
+ * every button; the next commit took them off the talents and the wire and put
+ * ToME's Usage Speed where they were. WEAK ON PURPOSE: with every field optional,
+ * a leftover `{ ap: 0 }` has no property in common with this type and is a
+ * compile error, even inside a spread.
+ */
 export type TalentCost = {
-  /**
-   * Action points. NOTHING SPENDS THEM: the per-turn budget this was a share of
-   * (6 AP a round, game-design.md § 6) was retired with the open round, and a
-   * talent's time is its `speed` now. The figure still reaches the wire in
-   * `TalentCostView` until the price itself goes.
-   */
-  readonly ap?: number;
-  /** Movement points, which nothing spends either. Fog Step is the only talent that sets it. */
-  readonly mp?: number;
   /** The class resource. Kind is implied by the class; amount is authored. */
   readonly resource?: number;
 };
@@ -1756,6 +1759,60 @@ export function talentSpeed(
   return Math.max(MIN_ACTION_COST_MULTIPLIER, speed);
 }
 
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE TOOLTIP'S "USAGE SPEED", AS DATA — tome/class/Actor.lua:6276-6294.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * The same facts the server charges on, read the same way:
+ *
+ *   `noEnergy`    `instant`, at 0 — upstream's `no_energy == true` branch, and
+ *                 the talent the scheduler parks for zero energy.
+ *   `sustain`     `instant` as well, and this one is OURS: a stance toggles
+ *                 through `toggleSustain` in the gateway's `handleTalent`,
+ *                 which never pumps and never reaches the scheduler ("A
+ *                 SUSTAINED TALENT TOGGLES ... IT COSTS NO TURN"). Upstream
+ *                 charges most sustains a turn to raise; this game charges
+ *                 none, and a line saying "Standard (100% of a turn)" over a
+ *                 free toggle would be the lie this line replaced. It keys on
+ *                 `sustain`, the field `toggleSustain` routes on.
+ *   otherwise     `getTalentSpeedType` (:5798-5814) for the word: a NUMBER is
+ *                 `special`, a name is itself, and absent is `standard`. The
+ *                 fraction is `talentSpeed(actor, talent)` itself, so a
+ *                 weapon-speed talent says what the hand in THIS sheet costs.
+ *
+ * ═══ UPSTREAM DERIVES THE WORD, AND THIS READS IT OFF THE TALENT ═══
+ * `getTalentSpeedType` falls back to `is_spell` → spell, `is_summon` → summon,
+ * a technique → weapon or archery, and `is_mind` → mind, all copied from the
+ * talent's CATEGORY (data/talents.lua:47), before it says standard. There are
+ * no category flags here, so the word is `Talent.speed`, written per talent: a
+ * spell or mind port with none written reads "Standard" where upstream reads
+ * "Spell" or "Mind", with the same percentage (both speeds are 1 here).
+ *
+ * NEVER FROM A PRICE OF ZERO. Those two are the only things that make a use
+ * instant; Phase Door Rune was priced `ap: 0` for as long as talents had an AP
+ * price and costs the whole turn upstream, and it reads "Spell (100% of a
+ * turn)".
+ *
+ * `usageSpeedText` (shared/usage-speed.ts) turns this into the sentence.
+ */
+export function usageSpeedOf(
+  actor: { readonly combat?: CombatSheet; readonly movementSpeed?: number },
+  talent: {
+    readonly noEnergy?: true;
+    readonly sustain?: object;
+    readonly speed?: TalentSpeedType | number;
+  },
+): UsageSpeedView {
+  if (talent.noEnergy === true || talent.sustain !== undefined) {
+    return { type: 'instant', speed: 0 };
+  }
+  return {
+    type: typeof talent.speed === 'number' ? 'special' : (talent.speed ?? 'standard'),
+    speed: talentSpeed(actor, talent),
+  };
+}
+
 export type Talent = {
   readonly id: string;
   readonly name: string;
@@ -1906,7 +1963,12 @@ export type Talent = {
    * rule beside it.
    */
   readonly maxLevel?: number;
-  readonly cost: TalentCost;
+  /**
+   * WHAT A USE TAKES FROM THE POOL. ABSENT TAKES NOTHING, which is every
+   * passive, every stance that pays in its reserve, and every button whose
+   * price is its time alone — `speed` below says how much of a turn that is.
+   */
+  readonly cost?: TalentCost;
   /**
    * ═══════════════════════════════════════════════════════════════════════════
    * WHAT A SUSTAIN RESERVES WHILE IT IS ON — ToME's `sustain_<resource>`.
@@ -2039,8 +2101,9 @@ export type Talent = {
    * tome/class/Actor.lua:5862-5863: `if not ab.no_energy then self:useEnergy(...)`.
    * Every other action costs the turn; a talent carrying this is pressed and the
    * player acts again (`TalentResolution.noEnergy`). Set it ONLY where the Lua
-   * sets it: a price of `ap: 0` is not the same claim (Phase Door rune is
-   * `ap: 0` and costs a turn upstream).
+   * sets it: a price of zero was never the same claim (Phase Door rune was
+   * priced `ap: 0` while talents had AP prices, and costs a turn upstream). It
+   * is also the only thing the tooltip reads as "Instant" (`usageSpeedOf`).
    */
   readonly noEnergy?: true;
   /**
@@ -3072,7 +3135,7 @@ export function canUseTalent(
   if (getTalentLevelRaw(sheet, talent.id) < 1) return TalentRefusal.NotLearned; // RAW: has a point been spent here at all — a mastery multiplier cannot turn "never learned" into "learned".
   if (cooldownOf(actor, talent.id) > 0) return TalentRefusal.OnCooldown;
 
-  if (!hasResource(sheet.resource, talent.cost.resource ?? 0)) return TalentRefusal.NoResource;
+  if (!hasResource(sheet.resource, talent.cost?.resource ?? 0)) return TalentRefusal.NoResource;
 
   // `on_pre_use`, IN UPSTREAM'S PLACE: tome/class/Actor.lua:5547 asks it after
   // the costs and before anything is spent, and a `false` there costs nothing.
@@ -3331,7 +3394,7 @@ export function useTalent(
    * It runs before the body, above this line, and this only skips the deduction.
    */
   const resourceSpent =
-    actor.combat?.flags?.freeResources === true ? 0 : (talent.cost.resource ?? 0);
+    actor.combat?.flags?.freeResources === true ? 0 : (talent.cost?.resource ?? 0);
   spendResource(sheet.resource, resourceSpent);
   /**
    * ═══════════════════════════════════════════════════════════════════════════

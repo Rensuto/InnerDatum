@@ -1918,9 +1918,10 @@ export const FOOTNOTED_LUCK: EffectDef = Object.freeze({
  * button safe.
  * ═══════════════════════════════════════════════════════════════════════════
  *
- * Every infusion in this game costs `ap: 0`, because upstream's are
- * `no_energy = true`. Each of those three files argues that faithfully and
- * NONE of them ports the other half:
+ * The infusions upstream marks `no_energy = true` are free to press here
+ * (`noEnergy`; they were priced `ap: 0` while talents carried an AP price).
+ * Each of those files argues that faithfully and NONE of them ports the other
+ * half:
  *
  *     -- Actor.lua:5850-5859, inside useTalent, delayed to onTickEnd
  *     if ab.type[1] == "inscriptions/infusions" then

@@ -76,9 +76,11 @@ import type { PanelRect } from '../../src/client/ui/panel.ts';
  * A slot for every index, alternating kinds so no assertion below can be true
  * of a bar that still separated them.
  *
- * TWO-DIGIT COSTS, deliberately, for the reason hotbar.test.ts:180-186 gives:
- * the cost readout is a `fillText` in the same slot as the key, so a one-digit
- * cost would be indistinguishable from a key label in the recording.
+ * NO POOL PRICE, deliberately, for the reason hotbar.test.ts's `barSlots`
+ * gives: the cost readout is a `fillText` in the same slot as the key, and a
+ * talent that takes nothing from the pool draws no readout, so no cost digit
+ * can be mistaken for a key label in the recording. (These were two-digit AP
+ * costs, for the same reason, while the corner drew the AP price.)
  */
 function mixedSlot(index: number): HotbarSlot {
   if (index % 3 === 0) {
@@ -88,7 +90,8 @@ function mixedSlot(index: number): HotbarSlot {
         id: `talent:t${String(index)}`,
         name: `Talent ${String(index)}`,
         icon: `icon_active_t${String(index)}`,
-        cost: { ap: 10, mp: 0, resource: 0 },
+        cost: { resource: 0 },
+        usage: { type: 'standard', speed: 1 },
         cooldownTurns: 4,
         range: 5,
         minRange: 0,

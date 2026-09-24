@@ -52,7 +52,6 @@ export const weightOfPrecedent: Talent = {
   statGate: 'wil',
   kind: TalentKind.Passive,
   iconId: 'icon_passive_weight_of_precedent',
-  cost: { ap: 0, resource: 0 },
   cooldownTurns: 0,
   targeting: {
     shape: TargetShape.Self,

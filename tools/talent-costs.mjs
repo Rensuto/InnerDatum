@@ -99,9 +99,14 @@ for (const name of fs.readdirSync(DIR).filter((f) => f.endsWith('.ts'))) {
   const src = fs.readFileSync(file, 'utf8');
 
   // ── our cost ────────────────────────────────────────────────────────────
+  // A FILE WITH NO TALENT IN IT IS SKIPPED, NOT A FILE WITH NO `cost:`. This
+  // skipped on a missing `cost:` while every talent carried one (`ap: 0` at
+  // least); `Talent.cost` is optional since the AP price went, and a talent
+  // that takes nothing from the pool omits it — which is a price of 0, and a
+  // row, exactly as `{ ap: 0 }` was.
+  if (!/:\s*Talent\s*=\s*\{|\):\s*Talent\s*\{/.test(src)) continue;
   const costLine = /cost:\s*\{([^}]*)\}/.exec(src);
-  if (costLine === null) continue;
-  const resourceRef = /resource:\s*([A-Za-z_0-9]+)/.exec(costLine[1]);
+  const resourceRef = costLine === null ? null : /resource:\s*([A-Za-z_0-9]+)/.exec(costLine[1]);
   let ours = 0;
   if (resourceRef !== null) {
     const token = resourceRef[1];

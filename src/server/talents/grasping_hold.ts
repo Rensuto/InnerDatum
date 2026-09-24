@@ -29,8 +29,6 @@ import { MONSTER_CURVE } from './monster.ts';
 import type { SetEffectResult } from '../engine/effects.ts';
 import type { Talent } from '../engine/talents.ts';
 
-/** FROZEN. Two of a creature's six, so it still has a round left to move in. */
-const CLUTCH_AP = 2;
 const CLUTCH_COOLDOWN = 5;
 
 /** How hard it bites, at a rank. Monsters are all rank 1 — see `ensureMonsterSheet`. */
@@ -91,7 +89,6 @@ export const graspingHold: Talent = {
   tree: 'monster/index',
   kind: TalentKind.Active,
   iconId: 'icon_monster_grasping_hold',
-  cost: { ap: CLUTCH_AP },
   cooldownTurns: CLUTCH_COOLDOWN,
   targeting: {
     shape: TargetShape.Single,
